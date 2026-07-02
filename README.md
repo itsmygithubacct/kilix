@@ -112,6 +112,31 @@ visible across the top and ends with a clickable **`+`** to open a new page. You
 visual page chooser (kilix's stand-in for Tilix's session sidebar), and **`F2`** to
 rename the current page. The page shortcuts are in [Keybindings](#keybindings-tilix-layout).
 
+## Browse the web in a pane (experimental)
+
+```bash
+kilix browse wikipedia.org        # or any URL; bare words become a search
+```
+
+`kilix browse` renders **real Chrome inside the pane**: page pixels (images,
+video, layout) stream in at full resolution via the kitty graphics protocol,
+while **page text is drawn as live terminal glyphs** — crisp, and selectable
+like any terminal text (shift+drag). Mouse clicks, wheel scrolling, and typing
+are forwarded to the page.
+
+| Key | Action |
+|---|---|
+| `Ctrl+L` | edit the URL (bare words search DuckDuckGo) |
+| `Alt+←` / `Alt+→` | history back / forward |
+| `Ctrl+R` | reload |
+| `Ctrl+C` | copy the mouse-drag selection (OSC 52 → clipboard) |
+| `Ctrl+Q` | quit |
+
+Requires `google-chrome`/`chromium` on `PATH` and `python3-pil`. It drives a
+headless Chrome over the DevTools protocol — no window, no compositor, works
+in any kilix pane. Known limits: no audio, no DRM video, and dense typography
+quantizes to the character grid.
+
 ## Keybindings (Tilix layout)
 
 | Action | Shortcut |
