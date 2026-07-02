@@ -5,3 +5,6 @@
 
 # Runtime state
 /.last-update-check
+
+# Python bytecode (browse kitten)
+config/__pycache__/
