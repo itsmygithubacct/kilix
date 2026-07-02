@@ -9,6 +9,8 @@ anyone who wants clickable split/maximize/close chrome on kitty.
 It runs its own kitty binary with its own config and icon, so it leaves any
 kitty you already have (and `~/.config/kitty`) completely untouched.
 
+![kilix — pages strip with + button, per-pane title bars with clickable split/maximize/close buttons, splits, and icat](config/kilix_demo.png)
+
 ## Features
 
 - **Clickable pane buttons** `[|] [-] [□] [x]` — split-right / split-down / maximize / close.
