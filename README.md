@@ -1,6 +1,6 @@
 # kilix — kitty that looks & behaves like Tilix, with clickable pane buttons
 
-`kilix` is a self-contained wrapper around a small **fork of kitty** that gives
+`kilix` is a self-contained wrapper around a **fork of kitty** that gives
 each pane's title bar clickable **`[|] [-] [□] [x]` buttons** — split-right,
 split-down, maximize, and close — just like Tilix's pane headers, on top of
 kitty's GPU-rendered speed. For Tilix users who want kitty underneath, and
@@ -13,9 +13,14 @@ kitty you already have (and `~/.config/kitty`) completely untouched.
 
 ## Features
 
-- **Clickable pane buttons** `[|] [-] [□] [x]` — split-right / split-down / maximize / close.
+- **Clickable pane buttons** `[|] [-] [□] [x]` — split-right / split-down / maximize / close,
+  drawn as Nerd Font icons that highlight on hover.
+- **Pane title menu** — click a pane's title for Tilix-style actions: rename, copy title,
+  reset, clear, split right/down, close.
 - **Drag-to-split by quadrant** — drag a pane's header onto another pane's edge to split it (Tilix's model).
 - **Pages (Tilix sessions)** — each page is a kitty tab, with an always-on page strip and a `+` button.
+- **Input broadcast** — `Ctrl+Alt+B` mirrors your typing to every pane in the page
+  (Tilix's "synchronize input").
 - **Tilix look & keys** — per-pane title bars, active-pane highlight, dimmed inactive panes, Tango palette, Tilix keybindings.
 - **Own taskbar identity** — groups separately from plain kitty, with its own icon.
 - **Self-contained** — prefers its bundled fork build, and falls back to a prebuilt kitty if you haven't built it.
@@ -82,9 +87,12 @@ Every pane's title bar shows four buttons flush-right (bold):
 | `[□]` | maximize / zoom the pane | `Ctrl+Alt+Z` |
 | `[x]` | close the pane | `Ctrl+Alt+W` |
 
-Plus Tilix-style header behavior: **click** a header focuses the pane, **double-click**
-a header maximizes/restores it. The active pane's header is highlighted (bright blue);
-inactive panes are grayed — matching Tilix's active-pane cue.
+The buttons are drawn as **Nerd Font icons** (the `[|] [-] [□] [x]` notation above is
+shorthand) and **highlight under the cursor**. Clicking a header focuses the pane, and a
+click on the title itself opens the **pane action menu** — rename, copy title, reset,
+clear, split right/down, close (maximize lives on the `[□]` button and `Ctrl+Alt+Z`).
+The active pane's header is highlighted (bright blue); inactive panes are grayed —
+matching Tilix's active-pane cue.
 
 **Drag-to-split by quadrant** (Tilix's model): drag a pane by its title bar onto another
 pane and drop on that pane's **top / bottom / left / right** triangle — a live half-pane
@@ -116,6 +124,7 @@ rename the current page. The page shortcuts are in [Keybindings](#keybindings-ti
 | Resize pane | `Ctrl+Shift+Arrows` |
 | Move/swap pane | `Ctrl+Alt+Arrows` |
 | Zoom/maximize pane (toggle) | `Ctrl+Alt+Z` |
+| Broadcast input to all panes in page | `Ctrl+Alt+B` |
 | Cycle layout | `Ctrl+Alt+L` |
 | Next / previous pane in page | `Ctrl+Tab` / `Ctrl+Shift+Tab` |
 | New page (session) | `Ctrl+Shift+T` |
@@ -172,9 +181,9 @@ gtk-update-icon-cache -f ~/.local/share/icons/hicolor 2>/dev/null || true
 
 ## FAQ
 
-- **Why a fork of kitty?** Stock kitty can't put clickable buttons in its window chrome.
-  The fork is two small Python edits (no C changes) that wire title-bar clicks to kitty
-  actions — deliberately minimal and upstream-friendly.
+- **Why a fork of kitty?** Stock kitty can't put clickable buttons in its window chrome,
+  so kilix ships a fork (the `./src` submodule) that wires title-bar clicks to kitty
+  actions. It's a full fork kilix evolves freely — the buttons plus quality-of-life fixes.
 - **Does it touch my normal kitty?** No. kilix runs its own binary, its own config dir
   (`./config` via `KITTY_CONFIG_DIRECTORY`), and its own `--class`, so your system kitty
   and `~/.config/kitty` are untouched.
@@ -188,7 +197,8 @@ gtk-update-icon-cache -f ~/.local/share/icons/hicolor 2>/dev/null || true
 
 `./src` is a submodule of the
 [kitty fork](https://github.com/itsmygithubacct/kitty/tree/clickable-chrome)
-(branch `clickable-chrome`). The feature is confined to **two Python files, no C changes**:
+(branch `clickable-chrome`). It's a **full fork** — kilix keeps whatever changes make the
+best experience. The clickable-button feature is two Python files:
 
 - `kitty/window_title_bar.py` — draws `[|] [-] [□] [x]` flush-right in each pane title
   bar and records which cells map to which kitty action.
@@ -198,8 +208,10 @@ gtk-update-icon-cache -f ~/.local/share/icons/hicolor 2>/dev/null || true
   pane). kitty ≥ 0.47 already ships the drag-split machinery; the fork only refines the
   hit-test and adds the maximized-target rejection.
 
-It reuses kitty's existing window-title-bar → Python click routing, so it stays a
-minimal, upstream-friendly change.
+The buttons reuse kitty's existing window-title-bar → Python click routing. The fork also
+carries quality-of-life fixes on top — e.g. `glfw/linux_notify.c` raises the DBus
+notification-server probe timeout to silence a spurious "Notify NoReply" warning at
+startup. Branch history: clickable chrome, double-fire fix, DBus-warning fix.
 
 **Build / rebuild:** `kilix --build` (or `./build.sh`). Needs Go ≥ 1.26 plus the X11
 build deps from [Requirements](#requirements); kitty downloads a prebuilt bundle for the
