@@ -1,0 +1,7 @@
+# Downloaded, self-contained kitty binary bundle (fetched by bootstrap.sh).
+# Not part of the source; each machine pulls its own via ./bootstrap.sh.
+/kitty.app/
+/kitty.app.old/
+
+# Runtime state
+/.last-update-check

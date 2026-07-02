@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+# kilix — a Tilix-styled kitty with clickable pane-title-bar buttons.
+#
+# Runs the forked kitty built from ./src (the "clickable-chrome" fork: each pane
+# title bar gets clickable [|] [-] [maximize] [x] buttons) with the
+# kilix configuration (Tilix-like per-pane title bars, splits, keybindings,
+# theming). Falls back to a prebuilt kitty in ./kitty.app if the fork is not
+# built yet. Fully self-contained; any extra args are forwarded to kitty.
+#
+#   ./kilix                   # launch kilix
+#   ./kilix --build           # build the forked kitty from ./src
+#   ./kilix --which           # print the kitty binary kilix uses + its version
+#   ./kilix --install-desktop # desktop entry + icon (own taskbar group)
+set -euo pipefail
+
+# Resolve symlinks so `ln -s .../kilix ~/.local/bin/kilix` still finds the project.
+_self="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+KILIX_HOME="$(cd "$(dirname "$_self")" && pwd)"
+FORK="$KILIX_HOME/src/kitty/launcher/kitty"     # built from ./src (clickable chrome)
+PREBUILT="$KILIX_HOME/kitty.app/bin/kitty"      # official prebuilt kitty (fallback)
+
+# kilix's own config dir: kitty loads kitty.conf from it AND uses
+# kitty.app.png / kitty.app-128.png in it as the window icon.
+export KITTY_CONFIG_DIRECTORY="$KILIX_HOME/config"
+
+case "${1:-}" in
+  --build) shift; exec "$KILIX_HOME/build.sh" "$@" ;;
+  --which)
+    for b in "$FORK" "$PREBUILT"; do
+      [ -x "$b" ] && { echo "$b"; exec "$b" --version; }
+    done
+    echo "no kitty built yet — run: $KILIX_HOME/kilix --build" >&2; exit 1 ;;
+  --install-desktop)
+    # Desktop entry + themed icon so kilix groups separately in the taskbar
+    # (StartupWMClass matches the WM_CLASS set by --class below) and can be
+    # pinned/launched from the app menu with its own icon.
+    apps="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+    icons="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor"
+    for _i in kitty.app-128.png kitty.app.png kilix-512.png; do
+      [ -f "$KILIX_HOME/config/$_i" ] || { echo "kilix: missing icon $KILIX_HOME/config/$_i" >&2; exit 1; }
+    done
+    mkdir -p "$apps" "$icons/128x128/apps" "$icons/256x256/apps" "$icons/512x512/apps"
+    cp "$KILIX_HOME/config/kitty.app-128.png" "$icons/128x128/apps/kilix.png"
+    cp "$KILIX_HOME/config/kitty.app.png"     "$icons/256x256/apps/kilix.png"
+    cp "$KILIX_HOME/config/kilix-512.png"     "$icons/512x512/apps/kilix.png"
+    cat > "$apps/kilix.desktop" <<EOF
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=kilix
+GenericName=Terminal Emulator
+Comment=Tilix-styled kitty with clickable pane buttons
+Exec="$KILIX_HOME/kilix"
+Icon=kilix
+Terminal=false
+Categories=System;TerminalEmulator;
+StartupWMClass=kilix
+StartupNotify=true
+EOF
+    command -v update-desktop-database >/dev/null && update-desktop-database "$apps" || true
+    command -v gtk-update-icon-cache  >/dev/null && gtk-update-icon-cache -f -t "$icons" 2>/dev/null || true
+    echo "installed: $apps/kilix.desktop (+ hicolor icons). Log out/in or restart your panel if the icon doesn't show immediately."
+    exit 0 ;;
+esac
+
+if [ -x "$FORK" ]; then
+  BIN="$FORK"                                     # prefer the clickable-chrome fork
+elif [ -x "$PREBUILT" ]; then
+  BIN="$PREBUILT"                                 # fall back to the prebuilt binary
+else
+  # nothing available yet: try building the fork, else pull the prebuilt binary
+  if "$KILIX_HOME/build.sh"; then BIN="$FORK"; else "$KILIX_HOME/bootstrap.sh"; BIN="$PREBUILT"; fi
+fi
+[ -x "$BIN" ] || { echo "kilix: no runnable kitty (build and bootstrap both failed)" >&2; exit 1; }
+
+case "${1:-}" in
+  # kitty subcommands (kitty +kitten icat …): + must be kitty's first arg,
+  # so forward without --class.
+  +*) exec "$BIN" "$@" ;;
+esac
+
+# Kittens (kilix icat foo.png, kilix diff a b, …) run via the sibling kitten
+# launcher, not by opening a new terminal window. The kitten list is probed
+# from `kitten --help` so it tracks whatever the active binary ships; any
+# non-kitten bare word still falls through to kitty (= run it in a window).
+KITTEN="$(dirname "$BIN")/kitten"
+if [ $# -gt 0 ] && [ -x "$KITTEN" ]; then
+  case "$1" in
+    -*) ;;  # an option, not a kitten name
+    *)
+      if "$KITTEN" --help 2>/dev/null | sed -n '/^Commands:/,/^$/p' | grep -qFx "   $1"; then
+        exec "$KITTEN" "$@"
+      fi ;;
+  esac
+fi
+
+# --class kilix: own WM_CLASS/app_id so kilix groups separately from kitty
+# in the taskbar and picks up the kilix icon via kilix.desktop.
+exec "$BIN" --class kilix "$@"
