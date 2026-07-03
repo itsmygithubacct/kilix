@@ -132,10 +132,14 @@ are forwarded to the page.
 | `Ctrl+C` | copy the mouse-drag selection (OSC 52 → clipboard) |
 | `Ctrl+Q` | quit |
 
-Requires `google-chrome`/`chromium` on `PATH` and `python3-pil`. It drives a
-headless Chrome over the DevTools protocol — no window, no compositor, works
-in any kilix pane. Known limits: no audio, no DRM video, and dense typography
-quantizes to the character grid.
+Requires `google-chrome`/`chromium` on `PATH`. With the **fork build** the
+browser is a built-in Go kitten (no other dependencies); on the prebuilt
+fallback engine a Python prototype is used instead, which also needs
+`python3-pil`. It drives a headless Chrome over the DevTools protocol — no
+window, no compositor, works in any kilix pane. During sustained animation
+(video) it adaptively halves the capture resolution and lets the GPU scale it
+back, keeping CPU in check. Known limits: no audio, no DRM video, and dense
+typography quantizes to the character grid.
 
 ## Keybindings (Tilix layout)
 

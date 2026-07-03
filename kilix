@@ -77,8 +77,6 @@ case "${1:-}" in
   # kitty subcommands (kitty +kitten icat …): + must be kitty's first arg,
   # so forward without --class.
   +*) exec "$BIN" "$@" ;;
-  # browser kitten prototype (Phase 1): chrome in a pane, run in-terminal
-  browse) shift; exec python3 "$KILIX_HOME/config/browse.py" "$@" ;;
 esac
 
 # Kittens (kilix icat foo.png, kilix diff a b, …) run via the sibling kitten
@@ -94,6 +92,12 @@ if [ $# -gt 0 ] && [ -x "$KITTEN" ]; then
         exec "$KITTEN" "$@"
       fi ;;
   esac
+fi
+
+# browse: normally the fork's Go kitten (dispatched by the probe above);
+# this python fallback covers the prebuilt engine, which doesn't ship it.
+if [ "${1:-}" = "browse" ]; then
+  shift; exec python3 "$KILIX_HOME/config/browse.py" "$@"
 fi
 
 # --class kilix: own WM_CLASS/app_id so kilix groups separately from kitty
