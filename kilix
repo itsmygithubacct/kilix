@@ -79,11 +79,70 @@ case "${1:-}" in
   +*) exec "$BIN" "$@" ;;
 esac
 
+KITTEN="$(dirname "$BIN")/kitten"
+
+# browse: Chrome (and video) rendered in a pane. Host it in its own overlay
+# WINDOW so it gets a title bar with a clickable close button — closing the
+# overlay exits the app and reveals the shell underneath, which is never
+# taken over. Needs to be inside a kitty window with remote control
+# (KITTY_LISTEN_ON, set by the allow_remote_control + listen_on config).
+# KILIX_IN_OVERLAY guards against the re-launched instance overlaying again.
+if [ "${1:-}" = "browse" ]; then
+  shift
+  if [ -z "${KILIX_IN_OVERLAY:-}" ] && [ -n "${KITTY_WINDOW_ID:-}" ] \
+       && [ -n "${KITTY_LISTEN_ON:-}" ] && [ -x "$KITTEN" ]; then
+    # Spawn the app as an overlay over the current window; the launcher then
+    # exits and the shell returns to its prompt (hidden under the overlay
+    # until it is closed). The overlay re-enters this launcher with
+    # KILIX_IN_OVERLAY=1, taking the in-place branch below.
+    exec "$KITTEN" @ launch --type=overlay --cwd=current \
+      --env KILIX_IN_OVERLAY=1 -- "$_self" browse "$@"
+  fi
+  # In-place fallback: inside the overlay, or a terminal without remote
+  # control. Run WRAPPED, not exec'd: if the app dies by signal (SIGKILL,
+  # etc.) without running its own terminal cleanup, restore the tty here so
+  # the shell stays usable. A clean exit (rc < 128) already cleaned up.
+  rc=0
+  if [ -x "$KITTEN" ] && "$KITTEN" --help 2>/dev/null \
+       | sed -n '/^Commands:/,/^$/p' | grep -qFx "   browse"; then
+    "$KITTEN" browse "$@" || rc=$?
+  else
+    python3 "$KILIX_HOME/config/browse.py" "$@" || rc=$?
+  fi
+  if [ "$rc" -ge 128 ]; then
+    # pop kbd protocol; disable mouse (btn-event/SGR/pixels) + bracketed
+    # paste; re-enable autowrap; delete all images; show cursor; leave alt
+    # screen. Each is a no-op if the state wasn't set, so this is safe.
+    printf '\033[<u\033[?1002l\033[?1006l\033[?1016l\033[?2004l\033[?7h\033_Ga=d,d=A\033\\\033[?25h\033[?1049l'
+    stty sane 2>/dev/null || true
+  fi
+  exit "$rc"
+fi
+
+# run: an X11 app streamed into a pane (private Xvfb + x11grab + XTest).
+# Python prototype only for now. Same overlay + wrapped-cleanup story as
+# browse above: prefer an overlay window (title bar, close button); if the
+# kitten dies by signal, restore the tty by hand.
+if [ "${1:-}" = "run" ]; then
+  shift
+  if [ -z "${KILIX_IN_OVERLAY:-}" ] && [ -n "${KITTY_WINDOW_ID:-}" ] \
+       && [ -n "${KITTY_LISTEN_ON:-}" ] && [ -x "$KITTEN" ]; then
+    exec "$KITTEN" @ launch --type=overlay --cwd=current \
+      --env KILIX_IN_OVERLAY=1 -- "$_self" run "$@"
+  fi
+  rc=0
+  python3 "$KILIX_HOME/config/apprun.py" "$@" || rc=$?
+  if [ "$rc" -ge 128 ]; then
+    printf '\033[<u\033[?1002l\033[?1006l\033[?1016l\033[?2004l\033[?7h\033_Ga=d,d=A\033\\\033[?25h\033[?1049l'
+    stty sane 2>/dev/null || true
+  fi
+  exit "$rc"
+fi
+
 # Kittens (kilix icat foo.png, kilix diff a b, …) run via the sibling kitten
 # launcher, not by opening a new terminal window. The kitten list is probed
 # from `kitten --help` so it tracks whatever the active binary ships; any
 # non-kitten bare word still falls through to kitty (= run it in a window).
-KITTEN="$(dirname "$BIN")/kitten"
 if [ $# -gt 0 ] && [ -x "$KITTEN" ]; then
   case "$1" in
     -*) ;;  # an option, not a kitten name
@@ -92,12 +151,6 @@ if [ $# -gt 0 ] && [ -x "$KITTEN" ]; then
         exec "$KITTEN" "$@"
       fi ;;
   esac
-fi
-
-# browse: normally the fork's Go kitten (dispatched by the probe above);
-# this python fallback covers the prebuilt engine, which doesn't ship it.
-if [ "${1:-}" = "browse" ]; then
-  shift; exec python3 "$KILIX_HOME/config/browse.py" "$@"
 fi
 
 # --class kilix: own WM_CLASS/app_id so kilix groups separately from kitty
