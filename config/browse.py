@@ -496,8 +496,13 @@ class Browse:
                     if w == 2 and col + 1 < cols:
                         grid[row][col + 1] = ("", attr)  # wide continuation
                 col += w
-        if grid == self.prev_glyphs and not self.glyph_dirty:
+        status = self.render_status()
+        if grid == self.prev_glyphs and status == getattr(self, "prev_status", None):
+            # identical content: never rewrite (a no-op repaint still clears
+            # kitty's native selection)
+            self.glyph_dirty = False
             return
+        self.prev_status = status
         prev = self.prev_glyphs or [[None] * cols for _ in range(rows)]
         out = ["\x1b[?2026h"]
         for r in range(rows):
@@ -542,7 +547,7 @@ class Browse:
                 line.append(chx)
                 col += wcwidth(chx)
             out.append("".join(line))
-        out.append(self.render_status())
+        out.append(status)
         out.append("\x1b[?2026l")
         self.term.write("".join(out))
         self.prev_glyphs = grid
@@ -559,6 +564,11 @@ class Browse:
 
     # ---- input -------------------------------------------------------------
     def on_key(self, ev):
+        # pure modifier presses (kitty functional keycodes 57441-57454, e.g.
+        # the Shift of a shift+drag selection) must not dirty the page: the
+        # resulting repaint would clear kitty's native selection
+        if len(ev["key"]) == 1 and 57441 <= ord(ev["key"]) <= 57454:
+            return
         self.last_input = time.time()
         self.snap_dirty = True
         mods = max(0, ev["mods"] - 1)
@@ -626,6 +636,7 @@ class Browse:
     def on_mouse(self, ev):
         self.last_input = time.time()
         b, x, y, press = ev["b"], ev["x"], ev["y"], ev["press"]
+        log(f"mouse b={b} x={x} y={y} press={press}")
         if y >= self.page_h:      # status row: ignore
             return
         mods = ((8 if b & 4 else 0) | (1 if b & 8 else 0) | (2 if b & 16 else 0))
@@ -640,10 +651,15 @@ class Browse:
         btn_code = b & 3
         button = ("left", "middle", "right", "none")[btn_code]
         if b & 32:  # motion
+            # during a drag the moved events must carry the held button or
+            # Blink's selection controller ignores the drag
+            drag_btn = ("left" if self.mouse_buttons & 1 else
+                        "right" if self.mouse_buttons & 2 else
+                        "middle" if self.mouse_buttons & 4 else "none")
             self.cdp.send("Input.dispatchMouseEvent",
                           {"type": "mouseMoved", "x": x, "y": y,
                            "buttons": self.mouse_buttons, "modifiers": mods,
-                           "button": "none"}, session=self.sess)
+                           "button": drag_btn}, session=self.sess)
             return
         mask = {"left": 1, "right": 2, "middle": 4}.get(button, 0)
         if press:
