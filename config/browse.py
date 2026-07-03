@@ -309,8 +309,8 @@ def wcwidth(ch):
     o = ord(ch)
     if o < 32 or o == 127:
         return -1  # control char (\t, \n, …): sanitize before drawing
-    if unicodedata.combining(ch) or unicodedata.category(ch) == "Cf":
-        return 0   # combining marks, ZWSP & other format chars
+    if unicodedata.combining(ch) or unicodedata.category(ch) in ("Mn", "Me", "Cf"):
+        return 0   # combining/enclosing marks (any class), ZWSP & format chars — match kitty/Go
     return 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
 
 
@@ -348,8 +348,6 @@ class Browse:
         self.wid = os.environ.get("KITTY_WINDOW_ID", str(os.getpid()))
         self.seq = 0
         self.view_rows = self.term.rows - 1          # last row = status
-        self.vw = int(self.view_rows * self.term.cell_h)
-        self.vh_cols = self.term.cols
         self.page_w = int(self.term.cols * self.term.cell_w)
         self.page_h = int(self.view_rows * self.term.cell_h)
         profile = os.path.join(os.environ.get("XDG_STATE_HOME",
@@ -377,6 +375,8 @@ class Browse:
         self.last_input = 0.0
         self.last_snap = 0.0
         self.frames = 0
+        self.half_res = False        # sustained animation: screencast at half size
+        self.frame_times = []
         self.status_msg = "loading…"
         self.title = url
         self.url_edit = None         # None or [buffer string]
@@ -401,10 +401,36 @@ class Browse:
                       {"width": self.page_w, "height": self.page_h,
                        "deviceScaleFactor": 1, "mobile": False}, session=s)
         self.cdp.send("Page.navigate", {"url": self.url}, session=s)
+        self.start_screencast()
+
+    def start_screencast(self):
+        w, h = self.page_w, self.page_h
+        if self.half_res:
+            w, h = w // 2, h // 2
         self.cdp.call("Page.startScreencast",
                       {"format": "jpeg", "quality": 80,
-                       "maxWidth": self.page_w, "maxHeight": self.page_h,
-                       "everyNthFrame": 1}, session=s)
+                       "maxWidth": w, "maxHeight": h,
+                       "everyNthFrame": 1}, session=self.sess)
+
+    def adapt_resolution(self):
+        # Sustained animation (video) makes JPEG decode the CPU hog. Drop the
+        # screencast to half resolution while frames stream (quarter the decode
+        # work; kitty GPU-scales the placement back to the full pane via c/r)
+        # and return to full resolution once the page goes still.
+        now = time.time()
+        self.frame_times.append(now)
+        self.frame_times = [t for t in self.frame_times if now - t <= 1.0]
+        fps = len(self.frame_times)
+        if not self.half_res and fps >= 15:
+            self.half_res = True
+            self.cdp.send("Page.stopScreencast", {}, session=self.sess)
+            self.start_screencast()
+            log(f"adaptive: half-res (fps={fps})")
+        elif self.half_res and fps <= 3:
+            self.half_res = False
+            self.cdp.send("Page.stopScreencast", {}, session=self.sess)
+            self.start_screencast()
+            log("adaptive: full-res")
 
     # ---- pixel layer -------------------------------------------------------
     def blit(self, b64jpeg, meta):
@@ -418,8 +444,11 @@ class Browse:
         with open(path, "wb") as f:
             f.write(img.tobytes())
         payload = base64.b64encode(path.encode()).decode()
+        # c/r pin the placement to the full pane rect so half-res frames are
+        # GPU-scaled back up; at full resolution it is a 1:1 no-op.
         self.term.write(f"\x1b[H\x1b_Ga=T,i=1,p=1,z=-1,t=t,f=24,"
-                        f"s={w},v={h},q=2,C=1;{payload}\x1b\\")
+                        f"s={w},v={h},c={self.term.cols},r={self.view_rows},"
+                        f"q=2,C=1;{payload}\x1b\\")
         sx, sy = meta.get("scrollOffsetX", 0), meta.get("scrollOffsetY", 0)
         if (sx, sy) != (self.scroll_x, self.scroll_y):
             self.scroll_x, self.scroll_y = sx, sy
@@ -478,10 +507,10 @@ class Browse:
         for x, y, w, h, text, fg, bold, italic, under in self.runs:
             sy = y - self.scroll_y
             sx = x - self.scroll_x
-            row = int((sy + h / 2) // ch)
+            row = int((sy + h / 2) / ch)          # trunc toward 0 (match Go), not floor
             if not (0 <= row < rows):
                 continue
-            col = int(round(sx / cw))
+            col = int(sx / cw + 0.5)              # half-up (match Go), not banker's round
             attr = (fg, bold, italic, under)
             for chx in text:
                 if col >= cols:
@@ -637,6 +666,8 @@ class Browse:
         self.last_input = time.time()
         b, x, y, press = ev["b"], ev["x"], ev["y"], ev["press"]
         log(f"mouse b={b} x={x} y={y} press={press}")
+        if b & 256:               # kitty SGR-pixel LEAVE_INDICATOR: not a real event
+            return
         if y >= self.page_h:      # status row: ignore
             return
         mods = ((8 if b & 4 else 0) | (1 if b & 8 else 0) | (2 if b & 16 else 0))
@@ -746,6 +777,7 @@ class Browse:
         meth, params = m.get("method"), m.get("params", {})
         if meth == "Page.screencastFrame":
             self.blit(params["data"], params.get("metadata", {}))
+            self.adapt_resolution()
             # cap ~30fps: the ack is the throttle (CDP sends nothing until
             # acked). Only bites during animation; static pages are
             # damage-driven and idle at 0.

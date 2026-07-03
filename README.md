@@ -1,7 +1,7 @@
 # kilix — kitty that looks & behaves like Tilix, with clickable pane buttons
 
 `kilix` is a self-contained wrapper around a **fork of kitty** that gives
-each pane's title bar clickable **`[|] [-] [□] [x]` buttons** — split-right,
+each pane's title bar clickable **`→ ↓ ▢ ✕` buttons** — split-right,
 split-down, maximize, and close — just like Tilix's pane headers, on top of
 kitty's GPU-rendered speed. For Tilix users who want kitty underneath, and
 anyone who wants clickable split/maximize/close chrome on kitty.
@@ -13,7 +13,7 @@ kitty you already have (and `~/.config/kitty`) completely untouched.
 
 ## Features
 
-- **Clickable pane buttons** `[|] [-] [□] [x]` — split-right / split-down / maximize / close,
+- **Clickable pane buttons** `→ ↓ ▢ ✕` — split-right / split-down / maximize / close,
   drawn as Nerd Font icons that highlight on hover.
 - **Pane title menu** — click a pane's title for Tilix-style actions: rename, copy title,
   reset, clear, split right/down, close.
@@ -55,7 +55,7 @@ working Tilix-styled terminal, but **without the clickable buttons**.
 
 | Engine | Buttons? | Needs |
 |---|---|---|
-| **Fork build** (`kilix --build`) | ✅ `[|] [-] [□] [x]` | Go ≥ 1.26 + X11 build deps |
+| **Fork build** (`kilix --build`) | ✅ `→ ↓ ▢ ✕` | Go ≥ 1.26 + X11 build deps |
 | **Prebuilt fallback** (`bootstrap.sh`) | ❌ no buttons | `git`, `curl`, `tar` |
 
 To skip the build attempt and go straight to the prebuilt engine:
@@ -82,15 +82,16 @@ Every pane's title bar shows four buttons flush-right (bold):
 
 | Button | Click does | Same as key |
 |---|---|---|
-| `[|]` | split right — side-by-side | `Ctrl+Alt+R` |
-| `[-]` | split down — stacked | `Ctrl+Alt+D` |
-| `[□]` | maximize / zoom the pane | `Ctrl+Alt+Z` |
-| `[x]` | close the pane | `Ctrl+Alt+W` |
+| `→` | split right — new pane to the right | `Ctrl+Alt+R` |
+| `↓` | split down — new pane below | `Ctrl+Alt+D` |
+| `▢` | maximize / zoom the pane | `Ctrl+Alt+Z` |
+| `✕` | close the pane | `Ctrl+Alt+W` |
 
-The buttons are drawn as **Nerd Font icons** (the `[|] [-] [□] [x]` notation above is
-shorthand) and **highlight under the cursor**. Clicking a header focuses the pane, and a
-click on the title itself opens the **pane action menu** — rename, copy title, reset,
-clear, split right/down, close (maximize lives on the `[□]` button and `Ctrl+Alt+Z`).
+The buttons are drawn as **Nerd Font icons** — a bold right/down arrow for the splits
+(pointing where the new pane lands), a maximize glyph, and a close ✕ — and they
+**highlight under the cursor**. Clicking a header focuses the pane, and a click on the
+title itself opens the **pane action menu** — rename, copy title, reset, clear, split
+right/down, close (maximize also lives on the `▢` button and `Ctrl+Alt+Z`).
 The active pane's header is highlighted (bright blue); inactive panes are grayed —
 matching Tilix's active-pane cue.
 
@@ -140,6 +141,33 @@ window, no compositor, works in any kilix pane. During sustained animation
 (video) it adaptively halves the capture resolution and lets the GPU scale it
 back, keeping CPU in check. Known limits: no audio, no DRM video, and dense
 typography quantizes to the character grid.
+
+## Run a GUI app in a pane (experimental)
+
+```bash
+kilix run --size 640x400 dosbox           # any X11 app; --size = its screen
+```
+
+`kilix run` puts a real X11 app **inside the pane**: the app gets its own
+private off-screen X server (Xvfb), its frames are streamed into the pane via
+the kitty graphics protocol (GPU-scaled and letterboxed), and the pane's
+keyboard and mouse are forwarded back with XTest — key *releases* included, so
+games can hold keys. It's `kilix browse` generalized from Chrome to anything
+with an X window; think of it as a tiling WM turned inside-out — the app's
+pixels come to the pane instead of the WM arranging app windows. Proven by
+playing X-COM: UFO Defense under DOSBox entirely through a pane.
+
+| Key | Action |
+|---|---|
+| `Ctrl+Q` | quit (everything else is forwarded to the app) |
+
+Requires `ffmpeg`, `python3-xlib`, and `Xvfb` — either on `PATH` or unpacked
+without root into `~/.local/share/kilix/xvfb`:
+`apt-get download xvfb && dpkg -x xvfb_*.deb ~/.local/share/kilix/xvfb`.
+Python prototype (`config/apprun.py`). Known limits: no sound routing; apps
+that grab the pointer (DOSBox's autolock) see relative motion, so the app
+cursor and the pane cursor can drift; the app's screen size is fixed at
+launch — resizing the pane rescales the picture instead of the app.
 
 ## Keybindings (Tilix layout)
 
@@ -229,7 +257,7 @@ gtk-update-icon-cache -f ~/.local/share/icons/hicolor 2>/dev/null || true
 (branch `clickable-chrome`). It's a **full fork** — kilix keeps whatever changes make the
 best experience. The clickable-button feature is two Python files:
 
-- `kitty/window_title_bar.py` — draws `[|] [-] [□] [x]` flush-right in each pane title
+- `kitty/window_title_bar.py` — draws `→ ↓ ▢ ✕` flush-right in each pane title
   bar and records which cells map to which kitty action.
 - `kitty/tabs.py` — `handle_window_title_bar_mouse` dispatches a button's action on a
   single left-click (`boss.combine`), double-click toggles maximize, and the quadrant
