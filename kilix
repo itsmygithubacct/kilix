@@ -148,6 +148,13 @@ fi
 # fork build). Usage: `kilix screensaver` or `kilix screensaver <name>`.
 if [ "${1:-}" = "screensaver" ]; then
   shift
+  # Host it in an overlay window (own title bar + close ✕) like browse/run, so
+  # it can be dismissed with a click and reveals the shell underneath.
+  if [ -z "${KILIX_IN_OVERLAY:-}" ] && [ -n "${KITTY_WINDOW_ID:-}" ] \
+       && [ -n "${KITTY_LISTEN_ON:-}" ] && [ -x "$KITTEN" ]; then
+    exec "$KITTEN" @ launch --type=overlay --cwd=current \
+      --env KILIX_IN_OVERLAY=1 -- "$_self" screensaver "$@"
+  fi
   _ss="${1:-matrix}"; [ $# -gt 0 ] && shift
   _sssrc="$KILIX_HOME/config/screensavers/$_ss.c"
   _ssbin="$KILIX_HOME/config/screensavers/.build/$_ss"
