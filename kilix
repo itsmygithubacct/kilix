@@ -133,7 +133,10 @@ if [ "${1:-}" = "run" ]; then
   rc=0
   python3 "$KILIX_HOME/config/apprun.py" "$@" || rc=$?
   if [ "$rc" -ge 128 ]; then
-    printf '\033[<u\033[?1002l\033[?1006l\033[?1016l\033[?2004l\033[?7h\033_Ga=d,d=A\033\\\033[?25h\033[?1049l'
+    # apprun uses ?1003h (any-motion) mouse tracking, so this fallback must
+    # pop ?1003l too — otherwise a signal-killed kitten leaves the shell
+    # flooded with motion reports. ?1002l is a harmless no-op here.
+    printf '\033[<u\033[?1002l\033[?1003l\033[?1006l\033[?1016l\033[?2004l\033[?7h\033_Ga=d,d=A\033\\\033[?25h\033[?1049l'
     stty sane 2>/dev/null || true
   fi
   exit "$rc"
@@ -153,6 +156,18 @@ if [ $# -gt 0 ] && [ -x "$KITTEN" ]; then
   esac
 fi
 
+# Carry prompt/shell tweaks in config/kilix.bashrc instead of ~/.bashrc, so
+# they apply only to kilix sessions — not regular shells or tmux. bash only
+# (the rcfile is bash); it sources ~/.bashrc, keeps kitty's shell integration
+# working, then applies a kilix-only prompt. Delete config/kilix.bashrc to opt
+# out. KILIX_HOME is exported so the rcfile can find its prompt override.
+export KILIX_HOME
+KILIX_SHELL=()
+_ushell="${SHELL:-$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7)}"
+if [ -f "$KILIX_HOME/config/kilix.bashrc" ] && [ "${_ushell##*/}" = bash ]; then
+  KILIX_SHELL=(-o "shell=$_ushell --rcfile $KILIX_HOME/config/kilix.bashrc")
+fi
+
 # --class kilix: own WM_CLASS/app_id so kilix groups separately from kitty
 # in the taskbar and picks up the kilix icon via kilix.desktop.
-exec "$BIN" --class kilix "$@"
+exec "$BIN" --class kilix "${KILIX_SHELL[@]}" "$@"
