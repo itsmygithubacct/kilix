@@ -35,7 +35,9 @@ kitty you already have (and `~/.config/kitty`) completely untouched.
 - **To run the prebuilt kitty** (no buttons): `git`, `curl`, `tar`.
 - **To build the fork** (the buttons): **Go ≥ 1.26**, a C compiler, `pkg-config`, and
   kitty's X11 build deps — `x11 xrandr xinerama xcursor xi xkbcommon xkbcommon-x11
-  x11-xcb dbus-1 gl` and `fontconfig`. kitty downloads a prebuilt bundle for the rest.
+  x11-xcb dbus-1 gl` and `fontconfig`. kitty downloads a prebuilt deps bundle plus
+  the Symbols Nerd Font Mono (the pane-button glyphs) from GitHub at build time, so
+  the first build needs network access.
 - kitty **≥ 0.47** (the fork is 0.47.x) — required for the per-pane title bars.
 
 ## Quick start
@@ -116,7 +118,7 @@ rename the current page. The page shortcuts are in [Keybindings](#keybindings-ti
 ## Browse the web in a pane (experimental)
 
 ```bash
-kilix browse wikipedia.org        # or any URL; bare words become a search
+kilix browse wikipedia.org        # any URL or hostname (Ctrl+L bar also searches)
 ```
 
 `kilix browse` renders **real Chrome inside the pane**: page pixels (images,
@@ -168,6 +170,14 @@ Python prototype (`config/apprun.py`). Known limits: no sound routing; apps
 that grab the pointer (DOSBox's autolock) see relative motion, so the app
 cursor and the pane cursor can drift; the app's screen size is fixed at
 launch — resizing the pane rescales the picture instead of the app.
+
+**Their own window.** `browse` and `run` open in a kitty **overlay window** — a
+pane with its own title bar and a clickable close (`✕`) button — so closing the
+app exits it and drops you back to the shell underneath, never taking over the
+shell session. This uses kitty remote control, which kilix's config enables
+(`allow_remote_control yes` + a per-instance `listen_on` socket); remove those
+two lines from `config/kitty.conf` and the app runs in-place in the current
+pane instead.
 
 ## Keybindings (Tilix layout)
 
