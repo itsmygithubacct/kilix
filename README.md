@@ -179,6 +179,22 @@ shell session. This uses kitty remote control, which kilix's config enables
 two lines from `config/kitty.conf` and the app runs in-place in the current
 pane instead.
 
+## Screensaver
+
+```bash
+kilix screensaver            # matrix digital-rain (the default)
+kilix screensaver matrix     # …or by name
+```
+
+Terminal screensavers live in `config/screensavers/` as small, self-contained
+C programs. kilix compiles the one you ask for on first use (cached under
+`.build/`, gitignored) and runs it in the current pane — press `q` or `Ctrl-C`
+to quit. `matrix` is efficient green digital-rain: diff-rendered with one
+synchronized write per frame, so it's a couple of percent of a core even
+full-screen. Drop another `<name>.c` into that directory and
+`kilix screensaver <name>` picks it up. Needs a C compiler (the same one the
+fork build uses).
+
 ## Keybindings (Tilix layout)
 
 | Action | Shortcut |
