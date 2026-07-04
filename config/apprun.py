@@ -349,6 +349,7 @@ class AppPane:
         self.term.enter()
         try:
             self.start()
+            self._loop_start = time.time()
             while True:
                 r, _, _ = select.select(
                     [self.term.fd, self.ff.stdout], [], [], 0.25)
@@ -365,12 +366,18 @@ class AppPane:
                 if self.resized:
                     self.resized = False
                     self.do_resize()
-                # placements can be lost without us hearing about it (q=2;
-                # observed once right after startup): periodically re-place
-                # the current frame so the pane self-heals within seconds
-                if (self.last_frame is not None
-                        and time.time() - getattr(self, "_blit_t", 0) > 3):
-                    self.blit(self.last_frame)
+                # A first placement can be dropped right after startup (seen
+                # as a pane that stays black while the app clearly has output;
+                # q=2 means we never hear the error). Placement is otherwise
+                # reliable, so self-heal by re-placing the current frame: fast
+                # during a warmup window (recover in <1s), then a cheap idle
+                # interval so an app sitting on a static screen isn't rewritten
+                # every tick. Animation blits on its own and resets the timer.
+                if self.last_frame is not None:
+                    idle = time.time() - getattr(self, "_blit_t", 0)
+                    warming = time.time() - self._loop_start < 4
+                    if idle > (0.4 if warming else 3):
+                        self.blit(self.last_frame)
                 if self.app.poll() is not None:
                     err = (None if self.app.returncode == 0 else
                            f"app exited with rc={self.app.returncode}")
