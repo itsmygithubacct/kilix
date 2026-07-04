@@ -142,6 +142,30 @@ if [ "${1:-}" = "run" ]; then
   exit "$rc"
 fi
 
+# screensaver: a terminal screensaver in this pane (default: matrix). The
+# screensavers are small self-contained C programs in config/screensavers/,
+# compiled on first use and cached under .build/ (needs a C compiler, like the
+# fork build). Usage: `kilix screensaver` or `kilix screensaver <name>`.
+if [ "${1:-}" = "screensaver" ]; then
+  shift
+  _ss="${1:-matrix}"; [ $# -gt 0 ] && shift
+  _sssrc="$KILIX_HOME/config/screensavers/$_ss.c"
+  _ssbin="$KILIX_HOME/config/screensavers/.build/$_ss"
+  if [ ! -f "$_sssrc" ]; then
+    echo "kilix: no screensaver '$_ss'. Available:" >&2
+    for _f in "$KILIX_HOME"/config/screensavers/*.c; do
+      [ -e "$_f" ] && echo "  $(basename "$_f" .c)" >&2
+    done
+    exit 1
+  fi
+  if [ ! -x "$_ssbin" ] || [ "$_sssrc" -nt "$_ssbin" ]; then     # (re)build if stale
+    mkdir -p "$KILIX_HOME/config/screensavers/.build"
+    cc -O2 -o "$_ssbin" "$_sssrc" || {
+      echo "kilix: could not build screensaver '$_ss' (needs a C compiler)" >&2; exit 1; }
+  fi
+  exec "$_ssbin" "$@"
+fi
+
 # Kittens (kilix icat foo.png, kilix diff a b, …) run via the sibling kitten
 # launcher, not by opening a new terminal window. The kitten list is probed
 # from `kitten --help` so it tracks whatever the active binary ships; any
