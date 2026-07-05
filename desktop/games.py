@@ -200,10 +200,21 @@ rate=44100
 """
 
 # Doom merges this with its built-in defaults: fire on Space (57), use/open
-# on Ctrl (157 = right-ctrl) — swapped from the DOS defaults per taste.
+# on Ctrl (157 = right-ctrl) — swapped from the DOS defaults per taste — and
+# the Sound Blaster settings SETUP.EXE would normally write (without them the
+# engine defaults to NO sound devices). Device 3 = Sound Blaster: digital sfx
+# + OPL FM music, exactly what DOSBox emulates at 220/7/1.
 DOOM_CFG = """\
 key_fire\t\t57
 key_use\t\t\t157
+sfx_volume\t\t8
+music_volume\t\t8
+snd_channels\t\t3
+snd_musicdevice\t\t3
+snd_sfxdevice\t\t3
+snd_sbport\t\t544
+snd_sbirq\t\t7
+snd_sbdma\t\t1
 """
 
 
