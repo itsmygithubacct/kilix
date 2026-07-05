@@ -121,7 +121,7 @@ if [ "${1:-}" = "browse" ]; then
     # pop kbd protocol; disable mouse (btn-event/SGR/pixels) + bracketed
     # paste; re-enable autowrap; delete all images; show cursor; leave alt
     # screen. Each is a no-op if the state wasn't set, so this is safe.
-    printf '\033[<u\033[?1002l\033[?1006l\033[?1016l\033[?2004l\033[?7h\033_Ga=d,d=A\033\\\033[?25h\033[?1049l'
+    printf '\033[<u\033[?1002l\033[?1003l\033[?1006l\033[?1016l\033[?2004l\033[?7h\033_Ga=d,d=A\033\\\033[?25h\033[?1049l'
     stty sane 2>/dev/null || true
   fi
   exit "$rc"

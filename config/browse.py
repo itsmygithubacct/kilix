@@ -51,7 +51,7 @@ def log(*a):
 class CDP:
     """NUL-framed JSON over Chrome's fds 3 (it reads) / 4 (it writes)."""
 
-    def __init__(self, url, width, height, profile):
+    def __init__(self, url, width, height, profile, extra_args=()):
         a, b = os.pipe()   # we write -> chrome fd 3
         c, d = os.pipe()   # chrome fd 4 -> we read
         r_in = fcntl.fcntl(a, fcntl.F_DUPFD, 10)
@@ -80,7 +80,7 @@ class CDP:
              "--hide-scrollbars", "--mute-audio",
              "--autoplay-policy=no-user-gesture-required",
              f"--user-data-dir={profile}",
-             f"--window-size={width},{height}", "about:blank"],
+             f"--window-size={width},{height}", *extra_args, "about:blank"],
             pass_fds=(3, 4),
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         os.close(3)
@@ -213,11 +213,11 @@ class Term:
         # kbd protocol (1|4|8: disambiguate, alternates, all-keys-as-escapes),
         # mouse: drag+SGR+SGR-pixels, bracketed paste
         self.write("\x1b[?1049h\x1b[2J\x1b[?25l\x1b[?7l\x1b[>13u"
-                   "\x1b[?1002h\x1b[?1006h\x1b[?1016h\x1b[?2004h")
+                   "\x1b[?1003h\x1b[?1006h\x1b[?1016h\x1b[?2004h")
 
     def restore(self):
         try:
-            self.write("\x1b[<u\x1b[?1002l\x1b[?1006l\x1b[?1016l\x1b[?2004l"
+            self.write("\x1b[<u\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1016l\x1b[?2004l"
                        "\x1b[?7h\x1b_Ga=d,d=A\x1b\\\x1b[?25h\x1b[?1049l")
         finally:
             termios.tcsetattr(self.fd, termios.TCSADRAIN, self.saved)
@@ -343,8 +343,17 @@ INJECT_JS = ("(function(){var s=document.createElement('style');"
 RGB_RE = re.compile(r"rgba?\((\d+),\s*(\d+),\s*(\d+)")
 
 
+# headless Chrome renders no pointer: stamp a classic arrow onto the frame
+# (pixels underneath saved/restored, so motion needs no fresh frame)
+CURSOR_ART = ["k          ", "kk         ", "kwk        ", "kwwk       ",
+              "kwwwk      ", "kwwwwk     ", "kwwwwwk    ", "kwwwwwwk   ",
+              "kwwwwwwwk  ", "kwwwwwwwwk ", "kwwwwwkkkkk", "kwwkwwk    ",
+              "kwk kwwk   ", "kk  kwwk   ", "k    kwwk  ", "     kwwk  ",
+              "      kk   "]
+
+
 class Browse:
-    def __init__(self, url):
+    def __init__(self, url, incognito=False, cursor=True):
         self.term = Term()
         self.url = url
         self.wid = os.environ.get("KITTY_WINDOW_ID", str(os.getpid()))
@@ -356,24 +365,37 @@ class Browse:
         self.view_rows = self.term.rows - 1          # last row = status
         self.page_w = int(self.term.cols * self.term.cell_w)
         self.page_h = int(self.view_rows * self.term.cell_h)
-        profile = os.path.join(os.environ.get("XDG_STATE_HOME",
-                               os.path.expanduser("~/.local/state")),
-                               "kilix", "browse-profile")
-        os.makedirs(profile, exist_ok=True)
+        self.cursor = cursor
+        self.cur_x, self.cur_y = self.page_w // 2, self.page_h // 2
+        self.last_img = None
+        self._cur_saved = None            # (patch Image, x, y)
+        self._cur_paint = 0.0
+        extra = ()
         self.temp_profile = None
-        # Chrome refuses to share a profile: if another browse instance
-        # holds the SingletonLock, fall back to a disposable profile.
-        lock = os.path.join(profile, "SingletonLock")
-        if os.path.lexists(lock):
-            try:
-                holder_pid = int(os.readlink(lock).rsplit("-", 1)[1])
-                alive = os.path.exists(f"/proc/{holder_pid}")
-            except (OSError, ValueError, IndexError):
-                alive = False
-            if alive:
-                profile = f"{profile}-{os.getpid()}"
-                self.temp_profile = profile
-        self.cdp = CDP(url, self.page_w, self.page_h, profile)
+        if incognito:
+            # throwaway profile, deleted on exit: no history/cookies survive
+            import tempfile
+            profile = tempfile.mkdtemp(prefix="kilix-browse-incognito-")
+            self.temp_profile = profile
+            extra = ("--incognito",)
+        else:
+            profile = os.path.join(os.environ.get("XDG_STATE_HOME",
+                                   os.path.expanduser("~/.local/state")),
+                                   "kilix", "browse-profile")
+            os.makedirs(profile, exist_ok=True)
+            # Chrome refuses to share a profile: if another browse instance
+            # holds the SingletonLock, fall back to a disposable profile.
+            lock = os.path.join(profile, "SingletonLock")
+            if os.path.lexists(lock):
+                try:
+                    holder_pid = int(os.readlink(lock).rsplit("-", 1)[1])
+                    alive = os.path.exists(f"/proc/{holder_pid}")
+                except (OSError, ValueError, IndexError):
+                    alive = False
+                if alive:
+                    profile = f"{profile}-{os.getpid()}"
+                    self.temp_profile = profile
+        self.cdp = CDP(url, self.page_w, self.page_h, profile, extra)
         self.sess = None
         self.runs = []               # cached glyph runs (doc coords)
         self.scroll_x = self.scroll_y = 0.0
@@ -443,6 +465,10 @@ class Browse:
         img = Image.open(BytesIO(base64.b64decode(b64jpeg)))
         if img.mode != "RGB":
             img = img.convert("RGB")
+        self.last_img = img
+        self._cur_saved = None
+        if self.cursor:
+            self._stamp_cursor()
         w, h = img.size
         if self.stream:
             # streamed session: inline the pixels (t=d). See config/gfx.py.
@@ -468,6 +494,64 @@ class Browse:
         self.frames += 1
         if self.frames == 1 or self.frames % 60 == 0:
             log(f"frames={self.frames} size={w}x{h} scroll={self.scroll_y}")
+
+    # ---- software mouse pointer ---------------------------------------------
+    def _stamp_cursor(self):
+        img = self.last_img
+        if img is None or not self.page_w or not self.page_h:
+            return
+        w, h = img.size
+        sx = self.cur_x * w // self.page_w
+        sy = self.cur_y * h // self.page_h
+        cw, chh = len(CURSOR_ART[0]), len(CURSOR_ART)
+        box = (max(0, sx), max(0, sy), min(w, sx + cw), min(h, sy + chh))
+        if box[0] >= box[2] or box[1] >= box[3]:
+            self._cur_saved = None
+            return
+        self._cur_saved = (img.crop(box), box[0], box[1])
+        px = img.load()
+        for dy, row in enumerate(CURSOR_ART):
+            for dx, c in enumerate(row):
+                x, y = sx + dx, sy + dy
+                if c == " " or not (0 <= x < w and 0 <= y < h):
+                    continue
+                px[x, y] = (255, 255, 255) if c == "w" else (0, 0, 0)
+
+    def _unstamp_cursor(self):
+        if self._cur_saved and self.last_img is not None:
+            patch, x, y = self._cur_saved
+            self.last_img.paste(patch, (x, y))
+        self._cur_saved = None
+
+    def _repaint_cursor(self):
+        """Re-present the last frame with the pointer moved (throttled)."""
+        if not self.cursor or self.last_img is None:
+            return
+        now = time.time()
+        if now - self._cur_paint < 0.025:
+            return
+        self._cur_paint = now
+        self._unstamp_cursor()
+        self._stamp_cursor()
+        self._present()
+
+    def _present(self):
+        img = self.last_img
+        w, h = img.size
+        if self.stream:
+            gfx.blit_direct(self.term, img.tobytes(), w, h,
+                            self.term.cols, self.view_rows, self.img_id,
+                            1, 1, in_tmux=bool(os.environ.get("TMUX")))
+            return
+        self.seq = (self.seq + 1) % 8
+        name = f"tty-graphics-protocol-kilix-{self.wid}-{self.seq}.rgb"
+        path = "/dev/shm/" + name
+        with open(path, "wb") as f:
+            f.write(img.tobytes())
+        payload = base64.b64encode(path.encode()).decode()
+        self.term.write(f"\x1b[H\x1b_Ga=T,i=1,p=1,z=-1,t=t,f=24,"
+                        f"s={w},v={h},c={self.term.cols},r={self.view_rows},"
+                        f"q=2,C=1;{payload}\x1b\\")
 
     # ---- glyph layer -------------------------------------------------------
     def snapshot(self):
@@ -680,6 +764,8 @@ class Browse:
         log(f"mouse b={b} x={x} y={y} press={press}")
         if b & 256:               # kitty SGR-pixel LEAVE_INDICATOR: not a real event
             return
+        self.cur_x, self.cur_y = x, y
+        self._repaint_cursor()    # the pointer follows on every path
         if y >= self.page_h:      # status row: ignore
             return
         mods = ((8 if b & 4 else 0) | (1 if b & 8 else 0) | (2 if b & 16 else 0))
@@ -813,6 +899,10 @@ class Browse:
 
     def run(self):
         signal.signal(signal.SIGWINCH, lambda *a: setattr(self, "resized", True))
+        # SIGTERM/SIGHUP (e.g. the hosting window closing) -> sys.exit -> the
+        # finally below still restores the tty and removes temp profiles
+        for _s in (signal.SIGTERM, signal.SIGHUP):
+            signal.signal(_s, lambda *a: sys.exit(0))
         os.set_blocking(self.term.fd, False)
         err = None
         self.term.enter()
@@ -870,10 +960,14 @@ class Browse:
 
 
 def main():
-    url = sys.argv[1] if len(sys.argv) > 1 else "https://example.com"
+    args = sys.argv[1:]
+    incognito = "--incognito" in args
+    cursor = "--no-cursor" not in args
+    args = [a for a in args if a not in ("--incognito", "--no-cursor")]
+    url = args[0] if args else "https://example.com"
     if "://" not in url:
         url = "https://" + url
-    Browse(url).run()
+    Browse(url, incognito=incognito, cursor=cursor).run()
 
 
 if __name__ == "__main__":

@@ -125,13 +125,18 @@ rename the current page. The page shortcuts are in [Keybindings](#keybindings-ti
 
 ```bash
 kilix browse wikipedia.org        # any URL or hostname (Ctrl+L bar also searches)
+kilix browse --incognito site.com # throwaway profile: nothing survives the session
 ```
 
 `kilix browse` renders **real Chrome inside the pane**: page pixels (images,
 video, layout) stream in at full resolution via the kitty graphics protocol,
 while **page text is drawn as live terminal glyphs** — crisp, and selectable
 like any terminal text (shift+drag). Mouse clicks, wheel scrolling, and typing
-are forwarded to the page.
+are forwarded to the page, a software pointer tracks the mouse (headless
+Chrome draws none; `--no-cursor` opts out), and hovering triggers real hover
+effects. Normal sessions keep history/cookies in
+`~/.local/state/kilix/browse-profile`; `--incognito` uses a throwaway profile
+deleted on exit.
 
 | Key | Action |
 |---|---|
