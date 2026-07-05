@@ -255,6 +255,36 @@ def _arrow_right(p):
     _arrow(p, +1)
 
 
+def _games(p):
+    p.rect(1, 5, 14, 10, fill=S, outline=K)        # a gamepad
+    p.rect(0, 6, 0, 9, fill=S)
+    p.rect(15, 6, 15, 9, fill=S)
+    p.rect(3, 7, 6, 8, fill=K)                     # d-pad
+    p.rect(4, 6, 5, 9, fill=K)
+    p.px(11, 6, R)                                 # buttons
+    p.px(12, 7, Y)
+    p.px(10, 7, B)
+    p.px(11, 8, DN)
+    p.hline(2, 13, 5, W)
+
+
+def _doom(p):
+    # a cacodemon-ish grinning red sphere (all in-house pixel art)
+    p.rect(4, 1, 11, 1, fill=DR)
+    p.rect(2, 2, 13, 3, fill=R)
+    p.rect(1, 4, 14, 11, fill=R)
+    p.rect(2, 12, 13, 13, fill=R)
+    p.rect(4, 14, 11, 14, fill=DR)
+    p.rect(5, 3, 10, 3, fill=DR)                   # brow
+    p.rect(5, 4, 10, 6, fill=W)                    # eye
+    p.rect(7, 4, 8, 6, fill=DN)                    # green iris
+    p.rect(3, 9, 12, 11, fill=DR)                  # mouth
+    for x in (4, 6, 8, 10, 12):
+        p.px(x, 9, W)                              # fangs
+    for x in (5, 7, 9, 11):
+        p.px(x, 11, W)
+
+
 def _arrow_up(p):
     p.poly([(2, 9), (13, 9), (7, 2)], fill=Y, outline=K)   # explorer "up" folder
     p.rect(5, 9, 9, 13, fill=Y)
@@ -270,6 +300,7 @@ ICONS = {
     "exe": _exe, "terminal": _terminal, "settings": _settings,
     "notepad": _notepad, "browser": _browser, "run": _run,
     "shutdown": _shutdown, "flame": _flame, "home": _home,
+    "games": _games, "doom": _doom,
     "question": _question, "info": _info, "warn": _warn, "error": _error,
     "back": _arrow_left, "forward": _arrow_right, "up": _arrow_up,
 }

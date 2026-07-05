@@ -29,6 +29,7 @@ toolkit below is self-contained.
 | `wm.py` | `Window` (chrome, sysbuttons) + `WM` (z-order, drags, modality) + `msgbox`/`inputbox` |
 | `taskbar.py` | start bar: Start button/menu, task buttons, clock |
 | `shell.py` | desktop surface: wallpaper, icon grid, launcher files, spawn verbs |
+| `games.py` | Games section: on-demand installers (Doom shareware + DOSBox) + CLI launcher |
 | `apps/` | `filemgr` `notepad` `settings` `viewer` — each a `Window` subclass |
 
 Input events flow Desk → (MenuHost | dragged owner | window | taskbar |

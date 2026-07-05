@@ -522,6 +522,31 @@ class Shell:
         except OSError:
             return False
 
+    def play_game(self, game):
+        """Start ▸ Programs ▸ Games. Plays immediately when games.conf points
+        at a working install; otherwise asks once, then a new tab downloads
+        the pieces (showing progress) and boots the game."""
+        import games
+
+        def go():
+            self._tab(["python3", os.path.join(_here, "games.py"), game],
+                      game, None)
+
+        if games.doom_ready():
+            go()
+            return
+
+        def answered(ans):
+            if ans == "Download":
+                go()
+        wm.msgbox(self.desk, "Games",
+                  "Doom isn't set up yet.\n\n"
+                  "Download the official shareware episode (~2.4 MB) —\n"
+                  "plus DOSBox if none is installed — into\n"
+                  "~/.local/share/kilix/games, and play?\n"
+                  "(Paths are remembered in ~/.config/kilix/games.conf.)",
+                  icon="doom", buttons=("Download", "Cancel"), cb=answered)
+
     def open_app(self, app, arg=None):
         import apps
         try:
