@@ -3,7 +3,7 @@
 Factored out of apprun.AppPane so it can be reused by:
   - `kilix run` (Phase 2): inject the local pane's kitty-kbd + SGR-pixel events
     into the app's private X server (Xvfb or, in --serve mode, Xvnc).
-  - `kilix desktop` (Phase 3, deskcontrol.py): inject a remote viewer's events
+  - `kilix share` (Phase 3, share.py): inject a remote viewer's events
     into the headless Xvfb the whole kilix runs on.
 
 Injects only into the private display it is handed — never the real one. Tracks
@@ -67,7 +67,7 @@ class Injector:
 
     def key_named(self, xname, etype):
         """Press/release by X keysym NAME (e.g. 'Return', 'Control_L', 'Up').
-        Used by kilix desktop to inject a browser viewer's named keys."""
+        Used by kilix share to inject a browser viewer's named keys."""
         keysym = XK.string_to_keysym(xname)
         if not keysym:
             return False
@@ -85,7 +85,7 @@ class Injector:
 
     def move_click(self, x, y, button=0, press=None):
         """Absolute pointer move, and optional button/wheel, in display pixels.
-        Used by kilix desktop (whole-screen coords, no letterbox mapping)."""
+        Used by kilix share (whole-screen coords, no letterbox mapping)."""
         x = max(0, min(self.app_w - 1, int(x)))
         y = max(0, min(self.app_h - 1, int(y)))
         xtest.fake_input(self.xd, X.MotionNotify, x=x, y=y)

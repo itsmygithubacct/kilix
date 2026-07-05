@@ -1,6 +1,6 @@
 """kilix — WebSocket<->RFB bridge + static server for the browser/HLS tiers.
 
-Spawned by `kilix run --serve`/`kilix desktop` when the browser (--lan) or HLS
+Spawned by `kilix run --serve`/`kilix share` when the browser (--lan) or HLS
 (--hls) tier is requested. It:
   - bridges  /websockify  (binary WebSocket) <-> the loopback RFB port, so a
     browser running vendored noVNC can view+control the Xvnc session;

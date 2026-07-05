@@ -26,6 +26,9 @@ kitty you already have (and `~/.config/kitty`) completely untouched.
 - **Stream to other devices** — persist a session and attach (or watch read-only)
   from another machine, share a GUI app to a browser/VNC client, or stream the whole
   kilix — graphics and video included — to any browser. Loopback-first, opt-in.
+- **kilix 95** — a Windows 95-style desktop environment in a tab (`kilix desktop`):
+  start bar, launchers, file manager, and a Settings app that edits the kilix
+  config live.
 - **Self-contained** — prefers its bundled fork build, and falls back to a prebuilt kitty if you haven't built it.
 
 ## Requirements
@@ -201,6 +204,36 @@ full-screen. Drop another `<name>.c` into that directory and
 `kilix screensaver <name>` picks it up. Needs a C compiler (the same one the
 fork build uses).
 
+## Desktop — a Windows 95-style desktop in a tab (experimental)
+
+```bash
+kilix desktop                # opens "kilix 95" in a new kilix tab
+```
+
+A full little desktop environment rendered as pixels in a kilix pane (same
+graphics path as `browse`/`run`): teal wallpaper, desktop icons, overlapping
+draggable/resizable windows, a start bar with a Start menu and clock, and a
+right-click menu everywhere. Built in:
+
+- **File Manager** — browse, open, rename, delete, new folder/file,
+  properties, "open terminal here".
+- **kilix Settings** — edits this kilix's `config/kitty.conf` (form tabs for
+  the common knobs + a raw editor tab) and applies it **live** to the running
+  kilix via remote control (fallback: SIGUSR1).
+- **Notepad** and an **image viewer**.
+- **Create Launcher…** (Start menu or right-click the desktop) writes
+  freedesktop-style `.desktop` files into the desktop folder
+  (`~/.local/share/kilix/desktop`, override with `$KILIX_DESKTOP_DIR`); plain
+  files and folders dropped there show up as icons too. Launchers open in a
+  new kilix tab / OS window, through `kilix run` for X11 apps, or in
+  `kilix browse` for URLs.
+
+Quit via Start ▸ Shut Down… (or `Ctrl+Alt+Q`); the terminal underneath is
+untouched. All artwork is drawn in code — no Microsoft assets are bundled.
+Modules live in `desktop/` (see `desktop/README.md`). The fork's software
+mouse cursor shows the pointer; under a plain kitty run `kilix desktop
+--cursor` to have the desktop draw its own.
+
 ## Stream sessions to other devices (experimental)
 
 kilix can share a session over the network so you can pick it up — or just watch
@@ -253,9 +286,11 @@ for a native VNC viewer, a browser URL (bundled **noVNC**, no install), and an
 ### 3. The whole kilix — every pane, graphics and video included
 
 ```bash
-kilix desktop                     # whole kilix on a headless screen -> your browser
-kilix desktop --size 1600x900 --lan
+kilix share                       # whole kilix on a headless screen -> your browser
+kilix share --size 1600x900 --lan
 ```
+
+(*Renamed from `kilix desktop` when the [desktop environment](#desktop--a-windows-95-style-desktop-in-a-tab-experimental) claimed that name.*)
 
 This runs the *entire* kilix (all panes, splits, `browse`/`run` video, images) on
 a headless display and streams the composited picture as **H.264/HLS** to any
@@ -388,6 +423,7 @@ toolchain env at `~/.kitty-fork-buildenv`, `build.sh` sources it automatically.
 ├── build.sh           # builds the forked kitty in ./src
 ├── bootstrap.sh       # pulls the prebuilt kitty (fallback engine)
 ├── config/            # kitty.conf + kilix icons (kitty.app*.png, kilix-512.png)
+├── desktop/           # the "kilix 95" desktop environment (kilix desktop)
 ├── src/               # the kitty fork (submodule → itsmygithubacct/kitty @ clickable-chrome)
 ├── kitty.app/         # prebuilt kitty fallback (downloaded on demand)
 ├── README.md
