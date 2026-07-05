@@ -221,6 +221,11 @@ right-click menu everywhere. Built in:
   the common knobs + a raw editor tab) and applies it **live** to the running
   kilix via remote control (fallback: SIGUSR1).
 - **Notepad** and an **image viewer**.
+- **Games** — Start ▸ Programs ▸ Games ▸ **Doom**: plays immediately if
+  `~/.config/kilix/games.conf` points at a DOSBox + Doom install; otherwise
+  one click downloads the official shareware episode (and a dosbox-staging
+  build if no dosbox is installed) into `~/.local/share/kilix/games`, saves
+  the paths, and boots it in a pane via `kilix run`.
 - **Create Launcher…** (Start menu or right-click the desktop) writes
   freedesktop-style `.desktop` files into the desktop folder
   (`~/.local/share/kilix/desktop`, override with `$KILIX_DESKTOP_DIR`); plain
