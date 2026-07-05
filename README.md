@@ -23,6 +23,9 @@ kitty you already have (and `~/.config/kitty`) completely untouched.
   (Tilix's "synchronize input").
 - **Tilix look & keys** — per-pane title bars, active-pane highlight, dimmed inactive panes, Tango palette, Tilix keybindings.
 - **Own taskbar identity** — groups separately from plain kitty, with its own icon.
+- **Stream to other devices** — persist a session and attach (or watch read-only)
+  from another machine, share a GUI app to a browser/VNC client, or stream the whole
+  kilix — graphics and video included — to any browser. Loopback-first, opt-in.
 - **Self-contained** — prefers its bundled fork build, and falls back to a prebuilt kitty if you haven't built it.
 
 ## Requirements
@@ -194,6 +197,75 @@ synchronized write per frame, so it's a couple of percent of a core even
 full-screen. Drop another `<name>.c` into that directory and
 `kilix screensaver <name>` picks it up. Needs a C compiler (the same one the
 fork build uses).
+
+## Stream sessions to other devices (experimental)
+
+kilix can share a session over the network so you can pick it up — or just watch
+it — from another laptop, a phone, or a browser. There are three tiers, from
+crisp-text-cheap to full-pixel-faithful. **All of them bind to loopback by
+default** (reach them over SSH); LAN exposure is opt-in and gated by TLS + a
+token. Everything here is *opt-in* — plain kilix is unchanged.
+
+### 1. Text sessions — persist + attach from many devices
+
+```bash
+kilix serve            # start (or re-attach) a persistent session named "main"
+kilix serve work       # …or a named one
+kilix attach work      # attach read-write (from anywhere, incl. over SSH)
+kilix view work        # attach READ-ONLY (a safe way to let someone watch)
+kilix serve ls         # list sessions   ·   kilix serve kill work
+```
+
+This runs a **private tmux server** (its own socket under the kilix runtime dir —
+your `~/.tmux.conf` is never touched) that keeps the session alive across
+disconnects and lets several devices attach at once. Text, colors, and inline
+images (`kilix icat`) come through; kilix forces images to inline transmission so
+they survive the hop. From another machine it's just SSH:
+
+```bash
+ssh -t you@host ~/kilix/kilix attach work     # take over
+ssh -t you@host ~/kilix/kilix view  work      # watch, read-only
+```
+
+Needs `tmux`. Animated `browse`/`run` panes work but are throttled over tmux —
+for those, use the pixel tiers below.
+
+### 2. A GUI app — view + control from a browser or VNC client
+
+`kilix run` can expose the app it's already running on its private display:
+
+```bash
+kilix run --serve xclock          # local pane + remote VNC (loopback)
+kilix run --serve --hls mpv-app   # …also an HLS broadcast for many watchers
+kilix run --lan  --size 1024x768 someapp   # expose on the LAN over HTTPS+token
+```
+
+`--serve` swaps the app's off-screen display for **Xvnc**, so the same picture
+your local pane shows is available to remote devices with native view **and
+control**. On launch kilix prints ready-to-paste connect lines — an SSH tunnel
+for a native VNC viewer, a browser URL (bundled **noVNC**, no install), and an
+`mpv`/HLS watch URL. Two passwords are minted: a **control** one and a
+**view-only** one (the server enforces the difference).
+
+### 3. The whole kilix — every pane, graphics and video included
+
+```bash
+kilix desktop                     # whole kilix on a headless screen -> your browser
+kilix desktop --size 1600x900 --lan
+```
+
+This runs the *entire* kilix (all panes, splits, `browse`/`run` video, images) on
+a headless display and streams the composited picture as **H.264/HLS** to any
+number of browsers or players, with keyboard/mouse control forwarded back. Since
+it ships pixels, this is the only tier that carries graphics **and** video with
+full fidelity to any device. It prints a bold warning — it shares your whole
+desktop — and, like the others, stays on loopback unless you pass `--lan`.
+
+**Requirements for the pixel tiers:** `Xvnc` (TightVNC/TigerVNC), `ffmpeg` (with
+`libx264` + `x11grab`), `Xvfb`, `python3-xlib`, and the `websockets` Python
+module; `openssl` for `--lan` TLS. The first `--lan`/browser use vendors noVNC +
+hls.js into `~/.local/share/kilix/` (one-time network). Design notes and the full
+rationale live in `~/research/kilix/`.
 
 ## Keybindings (Tilix layout)
 
