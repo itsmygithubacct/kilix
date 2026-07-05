@@ -30,6 +30,9 @@ CONF = os.path.join(os.environ.get("XDG_CONFIG_HOME")
 GAMES_DIR = os.path.join(os.environ.get("XDG_DATA_HOME")
                          or os.path.join(HOME, ".local", "share"),
                          "kilix", "games")
+APPS_DIR = os.path.join(os.environ.get("XDG_DATA_HOME")
+                        or os.path.join(HOME, ".local", "share"),
+                        "kilix", "apps")
 KILIX_HOME = (os.environ.get("KILIX_HOME")
               or os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -44,6 +47,25 @@ DOSBOX_VER = "v0.82.2"
 DOSBOX_URL = ("https://github.com/dosbox-staging/dosbox-staging/releases/"
               f"download/{DOSBOX_VER}/dosbox-staging-linux-x86_64-"
               f"{DOSBOX_VER}.tar.xz")
+
+BASHED_REPO = "https://github.com/itsmygithubacct/Bashed-Earth"
+AMP_REPO = "https://github.com/itsmygithubacct/kilix-amp"
+
+# the Start-menu registry (taskbar/shell build the Games submenu from this)
+GAMES = {
+    "doom": {
+        "label": "Doom", "icon": "doom",
+        "blurb": "Download the official shareware episode (~2.4 MB) —\n"
+                 "plus DOSBox if none is installed — into\n"
+                 "~/.local/share/kilix/games, and play?",
+    },
+    "bashed-earth": {
+        "label": "Bashed Earth", "icon": "tank",
+        "blurb": "Clone and build Bashed Earth (terminal artillery\n"
+                 "combat, github.com/itsmygithubacct/Bashed-Earth)\n"
+                 "into ~/.local/share/kilix/games, and play?",
+    },
+}
 
 
 def load():
@@ -251,31 +273,88 @@ def _audio_check(report):
     report("audio: no PulseAudio/PipeWire found — Doom will run silent")
 
 
+def _clone_and_make(repo, dest, binary, dep_hint, report):
+    """Shared clone+build installer: git clone --depth 1, make, return the
+    built binary's path."""
+    import subprocess
+    if not os.path.isdir(os.path.join(dest, ".git")):
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        report(f"cloning {repo} …")
+        r = subprocess.run(["git", "clone", "--depth", "1", repo, dest],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            raise RuntimeError(f"clone failed:\n{r.stderr.strip()[-500:]}")
+    exe = os.path.join(dest, binary)
+    if not os.access(exe, os.X_OK):
+        report("building (make) …")
+        r = subprocess.run(["make", "-C", dest], capture_output=True,
+                           text=True)
+        if r.returncode != 0:
+            raise RuntimeError(f"build failed ({dep_hint}):\n"
+                               + (r.stderr or r.stdout).strip()[-600:])
+    if not os.access(exe, os.X_OK):
+        raise RuntimeError(f"make succeeded but no {binary} binary appeared")
+    return exe
+
+
+def _repo_ready(cp, section, binary):
+    if not cp.has_section(section):
+        return None
+    d = os.path.expanduser(cp.get(section, "dir", fallback=""))
+    exe = os.path.join(d, binary) if d else ""
+    return exe if exe and os.access(exe, os.X_OK) else None
+
+
+def bashed_ready(cp=None):
+    return _repo_ready(cp or load(), "bashed-earth", "bashed-earth")
+
+
+def ensure_bashed(cp, report):
+    return bashed_ready(cp) or _clone_and_make(
+        BASHED_REPO, os.path.join(GAMES_DIR, "bashed-earth"), "bashed-earth",
+        "needs gcc/clang, zlib, make", report)
+
+
+def amp_ready(cp=None):
+    return _repo_ready(cp or load(), "kilix-amp", "kilix-amp")
+
+
+def ensure_amp(cp, report):
+    return amp_ready(cp) or _clone_and_make(
+        AMP_REPO, os.path.join(APPS_DIR, "kilix-amp"), "kilix-amp",
+        "needs libsdl2-dev, libsdl2-image-dev, libsndfile1-dev, zlib1g-dev",
+        report)
+
+
 def ensure(game, report=print):
-    if game != "doom":
-        raise SystemExit(f"kilix games: unknown game {game!r}")
     cp = load()
-    if not cp.has_section("doom"):
-        cp.add_section("doom")
-    dosbox = ensure_dosbox(cp, report)
-    ddir = ensure_doom(cp, report)
-    conf = _write_settings(ddir, report)
-    _audio_check(report)
-    cp.set("doom", "dosbox", dosbox)
-    cp.set("doom", "dir", ddir)
+    if not cp.has_section(game):
+        cp.add_section(game)
+    if game == "doom":
+        dosbox = ensure_dosbox(cp, report)
+        ddir = ensure_doom(cp, report)
+        conf = _write_settings(ddir, report)
+        _audio_check(report)
+        cp.set("doom", "dosbox", dosbox)
+        cp.set("doom", "dir", ddir)
+        payload = (dosbox, conf, _find(ddir, "DOOM.EXE"))
+    elif game == "bashed-earth":
+        exe = ensure_bashed(cp, report)
+        cp.set("bashed-earth", "dir", os.path.dirname(exe))
+        payload = exe
+    elif game == "kilix-amp":
+        exe = ensure_amp(cp, report)
+        cp.set("kilix-amp", "dir", os.path.dirname(exe))
+        payload = exe
+    else:
+        raise SystemExit(f"kilix games: unknown game {game!r}")
     save(cp)
     report(f"ready — config saved to {CONF}")
-    return dosbox, conf, _find(ddir, "DOOM.EXE")
+    return payload
 
 
-def main():
-    args = [a for a in sys.argv[1:]]
-    setup_only = "--setup-only" in args
-    args = [a for a in args if a != "--setup-only"]
-    game = args[0] if args else "doom"
-    dosbox, conf, exe = ensure(game)
-    if setup_only:
-        return
+def _launch_doom(payload):
+    dosbox, conf, exe = payload
     kilix = os.path.join(KILIX_HOME, "kilix")
     argv = [dosbox, "-conf", conf, exe, "-exit"]
     if os.environ.get("KITTY_WINDOW_ID") and os.access(kilix, os.X_OK):
@@ -286,8 +365,36 @@ def main():
         os.execv(kilix, [kilix, "run", "--fill", "--size", "640x400"] + argv)
     elif os.environ.get("DISPLAY"):
         os.execv(dosbox, argv)                # plain X session
+    raise SystemExit("kilix games: no display (run inside kilix or X)")
+
+
+def _launch_bashed(exe):
+    # speaks the kitty graphics protocol itself: runs right here in the tab
+    os.chdir(os.path.dirname(exe))
+    os.execv(exe, [exe])
+
+
+def main():
+    args = [a for a in sys.argv[1:]]
+    setup_only = "--setup-only" in args
+    args = [a for a in args if a != "--setup-only"]
+    game = args[0] if args else "doom"
+    try:
+        payload = ensure(game)
+    except (RuntimeError, OSError) as e:
+        # keep the message readable in the tab instead of vanishing with it
+        print(f"\x1b[1;31mkilix games: {e}\x1b[0m", file=sys.stderr)
+        try:
+            input("\n[Enter to close]")
+        except EOFError:
+            pass
+        sys.exit(1)
+    if setup_only:
+        return
+    if game == "doom":
+        _launch_doom(payload)
     else:
-        raise SystemExit("kilix games: no display (run inside kilix or X)")
+        _launch_bashed(payload)
 
 
 if __name__ == "__main__":

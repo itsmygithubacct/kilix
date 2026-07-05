@@ -268,6 +268,34 @@ def _games(p):
     p.hline(2, 13, 5, W)
 
 
+def _amp(p):
+    # a little Winamp-style player: title strip, scope window, lightning
+    p.rect(1, 2, 14, 13, fill=G, outline=K)
+    p.rect(2, 3, 13, 4, fill=DB)                   # title strip
+    p.px(13, 3, S)
+    p.rect(2, 5, 9, 10, fill=K)                    # vis window
+    for x, h in ((3, 2), (4, 4), (5, 3), (6, 5), (7, 2), (8, 4)):
+        p.vline(x, 10 - h, 9, N)                   # spectrum bars
+    p.poly([(12, 4), (10, 8), (11, 8), (10, 12), (13, 7), (12, 7), (13, 4)],
+           fill=Y)                                 # lightning bolt
+    p.rect(2, 11, 13, 12, fill=S)                  # transport strip
+    for x in (3, 5, 7, 9, 11):
+        p.px(x, 11, K)
+
+
+def _tank(p):
+    # a little artillery tank (Bashed Earth)
+    p.rect(9, 4, 14, 5, fill=DN)                   # barrel, aimed up-right
+    p.px(13, 3, DN)
+    p.px(14, 3, DN)
+    p.rect(5, 6, 10, 8, fill=DN, outline=K)        # turret
+    p.rect(2, 9, 13, 11, fill=N, outline=K)        # hull
+    p.rect(1, 12, 14, 14, fill=G, outline=K)       # tracks
+    for x in (3, 6, 9, 12):
+        p.px(x, 13, K)                             # road wheels
+    p.hline(2, 13, 12, S)
+
+
 def _doom(p):
     # a cacodemon-ish grinning red sphere (all in-house pixel art)
     p.rect(4, 1, 11, 1, fill=DR)
@@ -300,7 +328,7 @@ ICONS = {
     "exe": _exe, "terminal": _terminal, "settings": _settings,
     "notepad": _notepad, "browser": _browser, "run": _run,
     "shutdown": _shutdown, "flame": _flame, "home": _home,
-    "games": _games, "doom": _doom,
+    "games": _games, "doom": _doom, "tank": _tank, "amp": _amp,
     "question": _question, "info": _info, "warn": _warn, "error": _error,
     "back": _arrow_left, "forward": _arrow_right, "up": _arrow_up,
 }
