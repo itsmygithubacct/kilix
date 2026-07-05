@@ -21,6 +21,7 @@ Known limits (prototype): no sound routing; apps that grab the pointer
 pane cursor can drift; the X screen size is fixed at startup — pane
 resizes rescale the picture instead of resizing the app.
 """
+import json
 import os
 import select
 import shutil
@@ -32,7 +33,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import browse  # reuse Term (raw mode, kitty kbd/mouse parsing), not Chrome
 import gfx      # direct (t=d) graphics transmission for streamed sessions
-import xinject  # XTest keyboard/mouse injection (shared with kilix desktop)
+import xinject  # XTest keyboard/mouse injection (shared with kilix share)
 import stream   # Xvnc/Xvfb + VNC/HLS/bridge supervisor for serve modes
 
 try:
@@ -113,13 +114,16 @@ class RunTerm(browse.Term):
 
 
 class AppPane:
-    def __init__(self, cmd, app_w, app_h, fps, serve=False, lan=False, hls=False):
+    def __init__(self, cmd, app_w, app_h, fps, serve=False, lan=False, hls=False,
+                 audio=False):
         self.cmd = cmd
         self.app_w, self.app_h = app_w, app_h   # None → sized from the pane
         self.fps = fps
         # --serve: also expose the app to remote devices via Xvnc (view+control).
         # --hls/--lan add the browser broadcast/bridge tiers (see stream.py).
         self.serve, self.lan, self.hls = serve, lan, hls
+        self.audio = audio               # capture app audio -> AAC in the HLS
+        self.pulse_sink = None
         self.session = os.environ.get("KILIX_SESSION") or f"run-{os.getpid()}"
         self.sup = stream.StreamSupervisor(self.session)
         self.rfb_port = None
@@ -146,6 +150,11 @@ class AppPane:
         self.img_id = 1 + ((int(self.wid) if self.wid.isdigit()
                             else os.getpid()) % 4000)
         self.frames = 0
+        # --debug / KILIX_DEBUG: capture-vs-blit fps + wire kbps, to a metrics
+        # file and the status bar, for measuring streaming efficiency.
+        self.debug = os.environ.get("KILIX_DEBUG") == "1"
+        self._dbg = {"t0": time.time(), "cap": 0, "blit": 0, "bytes": 0,
+                     "cfps": 0.0, "fps": 0.0, "kbps": 0.0}
         self.resized = False
         self.status = "starting…"
         self.prev_status = None
@@ -219,8 +228,12 @@ class AppPane:
         self.token = self.sup.mint_token()
         hlsdir = None
         if self.hls:
+            monitor = None
+            if self.audio:
+                self.pulse_sink, monitor = self.sup.make_null_sink(self.session)
             hlsdir = os.path.join(self.sup.runtime_dir, "hls")
-            self.sup.start_hls(n, self.app_w, self.app_h, hlsdir, fps=self.fps)
+            self.sup.start_hls(n, self.app_w, self.app_h, hlsdir,
+                               fps=self.fps, debug=self.debug, audio=monitor)
         tls = self.sup.tls_cert() if self.lan else None
         self.tls_fp = tls[2] if tls else None
         self.sup.start_bridge(rfb_port=self.rfb_port, http_port=self.http_port,
@@ -231,6 +244,8 @@ class AppPane:
 
     def start_app_and_capture(self):
         env = dict(os.environ, DISPLAY=self.disp)
+        if self.pulse_sink:
+            env["PULSE_SINK"] = self.pulse_sink   # route app audio to our sink
         self.app = subprocess.Popen(self.cmd, env=env,
                                     stdout=subprocess.DEVNULL,
                                     stderr=subprocess.DEVNULL)
@@ -317,18 +332,20 @@ class AppPane:
         while len(self.ffbuf) >= fsize:      # keep only the newest frame
             frame = bytes(self.ffbuf[:fsize])
             del self.ffbuf[:fsize]
+            self._dbg["cap"] += 1            # frames captured (before change-detect)
         if frame is not None and frame != self.last_frame:
             self.last_frame = frame
             self.blit(frame)
 
     def blit(self, rgb):
+        wire = 0
         if self.stream:
             # streamed session: inline the pixels (t=d) — the /dev/shm path of
             # the local branch below is meaningless to a kitty on another box.
-            gfx.blit_direct(self.term, rgb, self.app_w, self.app_h,
-                            self.img_cols, self.img_rows, self.img_id,
-                            self.off_row + 1, self.off_col + 1,
-                            in_tmux=bool(os.environ.get("TMUX")))
+            wire = gfx.blit_direct(self.term, rgb, self.app_w, self.app_h,
+                                   self.img_cols, self.img_rows, self.img_id,
+                                   self.off_row + 1, self.off_col + 1,
+                                   in_tmux=bool(os.environ.get("TMUX")))
         else:
             import base64
             self.seq = (self.seq + 1) % 8
@@ -342,16 +359,43 @@ class AppPane:
                 f"\x1b_Ga=T,i=1,p=1,z=-1,t=t,f=24,"
                 f"s={self.app_w},v={self.app_h},"
                 f"c={self.img_cols},r={self.img_rows},q=2,C=1;{payload}\x1b\\")
+            wire = len(rgb)                  # local shm pixel volume (not on wire)
         self._blit_t = time.time()
         self.frames += 1
+        self._dbg["blit"] += 1
+        self._dbg["bytes"] += wire
         if self.frames == 1 or self.frames % 300 == 0:
             log(f"frames={self.frames}")
 
+    def _dbg_tick(self):
+        d = self._dbg
+        dt = time.time() - d["t0"]
+        if dt < 1.0:
+            return
+        d["cfps"], d["fps"] = d["cap"] / dt, d["blit"] / dt
+        d["kbps"] = (d["bytes"] / dt) * 8 / 1000
+        log(f"metrics cap={d['cfps']:.1f}/s blit={d['fps']:.1f}/s "
+            f"wire={d['kbps']:.0f}kbps {self.app_w}x{self.app_h}")
+        try:
+            with open(os.path.join(self.sup.runtime_dir, "metrics.jsonl"), "a") as f:
+                f.write(json.dumps({"t": round(time.time(), 1),
+                                    "cap_fps": round(d["cfps"], 1),
+                                    "blit_fps": round(d["fps"], 1),
+                                    "pane_kbps": round(d["kbps"]),
+                                    "w": self.app_w, "h": self.app_h}) + "\n")
+        except Exception:
+            pass
+        d["t0"], d["cap"], d["blit"], d["bytes"] = time.time(), 0, 0, 0
+
     def render_status(self):
+        dbg = ""
+        if self.debug:
+            self._dbg_tick()
+            dbg = (f" · cap{self._dbg['cfps']:.0f} blit{self._dbg['fps']:.0f}/s "
+                   f"{self._dbg['kbps']:.0f}kb/s")
         serve = f" · VNC :{self.rfb_port}" if self.serve else ""
-        body = (f" kilix run — {' '.join(self.cmd)[:36]} · {self.disp} "
-                f"{self.app_w}x{self.app_h} · {self.frames}f{serve} · "
-                f"Ctrl+Q quit")
+        body = (f" kilix run — {' '.join(self.cmd)[:28]} · {self.disp} "
+                f"{self.app_w}x{self.app_h} · {self.frames}f{serve}{dbg} · Ctrl+Q")
         body = body[:self.term.cols].ljust(self.term.cols)
         s = f"\x1b[{self.term.rows};1H\x1b[0;7m{body}\x1b[0m"
         if s != self.prev_status:
@@ -480,7 +524,7 @@ def main():
     args = sys.argv[1:]
     app_w = app_h = None                 # default: sized from the pane
     fps = 20
-    serve = lan = hls = False
+    serve = lan = hls = audio = False
     while args and args[0].startswith("--"):
         if args[0] == "--size" and len(args) > 1:
             app_w, app_h = (int(v) for v in args[1].lower().split("x"))
@@ -503,13 +547,20 @@ def main():
         elif args[0] == "--hls":            # broadcast tier (many view-only viewers)
             hls = True
             args = args[1:]
+        elif args[0] == "--debug":          # fps/bandwidth metrics -> status + file
+            os.environ["KILIX_DEBUG"] = "1"
+            args = args[1:]
+        elif args[0] == "--audio":          # capture app audio -> AAC in the HLS
+            audio = hls = True
+            args = args[1:]
         else:
             sys.exit(f"kilix run: unknown option {args[0]}")
     if not args:
         sys.exit("usage: kilix run [--size WxH] [--fps N] "
-                 "[--serve|--lan] [--hls] command [args…]\n"
+                 "[--serve|--lan] [--hls] [--audio] [--debug] command [args…]\n"
                  "  --size defaults to the pane's pixel size")
-    AppPane(args, app_w, app_h, fps, serve=serve, lan=lan, hls=hls).run()
+    AppPane(args, app_w, app_h, fps, serve=serve, lan=lan, hls=hls,
+            audio=audio).run()
 
 
 if __name__ == "__main__":
