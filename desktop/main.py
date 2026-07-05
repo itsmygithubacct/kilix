@@ -391,8 +391,10 @@ def _scene(desk, name):
 
 def main():
     ap = argparse.ArgumentParser(prog="kilix desktop")
-    ap.add_argument("--cursor", action="store_true",
-                    help="draw a software mouse pointer (for plain kitty)")
+    ap.add_argument("--cursor", dest="cursor", action="store_true",
+                    default=True, help=argparse.SUPPRESS)   # legacy (now default)
+    ap.add_argument("--no-cursor", dest="cursor", action="store_false",
+                    help="don't draw the desktop's own mouse pointer")
     ap.add_argument("--dir", help="desktop folder override")
     ap.add_argument("--screenshot", metavar="PNG",
                     help="render offscreen to PNG and exit (no terminal)")

@@ -230,9 +230,8 @@ right-click menu everywhere. Built in:
 
 Quit via Start ▸ Shut Down… (or `Ctrl+Alt+Q`); the terminal underneath is
 untouched. All artwork is drawn in code — no Microsoft assets are bundled.
-Modules live in `desktop/` (see `desktop/README.md`). The fork's software
-mouse cursor shows the pointer; under a plain kitty run `kilix desktop
---cursor` to have the desktop draw its own.
+Modules live in `desktop/` (see `desktop/README.md`). The desktop draws its
+own Win95 mouse pointer (pass `--no-cursor` if you'd rather not).
 
 ## Stream sessions to other devices (experimental)
 
@@ -272,22 +271,40 @@ for those, use the pixel tiers below.
 
 ```bash
 kilix run --serve xclock          # local pane + remote VNC (loopback)
-kilix run --serve --hls mpv-app   # …also an HLS broadcast for many watchers
+kilix run --hls mpv-app           # fMP4-HLS broadcast (scales out, ~1.5-2.5 s)
+kilix run --mse mpv-app           # MPEG-TS over WebSocket -> MSE (~0.3-1 s)
+kilix run --webrtc mpv-app        # WebRTC via MediaMTX (sub-500 ms)
+kilix run --mse --audio mpv-app   # …any of them + the app's audio (AAC)
 kilix run --lan  --size 1024x768 someapp   # expose on the LAN over HTTPS+token
+kilix run --no-pane --mse cmd     # headless: network tiers only (e.g. over SSH)
 ```
 
 `--serve` swaps the app's off-screen display for **Xvnc**, so the same picture
 your local pane shows is available to remote devices with native view **and
-control**. On launch kilix prints ready-to-paste connect lines — an SSH tunnel
-for a native VNC viewer, a browser URL (bundled **noVNC**, no install), and an
-`mpv`/HLS watch URL. Two passwords are minted: a **control** one and a
-**view-only** one (the server enforces the difference).
+control** (VNC/Tight is also the most bandwidth-efficient tier for terminal
+content). The broadcast tiers are view-only and combinable: **--hls** for many
+viewers behind dumb caches, **--mse** for ~half-second latency in any browser
+(vendored mpegts.js), **--webrtc** for the lowest latency (MediaMTX,
+auto-downloaded on first use; viewers authenticate as `kilix` + the printed
+token). On launch kilix prints ready-to-paste connect lines — an SSH tunnel
+for a native VNC viewer, a browser URL (bundled **noVNC**, no install), the
+`/watch` low-latency page, and an `mpv`/HLS watch URL. Two VNC passwords are
+minted: a **control** one and a **view-only** one (the server enforces the
+difference).
+
+With a local pane, every encoder is fed from the pane's own capture (one
+x11grab total), the capture rate drops to 2 fps when the screen goes idle,
+and static screens cost almost nothing on the wire. `KILIX_HW=1` prefers
+VAAPI hardware encoding when a render node exists; `--debug` overlays
+capture/blit fps + wire bandwidth and logs `metrics.jsonl`, and
+`scripts/stream-stats.sh <url>` measures what a viewer actually receives.
 
 ### 3. The whole kilix — every pane, graphics and video included
 
 ```bash
 kilix share                       # whole kilix on a headless screen -> your browser
 kilix share --size 1600x900 --lan
+kilix share --audio --debug       # desktop audio in the stream + encode metrics
 ```
 
 (*Renamed from `kilix desktop` when the [desktop environment](#desktop--a-windows-95-style-desktop-in-a-tab-experimental) claimed that name.*)
@@ -299,11 +316,13 @@ it ships pixels, this is the only tier that carries graphics **and** video with
 full fidelity to any device. It prints a bold warning — it shares your whole
 desktop — and, like the others, stays on loopback unless you pass `--lan`.
 
-**Requirements for the pixel tiers:** `Xvnc` (TightVNC/TigerVNC), `ffmpeg` (with
-`libx264` + `x11grab`), `Xvfb`, `python3-xlib`, and the `websockets` Python
-module; `openssl` for `--lan` TLS. The first `--lan`/browser use vendors noVNC +
-hls.js into `~/.local/share/kilix/` (one-time network). Design notes and the full
-rationale live in `~/research/kilix/`.
+**Requirements for the pixel tiers:** `ffmpeg` (libx264, libopenh264 or
+h264_vaapi — auto-detected; `x11grab`), `Xvfb`, `python3-xlib`, and the
+`websockets` Python module; `Xvnc` (TightVNC/TigerVNC) only for `--serve`;
+`pactl` (PulseAudio/PipeWire) only for `--audio`; `openssl` for `--lan` TLS.
+First use vendors noVNC, hls.js, mpegts.js and (for `--webrtc`) the MediaMTX
+binary into `~/.local/share/kilix/` (one-time network). Design notes and the
+full rationale live in `~/research/kilix/`.
 
 ## Keybindings (Tilix layout)
 
