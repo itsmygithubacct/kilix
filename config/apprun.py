@@ -115,7 +115,7 @@ class RunTerm(browse.Term):
 class AppPane:
     def __init__(self, cmd, app_w, app_h, fps, serve=False, lan=False, hls=False):
         self.cmd = cmd
-        self.app_w, self.app_h = app_w, app_h
+        self.app_w, self.app_h = app_w, app_h   # None → sized from the pane
         self.fps = fps
         # --serve: also expose the app to remote devices via Xvnc (view+control).
         # --hls/--lan add the browser broadcast/bridge tiers (see stream.py).
@@ -126,6 +126,16 @@ class AppPane:
         self.full_pw = self.view_pw = None
         self.http_port = self.token = self.tls_fp = None
         self.term = RunTerm()
+        if self.app_w is None:
+            # No --size given: match the app's screen to the pane's usable
+            # pixel area (full width × rows minus the status row), as the
+            # terminal reports it (TIOCGWINSZ — so HiDPI scaling is already
+            # baked in). The picture then renders 1:1 crisp instead of an
+            # upscaled 640×400. Rounded down to even: the --serve/--hls
+            # H.264 encoders (yuv420p) reject odd dimensions.
+            t = self.term
+            self.app_w = max(320, int(t.cols * t.cell_w)) & ~1
+            self.app_h = max(200, int((t.rows - 1) * t.cell_h)) & ~1
         self.wid = os.environ.get("KITTY_WINDOW_ID", str(os.getpid()))
         self.seq = 0
         # In a streamed/served session (KILIX_STREAM=1) inline the pixels (t=d)
@@ -468,7 +478,8 @@ class AppPane:
 
 def main():
     args = sys.argv[1:]
-    app_w, app_h, fps = 640, 400, 20
+    app_w = app_h = None                 # default: sized from the pane
+    fps = 20
     serve = lan = hls = False
     while args and args[0].startswith("--"):
         if args[0] == "--size" and len(args) > 1:
@@ -496,7 +507,8 @@ def main():
             sys.exit(f"kilix run: unknown option {args[0]}")
     if not args:
         sys.exit("usage: kilix run [--size WxH] [--fps N] "
-                 "[--serve|--lan] [--hls] command [args…]")
+                 "[--serve|--lan] [--hls] command [args…]\n"
+                 "  --size defaults to the pane's pixel size")
     AppPane(args, app_w, app_h, fps, serve=serve, lan=lan, hls=hls).run()
 
 
