@@ -174,13 +174,15 @@ that grab the pointer (DOSBox's autolock) see relative motion, so the app
 cursor and the pane cursor can drift; the app's screen size is fixed at
 launch — resizing the pane rescales the picture instead of the app.
 
-**Their own window.** `browse` and `run` open in a kitty **overlay window** — a
-pane with its own title bar and a clickable close (`✕`) button — so closing the
-app exits it and drops you back to the shell underneath, never taking over the
-shell session. This uses kitty remote control, which kilix's config enables
-(`allow_remote_control yes` + a per-instance `listen_on` socket); remove those
-two lines from `config/kitty.conf` and the app runs in-place in the current
-pane instead.
+**Their own window.** `browse` opens in a kitty **overlay window** — a pane
+with its own title bar and a clickable close (`✕`) button — so closing the
+app exits it and drops you back to the shell underneath. `run` opens in a
+**new tab** (titled after the app), so the launching shell stays visible in
+its own tab and closing the app's tab exits the app. Either way the shell
+session is never taken over. This uses kitty remote control, which kilix's
+config enables (`allow_remote_control yes` + a per-instance `listen_on`
+socket); remove those two lines from `config/kitty.conf` and the app runs
+in-place in the current pane instead.
 
 ## Screensaver
 
