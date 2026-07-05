@@ -215,6 +215,8 @@ fork build uses).
 kilix desktop                # opens "kilix 95" in a new kilix tab
 ```
 
+![kilix 95 — the desktop with the media player, file manager and Notepad open](config/kilix95_with_amp.png)
+
 ![kilix 95 — from a shell to the desktop to Doom, all in kilix tabs](docs/kilix95-doom-demo.gif)
 
 A full little desktop environment rendered as pixels in a kilix pane (same
