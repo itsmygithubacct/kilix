@@ -150,7 +150,8 @@ typography quantizes to the character grid.
 ## Run a GUI app in a pane (experimental)
 
 ```bash
-kilix run --size 640x400 dosbox           # any X11 app; --size = its screen
+kilix run xterm                           # app screen = the pane's pixel size
+kilix run --size 640x400 dosbox           # …or fix it (e.g. a DOS game's native res)
 ```
 
 `kilix run` puts a real X11 app **inside the pane**: the app gets its own
