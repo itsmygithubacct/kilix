@@ -41,6 +41,8 @@ except Exception:
 
 mimetypes.add_type("application/vnd.apple.mpegurl", ".m3u8")
 mimetypes.add_type("video/mp2t", ".ts")
+mimetypes.add_type("video/mp4", ".mp4")
+mimetypes.add_type("video/iso.segment", ".m4s")
 
 
 def _ct_eq(a, b):
@@ -72,7 +74,7 @@ background:#000a;padding:4px 8px;border-radius:4px}</style>
 <script src="/hlsjs/hls.min.js"></script>
 <script>
 var v=document.getElementById('v'),src='/hls/live.m3u8'+location.search;
-if(window.Hls&&Hls.isSupported()){var h=new Hls({lowLatencyMode:true});h.loadSource(src);h.attachMedia(v);}
+if(window.Hls&&Hls.isSupported()){var h=new Hls({liveSyncDurationCount:2,liveMaxLatencyDurationCount:6,maxLiveSyncPlaybackRate:1.5});h.loadSource(src);h.attachMedia(v);}
 else{v.src=src;}
 var ws=new WebSocket((location.protocol=='https:'?'wss://':'ws://')+location.host+'/control'+location.search);
 function send(o){if(ws.readyState==1)ws.send(JSON.stringify(o));}
@@ -109,6 +111,11 @@ class Desktop:
         kitty = os.environ.get("KILIX_KITTY") or "kitty"
         env = dict(os.environ, DISPLAY=f":{n}", LIBGL_ALWAYS_SOFTWARE="1")
         env.pop("KILIX_STREAM", None)     # nested kilix uses fast local t=t graphics
+        self.monitor = None
+        if self.a.audio:                  # whole-desktop audio -> AAC in the HLS
+            sink, self.monitor = self.sup.make_null_sink(f"share-{os.getpid()}")
+            if sink:
+                env["PULSE_SINK"] = sink
         argv = [kitty, "--class", "kilix",
                 "-o", f"initial_window_width={self.w}",
                 "-o", f"initial_window_height={self.h}",
@@ -155,10 +162,13 @@ class Desktop:
         t = (q.get("t") or [None])[0]
         return bool(t and _ct_eq(t, self.token))
 
-    def resp(self, status, body, ctype="text/plain", cookie=None):
+    def resp(self, status, body, ctype="text/plain", cookie=None,
+             cache=None):
         if isinstance(body, str):
             body = body.encode()
         h = [("Content-Type", ctype), ("Content-Length", str(len(body)))]
+        if cache:
+            h.append(("Cache-Control", cache))
         if cookie:
             h.append(("Set-Cookie", f"kilix_t={cookie}; Path=/; SameSite=Strict"))
         return http.HTTPStatus(status), h, body
@@ -171,8 +181,12 @@ class Desktop:
         if not os.path.isfile(full):
             return self.resp(404, b"not found")
         ct = mimetypes.guess_type(full)[0] or "application/octet-stream"
+        cache = ("no-cache" if full.endswith(".m3u8") else
+                 "max-age=60, immutable"
+                 if full.endswith((".ts", ".m4s", ".mp4")) else
+                 "max-age=86400" if full.endswith(".js") else None)
         with open(full, "rb") as f:
-            return self.resp(200, f.read(), ct, cookie)
+            return self.resp(200, f.read(), ct, cookie, cache)
 
     async def process_request(self, path, headers):
         route = urllib.parse.urlsplit(path).path
@@ -255,6 +269,8 @@ def main():
     ap.add_argument("--fps", type=int, default=15)
     ap.add_argument("--lan", action="store_true")
     ap.add_argument("--hls", action="store_true")   # accepted for symmetry (always on)
+    ap.add_argument("--audio", action="store_true")  # desktop audio -> AAC in the HLS
+    ap.add_argument("--debug", action="store_true")  # encoder metrics -> runtime dir
     ap.add_argument("--debug", action="store_true")  # ffmpeg encode fps/bitrate -> progress file
     a = ap.parse_args()
     if a.debug:
