@@ -30,6 +30,8 @@ import time
 import unicodedata
 from io import BytesIO
 
+import gfx  # kilix: direct (t=d) graphics transmission for streamed sessions
+
 try:
     from PIL import Image
 except ImportError:
@@ -347,6 +349,10 @@ class Browse:
         self.url = url
         self.wid = os.environ.get("KITTY_WINDOW_ID", str(os.getpid()))
         self.seq = 0
+        # streamed/served session -> inline pixels (t=d); see config/gfx.py
+        self.stream = os.environ.get("KILIX_STREAM") == "1"
+        self.img_id = 1 + ((int(self.wid) if self.wid.isdigit()
+                            else os.getpid()) % 4000)
         self.view_rows = self.term.rows - 1          # last row = status
         self.page_w = int(self.term.cols * self.term.cell_w)
         self.page_h = int(self.view_rows * self.term.cell_h)
@@ -438,17 +444,23 @@ class Browse:
         if img.mode != "RGB":
             img = img.convert("RGB")
         w, h = img.size
-        self.seq = (self.seq + 1) % 8
-        name = f"tty-graphics-protocol-kilix-{self.wid}-{self.seq}.rgb"
-        path = "/dev/shm/" + name
-        with open(path, "wb") as f:
-            f.write(img.tobytes())
-        payload = base64.b64encode(path.encode()).decode()
-        # c/r pin the placement to the full pane rect so half-res frames are
-        # GPU-scaled back up; at full resolution it is a 1:1 no-op.
-        self.term.write(f"\x1b[H\x1b_Ga=T,i=1,p=1,z=-1,t=t,f=24,"
-                        f"s={w},v={h},c={self.term.cols},r={self.view_rows},"
-                        f"q=2,C=1;{payload}\x1b\\")
+        if self.stream:
+            # streamed session: inline the pixels (t=d). See config/gfx.py.
+            gfx.blit_direct(self.term, img.tobytes(), w, h,
+                            self.term.cols, self.view_rows, self.img_id,
+                            1, 1, in_tmux=bool(os.environ.get("TMUX")))
+        else:
+            self.seq = (self.seq + 1) % 8
+            name = f"tty-graphics-protocol-kilix-{self.wid}-{self.seq}.rgb"
+            path = "/dev/shm/" + name
+            with open(path, "wb") as f:
+                f.write(img.tobytes())
+            payload = base64.b64encode(path.encode()).decode()
+            # c/r pin the placement to the full pane rect so half-res frames are
+            # GPU-scaled back up; at full resolution it is a 1:1 no-op.
+            self.term.write(f"\x1b[H\x1b_Ga=T,i=1,p=1,z=-1,t=t,f=24,"
+                            f"s={w},v={h},c={self.term.cols},r={self.view_rows},"
+                            f"q=2,C=1;{payload}\x1b\\")
         sx, sy = meta.get("scrollOffsetX", 0), meta.get("scrollOffsetY", 0)
         if (sx, sy) != (self.scroll_x, self.scroll_y):
             self.scroll_x, self.scroll_y = sx, sy

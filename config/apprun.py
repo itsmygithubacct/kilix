@@ -31,9 +31,12 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import browse  # reuse Term (raw mode, kitty kbd/mouse parsing), not Chrome
+import gfx      # direct (t=d) graphics transmission for streamed sessions
+import xinject  # XTest keyboard/mouse injection (shared with kilix desktop)
+import stream   # Xvnc/Xvfb + VNC/HLS/bridge supervisor for serve modes
 
 try:
-    from Xlib import X, XK, display as xdisplay
+    from Xlib import X, display as xdisplay
     from Xlib.ext import xtest
 except ImportError:
     sys.exit("kilix run: python3-xlib is required (apt install python3-xlib)")
@@ -59,19 +62,6 @@ def find_xvfb():
              "into ~/.local/share/kilix/xvfb (apt-get download xvfb && "
              "dpkg -x xvfb_*.deb ~/.local/share/kilix/xvfb)")
 
-
-# kitty functional keycodes for modifier keys -> X keysym names
-MOD_KEYSYMS = {57441: "Shift_L", 57442: "Control_L", 57443: "Alt_L",
-               57444: "Super_L", 57447: "Shift_R", 57448: "Control_R",
-               57449: "Alt_R", 57450: "Super_R"}
-
-NAME_KEYSYMS = {"Enter": "Return", "Escape": "Escape",
-                "Backspace": "BackSpace", "Tab": "Tab",
-                "ArrowUp": "Up", "ArrowDown": "Down",
-                "ArrowLeft": "Left", "ArrowRight": "Right",
-                "Home": "Home", "End": "End", "PageUp": "Prior",
-                "PageDown": "Next", "Insert": "Insert", "Delete": "Delete",
-                **{f"F{i}": f"F{i}" for i in range(1, 13)}}
 
 # legacy CSI ~ numbers for F1-F12 (browse's tables stop at PageDown)
 FKEY_TILDE = {11: "F1", 12: "F2", 13: "F3", 14: "F4", 15: "F5", 17: "F6",
@@ -123,13 +113,28 @@ class RunTerm(browse.Term):
 
 
 class AppPane:
-    def __init__(self, cmd, app_w, app_h, fps):
+    def __init__(self, cmd, app_w, app_h, fps, serve=False, lan=False, hls=False):
         self.cmd = cmd
         self.app_w, self.app_h = app_w, app_h
         self.fps = fps
+        # --serve: also expose the app to remote devices via Xvnc (view+control).
+        # --hls/--lan add the browser broadcast/bridge tiers (see stream.py).
+        self.serve, self.lan, self.hls = serve, lan, hls
+        self.session = os.environ.get("KILIX_SESSION") or f"run-{os.getpid()}"
+        self.sup = stream.StreamSupervisor(self.session)
+        self.rfb_port = None
+        self.full_pw = self.view_pw = None
+        self.http_port = self.token = self.tls_fp = None
         self.term = RunTerm()
         self.wid = os.environ.get("KITTY_WINDOW_ID", str(os.getpid()))
         self.seq = 0
+        # In a streamed/served session (KILIX_STREAM=1) inline the pixels (t=d)
+        # so a remote kitty can render them; otherwise use the fast local t=t
+        # /dev/shm path. img_id is stable per producer so two apps reaching one
+        # client terminal never collide on the graphics id.
+        self.stream = os.environ.get("KILIX_STREAM") == "1"
+        self.img_id = 1 + ((int(self.wid) if self.wid.isdigit()
+                            else os.getpid()) % 4000)
         self.frames = 0
         self.resized = False
         self.status = "starting…"
@@ -157,33 +162,70 @@ class AppPane:
 
     # ---- processes ---------------------------------------------------------
     def start(self):
-        r, w = os.pipe()
-        self.xvfb = subprocess.Popen(
-            [find_xvfb(), "-displayfd", str(w),
-             "-screen", "0", f"{self.app_w}x{self.app_h}x24",
-             "-nolisten", "tcp"],
-            pass_fds=(w,), stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL)
-        os.close(w)
-        num = b""
-        deadline = time.time() + 10
-        while not num.endswith(b"\n") and time.time() < deadline:
-            if select.select([r], [], [], deadline - time.time())[0]:
-                chunk = os.read(r, 16)
-                if not chunk:
-                    break
-                num += chunk
-        os.close(r)
-        if not num.strip():
-            raise RuntimeError("Xvfb did not start")
-        self.disp = f":{int(num)}"
+        self.start_display()
+        self.start_app_and_capture()
+
+    def start_display(self):
+        if self.serve:
+            self._start_xvnc()
+        else:
+            self._start_xvfb()
+
+    def _start_xvfb(self):
+        # Xvfb (with -auth, via the supervisor) so the private display is not
+        # reachable by other local users on its /tmp/.X11-unix socket.
+        n = self.sup.pick_display()
+        self.sup.start_xvfb(n, self.app_w, self.app_h)
+        self.disp = f":{n}"
+        self.xvfb = None                 # owned by the supervisor
+        os.environ["XAUTHORITY"] = self.sup.xauth
         log("Xvfb on", self.disp)
 
+    def _start_xvnc(self):
+        # Serve mode: run the app on Xvnc (a virtual X server that is ALSO a VNC
+        # server), so the same display the local pane captures is exposed for
+        # remote view+control. Xvnc lacks -displayfd, so reserve the number.
+        n = self.sup.pick_display()
+        # rfb port tied to the flock-reserved display (5900+n) so two kilix
+        # serves never race for it; ephemeral fallback only if it's taken.
+        self.rfb_port = 5900 + n if stream.port_free(5900 + n) else stream.free_port()
+        # VncAuth caps passwords at 8 chars; two roles -> full + view-only.
+        self.full_pw = self.sup.mint_token()[:8]
+        self.view_pw = self.sup.mint_token()[:8]
+        pwfile = self.sup.make_vncpw(self.full_pw, self.view_pw)
+        self.sup.start_xvnc(n, self.app_w, self.app_h, self.rfb_port, pwfile,
+                            desktop=f"kilix-run {os.path.basename(self.cmd[0])}")
+        self.disp = f":{n}"
+        self.xvfb = None                 # Xvnc is owned by the supervisor
+        os.environ["XAUTHORITY"] = self.sup.xauth
+        log("Xvnc on", self.disp, "rfb", self.rfb_port)
+        if self.lan or self.hls:
+            self._start_web_tier(n)
+
+    def _start_web_tier(self, n):
+        """Browser tier: a WS<->RFB bridge (noVNC) and/or an HLS broadcast,
+        loopback by default, or LAN over TLS+token with --lan."""
+        self.http_port = stream.free_port()
+        self.token = self.sup.mint_token()
+        hlsdir = None
+        if self.hls:
+            hlsdir = os.path.join(self.sup.runtime_dir, "hls")
+            self.sup.start_hls(n, self.app_w, self.app_h, hlsdir, fps=self.fps)
+        tls = self.sup.tls_cert() if self.lan else None
+        self.tls_fp = tls[2] if tls else None
+        self.sup.start_bridge(rfb_port=self.rfb_port, http_port=self.http_port,
+                              token=self.token, hlsdir=hlsdir, tls=tls,
+                              lan=self.lan,
+                              what=f"run {os.path.basename(self.cmd[0])}")
+        log("bridge on http", self.http_port, "lan" if self.lan else "loopback")
+
+    def start_app_and_capture(self):
         env = dict(os.environ, DISPLAY=self.disp)
         self.app = subprocess.Popen(self.cmd, env=env,
                                     stdout=subprocess.DEVNULL,
                                     stderr=subprocess.DEVNULL)
         self.xd = xdisplay.Display(self.disp)
+        self.inj = xinject.Injector(self.xd, self.app_w, self.app_h)
         self.focus_app_window()
 
         self.ff = subprocess.Popen(
@@ -194,6 +236,31 @@ class AppPane:
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         os.set_blocking(self.ff.stdout.fileno(), False)
         self.status = f"{os.path.basename(self.cmd[0])} on {self.disp}"
+
+    def announce(self):
+        """Print connect instructions to the LOCAL terminal (before the app
+        takes the alt screen) and to a 0600 file. Passwords appear here only —
+        never in the pane/status, and the VNC stream is the app's display, not
+        this pane, so viewers never see them."""
+        lan_host = stream.lan_ip() if self.lan else None
+        self.sup.print_connect(what=f"app '{os.path.basename(self.cmd[0])}'",
+                               rfb_port=self.rfb_port,
+                               full_pw=self.full_pw, view_pw=self.view_pw,
+                               http_port=self.http_port, token=self.token,
+                               lan_host=lan_host, tls_fp=self.tls_fp)
+        try:
+            _cf = os.open(os.path.join(self.sup.runtime_dir, "connect.txt"),
+                          os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(_cf, "w") as f:
+                f.write(f"kilix run --serve {' '.join(self.cmd)}\n"
+                        f"VNC        127.0.0.1:{self.rfb_port}\n"
+                        f"control pw {self.full_pw}\n"
+                        f"view-only  {self.view_pw}\n")
+                if self.http_port:
+                    scheme = "https" if self.lan else "http"
+                    f.write(f"browser    {scheme}://127.0.0.1:{self.http_port}/?t={self.token}\n")
+        except OSError:
+            pass
 
     def focus_app_window(self):
         """No WM on the Xvfb: size the app's window to fill the virtual
@@ -245,26 +312,35 @@ class AppPane:
             self.blit(frame)
 
     def blit(self, rgb):
-        import base64
-        self.seq = (self.seq + 1) % 8
-        name = f"tty-graphics-protocol-kilix-run-{self.wid}-{self.seq}.rgb"
-        path = "/dev/shm/" + name
-        with open(path, "wb") as f:
-            f.write(rgb)
-        payload = base64.b64encode(path.encode()).decode()
-        self.term.write(
-            f"\x1b[{self.off_row + 1};{self.off_col + 1}H"
-            f"\x1b_Ga=T,i=1,p=1,z=-1,t=t,f=24,"
-            f"s={self.app_w},v={self.app_h},"
-            f"c={self.img_cols},r={self.img_rows},q=2,C=1;{payload}\x1b\\")
+        if self.stream:
+            # streamed session: inline the pixels (t=d) — the /dev/shm path of
+            # the local branch below is meaningless to a kitty on another box.
+            gfx.blit_direct(self.term, rgb, self.app_w, self.app_h,
+                            self.img_cols, self.img_rows, self.img_id,
+                            self.off_row + 1, self.off_col + 1,
+                            in_tmux=bool(os.environ.get("TMUX")))
+        else:
+            import base64
+            self.seq = (self.seq + 1) % 8
+            name = f"tty-graphics-protocol-kilix-run-{self.wid}-{self.seq}.rgb"
+            path = "/dev/shm/" + name
+            with open(path, "wb") as f:
+                f.write(rgb)
+            payload = base64.b64encode(path.encode()).decode()
+            self.term.write(
+                f"\x1b[{self.off_row + 1};{self.off_col + 1}H"
+                f"\x1b_Ga=T,i=1,p=1,z=-1,t=t,f=24,"
+                f"s={self.app_w},v={self.app_h},"
+                f"c={self.img_cols},r={self.img_rows},q=2,C=1;{payload}\x1b\\")
         self._blit_t = time.time()
         self.frames += 1
         if self.frames == 1 or self.frames % 300 == 0:
             log(f"frames={self.frames}")
 
     def render_status(self):
-        body = (f" kilix run — {' '.join(self.cmd)[:40]} · {self.disp} "
-                f"{self.app_w}x{self.app_h} · {self.frames} frames · "
+        serve = f" · VNC :{self.rfb_port}" if self.serve else ""
+        body = (f" kilix run — {' '.join(self.cmd)[:36]} · {self.disp} "
+                f"{self.app_w}x{self.app_h} · {self.frames}f{serve} · "
                 f"Ctrl+Q quit")
         body = body[:self.term.cols].ljust(self.term.cols)
         s = f"\x1b[{self.term.rows};1H\x1b[0;7m{body}\x1b[0m"
@@ -272,20 +348,7 @@ class AppPane:
             self.term.write(s)
             self.prev_status = s
 
-    # ---- input -------------------------------------------------------------
-    def keysym_for(self, key):
-        if len(key) == 1:
-            o = ord(key)
-            if o in MOD_KEYSYMS:
-                return XK.string_to_keysym(MOD_KEYSYMS[o])
-            if 57344 <= o <= 63743:      # other functional keys: unmapped
-                return 0
-            if o < 256:                  # latin-1 keysyms == codepoints
-                return o
-            return 0
-        name = NAME_KEYSYMS.get(key)
-        return XK.string_to_keysym(name) if name else 0
-
+    # ---- input (injected via xinject.Injector into the private display) ----
     def on_key(self, ev):
         mods = max(0, ev["mods"] - 1)
         etype = ev.get("event", 1)
@@ -293,43 +356,13 @@ class AppPane:
             raise KeyboardInterrupt
         if etype == 2:
             return                       # Xvfb autorepeats held keys itself
-        keysym = self.keysym_for(ev["key"])
-        if not keysym:
-            return
-        keycode = self.xd.keysym_to_keycode(keysym)
-        if not keycode:
-            return
-        xtest.fake_input(self.xd, X.KeyPress if etype == 1 else X.KeyRelease,
-                         keycode)
-        self.xd.flush()
+        self.inj.key(ev["key"], etype)
 
     def on_paste(self, text):
-        for ch in text:
-            keysym = self.keysym_for(ch if ch != "\n" else "Enter")
-            keycode = self.xd.keysym_to_keycode(keysym) if keysym else 0
-            if keycode:
-                xtest.fake_input(self.xd, X.KeyPress, keycode)
-                xtest.fake_input(self.xd, X.KeyRelease, keycode)
-        self.xd.flush()
+        self.inj.paste(text)
 
     def on_mouse(self, ev):
-        bx, by, bw, bh = self.box
-        ax = min(self.app_w - 1, max(0, round((ev["x"] - bx) * self.app_w / bw)))
-        ay = min(self.app_h - 1, max(0, round((ev["y"] - by) * self.app_h / bh)))
-        b = ev["b"]
-        if b & 64:                       # wheel -> X buttons 4/5
-            btn = 4 if (b & 3) == 0 else 5
-            xtest.fake_input(self.xd, X.MotionNotify, x=ax, y=ay)
-            xtest.fake_input(self.xd, X.ButtonPress, btn)
-            xtest.fake_input(self.xd, X.ButtonRelease, btn)
-        elif b & 32:                     # motion (with or without drag)
-            xtest.fake_input(self.xd, X.MotionNotify, x=ax, y=ay)
-        else:
-            btn = (b & 3) + 1            # 0/1/2 -> left/middle/right
-            xtest.fake_input(self.xd, X.MotionNotify, x=ax, y=ay)
-            xtest.fake_input(self.xd, X.ButtonPress if ev["press"]
-                             else X.ButtonRelease, btn)
-        self.xd.flush()
+        self.inj.mouse(ev, self.box)
 
     # ---- lifecycle ---------------------------------------------------------
     def do_resize(self):
@@ -344,11 +377,28 @@ class AppPane:
 
     def run(self):
         signal.signal(signal.SIGWINCH, lambda *a: setattr(self, "resized", True))
+        for _s in (signal.SIGTERM, signal.SIGHUP):   # -> finally + sup.cleanup()
+            signal.signal(_s, lambda *a: sys.exit(0))
         os.set_blocking(self.term.fd, False)
         err = None
+        if self.serve:
+            # Bring Xvnc up first so connect details print to the LOCAL terminal
+            # before the app takes the alt screen (and never into the captured
+            # stream — passwords must not reach remote viewers).
+            try:
+                self.start_display()
+                self.announce()
+            except Exception as e:
+                if self.sup is not None:
+                    self.sup.cleanup()
+                print(f"kilix run: {e}", file=sys.stderr)
+                sys.exit(1)
         self.term.enter()
         try:
-            self.start()
+            if self.serve:
+                self.start_app_and_capture()   # display already up
+            else:
+                self.start()
             self._loop_start = time.time()
             while True:
                 r, _, _ = select.select(
@@ -391,6 +441,8 @@ class AppPane:
             err = f"{type(e).__name__}: {e}"
         finally:
             self.term.restore()
+            if getattr(self, "inj", None) is not None:
+                self.inj.release_all()   # no keys/buttons left stuck down
             for p in (self.app, self.ff, self.xvfb):
                 if p is not None:
                     try:
@@ -407,6 +459,8 @@ class AppPane:
                               f"{self.wid}-{i}.rgb")
                 except OSError:
                     pass
+            if self.sup is not None:
+                self.sup.cleanup()
         if err:
             print(f"kilix run: {err}", file=sys.stderr)
             sys.exit(1)
@@ -415,6 +469,7 @@ class AppPane:
 def main():
     args = sys.argv[1:]
     app_w, app_h, fps = 640, 400, 20
+    serve = lan = hls = False
     while args and args[0].startswith("--"):
         if args[0] == "--size" and len(args) > 1:
             app_w, app_h = (int(v) for v in args[1].lower().split("x"))
@@ -428,11 +483,21 @@ def main():
         elif args[0].startswith("--fps="):
             fps = int(args[0][6:])
             args = args[1:]
+        elif args[0] == "--serve":
+            serve = True
+            args = args[1:]
+        elif args[0] == "--lan":            # implies serve + LAN bridge (TLS+token)
+            serve = lan = True
+            args = args[1:]
+        elif args[0] == "--hls":            # broadcast tier (many view-only viewers)
+            hls = True
+            args = args[1:]
         else:
             sys.exit(f"kilix run: unknown option {args[0]}")
     if not args:
-        sys.exit("usage: kilix run [--size WxH] [--fps N] command [args…]")
-    AppPane(args, app_w, app_h, fps).run()
+        sys.exit("usage: kilix run [--size WxH] [--fps N] "
+                 "[--serve|--lan] [--hls] command [args…]")
+    AppPane(args, app_w, app_h, fps, serve=serve, lan=lan, hls=hls).run()
 
 
 if __name__ == "__main__":

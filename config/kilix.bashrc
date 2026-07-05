@@ -28,3 +28,19 @@ if [[ $- == *i* ]]; then
         . "$HOME/.config/synth-shell/synth-shell-prompt.sh"
     fi
 fi
+
+# 4. Streamed session (`kilix serve`, KILIX_STREAM=1): inline images must use
+#    direct transmission or they won't survive a remote/tmux attach. Force icat
+#    to stream + unicode-placeholders so images render on every attached device.
+#    (No effect on a normal local kilix shell, where KILIX_STREAM is unset.)
+if [ "${KILIX_STREAM:-}" = 1 ]; then
+    icat() { command kitten icat --transfer-mode=stream --unicode-placeholder "$@"; }
+    kitten() {
+        if [ "${1:-}" = icat ]; then
+            shift
+            command kitten icat --transfer-mode=stream --unicode-placeholder "$@"
+        else
+            command kitten "$@"
+        fi
+    }
+fi

@@ -96,7 +96,8 @@ if [ "${1:-}" = "browse" ]; then
     # until it is closed). The overlay re-enters this launcher with
     # KILIX_IN_OVERLAY=1, taking the in-place branch below.
     exec "$KITTEN" @ launch --type=overlay --cwd=current \
-      --env KILIX_IN_OVERLAY=1 -- "$_self" browse "$@"
+      --env KILIX_IN_OVERLAY=1 --env "KILIX_STREAM=${KILIX_STREAM:-}" \
+      -- "$_self" browse "$@"
   fi
   # In-place fallback: inside the overlay, or a terminal without remote
   # control. Run WRAPPED, not exec'd: if the app dies by signal (SIGKILL,
@@ -128,7 +129,8 @@ if [ "${1:-}" = "run" ]; then
   if [ -z "${KILIX_IN_OVERLAY:-}" ] && [ -n "${KITTY_WINDOW_ID:-}" ] \
        && [ -n "${KITTY_LISTEN_ON:-}" ] && [ -x "$KITTEN" ]; then
     exec "$KITTEN" @ launch --type=overlay --cwd=current \
-      --env KILIX_IN_OVERLAY=1 -- "$_self" run "$@"
+      --env KILIX_IN_OVERLAY=1 --env "KILIX_STREAM=${KILIX_STREAM:-}" \
+      -- "$_self" run "$@"
   fi
   rc=0
   python3 "$KILIX_HOME/config/apprun.py" "$@" || rc=$?
@@ -140,6 +142,16 @@ if [ "${1:-}" = "run" ]; then
     stty sane 2>/dev/null || true
   fi
   exit "$rc"
+fi
+
+# desktop: run the WHOLE kilix on a headless display and stream it to multiple
+# devices (Phase 3). Pixels go out as HLS (any browser/player, many viewers);
+# a remote viewer's keyboard/mouse are injected with XTest. Runs in the current
+# pane, printing connect instructions; Ctrl+C stops it. Loopback by default;
+# `--lan` serves the LAN over TLS + token. `--size WxH` sets the virtual screen.
+if [ "${1:-}" = "desktop" ]; then
+  shift
+  KILIX_KITTY="$BIN" exec python3 "$KILIX_HOME/config/desktop.py" "$@"
 fi
 
 # screensaver: a terminal screensaver in this pane (default: matrix). The
@@ -171,6 +183,67 @@ if [ "${1:-}" = "screensaver" ]; then
       echo "kilix: could not build screensaver '$_ss' (needs a C compiler)" >&2; exit 1; }
   fi
   exec "$_ssbin" "$@"
+fi
+
+# serve / attach / view — session persistence + multi-device attach (Phase 1
+# "text plane"). A PRIVATE tmux server on a socket under the kilix runtime dir
+# (never your ~/.tmux.conf) keeps a kilix session alive across disconnects and
+# lets several devices attach at once: read-write (attach) or read-only (view).
+# KILIX_STREAM=1 is set in the session so `kilix browse/run/icat` use inline
+# (t=d) graphics that survive a remote attach. Reach it from another device over
+# SSH, e.g.  ssh -t user@host ~/kilix/kilix attach
+case "${1:-}" in
+  serve|attach|view)
+    command -v tmux >/dev/null 2>&1 || {
+      echo "kilix $1: needs tmux (session multiplexing) — not found" >&2; exit 1; }
+    _rundir="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/kilix"
+    mkdir -p "$_rundir" && chmod 700 "$_rundir" 2>/dev/null || true
+    _sock="$_rundir/tmux.sock"
+    _tconf="$KILIX_HOME/config/tmux.conf"
+    _sub="$1"; shift
+    case "${1:-}" in
+      ls|list|status)
+        tmux -S "$_sock" list-sessions 2>/dev/null || echo "kilix: no sessions running"
+        exit 0 ;;
+      kill|clean)
+        shift
+        if [ -n "${1:-}" ]; then exec tmux -S "$_sock" kill-session -t "kilix-$1"; fi
+        # no name: stop everything — text sessions AND any pixel-plane strays
+        # (Xvnc/Xvfb/ffmpeg/bridge) left by a SIGKILLed serve.
+        python3 -c "import sys;sys.path.insert(0,'$KILIX_HOME/config');import stream;print('kilix: reaped',stream.kill_all(),'stream processes')" 2>/dev/null || true
+        tmux -S "$_sock" kill-server 2>/dev/null && echo "kilix: stopped tmux sessions" || true
+        exit 0 ;;
+    esac
+    _name="${1:-main}"; _session="kilix-$_name"
+    case "$_sub" in
+      serve)
+        _ushell="${SHELL:-$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7)}"
+        _ushell="${_ushell:-/bin/bash}"
+        if [ -f "$KILIX_HOME/config/kilix.bashrc" ] && [ "${_ushell##*/}" = bash ]; then
+          _shcmd="$_ushell --rcfile $KILIX_HOME/config/kilix.bashrc"
+        else
+          _shcmd="$_ushell"
+        fi
+        echo "kilix serve: session '$_session' (socket $_sock)"
+        echo "  attach (read-write):  $_self attach $_name"
+        echo "  view   (read-only) :  $_self view $_name"
+        echo "  another device     :  ssh -t $(id -un)@$(hostname 2>/dev/null || echo HOST) $_self attach $_name"
+        exec tmux -S "$_sock" -f "$_tconf" new-session -A -s "$_session" \
+          -e KILIX_STREAM=1 -e "KILIX_HOME=$KILIX_HOME" \
+          -e "KITTY_CONFIG_DIRECTORY=$KITTY_CONFIG_DIRECTORY" "$_shcmd" ;;
+      attach) exec tmux -S "$_sock" attach-session -t "$_session" ;;
+      view)   exec tmux -S "$_sock" attach-session -r -t "$_session" ;;
+    esac ;;
+esac
+
+# icat inside a streamed session: force inline (stream) transmission + unicode
+# placeholders so images survive a remote/tmux attach; locally, plain icat.
+if [ "${1:-}" = icat ] && [ -x "$KITTEN" ]; then
+  shift
+  if [ "${KILIX_STREAM:-}" = 1 ]; then
+    exec "$KITTEN" icat --transfer-mode=stream --unicode-placeholder "$@"
+  fi
+  exec "$KITTEN" icat "$@"
 fi
 
 # Kittens (kilix icat foo.png, kilix diff a b, …) run via the sibling kitten
