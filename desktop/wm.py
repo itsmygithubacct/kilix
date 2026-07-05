@@ -17,13 +17,22 @@ class Window:
     _seq = 0                          # stable launch order for the taskbar
 
     def __init__(self, desk, title, w, h, x=None, y=None, icon="exe",
-                 resizable=True, modal=False, on_close=None):
+                 resizable=True, modal=False, on_close=None, chromeless=False):
         Window._seq += 1
         self.seq = Window._seq
         self.desk = desk
         self.title = title
         self.icon = icon
-        self.w, self.h = max(w, 120), max(h, T.TITLE_H + 2 * T.BORDER + 10)
+        # chromeless windows (e.g. the skinned media player) have no frame or
+        # title bar — the whole surface is client area, drawn edge to edge and
+        # composited with a transparency mask so the app's skin sits directly
+        # on the desktop, Winamp-style.
+        self.chromeless = chromeless
+        if chromeless:
+            self.w, self.h = max(w, 1), max(h, 1)
+            resizable = False
+        else:
+            self.w, self.h = max(w, 120), max(h, T.TITLE_H + 2 * T.BORDER + 10)
         sw, sh = desk.size()
         n = len(desk.wm.windows)
         self.x = x if x is not None else max(0, (sw - self.w) // 2 + n * 22)
@@ -40,16 +49,26 @@ class Window:
         self._restore = None
         self.min_w, self.min_h = 140, 80
         self.surface = None
+        self.compose_mask = None      # optional L-image: per-pixel opacity
         self.dirty = True
         self._capture = None          # widget holding the mouse until release
 
     # ── geometry ────────────────────────────────────────────────────────────
     def client_size(self):
+        if self.chromeless:
+            return self.w, self.h
         return (self.w - 2 * T.BORDER,
                 self.h - 2 * T.BORDER - T.TITLE_H)
 
     def client_origin(self):
+        if self.chromeless:
+            return self.x, self.y
         return self.x + T.BORDER, self.y + T.BORDER + T.TITLE_H
+
+    def hit_test(self, gx, gy):
+        """WM hit test — overridable so a chromeless window can pass clicks
+        through its transparent pixels to whatever is behind it."""
+        return self.hit(gx, gy)
 
     def hit(self, gx, gy):
         return (self.x <= gx < self.x + self.w
@@ -111,6 +130,14 @@ class Window:
             return self.surface
         img = self.surface
         d = W.drawer(img)
+        if self.chromeless:
+            # no frame/title bar: widgets own the whole surface
+            self.draw_client(d, img)
+            for wdg in self.widgets:
+                if wdg.visible:
+                    wdg.draw(d, img)
+            self.dirty = False
+            return img
         d.rectangle([0, 0, self.w - 1, self.h - 1], fill=T.FACE)
         T.frame(d, 0, 0, self.w - 1, self.h - 1)
         active = self.desk.wm.active is self
@@ -200,6 +227,25 @@ class Window:
         lev = gev.at(self.x, self.y)
         lx, ly = lev.x, lev.y
         wm = self.desk.wm
+        if self.chromeless:
+            # no chrome: everything goes to the client widgets (the app's own
+            # skin draws its titlebar / buttons and handles dragging)
+            cev = lev
+            target = self._capture
+            if target is None:
+                for wdg in reversed(self.widgets):
+                    if wdg.visible and wdg.enabled and wdg.hit(cev.x, cev.y):
+                        target = wdg
+                        break
+            if gev.press and target is not None:
+                self._capture = target
+                if target.focusable:
+                    self.set_focus(target)
+            if not gev.press and not gev.move and not gev.wheel:
+                self._capture = None
+            if target is not None:
+                target.on_mouse(cev)
+            return True
         if gev.press:
             edge = self._edge_at(lx, ly)
             in_title = (T.BORDER <= ly < T.BORDER + T.TITLE_H - 2
@@ -381,7 +427,7 @@ class WM:
     # ── routing ─────────────────────────────────────────────────────────────
     def window_at(self, gx, gy):
         for win in reversed(self.windows):
-            if not win.minimized and win.hit(gx, gy):
+            if not win.minimized and win.hit_test(gx, gy):
                 return win
         return None
 

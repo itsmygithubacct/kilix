@@ -11,8 +11,6 @@ import os
 import wm
 from . import xpane
 
-APP_SIZE = (640, 480)
-
 
 def open_amp(desk, path=None):
     import games
@@ -44,7 +42,10 @@ def _spawn(desk, exe, path=None):
     cmd = [exe] + ([os.path.abspath(os.path.expanduser(path))] if path
                    else [])
     desk.wm.add(xpane.XPane(
-        desk, cmd, "Media Player", icon="amp", app_size=APP_SIZE,
+        desk, cmd, "Media Player", icon="amp",
+        # no app_size: the region fills the desktop working area, so the
+        # skin can be dragged anywhere like Winamp and its stacked windows
+        # (EQ / playlist) are never clipped
         # private, persistent config: window layout survives sessions and
         # never collides with a user-level kilix-amp install
         env={"XDG_CONFIG_HOME": os.path.join(d, ".xpane-config")},

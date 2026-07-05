@@ -130,7 +130,7 @@ class Desk:
             if win.minimized:
                 continue
             surf = win.render()
-            fb.paste(surf, (win.x, win.y))
+            fb.paste(surf, (win.x, win.y), win.compose_mask)
         self.taskbar.draw(fb, d)
         self.menus.draw(fb, d)
         if self.draw_cursor:
