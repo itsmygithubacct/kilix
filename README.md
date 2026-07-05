@@ -210,6 +210,8 @@ fork build uses).
 kilix desktop                # opens "kilix 95" in a new kilix tab
 ```
 
+![kilix 95 — from a shell to the desktop to Doom, all in kilix tabs](docs/kilix95-doom-demo.gif)
+
 A full little desktop environment rendered as pixels in a kilix pane (same
 graphics path as `browse`/`run`): teal wallpaper, desktop icons, overlapping
 draggable/resizable windows, a start bar with a Start menu and clock, and a
