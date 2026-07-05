@@ -235,9 +235,11 @@ right-click menu everywhere. Built in:
   dosbox-staging build if no dosbox is installed (fullscreen, fire on Space,
   sound on); **Bashed Earth** clones + builds
   [itsmygithubacct/Bashed-Earth](https://github.com/itsmygithubacct/Bashed-Earth).
-- **Media Player** — Start ▸ Programs ▸ Media Player opens *inside the desktop*
-  (not a tab): an SDL2 app on a private display, streamed into a kilix 95
-  window. First run clones + builds
+- **Media Player** — Start ▸ Programs ▸ Media Player. The skin sits *directly
+  on the desktop* with no kilix window frame (Winamp-on-Win95 style): an SDL2
+  app on a private display whose background is chroma-keyed away, so only the
+  skin composites onto the desktop — drag it by its own titlebar; clicks on the
+  gaps fall through to the desktop icons. First run clones + builds
   [itsmygithubacct/kilix-amp](https://github.com/itsmygithubacct/kilix-amp),
   a Winamp 2.x clone, into `~/.local/share/kilix/apps`.
 - **Create Launcher…** (Start menu or right-click the desktop) writes
