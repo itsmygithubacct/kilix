@@ -71,6 +71,9 @@ class XPane(wm.Window):
         XPane._seq2 += 1
         self.app_w, self.app_h = aw, ah
         self.frame_img = None
+        # fully transparent until the first real frame, so the magenta chroma
+        # fill never flashes onto the desktop during startup
+        self.compose_mask = Image.new("L", (aw, ah), 0)
         self.fsize = aw * ah * 3
         self.buf = bytearray()
         self._dead = False
@@ -100,7 +103,6 @@ class XPane(wm.Window):
         self.add(_XSurface(self, aw, ah))
         self.set_focus(self.widgets[-1])
         self._born = time.time()
-        self._placed = False
         desk.add_fd(self.ff.stdout.fileno(), self._pump)
         desk.tick_hooks.append(self._tick)
 
@@ -159,34 +161,29 @@ class XPane(wm.Window):
         if self.app.poll() is not None:           # app exited: window follows
             self.close()
             return
-        # give the app a moment to map, then center its window cluster once
-        if not self._placed and now - self._born > 0.8:
-            self._place_windows()
+        self._keep_on_screen()
 
-    def _place_windows(self):
-        """Move the app's mapped windows into a tidy cluster near the top
-        center of the desktop (SDL apps restore positions from a bigger
-        screen and can land partly off the private root)."""
+    def _keep_on_screen(self):
+        """Keep every one of the app's windows fully within the visible
+        region. kilix-amp is a multi-window docking app built for a real
+        screen — its playlist/EQ windows (mapped only when toggled on, after
+        startup) can dock or restore to positions off our region. Pull any
+        out-of-bounds window just inside; windows already in view are left
+        alone, so this never fights a drag happening on-screen."""
         try:
-            wins = []
             for c in self.xd.screen().root.query_tree().children:
-                if c.get_attributes().map_state == X.IsViewable:
-                    g = c.get_geometry()
-                    if g.width > 8 and g.height > 8:
-                        wins.append((c, g))
-            if not wins:
-                return
-            wins.sort(key=lambda cg: (cg[1].y, cg[1].x))
-            widest = max(g.width for _c, g in wins)
-            x0 = max(0, (self.app_w - widest) // 2)
-            y = 24
-            for c, g in wins:
-                c.configure(x=x0, y=y, stack_mode=X.Above)
-                y += g.height
+                if c.get_attributes().map_state != X.IsViewable:
+                    continue
+                g = c.get_geometry()
+                if g.width <= 8 or g.height <= 8:
+                    continue
+                nx = min(max(0, g.x), max(0, self.app_w - g.width))
+                ny = min(max(0, g.y), max(0, self.app_h - g.height))
+                if (nx, ny) != (g.x, g.y):
+                    c.configure(x=nx, y=ny)
             self.xd.sync()
-            self._placed = True
         except Exception:
-            self._placed = True
+            pass
 
     # ── input out ───────────────────────────────────────────────────────────
     def inject_mouse(self, ev):
@@ -203,9 +200,23 @@ class XPane(wm.Window):
             pass
 
     def inject_key(self, ev):
-        try:                          # desk key events are press-only: tap
+        # desk key events are press-only; tap the key, but hold any modifiers
+        # around it so shortcuts reach the app (kilix-amp toggles EQ/playlist/
+        # editor with Alt+G/E/D; games use Ctrl/Shift combos)
+        try:
+            mods = []
+            if getattr(ev, "ctrl", False):
+                mods.append("Control_L")
+            if getattr(ev, "alt", False):
+                mods.append("Alt_L")
+            if getattr(ev, "shift", False):
+                mods.append("Shift_L")
+            for m in mods:
+                self.inj.key_named(m, 1)
             self.inj.key(ev.key, 1)
             self.inj.key(ev.key, 3)
+            for m in reversed(mods):
+                self.inj.key_named(m, 3)
         except Exception:
             pass
 
