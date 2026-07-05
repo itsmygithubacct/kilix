@@ -91,7 +91,8 @@ class XPane(wm.Window):
         self.inj = xinject.Injector(self.xd, aw, ah)
         self.ff = self.sup.spawn(
             "cap", ["ffmpeg", "-loglevel", "quiet",
-                    "-f", "x11grab", "-framerate", str(fps),
+                    "-f", "x11grab", "-draw_mouse", "0",  # desktop draws the
+                    "-framerate", str(fps),               # only pointer
                     "-video_size", f"{aw}x{ah}", "-i", f":{n}",
                     "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
