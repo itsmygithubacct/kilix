@@ -79,7 +79,29 @@ def find_xvfb():
 
 
 def find_xvnc():
-    return shutil.which("Xvnc")
+    # TightVNC ships `Xvnc`; TigerVNC (Debian's tigervnc-standalone-server) ships
+    # `Xtigervnc` (and only sets up the `Xvnc` alternative on a system install).
+    return shutil.which("Xvnc") or shutil.which("Xtigervnc")
+
+
+def _xvnc_is_tiger(xvnc):
+    # Binary name is the reliable signal (Debian ships TigerVNC as `Xtigervnc`);
+    # fall back to the -version banner for an `Xvnc`-named TigerVNC.
+    if "tiger" in os.path.basename(xvnc or "").lower():
+        return True
+    try:
+        r = subprocess.run([xvnc, "-version"], capture_output=True, text=True, timeout=5)
+        return "tigervnc" in (r.stdout + r.stderr).lower()
+    except Exception:
+        return False
+
+
+def _fontpath_args():
+    # When fonts are unpacked into a no-sudo prefix (install-stream-deps.sh sets
+    # KILIX_XFONTS) the X server's built-in default font path misses them, so it
+    # can't open 'fixed' and refuses to start. Point it at the unpacked dirs.
+    fp = os.environ.get("KILIX_XFONTS")
+    return ["-fp", fp] if fp else []
 
 
 def free_port():
@@ -223,7 +245,11 @@ class StreamSupervisor:
         auth = self.make_xauth(n)
         argv = [xvnc, f":{n}", "-geometry", f"{w}x{h}", "-depth", "24",
                 "-rfbport", str(port), "-rfbauth", pwfile, "-auth", auth,
-                "-localhost", "-desktop", desktop, "-nolisten", "tcp"]
+                "-localhost", "-desktop", desktop, "-nolisten", "tcp"] + _fontpath_args()
+        if _xvnc_is_tiger(xvnc):
+            # TigerVNC must be told to actually offer VncAuth (its default set
+            # differs); TightVNC has no -SecurityTypes and would reject it.
+            argv += ["-SecurityTypes", "VncAuth"]
         logf = open(os.path.join(self.runtime_dir, f"xvnc-{n}.log"), "wb")
         p = self.spawn(f"xvnc-{n}", argv, stdout=logf, stderr=logf)
         if not self._wait_x(n):
@@ -236,7 +262,7 @@ class StreamSupervisor:
             raise RuntimeError("kilix: Xvfb not found")
         auth = self.make_xauth(n)
         argv = [xvfb, f":{n}", "-screen", "0", f"{w}x{h}x24",
-                "-nolisten", "tcp", "-auth", auth]
+                "-nolisten", "tcp", "-auth", auth] + _fontpath_args()
         logf = open(os.path.join(self.runtime_dir, f"xvfb-{n}.log"), "wb")
         p = self.spawn(f"xvfb-{n}", argv, stdout=logf, stderr=logf)
         if not self._wait_x(n):
@@ -258,19 +284,27 @@ class StreamSupervisor:
         return self.spawn(f"hls-{n}", argv, stdout=logf, stderr=logf)
 
     # ---- secrets ------------------------------------------------------------
+    # Classic vncpasswd obfuscation key: the stored VNC password is the 8-byte
+    # password DES-encrypted with this fixed key (d3des bit-reverses key bytes).
+    _VNC_FIXED = bytes([23, 82, 107, 6, 35, 78, 88, 7])
+
+    def _vnc_obfuscate(self, pw):
+        p8 = pw.encode()[:8].ljust(8, b"\x00")
+        key = bytes(int(f"{b:08b}"[::-1], 2) for b in self._VNC_FIXED).hex()
+        for extra in (["-provider", "legacy", "-provider", "default"], []):
+            r = subprocess.run(["openssl", "enc", "-des-ecb", "-e", "-K", key,
+                                "-nopad"] + extra, input=p8, capture_output=True)
+            if len(r.stdout) >= 8:
+                return r.stdout[:8]
+        raise RuntimeError("kilix: openssl des-ecb unavailable for VNC password")
+
     def make_vncpw(self, full, view):
-        """Two-entry VncAuth file (0600): entry 1 = full control, entry 2 =
-        view-only. TightVNC's Xvnc reads both; a client authenticating with the
-        `view` password gets a server-enforced view-only session."""
-        if not shutil.which("vncpasswd"):
-            raise RuntimeError("kilix: vncpasswd not found")
-
-        def blob(pw):
-            r = subprocess.run(["vncpasswd", "-f"], input=pw.encode(),
-                               capture_output=True)
-            return r.stdout[:8].ljust(8, b"\x00")
-
-        data = blob(full) + blob(view)
+        """Two-entry VNC passwd file (0600): entry 1 = full control, entry 2 =
+        view-only. Generated with openssl — byte-identical to `vncpasswd` — so no
+        vncpasswd binary is needed; works on TightVNC and TigerVNC hosts alike.
+        A client authenticating with the `view` password gets a server-enforced
+        view-only session."""
+        data = self._vnc_obfuscate(full) + self._vnc_obfuscate(view)
         path = os.path.join(self.runtime_dir, "vncpw")
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "wb") as f:

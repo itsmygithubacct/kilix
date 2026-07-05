@@ -23,7 +23,19 @@ import os
 import ssl
 import urllib.parse
 
+import warnings
 import websockets
+
+# websockets compat: use the legacy asyncio server API explicitly. It exists on
+# both 10.x (where it is the default `websockets.serve`) and 15.x (where the
+# default switched to a new, incompatible API but legacy is still shipped). This
+# keeps the ws_handler(ws, path) / process_request(path, headers) shape working
+# on either version. Silence the 14+ deprecation notice.
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+try:
+    from websockets.legacy.server import serve as ws_serve
+except Exception:                          # very old websockets
+    from websockets.server import serve as ws_serve
 
 mimetypes.add_type("application/vnd.apple.mpegurl", ".m3u8")
 mimetypes.add_type("video/mp2t", ".ts")
@@ -186,10 +198,10 @@ async def _main(a):
     if a.tls_cert and a.tls_key:
         ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ssl_ctx.load_cert_chain(a.tls_cert, a.tls_key)
-    async with websockets.serve(b.ws_handler, a.host, a.http_port,
-                                process_request=b.process_request,
-                                subprotocols=["binary"], ssl=ssl_ctx,
-                                max_size=None, ping_interval=None):
+    async with ws_serve(b.ws_handler, a.host, a.http_port,
+                        process_request=b.process_request,
+                        subprotocols=["binary"], ssl=ssl_ctx,
+                        max_size=None, ping_interval=None):
         await asyncio.Future()      # run forever
 
 
