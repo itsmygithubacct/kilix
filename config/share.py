@@ -1,4 +1,4 @@
-"""kilix desktop — run the WHOLE kilix on a headless Xvfb and stream it to
+"""kilix share — run the WHOLE kilix on a headless Xvfb and stream it to
 multiple devices (Phase 3, the faithful text+graphics+video path).
 
 kitty cannot start on TightVNC's Xvnc (missing Xkb extension), so the desktop
@@ -61,14 +61,14 @@ BROWSER_KEYMAP = {
     **{f"F{i}": f"F{i}" for i in range(1, 13)},
 }
 
-PAGE = """<!doctype html><meta charset=utf-8><title>kilix desktop</title>
+PAGE = """<!doctype html><meta charset=utf-8><title>kilix share</title>
 <meta name=viewport content="width=device-width,initial-scale=1">
 <style>html,body{margin:0;background:#000;height:100%;overflow:hidden}
 #v{width:100vw;height:100vh;object-fit:contain;display:block;outline:none}
 #hint{position:fixed;top:8px;left:8px;font:13px system-ui;color:#8ae234;
 background:#000a;padding:4px 8px;border-radius:4px}</style>
 <video id=v autoplay muted playsinline tabindex=0></video>
-<div id=hint>kilix desktop — click to control · keys &amp; mouse are forwarded</div>
+<div id=hint>kilix share — click to control · keys &amp; mouse are forwarded</div>
 <script src="/hlsjs/hls.min.js"></script>
 <script>
 var v=document.getElementById('v'),src='/hls/live.m3u8'+location.search;
@@ -98,7 +98,7 @@ class Desktop:
         self.a = a
         self.w, self.h = a.width, a.height
         self.token = None
-        self.sup = stream.StreamSupervisor(f"desktop-{os.getpid()}")
+        self.sup = stream.StreamSupervisor(f"share-{os.getpid()}")
         self.inj = None
 
     def setup(self):
@@ -128,7 +128,8 @@ class Desktop:
             time.sleep(0.25)
         self.inj = xinject.Injector(xd, self.w, self.h)
         self.hlsdir = os.path.join(self.sup.runtime_dir, "hls")
-        self.sup.start_hls(n, self.w, self.h, self.hlsdir, fps=self.a.fps)
+        self.sup.start_hls(n, self.w, self.h, self.hlsdir, fps=self.a.fps,
+                           debug=self.a.debug)
         self.hlsjs = self.sup.ensure_hlsjs()
         self.token = self.sup.mint_token()
         self.http_port = stream.free_port()
@@ -249,12 +250,15 @@ async def _serve(d):
 
 
 def main():
-    ap = argparse.ArgumentParser(prog="kilix desktop")
+    ap = argparse.ArgumentParser(prog="kilix share")
     ap.add_argument("--size", default="1280x800")
     ap.add_argument("--fps", type=int, default=15)
     ap.add_argument("--lan", action="store_true")
     ap.add_argument("--hls", action="store_true")   # accepted for symmetry (always on)
+    ap.add_argument("--debug", action="store_true")  # ffmpeg encode fps/bitrate -> progress file
     a = ap.parse_args()
+    if a.debug:
+        os.environ["KILIX_DEBUG"] = "1"
     a.width, a.height = (int(v) for v in a.size.lower().split("x"))
     for _s in (signal.SIGTERM, signal.SIGHUP):     # -> atexit -> cleanup
         signal.signal(_s, lambda *_: sys.exit(0))

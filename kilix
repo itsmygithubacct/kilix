@@ -165,14 +165,38 @@ if [ "${1:-}" = "run" ]; then
   exit "$rc"
 fi
 
-# desktop: run the WHOLE kilix on a headless display and stream it to multiple
+# desktop: a Windows 95-style desktop environment rendered as pixels in a
+# kilix tab (start bar, launchers, file manager, Notepad, Settings that edits
+# the kilix config live). Modules live in ./desktop/. Same host-in-own-tab +
+# wrapped-cleanup story as run; quit via Start > Shut Down (or Ctrl+Alt+Q).
+if [ "${1:-}" = "desktop" ]; then
+  shift
+  if [ -z "${KILIX_IN_OVERLAY:-}" ] && [ -n "${KITTY_WINDOW_ID:-}" ] \
+       && [ -n "${KITTY_LISTEN_ON:-}" ] && [ -x "$KITTEN" ]; then
+    exec "$KITTEN" @ launch --type=tab --cwd=current --tab-title "desktop" \
+      --env KILIX_IN_OVERLAY=1 --env "KILIX_STREAM=${KILIX_STREAM:-}" \
+      -- "$_self" desktop "$@"
+  fi
+  rc=0
+  KILIX_HOME="$KILIX_HOME" KILIX_KITTEN="$KITTEN" \
+    python3 "$KILIX_HOME/desktop/main.py" "$@" || rc=$?
+  if [ "$rc" -ge 128 ]; then
+    # the desktop uses ?1003h any-motion mouse tracking, like apprun
+    printf '\033[<u\033[?1002l\033[?1003l\033[?1006l\033[?1016l\033[?2004l\033[?7h\033_Ga=d,d=A\033\\\033[?25h\033[?1049l'
+    stty sane 2>/dev/null || true
+  fi
+  exit "$rc"
+fi
+
+# share: run the WHOLE kilix on a headless display and stream it to multiple
 # devices (Phase 3). Pixels go out as HLS (any browser/player, many viewers);
 # a remote viewer's keyboard/mouse are injected with XTest. Runs in the current
 # pane, printing connect instructions; Ctrl+C stops it. Loopback by default;
 # `--lan` serves the LAN over TLS + token. `--size WxH` sets the virtual screen.
-if [ "${1:-}" = "desktop" ]; then
+# (This was `kilix desktop` before the desktop environment claimed that name.)
+if [ "${1:-}" = "share" ]; then
   shift
-  KILIX_KITTY="$BIN" exec python3 "$KILIX_HOME/config/desktop.py" "$@"
+  KILIX_KITTY="$BIN" exec python3 "$KILIX_HOME/config/share.py" "$@"
 fi
 
 # screensaver: a terminal screensaver in this pane (default: matrix). The
