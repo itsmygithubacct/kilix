@@ -1,6 +1,6 @@
 """kilix — streaming supervisor: shared plumbing for the pixel-plane serve modes.
 
-Used by `kilix run --serve` (Phase 2) and `kilix desktop` (Phase 3). Provides:
+Used by `kilix run --serve` (Phase 2) and `kilix share` (Phase 3). Provides:
   - a private per-session runtime dir (0700) for sockets, pidfiles, secrets, logs
   - X display-number allocation held with an flock (TightVNC Xvnc has no
     -displayfd, so the server can't pick its own number)
@@ -104,6 +104,56 @@ def _fontpath_args():
     return ["-fp", fp] if fp else []
 
 
+_H264_CACHE = None
+
+
+def _h264_encoder():
+    """Pick the best available H.264 encoder in this ffmpeg. Returns a 'kind'
+    string: 'x264' | 'openh264' | 'vaapi' | None. Fedora's ffmpeg-free ships no
+    libx264, so we fall back to Cisco OpenH264 (software) or VAAPI (hardware).
+    Cached."""
+    global _H264_CACHE
+    if _H264_CACHE is not None:
+        return _H264_CACHE
+    try:
+        enc = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"],
+                             capture_output=True, text=True, timeout=10).stdout
+    except Exception:
+        enc = ""
+    if "libx264" in enc:
+        _H264_CACHE = "x264"
+    elif "libopenh264" in enc:
+        _H264_CACHE = "openh264"
+    elif "h264_vaapi" in enc and os.path.exists("/dev/dri/renderD128"):
+        _H264_CACHE = "vaapi"
+    else:
+        _H264_CACHE = None
+    return _H264_CACHE
+
+
+def _video_encode_args(fps, hls_time):
+    """(global_pre_args, output_codec_args) for the chosen H.264 encoder. The GOP
+    equals one segment (fps*hls_time) so HLS can cut keyframe-aligned segments."""
+    g = str(max(1, int(fps * hls_time)))
+    kind = _h264_encoder()
+    if kind == "x264":
+        # veryfast + CRF28 + a VBV cap: ~55% less bitrate than ultrafast at equal
+        # quality, still comfortably real-time; zerolatency governs latency.
+        return [], ["-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
+                    "-crf", "28", "-maxrate", "2M", "-bufsize", "1M",
+                    "-g", g, "-keyint_min", g, "-sc_threshold", "0",
+                    "-pix_fmt", "yuv420p"]
+    if kind == "openh264":                 # Fedora ffmpeg-free (no -crf/-preset)
+        return [], ["-c:v", "libopenh264", "-b:v", "1500k",
+                    "-g", g, "-pix_fmt", "yuv420p"]
+    if kind == "vaapi":                    # hardware encode (frees the CPU)
+        return (["-vaapi_device", "/dev/dri/renderD128"],
+                ["-vf", "format=nv12,hwupload", "-c:v", "h264_vaapi",
+                 "-qp", "26", "-g", g])
+    raise RuntimeError("kilix: ffmpeg has no usable H.264 encoder "
+                       "(need libx264, libopenh264, or h264_vaapi)")
+
+
 def free_port():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
@@ -154,6 +204,7 @@ class StreamSupervisor:
             pass
         self.children = []     # list of (name, Popen)
         self._locks = []       # held flock fds reserving display numbers
+        self._pulse_modules = []   # pactl null-sink module ids to unload
         self._cleaned = False
         self.xauth = None      # per-session X authority file (MIT cookie)
         atexit.register(self.cleanup)
@@ -194,6 +245,12 @@ class StreamSupervisor:
             except OSError:
                 pass
         self._locks.clear()
+        for mod in self._pulse_modules:
+            try:
+                subprocess.run(["pactl", "unload-module", mod], capture_output=True)
+            except Exception:
+                pass
+        self._pulse_modules.clear()
 
     # ---- display allocation -------------------------------------------------
     def pick_display(self, lo=60, hi=120):
@@ -269,17 +326,50 @@ class StreamSupervisor:
             raise RuntimeError("kilix: Xvfb did not come up")
         return p
 
-    # ---- broadcast (HLS, H.264) --------------------------------------------
-    def start_hls(self, n, w, h, outdir, fps=15):
+    def make_null_sink(self, name):
+        """Create a PipeWire/PulseAudio null sink so a headless app's audio can
+        be captured from its .monitor source. Returns (sink_name, monitor_source)
+        or (None, None) if pactl is unavailable. The module is unloaded on
+        cleanup. Set the app's PULSE_SINK to the returned sink name."""
+        if not shutil.which("pactl"):
+            return None, None
+        sink = "kilix_" + "".join(c if c.isalnum() else "_" for c in name)
+        r = subprocess.run(["pactl", "load-module", "module-null-sink",
+                            f"sink_name={sink}",
+                            f"sink_properties=device.description={sink}"],
+                           capture_output=True, text=True)
+        mod = r.stdout.strip()
+        if not mod.isdigit():
+            return None, None
+        self._pulse_modules.append(mod)
+        return sink, f"{sink}.monitor"
+
+    # ---- broadcast (HLS, H.264 + optional AAC audio) -----------------------
+    def start_hls(self, n, w, h, outdir, fps=15, debug=False, audio=None,
+                  hls_time=1):
         os.makedirs(outdir, exist_ok=True)
         m3u8 = os.path.join(outdir, "live.m3u8")
-        argv = ["ffmpeg", "-hide_banner", "-loglevel", "error",
-                "-f", "x11grab", "-framerate", str(fps),
-                "-video_size", f"{w}x{h}", "-i", f":{n}",
-                "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
-                "-g", str(fps * 2), "-pix_fmt", "yuv420p",
-                "-f", "hls", "-hls_time", "1", "-hls_list_size", "4",
-                "-hls_flags", "delete_segments+omit_endlist", m3u8]
+        # The GOP must equal the segment length (HLS only cuts on an IDR frame):
+        # the old -g fps*2 made every 1s segment come out 2s and doubled latency.
+        pre, vargs = _video_encode_args(fps, hls_time)
+        argv = ["ffmpeg", "-hide_banner", "-loglevel", "error"]
+        if debug:
+            # ffmpeg writes frame=/fps=/bitrate=/total_size=/drop_frames= here
+            # every second, so the server-side encode rate can be read live.
+            argv += ["-progress", os.path.join(self.runtime_dir, f"hls-{n}.progress"),
+                     "-stats_period", "1"]
+        argv += pre                        # global opts (e.g. -vaapi_device)
+        argv += ["-thread_queue_size", "512", "-f", "x11grab", "-framerate", str(fps),
+                 "-video_size", f"{w}x{h}", "-i", f":{n}"]
+        if audio:                          # capture a pulse/pipewire monitor
+            argv += ["-thread_queue_size", "512", "-f", "pulse", "-i", audio]
+        argv += vargs                      # H.264 encoder (libx264 / openh264 / vaapi)
+        if audio:
+            argv += ["-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
+                     "-af", "aresample=async=1"]
+        argv += ["-f", "hls", "-hls_time", str(hls_time), "-hls_list_size", "4",
+                 "-hls_flags",
+                 "delete_segments+omit_endlist+independent_segments", m3u8]
         logf = open(os.path.join(self.runtime_dir, f"hls-{n}.log"), "wb")
         return self.spawn(f"hls-{n}", argv, stdout=logf, stderr=logf)
 

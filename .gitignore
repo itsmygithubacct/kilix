@@ -6,14 +6,12 @@
 # Runtime state
 /.last-update-check
 
-# Python bytecode (browse kitten)
-config/__pycache__/
+# Python bytecode, anywhere
+__pycache__/
 
 # Compiled screensaver binaries (built on first use from config/screensavers/*.c)
 config/screensavers/.build/
 
-# kilix 95 desktop: bytecode + user-supplied fonts (never committed — see
+# kilix 95 desktop: user-supplied fonts (never committed — see
 # desktop/README.md; period fonts stay local for copyright reasons)
-desktop/__pycache__/
-desktop/apps/__pycache__/
 desktop/assets/

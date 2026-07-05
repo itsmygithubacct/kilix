@@ -45,7 +45,9 @@ def build_direct(rgb: bytes, w: int, h: int, cols: int, rows: int, img_id: int,
     """
     if not rgb:
         return ""
-    comp = zlib.compress(rgb)
+    # level 1: ~2-3x faster than the default (6) for ~5% larger output — a good
+    # trade on this per-frame, Python-driven path where CPU is the bottleneck.
+    comp = zlib.compress(rgb, 1)
     payload = base64.b64encode(comp)
     chunks = [payload[i:i + CHUNK] for i in range(0, len(payload), CHUNK)]
 
@@ -68,8 +70,9 @@ def build_direct(rgb: bytes, w: int, h: int, cols: int, rows: int, img_id: int,
 
 def blit_direct(term, rgb: bytes, w: int, h: int, cols: int, rows: int,
                 img_id: int, off_row: int = 1, off_col: int = 1,
-                in_tmux: bool = False) -> None:
-    """Emit one inline (t=d) frame to `term` (a browse.Term or compatible)."""
+                in_tmux: bool = False) -> int:
+    """Emit one inline (t=d) frame to `term`. Returns bytes written (wire size)."""
     esc = build_direct(rgb, w, h, cols, rows, img_id, off_row, off_col, in_tmux)
     if esc:
         term.write(esc)
+    return len(esc)
