@@ -330,10 +330,16 @@ def _rle(seg):
 
 # ───────────────────────── the browser app ──────────────────────────────────
 
+# NB: -webkit-text-fill-color INHERITS: excluding form fields from the
+# selector is not enough — transparent flows down from the parent and typed
+# text becomes invisible. Fields + placeholders get their ink back explicitly.
 TRANSPARENT_CSS = (
     "*:not(input):not(textarea):not(select)"
     "{-webkit-text-fill-color:transparent !important;"
     "text-shadow:none !important}"
+    "input,textarea,select{-webkit-text-fill-color:currentColor !important}"
+    "input::placeholder,textarea::placeholder"
+    "{-webkit-text-fill-color:currentColor !important}"
     "::selection{background:rgba(52,101,164,0.55)}"
 )
 INJECT_JS = ("(function(){var s=document.createElement('style');"
