@@ -38,6 +38,11 @@ TEXT_EXT = (".txt", ".md", ".rst", ".log", ".conf", ".cfg", ".ini", ".json",
             ".js", ".ts", ".html", ".css", ".xml", ".csv", ".diff", ".patch")
 IMG_EXT = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".ico", ".ppm",
            ".tiff")
+# what the media player (kilix-amp, via libsndfile) can open, plus common
+# audio kinds it will at least try; playlists open there too
+AUDIO_EXT = (".mp3", ".flac", ".ogg", ".oga", ".opus", ".wav", ".aiff",
+             ".aif", ".aifc", ".m4a", ".aac", ".wma", ".m3u", ".m3u8",
+             ".pls")
 
 WALL_COLORS = [("Teal (classic)", (0, 128, 128)), ("Navy", (0, 0, 128)),
                ("Black", (0, 0, 0)), ("Gray", (128, 128, 128)),
@@ -490,6 +495,8 @@ class Shell:
             return
         if low.endswith(IMG_EXT):
             self.open_app("viewer", path)
+        elif low.endswith(AUDIO_EXT):
+            self.open_app("amp", path)
         elif low.endswith(TEXT_EXT) or self._looks_texty(path):
             self.open_app("notepad", path)
         elif os.access(path, os.X_OK):
