@@ -181,6 +181,65 @@ def ensure_doom(cp, report):
     return ddir
 
 
+# DOSBox: fullscreen on its private X server, which `kilix run` sizes to the
+# pane's exact pixel area — so the game fills the WHOLE pane, no letterbox
+# (aspect=false: pane aspect wins over VGA aspect). Sound on (Doom autodetects
+# the emulated Sound Blaster). Understood by classic DOSBox and staging.
+DOSBOX_CONF = """\
+[sdl]
+fullscreen=true
+fullresolution=desktop
+output=opengl
+
+[render]
+aspect=false
+
+[mixer]
+nosound=false
+rate=44100
+"""
+
+# Doom merges this with its built-in defaults: fire on Space (57), use/open
+# on Ctrl (157 = right-ctrl) — swapped from the DOS defaults per taste.
+DOOM_CFG = """\
+key_fire\t\t57
+key_use\t\t\t157
+"""
+
+
+def _write_settings(ddir, report):
+    """Drop the dosbox conf + key bindings next to the game (created once;
+    a user-edited file is never overwritten)."""
+    conf = os.path.join(ddir, "dosbox-kilix.conf")
+    if not os.path.exists(conf):
+        with open(conf, "w") as f:
+            f.write(DOSBOX_CONF)
+        report("wrote dosbox-kilix.conf (fullscreen, aspect, sound on)")
+    exe = _find(ddir, "DOOM.EXE")
+    cfg = os.path.join(os.path.dirname(exe), "DEFAULT.CFG") if exe else None
+    if cfg and not os.path.exists(cfg):
+        with open(cfg, "w") as f:
+            f.write(DOOM_CFG)
+        report("wrote DEFAULT.CFG (fire = Space, use = Ctrl)")
+    return conf
+
+
+def _audio_check(report):
+    import subprocess
+    try:
+        r = subprocess.run(["pactl", "info"], capture_output=True, text=True,
+                           timeout=5)
+        if r.returncode == 0:
+            srv = next((ln.split(":", 1)[1].strip()
+                        for ln in r.stdout.splitlines()
+                        if ln.startswith("Server Name")), "PulseAudio")
+            report(f"audio: {srv} reachable — DOSBox sound will work")
+            return
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    report("audio: no PulseAudio/PipeWire found — Doom will run silent")
+
+
 def ensure(game, report=print):
     if game != "doom":
         raise SystemExit(f"kilix games: unknown game {game!r}")
@@ -189,11 +248,13 @@ def ensure(game, report=print):
         cp.add_section("doom")
     dosbox = ensure_dosbox(cp, report)
     ddir = ensure_doom(cp, report)
+    conf = _write_settings(ddir, report)
+    _audio_check(report)
     cp.set("doom", "dosbox", dosbox)
     cp.set("doom", "dir", ddir)
     save(cp)
     report(f"ready — config saved to {CONF}")
-    return dosbox, _find(ddir, "DOOM.EXE")
+    return dosbox, conf, _find(ddir, "DOOM.EXE")
 
 
 def main():
@@ -201,16 +262,17 @@ def main():
     setup_only = "--setup-only" in args
     args = [a for a in args if a != "--setup-only"]
     game = args[0] if args else "doom"
-    dosbox, exe = ensure(game)
+    dosbox, conf, exe = ensure(game)
     if setup_only:
         return
     kilix = os.path.join(KILIX_HOME, "kilix")
-    argv = [dosbox, exe, "-exit"]
+    argv = [dosbox, "-conf", conf, exe, "-exit"]
     if os.environ.get("KITTY_WINDOW_ID") and os.access(kilix, os.X_OK):
-        # already in our own tab: run DOSBox in-place through `kilix run`
-        # (private X server, pixels streamed into this pane)
+        # already in our own tab: run DOSBox in-place through `kilix run`.
+        # 640x400 = Doom's own 16:10, so DOSBox fullscreen has zero bars;
+        # --fill then stretches the placement over the WHOLE pane.
         os.environ["KILIX_IN_OVERLAY"] = "1"
-        os.execv(kilix, [kilix, "run"] + argv)
+        os.execv(kilix, [kilix, "run", "--fill", "--size", "640x400"] + argv)
     elif os.environ.get("DISPLAY"):
         os.execv(dosbox, argv)                # plain X session
     else:

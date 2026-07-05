@@ -181,9 +181,11 @@ class EncoderFeed:
 
 class AppPane:
     def __init__(self, cmd, app_w, app_h, fps, serve=False, lan=False, hls=False,
-                 audio=False, mse=False, webrtc=False, no_pane=False):
+                 audio=False, mse=False, webrtc=False, no_pane=False,
+                 fill=False):
         self.cmd = cmd
         self.app_w, self.app_h = app_w, app_h   # None → sized from the pane
+        self.fill = fill
         self.fps = fps
         # --serve: also expose the app to remote devices via Xvnc (view+control).
         # --hls/--mse/--webrtc/--lan add browser tiers (see stream.py).
@@ -244,13 +246,20 @@ class AppPane:
     def compute_layout(self):
         t = self.term
         view_rows = t.rows - 1                     # last row = status
-        pane_w, pane_h = t.cols * t.cell_w, view_rows * t.cell_h
-        scale = min(pane_w / self.app_w, pane_h / self.app_h)
-        self.img_cols = max(1, round(self.app_w * scale / t.cell_w))
-        self.img_rows = max(1, min(view_rows,
-                                   round(self.app_h * scale / t.cell_h)))
-        self.off_col = (t.cols - self.img_cols) // 2
-        self.off_row = (view_rows - self.img_rows) // 2
+        if self.fill:
+            # --fill: stretch the placement over the whole pane (games etc.
+            # that should own the pane edge-to-edge; aspect is the app's
+            # problem — pick an app --size with the ratio you want)
+            self.img_cols, self.img_rows = t.cols, view_rows
+            self.off_col = self.off_row = 0
+        else:
+            pane_w, pane_h = t.cols * t.cell_w, view_rows * t.cell_h
+            scale = min(pane_w / self.app_w, pane_h / self.app_h)
+            self.img_cols = max(1, round(self.app_w * scale / t.cell_w))
+            self.img_rows = max(1, min(view_rows,
+                                       round(self.app_h * scale / t.cell_h)))
+            self.off_col = (t.cols - self.img_cols) // 2
+            self.off_row = (view_rows - self.img_rows) // 2
         # the pixel box the image actually occupies, for mouse mapping
         self.box = (self.off_col * t.cell_w, self.off_row * t.cell_h,
                     self.img_cols * t.cell_w, self.img_rows * t.cell_h)
@@ -702,7 +711,7 @@ def main():
     args = sys.argv[1:]
     app_w = app_h = None                 # default: sized from the pane
     fps = 20
-    serve = lan = hls = audio = mse = webrtc = False
+    serve = lan = hls = audio = mse = webrtc = fill = False
     no_pane = os.environ.get("KILIX_NO_PANE") == "1"
     while args and args[0].startswith("--"):
         if args[0] == "--size" and len(args) > 1:
@@ -735,6 +744,9 @@ def main():
         elif args[0] == "--no-pane":        # QW3: headless, network tiers only
             no_pane = True
             args = args[1:]
+        elif args[0] == "--fill":           # stretch over the whole pane
+            fill = True
+            args = args[1:]
         elif args[0] == "--debug":          # fps/bandwidth metrics -> status + file
             os.environ["KILIX_DEBUG"] = "1"
             args = args[1:]
@@ -751,7 +763,8 @@ def main():
                  "command [args…]\n"
                  "  --size defaults to the pane's pixel size")
     AppPane(args, app_w, app_h, fps, serve=serve, lan=lan, hls=hls,
-            audio=audio, mse=mse, webrtc=webrtc, no_pane=no_pane).run()
+            audio=audio, mse=mse, webrtc=webrtc, no_pane=no_pane,
+            fill=fill).run()
 
 
 if __name__ == "__main__":
