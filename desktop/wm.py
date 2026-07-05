@@ -331,11 +331,11 @@ class WM:
         else:
             win._restore = (win.x, win.y, win.w, win.h)
             sw, sh = self.desk.size()
-            win.x, win.y = -1, -1     # hide the side frame slightly? keep 0
             win.x = win.y = 0
             win.w, win.h = sw, sh - T.TASKBAR_H
             win.maximized = True
         win.surface = None
+        win.on_resize()               # apps relayout their widgets
         self.activate(win)
 
     def modal_top(self):
