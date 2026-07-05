@@ -87,6 +87,8 @@ class Desk:
         self.wm = wm_mod.WM(self)
         self.shell = shell_mod.Shell(self)
         self.taskbar = taskbar_mod.Taskbar(self)
+        self.fd_hooks = {}            # fd -> callback (XPane video feeds etc.)
+        self.tick_hooks = []          # callables(now), each loop pass
         self.mouse_owner = None
         self._buttons = 0
         self._last_click = (0.0, -99, -99, 0)
@@ -100,6 +102,13 @@ class Desk:
 
     def size(self):
         return self.w, self.h
+
+    def add_fd(self, fd, cb):
+        """Watch fd in the main select loop; cb() when readable."""
+        self.fd_hooks[fd] = cb
+
+    def remove_fd(self, fd):
+        self.fd_hooks.pop(fd, None)
 
     def quit(self):
         self.running = False
@@ -321,8 +330,15 @@ class Desk:
         try:
             self.render()
             while self.running:
-                r, _, _ = select.select([term.fd], [], [], 0.25)
-                if r:
+                rlist = [term.fd] + list(self.fd_hooks)
+                r, _, _ = select.select(rlist, [], [], 0.25)
+                for fd in r:
+                    if fd == term.fd:
+                        continue
+                    cb = self.fd_hooks.get(fd)
+                    if cb:
+                        cb()
+                if term.fd in r:
                     for raw in term.read_input():
                         if raw["kind"] == "key":
                             ev = self._norm_key(raw)
@@ -339,6 +355,8 @@ class Desk:
                     self.do_resize()
                 now = time.time()
                 self.taskbar.tick(now)
+                for hook in list(self.tick_hooks):
+                    hook(now)
                 if now - last_blink >= 0.53:
                     last_blink = now
                     self.wm.blink()

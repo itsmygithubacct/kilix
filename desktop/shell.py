@@ -522,30 +522,38 @@ class Shell:
         except OSError:
             return False
 
-    def play_game(self, game):
-        """Start ▸ Programs ▸ Games. Plays immediately when games.conf points
-        at a working install; otherwise asks once, then a new tab downloads
-        the pieces (showing progress) and boots the game."""
+    def game_menu_items(self):
+        """Start ▸ Programs ▸ Games, built from the games.py registry."""
         import games
+        return [W.MenuItem(meta["label"], icon=meta["icon"],
+                           action=lambda g=name: self.play_game(g))
+                for name, meta in games.GAMES.items()]
+
+    def play_game(self, game):
+        """Plays immediately when games.conf points at a working install;
+        otherwise asks once, then a new tab installs the pieces (showing
+        progress) and boots the game."""
+        import games
+        meta = games.GAMES[game]
 
         def go():
             self._tab(["python3", os.path.join(_here, "games.py"), game],
-                      game, None)
+                      meta["label"], None)
 
-        if games.doom_ready():
+        ready = (games.doom_ready() if game == "doom"
+                 else games.bashed_ready())
+        if ready:
             go()
             return
 
         def answered(ans):
-            if ans == "Download":
+            if ans == "Install":
                 go()
         wm.msgbox(self.desk, "Games",
-                  "Doom isn't set up yet.\n\n"
-                  "Download the official shareware episode (~2.4 MB) —\n"
-                  "plus DOSBox if none is installed — into\n"
-                  "~/.local/share/kilix/games, and play?\n"
+                  f"{meta['label']} isn't set up yet.\n\n{meta['blurb']}\n"
                   "(Paths are remembered in ~/.config/kilix/games.conf.)",
-                  icon="doom", buttons=("Download", "Cancel"), cb=answered)
+                  icon=meta["icon"], buttons=("Install", "Cancel"),
+                  cb=answered)
 
     def open_app(self, app, arg=None):
         import apps

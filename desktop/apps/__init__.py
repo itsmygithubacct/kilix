@@ -16,6 +16,9 @@ def open(desk, name, arg=None):
     elif name == "viewer":
         from . import viewer
         desk.wm.add(viewer.Viewer(desk, arg))
+    elif name == "amp":
+        from . import amp
+        amp.open_amp(desk, arg)
     elif name == "settings":
         from . import settings
         for w in desk.wm.windows:

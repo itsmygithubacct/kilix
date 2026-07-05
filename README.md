@@ -228,11 +228,18 @@ right-click menu everywhere. Built in:
   the common knobs + a raw editor tab) and applies it **live** to the running
   kilix via remote control (fallback: SIGUSR1).
 - **Notepad** and an **image viewer**.
-- **Games** — Start ▸ Programs ▸ Games ▸ **Doom**: plays immediately if
-  `~/.config/kilix/games.conf` points at a DOSBox + Doom install; otherwise
-  one click downloads the official shareware episode (and a dosbox-staging
-  build if no dosbox is installed) into `~/.local/share/kilix/games`, saves
-  the paths, and boots it in a pane via `kilix run`.
+- **Games** — Start ▸ Programs ▸ Games. Each entry plays immediately if
+  `~/.config/kilix/games.conf` already points at a working install, otherwise
+  one consented click sets it up (paths saved to that file) and launches it in
+  a tab: **Doom** downloads the official shareware episode plus a
+  dosbox-staging build if no dosbox is installed (fullscreen, fire on Space,
+  sound on); **Bashed Earth** clones + builds
+  [itsmygithubacct/Bashed-Earth](https://github.com/itsmygithubacct/Bashed-Earth).
+- **Media Player** — Start ▸ Programs ▸ Media Player opens *inside the desktop*
+  (not a tab): an SDL2 app on a private display, streamed into a kilix 95
+  window. First run clones + builds
+  [itsmygithubacct/kilix-amp](https://github.com/itsmygithubacct/kilix-amp),
+  a Winamp 2.x clone, into `~/.local/share/kilix/apps`.
 - **Create Launcher…** (Start menu or right-click the desktop) writes
   freedesktop-style `.desktop` files into the desktop folder
   (`~/.local/share/kilix/desktop`, override with `$KILIX_DESKTOP_DIR`); plain

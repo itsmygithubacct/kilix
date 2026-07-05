@@ -125,8 +125,7 @@ class Taskbar:
         MI, sub = W.MenuItem, W.sep
 
         def games():
-            return [MI("Doom", icon="doom",
-                       action=lambda: shell.play_game("doom"))]
+            return shell.game_menu_items()
 
         def programs():
             items = [
@@ -137,6 +136,8 @@ class Taskbar:
                 MI("Terminal", icon="terminal", action=shell.open_terminal),
                 MI("Web Browser", icon="browser",
                    action=lambda: shell.open_url(None)),
+                MI("Media Player", icon="amp",
+                   action=lambda: shell.open_app("amp")),
                 MI("Games", icon="games", submenu=games()),
             ]
             user = shell.launcher_menu_items()

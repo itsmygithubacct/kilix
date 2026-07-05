@@ -29,8 +29,8 @@ toolkit below is self-contained.
 | `wm.py` | `Window` (chrome, sysbuttons) + `WM` (z-order, drags, modality) + `msgbox`/`inputbox` |
 | `taskbar.py` | start bar: Start button/menu, task buttons, clock |
 | `shell.py` | desktop surface: wallpaper, icon grid, launcher files, spawn verbs |
-| `games.py` | Games section: on-demand installers (Doom shareware + DOSBox) + CLI launcher |
-| `apps/` | `filemgr` `notepad` `settings` `viewer` — each a `Window` subclass |
+| `games.py` | Games/app registry + on-demand installers (Doom, Bashed Earth, kilix-amp) + CLI launcher |
+| `apps/` | `filemgr` `notepad` `settings` `viewer` `amp`; `xpane` (X11-app-in-a-window) — each a `Window` subclass |
 
 Input events flow Desk → (MenuHost | dragged owner | window | taskbar |
 shell); windows capture the pressed widget until release, which is what
