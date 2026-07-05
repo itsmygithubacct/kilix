@@ -121,14 +121,28 @@ if [ "${1:-}" = "browse" ]; then
 fi
 
 # run: an X11 app streamed into a pane (private Xvfb + x11grab + XTest).
-# Python prototype only for now. Same overlay + wrapped-cleanup story as
-# browse above: prefer an overlay window (title bar, close button); if the
-# kitten dies by signal, restore the tty by hand.
+# Python prototype only for now. Same wrapped-cleanup story as browse above,
+# but the default target is a new TAB, not an overlay: the launching shell
+# stays visible in its own tab and closing the app's tab exits the app. If
+# the kitten dies by signal, restore the tty by hand.
 if [ "${1:-}" = "run" ]; then
   shift
   if [ -z "${KILIX_IN_OVERLAY:-}" ] && [ -n "${KITTY_WINDOW_ID:-}" ] \
        && [ -n "${KITTY_LISTEN_ON:-}" ] && [ -x "$KITTEN" ]; then
-    exec "$KITTEN" @ launch --type=overlay --cwd=current \
+    # Tab title: the first non-flag arg is the app command (--size/--fps
+    # take a separate value in their unglued form, so skip it).
+    _app=run; _skip=
+    for _a in "$@"; do
+      if [ -n "$_skip" ]; then _skip=; continue; fi
+      case "$_a" in
+        --size|--fps) _skip=1 ;;
+        --*) ;;
+        *) _app=${_a##*/}; break ;;
+      esac
+    done
+    # KILIX_IN_OVERLAY doubles as the generic "already relaunched into our
+    # own kitty window" guard, whatever the window type.
+    exec "$KITTEN" @ launch --type=tab --cwd=current --tab-title "$_app" \
       --env KILIX_IN_OVERLAY=1 --env "KILIX_STREAM=${KILIX_STREAM:-}" \
       -- "$_self" run "$@"
   fi
