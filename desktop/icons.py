@@ -116,6 +116,15 @@ def _doc_image(p):
     _doc(p, "image")
 
 
+def _doc_audio(p):
+    _doc(p)                                        # a document with a note
+    p.rect(6, 9, 6, 12, fill=DB)                   # stems
+    p.rect(10, 8, 10, 11, fill=DB)
+    p.rect(6, 8, 10, 9, fill=DB)                   # beam
+    p.rect(4, 11, 6, 13, fill=K)                   # note heads
+    p.rect(8, 10, 10, 12, fill=K)
+
+
 def _exe(p):
     p.rect(1, 2, 14, 13, fill=S, outline=K)
     p.rect(2, 3, 13, 4, fill=DB)                   # title bar
@@ -325,6 +334,7 @@ ICONS = {
     "computer": _computer, "display": _display, "drive": _drive,
     "folder": _folder, "folder_open": _folder_open,
     "doc": _doc, "doc_text": _doc_text, "doc_image": _doc_image,
+    "doc_audio": _doc_audio,
     "exe": _exe, "terminal": _terminal, "settings": _settings,
     "notepad": _notepad, "browser": _browser, "run": _run,
     "shutdown": _shutdown, "flame": _flame, "home": _home,
@@ -376,6 +386,10 @@ def for_path(path, is_dir=False):
                      ".json", ".yaml", ".yml", ".toml", ".py", ".sh", ".c",
                      ".h", ".go", ".rs", ".js", ".ts", ".html", ".css")):
         return "doc_text"
+    if low.endswith((".mp3", ".flac", ".ogg", ".oga", ".opus", ".wav",
+                     ".aiff", ".aif", ".aifc", ".m4a", ".aac", ".wma",
+                     ".m3u", ".m3u8", ".pls")):
+        return "doc_audio"
     if low.endswith(".desktop"):
         return "exe"
     return "doc"
