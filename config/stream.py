@@ -111,7 +111,8 @@ def _h264_encoder():
     """Pick the best available H.264 encoder in this ffmpeg. Returns a 'kind'
     string: 'x264' | 'openh264' | 'vaapi' | None. Fedora's ffmpeg-free ships no
     libx264, so we fall back to Cisco OpenH264 (software) or VAAPI (hardware).
-    Cached."""
+    KILIX_HW=1 prefers the VAAPI hardware path when a render node exists (frees
+    the CPU for capture/serve at some quality-per-bit cost). Cached."""
     global _H264_CACHE
     if _H264_CACHE is not None:
         return _H264_CACHE
@@ -120,38 +121,75 @@ def _h264_encoder():
                              capture_output=True, text=True, timeout=10).stdout
     except Exception:
         enc = ""
-    if "libx264" in enc:
+    have_vaapi = "h264_vaapi" in enc and os.path.exists("/dev/dri/renderD128")
+    if have_vaapi and os.environ.get("KILIX_HW") == "1":
+        _H264_CACHE = "vaapi"
+    elif "libx264" in enc:
         _H264_CACHE = "x264"
     elif "libopenh264" in enc:
         _H264_CACHE = "openh264"
-    elif "h264_vaapi" in enc and os.path.exists("/dev/dri/renderD128"):
+    elif have_vaapi:
         _H264_CACHE = "vaapi"
     else:
         _H264_CACHE = None
     return _H264_CACHE
 
 
-def _video_encode_args(fps, hls_time):
-    """(global_pre_args, output_codec_args) for the chosen H.264 encoder. The GOP
-    equals one segment (fps*hls_time) so HLS can cut keyframe-aligned segments."""
-    g = str(max(1, int(fps * hls_time)))
+def _video_encode_args(fps, keyint_sec, vfr=False):
+    """(global_pre_args, output_codec_args) for the chosen H.264 encoder, with a
+    keyframe every keyint_sec seconds. For CFR x11grab input the GOP is counted
+    in frames (fps*keyint_sec); a piped VFR feed (single-capture fan-out, frames
+    arrive only on damage) instead forces keyframes on a WALLCLOCK schedule —
+    frame-counted GOPs would stretch segments arbitrarily on an idle screen."""
+    g = str(max(1, int(fps * keyint_sec)))
     kind = _h264_encoder()
     if kind == "x264":
         # veryfast + CRF28 + a VBV cap: ~55% less bitrate than ultrafast at equal
         # quality, still comfortably real-time; zerolatency governs latency.
-        return [], ["-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
-                    "-crf", "28", "-maxrate", "2M", "-bufsize", "1M",
-                    "-g", g, "-keyint_min", g, "-sc_threshold", "0",
-                    "-pix_fmt", "yuv420p"]
-    if kind == "openh264":                 # Fedora ffmpeg-free (no -crf/-preset)
-        return [], ["-c:v", "libopenh264", "-b:v", "1500k",
-                    "-g", g, "-pix_fmt", "yuv420p"]
-    if kind == "vaapi":                    # hardware encode (frees the CPU)
-        return (["-vaapi_device", "/dev/dri/renderD128"],
-                ["-vf", "format=nv12,hwupload", "-c:v", "h264_vaapi",
-                 "-qp", "26", "-g", g])
-    raise RuntimeError("kilix: ffmpeg has no usable H.264 encoder "
-                       "(need libx264, libopenh264, or h264_vaapi)")
+        vargs = ["-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
+                 "-crf", "28", "-maxrate", "2M", "-bufsize", "1M",
+                 "-g", g, "-keyint_min", g, "-sc_threshold", "0",
+                 "-pix_fmt", "yuv420p"]
+        pre = []
+    elif kind == "openh264":               # Fedora ffmpeg-free (no -crf/-preset)
+        vargs = ["-c:v", "libopenh264", "-b:v", "1500k",
+                 "-g", g, "-pix_fmt", "yuv420p"]
+        pre = []
+    elif kind == "vaapi":                  # hardware encode (frees the CPU)
+        vargs = ["-vf", "format=nv12,hwupload", "-c:v", "h264_vaapi",
+                 "-qp", "26", "-g", g]
+        pre = ["-vaapi_device", "/dev/dri/renderD128"]
+    else:
+        raise RuntimeError("kilix: ffmpeg has no usable H.264 encoder "
+                           "(need libx264, libopenh264, or h264_vaapi)")
+    if vfr:
+        # generic ffmpeg option — works with every encoder above
+        vargs += ["-force_key_frames", f"expr:gte(t,n_forced*{keyint_sec})"]
+    return pre, vargs
+
+
+def _raw_input_args(w, h):
+    """Input args for a piped rawvideo feed (the pane capture fanned out to the
+    encoders — E4): frames arrive only when the screen changed, so timestamps
+    come from the wallclock, not a nominal rate."""
+    return ["-f", "rawvideo", "-pix_fmt", "rgb24", "-video_size", f"{w}x{h}",
+            "-use_wallclock_as_timestamps", "1", "-i", "pipe:0"]
+
+
+def wait_port(port, timeout=8.0, host="127.0.0.1"):
+    """Poll until a TCP port accepts connections (bridge/mediamtx readiness)."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(0.3)
+        try:
+            s.connect((host, port))
+            return True
+        except OSError:
+            time.sleep(0.15)
+        finally:
+            s.close()
+    return False
 
 
 def free_port():
@@ -306,7 +344,11 @@ class StreamSupervisor:
         if _xvnc_is_tiger(xvnc):
             # TigerVNC must be told to actually offer VncAuth (its default set
             # differs); TightVNC has no -SecurityTypes and would reject it.
-            argv += ["-SecurityTypes", "VncAuth"]
+            # -CompareFB 2: always diff the framebuffer before sending — cheap
+            # CPU for a big bandwidth cut on terminal content, where most of
+            # the screen is unchanged between updates (E6: VNC is the
+            # text-efficiency tier; Tight beats H.264 on terminals).
+            argv += ["-SecurityTypes", "VncAuth", "-CompareFB", "2"]
         logf = open(os.path.join(self.runtime_dir, f"xvnc-{n}.log"), "wb")
         p = self.spawn(f"xvnc-{n}", argv, stdout=logf, stderr=logf)
         if not self._wait_x(n):
@@ -344,34 +386,148 @@ class StreamSupervisor:
         self._pulse_modules.append(mod)
         return sink, f"{sink}.monitor"
 
-    # ---- broadcast (HLS, H.264 + optional AAC audio) -----------------------
-    def start_hls(self, n, w, h, outdir, fps=15, debug=False, audio=None,
-                  hls_time=1):
-        os.makedirs(outdir, exist_ok=True)
-        m3u8 = os.path.join(outdir, "live.m3u8")
-        # The GOP must equal the segment length (HLS only cuts on an IDR frame):
-        # the old -g fps*2 made every 1s segment come out 2s and doubled latency.
-        pre, vargs = _video_encode_args(fps, hls_time)
+    # ---- broadcast encoders (H.264 + optional AAC audio) --------------------
+    def _enc_argv(self, name, n, w, h, fps, keyint_sec, debug, audio, piped):
+        """Shared front half of every broadcast encoder: metrics feed, video
+        input (x11grab, or a piped rawvideo feed for single-capture fan-out),
+        optional pulse-monitor audio, and the H.264 + AAC codec args."""
+        pre, vargs = _video_encode_args(fps, keyint_sec, vfr=piped)
         argv = ["ffmpeg", "-hide_banner", "-loglevel", "error"]
         if debug:
             # ffmpeg writes frame=/fps=/bitrate=/total_size=/drop_frames= here
             # every second, so the server-side encode rate can be read live.
-            argv += ["-progress", os.path.join(self.runtime_dir, f"hls-{n}.progress"),
+            argv += ["-progress",
+                     os.path.join(self.runtime_dir, f"{name}.progress"),
                      "-stats_period", "1"]
         argv += pre                        # global opts (e.g. -vaapi_device)
-        argv += ["-thread_queue_size", "512", "-f", "x11grab", "-framerate", str(fps),
-                 "-video_size", f"{w}x{h}", "-i", f":{n}"]
+        if piped:
+            argv += ["-thread_queue_size", "512"] + _raw_input_args(w, h)
+        else:
+            argv += ["-thread_queue_size", "512", "-f", "x11grab",
+                     "-framerate", str(fps), "-video_size", f"{w}x{h}",
+                     "-i", f":{n}"]
         if audio:                          # capture a pulse/pipewire monitor
             argv += ["-thread_queue_size", "512", "-f", "pulse", "-i", audio]
-        argv += vargs                      # H.264 encoder (libx264 / openh264 / vaapi)
+        argv += vargs                      # H.264 encoder (libx264/openh264/vaapi)
         if audio:
             argv += ["-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
                      "-af", "aresample=async=1"]
-        argv += ["-f", "hls", "-hls_time", str(hls_time), "-hls_list_size", "4",
+        return argv
+
+    def _spawn_enc(self, name, argv, piped):
+        logf = open(os.path.join(self.runtime_dir, f"{name}.log"), "wb")
+        return self.spawn(name, argv, stdout=logf, stderr=logf,
+                          stdin=subprocess.PIPE if piped else subprocess.DEVNULL)
+
+    def start_hls(self, n, w, h, outdir, fps=15, debug=False, audio=None,
+                  hls_time=0.5, piped=False):
+        """HLS broadcast. QW2: 0.5 s fMP4 segments, list of 3 — ~1.5-2.5 s glass
+        latency, the segmented-HLS floor. The keyframe cadence must equal the
+        segment length (HLS only cuts on an IDR frame). piped=True → feed frames
+        on stdin (single-capture fan-out) instead of a second x11grab."""
+        os.makedirs(outdir, exist_ok=True)
+        m3u8 = os.path.join(outdir, "live.m3u8")
+        argv = self._enc_argv(f"hls-{n}", n, w, h, fps, hls_time, debug,
+                              audio, piped)
+        argv += ["-f", "hls", "-hls_time", str(hls_time), "-hls_list_size", "3",
+                 "-hls_segment_type", "fmp4",
+                 "-hls_fmp4_init_filename", "init.mp4",
                  "-hls_flags",
                  "delete_segments+omit_endlist+independent_segments", m3u8]
-        logf = open(os.path.join(self.runtime_dir, f"hls-{n}.log"), "wb")
-        return self.spawn(f"hls-{n}", argv, stdout=logf, stderr=logf)
+        return self._spawn_enc(f"hls-{n}", argv, piped)
+
+    def start_ts(self, n, w, h, ts_port, fps=15, debug=False, audio=None,
+                 piped=False):
+        """MPEG-TS to the wsbridge's loopback fan-out (E1: TS over WebSocket →
+        mpegts.js/MSE, sub-second glass latency). Segment-free, so the GOP can
+        be long (2 s) — a big bitrate saving on mostly-static screens. The
+        bridge must already be listening on ts_port (see wait_port)."""
+        argv = self._enc_argv(f"ts-{n}", n, w, h, fps, 2.0, debug, audio, piped)
+        argv += ["-muxdelay", "0", "-muxpreload", "0", "-pat_period", "0.4",
+                 "-f", "mpegts", f"tcp://127.0.0.1:{ts_port}"]
+        return self._spawn_enc(f"ts-{n}", argv, piped)
+
+    def start_rtsp_pub(self, n, w, h, rtsp_port, path="kilix", fps=15,
+                       debug=False, audio=None, piped=False):
+        """Publish into MediaMTX over loopback RTSP (E2: WebRTC tier). MediaMTX
+        re-serves it as WHEP/WebRTC to browsers with sub-500 ms latency."""
+        argv = self._enc_argv(f"rtsp-{n}", n, w, h, fps, 2.0, debug, audio,
+                              piped)
+        argv += ["-f", "rtsp", "-rtsp_transport", "tcp",
+                 f"rtsp://127.0.0.1:{rtsp_port}/{path}"]
+        return self._spawn_enc(f"rtsp-{n}", argv, piped)
+
+    # ---- WebRTC (MediaMTX) ---------------------------------------------------
+    MEDIAMTX_VERSION = "v1.9.3"
+
+    def ensure_mediamtx(self):
+        """One-time download of the pinned MediaMTX release into the kilix data
+        dir (same pattern as noVNC/hls.js vendoring). Returns the binary path."""
+        d = os.path.join(_data_home(), "kilix", "mediamtx")
+        exe = os.path.join(d, "mediamtx")
+        if os.access(exe, os.X_OK):
+            return exe
+        arch = {"x86_64": "amd64", "aarch64": "arm64v8",
+                "armv7l": "armv7"}.get(os.uname().machine)
+        if not arch:
+            raise RuntimeError(f"kilix: no MediaMTX build for {os.uname().machine}")
+        os.makedirs(d, exist_ok=True)
+        url = ("https://github.com/bluenviron/mediamtx/releases/download/"
+               f"{self.MEDIAMTX_VERSION}/mediamtx_{self.MEDIAMTX_VERSION}"
+               f"_linux_{arch}.tar.gz")
+        tgz = os.path.join(d, "mediamtx.tar.gz")
+        subprocess.run(["curl", "-fsSL", url, "-o", tgz], check=True,
+                       capture_output=True)
+        subprocess.run(["tar", "-xzf", tgz, "-C", d, "mediamtx"], check=True,
+                       capture_output=True)
+        os.unlink(tgz)
+        return exe
+
+    def start_mediamtx(self, *, rtsp_port, webrtc_port, token, lan=False,
+                       path="kilix"):
+        """MediaMTX with RTSP ingest on loopback and a WebRTC (WHEP + built-in
+        web player) read side. Loopback publisher needs no credentials; readers
+        authenticate as kilix/<token> (HTTP basic auth in the browser)."""
+        exe = self.ensure_mediamtx()
+        addr = "" if lan else "127.0.0.1"
+        conf = os.path.join(self.runtime_dir, "mediamtx.yml")
+        udp_port = free_port()
+        with open(conf, "w") as f:
+            f.write(f"""\
+logLevel: warn
+api: no
+metrics: no
+pprof: no
+playback: no
+rtsp: yes
+rtspAddress: 127.0.0.1:{rtsp_port}
+protocols: [tcp]
+rtmp: no
+hls: no
+srt: no
+webrtc: yes
+webrtcAddress: {addr}:{webrtc_port}
+webrtcLocalUDPAddress: :{udp_port}
+authInternalUsers:
+- user: any
+  ips: ['127.0.0.1', '::1']
+  permissions:
+  - action: publish
+  - action: read
+- user: kilix
+  pass: {token}
+  permissions:
+  - action: read
+paths:
+  {path}:
+    source: publisher
+""")
+        os.chmod(conf, 0o600)
+        logf = open(os.path.join(self.runtime_dir, "mediamtx.log"), "wb")
+        p = self.spawn("mediamtx", [exe, conf], stdout=logf, stderr=logf)
+        if not wait_port(rtsp_port):
+            raise RuntimeError("kilix: MediaMTX did not come up (see runtime log)")
+        return p
 
     # ---- secrets ------------------------------------------------------------
     # Classic vncpasswd obfuscation key: the stored VNC password is the 8-byte
@@ -442,18 +598,35 @@ class StreamSupervisor:
                             "-o", f], check=True, capture_output=True)
         return d
 
-    def start_bridge(self, *, rfb_port, http_port, token, hlsdir=None,
-                     tls=None, lan=False, what="session"):
+    def ensure_mpegtsjs(self):
+        d = os.path.join(_data_home(), "kilix", "mpegtsjs")
+        f = os.path.join(d, "mpegts.js")
+        if not os.path.exists(f):
+            os.makedirs(d, exist_ok=True)
+            subprocess.run(["curl", "-fsSL",
+                            "https://cdn.jsdelivr.net/npm/mpegts.js@1.7.3/dist/mpegts.js",
+                            "-o", f], check=True, capture_output=True)
+        return d
+
+    def start_bridge(self, *, rfb_port=None, http_port, token, hlsdir=None,
+                     ts_port=None, tls=None, lan=False, what="session"):
         """Spawn config/wsbridge.py. Token goes via the env (KILIX_BRIDGE_TOKEN),
-        never argv, so it is not visible in `ps`."""
+        never argv, so it is not visible in `ps`. rfb_port may be None (HLS/TS
+        broadcast without a VNC control tier); ts_port makes the bridge listen
+        there for the MPEG-TS encoder feed and serve it at /ts + /watch."""
         argv = ["python3",
                 os.path.join(os.path.dirname(os.path.abspath(__file__)), "wsbridge.py"),
-                "--rfb-port", str(rfb_port), "--http-port", str(http_port),
+                "--http-port", str(http_port),
                 "--host", "0.0.0.0" if lan else "127.0.0.1",
                 "--novnc", self.ensure_novnc(),
                 "--hlsjs", self.ensure_hlsjs(), "--what", what]
+        if rfb_port:
+            argv += ["--rfb-port", str(rfb_port)]
         if hlsdir:
             argv += ["--hls", hlsdir]
+        if ts_port:
+            argv += ["--ts-port", str(ts_port),
+                     "--mpegtsjs", self.ensure_mpegtsjs()]
         if tls:
             argv += ["--tls-cert", tls[0], "--tls-key", tls[1]]
         env = dict(os.environ, KILIX_BRIDGE_TOKEN=token)
@@ -463,7 +636,8 @@ class StreamSupervisor:
     # ---- connect instructions ----------------------------------------------
     def print_connect(self, *, what="app", rfb_port=None, http_port=None,
                        full_pw=None, view_pw=None, token=None,
-                       lan_host=None, tls_fp=None, hls_path="hls/live.m3u8"):
+                       lan_host=None, tls_fp=None, hls_path="hls/live.m3u8",
+                       have_hls=True, have_ts=False, webrtc_port=None):
         user, host = _whoami(), _hostname()
         # flush every line: a serve process then blocks forever, so buffered
         # connect instructions (e.g. when stdout is a pipe) would never appear.
@@ -481,10 +655,21 @@ class StreamSupervisor:
             q = f"?t={token}" if token else ""
             w(f"   browser    : ssh -N -L {http_port}:127.0.0.1:{http_port} {user}@{host}")
             w(f"                then open  http://localhost:{http_port}/{q}")
-            w(f"   view (mpv) : mpv http://localhost:{http_port}/{hls_path}{q}")
+            if have_ts:
+                w(f"   low-latency: http://localhost:{http_port}/watch{q}   (~0.3-1 s)")
+            if have_hls:
+                w(f"   view (mpv) : mpv http://localhost:{http_port}/{hls_path}{q}")
+        if webrtc_port:
+            w(f"   WebRTC     : ssh -N -L {webrtc_port}:127.0.0.1:{webrtc_port} {user}@{host}")
+            w(f"                then open  http://localhost:{webrtc_port}/kilix"
+              f"   (user kilix, password = token below)")
+            if token:
+                w(f"                token: {token}")
         if lan_host and http_port:
             q = f"?t={token}" if token else ""
             w(f"   LAN (TLS)  : https://{lan_host}:{http_port}/{q}")
             if tls_fp:
                 w(f"                accept cert  {tls_fp}")
+        if lan_host and webrtc_port:
+            w(f"   LAN WebRTC : http://{lan_host}:{webrtc_port}/kilix  (no TLS)")
         w("")

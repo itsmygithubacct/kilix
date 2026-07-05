@@ -16,10 +16,17 @@ into a pane, so GUI apps tile exactly like terminal programs.
 Usage: kilix run [--size WxH] [--fps N] command [args…]
 Keys : everything is forwarded to the app; Ctrl+Q quits the kitten.
 
-Known limits (prototype): no sound routing; apps that grab the pointer
-(e.g. DOSBox autolock) see relative motion, so the app cursor and the
-pane cursor can drift; the X screen size is fixed at startup — pane
-resizes rescale the picture instead of resizing the app.
+Broadcast tiers (combinable): --hls (fMP4 HLS, scales out, ~1.5-2.5 s),
+--mse (MPEG-TS over WebSocket -> mpegts.js, ~0.3-1 s), --webrtc (MediaMTX
+WHEP, sub-500 ms), --audio (AAC from a PipeWire null sink), --no-pane
+(headless: network tiers only). With a local pane, all encoders are fed
+from its single capture (E4 fan-out) and the capture rate downshifts on
+an idle screen (QW5).
+
+Known limits (prototype): apps that grab the pointer (e.g. DOSBox
+autolock) see relative motion, so the app cursor and the pane cursor can
+drift; the X screen size is fixed at startup — pane resizes rescale the
+picture instead of resizing the app.
 """
 import json
 import os
@@ -113,23 +120,89 @@ class RunTerm(browse.Term):
         return ev
 
 
+IDLE_AFTER = 5.0                     # QW5: downshift capture after this long
+IDLE_FPS = 2                         # …to this rate (terminal screens idle ~95%)
+KEEPALIVE = 1.0                      # E4: re-feed the last frame to idle sinks
+
+
+class EncoderFeed:
+    """E4 single-capture fan-out: the pane's rawvideo frames, written to the
+    broadcast encoders' stdins, so one x11grab serves the pane AND every
+    encoder. Non-blocking progressive writes of whole frames; if an encoder
+    can't keep up the newest frame replaces the queued one (latest wins); a
+    1 s keepalive re-sends the last frame so the VFR sinks (HLS segmenter,
+    TS/RTSP mux) keep flowing while the screen is idle."""
+
+    def __init__(self):
+        self.sinks = []              # {fd, cur, off, next}
+        self.last_fed = 0.0
+
+    def add(self, proc):
+        import fcntl
+        fd = proc.stdin.fileno()
+        os.set_blocking(fd, False)
+        try:                         # F_SETPIPE_SZ: frames are ~1 MB, default
+            fcntl.fcntl(fd, 1031, 1 << 20)   # 64 KB pipes mean 16 partials
+        except OSError:
+            pass
+        self.sinks.append({"fd": fd, "cur": None, "off": 0, "next": None})
+
+    def offer(self, frame, now):
+        self.last_fed = now
+        for s in self.sinks:
+            if s["cur"] is None:
+                s["cur"], s["off"] = memoryview(frame), 0
+            else:
+                s["next"] = frame    # replace any queued frame: latest wins
+
+    def keepalive(self, frame, now):
+        if frame is not None and self.sinks and now - self.last_fed >= KEEPALIVE:
+            self.offer(frame, now)
+
+    def pump(self):
+        for s in self.sinks:
+            while s["cur"] is not None:
+                try:
+                    n = os.write(s["fd"], s["cur"][s["off"]:])
+                except BlockingIOError:
+                    break
+                except OSError:      # encoder died; supervisor reports it
+                    s["cur"] = s["next"] = None
+                    break
+                s["off"] += n
+                if s["off"] >= len(s["cur"]):
+                    s["cur"], s["off"] = None, 0
+                    if s["next"] is not None:
+                        s["cur"], s["next"] = memoryview(s["next"]), None
+
+    def pending_fds(self):
+        return [s["fd"] for s in self.sinks if s["cur"] is not None]
+
+
 class AppPane:
     def __init__(self, cmd, app_w, app_h, fps, serve=False, lan=False, hls=False,
-                 audio=False):
+                 audio=False, mse=False, webrtc=False, no_pane=False):
         self.cmd = cmd
         self.app_w, self.app_h = app_w, app_h   # None → sized from the pane
         self.fps = fps
         # --serve: also expose the app to remote devices via Xvnc (view+control).
-        # --hls/--lan add the browser broadcast/bridge tiers (see stream.py).
+        # --hls/--mse/--webrtc/--lan add browser tiers (see stream.py).
         self.serve, self.lan, self.hls = serve, lan, hls
-        self.audio = audio               # capture app audio -> AAC in the HLS
+        self.mse, self.webrtc = mse, webrtc
+        self.audio = audio               # capture app audio into the broadcasts
+        self.no_pane = no_pane           # QW3: headless — no local pane at all
         self.pulse_sink = None
+        self.feed = EncoderFeed()
         self.session = os.environ.get("KILIX_SESSION") or f"run-{os.getpid()}"
         self.sup = stream.StreamSupervisor(self.session)
         self.rfb_port = None
+        self.disp_n = None
         self.full_pw = self.view_pw = None
         self.http_port = self.token = self.tls_fp = None
-        self.term = RunTerm()
+        self.rtsp_port = self.webrtc_port = None
+        self.term = None if no_pane else RunTerm()
+        if self.app_w is None and no_pane:
+            self.app_w, self.app_h = 1280, 720
         if self.app_w is None:
             # No --size given: match the app's screen to the pane's usable
             # pixel area (full width × rows minus the status row), as the
@@ -162,7 +235,10 @@ class AppPane:
         self.ffbuf = bytearray()
         self.xvfb = self.app = self.ff = None
         self.xd = None
-        self.compute_layout()
+        self._cap_fps = fps              # current pane-capture rate (QW5)
+        self._last_change = time.time()
+        if self.term:
+            self.compute_layout()
 
     # ---- geometry ----------------------------------------------------------
     def compute_layout(self):
@@ -189,6 +265,11 @@ class AppPane:
             self._start_xvnc()
         else:
             self._start_xvfb()
+        # browser tiers work with either X server — the old code only offered
+        # them under --serve, which needlessly dragged in the Xvnc dependency
+        # for a broadcast-only use
+        if self.lan or self.hls or self.mse or self.webrtc:
+            self._start_web_tier(self.disp_n)
 
     def _start_xvfb(self):
         # Xvfb (with -auth, via the supervisor) so the private display is not
@@ -196,6 +277,7 @@ class AppPane:
         n = self.sup.pick_display()
         self.sup.start_xvfb(n, self.app_w, self.app_h)
         self.disp = f":{n}"
+        self.disp_n = n
         self.xvfb = None                 # owned by the supervisor
         os.environ["XAUTHORITY"] = self.sup.xauth
         log("Xvfb on", self.disp)
@@ -215,32 +297,67 @@ class AppPane:
         self.sup.start_xvnc(n, self.app_w, self.app_h, self.rfb_port, pwfile,
                             desktop=f"kilix-run {os.path.basename(self.cmd[0])}")
         self.disp = f":{n}"
+        self.disp_n = n
         self.xvfb = None                 # Xvnc is owned by the supervisor
         os.environ["XAUTHORITY"] = self.sup.xauth
         log("Xvnc on", self.disp, "rfb", self.rfb_port)
-        if self.lan or self.hls:
-            self._start_web_tier(n)
 
     def _start_web_tier(self, n):
-        """Browser tier: a WS<->RFB bridge (noVNC) and/or an HLS broadcast,
-        loopback by default, or LAN over TLS+token with --lan."""
-        self.http_port = stream.free_port()
+        """Browser tiers: WS<->RFB bridge (noVNC), fMP4-HLS broadcast, the
+        TS-over-WS low-latency feed (--mse) and/or WebRTC (--webrtc). Loopback
+        by default, LAN over TLS+token with --lan. With a local pane the
+        encoders are fed from its capture (E4 single-capture fan-out, piped);
+        headless (--no-pane) they x11grab the display directly — one capture
+        total either way."""
         self.token = self.sup.mint_token()
-        hlsdir = None
+        monitor = None
+        if self.audio:
+            self.pulse_sink, monitor = self.sup.make_null_sink(self.session)
+        piped = not self.no_pane
+        w, h, fps = self.app_w, self.app_h, self.fps
+        what = f"run {os.path.basename(self.cmd[0])}"
+        need_bridge = self.lan or self.hls or self.mse
+        hlsdir = ts_port = None
+        if need_bridge:
+            self.http_port = stream.free_port()
+            if self.hls:
+                hlsdir = os.path.join(self.sup.runtime_dir, "hls")
+            if self.mse:
+                ts_port = stream.free_port()
+            tls = self.sup.tls_cert() if self.lan else None
+            self.tls_fp = tls[2] if tls else None
+            self.sup.start_bridge(rfb_port=self.rfb_port,
+                                  http_port=self.http_port, token=self.token,
+                                  hlsdir=hlsdir, ts_port=ts_port, tls=tls,
+                                  lan=self.lan, what=what)
+            log("bridge on http", self.http_port,
+                "lan" if self.lan else "loopback")
         if self.hls:
-            monitor = None
-            if self.audio:
-                self.pulse_sink, monitor = self.sup.make_null_sink(self.session)
-            hlsdir = os.path.join(self.sup.runtime_dir, "hls")
-            self.sup.start_hls(n, self.app_w, self.app_h, hlsdir,
-                               fps=self.fps, debug=self.debug, audio=monitor)
-        tls = self.sup.tls_cert() if self.lan else None
-        self.tls_fp = tls[2] if tls else None
-        self.sup.start_bridge(rfb_port=self.rfb_port, http_port=self.http_port,
-                              token=self.token, hlsdir=hlsdir, tls=tls,
-                              lan=self.lan,
-                              what=f"run {os.path.basename(self.cmd[0])}")
-        log("bridge on http", self.http_port, "lan" if self.lan else "loopback")
+            p = self.sup.start_hls(n, w, h, hlsdir, fps=fps, debug=self.debug,
+                                   audio=monitor, piped=piped)
+            if piped:
+                self.feed.add(p)
+        if self.mse:
+            # the encoder connects OUT to the bridge's TS listener
+            if not stream.wait_port(ts_port):
+                raise RuntimeError("kilix: bridge TS port did not come up")
+            p = self.sup.start_ts(n, w, h, ts_port, fps=fps, debug=self.debug,
+                                  audio=monitor, piped=piped)
+            if piped:
+                self.feed.add(p)
+        if self.webrtc:
+            self.rtsp_port = stream.free_port()
+            self.webrtc_port = (8889 if stream.port_free(8889)
+                                else stream.free_port())
+            self.sup.start_mediamtx(rtsp_port=self.rtsp_port,
+                                    webrtc_port=self.webrtc_port,
+                                    token=self.token, lan=self.lan)
+            p = self.sup.start_rtsp_pub(n, w, h, self.rtsp_port, fps=fps,
+                                        debug=self.debug, audio=monitor,
+                                        piped=piped)
+            if piped:
+                self.feed.add(p)
+            log("webrtc on", self.webrtc_port, "rtsp", self.rtsp_port)
 
     def start_app_and_capture(self):
         env = dict(os.environ, DISPLAY=self.disp)
@@ -250,17 +367,37 @@ class AppPane:
                                     stdout=subprocess.DEVNULL,
                                     stderr=subprocess.DEVNULL)
         self.xd = xdisplay.Display(self.disp)
-        self.inj = xinject.Injector(self.xd, self.app_w, self.app_h)
+        if self.term:
+            self.inj = xinject.Injector(self.xd, self.app_w, self.app_h)
         self.focus_app_window()
+        if self.term:                    # QW3: headless mode has no pane feed
+            self._spawn_capture(self.fps)
+        self.status = f"{os.path.basename(self.cmd[0])} on {self.disp}"
 
+    def _spawn_capture(self, fps):
+        """(Re)start the pane's rawvideo capture at `fps`. QW5 downshifts to
+        IDLE_FPS after IDLE_AFTER seconds without a changed frame — a mostly
+        static screen was measured wasting ~2200 dup frames per session — and
+        shifts back up on the first change (detected within 1/IDLE_FPS s)."""
+        if self.ff is not None:
+            try:
+                self.ff.terminate()
+                self.ff.wait(timeout=2)
+            except Exception:
+                try:
+                    self.ff.kill()
+                except Exception:
+                    pass
+        del self.ffbuf[:]                # drop any partial frame
         self.ff = subprocess.Popen(
             ["ffmpeg", "-loglevel", "quiet",
-             "-f", "x11grab", "-framerate", str(self.fps),
+             "-f", "x11grab", "-framerate", str(fps),
              "-video_size", f"{self.app_w}x{self.app_h}", "-i", self.disp,
              "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         os.set_blocking(self.ff.stdout.fileno(), False)
-        self.status = f"{os.path.basename(self.cmd[0])} on {self.disp}"
+        self._cap_fps = fps
+        log(f"capture at {fps}fps")
 
     def announce(self):
         """Print connect instructions to the LOCAL terminal (before the app
@@ -272,18 +409,30 @@ class AppPane:
                                rfb_port=self.rfb_port,
                                full_pw=self.full_pw, view_pw=self.view_pw,
                                http_port=self.http_port, token=self.token,
-                               lan_host=lan_host, tls_fp=self.tls_fp)
+                               lan_host=lan_host, tls_fp=self.tls_fp,
+                               have_hls=self.hls, have_ts=self.mse,
+                               webrtc_port=self.webrtc_port)
         try:
             _cf = os.open(os.path.join(self.sup.runtime_dir, "connect.txt"),
                           os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
             with os.fdopen(_cf, "w") as f:
-                f.write(f"kilix run --serve {' '.join(self.cmd)}\n"
-                        f"VNC        127.0.0.1:{self.rfb_port}\n"
-                        f"control pw {self.full_pw}\n"
-                        f"view-only  {self.view_pw}\n")
+                f.write(f"kilix run {' '.join(self.cmd)}\n")
+                if self.rfb_port:
+                    f.write(f"VNC        127.0.0.1:{self.rfb_port}\n"
+                            f"control pw {self.full_pw}\n"
+                            f"view-only  {self.view_pw}\n")
                 if self.http_port:
                     scheme = "https" if self.lan else "http"
-                    f.write(f"browser    {scheme}://127.0.0.1:{self.http_port}/?t={self.token}\n")
+                    base = f"{scheme}://127.0.0.1:{self.http_port}"
+                    f.write(f"browser    {base}/?t={self.token}\n")
+                    if self.mse:
+                        f.write(f"low-latency {base}/watch?t={self.token}\n")
+                    if self.hls:
+                        f.write(f"hls        {base}/hls/live.m3u8?t={self.token}\n")
+                if self.webrtc_port:
+                    f.write(f"webrtc     http://127.0.0.1:{self.webrtc_port}"
+                            f"/kilix  (user kilix, pass = token)\n"
+                            f"token      {self.token}\n")
         except OSError:
             pass
 
@@ -335,7 +484,21 @@ class AppPane:
             self._dbg["cap"] += 1            # frames captured (before change-detect)
         if frame is not None and frame != self.last_frame:
             self.last_frame = frame
+            now = time.time()
+            self._last_change = now
+            self.feed.offer(frame, now)      # E4: same frame feeds the encoders
+            if self._cap_fps != self.fps:    # QW5: activity — back to full rate
+                self._spawn_capture(self.fps)
             self.blit(frame)
+
+    def tick_capture(self, now):
+        """Idle housekeeping each loop pass: QW5 capture downshift and the E4
+        keepalive that keeps VFR encoder sinks flowing on a static screen."""
+        if (self.ff is not None and self._cap_fps > IDLE_FPS
+                and now - self._last_change > IDLE_AFTER):
+            self._spawn_capture(IDLE_FPS)
+        self.feed.keepalive(self.last_frame, now)
+        self.feed.pump()
 
     def blit(self, rgb):
         wire = 0
@@ -430,15 +593,18 @@ class AppPane:
             del self.ffbuf[:]
 
     def run(self):
-        signal.signal(signal.SIGWINCH, lambda *a: setattr(self, "resized", True))
+        if self.term:
+            signal.signal(signal.SIGWINCH,
+                          lambda *a: setattr(self, "resized", True))
+            os.set_blocking(self.term.fd, False)
         for _s in (signal.SIGTERM, signal.SIGHUP):   # -> finally + sup.cleanup()
             signal.signal(_s, lambda *a: sys.exit(0))
-        os.set_blocking(self.term.fd, False)
         err = None
-        if self.serve:
-            # Bring Xvnc up first so connect details print to the LOCAL terminal
-            # before the app takes the alt screen (and never into the captured
-            # stream — passwords must not reach remote viewers).
+        web = self.lan or self.hls or self.mse or self.webrtc
+        if self.serve or web:
+            # Bring the servers up first so connect details print to the LOCAL
+            # terminal before the app takes the alt screen (and never into the
+            # captured stream — secrets must not reach remote viewers).
             try:
                 self.start_display()
                 self.announce()
@@ -447,19 +613,27 @@ class AppPane:
                     self.sup.cleanup()
                 print(f"kilix run: {e}", file=sys.stderr)
                 sys.exit(1)
-        self.term.enter()
+        if self.term:
+            self.term.enter()
         try:
-            if self.serve:
+            if self.serve or web:
                 self.start_app_and_capture()   # display already up
             else:
                 self.start()
             self._loop_start = time.time()
             while True:
-                r, _, _ = select.select(
-                    [self.term.fd, self.ff.stdout], [], [], 0.25)
-                if self.ff.stdout in r:
+                rlist = []
+                if self.ff is not None:
+                    rlist.append(self.ff.stdout)
+                if self.term:
+                    rlist.append(self.term.fd)
+                # write-select on encoder stdins with a queued frame, so a
+                # briefly-full pipe drains as soon as the encoder catches up
+                r, w, _ = select.select(rlist, self.feed.pending_fds(),
+                                        [], 0.25)
+                if self.ff is not None and self.ff.stdout in r:
                     self.pump_frames()
-                if self.term.fd in r:
+                if self.term and self.term.fd in r:
                     for ev in self.term.read_input():
                         if ev["kind"] == "key":
                             self.on_key(ev)
@@ -470,6 +644,8 @@ class AppPane:
                 if self.resized:
                     self.resized = False
                     self.do_resize()
+                now = time.time()
+                self.tick_capture(now)
                 # A first placement can be dropped right after startup (seen
                 # as a pane that stays black while the app clearly has output;
                 # q=2 means we never hear the error). Placement is otherwise
@@ -477,16 +653,17 @@ class AppPane:
                 # during a warmup window (recover in <1s), then a cheap idle
                 # interval so an app sitting on a static screen isn't rewritten
                 # every tick. Animation blits on its own and resets the timer.
-                if self.last_frame is not None:
-                    idle = time.time() - getattr(self, "_blit_t", 0)
-                    warming = time.time() - self._loop_start < 4
+                if self.term and self.last_frame is not None:
+                    idle = now - getattr(self, "_blit_t", 0)
+                    warming = now - self._loop_start < 4
                     if idle > (0.4 if warming else 3):
                         self.blit(self.last_frame)
                 if self.app.poll() is not None:
                     err = (None if self.app.returncode == 0 else
                            f"app exited with rc={self.app.returncode}")
                     break
-                self.render_status()
+                if self.term:
+                    self.render_status()
         except KeyboardInterrupt:
             pass
         except (EOFError, BrokenPipeError) as e:
@@ -494,7 +671,8 @@ class AppPane:
         except Exception as e:
             err = f"{type(e).__name__}: {e}"
         finally:
-            self.term.restore()
+            if self.term:
+                self.term.restore()
             if getattr(self, "inj", None) is not None:
                 self.inj.release_all()   # no keys/buttons left stuck down
             for p in (self.app, self.ff, self.xvfb):
@@ -524,7 +702,8 @@ def main():
     args = sys.argv[1:]
     app_w = app_h = None                 # default: sized from the pane
     fps = 20
-    serve = lan = hls = audio = False
+    serve = lan = hls = audio = mse = webrtc = False
+    no_pane = os.environ.get("KILIX_NO_PANE") == "1"
     while args and args[0].startswith("--"):
         if args[0] == "--size" and len(args) > 1:
             app_w, app_h = (int(v) for v in args[1].lower().split("x"))
@@ -547,20 +726,32 @@ def main():
         elif args[0] == "--hls":            # broadcast tier (many view-only viewers)
             hls = True
             args = args[1:]
+        elif args[0] in ("--mse", "--ts"):  # TS-over-WS low-latency tier (E1)
+            mse = True
+            args = args[1:]
+        elif args[0] == "--webrtc":         # sub-500ms WebRTC tier (E2, MediaMTX)
+            webrtc = True
+            args = args[1:]
+        elif args[0] == "--no-pane":        # QW3: headless, network tiers only
+            no_pane = True
+            args = args[1:]
         elif args[0] == "--debug":          # fps/bandwidth metrics -> status + file
             os.environ["KILIX_DEBUG"] = "1"
             args = args[1:]
-        elif args[0] == "--audio":          # capture app audio -> AAC in the HLS
-            audio = hls = True
+        elif args[0] == "--audio":          # capture app audio into the broadcasts
+            audio = True
             args = args[1:]
         else:
             sys.exit(f"kilix run: unknown option {args[0]}")
+    if audio and not (hls or mse or webrtc):
+        hls = True                          # audio needs a broadcast to ride in
     if not args:
-        sys.exit("usage: kilix run [--size WxH] [--fps N] "
-                 "[--serve|--lan] [--hls] [--audio] [--debug] command [args…]\n"
+        sys.exit("usage: kilix run [--size WxH] [--fps N] [--serve|--lan] "
+                 "[--hls] [--mse] [--webrtc] [--audio] [--no-pane] [--debug] "
+                 "command [args…]\n"
                  "  --size defaults to the pane's pixel size")
     AppPane(args, app_w, app_h, fps, serve=serve, lan=lan, hls=hls,
-            audio=audio).run()
+            audio=audio, mse=mse, webrtc=webrtc, no_pane=no_pane).run()
 
 
 if __name__ == "__main__":

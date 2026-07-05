@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """Run `kilix run` on a HEADLESS host (no real terminal, e.g. over SSH).
 
-apprun needs a terminal that reports a pixel size (for the local pane); a plain
-SSH pty reports none. This wraps apprun in a pty with a synthetic pixel winsize
-so its Term check passes, drains (discards) the local-pane output, and turns
-SIGINT/SIGTERM into kilix's Ctrl+Q quit. Deps that live in a no-sudo prefix
-(Debian) are picked up by sourcing stream-env.sh; on a system-installed host
-(Fedora) that file is absent and system paths are used.
+Sets KILIX_NO_PANE=1 (QW3) so apprun skips the local pane entirely — no Term,
+no pane x11grab; the network tiers x11grab the display themselves, so exactly
+one capture runs. The pty wrapper remains for compatibility (some hosts still
+run an older apprun that insists on a pixel-size-reporting terminal); deps in
+a no-sudo prefix (Debian) are picked up by sourcing stream-env.sh; on a
+system-installed host (Fedora) that file is absent and system paths are used.
 
-Usage:  scripts/kilix-headless.py [--serve|--lan] [--hls] [--audio] [--debug] \\
-                                   [--size WxH] [--fps N] command [args…]
-The streamed tiers (Xvnc/HLS/bridge) serve over the network as usual; the local
-pane is simply thrown away. Read connect details from the session's connect.txt
-(set KILIX_SESSION=<name> to make its runtime dir predictable).
+Usage:  scripts/kilix-headless.py [--serve|--lan] [--hls] [--mse] [--webrtc] \\
+                                   [--audio] [--debug] [--size WxH] [--fps N] \\
+                                   command [args…]
+Read connect details from the session's connect.txt (set KILIX_SESSION=<name>
+to make its runtime dir predictable).
 """
 import fcntl
 import os
@@ -27,7 +27,7 @@ import termios
 HERE = os.path.dirname(os.path.abspath(__file__))
 APPRUN = os.path.abspath(os.path.join(HERE, "..", "config", "apprun.py"))
 
-env = dict(os.environ)
+env = dict(os.environ, KILIX_NO_PANE="1")
 envfile = os.path.expanduser("~/.local/share/kilix/stream-env.sh")
 if os.path.exists(envfile):          # no-sudo Debian prefix: import its exports
     out = subprocess.run(["bash", "-c", f". '{envfile}'; env"],
@@ -47,8 +47,10 @@ os.close(slave)
 
 
 def _stop(*_):
+    # no-pane apprun reads no input: signal it instead of injecting Ctrl+Q
+    # (its SIGTERM handler exits cleanly through the supervisor teardown)
     try:
-        os.write(master, b"\x1b[113;5u")      # kitty-encoded Ctrl+Q
+        p.terminate()
     except OSError:
         pass
 
