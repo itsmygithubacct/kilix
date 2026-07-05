@@ -23,6 +23,13 @@ PREBUILT="$KILIX_HOME/kitty.app/bin/kitty"      # official prebuilt kitty (fallb
 # kitty.app.png / kitty.app-128.png in it as the window icon.
 export KITTY_CONFIG_DIRECTORY="$KILIX_HOME/config"
 
+# No-sudo streaming deps (Xvfb / Xvnc / vncpasswd / python-xlib unpacked by
+# scripts/install-stream-deps.sh on hosts that lack them): pull in their
+# PATH / LD_LIBRARY_PATH / PYTHONPATH so the serve modes find them. A no-op
+# where the deps are already system-installed (the file won't exist).
+_kx_env="${XDG_DATA_HOME:-$HOME/.local/share}/kilix/stream-env.sh"
+[ -f "$_kx_env" ] && . "$_kx_env"
+
 case "${1:-}" in
   --build) shift; exec "$KILIX_HOME/build.sh" "$@" ;;
   --which)

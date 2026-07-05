@@ -25,10 +25,19 @@ import time
 import urllib.parse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import warnings
 import stream
 import xinject
 import websockets
 from Xlib import display as xdisplay
+
+# websockets compat (see config/wsbridge.py): the legacy serve API works on both
+# websockets 10.x and 15.x; the default `websockets.serve` does not.
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+try:
+    from websockets.legacy.server import serve as ws_serve
+except Exception:
+    from websockets.server import serve as ws_serve
 
 mimetypes.add_type("application/vnd.apple.mpegurl", ".m3u8")
 mimetypes.add_type("video/mp2t", ".ts")
@@ -233,9 +242,9 @@ async def _serve(d):
         ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ssl_ctx.load_cert_chain(d.tls[0], d.tls[1])
     host = "0.0.0.0" if d.a.lan else "127.0.0.1"
-    async with websockets.serve(d.ws_handler, host, d.http_port,
-                                process_request=d.process_request,
-                                max_size=None, ping_interval=None, ssl=ssl_ctx):
+    async with ws_serve(d.ws_handler, host, d.http_port,
+                        process_request=d.process_request,
+                        max_size=None, ping_interval=None, ssl=ssl_ctx):
         await asyncio.Future()
 
 
