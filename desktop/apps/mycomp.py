@@ -61,6 +61,8 @@ class MyComputer(wm.Window):
              "data": ("filemgr", self.desk.shell.dir)},
             {"label": "Control Panel", "icon": "settings",
              "data": ("settings", None)},
+            {"label": "Sounds", "icon": "soundcp",
+             "data": ("soundcp", None)},
             {"label": "Recycle Bin", "icon": _bin_icon(),
              "data": ("bin", None)},
         ]
@@ -83,6 +85,8 @@ class MyComputer(wm.Window):
             self.desk.shell.open_app("filemgr", arg)
         elif kind == "settings":
             self.desk.shell.open_app("settings")
+        elif kind == "soundcp":
+            self.desk.shell.open_app("soundcp")
         elif kind == "bin":
             self._open_bin()
 

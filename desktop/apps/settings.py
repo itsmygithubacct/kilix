@@ -137,7 +137,10 @@ class SettingsWin(wm.Window):
                                           "Cancel", cb=self.close))
         self.b_apply = self.add(W.Button(cw - 84, ch - 33, 72, 23, "Apply",
                                          cb=self._apply))
-        self.status = self.add(W.Label(10, ch - 28, "", font=T.SMALL,
+        self.b_sounds = self.add(W.Button(
+            10, ch - 33, 84, 23, "Sounds…", icon="soundcp",
+            cb=lambda: self.desk.shell.open_app("soundcp")))
+        self.status = self.add(W.Label(102, ch - 28, "", font=T.SMALL,
                                        color=T.SHADOW))
         self._cur_tab = 0
         self._populate()
@@ -150,6 +153,7 @@ class SettingsWin(wm.Window):
         for b, dx in ((self.b_ok, 244), (self.b_cancel, 164),
                       (self.b_apply, 84)):
             b.x, b.y = cw - dx, ch - 33
+        self.b_sounds.y = ch - 33
         self.status.y = ch - 28
 
     def draw_client(self, d, img):

@@ -249,6 +249,8 @@ class Shell:
                    action=lambda: self.open_app("filemgr", self.dir)),
                 sep(),
                 MI("Display…", icon="display", action=self.display_properties),
+                MI("Sounds…", icon="soundcp",
+                   action=lambda: self.open_app("soundcp")),
                 MI("About kilix 95…", icon="flame", action=self.about_dialog),
             ]
         self.desk.menus.open(items, ev.x, ev.y)
