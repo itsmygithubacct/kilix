@@ -1,4 +1,4 @@
-"""Notepad Save As: a failed write must not latch the bad path (F29)."""
+"""Notepad Open/Save As now drive the graphical file picker (filedialog)."""
 import os
 import tempfile
 
@@ -11,41 +11,24 @@ def _field(dlg):
     return next(w for w in dlg.widgets if isinstance(w, W.TextField))
 
 
-# ── F29: Save As to a directory fails; path/title/dirty must stay truthful ──
+def _button(win, label):
+    return next(w for w in win.widgets
+               if isinstance(w, W.Button) and w.text == label)
+
+
+tmp = tempfile.mkdtemp()
+
+# ── Save As drives the picker: type a path, Enter commits + retitles ──
 d = H.make_desk()
 apps.open(d, "notepad", None)
 np = H.find_window(d, "Notepad")
 H.type_text(d, "hello")
 assert np.modified and np.path is None
 
-baddir = tempfile.mkdtemp()          # open(dir, "w") -> IsADirectoryError
 np._save_as()
 dlg = d.wm.modal_top()
 assert dlg is not None and dlg.title == "Save As", dlg
-_field(dlg).set(baddir)
-H.key(d, "Enter")
-
-# the write failed: nothing latched, title still says Untitled, still dirty
-assert np.path is None, ("bad path latched", np.path)
-assert np.modified
-assert np.title == "*Untitled - Notepad", np.title
-
-# dismiss the error box the failed write raised, back to the editor
-err = d.wm.modal_top()
-assert err is not None and err.title == "Notepad", err
-err.close()
-d.wm.activate(np)
-
-# Ctrl+S must re-prompt Save As, not silently retry the bad path
-H.key(d, "s", ctrl=True)
-top = d.wm.modal_top()
-assert top is not None and top.title == "Save As", ("no re-prompt", top)
-top.close()
-
-# ── happy path unchanged: a good Save As commits the path and retitles ──
-good = os.path.join(baddir, "note.txt")
-np._save_as()
-dlg = d.wm.modal_top()
+good = os.path.join(tmp, "note.txt")
 _field(dlg).set(good)
 H.key(d, "Enter")
 
@@ -54,5 +37,56 @@ assert not np.modified
 assert np.title == "note.txt - Notepad", np.title
 with open(good, encoding="utf-8") as f:
     assert f.read() == "hello"
+
+# ── Save As over an existing file: the dialog owns the overwrite prompt ──
+np.ta.set_text("hello world")
+np._save_as()
+dlg = d.wm.modal_top()
+_field(dlg).set(good)                 # same path -> replace? prompt
+H.key(d, "Enter")
+ask = d.wm.modal_top()
+assert ask is not dlg and ask.title == "Save As", ask
+_button(ask, "Yes").cb()              # confirm replace
+assert np.path == good and not np.modified
+with open(good, encoding="utf-8") as f:
+    assert f.read() == "hello world"
+
+# ── a missing file typed into Open warns and does not load or latch ──
+np2_path = np.path
+np._open()
+dlg = d.wm.modal_top()
+assert dlg.title == "Open", dlg
+_field(dlg).set(os.path.join(tmp, "nope.txt"))
+H.key(d, "Enter")
+warn = d.wm.modal_top()
+assert warn is not dlg and warn.title == "Open", warn   # not-found box
+warn.close()
+dlg.close()
+assert np.path == np2_path
+
+# ── Open drives the picker: type a real path, Enter loads it ──
+other = os.path.join(tmp, "other.md")
+with open(other, "w", encoding="utf-8") as f:
+    f.write("from disk")
+d.wm.activate(np)
+np._open()
+dlg = d.wm.modal_top()
+assert dlg is not None and dlg.title == "Open", dlg
+_field(dlg).set(other)
+H.key(d, "Enter")
+
+assert np.path == other, np.path
+assert np.ta.text() == "from disk", np.ta.text()
+assert not np.modified
+assert np.title == "other.md - Notepad", np.title
+
+# ── Ctrl+S with no path re-routes through Save As (the picker) ──
+apps.open(d, "notepad", None)
+np2 = H.find_window(d, "Notepad")
+H.type_text(d, "x")
+H.key(d, "s", ctrl=True)
+top = d.wm.modal_top()
+assert top is not None and top.title == "Save As", top
+top.close()
 
 print("ok")

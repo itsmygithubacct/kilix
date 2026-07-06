@@ -234,4 +234,62 @@ with open(w.path) as f:
 assert _font(False, False, 10 ** 6) is _font(False, False, MAX_SIZE)
 assert _font(False, False, 0) is _font(False, False, 1)
 
+# ── Save As / Open round-trip through the graphical file picker ─────────────
+def _dialog(desk):
+    return H.find_window(desk, "FileDialog")
+
+
+def _pick(dlg, label):
+    for it in dlg.list.items:
+        if it[1] == label:
+            return it
+    raise AssertionError(f"{label!r} not listed: {[it[1] for it in dlg.list.items]}")
+
+
+w.modified = False
+w.rta.set_doc([])
+d.wm.activate(w)
+typ("picker body")
+w.rta.anchor = (0, 0)
+w.rta.caret = (0, 6)
+w.rta.toggle("bold")
+saved_obj = w.rta.to_obj()
+w._save_as()                                     # opens the picker, no path yet
+dlg = _dialog(d)
+assert dlg is not None
+dlg._nav(tmp)
+dlg.name.set("viapicker.krt")
+dlg._confirm()
+via = os.path.join(tmp, "viapicker.krt")
+assert w.path == via and os.path.exists(via)     # picker chose the save path
+assert w.modified is False                        # save cleared the dirty flag
+assert _dialog(d) is None                          # dialog closed on confirm
+with open(via) as f:
+    assert json.load(f).get("kilix_rich") == 1    # styled rich JSON via picker
+
+w4 = _open(d)
+w4._open()                                        # fresh doc → picker opens now
+dlg = _dialog(d)
+assert dlg is not None
+dlg._nav(tmp)
+dlg._select(_pick(dlg, "viapicker.krt"))          # single click → name field
+assert dlg.name.text == "viapicker.krt"
+dlg._activate(_pick(dlg, "viapicker.krt"))        # double-click loads + closes
+assert _dialog(d) is None
+assert w4.path == via
+assert w4.rta.to_obj() == saved_obj               # styles survived picker round-trip
+assert _run_at(w4.rta, 0, 0)["bold"] is True
+
+# ── Open picker filters to WordPad/Text documents ───────────────────────────
+open(os.path.join(tmp, "shown.krt"), "w").close()
+open(os.path.join(tmp, "hidden.dat"), "w").close()
+w5 = _open(d)
+w5._open()
+dlg = _dialog(d)
+dlg._nav(tmp)
+labels = [it[1] for it in dlg.list.items]
+assert "shown.krt" in labels and "hidden.dat" not in labels
+dlg._cancel()
+assert _dialog(d) is None
+
 print("ok")
