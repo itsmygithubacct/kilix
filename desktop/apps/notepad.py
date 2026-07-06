@@ -53,15 +53,17 @@ class Notepad(wm.Window):
         self.desk.shell.add_recent(path)
         self._retitle()
 
-    def _save(self, then=None):
-        if not self.path:
+    def _save(self, then=None, path=None):
+        target = os.path.expanduser(path) if path else self.path
+        if not target:
             return self._save_as(then)
         try:
-            with open(self.path, "w", encoding="utf-8") as f:
+            with open(target, "w", encoding="utf-8") as f:
                 f.write(self.ta.text())
         except OSError as e:
             wm.msgbox(self.desk, "Notepad", str(e), icon="error")
             return
+        self.path = target
         self.modified = False
         self._retitle()
         if then:
@@ -70,8 +72,7 @@ class Notepad(wm.Window):
     def _save_as(self, then=None):
         def do(path):
             if path:
-                self.path = os.path.expanduser(path)
-                self._save(then)
+                self._save(then, path=path)
         wm.inputbox(self.desk, "Save As", "Save to path:",
                     self.path or os.path.expanduser("~/"), cb=do,
                     icon="notepad", width=340)
