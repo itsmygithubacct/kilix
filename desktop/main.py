@@ -47,6 +47,19 @@ browse.SPECIAL_CSI.update({
     "P": ("F1", "F1", 112), "Q": ("F2", "F2", 113),
     "S": ("F4", "F4", 115)})
 
+# kitty reports the numeric keypad only as functional (PUA) codes under flags
+# 13 (no KP folding, no embedded text) — map them to (key, text) here so the
+# keypad types and navigates like the main block.
+_KEYPAD = {
+    57409: (".", "."), 57410: ("/", "/"), 57411: ("*", "*"),
+    57412: ("-", "-"), 57413: ("+", "+"), 57414: ("Enter", "\r"),
+    57415: ("=", "="), 57417: ("ArrowLeft", ""), 57418: ("ArrowRight", ""),
+    57419: ("ArrowUp", ""), 57420: ("ArrowDown", ""), 57421: ("PageUp", ""),
+    57422: ("PageDown", ""), 57423: ("Home", ""), 57424: ("End", ""),
+    57425: ("Insert", ""), 57426: ("Delete", "")}
+for _i in range(10):
+    _KEYPAD[57399 + _i] = (str(_i), str(_i))
+
 
 class DeskTerm(browse.Term):
     """browse.Term with any-motion mouse tracking (hover, drags)."""
@@ -62,8 +75,15 @@ class DeskTerm(browse.Term):
 
     def restore(self):
         try:
+            # tmux filters unwrapped APCs, so in a streamed tmux session the
+            # placement-delete must ride the same passthrough envelope the
+            # frames do or the dead desktop's last frame stays on attached
+            # clients (mirrors blit_direct's in_tmux path).
+            delete = "\x1b_Ga=d,d=A\x1b\\"
+            if os.environ.get("KILIX_STREAM") == "1" and os.environ.get("TMUX"):
+                delete = gfx._tmux_wrap(delete)
             self.write("\x1b[<u\x1b[?1003l\x1b[?1006l\x1b[?1016l\x1b[?2004l"
-                       "\x1b[?7h\x1b_Ga=d,d=A\x1b\\\x1b[?25h\x1b[?1049l")
+                       "\x1b[?7h" + delete + "\x1b[?25h\x1b[?1049l")
         finally:
             import termios
             termios.tcsetattr(self.fd, termios.TCSADRAIN, self.saved)
@@ -90,8 +110,9 @@ class Desk:
         self.fd_hooks = {}            # fd -> callback (XPane video feeds etc.)
         self.tick_hooks = []          # callables(now), each loop pass
         self.mouse_owner = None
+        self._owner_btn = 0           # button that captured mouse_owner/drag
         self._buttons = 0
-        self._last_click = (0.0, -99, -99, 0)
+        self._last_click = (0.0, -99, -99, 0, 0)
         # graphics transport (mirrors browse.py)
         self.stream = os.environ.get("KILIX_STREAM") == "1"
         wid = os.environ.get("KITTY_WINDOW_ID", str(os.getpid()))
@@ -176,9 +197,13 @@ class Desk:
     def _norm_key(self, raw):
         mods = max(0, raw.get("mods", 1) - 1)
         key = raw["key"]
+        text = raw.get("text", "")
         if len(key) == 1 and 57344 <= ord(key) <= 63743:
-            return None               # kitty functional keycodes (bare mods)
-        return W.Ev(kind="key", key=key, text=raw.get("text", ""),
+            kp = _KEYPAD.get(ord(key))
+            if kp is None:
+                return None           # kitty functional keycodes (bare mods)
+            key, text = kp
+        return W.Ev(kind="key", key=key, text=text,
                     shift=bool(mods & 1), alt=bool(mods & 2),
                     ctrl=bool(mods & 4))
 
@@ -186,21 +211,30 @@ class Desk:
         b = raw["b"]
         if b & 256:                   # SGR-pixel leave indicator
             return None
-        x, y = raw["x"], raw["y"]
+        if b & 128:                   # side buttons 8-11: no desktop meaning
+            return None
+        # padding-edge / inter-pane wheel reports carry coords outside the
+        # framebuffer (kitty measures from the content origin) — clamp so they
+        # route to the edge window instead of missing every window.
+        x = max(0, min(raw["x"], self.w - 1))
+        y = max(0, min(raw["y"], self.h - 1))
         self.mouse_pos = (x, y)
         mods = dict(shift=bool(b & 4), alt=bool(b & 8), ctrl=bool(b & 16))
-        if b & 64:                    # wheel
+        if b & 64:                    # wheel: 0 up, 1 down, 2/3 horizontal
+            c3 = b & 3
+            if c3 >= 2:
+                return None           # horizontal wheel — not a vertical scroll
             return W.Ev(kind="mouse", x=x, y=y,
-                        wheel=(-1 if (b & 3) == 0 else 1), **mods)
+                        wheel=(-1 if c3 == 0 else 1), **mods)
         if b & 32:                    # motion
             return W.Ev(kind="mouse", x=x, y=y, move=True,
                         btn=self._buttons, **mods)
         btn = (b & 3) + 1
         if raw["press"]:
-            t, lx, ly, cc = self._last_click
-            cc = cc + 1 if (time.time() - t < 0.4 and abs(x - lx) < 5
-                            and abs(y - ly) < 5) else 1
-            self._last_click = (time.time(), x, y, cc)
+            t, lx, ly, lb, cc = self._last_click
+            cc = cc + 1 if (btn == lb and time.time() - t < 0.4
+                            and abs(x - lx) < 5 and abs(y - ly) < 5) else 1
+            self._last_click = (time.time(), x, y, btn, cc)
             self._buttons |= 1 << (btn - 1)
             return W.Ev(kind="mouse", x=x, y=y, btn=btn, press=True,
                         clicks=cc, **mods)
@@ -210,10 +244,11 @@ class Desk:
     # ── dispatch ────────────────────────────────────────────────────────────
     def dispatch_mouse(self, ev):
         self._dispatch_mouse(ev)
-        if not ev.press and not ev.move and not ev.wheel:
-            # a release ALWAYS ends capture, even when a menu ate the event —
-            # otherwise the owner set by the menu-opening press leaks and
-            # swallows the next click
+        if (not ev.press and not ev.move and not ev.wheel
+                and ev.btn == self._owner_btn):
+            # the release of the CAPTURING button ends capture (even when a
+            # menu ate the event — otherwise the owner set by the menu-opening
+            # press leaks); another button's release must not abort the drag
             self.mouse_owner = None
 
     def _dispatch_mouse(self, ev):
@@ -225,8 +260,17 @@ class Desk:
         if self.mouse_owner is not None:
             self.mouse_owner(ev)
             return
-        win = self.wm.window_at(ev.x, ev.y)
         modal = self.wm.modal_top()
+        # the taskbar is composited last (on top), so it must be hit-tested
+        # before windows or a window overlapping the bottom strip steals its
+        # Start-button/task-button clicks
+        if self.taskbar.hit(ev.x, ev.y):
+            self.taskbar.on_mouse(ev)
+            if ev.press:
+                self.mouse_owner = self.taskbar.on_mouse
+                self._owner_btn = ev.btn
+            return
+        win = self.wm.window_at(ev.x, ev.y)
         if win is not None:
             if modal and win is not modal:
                 if ev.press:
@@ -236,14 +280,10 @@ class Desk:
                 if self.wm.active is not win:
                     self.wm.activate(win)
                 self.mouse_owner = self._route_window(win)
+                self._owner_btn = ev.btn
             win.on_mouse(ev)
             if self.wm.drag:
                 self.mouse_owner = self._route_drag
-            return
-        if self.taskbar.hit(ev.x, ev.y):
-            self.taskbar.on_mouse(ev)
-            if ev.press:
-                self.mouse_owner = self.taskbar.on_mouse
             return
         if modal:
             if ev.press:
@@ -252,6 +292,7 @@ class Desk:
         self.shell.on_mouse(ev)
         if ev.press:
             self.mouse_owner = self.shell.on_mouse
+            self._owner_btn = ev.btn
 
     def _route_window(self, win):
         def route(ev):
@@ -264,7 +305,7 @@ class Desk:
     def _route_drag(self, ev):
         if ev.move:
             self.wm.drag_motion(ev)
-        elif not ev.press:
+        elif not ev.press and ev.btn == self._owner_btn:
             self.wm.end_drag()
 
     def dispatch_key(self, ev):
@@ -276,6 +317,12 @@ class Desk:
             return
         if ev.ctrl and ev.key == "Escape":
             self.taskbar.open_start_menu()
+            return
+        modal = self.wm.modal_top()
+        if modal and self.wm.active is not modal:
+            # keyboard is modal too: never let typing (or Alt+F4) reach a
+            # window activated behind an open modal dialog
+            self.wm.activate(modal)
             return
         if ev.alt and ev.key == "F4":
             if self.wm.active:
@@ -302,6 +349,7 @@ class Desk:
         self.w = int(self.term.cols * self.term.cell_w)
         self.h = int(self.term.rows * self.term.cell_h)
         self.fb = Image.new("RGB", (self.w, self.h), T.DESKTOP)
+        self.menus.close_all()        # popups clamp to the old size — drop them
         self.shell.on_resize()
         for win in self.wm.windows:
             if win.maximized:
@@ -309,6 +357,12 @@ class Desk:
                 win.w, win.h = self.w, self.h - T.TASKBAR_H
                 win.surface = None
                 win.on_resize()
+                if win._restore:      # keep the un-maximize rect on-screen too
+                    rx, ry, rw, rh = win._restore
+                    rw, rh = min(rw, self.w), min(rh, self.h - T.TASKBAR_H)
+                    rx = max(0, min(rx, self.w - 60))
+                    ry = max(0, min(ry, self.h - T.TASKBAR_H - 20))
+                    win._restore = (rx, ry, rw, rh)
             else:
                 win.x = max(0, min(win.x, self.w - 60))
                 win.y = max(0, min(win.y, self.h - T.TASKBAR_H - 20))
