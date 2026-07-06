@@ -68,10 +68,31 @@ class DeskTerm(browse.Term):
         import tty
         tty.setraw(self.fd)
         # alt screen, hide cursor, no autowrap, kitty kbd protocol,
-        # any-motion + SGR + SGR-pixels mouse, bracketed paste
-        self.write("\x1b[?1049h\x1b[2J\x1b[?25l\x1b[?7l\x1b[>13u"
+        # any-motion + SGR + SGR-pixels mouse, bracketed paste.
+        # >15u adds event-type reporting (flag 2) on top of the usual
+        # disambiguate+alternates+all-keys so the loop sees the Alt key's
+        # release — needed to commit the Alt+Tab switcher (_parse_csi tags
+        # every key event with its type; _norm_key drops the releases).
+        self.write("\x1b[?1049h\x1b[2J\x1b[?25l\x1b[?7l\x1b[>15u"
                    "\x1b[?1003h\x1b[?1006h\x1b[?1016h\x1b[?2004h"
                    "\x1b]2;kilix 95\x07")
+
+    def _parse_csi(self, params, final):
+        # tag key events with the kitty event type (1 press, 2 repeat,
+        # 3 release) — browse drops it; the switcher needs it
+        ev = super()._parse_csi(params, final)
+        if ev and ev.get("kind") == "key":
+            evt = 1
+            parts = params.split(";")
+            if len(parts) > 1:
+                sub = parts[1].split(":")
+                if len(sub) > 1 and sub[1]:
+                    try:
+                        evt = int(sub[1])
+                    except ValueError:
+                        evt = 1
+            ev["evt"] = evt
+        return ev
 
     def restore(self):
         try:
@@ -120,6 +141,20 @@ class Desk:
         self.img_id = 1 + ((int(wid) if wid.isdigit() else os.getpid())
                            % 4000)
         self.seq = 0
+        # WM/loop polish state
+        self.switcher = None          # Alt+Tab overlay: {"wins", "sel"} or None
+        self._tooltip = None          # current tooltip text or None
+        self._tooltip_pos = (0, 0)
+        self._hover_pos = self.mouse_pos
+        self._hover_since = 0.0
+        self.saver = None             # active screensaver instance or None
+        self.saving = False
+        self._saver_last = 0.0
+        self._last_input = time.time()
+        try:
+            self.saver_idle = float(os.environ.get("KILIX_SAVER_IDLE") or 180)
+        except ValueError:
+            self.saver_idle = 180.0
 
     def size(self):
         return self.w, self.h
@@ -154,6 +189,10 @@ class Desk:
             fb.paste(surf, (win.x, win.y), win.compose_mask)
         self.taskbar.draw(fb, d)
         self.menus.draw(fb, d)
+        if self.switcher is not None:
+            self._draw_switcher(d)
+        elif self._tooltip:
+            self._draw_tooltip(d)
         if self.draw_cursor:
             self._paint_cursor(d)
         self.dirty = False
@@ -165,11 +204,156 @@ class Desk:
                (x + 9, y + 15), (x + 6, y + 9), (x + 11, y + 9)]
         d.polygon(pts, fill=T.LIGHT, outline=T.TEXT)
 
-    def blit(self):
+    # ── Alt+Tab window switcher ──────────────────────────────────────────────
+    def _switch(self, direction):
+        """Open (or advance) the switcher overlay by one step."""
+        wins = self.wm.switch_list()
+        if not wins:
+            return
+        if self.switcher is None:
+            self.switcher = {"wins": wins, "sel": 0}
+        sel = (self.switcher["sel"] + direction) % len(self.switcher["wins"])
+        self.switcher["sel"] = sel
+        self.dirty = True
+
+    def _end_switch(self, commit=True):
+        sw, self.switcher = self.switcher, None
+        if sw is None:
+            return
+        wins, sel = sw["wins"], sw["sel"]
+        # a window may have closed mid-switch (an XPane teardown fires from a
+        # tick hook while Alt is held) — only activate one still on the stack
+        if (commit and 0 <= sel < len(wins)
+                and wins[sel] in self.wm.windows):
+            self.wm.activate(wins[sel])
+        self.dirty = True
+
+    def _cycle(self, direction):
+        """Alt+Esc: raise the next/previous window with no overlay."""
+        wins = self.wm.switch_list()
+        if len(wins) >= 2:
+            self.wm.activate(wins[direction % len(wins)])
+
+    def _draw_switcher(self, d):
+        sw = self.switcher
+        wins = sw["wins"]
+        if not wins:
+            return
+        row_h, pad = 22, 8
+        tw = max(T.text_w(T.FONT, w.title) for w in wins)
+        pw = max(180, min(tw + 26 + 24, self.w - 40))
+        ph = pad * 2 + len(wins) * row_h
+        px = (self.w - pw) // 2
+        py = (self.h - ph) // 2
+        T.raised(d, px, py, px + pw - 1, py + ph - 1)
+        for i, win in enumerate(wins):
+            ry = py + pad + i * row_h
+            rx0, rx1 = px + pad, px + pw - pad - 1
+            if i == sw["sel"]:
+                d.rectangle([rx0, ry, rx1, ry + row_h - 2], fill=T.SEL_BG)
+                T.focus_rect(d, rx0, ry, rx1, ry + row_h - 2, off=T.SEL_BG)
+                col = T.SEL_TX
+            else:
+                col = T.TEXT
+            icons.paint(self.fb, win.icon, rx0 + 4, ry + (row_h - 2 - 16) // 2,
+                        16)
+            label = T.ellipsize(T.FONT, win.title, pw - 26 - 2 * pad)
+            d.text((rx0 + 26, ry + (row_h - 13) // 2), label, font=T.FONT,
+                   fill=col)
+
+    # ── tooltips ─────────────────────────────────────────────────────────────
+    def _hide_tooltip(self):
+        if self._tooltip is not None:
+            self._tooltip = None
+            self.dirty = True
+
+    def _tooltip_query(self, x, y):
+        win = self.wm.window_at(x, y)
+        obj = win if win is not None else (
+            self.taskbar if self.taskbar.hit(x, y) else self.shell)
+        fn = getattr(obj, "tooltip_at", None)
+        if fn is None:
+            return None
+        try:
+            return fn(x, y)
+        except Exception:
+            return None
+
+    def _draw_tooltip(self, d):
+        txt = self._tooltip
+        x, y = self._tooltip_pos
+        tw = T.text_w(T.FONT, txt)
+        bx, by = x + 12, y + 20
+        bx = min(bx, self.w - tw - 8)
+        if by + 16 > self.h:
+            by = y - 18
+        d.rectangle([bx, by, bx + tw + 5, by + 15], fill=T.INFO_BG,
+                    outline=T.TEXT)
+        d.text((bx + 3, by + 2), txt, font=T.FONT, fill=T.TEXT)
+
+    # ── idle screensaver ─────────────────────────────────────────────────────
+    def maybe_start_saver(self, now=None):
+        """Engage the screensaver if idle past the timeout. Never headless."""
+        now = now if now is not None else time.time()
+        if (self.term is not None and not self.saving and self.saver_idle > 0
+                and now - self._last_input >= self.saver_idle):
+            self._start_saver()
+            return True
+        return False
+
+    def _start_saver(self):
+        import screensaver
+        self.saver = screensaver.pick(self.size())
+        self.saving = True
+        self._saver_last = time.time()
+        self.dirty = True
+
+    def _wake_saver(self):
+        if not self.saving:
+            return
+        self.saving = False
+        self.saver = None
+        self._last_input = time.time()
+        self.dirty = True
+
+    # ── shutdown screen ──────────────────────────────────────────────────────
+    def shutdown(self):
+        """The classic full-screen 'It's now safe to turn off your computer.'
+        Painted on the quit path, held until a key or a few seconds. No-op
+        headless (self.term is None)."""
+        if self.term is None:
+            return
+        img = Image.new("RGB", (self.w, self.h), (0, 0, 0))
+        d = W.drawer(img)
+        orange = (255, 160, 0)
+        big = T._find_font(T._candidates(True), max(20, self.h // 18))
+        lines = ["It's now safe to turn off", "your computer."]
+        lh = max(26, self.h // 14)
+        y = (self.h - lh * len(lines)) // 2
+        for ln in lines:
+            try:
+                lw = int(big.getlength(ln))
+            except AttributeError:
+                lw = T.text_w(big, ln)
+            d.text(((self.w - lw) // 2, y), ln, font=big, fill=orange)
+            y += lh
+        self.blit(img)
+        end = time.time() + 5
+        while time.time() < end:
+            r, _, _ = select.select([self.term.fd], [], [],
+                                    max(0.0, end - time.time()))
+            if r:
+                try:
+                    os.read(self.term.fd, 4096)
+                except OSError:
+                    pass
+                break
+
+    def blit(self, img=None):
         if not self.term:
             return
         self._last_blit = time.time()
-        rgb = self.fb.tobytes()
+        rgb = (img if img is not None else self.fb).tobytes()
         if self.stream:
             gfx.blit_direct(self.term, rgb, self.w, self.h,
                             self.term.cols, self.term.rows, self.img_id,
@@ -195,8 +379,16 @@ class Desk:
 
     # ── input normalization ─────────────────────────────────────────────────
     def _norm_key(self, raw):
-        mods = max(0, raw.get("mods", 1) - 1)
+        evt = raw.get("evt", 1)       # 1 press, 2 repeat, 3 release
         key = raw["key"]
+        # the Alt key reports its own press AND release (so the switcher can
+        # commit on Alt-up); other bare modifiers stay filtered out
+        if len(key) == 1 and ord(key) in (57443, 57449):   # L/R Alt
+            return W.Ev(kind="key", key="Alt", press=(evt != 3),
+                        alt=(evt != 3))
+        if evt == 3:
+            return None               # drop key releases (no double-typing)
+        mods = max(0, raw.get("mods", 1) - 1)
         text = raw.get("text", "")
         if len(key) == 1 and 57344 <= ord(key) <= 63743:
             kp = _KEYPAD.get(ord(key))
@@ -243,6 +435,10 @@ class Desk:
 
     # ── dispatch ────────────────────────────────────────────────────────────
     def dispatch_mouse(self, ev):
+        self._last_input = time.time()
+        if ev.press or ev.wheel:
+            self._hover_since = self._last_input
+            self._hide_tooltip()
         self._dispatch_mouse(ev)
         if (not ev.press and not ev.move and not ev.wheel
                 and ev.btn == self._owner_btn):
@@ -309,8 +505,25 @@ class Desk:
             self.wm.end_drag()
 
     def dispatch_key(self, ev):
+        self._last_input = time.time()
+        self._hover_since = self._last_input
+        self._hide_tooltip()
         if self.menus.active:
             self.menus.on_key(ev)
+            return
+        # ── Alt+Tab / Alt+Esc window switching ──────────────────────────────
+        if ev.key == "Alt":
+            if not ev.press:          # Alt released → commit the selection
+                self._end_switch(commit=True)
+            return
+        if ev.alt and ev.key == "Tab":
+            self._switch(-1 if ev.shift else 1)
+            return
+        if ev.alt and ev.key == "Escape":     # Alt+Esc: cycle, no overlay
+            self._cycle(-1 if ev.shift else 1)
+            return
+        if self.switcher is not None:         # any other key ends the switcher
+            self._end_switch(commit=True)
             return
         if ev.ctrl and ev.alt and ev.key == "q":
             self.quit()
@@ -394,6 +607,10 @@ class Desk:
                         cb()
                 if term.fd in r:
                     for raw in term.read_input():
+                        self._last_input = time.time()
+                        if self.saving:
+                            self._wake_saver()   # any input exits; swallow it
+                            continue
                         if raw["kind"] == "key":
                             ev = self._norm_key(raw)
                             if ev:
@@ -414,6 +631,25 @@ class Desk:
                 if now - last_blink >= 0.53:
                     last_blink = now
                     self.wm.blink()
+                # idle screensaver: while engaged, step and blit each pass
+                # (this doubles as the keepalive) and skip the desktop render
+                self.maybe_start_saver(now)
+                if self.saving:
+                    self.blit(self.saver.step(now - self._saver_last))
+                    self._saver_last = now
+                    continue
+                # hover-dwell tooltip
+                if self.switcher is None and not self.menus.active:
+                    if self.mouse_pos != self._hover_pos:
+                        self._hover_pos = self.mouse_pos
+                        self._hover_since = now
+                        self._hide_tooltip()
+                    elif self._tooltip is None and now - self._hover_since >= 0.7:
+                        txt = self._tooltip_query(*self.mouse_pos)
+                        if txt:
+                            self._tooltip = txt
+                            self._tooltip_pos = self.mouse_pos
+                            self.dirty = True
                 # keepalive re-blits: kitty drops graphics sent while the
                 # window is still settling (tab bar / pane title bar appear
                 # right after startup and clear placements), and rendering is
@@ -426,6 +662,10 @@ class Desk:
         except KeyboardInterrupt:
             pass
         finally:
+            try:
+                self.shutdown()       # safe-to-power-off screen on the way out
+            except Exception:
+                pass
             term.restore()
             self.cleanup_shm()
 

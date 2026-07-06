@@ -80,6 +80,16 @@ class Window:
         return (self.x <= gx < self.x + self.w
                 and self.y <= gy < self.y + self.h)
 
+    def tooltip_at(self, gx, gy):
+        """Hover tip: the (possibly-ellipsized) title over the title bar."""
+        if self.chromeless:
+            return None
+        lx, ly = gx - self.x, gy - self.y
+        if (T.BORDER <= ly < T.BORDER + T.TITLE_H
+                and T.BORDER <= lx < self.w - T.BORDER):
+            return self.title
+        return None
+
     # ── widget management ───────────────────────────────────────────────────
     def add(self, wdg):
         wdg.window = self
@@ -463,6 +473,11 @@ class WM:
             if not win.minimized and win.hit_test(gx, gy):
                 return win
         return None
+
+    def switch_list(self):
+        """Alt+Tab order: non-minimized windows, most-recently-active first
+        (top of the z-order first)."""
+        return [w for w in reversed(self.windows) if not w.minimized]
 
     def blink(self):
         w = self.active
