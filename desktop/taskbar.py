@@ -139,20 +139,42 @@ class Taskbar:
         MI, sub = W.MenuItem, W.sep
 
         def games():
-            return shell.game_menu_items()
+            builtin = [
+                MI("Minesweeper", icon="mines",
+                   action=lambda: shell.open_app("mines")),
+                MI("Solitaire", icon="cards",
+                   action=lambda: shell.open_app("sol")),
+            ]
+            return builtin + shell.game_menu_items()
+
+        def accessories():
+            return [
+                MI("Calculator", icon="calc",
+                   action=lambda: shell.open_app("calc")),
+                MI("Character Map", icon="charmap",
+                   action=lambda: shell.open_app("charmap")),
+                MI("Help", icon="help",
+                   action=lambda: shell.open_app("winhelp")),
+                MI("Notepad", icon="notepad",
+                   action=lambda: shell.open_app("notepad")),
+                MI("Paint", icon="paint",
+                   action=lambda: shell.open_app("paint")),
+                MI("WordPad", icon="wordpad",
+                   action=lambda: shell.open_app("wordpad")),
+            ]
 
         def programs():
             items = [
+                MI("Accessories", icon="folder", submenu=accessories()),
+                MI("Games", icon="games", submenu=games()),
+                sub(),
                 MI("File Manager", icon="folder_open",
                    action=lambda: shell.open_app("filemgr")),
-                MI("Notepad", icon="notepad",
-                   action=lambda: shell.open_app("notepad")),
                 MI("Terminal", icon="terminal", action=shell.open_terminal),
                 MI("Web Browser", icon="browser",
                    action=lambda: shell.open_url(None)),
                 MI("Media Player", icon="amp",
                    action=lambda: shell.open_app("amp")),
-                MI("Games", icon="games", submenu=games()),
             ]
             user = shell.launcher_menu_items()
             if user:

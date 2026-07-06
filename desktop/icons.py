@@ -330,6 +330,92 @@ def _arrow_up(p):
     p.hline(5, 9, 13, K)
 
 
+def _calc(p):
+    p.rect(2, 1, 13, 14, fill=S, outline=K)        # body
+    p.rect(4, 3, 11, 5, fill=N, outline=K)         # LCD display
+    p.hline(5, 8, 4, W)                            # display glint
+    for y in (8, 10, 12):                          # button rows
+        for x in (4, 6, 8, 10):
+            p.px(x, y, K)
+    p.px(10, 8, R)                                 # plus/equal accent
+    p.px(10, 12, R)
+
+
+def _cards(p):
+    p.rect(1, 4, 8, 14, fill=W, outline=K)         # back card, green
+    p.rect(2, 5, 7, 13, fill=DN)
+    p.px(4, 7, W); p.px(6, 9, W); p.px(4, 11, W)   # back hatch
+    p.rect(7, 2, 14, 12, fill=W, outline=K)        # front card, red
+    p.rect(8, 3, 13, 11, fill=DR)
+    p.px(10, 5, W); p.px(12, 7, W); p.px(10, 9, W)
+
+
+def _charmap(p):
+    p.rect(1, 1, 14, 14, fill=W, outline=K)         # glyph panel
+    for gx in (5, 10):                              # grid rules
+        p.vline(gx, 2, 13, S)
+    for gy in (5, 10):
+        p.hline(2, 13, gy, S)
+    p.rect(6, 6, 9, 9, fill=DB)                     # highlighted cell
+    p.hline(7, 8, 6, W)                             # the "A" glyph
+    p.px(6, 7, W); p.px(9, 7, W)
+    p.hline(6, 9, 8, W)
+    p.px(6, 9, W); p.px(9, 9, W)
+
+
+def _help(p):
+    p.rect(2, 2, 13, 14, fill=Y, outline=K)        # yellow help book
+    p.vline(4, 3, 13, DY)                          # spine groove
+    p.rect(5, 2, 13, 3, fill=DY)                   # top shading
+    p.px(12, 3, W)                                 # page glint
+    p.hline(7, 9, 5, K)                            # a chunky "?"
+    p.px(10, 6, K)
+    p.px(10, 7, K)
+    p.px(9, 8, K)
+    p.px(8, 9, K)
+    p.px(8, 10, K)
+    p.px(8, 12, K)                                 # the dot
+
+
+def _mines(p):
+    p.rect(1, 1, 14, 14, fill=S, outline=G)        # raised minefield cell
+    p.hline(1, 14, 1, W)                            # top hilight
+    p.vline(1, 1, 14, W)
+    p.hline(1, 14, 14, K)                           # bottom/right shadow
+    p.vline(14, 1, 14, K)
+    p.hline(4, 11, 7, K)                            # mine spikes
+    p.vline(7, 4, 11, K)
+    p.poly([(4, 4), (11, 11)], outline=K)
+    p.poly([(11, 4), (4, 11)], outline=K)
+    p.rect(5, 5, 9, 9, fill=K)                      # the black ball
+    p.px(6, 6, W)                                   # glint
+
+
+def _paint(p):
+    p.poly([(2, 6), (7, 3), (12, 4), (14, 8), (12, 12), (6, 14), (2, 11)],
+           fill=S, outline=K)                          # painter's palette
+    p.rect(4, 9, 6, 11, fill=W, outline=K)             # thumb hole
+    p.px(6, 6, R); p.px(7, 5, R)                        # dabs of color
+    p.px(9, 5, Y); p.px(10, 6, Y)
+    p.px(11, 8, B); p.px(12, 9, B)
+    p.px(9, 10, N); p.px(10, 11, N)
+    p.vline(13, 1, 4, DR)                               # brush handle
+    p.px(13, 5, Y); p.px(13, 6, Y)                      # ferrule
+    p.rect(12, 7, 14, 9, fill=K)                        # bristles
+
+
+def _wordpad(p):
+    p.rect(3, 1, 12, 14, fill=W, outline=K)                # page
+    p.poly([(9, 1), (12, 4), (9, 4)], fill=S, outline=K)   # dog-ear
+    p.vline(4, 6, 11, DB)                                   # blue "W"
+    p.vline(10, 6, 11, DB)
+    p.px(5, 11, DB); p.px(6, 10, DB); p.px(6, 11, DB)
+    p.px(7, 8, DB); p.px(7, 9, DB)
+    p.px(8, 10, DB); p.px(8, 11, DB); p.px(9, 11, DB)
+    p.poly([(11, 1), (14, 4), (13, 5), (10, 2)], fill=B, outline=DB)  # pen
+    p.px(10, 2, K)                                          # nib
+
+
 ICONS = {
     "computer": _computer, "display": _display, "drive": _drive,
     "folder": _folder, "folder_open": _folder_open,
@@ -341,6 +427,8 @@ ICONS = {
     "games": _games, "doom": _doom, "tank": _tank, "amp": _amp,
     "question": _question, "info": _info, "warn": _warn, "error": _error,
     "back": _arrow_left, "forward": _arrow_right, "up": _arrow_up,
+    "calc": _calc, "cards": _cards, "charmap": _charmap, "help": _help,
+    "mines": _mines, "paint": _paint, "wordpad": _wordpad,
 }
 
 _cache = {}
