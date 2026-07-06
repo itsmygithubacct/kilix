@@ -10,6 +10,7 @@ import stat
 import time
 
 import icons
+import recycle
 import shell as _shell
 import theme as T
 import widgets as W
@@ -18,6 +19,8 @@ import wm
 TB_Y = T.MENU_H + 2                  # toolbar row (below the menu bar)
 TB_H = 26
 STATUS_H = 20
+
+_clip = {"op": None, "paths": []}    # module-wide file clipboard: copy | cut
 
 
 class FileWindow(wm.Window):
@@ -30,8 +33,8 @@ class FileWindow(wm.Window):
         self.show_hidden = False
         cw, ch = self.client_size()
         self.menubar = self.add(W.MenuBar(cw, [
-            ("File", self._file_menu), ("View", self._view_menu),
-            ("Help", self._help_menu)]))
+            ("File", self._file_menu), ("Edit", self._edit_menu),
+            ("View", self._view_menu), ("Help", self._help_menu)]))
         bx = 4
         self.b_back = self.add(W.Button(bx, TB_Y + 2, 24, 22, icon="back",
                                         cb=lambda: self._go(-1)))
@@ -42,10 +45,11 @@ class FileWindow(wm.Window):
                                       cb=self._up))
         self.addr = self.add(W.TextField(bx + 84, TB_Y + 3, cw - bx - 92,
                                          on_enter=self._addr_enter))
-        self.grid = self.add(W.IconGrid(2, TB_Y + TB_H + 2, cw - 4,
-                                        ch - TB_Y - TB_H - STATUS_H - 4,
-                                        on_activate=self._activate,
-                                        on_context=self._context))
+        self.grid = self.add(_DropGrid(2, TB_Y + TB_H + 2, cw - 4,
+                                       ch - TB_Y - TB_H - STATUS_H - 4,
+                                       on_activate=self._activate,
+                                       on_context=self._context,
+                                       on_drop=self._drop))
         self.set_focus(self.grid)
         self.navigate(os.path.expanduser(path))
 
@@ -156,6 +160,26 @@ class FileWindow(wm.Window):
             MI("Close", action=self.request_close),
         ]
 
+    def _edit_menu(self):
+        MI, sep = W.MenuItem, W.sep
+        sel = self.grid.selected_items()
+        one = sel[0] if len(sel) == 1 else None
+        return [
+            MI("Cut", enabled=bool(sel), action=self._cut),
+            MI("Copy", enabled=bool(sel), action=self._copy),
+            MI("Paste", enabled=bool(_clip["op"] and _clip["paths"]),
+               action=self._paste),
+            sep(),
+            MI("Delete…", enabled=bool(sel),
+               action=lambda: self._delete(sel)),
+            MI("Rename…", enabled=one is not None,
+               action=lambda: self._rename(one)),
+            sep(),
+            MI("New Folder…", icon="folder", action=self._new_folder),
+            MI("Properties…", enabled=one is not None,
+               action=lambda: self._properties(one)),
+        ]
+
     def _view_menu(self):
         MI, sep = W.MenuItem, W.sep
         return [
@@ -188,6 +212,8 @@ class FileWindow(wm.Window):
             items = [
                 MI("New Folder…", icon="folder", action=self._new_folder),
                 MI("New Text File…", icon="doc_text", action=self._new_file),
+                MI("Paste", enabled=bool(_clip["op"] and _clip["paths"]),
+                   action=self._paste),
                 sep(),
                 MI("Open Terminal Here", icon="terminal",
                    action=lambda: self.desk.shell.open_terminal(self.path)),
@@ -196,6 +222,8 @@ class FileWindow(wm.Window):
                    action=self._toggle_hidden),
             ]
         else:
+            sel = self.grid.selected_items()
+            targets = sel if item in sel else [item]
             items = [
                 MI("Open", action=lambda: self._activate(item)),
             ]
@@ -208,12 +236,15 @@ class FileWindow(wm.Window):
                                 action=lambda: self.desk.shell.open_app(
                                     "notepad", item["data"])))
             items += [
+                sep(),
+                MI("Cut", action=lambda: self._cut(targets)),
+                MI("Copy", action=lambda: self._copy(targets)),
                 MI("Create Launcher…", icon="exe",
                    action=lambda: self.desk.shell.create_launcher_dialog(
                        prefill_cmd=_shell.shell_quote(item["data"]))),
                 sep(),
                 MI("Rename…", action=lambda: self._rename(item)),
-                MI("Delete…", action=lambda: self._delete([item])),
+                MI("Delete…", action=lambda: self._delete(targets)),
                 MI("Properties…", action=lambda: self._properties(item)),
             ]
         self.desk.menus.open(items, gx, gy)
@@ -257,7 +288,83 @@ class FileWindow(wm.Window):
         wm.inputbox(self.desk, "Rename", "New name:",
                     os.path.basename(item["data"]), cb=do)
 
-    def _delete(self, sel):
+    # ── clipboard ───────────────────────────────────────────────────────────
+    def _copy(self, sel=None):
+        sel = sel if sel is not None else self.grid.selected_items()
+        if sel:
+            _clip["op"], _clip["paths"] = "copy", [i["data"] for i in sel]
+
+    def _cut(self, sel=None):
+        sel = sel if sel is not None else self.grid.selected_items()
+        if sel:
+            _clip["op"], _clip["paths"] = "cut", [i["data"] for i in sel]
+
+    def _copy_name(self, dest):
+        stem, ext = os.path.splitext(os.path.basename(dest))
+        d = os.path.dirname(dest)
+        cand = os.path.join(d, f"{stem} - Copy{ext}")
+        i = 2
+        while os.path.lexists(cand):
+            cand = os.path.join(d, f"{stem} - Copy ({i}){ext}")
+            i += 1
+        return cand
+
+    def _paste(self):
+        op, paths = _clip["op"], list(_clip["paths"])
+        if not op or not paths:
+            return
+        srcdirs, err = set(), None
+        for src in paths:
+            if not os.path.lexists(src):
+                continue
+            same = os.path.abspath(os.path.dirname(src)) == \
+                os.path.abspath(self.path)
+            if op == "cut" and same:
+                continue                    # move onto self — no-op
+            dest = os.path.join(self.path, os.path.basename(src.rstrip("/")))
+            if os.path.lexists(dest):
+                dest = self._copy_name(dest)
+            try:
+                if op == "cut":
+                    shutil.move(src, dest)
+                    srcdirs.add(os.path.dirname(src))
+                elif os.path.isdir(src) and not os.path.islink(src):
+                    shutil.copytree(src, dest)
+                else:
+                    shutil.copy2(src, dest)
+            except (OSError, shutil.Error) as e:
+                err = str(e)
+        if op == "cut":
+            _clip["op"], _clip["paths"] = None, []
+        if err:
+            wm.msgbox(self.desk, "Paste", err, icon="error")
+        self.desk.shell.dir_changed(self.path)
+        for d in srcdirs:
+            self.desk.shell.dir_changed(d)
+
+    def _drop(self, sel, folder):
+        dst = folder["data"]
+        srcdirs, moved = set(), False
+        for it in sel:
+            p = it["data"]
+            if it is folder or os.path.abspath(p) == os.path.abspath(dst):
+                continue
+            dest = os.path.join(dst, os.path.basename(p.rstrip("/")))
+            if os.path.lexists(dest):
+                dest = self._copy_name(dest)
+            try:
+                shutil.move(p, dest)
+                srcdirs.add(os.path.dirname(p))
+                moved = True
+            except (OSError, shutil.Error) as e:
+                wm.msgbox(self.desk, "Move", str(e), icon="error")
+        if moved:
+            self.desk.shell.dir_changed(dst)
+            for d in srcdirs:
+                self.desk.shell.dir_changed(d)
+
+    # ── delete ──────────────────────────────────────────────────────────────
+    def _delete(self, sel, permanent=False):
         if not sel:
             return
         names = ", ".join(i["label"] for i in sel[:4]) + (
@@ -267,17 +374,21 @@ class FileWindow(wm.Window):
             if ans != "Yes":
                 return
             for it in sel:
+                p = it["data"]
                 try:
-                    p = it["data"]
-                    if os.path.isdir(p) and not os.path.islink(p):
-                        shutil.rmtree(p)
+                    if permanent:
+                        if os.path.isdir(p) and not os.path.islink(p):
+                            shutil.rmtree(p)
+                        else:
+                            os.unlink(p)
                     else:
-                        os.unlink(p)
-                except OSError as e:
+                        recycle.send(p)
+                except (OSError, shutil.Error) as e:
                     wm.msgbox(self.desk, "Delete", str(e), icon="error")
             self.desk.shell.dir_changed(self.path)
-        wm.msgbox(self.desk, "Confirm Delete",
-                  f"Delete {names}?\nThis cannot be undone.", icon="warn",
+        msg = (f"Permanently delete {names}?\nThis cannot be undone."
+               if permanent else f"Send {names} to the Recycle Bin?")
+        wm.msgbox(self.desk, "Confirm Delete", msg, icon="warn",
                   buttons=("Yes", "No"), default=1, cb=do)
 
     def _properties(self, item):
@@ -289,20 +400,21 @@ class FileWindow(wm.Window):
             return
         kind = ("Folder" if item["isdir"] else
                 "Launcher" if p.endswith(".desktop") else "File")
-        size = st.st_size
         if item["isdir"]:
             try:
-                size = len(os.listdir(p))
-                size_s = f"{size} item(s)"
+                n = len(os.listdir(p))
             except OSError:
-                size_s = "?"
+                n = 0
+            size_s = f"{_human(_tree_size(p))} ({n} item(s))"
         else:
-            size_s = _human(size)
+            size_s = _human(st.st_size)
+        fmt = lambda t: time.strftime("%Y-%m-%d %H:%M", time.localtime(t))
         wm.msgbox(self.desk, f"{item['label']} Properties",
                   f"Type:      {kind}\n"
                   f"Location:  {os.path.dirname(p)}\n"
                   f"Size:      {size_s}\n"
-                  f"Modified:  {time.strftime('%Y-%m-%d %H:%M', time.localtime(st.st_mtime))}\n"
+                  f"Modified:  {fmt(st.st_mtime)}\n"
+                  f"Created:   {fmt(st.st_ctime)}\n"
                   f"Mode:      {stat.filemode(st.st_mode)}",
                   icon=item.get("icon", "doc"),
                   win_icon=item.get("icon", "doc"))
@@ -316,8 +428,22 @@ class FileWindow(wm.Window):
             if ev.key == "F5":
                 self.refresh()
                 return True
+            if ev.ctrl and ev.key == "c":
+                self._copy()
+                return True
+            if ev.ctrl and ev.key == "x":
+                self._cut()
+                return True
+            if ev.ctrl and ev.key == "v":
+                self._paste()
+                return True
             if ev.key == "Delete":
-                self._delete(self.grid.selected_items())
+                self._delete(self.grid.selected_items(), permanent=ev.shift)
+                return True
+            if ev.alt and ev.key == "Enter":
+                sel = self.grid.selected_items()
+                if sel:
+                    self._properties(sel[0])
                 return True
             if ev.key == "F2":
                 sel = self.grid.selected_items()
@@ -328,6 +454,51 @@ class FileWindow(wm.Window):
             self.set_focus(self.addr)
             return True
         return super().on_key(ev)
+
+
+class _DropGrid(W.IconGrid):
+    """Icon grid that reports intra-view drops: drag an item and release it
+    over a folder to move the selection into that folder."""
+
+    def __init__(self, *a, on_drop=None, **k):
+        super().__init__(*a, **k)
+        self.on_drop = on_drop
+        self._from = None
+        self._press_xy = None
+
+    def on_mouse(self, ev):
+        if ev.press and ev.btn == 1:
+            self._from = self._item_at(ev.x, ev.y)
+            self._press_xy = (ev.x, ev.y)
+        res = super().on_mouse(ev)
+        if (self._from is not None and self.on_drop
+                and not ev.press and not ev.move and not ev.wheel):
+            px, py = self._press_xy or (ev.x, ev.y)
+            if abs(ev.x - px) + abs(ev.y - py) > 6:
+                tgt = self._item_at(ev.x, ev.y)
+                if (tgt is not None and tgt != self._from
+                        and self.items[tgt].get("isdir")):
+                    self.on_drop(self.selected_items()
+                                 or [self.items[self._from]], self.items[tgt])
+            self._from = None
+            self._press_xy = None
+        return res
+
+
+def _tree_size(path):
+    if os.path.islink(path) or not os.path.isdir(path):
+        try:
+            return os.lstat(path).st_size
+        except OSError:
+            return 0
+    total = 0
+    for root, _dirs, files in os.walk(path):
+        for n in files:
+            try:
+                total += os.lstat(os.path.join(root, n)).st_size
+            except OSError:
+                pass
+    return total
 
 
 def _human(n):

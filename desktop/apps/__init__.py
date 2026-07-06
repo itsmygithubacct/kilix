@@ -47,5 +47,18 @@ def open(desk, name, arg=None):
     elif name == "winhelp":
         from . import winhelp
         desk.wm.add(winhelp.Help(desk, arg))
+    elif name == "mycomp":
+        from . import mycomp
+        desk.wm.add(mycomp.MyComputer(desk, arg))
+    elif name == "recyclebin":
+        from . import recyclebin
+        for w in desk.wm.windows:
+            if isinstance(w, recyclebin.RecycleBin):
+                desk.wm.activate(w)
+                return
+        desk.wm.add(recyclebin.RecycleBin(desk))
+    elif name == "findfiles":
+        from . import findfiles
+        desk.wm.add(findfiles.FindFiles(desk, arg))
     else:
         raise ValueError(f"unknown app {name!r}")
