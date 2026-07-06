@@ -345,28 +345,32 @@ class TextField(Widget):
     def draw(self, d, img):
         x0, y0 = self.x, self.y
         x1, y1 = x0 + self.w - 1, y0 + self.h - 1
-        T.sunken(d, x0, y0, x1, y1,
-                 fill=T.WINDOW_BG if self.enabled else T.FACE)
-        ty = y0 + (self.h - 13) // 2
+        bg = T.WINDOW_BG if self.enabled else T.FACE
+        T.sunken(d, x0, y0, x1, y1, fill=bg)
+        # render into an interior-sized strip so scrolled text can't bleed
+        # past the box onto neighbouring widgets
+        iw, ih = self.w - 4, self.h - 4
+        ty = (ih - 13) // 2
+        strip = Image.new("RGB", (iw, ih), bg)
+        sd = drawer(strip)
+        ox = 2 - self.scroll                      # x of text[0] within strip
         s = self._sel()
         focused = self.window and self.window.focus is self
         if s and focused:
-            sx0 = max(x0 + 2, x0 + self._x_of(s[0]))
-            sx1 = min(x1 - 2, x0 + self._x_of(s[1]))
-            d.rectangle([sx0, ty - 1, sx1, ty + 13], fill=T.SEL_BG)
-        # clip by drawing only what fits (cheap: full string, box clips rarely
-        # matters at these widths — draw into the sunken area via slice)
-        d.text((x0 + 4 - self.scroll, ty), self.text, font=T.FONT, fill=T.TEXT)
-        d.rectangle([x0 + 1, y0 + 2, x0 + 2, y1 - 2], fill=None)  # keep edges
+            sx0 = ox + T.text_w(T.FONT, self.text[:s[0]])
+            sx1 = ox + T.text_w(T.FONT, self.text[:s[1]])
+            sd.rectangle([max(0, sx0), ty - 1, min(iw, sx1), ty + 13],
+                         fill=T.SEL_BG)
+        sd.text((ox, ty), self.text, font=T.FONT, fill=T.TEXT)
         if s and focused:
-            d.text((x0 + 4 - self.scroll, ty), self.text[:s[1]],
-                   font=T.FONT, fill=T.TEXT)
-            d.text((x0 + self._x_of(s[0]), ty), self.text[s[0]:s[1]],
-                   font=T.FONT, fill=T.SEL_TX)
+            sd.text((ox + T.text_w(T.FONT, self.text[:s[0]]), ty),
+                    self.text[s[0]:s[1]], font=T.FONT, fill=T.SEL_TX)
+        img.paste(strip, (x0 + 2, y0 + 2))
         if focused and self.window.caret_on:
             cx = x0 + self._x_of(self.cur)
             if x0 + 2 <= cx <= x1 - 2:
-                d.line([(cx, ty - 1), (cx, ty + 13)], fill=T.TEXT)
+                cy = y0 + 2 + ty
+                d.line([(cx, cy - 1), (cx, cy + 13)], fill=T.TEXT)
 
     def on_mouse(self, ev):
         if ev.press and ev.btn == 1:
@@ -375,7 +379,7 @@ class TextField(Widget):
             if ev.clicks == 2:                       # double-click: select all
                 self.anchor, self.cur = 0, len(self.text)
             self.invalidate()
-        elif ev.move:
+        elif ev.move and (ev.btn & 1):
             self.cur = self._idx_at(ev.x - self.x)
             self._reveal()
             self.invalidate()
@@ -416,6 +420,8 @@ class TextField(Widget):
         elif k == "Enter":
             if self.on_enter:
                 self.on_enter(self.text)
+        elif k == "Tab":
+            return False                       # let the window cycle focus
         elif ev.text and not ev.ctrl and not ev.alt:
             changed = self.insert(ev.text)
         else:
@@ -456,6 +462,7 @@ class TextArea(Widget):
         self.cr = self.cc = 0                 # cursor row/col
         self.anchor = None                    # (row, col) or None
         self.goal_col = 0
+        self.hx = 0                           # horizontal scroll (pixels)
         self.sb = VScroll()
         self.on_change = None
         self.font = T.FONT
@@ -466,6 +473,7 @@ class TextArea(Widget):
         self.cr = self.cc = 0
         self.anchor = None
         self.sb.pos = 0
+        self.hx = 0
         self.invalidate()
 
     def text(self):
@@ -495,6 +503,36 @@ class TextArea(Widget):
         if self.cr >= self.sb.pos + self._rows():
             self.sb.pos = self.cr - self._rows() + 1
         self.sb.clamp()
+        maxw = self.w - T.SCROLL_W - 10
+        cx = 4 + T.text_w(self.font, self.lines[self.cr][:self.cc])
+        if cx - self.hx > maxw:
+            self.hx = cx - maxw
+        if cx - self.hx < 4:
+            self.hx = max(0, cx - 4)
+
+    def _span(self, s, maxw):
+        """Visible [a, b) char range of s at horizontal offset self.hx —
+        binary-searched so a long line costs O(log n) width probes, not O(n)."""
+        n = len(s)
+        if not n:
+            return 0, 0
+        f, W = self.font, T.text_w
+        lo, hi = 0, n
+        while lo < hi:                        # first char whose right edge > hx
+            m = (lo + hi) // 2
+            if W(f, s[:m + 1]) > self.hx:
+                hi = m
+            else:
+                lo = m + 1
+        a, right = lo, self.hx + maxw
+        lo, hi = a, n
+        while lo < hi:                        # first char at or past the right
+            m = (lo + hi) // 2
+            if W(f, s[:m]) >= right:
+                hi = m
+            else:
+                lo = m + 1
+        return a, lo
 
     def draw(self, d, img):
         x0, y0 = self.x, self.y
@@ -506,39 +544,44 @@ class TextArea(Widget):
         sel = self._sel()
         focused = self.window and self.window.focus is self
         tx = x0 + 4
+        maxw = self.w - T.SCROLL_W - 10
+        W = T.text_w
         for i in range(self._rows()):
             row = self.sb.pos + i
             if row >= len(self.lines):
                 break
             yy = y0 + 3 + i * self.LH
             s = self.lines[row]
-            maxw = self.w - T.SCROLL_W - 10
-            vis = s
-            while vis and T.text_w(self.font, vis) > maxw:
-                vis = vis[:-1]
+            a, b = self._span(s, maxw)            # visible pixel window slice
+            sel_row = None
             if sel:
                 (ar, ac), (br, bc) = sel
                 if ar <= row <= br:
                     c0 = ac if row == ar else 0
                     c1 = bc if row == br else len(s)
-                    c0, c1 = min(c0, len(vis)), min(c1, len(vis))
-                    sx0 = tx + T.text_w(self.font, vis[:c0])
-                    sx1 = tx + T.text_w(self.font, vis[:c1])
-                    if row < br and c1 == len(vis):
-                        sx1 += 4                      # show newline in sel
-                    d.rectangle([sx0, yy - 1, max(sx0, sx1), yy + self.LH - 2],
-                                fill=T.SEL_BG)
-                    d.text((tx, yy), vis[:c0], font=self.font, fill=T.TEXT)
-                    d.text((sx0, yy), vis[c0:c1], font=self.font, fill=T.SEL_TX)
-                    d.text((sx1 if c1 < len(vis) else sx1, yy), vis[c1:],
-                           font=self.font, fill=T.TEXT)
-                else:
-                    d.text((tx, yy), vis, font=self.font, fill=T.TEXT)
-            else:
-                d.text((tx, yy), vis, font=self.font, fill=T.TEXT)
+                    sel_row = (c0, c1, row < br)
+            # render the line into an interior-width strip; anything outside is
+            # clipped by the strip, so horizontal scroll can't bleed sideways
+            strip = Image.new("RGB", (maxw, self.LH), T.WINDOW_BG)
+            sd = drawer(strip)
+            if sel_row:
+                c0, c1, nl = sel_row
+                sx0 = W(self.font, s[:c0]) - self.hx
+                sx1 = W(self.font, s[:c1]) - self.hx + (4 if nl else 0)
+                sx0, sx1 = max(0, sx0), min(maxw, sx1)
+                if sx1 > sx0:
+                    sd.rectangle([sx0, 0, sx1 - 1, self.LH - 1], fill=T.SEL_BG)
+            sd.text((W(self.font, s[:a]) - self.hx, 1), s[a:b],
+                    font=self.font, fill=T.TEXT)
+            if sel_row:
+                d0, d1 = max(a, c0), min(b, c1)
+                if d1 > d0:
+                    sd.text((W(self.font, s[:d0]) - self.hx, 1), s[d0:d1],
+                            font=self.font, fill=T.SEL_TX)
+            img.paste(strip, (tx, yy - 1))
             if focused and self.window.caret_on and row == self.cr:
-                cx = tx + T.text_w(self.font, s[:min(self.cc, len(vis))])
-                if cx < x1 - T.SCROLL_W:
+                cx = tx + W(self.font, s[:self.cc]) - self.hx
+                if tx <= cx <= tx + maxw:
                     d.line([(cx, yy - 1), (cx, yy + self.LH - 2)], fill=T.TEXT)
         self.sb.draw(d)
 
@@ -608,14 +651,16 @@ class TextArea(Widget):
             return True
         row = self.sb.pos + max(0, (ly - 3) // self.LH)
         row = min(row, len(self.lines) - 1)
-        col = self._col_at(row, lx - 4)
+        col = self._col_at(row, lx - 4 + self.hx)
         if ev.press and ev.btn == 1:
             self._move(row, col, ev.shift)
             if not ev.shift:
                 self.anchor = (row, col)
+            self.goal_col = self.cc
             self.invalidate()
-        elif ev.move:
+        elif ev.move and (ev.btn & 1):
             self.cr, self.cc = row, col
+            self.goal_col = self.cc
             self._reveal()
             self.invalidate()
         elif not ev.press and not ev.move and self.anchor == (self.cr, self.cc):
@@ -630,25 +675,21 @@ class TextArea(Widget):
                 self._move(self.cr, self.cc - 1, ev.shift)
             elif self.cr > 0:
                 self._move(self.cr - 1, len(self.lines[self.cr - 1]), ev.shift)
-            self.goal_col = self.cc
         elif k == "ArrowRight":
             if self.cc < len(self.lines[self.cr]):
                 self._move(self.cr, self.cc + 1, ev.shift)
             elif self.cr < len(self.lines) - 1:
                 self._move(self.cr + 1, 0, ev.shift)
-            self.goal_col = self.cc
         elif k in ("ArrowUp", "ArrowDown"):
             step = -1 if k == "ArrowUp" else 1
-            self._move(self.cr + step, max(self.goal_col, self.cc), ev.shift)
+            self._move(self.cr + step, self.goal_col, ev.shift)
         elif k in ("PageUp", "PageDown"):
             step = -rows if k == "PageUp" else rows
             self._move(self.cr + step, self.goal_col, ev.shift)
         elif k == "Home":
             self._move(self.cr, 0, ev.shift)
-            self.goal_col = 0
         elif k == "End":
             self._move(self.cr, len(self.lines[self.cr]), ev.shift)
-            self.goal_col = self.cc
         elif ev.ctrl and k == "a":
             self.anchor = (0, 0)
             self.cr = len(self.lines) - 1
@@ -667,28 +708,38 @@ class TextArea(Widget):
         elif k == "Tab":
             self.insert("    ")
         elif k == "Backspace":
-            if not self._del_sel():
+            did = self._del_sel()
+            if not did:
                 if self.cc > 0:
                     ln = self.lines[self.cr]
                     self.lines[self.cr] = ln[:self.cc - 1] + ln[self.cc:]
                     self.cc -= 1
+                    did = True
                 elif self.cr > 0:
                     self.cc = len(self.lines[self.cr - 1])
                     self.lines[self.cr - 1] += self.lines.pop(self.cr)
                     self.cr -= 1
-            self._changed()
+                    did = True
+            if did:
+                self._changed()
         elif k == "Delete":
-            if not self._del_sel():
+            did = self._del_sel()
+            if not did:
                 ln = self.lines[self.cr]
                 if self.cc < len(ln):
                     self.lines[self.cr] = ln[:self.cc] + ln[self.cc + 1:]
+                    did = True
                 elif self.cr < len(self.lines) - 1:
                     self.lines[self.cr] += self.lines.pop(self.cr + 1)
-            self._changed()
+                    did = True
+            if did:
+                self._changed()
         elif ev.text and not ev.ctrl and not ev.alt:
             self.insert(ev.text)
         else:
             return False
+        if k not in ("ArrowUp", "ArrowDown", "PageUp", "PageDown"):
+            self.goal_col = self.cc
         self._reveal()
         self.invalidate()
         return True
@@ -765,8 +816,10 @@ class ListBox(Widget):
             self.sb.clamp()
             self.invalidate()
             return True
-        idx = self.sb.pos + (ev.y - self.y - 2) // self.RH
-        valid = 0 <= idx < len(self.items)
+        rel = ev.y - self.y - 2                # only the drawn rows are hits:
+        r = rel // self.RH if rel >= 0 else -1  # reject top bevel + partial tail
+        idx = self.sb.pos + r
+        valid = 0 <= r < self._rows() and 0 <= idx < len(self.items)
         if ev.press and ev.btn in (1, 3):
             self.sel = idx if valid else -1
             self.invalidate()
@@ -941,8 +994,9 @@ class IconGrid(Widget):
 
     def on_mouse(self, ev):
         if not self.desktop and self.sb.total > self.sb.page:
-            if self.sb.hit(ev.x, ev.y) or self.sb.drag is not None:
-                if self.sb.on_mouse(ev):
+            sev = ev.at(self.x, self.y)      # sb geometry is in surface coords
+            if self.sb.hit(sev.x, sev.y) or self.sb.drag is not None:
+                if self.sb.on_mouse(sev):
                     self.invalidate()
                 if ev.press or self.sb.drag is not None:
                     return True
@@ -1087,14 +1141,16 @@ class Menu:
     """One popup panel. The MenuHost stacks these for submenus."""
     ITEM_H = 17
     SEP_H = 8
+    ARROW = 15                    # scroll-arrow strip height when overflowing
 
     def __init__(self, items, gx, gy, host, item_h=None, sidebar=None,
-                 min_w=0):
+                 min_w=0, flip_x=None):
         self.items = items
         self.host = host
         self.item_h = item_h or self.ITEM_H
         self.sidebar = sidebar        # text drawn vertically in a navy band
         self.hot = -1
+        self.first = 0                # first visible item (item-aligned scroll)
         pad_l = 24 if sidebar else 0
         w = min_w
         for it in items:
@@ -1102,20 +1158,82 @@ class Menu:
             iw += 12 if it.submenu else 0
             w = max(w, iw)
         self.w = w + pad_l + 4
-        self.h = 4 + sum(self.SEP_H if it.label == "-" else self.item_h
-                         for it in items)
-        # keep on screen
+        self.full_h = 4 + sum(self.SEP_H if it.label == "-" else self.item_h
+                              for it in items)
+        # keep on screen; a menu taller than the screen scrolls (F45)
         sw, sh = host.desk.size()
+        avail = sh - T.TASKBAR_H
+        self.scrollable = self.full_h > avail
+        self.h = min(self.full_h, avail)
         self.x = max(0, min(gx, sw - self.w))
-        self.y = max(0, min(gy, sh - self.h))
-        if gy + self.h > sh - T.TASKBAR_H:
-            self.y = max(0, gy - self.h)   # open upward (start menu)
+        if flip_x is not None and gx + self.w > sw:   # cascade left of parent
+            self.x = max(0, flip_x - self.w)
+        if self.scrollable:
+            self.y = 0
+        else:
+            self.y = max(0, min(gy, sh - self.h))
+            if gy + self.h > sh - T.TASKBAR_H:
+                self.y = max(0, gy - self.h)   # open upward (start menu)
 
     def _pad_l(self):
         return 24 if self.sidebar else 0
 
+    def _content(self):
+        """Absolute (top, bottom) y of the scrollable item band."""
+        top, bot = self.y + 2, self.y + self.h - 2
+        if self.scrollable:
+            top += self.ARROW
+            bot -= self.ARROW
+        return top, bot
+
+    def _off(self):                   # pixel height of the items above self.first
+        return sum(self.SEP_H if it.label == "-" else self.item_h
+                   for it in self.items[:self.first])
+
+    def _max_first(self):
+        top, bot = self._content()
+        vis = bot - top
+        total, y = self.full_h - 4, 0
+        for f, it in enumerate(self.items):
+            if total - y <= vis:
+                return f
+            y += self.SEP_H if it.label == "-" else self.item_h
+        return max(0, len(self.items) - 1)
+
+    def scroll_by(self, step):
+        self.first = max(0, min(self.first + step, self._max_first()))
+
+    def _reveal(self, i):
+        if not self.scrollable:
+            return
+        if i < self.first:
+            self.first = i
+        else:
+            top, bot = self._content()
+            vis = bot - top
+            while self.first < i:
+                span = sum(self.SEP_H if it.label == "-" else self.item_h
+                           for it in self.items[self.first:i + 1])
+                if span <= vis:
+                    break
+                self.first += 1
+        self.first = max(0, min(self.first, self._max_first()))
+
+    def move_hot(self, step, start=None):
+        n = len(self.items)
+        if not n:
+            return
+        i = self.hot if start is None else start
+        for _ in range(n):
+            i = (i + step) % n
+            it = self.items[i]
+            if it.label != "-" and it.enabled:
+                self.hot = i
+                self._reveal(i)
+                return
+
     def item_rects(self):
-        y = self.y + 2
+        y = self._content()[0] - self._off()
         for it in self.items:
             h = self.SEP_H if it.label == "-" else self.item_h
             yield it, (self.x + 2 + self._pad_l(), y,
@@ -1127,8 +1245,13 @@ class Menu:
                 and self.y <= gy < self.y + self.h)
 
     def item_at(self, gx, gy):
+        top, bot = self._content()
+        if not (top <= gy < bot):
+            return -1                             # frame / arrow strips are dead
         for i, (it, (x0, y0, x1, y1)) in enumerate(self.item_rects()):
-            if y0 <= gy <= y1 and it.label != "-":
+            if (x0 <= gx <= x1 and y0 <= gy <= y1  # F60: bound x, not just y
+                    and top <= y0 and y1 < bot     # F45: only fully-shown rows
+                    and it.label != "-"):
                 return i
         return -1
 
@@ -1143,7 +1266,10 @@ class Menu:
             bd.text((6, 3), self.sidebar, font=T.BOLD, fill=T.FACE)
             band = band.transpose(Image.ROTATE_90)
             fb.paste(band, (self.x + 2, self.y + 3))
+        top, bot = self._content()
         for i, (it, (x0, y0, x1, y1)) in enumerate(self.item_rects()):
+            if y0 < top or y1 >= bot:          # scrolled out / partially clipped
+                continue
             if it.label == "-":
                 T.hsep(d, x0 + 2, x1 - 2, (y0 + y1) // 2)
                 continue
@@ -1170,6 +1296,16 @@ class Menu:
                 ax = x1 - 10
                 ay = y0 + self.item_h // 2
                 d.polygon([(ax, ay - 4), (ax, ay + 4), (ax + 4, ay)], fill=fg)
+        if self.scrollable:
+            cx = self.x + self.w // 2
+            if self.first > 0:
+                ay = self.y + 2 + self.ARROW // 2
+                d.polygon([(cx - 4, ay + 2), (cx + 4, ay + 2), (cx, ay - 3)],
+                          fill=T.TEXT)
+            if self.first < self._max_first():
+                ay = self.y + self.h - 2 - self.ARROW // 2
+                d.polygon([(cx - 4, ay - 2), (cx + 4, ay - 2), (cx, ay + 3)],
+                          fill=T.TEXT)
 
 
 class MenuHost:
@@ -1179,16 +1315,36 @@ class MenuHost:
         self.desk = desk
         self.stack = []
         self.bar = None               # a MenuBar to hover-switch across
+        self._eat_release = False     # swallow the release of the opening click
 
     def open(self, items, gx, gy, item_h=None, sidebar=None, bar=None,
-             min_w=0):
+             min_w=0, flip_x=None):
         if bar is not None:
             self.bar = bar
+        if not self.stack:            # the click that opens must not select
+            self._eat_release = True
         m = Menu(items, gx, gy, self, item_h=item_h, sidebar=sidebar,
-                 min_w=min_w)
+                 min_w=min_w, flip_x=flip_x)
         self.stack.append(m)
         self.desk.dirty = True
         return m
+
+    def _open_submenu(self, m):
+        if not (0 <= m.hot < len(m.items)):
+            return
+        it = m.items[m.hot]
+        if it.submenu is None or not it.enabled:
+            return
+        while self.stack and self.stack[-1] is not m:
+            self.stack.pop()
+        sub = self._cascade(m, it)
+        sub.move_hot(1, start=-1)
+        self.desk.dirty = True
+
+    def _cascade(self, m, it):        # open it.submenu anchored to its row in m
+        rects = dict((id(x[0]), x[1]) for x in m.item_rects())
+        x0, y0, x1, y1 = rects[id(it)]
+        return self.open(it.submenu, x1 - 2, y0 - 2, flip_x=m.x + 2)
 
     def close_all(self):
         if self.stack:
@@ -1215,9 +1371,38 @@ class MenuHost:
             else:
                 self.close_all()
             return True
+        if not self.stack:
+            return True
+        m = self.stack[-1]            # keyboard nav (reaches scrolled tail, F45)
+        if ev.key in ("ArrowDown", "ArrowUp"):
+            m.move_hot(1 if ev.key == "ArrowDown" else -1)
+            self.desk.dirty = True
+        elif ev.key == "Home":
+            m.move_hot(1, start=-1)
+            self.desk.dirty = True
+        elif ev.key == "End":
+            m.move_hot(-1, start=len(m.items))
+            self.desk.dirty = True
+        elif ev.key == "ArrowRight":
+            self._open_submenu(m)
+        elif ev.key == "ArrowLeft":
+            if len(self.stack) > 1:
+                self.stack.pop()
+                self.desk.dirty = True
+        elif ev.key in ("Enter", " ") and 0 <= m.hot < len(m.items):
+            it = m.items[m.hot]
+            if not it.enabled:
+                pass
+            elif it.submenu is not None:
+                self._open_submenu(m)
+            elif it.action:
+                self.close_all()
+                it.action()
         return True                   # menus swallow keys while open
 
     def on_mouse(self, ev):
+        if ev.press:
+            self._eat_release = False      # a fresh press arms its own release
         # topmost menu that the pointer is over
         over = None
         for m in reversed(self.stack):
@@ -1231,8 +1416,22 @@ class MenuHost:
             if ev.move and self.bar:
                 self.bar.hover_switch(ev)
             return True
+        if ev.wheel and over.scrollable:
+            over.scroll_by(ev.wheel)
+            self.desk.dirty = True
+            return True
         i = over.item_at(ev.x, ev.y)
+        if ev.press and over.scrollable and i < 0:   # click a scroll arrow strip
+            top, bot = over._content()
+            if ev.y < top:
+                over.scroll_by(-1)
+                self.desk.dirty = True
+            elif ev.y >= bot:
+                over.scroll_by(1)
+                self.desk.dirty = True
+            return True
         if ev.move:
+            self._eat_release = False      # a drag-select arms the release
             if i != over.hot:
                 over.hot = i
                 # entering an item trims deeper submenus and opens this one's
@@ -1240,11 +1439,12 @@ class MenuHost:
                     self.stack.pop()
                 it = over.items[i] if i >= 0 else None
                 if it and it.submenu is not None and it.enabled:
-                    rects = dict((id(x[0]), x[1]) for x in over.item_rects())
-                    x0, y0, x1, y1 = rects[id(it)]
-                    self.open(it.submenu, x1 - 2, y0 - 2)
+                    self._cascade(over, it)
                 self.desk.dirty = True
         elif not ev.press and ev.btn == 1:
+            if self._eat_release:          # release of the opening click (F12/F44)
+                self._eat_release = False
+                return True                # keep the menu open, select nothing
             if i >= 0:
                 it = over.items[i]
                 if it.enabled and it.submenu is None and it.action:
@@ -1279,10 +1479,10 @@ class MenuBar(Widget):
                    fill=T.SEL_TX if i == self.menu_open else T.TEXT)
 
     def _open(self, i, label_x):
-        self.menu_open = i
         gx, gy = self.window.client_origin()
         host = self.desk.menus
-        host.close_all()
+        host.close_all()              # close_all resets menu_open; set it after
+        self.menu_open = i
         host.open(self.items[i][1](), gx + label_x,
                   gy + self.y + self.h, bar=self)
         self.invalidate()

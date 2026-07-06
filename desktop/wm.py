@@ -35,9 +35,14 @@ class Window:
             self.w, self.h = max(w, 120), max(h, T.TITLE_H + 2 * T.BORDER + 10)
         sw, sh = desk.size()
         n = len(desk.wm.windows)
-        self.x = x if x is not None else max(0, (sw - self.w) // 2 + n * 22)
-        self.y = y if y is not None else max(0, (sh - T.TASKBAR_H - self.h)
-                                             // 2 + n * 22)
+        off = (n * 22) % 220          # cascade, wrapping like Win95
+        if x is None:
+            x = min((sw - self.w) // 2 + off, sw - self.w)
+        if y is None:
+            y = min((sh - T.TASKBAR_H - self.h) // 2 + off,
+                    sh - T.TASKBAR_H - self.h)
+        self.x = max(0, x)
+        self.y = max(0, y)
         self.resizable = resizable
         self.modal = modal
         self.on_close = on_close
@@ -52,6 +57,7 @@ class Window:
         self.compose_mask = None      # optional L-image: per-pixel opacity
         self.dirty = True
         self._capture = None          # widget holding the mouse until release
+        self._capture_btn = 0         # button that grabbed it (only it releases)
 
     # ── geometry ────────────────────────────────────────────────────────────
     def client_size(self):
@@ -237,11 +243,13 @@ class Window:
                     if wdg.visible and wdg.enabled and wdg.hit(cev.x, cev.y):
                         target = wdg
                         break
-            if gev.press and target is not None:
-                self._capture = target
-                if target.focusable:
-                    self.set_focus(target)
-            if not gev.press and not gev.move and not gev.wheel:
+                if gev.press and target is not None:
+                    self._capture = target
+                    self._capture_btn = gev.btn
+                    if target.focusable:
+                        self.set_focus(target)
+            if (not gev.press and not gev.move and not gev.wheel
+                    and gev.btn == self._capture_btn):
                 self._capture = None
             if target is not None:
                 target.on_mouse(cev)
@@ -261,7 +269,8 @@ class Window:
                 if gev.clicks == 2 and self.resizable:
                     wm.toggle_maximize(self)
                     return True
-                wm.begin_drag(self, "move", gev.x, gev.y)
+                if not self.maximized:
+                    wm.begin_drag(self, "move", gev.x, gev.y)
                 return True
             if edge and gev.btn == 1:
                 wm.begin_drag(self, edge, gev.x, gev.y)
@@ -269,36 +278,52 @@ class Window:
         # client dispatch (per-widget capture from press until release; a
         # press always re-hit-tests so a stale capture can't steal clicks)
         cev = lev.at(T.BORDER, T.BORDER + T.TITLE_H)
-        target = None if gev.press else self._capture
+        # a press with no held capture re-hit-tests so a stale capture can't
+        # steal the click; a 2nd button pressed mid-drag keeps the owner so its
+        # release can't abort an in-progress widget drag (selection, scrollbar)
+        held = (gev.press and self._capture is not None
+                and gev.btn != self._capture_btn)
+        target = self._capture if (held or not gev.press) else None
         if target is None:
             for wdg in reversed(self.widgets):
                 if wdg.visible and wdg.enabled and wdg.hit(cev.x, cev.y):
                     target = wdg
                     break
-        if gev.press:
+        if gev.press and not held:
             self._capture = target
+            self._capture_btn = gev.btn
             if target is not None and target.focusable:
                 self.set_focus(target)
-        if not gev.press and not gev.move and not gev.wheel:
+        if (not gev.press and not gev.move and not gev.wheel
+                and gev.btn == self._capture_btn):
             self._capture = None
         if target is not None:
             target.on_mouse(cev)
             return True
         return True                    # clicks on the frame still belong to us
 
-    def _system_menu(self):
+    def _system_menu(self, gx=None, gy=None):
+        # anchored at the title icon by default, or at (gx, gy) for the taskbar
         wm = self.desk.wm
+
+        def restore():
+            if self.minimized:
+                wm.activate(self)
+            else:
+                wm.toggle_maximize(self)
         items = [
-            W.MenuItem("Restore", action=lambda: wm.toggle_maximize(self),
-                       enabled=self.maximized),
-            W.MenuItem("Minimize", action=lambda: wm.minimize(self)),
+            W.MenuItem("Restore", action=restore,
+                       enabled=self.minimized or self.maximized),
+            W.MenuItem("Minimize", action=lambda: wm.minimize(self),
+                       enabled=not self.modal and not self.minimized),
             W.MenuItem("Maximize", action=lambda: wm.toggle_maximize(self),
                        enabled=self.resizable and not self.maximized),
             W.sep(),
             W.MenuItem("Close", action=self.request_close),
         ]
-        self.desk.menus.open(items, self.x + T.BORDER,
-                             self.y + T.BORDER + T.TITLE_H - 2)
+        if gx is None:
+            gx, gy = self.x + T.BORDER, self.y + T.BORDER + T.TITLE_H - 2
+        self.desk.menus.open(items, gx, gy)
 
     def on_key(self, ev):
         if self.focus and self.focus.on_key(ev):
@@ -331,6 +356,12 @@ class WM:
     def add(self, win):
         self.windows.append(win)
         self.activate(win)
+        # a modal dialog raised mid-construction (e.g. an app __init__ that
+        # msgbox'es a load error) is added before the app window; keep it on
+        # top so it stays visible and dismissable.
+        m = self.modal_top()
+        if m is not None and m is not win:
+            self.activate(m)
         return win
 
     def close(self, win):
@@ -355,6 +386,8 @@ class WM:
         old, self.active = self.active, win
         if old and old is not win:
             old.dirty = True
+            old.caret_on = False      # only the active window blinks a caret
+        win.caret_on = True
         win.dirty = True
         self.desk.dirty = True
 
@@ -469,7 +502,9 @@ def msgbox(desk, title, text, icon="info", buttons=("OK",), cb=None,
     """Win95 message box. cb(label) fires with the chosen button."""
     lines = _wrap_text(text, T.FONT, 260)
     tw = max([T.text_w(T.FONT, ln) for ln in lines] + [120])
-    w = min(360, max(200, tw + 90))
+    bw, bh, gap = 72, 23, 8
+    total = len(buttons) * bw + (len(buttons) - 1) * gap
+    w = max(min(360, max(200, tw + 90)), total + 24 + 2 * T.BORDER)
     h = (T.TITLE_H + 2 * T.BORDER + 24 + max(len(lines) * 14, 34) + 40)
     win = Window(desk, title, w, h, icon=win_icon or icon, resizable=False,
                  modal=True)
@@ -486,8 +521,6 @@ def msgbox(desk, title, text, icon="info", buttons=("OK",), cb=None,
                 ty += 14
 
     win.add(_Body())
-    bw, bh, gap = 72, 23, 8
-    total = len(buttons) * bw + (len(buttons) - 1) * gap
     bx = (win.client_size()[0] - total) // 2
     by = win.client_size()[1] - bh - 10
 
