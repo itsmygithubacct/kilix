@@ -175,6 +175,22 @@ class Desk:
             b64 = base64.b64encode(text.encode()).decode()
             self.term.write(f"\x1b]52;c;{b64}\x07")
 
+    def play_sound(self, name):
+        """Fire-and-forget UI sound. No-op headless (term is None) or when the
+        tray volume is muted/zero; never blocks the loop, never raises."""
+        if self.term is None:
+            return
+        try:
+            st = self.shell.state
+            vol, muted = int(st.get("volume", 75)), bool(st.get("muted", False))
+        except Exception:
+            vol, muted = 75, False
+        try:
+            import sounds
+            sounds.play(name, volume=vol, muted=muted)
+        except Exception:
+            pass
+
     # ── rendering ───────────────────────────────────────────────────────────
     def render(self):
         if not self.dirty:
@@ -323,6 +339,7 @@ class Desk:
         headless (self.term is None)."""
         if self.term is None:
             return
+        self.play_sound("shutdown")
         img = Image.new("RGB", (self.w, self.h), (0, 0, 0))
         d = W.drawer(img)
         orange = (255, 160, 0)
@@ -591,6 +608,12 @@ class Desk:
             signal.signal(s, lambda *a: sys.exit(0))
         os.set_blocking(term.fd, False)
         term.enter()
+        try:
+            import sounds
+            sounds.warm()             # off-thread cache fill so no cue blocks the loop
+        except Exception:
+            pass
+        self.play_sound("startup")
         last_blink = time.time()
         self._last_blit = 0.0
         start = time.time()

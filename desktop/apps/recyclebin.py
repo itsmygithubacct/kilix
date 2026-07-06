@@ -152,6 +152,7 @@ class RecycleBin(wm.Window):
         def do(ans):
             if ans == "Yes":
                 recycle.empty()
+                self.desk.play_sound("recycle_empty")
                 self.desk.shell.refresh()
                 self.refresh()
         wm.msgbox(self.desk, "Empty Recycle Bin",

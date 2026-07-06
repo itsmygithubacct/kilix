@@ -363,7 +363,15 @@ class WM:
         self.drag = None              # (win, mode, grab_x, grab_y, orig_rect)
 
     # ── lifecycle ───────────────────────────────────────────────────────────
+    def _is_app(self, win):
+        # tasteful: blip only for ordinary app windows — not dialogs, tray
+        # flyouts or chromeless skins (they get their own cues or none)
+        return (not win.modal and not win.chromeless
+                and not getattr(win, "_no_taskbar", False))
+
     def add(self, win):
+        if self._is_app(win):
+            self.desk.play_sound("open")
         self.windows.append(win)
         self.activate(win)
         # a modal dialog raised mid-construction (e.g. an app __init__ that
@@ -375,6 +383,8 @@ class WM:
         return win
 
     def close(self, win):
+        if win in self.windows and self._is_app(win):
+            self.desk.play_sound("close")
         if win in self.windows:
             self.windows.remove(win)
         if win.on_close:
@@ -402,6 +412,7 @@ class WM:
         self.desk.dirty = True
 
     def minimize(self, win):
+        self.desk.play_sound("minimize")
         win.minimized = True
         if self.active is win:
             self.active = None
@@ -417,7 +428,9 @@ class WM:
         if win.maximized:
             win.x, win.y, win.w, win.h = win._restore
             win.maximized = False
+            self.desk.play_sound("restore")
         else:
+            self.desk.play_sound("maximize")
             win._restore = (win.x, win.y, win.w, win.h)
             sw, sh = self.desk.size()
             win.x = win.y = 0
@@ -551,6 +564,10 @@ def msgbox(desk, title, text, icon="info", buttons=("OK",), cb=None,
         if i == default:
             win.set_focus(b)
     desk.wm.add(win)
+    snd = {"error": "error", "warn": "exclamation", "info": "asterisk",
+           "question": "question"}.get(icon)
+    if snd:
+        desk.play_sound(snd)
     return win
 
 
