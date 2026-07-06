@@ -143,6 +143,19 @@ def _terminal(p):
     p.hline(3, 5, 8, G)
 
 
+def _dosbox(p):
+    p.rect(1, 1, 14, 10, fill=S, outline=K)        # beige monitor shell
+    p.rect(3, 2, 12, 8, fill=K)                    # black CRT
+    p.hline(4, 6, 3, N)                            # green "C:\>" prompt
+    p.px(7, 3, N)
+    p.rect(9, 3, 10, 3, fill=N)                    # block cursor
+    p.hline(4, 8, 5, DN)                           # dim scrollback
+    p.hline(4, 6, 6, DN)
+    p.rect(6, 11, 9, 11, fill=S)                   # neck
+    p.rect(3, 12, 12, 14, fill=S, outline=K)       # base
+    p.px(11, 13, N)                                # power led
+
+
 def _settings(p):
     p.rect(1, 2, 14, 13, fill=S, outline=K)
     p.hline(2, 13, 3, W)
@@ -477,7 +490,8 @@ ICONS = {
     "exe": _exe, "terminal": _terminal, "settings": _settings,
     "notepad": _notepad, "browser": _browser, "run": _run,
     "shutdown": _shutdown, "flame": _flame, "home": _home,
-    "games": _games, "doom": _doom, "tank": _tank, "amp": _amp,
+    "games": _games, "doom": _doom, "dosbox": _dosbox, "tank": _tank,
+    "amp": _amp,
     "question": _question, "info": _info, "warn": _warn, "error": _error,
     "back": _arrow_left, "forward": _arrow_right, "up": _arrow_up,
     "calc": _calc, "cards": _cards, "charmap": _charmap, "help": _help,

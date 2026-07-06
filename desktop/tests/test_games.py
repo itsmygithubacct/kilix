@@ -12,6 +12,7 @@ import games
 
 tmp = tempfile.mkdtemp(prefix="games-test-")
 games.CONF = os.path.join(tmp, "games.conf")
+games.GAMES_DIR = os.path.join(tmp, "games")   # isolate the vendored-binary scan
 
 
 def write(text):
@@ -39,6 +40,23 @@ write("[doom]\ndosbox = /nonexistent/dosbox\ndir = /nonexistent\n")
 cp = games.load()
 assert cp.get("doom", "dir") == "/nonexistent"
 assert games.doom_ready() is None            # path doesn't exist -> not ready
+
+
+# DOSBox is a first-class Games entry, launchable on its own; game_ready
+# dispatches to dosbox_ready, which finds a dosbox on $PATH without installing.
+assert "dosbox" in games.GAMES and games.GAMES["dosbox"]["icon"] == "dosbox"
+import shutil as _sh
+_which = _sh.which
+_sh.which = lambda n: "/usr/bin/dosbox" if n == "dosbox" else None
+try:
+    write("")                                    # empty conf, no [dosbox]
+    assert games.dosbox_ready(games.load()) == "/usr/bin/dosbox"
+    assert games.game_ready("dosbox") == "/usr/bin/dosbox"
+    _sh.which = lambda n: None                    # nothing on PATH, none vendored
+    assert games.dosbox_ready(games.load()) is None
+    assert games.game_ready("nonesuch") is None
+finally:
+    _sh.which = _which
 
 
 # F36: main() catches installer errors that don't subclass RuntimeError/OSError

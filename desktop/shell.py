@@ -598,8 +598,7 @@ class Shell:
             self._tab(["python3", os.path.join(_here, "games.py"), game],
                       meta["label"], None)
 
-        ready = (games.doom_ready() if game == "doom"
-                 else games.bashed_ready())
+        ready = games.game_ready(game)
         if ready:
             go()
             return
