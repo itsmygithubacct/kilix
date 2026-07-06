@@ -463,6 +463,8 @@ class Taskbar:
             MI("kilix Settings", icon="settings",
                action=lambda: shell.open_app("settings")),
             MI("Display…", icon="display", action=shell.display_properties),
+            MI("Sounds…", icon="soundcp",
+               action=lambda: shell.open_app("soundcp")),
         ]
         find_sub = [
             MI("Files or Folders…", icon="find",

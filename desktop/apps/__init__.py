@@ -26,6 +26,9 @@ def open(desk, name, arg=None):
                 desk.wm.activate(w)
                 return
         desk.wm.add(settings.SettingsWin(desk))
+    elif name == "soundcp":
+        from . import soundcp
+        soundcp.open(desk)
     elif name == "calc":
         from . import calc
         desk.wm.add(calc.Calc(desk, arg))

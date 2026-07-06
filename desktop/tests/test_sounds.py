@@ -87,4 +87,78 @@ while not os.path.exists(sounds.path_for("close")) and time.time() < deadline:
 assert os.path.isfile(sounds.path_for("close"))  # background thread regenerated it
 sounds.warm()                                    # idempotent: no-op after the first
 
+
+# ── events() exposes the whole system-event registry with default cues ───────
+evs = sounds.events()
+assert [e[0] for e in evs] == [eid for eid, _ in sounds._EVENTS]
+labels = {eid: label for eid, label, _ in evs}
+assert labels["error"] == "Critical Stop"
+assert labels["asterisk"] == "Default Beep"
+assert labels["recycle_empty"] == "Empty Recycle Bin"
+for eid, _label, dwav in evs:                             # every default resolves
+    assert dwav and os.path.isfile(dwav), eid
+
+
+# ── set_sound + save/load round-trips a scheme (incl. a non-WAV path) ─────────
+os.environ.pop("KILIX_NO_SOUND", None)
+sounds.load_scheme(sounds.DEFAULT_SCHEME)
+assert sounds.current_scheme() == {}                     # default == no overrides
+sounds.set_sound("error", "/clips/boom.mp3")             # any-format override
+sounds.set_sound("startup", None)                        # silence
+sch = sounds.current_scheme()
+assert sch["error"] == "/clips/boom.mp3" and sch["startup"] is None
+sounds.save_scheme_as("My Scheme")
+assert "My Scheme" in sounds.scheme_names()
+sounds.load_scheme(sounds.DEFAULT_SCHEME)                 # switch away…
+assert sounds.current_scheme() == {}
+sounds.load_scheme("My Scheme")                          # …and back: round-trip
+sch = sounds.current_scheme()
+assert sch["error"] == "/clips/boom.mp3"
+assert sch["startup"] is None
+
+# a non-WAV file resolves to an ffplay/mpv/cvlc command, never paplay/aplay
+mexe = sounds._player_for("/clips/boom.mp3")
+if mexe:
+    assert os.path.basename(mexe) in sounds._MEDIA_PLAYERS
+    margv = sounds._argv(mexe, "/clips/boom.mp3", 80)
+    assert os.path.basename(margv[0]) not in ("paplay", "aplay")
+    assert "/clips/boom.mp3" in margv
+wexe = sounds._player_for("/x.wav")                      # WAV → a WAV player
+assert wexe is None or os.path.basename(wexe) in sounds._PLAYERS
+
+
+# ── NO_SOUNDS makes play() a silent no-op even at full volume ────────────────
+sounds.load_scheme(sounds.NO_SOUNDS)
+t0 = time.time()
+assert sounds.play("startup", volume=90) is False        # bound to silence
+assert sounds.play("error", volume=90) is False
+assert time.time() - t0 < 0.5                            # never spawned/blocked
+
+
+# ── preview() honors mute / missing file / KILIX_NO_SOUND, never raises ──────
+os.environ["KILIX_NO_SOUND"] = "1"
+assert sounds.preview("/clips/boom.mp3") is False        # disabled by env
+os.environ.pop("KILIX_NO_SOUND", None)
+assert sounds.preview("/no/such/file.mp3", volume=90) is False   # missing file
+assert sounds.preview("/clips/boom.mp3", muted=True) is False    # muted
+
+
+# ── a corrupt scheme.json regenerates the default without raising ────────────
+with open(sounds._scheme_path(), "w") as f:
+    f.write("{ this is not json")
+sounds._active = None                                    # force a reload
+assert sounds.current_scheme() == {}                     # regenerated default
+assert sounds.play("startup", volume=0) is False         # still works, no raise
+sounds.reset()                                           # back to "kilix 95"
+assert sounds.current_scheme() == {}
+
+
+# ── still a no-op headless (term=None) with a scheme wired in ────────────────
+sounds.set_sound("error", "/clips/boom.mp3")
+t0 = time.time()
+d.play_sound("error")                                    # term None → no spawn
+d.play_sound("startup")
+assert time.time() - t0 < 0.5
+sounds.reset()
+
 print("ok")

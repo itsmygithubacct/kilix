@@ -450,6 +450,16 @@ def _find(p):
     p.px(14, 12, K)
 
 
+def _soundcp(p):
+    p.rect(3, 1, 12, 14, fill=S, outline=K)        # speaker cabinet
+    p.vline(4, 2, 13, W)                           # left bevel highlight
+    p.rect(5, 3, 10, 9, fill=G, outline=K)         # woofer surround
+    p.rect(6, 4, 9, 8, fill=DB, outline=K)         # woofer cone
+    p.px(7, 5, C)                                   # cone glint
+    p.rect(6, 11, 9, 13, fill=G, outline=K)         # tweeter
+    p.px(7, 12, DB)
+
+
 def _taskmgr(p):
     p.rect(5, 1, 14, 10, fill=S, outline=K)        # back window
     p.rect(5, 1, 14, 2, fill=DB)                   # its (inactive) title bar
@@ -473,7 +483,7 @@ ICONS = {
     "calc": _calc, "cards": _cards, "charmap": _charmap, "help": _help,
     "mines": _mines, "paint": _paint, "wordpad": _wordpad,
     "recyclebin_empty": _recyclebin_empty, "recyclebin_full": _recyclebin_full,
-    "find": _find, "taskmgr": _taskmgr,
+    "find": _find, "taskmgr": _taskmgr, "soundcp": _soundcp,
 }
 
 _cache = {}
