@@ -145,7 +145,23 @@ class CDP:
 
 # ───────────────────────── terminal plumbing ─────────────────────────────────
 
-CSI_RE = re.compile(rb"\x1b\[([\x30-\x3f]*)([\x20-\x2f]*)([\x40-\x7e])")
+CSI_RE = re.compile(rb"\x1b\[([\x2d\x30-\x3f]*)([\x20-\x2f]*)([\x40-\x7e])")  # \x2d '-': SGR-pixel coords go negative in pane padding
+
+
+def _utf8_tail(b):
+    """Count of trailing bytes of b that form an incomplete UTF-8 sequence
+    (a multibyte char split across read()s), else 0."""
+    for i in range(1, min(4, len(b)) + 1):
+        byte = b[-i]
+        if byte < 0x80:
+            return 0            # ASCII: nothing pending
+        if byte >= 0xc0:        # lead byte
+            if byte >= 0xf8:
+                return 0        # invalid lead, let errors='replace' handle it
+            need = 2 if byte < 0xe0 else 3 if byte < 0xf0 else 4
+            return i if i < need else 0
+        # continuation byte (0x80-0xbf): keep scanning back for the lead
+    return 0
 
 # kitty mods bitmask (mods-1): 1 shift, 2 alt, 4 ctrl, 8 super
 # CDP modifiers: 1 alt, 2 ctrl, 4 meta, 8 shift
@@ -233,8 +249,9 @@ class Term:
             if buf.startswith(b"\x1b["):
                 m = CSI_RE.match(buf)
                 if not m:
-                    if len(buf) > 64:  # garbage; drop ESC and resync
-                        buf = buf[1:]
+                    if len(buf) > 64:  # unparseable; resync to the next ESC so
+                        nxt = buf.find(b"\x1b", 1)  # no fragment leaks as text
+                        buf = buf[nxt:] if nxt > 0 else b""
                         continue
                     break  # incomplete sequence, wait for more bytes
                 buf = buf[m.end():]
@@ -253,13 +270,35 @@ class Term:
                         events.append(ev)
             elif buf.startswith(b"\x1b"):
                 if len(buf) == 1:
-                    break
-                buf = buf[1:]  # stray ESC (shouldn't happen with flag 8)
+                    break  # lone ESC, wait for the introducer byte
+                c = buf[1:2]
+                if c in (b"P", b"]", b"_", b"^", b"X"):
+                    # DCS/OSC/APC/PM/SOS: consume the whole string (ST or, for
+                    # OSC, BEL) so its body never surfaces as paste text
+                    st = buf.find(b"\x1b\\", 2)
+                    bel = buf.find(b"\x07", 2) if c == b"]" else -1
+                    if st < 0 and bel < 0:
+                        break  # wait for the terminator
+                    if 0 <= bel < st or st < 0:
+                        buf = buf[bel + 1:]
+                    else:
+                        buf = buf[st + 2:]
+                elif c == b"O":  # SS3: ESC O <final> (e.g. F-keys through tmux)
+                    if len(buf) < 3:
+                        break
+                    buf = buf[3:]
+                else:
+                    buf = buf[1:]  # stray/unknown ESC, drop one byte
             else:
                 # raw text (paste without brackets, or IME): one char run
                 nxt = buf.find(b"\x1b")
-                chunk = buf if nxt < 0 else buf[:nxt]
-                buf = b"" if nxt < 0 else buf[nxt:]
+                if nxt < 0:
+                    hold = _utf8_tail(buf)  # keep a split multibyte char whole
+                    if hold == len(buf):
+                        break  # only an incomplete UTF-8 lead; wait for the rest
+                    chunk, buf = buf[:len(buf) - hold], buf[len(buf) - hold:]
+                else:
+                    chunk, buf = buf[:nxt], buf[nxt:]
                 events.append({"kind": "paste",
                                "text": chunk.decode("utf-8", "replace")})
         self.inbuf = buf
@@ -268,7 +307,8 @@ class Term:
     def _parse_csi(self, params, final):
         if final in ("M", "m") and params.startswith("<"):
             b, x, y = (int(v) for v in params[1:].split(";"))
-            return {"kind": "mouse", "b": b, "x": x - 1, "y": y - 1,
+            # SGR-pixel coords are already 0-based (kitty/mouse.c: round(global_x))
+            return {"kind": "mouse", "b": b, "x": x, "y": y,
                     "press": final == "M"}
         parts = params.split(";") if params else []
         if final == "~":
@@ -298,8 +338,14 @@ class Term:
                         "mods": mods, "text": "\r" if key == 13 else
                         ("\t" if key == 9 else "")}
             mm = max(0, mods - 1)
+            caps = mm & 64
+            mm &= ~192          # caps_lock/num_lock LEDs must not blank the text
             ch = chr(shifted) if (mm & 1 and shifted) else chr(key)
-            text = ch if not (mm & ~1) and key >= 32 else ""
+            # < 57344: not a kitty functional PUA key (keypad/nav codes must
+            # stay text-less or kilix browse types them into the page)
+            text = ch if not (mm & ~1) and 32 <= key < 57344 else ""
+            if text and caps and text.isalpha():
+                text = text.swapcase()
             return {"kind": "key", "key": ch, "code": "", "vk": ord(ch.upper()[:1] or " "),
                     "mods": mods, "text": text}
         return None
