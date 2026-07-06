@@ -50,6 +50,13 @@ WALL_COLORS = [("Teal (classic)", (0, 128, 128)), ("Navy", (0, 0, 128)),
                ("Maroon", (128, 0, 0)), ("Steel", (60, 90, 120))]
 
 
+def _menu_label(s):
+    # "-" is MenuItem's separator sentinel; keep user-named entries clickable
+    if not s:
+        return "(unnamed)"
+    return s + " " if s == "-" else s
+
+
 class Shell:
     def __init__(self, desk):
         self.desk = desk
@@ -64,7 +71,9 @@ class Shell:
                       "wall_mode": "stretch", "recent": []}
         try:
             with open(self.state_path) as f:
-                self.state.update(json.load(f))
+                loaded = json.load(f)
+            if isinstance(loaded, dict):
+                self.state.update(loaded)
         except (OSError, ValueError):
             pass
         self._wall = None             # cached composited wallpaper
@@ -120,6 +129,17 @@ class Shell:
                               "data": ("path", p)})
         self.grid.set_items(items)
         self.invalidate()
+
+    def dir_changed(self, path):
+        """A directory changed on disk — refresh every open view of it: the
+        desktop grid and any File Manager window showing the same folder."""
+        path = os.path.abspath(os.path.expanduser(path))
+        if path == os.path.abspath(self.dir):
+            self.refresh()
+        for win in list(self.desk.wm.windows):
+            if getattr(win, "is_file_window", False) and \
+                    os.path.abspath(win.path) == path:
+                win.refresh()
 
     def on_resize(self):
         sw, sh = self.desk.size()
@@ -207,7 +227,7 @@ class Shell:
                 items += [sep(),
                           MI("Rename…", action=lambda: self._rename_item(item)),
                           MI("Delete…", action=lambda: self._delete_items(
-                              [item]))]
+                              self._sel_or_one(item)))]
             if kind == "path":
                 items.append(MI("Create Launcher…", icon="exe",
                                 action=lambda: self.create_launcher_dialog(
@@ -229,6 +249,11 @@ class Shell:
         self.desk.menus.open(items, ev.x, ev.y)
 
     # ── file ops on the desktop folder ──────────────────────────────────────
+    def _sel_or_one(self, item):
+        # a context action on a still-selected icon acts on the whole selection
+        sel = self.grid.selected_items()
+        return sel if item in sel else [item]
+
     def _writable(self, item):
         return item["data"][0] in ("launcher", "path")
 
@@ -247,11 +272,17 @@ class Shell:
                 spec["Name"] = name
                 write_launcher(path, spec)
             else:
+                target = os.path.join(self.dir, name)
+                if (os.path.lexists(target)
+                        and os.path.abspath(target) != os.path.abspath(path)):
+                    wm.msgbox(self.desk, "Rename",
+                              f"'{name}' already exists.", icon="error")
+                    return
                 try:
-                    os.rename(path, os.path.join(self.dir, name))
+                    os.rename(path, target)
                 except OSError as e:
                     wm.msgbox(self.desk, "Rename", str(e), icon="error")
-            self.refresh()
+            self.dir_changed(self.dir)
 
         wm.inputbox(self.desk, "Rename", "New name:", item["label"], cb=do)
 
@@ -276,7 +307,7 @@ class Shell:
                         os.unlink(p)
                 except OSError as e:
                     wm.msgbox(self.desk, "Delete", str(e), icon="error")
-            self.refresh()
+            self.dir_changed(self.dir)
 
         wm.msgbox(self.desk, "Confirm Delete",
                   f"Delete {names}?\nThis cannot be undone.",
@@ -289,7 +320,7 @@ class Shell:
                     os.makedirs(os.path.join(self.dir, name), exist_ok=False)
                 except OSError as e:
                     wm.msgbox(self.desk, "New Folder", str(e), icon="error")
-                self.refresh()
+                self.dir_changed(self.dir)
         wm.inputbox(self.desk, "New Folder", "Folder name:", "New Folder",
                     cb=do, icon="folder")
 
@@ -301,7 +332,7 @@ class Shell:
                     open(p, "x").close()
                 except OSError as e:
                     wm.msgbox(self.desk, "New File", str(e), icon="error")
-                self.refresh()
+                self.dir_changed(self.dir)
         wm.inputbox(self.desk, "New Text File", "File name:", "New File.txt",
                     cb=do, icon="doc_text")
 
@@ -317,7 +348,7 @@ class Shell:
                 continue
             p = os.path.join(self.dir, n)
             spec = parse_launcher(p)
-            out.append(W.MenuItem(spec.get("Name") or n[:-8],
+            out.append(W.MenuItem(_menu_label(spec.get("Name") or n[:-8]),
                                   icon=spec.get("Icon") or "exe",
                                   action=lambda s=spec, p=p: self.launch(s, p)))
         return out
@@ -391,7 +422,7 @@ class Shell:
                 os.path.join(self.dir, safe_name(name) + ".desktop"))
             write_launcher(path, out)
             win.close()
-            self.refresh()
+            self.dir_changed(self.dir)
 
         ch = win.client_size()[1]
         win.add(W.Button(cw - 164, ch - 33, 72, 23, "OK", cb=save,
@@ -489,6 +520,15 @@ class Shell:
         if os.path.isdir(path):
             self.open_app("filemgr", path)
             return
+        try:
+            # a FIFO/device would block open(2) on this single-threaded loop
+            if not stat.S_ISREG(os.stat(path).st_mode):
+                wm.msgbox(self.desk, os.path.basename(path) or path,
+                          "This is a special file (pipe or device) and "
+                          "cannot be opened.", icon="warn")
+                return
+        except OSError:
+            pass
         low = path.lower()
         if low.endswith(".desktop"):
             self.launch(parse_launcher(path), path)
@@ -577,7 +617,8 @@ class Shell:
         self._save_state()
 
     def recent_docs(self):
-        return [(os.path.basename(p), p) for p in self.state.get("recent", [])
+        return [(_menu_label(os.path.basename(p)), p)
+                for p in self.state.get("recent", [])
                 if os.path.exists(p)]
 
     # ── dialogs ─────────────────────────────────────────────────────────────
@@ -673,7 +714,7 @@ def parse_launcher(path):
         cp.read(path)
         if cp.has_section("Desktop Entry"):
             out = dict(cp["Desktop Entry"])
-    except (OSError, configparser.Error):
+    except (OSError, ValueError, configparser.Error):  # ValueError: bad UTF-8
         pass
     return out
 

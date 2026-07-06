@@ -48,6 +48,10 @@ def config_path():
     return os.path.join(d, "kitty.conf")
 
 
+def _is_true(s):
+    return s.lower() in ("yes", "y", "true", "1")
+
+
 def get_key(text, key):
     pat = re.compile(rf"^\s*{re.escape(key)}\s+(.*?)\s*$", re.M)
     hits = pat.findall(text)
@@ -89,7 +93,7 @@ class SettingsWin(wm.Window):
         self.min_w, self.min_h = 420, 320
         self.path = config_path()
         try:
-            with open(self.path, encoding="utf-8") as f:
+            with open(self.path, encoding="utf-8", errors="replace") as f:
                 self.buffer = f.read()
         except OSError:
             self.buffer = ""
@@ -135,6 +139,7 @@ class SettingsWin(wm.Window):
                                          cb=self._apply))
         self.status = self.add(W.Label(10, ch - 28, "", font=T.SMALL,
                                        color=T.SHADOW))
+        self._cur_tab = 0
         self._populate()
         self._switch_tab(0)
 
@@ -155,11 +160,14 @@ class SettingsWin(wm.Window):
             # the panel is drawn first because draw_client precedes widgets
 
     def _switch_tab(self, i):
+        if self._cur_tab == 2:
+            self.buffer = self.ta.text()   # keep raw edits made on the conf tab
         if i != 2:
-            self._populate()          # pick up raw edits made on the conf tab
+            self._populate()
         else:
             self._form_to_buffer()
             self.ta.set_text(self.buffer)
+        self._cur_tab = i
         for tab_i, panel in enumerate(self.panels):
             for wdg in panel:
                 wdg.visible = tab_i == i
@@ -172,26 +180,35 @@ class SettingsWin(wm.Window):
         for key, (kind, wd) in self.fields.items():
             val = get_key(self.buffer, key)
             if kind == "bool":
-                wd.checked = (val if val is not None
-                              else wd.default_val).lower() in (
-                    "yes", "y", "true", "1")
+                wd.checked = _is_true(val if val is not None
+                                      else wd.default_val)
             elif kind == "choice":
+                if val is not None and val not in wd.options:
+                    wd.options.append(val)   # keep a valid non-listed value
                 if val in wd.options:
                     wd.index = wd.options.index(val)
             else:
                 wd.set(val if val is not None else "")
 
     def _form_to_buffer(self):
+        # only rewrite a key when its value actually changed, so keys absent
+        # from the file stay absent and untouched values keep their formatting
         for key, (kind, wd) in self.fields.items():
+            cur = get_key(self.buffer, key)
             if kind == "bool":
-                self.buffer = set_key(self.buffer, key,
-                                      "yes" if wd.checked else "no")
+                v = "yes" if wd.checked else "no"
+                if _is_true(v) == _is_true(cur if cur is not None
+                                           else wd.default_val):
+                    continue
             elif kind == "choice":
-                self.buffer = set_key(self.buffer, key, wd.value)
+                v = wd.value
+                if v == (cur if cur is not None else wd.options[0]):
+                    continue
             else:
                 v = wd.text.strip()
-                if v:
-                    self.buffer = set_key(self.buffer, key, v)
+                if not v or v == (cur or ""):
+                    continue
+            self.buffer = set_key(self.buffer, key, v)
 
     # apply ----------------------------------------------------------------
     def _apply(self, close=False):

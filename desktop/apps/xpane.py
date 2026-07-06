@@ -71,6 +71,7 @@ class XPane(wm.Window):
         XPane._seq2 += 1
         self.app_w, self.app_h = aw, ah
         self.frame_img = None
+        self._last_frame = None
         # fully transparent until the first real frame, so the magenta chroma
         # fill never flashes onto the desktop during startup
         self.compose_mask = Image.new("L", (aw, ah), 0)
@@ -79,27 +80,32 @@ class XPane(wm.Window):
         self._dead = False
         self.sup = stream.StreamSupervisor(
             f"desk-xpane-{os.getpid()}-{XPane._seq2}")
-        n = self.sup.pick_display()
-        self.sup.start_xvfb(n, aw, ah)
-        e = dict(os.environ, DISPLAY=f":{n}",
-                 XAUTHORITY=self.sup.xauth, **(env or {}))
-        # python-xlib reads XAUTHORITY at connect time; each pane connects
-        # once, right here, so the env swap is safe for other panes
-        os.environ["XAUTHORITY"] = self.sup.xauth
-        self.xd = xdisplay.Display(f":{n}")
-        self._paint_root_chroma()
-        self.app = self.sup.spawn("app", cmd, env=e, cwd=cwd,
-                                  stdout=subprocess.DEVNULL,
-                                  stderr=subprocess.DEVNULL)
-        self.inj = xinject.Injector(self.xd, aw, ah)
-        self.ff = self.sup.spawn(
-            "cap", ["ffmpeg", "-loglevel", "quiet",
-                    "-f", "x11grab", "-draw_mouse", "0",  # desktop draws the
-                    "-framerate", str(fps),               # only pointer
-                    "-video_size", f"{aw}x{ah}", "-i", f":{n}",
-                    "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
-            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        os.set_blocking(self.ff.stdout.fileno(), False)
+        # any failure past here leaks Xvfb/app/display-lock unless we clean up
+        try:
+            n = self.sup.pick_display()
+            self.sup.start_xvfb(n, aw, ah)
+            e = dict(os.environ, DISPLAY=f":{n}",
+                     XAUTHORITY=self.sup.xauth, **(env or {}))
+            # python-xlib reads XAUTHORITY at connect time; each pane connects
+            # once, right here, so the env swap is safe for other panes
+            os.environ["XAUTHORITY"] = self.sup.xauth
+            self.xd = xdisplay.Display(f":{n}")
+            self._paint_root_chroma()
+            self.app = self.sup.spawn("app", cmd, env=e, cwd=cwd,
+                                      stdout=subprocess.DEVNULL,
+                                      stderr=subprocess.DEVNULL)
+            self.inj = xinject.Injector(self.xd, aw, ah)
+            self.ff = self.sup.spawn(
+                "cap", ["ffmpeg", "-loglevel", "quiet",
+                        "-f", "x11grab", "-draw_mouse", "0",  # desktop draws
+                        "-framerate", str(fps),               # only pointer
+                        "-video_size", f"{aw}x{ah}", "-i", f":{n}",
+                        "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            os.set_blocking(self.ff.stdout.fileno(), False)
+        except Exception:
+            self.sup.cleanup()
+            raise
         self.add(_XSurface(self, aw, ah))
         self.set_focus(self.widgets[-1])
         self._born = time.time()
@@ -134,7 +140,9 @@ class XPane(wm.Window):
         try:
             while True:
                 chunk = os.read(self.ff.stdout.fileno(), 1 << 20)
-                if not chunk:
+                if not chunk:                     # ffmpeg gone: a pipe at EOF
+                    self.desk.remove_fd(          # is permanently readable, so
+                        self.ff.stdout.fileno())  # leaving the hook spins select
                     return
                 self.buf += chunk
         except BlockingIOError:
@@ -143,7 +151,8 @@ class XPane(wm.Window):
         while len(self.buf) >= self.fsize:        # newest frame wins
             frame = bytes(self.buf[:self.fsize])
             del self.buf[:self.fsize]
-        if frame is not None:
+        if frame is not None and frame != self._last_frame:
+            self._last_frame = frame
             self.frame_img = Image.frombytes(
                 "RGB", (self.app_w, self.app_h), frame)
             # color-key: opaque everywhere the pixel differs from the chroma.
@@ -158,8 +167,8 @@ class XPane(wm.Window):
     def _tick(self, now):
         if self._dead:
             return
-        if self.app.poll() is not None:           # app exited: window follows
-            self.close()
+        if self.app.poll() is not None or self.ff.poll() is not None:
+            self.close()                          # app or capture gone: close
             return
         self._keep_on_screen()
 
@@ -170,6 +179,11 @@ class XPane(wm.Window):
         startup) can dock or restore to positions off our region. Pull any
         out-of-bounds window just inside; windows already in view are left
         alone, so this never fights a drag happening on-screen."""
+        # the visible region can shrink under us on a terminal resize; clamp
+        # against the on-screen intersection, not the (stale) capture size, or
+        # windows parked past the new edge become mouse-unreachable
+        vw = min(self.app_w, self.desk.w)
+        vh = min(self.app_h, self.desk.h - T.TASKBAR_H)
         try:
             for c in self.xd.screen().root.query_tree().children:
                 if c.get_attributes().map_state != X.IsViewable:
@@ -177,8 +191,8 @@ class XPane(wm.Window):
                 g = c.get_geometry()
                 if g.width <= 8 or g.height <= 8:
                     continue
-                nx = min(max(0, g.x), max(0, self.app_w - g.width))
-                ny = min(max(0, g.y), max(0, self.app_h - g.height))
+                nx = min(max(0, g.x), max(0, vw - g.width))
+                ny = min(max(0, g.y), max(0, vh - g.height))
                 if (nx, ny) != (g.x, g.y):
                     c.configure(x=nx, y=ny)
             self.xd.sync()
@@ -281,7 +295,14 @@ class InstallerWindow(wm.Window):
         if rc == 0:
             self.close()
             if self.on_ok:
-                self.on_ok()
+                # on_ok spawns the app (e.g. XPane → Xvfb/ffmpeg); a failure
+                # here runs inside a tick hook, which Desk.run does not guard,
+                # so an uncaught raise would take the whole desktop down
+                try:
+                    self.on_ok()
+                except Exception as ex:
+                    wm.msgbox(self.desk, "kilix",
+                              f"Could not start:\n{ex}", icon="error")
         else:
             self.title = "Install failed"
             self.invalidate()

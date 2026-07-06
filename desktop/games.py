@@ -69,8 +69,14 @@ GAMES = {
 
 
 def load():
-    cp = configparser.ConfigParser()
-    cp.read(CONF)
+    # interpolation=None so a '%' in a stored path is literal, not a token;
+    # a malformed conf reads as empty (== "no game installed") instead of
+    # taking down whatever called a *_ready() check.
+    cp = configparser.ConfigParser(interpolation=None)
+    try:
+        cp.read(CONF)
+    except configparser.Error:
+        cp = configparser.ConfigParser(interpolation=None)
     return cp
 
 
@@ -381,7 +387,7 @@ def main():
     game = args[0] if args else "doom"
     try:
         payload = ensure(game)
-    except (RuntimeError, OSError) as e:
+    except Exception as e:      # BadZipFile/TarError/configparser.Error too
         # keep the message readable in the tab instead of vanishing with it
         print(f"\x1b[1;31mkilix games: {e}\x1b[0m", file=sys.stderr)
         try:

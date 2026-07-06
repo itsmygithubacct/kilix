@@ -21,6 +21,8 @@ STATUS_H = 20
 
 
 class FileWindow(wm.Window):
+    is_file_window = True               # shell.dir_changed cross-refresh marker
+
     def __init__(self, desk, path):
         super().__init__(desk, "File Manager", 560, 400, icon="folder_open")
         self.min_w, self.min_h = 340, 220
@@ -70,7 +72,7 @@ class FileWindow(wm.Window):
             names = os.listdir(path)
         except OSError as e:
             wm.msgbox(self.desk, "File Manager", str(e), icon="error")
-            return
+            return False
         if not from_hist:
             self.hist = self.hist[:self.hist_i + 1] + [path]
             self.hist_i = len(self.hist) - 1
@@ -98,6 +100,7 @@ class FileWindow(wm.Window):
         self.b_fwd.enabled = self.hist_i < len(self.hist) - 1
         self.b_up.enabled = path != "/"
         self.invalidate()
+        return True
 
     def refresh(self):
         self.navigate(self.path, from_hist=True)
@@ -105,8 +108,12 @@ class FileWindow(wm.Window):
     def _go(self, step):
         i = self.hist_i + step
         if 0 <= i < len(self.hist):
+            old = self.hist_i
             self.hist_i = i
-            self.navigate(self.hist[i], from_hist=True)
+            if not self.navigate(self.hist[i], from_hist=True):
+                self.hist_i = old       # nav failed (dir gone) — stay put
+                self.b_back.enabled = self.hist_i > 0
+                self.b_fwd.enabled = self.hist_i < len(self.hist) - 1
 
     def _up(self):
         self.navigate(os.path.dirname(self.path))
@@ -220,7 +227,7 @@ class FileWindow(wm.Window):
                                 exist_ok=False)
                 except OSError as e:
                     wm.msgbox(self.desk, "New Folder", str(e), icon="error")
-                self.refresh()
+                self.desk.shell.dir_changed(self.path)
         wm.inputbox(self.desk, "New Folder", "Folder name:", "New Folder",
                     cb=do, icon="folder")
 
@@ -231,7 +238,7 @@ class FileWindow(wm.Window):
                     open(os.path.join(self.path, name), "x").close()
                 except OSError as e:
                     wm.msgbox(self.desk, "New File", str(e), icon="error")
-                self.refresh()
+                self.desk.shell.dir_changed(self.path)
         wm.inputbox(self.desk, "New Text File", "File name:",
                     "New File.txt", cb=do, icon="doc_text")
 
@@ -246,7 +253,7 @@ class FileWindow(wm.Window):
                               os.path.join(self.path, name))
                 except OSError as e:
                     wm.msgbox(self.desk, "Rename", str(e), icon="error")
-                self.refresh()
+                self.desk.shell.dir_changed(self.path)
         wm.inputbox(self.desk, "Rename", "New name:",
                     os.path.basename(item["data"]), cb=do)
 
@@ -268,7 +275,7 @@ class FileWindow(wm.Window):
                         os.unlink(p)
                 except OSError as e:
                     wm.msgbox(self.desk, "Delete", str(e), icon="error")
-            self.refresh()
+            self.desk.shell.dir_changed(self.path)
         wm.msgbox(self.desk, "Confirm Delete",
                   f"Delete {names}?\nThis cannot be undone.", icon="warn",
                   buttons=("Yes", "No"), default=1, cb=do)
