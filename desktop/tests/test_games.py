@@ -29,10 +29,10 @@ assert not cp.has_section("doom"), "malformed conf should load as empty"
 
 # F33b: a '%' in a stored path is literal, not an interpolation token.
 # Pre-fix cp.get() raised InterpolationSyntaxError from BasicInterpolation.
-write("[doom]\ndosbox = /home/user/%stuff/dosbox\ndir = /nonexistent\n")
+write("[doom]\ndosbox = /opt/games/%stuff/dosbox\ndir = /nonexistent\n")
 assert games.doom_ready() is None
 cp = games.load()
-assert cp.get("doom", "dosbox") == "/home/user/%stuff/dosbox"
+assert cp.get("doom", "dosbox") == "/opt/games/%stuff/dosbox"
 
 # a well-formed conf still round-trips
 write("[doom]\ndosbox = /nonexistent/dosbox\ndir = /nonexistent\n")
