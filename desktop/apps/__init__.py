@@ -60,5 +60,12 @@ def open(desk, name, arg=None):
     elif name == "findfiles":
         from . import findfiles
         desk.wm.add(findfiles.FindFiles(desk, arg))
+    elif name == "taskmgr":
+        from . import taskmgr
+        for w in desk.wm.windows:
+            if isinstance(w, taskmgr.TaskManager):
+                desk.wm.activate(w)
+                return
+        desk.wm.add(taskmgr.TaskManager(desk))
     else:
         raise ValueError(f"unknown app {name!r}")

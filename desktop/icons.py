@@ -450,6 +450,15 @@ def _find(p):
     p.px(14, 12, K)
 
 
+def _taskmgr(p):
+    p.rect(5, 1, 14, 10, fill=S, outline=K)        # back window
+    p.rect(5, 1, 14, 2, fill=DB)                   # its (inactive) title bar
+    p.rect(1, 5, 10, 14, fill=W, outline=K)        # front window, on top
+    p.rect(1, 5, 10, 6, fill=DB)                   # active title bar
+    for y in (9, 11, 13):                          # list rows
+        p.hline(3, 8, y, G)
+
+
 ICONS = {
     "computer": _computer, "display": _display, "drive": _drive,
     "folder": _folder, "folder_open": _folder_open,
@@ -464,7 +473,7 @@ ICONS = {
     "calc": _calc, "cards": _cards, "charmap": _charmap, "help": _help,
     "mines": _mines, "paint": _paint, "wordpad": _wordpad,
     "recyclebin_empty": _recyclebin_empty, "recyclebin_full": _recyclebin_full,
-    "find": _find,
+    "find": _find, "taskmgr": _taskmgr,
 }
 
 _cache = {}

@@ -5,14 +5,17 @@ a sunken clock well. The Start menu is a MenuHost popup with the classic
 vertical "kilix 95" sidebar; its content is assembled from the shell's
 built-in apps and the user's launchers.
 """
+import calendar
 import time
 
 import icons
 import theme as T
 import widgets as W
+import wm
 
 START_W = 58
 CLOCK_W = 76
+QL_BTN = 23                       # quick-launch button width
 
 
 class Taskbar:
@@ -21,25 +24,78 @@ class Taskbar:
         self.menu_open = -1           # duck-types as a MenuBar for MenuHost
         self._minute = ""
         self._pressed_btn = None
+        self._popup = None            # tray flyout / clock calendar (a window)
+        self._popup_owner = None      # "volume" | "clock"
+        self._sd_restore = []         # windows hidden by Show Desktop
 
     # geometry -----------------------------------------------------------
     def rect(self):
         sw, sh = self.desk.size()
         return 0, sh - T.TASKBAR_H, sw, sh - 1
 
+    # quick-launch toolbar (right of Start) --------------------------------
+    def _ql_defs(self):
+        shell = self.desk.shell
+        return [
+            ("show_desktop", "Show Desktop", self._show_desktop),
+            ("browser", "Web Browser", lambda: shell.open_url(None)),
+            ("folder_open", "File Manager",
+             lambda: shell.open_app("filemgr")),
+        ]
+
+    def _ql_rect(self):
+        x0, y0, x1, y1 = self.rect()
+        lx = x0 + 2 + START_W + 6
+        return lx, y0 + 4, lx + len(self._ql_defs()) * QL_BTN + 3, y1 - 3
+
+    def _ql_buttons(self):
+        """[(i, name, tip, action, x0, x1)] quick-launch buttons."""
+        rx0, ry0, rx1, ry1 = self._ql_rect()
+        out, bx = [], rx0 + 2
+        for i, (name, tip, act) in enumerate(self._ql_defs()):
+            out.append((i, name, tip, act, bx, bx + QL_BTN - 1))
+            bx += QL_BTN
+        return out
+
+    def _ql_end(self):
+        return self._ql_rect()[2] + 6
+
+    # system tray (left of the clock) --------------------------------------
+    def _tray_defs(self):
+        return [("display", "Display"), ("speaker", "Volume")]
+
+    def _tray_rect(self):
+        x0, y0, x1, y1 = self.rect()
+        w = len(self._tray_defs()) * 18 + 6
+        tx1 = (x1 - CLOCK_W - 2) - 4
+        return tx1 - w + 1, y0 + 4, tx1, y1 - 3
+
+    def _tray_icons(self):
+        """[(name, tip, x0, x1)] tray status icons, left to right."""
+        tx0, ty0, tx1, ty1 = self._tray_rect()
+        out, ix = [], tx0 + 3
+        for name, tip in self._tray_defs():
+            out.append((name, tip, ix, ix + 15))
+            ix += 18
+        return out
+
+    def _clock_rect(self):
+        x0, y0, x1, y1 = self.rect()
+        return x1 - CLOCK_W - 2, y0 + 4, x1 - 2, y1 - 3
+
     def _buttons(self):
         """[(win, x0, x1)] task buttons in stable launch order."""
-        x0, y0, x1, y1 = self.rect()
-        wins = sorted((w for w in self.desk.wm.windows if not w.modal),
+        wins = sorted((w for w in self.desk.wm.windows if not w.modal
+                       and not getattr(w, "_no_taskbar", False)),
                       key=lambda w: w.seq)
         if not wins:
             return []
-        bx = x0 + START_W + 10
-        lim = x1 - CLOCK_W - 8
+        bx = self._ql_end()
+        lim = self._tray_rect()[0] - 6
         bw = min(150, max(22, (lim - bx) // len(wins) - 3))
         out = []
         for w in wins:
-            if bx + bw - 1 > lim:     # never run under the clock
+            if bx + bw - 1 > lim:     # never run under the tray/clock
                 break
             out.append((w, bx, bx + bw - 1))
             bx += bw + 3
@@ -73,6 +129,8 @@ class Taskbar:
         icons.paint(fb, "flame", sb[0] + 4 + off, sb[1] + 2 + off, 16)
         d.text((sb[0] + 24 + off, sb[1] + 3 + off), "Start", font=T.BOLD,
                fill=T.TEXT)
+        # quick launch
+        self._draw_quicklaunch(fb, d)
         # task buttons
         active = self.desk.wm.active
         for win, bx0, bx1 in self._buttons():
@@ -89,13 +147,56 @@ class Taskbar:
                 d.text((r[0] + 23 + o, r[1] + 3 + o),
                        T.ellipsize(T.FONT, win.title, tw),
                        font=T.FONT, fill=T.TEXT)
-        # clock well
-        cw = (x1 - CLOCK_W - 2, y0 + 4, x1 - 2, y1 - 3)
-        T.sunken(d, *cw, fill=T.FACE)
-        icons.paint(fb, "display", cw[0] + 4, cw[1] + 2, 16)
+        # system tray + clock well
+        self._draw_tray(fb, d)
+        cx0, cy0, cx1, cy1 = self._clock_rect()
+        T.sunken(d, cx0, cy0, cx1, cy1, fill=T.FACE)
         clock = self._minute or time.strftime("%H:%M")
-        d.text((cw[2] - 8 - T.text_w(T.FONT, clock), cw[1] + 3), clock,
+        d.text((cx1 - 7 - T.text_w(T.FONT, clock), cy0 + 3), clock,
                font=T.FONT, fill=T.TEXT)
+
+    def _draw_quicklaunch(self, fb, d):
+        rx0, ry0, rx1, ry1 = self._ql_rect()
+        T.raised_thin(d, rx0, ry0, rx1, ry1)
+        cy = (ry0 + ry1) // 2
+        for i, name, tip, act, bx0, bx1 in self._ql_buttons():
+            ix = bx0 + (QL_BTN - 16) // 2
+            if name == "show_desktop":
+                self._draw_showdesktop(d, ix, cy - 8)
+            else:
+                icons.paint(fb, name, ix, cy - 8, 16)
+
+    def _draw_tray(self, fb, d):
+        tx0, ty0, tx1, ty1 = self._tray_rect()
+        T.sunken(d, tx0, ty0, tx1, ty1, fill=T.FACE)
+        cy = (ty0 + ty1) // 2
+        for name, tip, ix0, ix1 in self._tray_icons():
+            if name == "speaker":
+                self._draw_speaker(d, ix0, cy, self._muted())
+            else:
+                icons.paint(fb, name, ix0, cy - 8, 16)
+
+    def _draw_speaker(self, d, ix0, cy, muted):
+        k = T.TEXT
+        sx, sy = ix0 + 1, cy - 5
+        d.rectangle([sx, sy + 3, sx + 2, sy + 7], fill=k)      # magnet
+        d.polygon([(sx + 2, sy + 3), (sx + 6, sy - 1),
+                   (sx + 6, sy + 11), (sx + 2, sy + 7)], fill=k)   # cone
+        if muted:
+            r = (200, 0, 0)
+            d.line([(sx + 8, sy - 1), (sx + 13, sy + 9)], fill=r)
+            d.line([(sx + 8, sy + 9), (sx + 13, sy - 1)], fill=r)
+        else:
+            d.arc([sx + 6, sy, sx + 11, sy + 10], -60, 60, fill=k)
+            d.arc([sx + 8, sy - 2, sx + 15, sy + 12], -60, 60, fill=k)
+
+    def _draw_showdesktop(self, d, ix, iy):
+        d.rectangle([ix + 1, iy + 3, ix + 11, iy + 13], fill=T.DESKTOP,
+                    outline=T.TEXT)                              # desktop pad
+        d.rectangle([ix + 3, iy + 5, ix + 6, iy + 8], fill=T.LIGHT,
+                    outline=T.SHADOW)                            # a window
+        d.line([(ix + 6, iy + 11), (ix + 13, iy + 2)], fill=(255, 206, 0))
+        d.line([(ix + 12, iy + 3), (ix + 14, iy + 1)], fill=T.TEXT)  # pencil tip
 
     # input ------------------------------------------------------------------
     def hit(self, gx, gy):
@@ -111,8 +212,23 @@ class Taskbar:
             if modal:
                 self.desk.wm.activate(modal)
             else:
+                self._close_popup()
                 self.open_start_menu()
             return True
+        if not modal:
+            for i, name, tip, act, bx0, bx1 in self._ql_buttons():
+                if bx0 <= gev.x <= bx1 and gev.btn == 1:
+                    self._close_popup()
+                    act()
+                    return True
+            for name, tip, ix0, ix1 in self._tray_icons():
+                if ix0 <= gev.x <= ix1 and gev.btn == 1:
+                    self._tray_click(name)
+                    return True
+            cx0, cy0, cx1, cy1 = self._clock_rect()
+            if cx0 <= gev.x <= cx1 and gev.btn == 1 and gev.clicks >= 2:
+                self._toggle_popup("clock")
+                return True
         for win, bx0, bx1 in self._buttons():
             if bx0 <= gev.x <= bx1:
                 if modal:
@@ -122,9 +238,162 @@ class Taskbar:
                 elif win is self.desk.wm.active and not win.minimized:
                     self.desk.wm.minimize(win)
                 else:
+                    self._close_popup()
                     self.desk.wm.activate(win)
                 return True
+        if gev.btn == 3:                          # empty space → context menu
+            if modal:
+                self.desk.wm.activate(modal)
+            else:
+                self._context_menu(gev.x, gev.y)
         return True
+
+    def tooltip_at(self, gx, gy):
+        x0, y0, x1, y1 = self.rect()
+        if not (y0 <= gy <= y1):
+            return None
+        cx0, cy0, cx1, cy1 = self._clock_rect()
+        if cx0 <= gx <= cx1:
+            return time.strftime("%A, %B %d, %Y")
+        for name, tip, ix0, ix1 in self._tray_icons():
+            if ix0 <= gx <= ix1:
+                if name == "speaker":
+                    return ("Volume: muted" if self._muted()
+                            else "Volume: %d%%" % self._volume())
+                return tip
+        for i, name, tip, act, bx0, bx1 in self._ql_buttons():
+            if bx0 <= gx <= bx1:
+                return tip
+        return None
+
+    # ── tray flyouts / calendar popup ─────────────────────────────────────
+    def _tray_click(self, name):
+        if name == "speaker":
+            self._toggle_popup("volume")
+        elif name == "display":
+            self._close_popup()
+            self.desk.shell.display_properties()
+
+    def _toggle_popup(self, kind):
+        if self._popup_owner == kind:
+            self._close_popup()
+            return
+        self._close_popup()
+        win = (self._make_volume_flyout() if kind == "volume"
+               else self._make_clock_popup())
+        self._popup, self._popup_owner = win, kind
+
+    def _close_popup(self):
+        w, self._popup, self._popup_owner = self._popup, None, None
+        if w is not None and w in self.desk.wm.windows:
+            w.close()
+
+    def _make_volume_flyout(self):
+        fw, fh = 72, 136
+        x0, y0, x1, y1 = self.rect()
+        sw, sh = self.desk.size()
+        px = max(0, min(self._tray_rect()[0] - 6, sw - fw))
+        win = _VolFlyout(self.desk, self, px, max(0, y0 - fh - 1))
+        self.desk.wm.add(win)
+        return win
+
+    def _make_clock_popup(self):
+        cw, ch = 154, 160
+        x0, y0, x1, y1 = self.rect()
+        sw, sh = self.desk.size()
+        px = max(0, min(self._clock_rect()[2] - cw + 1, sw - cw))
+        win = _ClockPopup(self.desk, self, px, max(0, y0 - ch - 1))
+        self.desk.wm.add(win)
+        return win
+
+    # ── volume state (persisted to shell state) ───────────────────────────
+    def _volume(self):
+        return int(self.desk.shell.state.get("volume", 75))
+
+    def _muted(self):
+        return bool(self.desk.shell.state.get("muted", False))
+
+    def _set_volume(self, v):
+        self.desk.shell.state["volume"] = max(0, min(100, int(v)))
+        self.desk.shell._save_state()
+        self.invalidate()
+
+    def _set_muted(self, on):
+        self.desk.shell.state["muted"] = bool(on)
+        self.desk.shell._save_state()
+        self.invalidate()
+
+    # ── context menu: window arrangement ──────────────────────────────────
+    def _context_menu(self, gx, gy):
+        self._close_popup()
+        shell = self.desk.shell
+        MI = W.MenuItem
+        items = [
+            MI("Cascade Windows", action=self._cascade),
+            MI("Tile Windows Horizontally", action=self._tile_h),
+            MI("Minimize All Windows", action=self._minimize_all),
+            W.sep(),
+            MI("Task Manager", action=lambda: shell.open_app("taskmgr")),
+        ]
+        self.desk.menus.open(items, gx, gy)
+
+    def _arrangeable(self):
+        return [w for w in self.desk.wm.windows
+                if not w.modal and not w.minimized
+                and not getattr(w, "_no_taskbar", False)]
+
+    def _resize_win(self, win, x, y, w, h):
+        win.maximized = False
+        win.x, win.y = x, y
+        if (win.w, win.h) != (w, h):
+            win.w, win.h = w, h
+            win.surface = None
+            win.on_resize()
+        self.desk.dirty = True
+
+    def _cascade(self):
+        wins = self._arrangeable()
+        if not wins:
+            return
+        sw, sh = self.desk.size()
+        ah = sh - T.TASKBAR_H
+        w, h = max(240, sw * 6 // 10), max(160, ah * 6 // 10)
+        step = T.TITLE_H + T.BORDER + 4
+        for i, win in enumerate(wins):
+            self._resize_win(win, (i * step) % max(1, sw - w),
+                             (i * step) % max(1, ah - h), w, h)
+            self.desk.wm.activate(win)
+
+    def _tile_h(self):
+        wins = self._arrangeable()
+        if not wins:
+            return
+        sw, sh = self.desk.size()
+        ah = sh - T.TASKBAR_H
+        band = max(80, ah // len(wins))
+        for i, win in enumerate(wins):
+            self._resize_win(win, 0, min(i * band, ah - band), sw, band)
+            self.desk.wm.activate(win)
+
+    def _minimize_all(self):
+        for win in self._arrangeable():
+            self.desk.wm.minimize(win)
+
+    def _show_desktop(self):
+        self._close_popup()
+        wmgr = self.desk.wm
+        live = [w for w in wmgr.windows if not w.modal
+                and not getattr(w, "_no_taskbar", False)]
+        shown = [w for w in live if not w.minimized]
+        if shown:                     # hide everything, remember what we hid
+            self._sd_restore = shown
+            for w in shown:
+                wmgr.minimize(w)
+        else:                         # nothing visible → restore the last set
+            for w in self._sd_restore:
+                if w in wmgr.windows:
+                    wmgr.activate(w)
+            self._sd_restore = []
 
     # the Start menu -----------------------------------------------------------
     def open_start_menu(self):
@@ -159,6 +428,8 @@ class Taskbar:
                    action=lambda: shell.open_app("notepad")),
                 MI("Paint", icon="paint",
                    action=lambda: shell.open_app("paint")),
+                MI("Task Manager", icon="taskmgr",
+                   action=lambda: shell.open_app("taskmgr")),
                 MI("WordPad", icon="wordpad",
                    action=lambda: shell.open_app("wordpad")),
             ]
@@ -214,3 +485,134 @@ class Taskbar:
                              sidebar="kilix 95", bar=self, min_w=150)
         self.menu_open = 1
         self.invalidate()
+
+
+# ── tray popup furniture (chromeless, no taskbar button) ────────────────────
+
+class _VSlider(W.Widget):
+    """Vertical 0-100 volume slider."""
+    focusable = True
+
+    def __init__(self, x, y, h, value, cb):
+        super().__init__(x, y, 16, h)
+        self.value = value
+        self.cb = cb
+
+    def _from_y(self, py):
+        rel = (self.y + self.h - 1 - py) / max(1, self.h - 1)
+        return max(0, min(100, round(rel * 100)))
+
+    def _set(self, v):
+        if v != self.value:
+            self.value = v
+            self.invalidate()
+            if self.cb:
+                self.cb(v)
+
+    def draw(self, d, img):
+        cx = self.x + self.w // 2
+        T.sunken(d, cx - 2, self.y, cx + 1, self.y + self.h - 1, fill=T.FACE)
+        ty = self.y + (self.h - 1) - (self.h - 1) * self.value // 100
+        T.raised(d, self.x, ty - 4, self.x + self.w - 1, ty + 4)
+        if self.window and self.window.focus is self:
+            T.focus_rect(d, self.x, ty - 4, self.x + self.w - 1, ty + 4)
+
+    def on_mouse(self, ev):
+        if (ev.press and ev.btn == 1) or (ev.move and ev.btn & 1):
+            self._set(self._from_y(ev.y))
+        return True
+
+    def on_key(self, ev):
+        if ev.key in ("ArrowUp", "ArrowRight", "PageUp"):
+            self._set(min(100, self.value + 5))
+        elif ev.key in ("ArrowDown", "ArrowLeft", "PageDown"):
+            self._set(max(0, self.value - 5))
+        else:
+            return False
+        return True
+
+
+class _Popup(wm.Window):
+    """Chromeless taskbar popup: no taskbar button, Escape dismisses."""
+
+    def __init__(self, desk, taskbar, w, h, x, y):
+        super().__init__(desk, "", w, h, x=x, y=y, chromeless=True)
+        self._no_taskbar = True
+        self.tb = taskbar
+
+    def on_key(self, ev):
+        if ev.key == "Escape":
+            self.tb._close_popup()
+            return True
+        return super().on_key(ev)
+
+
+class _VolFlyout(_Popup):
+    def __init__(self, desk, taskbar, x, y):
+        super().__init__(desk, taskbar, 72, 136, x, y)
+        v = taskbar._volume()
+        self.slider = self.add(_VSlider(28, 22, 74, v, self._set))
+        self.pct = self.add(W.Label(0, 100, "%d%%" % v))
+        self._center_pct()
+        self.mute = self.add(W.Checkbox(8, 116, "Mute",
+                                        checked=taskbar._muted(),
+                                        cb=self._mute))
+        self.set_focus(self.slider)
+
+    def _center_pct(self):
+        self.pct.x = (self.client_size()[0] - self.pct.w) // 2
+
+    def _set(self, v):
+        self.tb._set_volume(v)
+        self.pct.set("%d%%" % v)
+        self._center_pct()
+        self.invalidate()
+
+    def _mute(self, on):
+        self.tb._set_muted(on)
+
+    def draw_client(self, d, img):
+        w, h = self.client_size()
+        T.raised(d, 0, 0, w - 1, h - 1)
+        t = "Volume"
+        d.text(((w - T.text_w(T.FONT, t)) // 2, 5), t, font=T.FONT,
+               fill=T.TEXT)
+
+
+class _ClockPopup(_Popup):
+    def __init__(self, desk, taskbar, x, y):
+        super().__init__(desk, taskbar, 154, 160, x, y)
+
+    def draw_client(self, d, img):
+        w, h = self.client_size()
+        T.raised(d, 0, 0, w - 1, h - 1)
+        now = time.localtime()
+        hdr = time.strftime("%B %Y", now)
+        d.text(((w - T.text_w(T.BOLD, hdr)) // 2, 6), hdr, font=T.BOLD,
+               fill=T.TEXT)
+        T.hsep(d, 6, w - 7, 21)
+        cw = (w - 12) // 7
+        for i, c in enumerate(("Su", "Mo", "Tu", "We", "Th", "Fr", "Sa")):
+            cx = 6 + i * cw
+            d.text((cx + (cw - T.text_w(T.SMALL, c)) // 2, 26), c,
+                   font=T.SMALL, fill=T.SHADOW)
+        weeks = calendar.Calendar(firstweekday=6).monthdayscalendar(
+            now.tm_year, now.tm_mon)
+        ry = 40
+        for wk in weeks:
+            for i, day in enumerate(wk):
+                if day == 0:
+                    continue
+                cx = 6 + i * cw
+                s = str(day)
+                tx = cx + (cw - T.text_w(T.FONT, s)) // 2
+                if day == now.tm_mday:
+                    d.rectangle([cx + 1, ry - 1, cx + cw - 2, ry + 11],
+                                fill=T.SEL_BG)
+                    d.text((tx, ry), s, font=T.FONT, fill=T.SEL_TX)
+                else:
+                    d.text((tx, ry), s, font=T.FONT, fill=T.TEXT)
+            ry += 14
+        tstr = time.strftime("%H:%M:%S", now)
+        d.text(((w - T.text_w(T.FONT, tstr)) // 2, h - 16), tstr,
+               font=T.FONT, fill=T.TEXT)
