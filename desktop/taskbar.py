@@ -193,10 +193,15 @@ class Taskbar:
                action=lambda: shell.open_app("settings")),
             MI("Display…", icon="display", action=shell.display_properties),
         ]
+        find_sub = [
+            MI("Files or Folders…", icon="find",
+               action=lambda: shell.open_app("findfiles")),
+        ]
         items = [
             MI("Programs", icon="folder", submenu=programs()),
             MI("Documents", icon="doc_text", submenu=documents()),
             MI("Settings", icon="settings", submenu=settings_sub),
+            MI("Find", icon="find", submenu=find_sub),
             sub(),
             MI("Create Launcher…", icon="exe",
                action=lambda: shell.create_launcher_dialog()),

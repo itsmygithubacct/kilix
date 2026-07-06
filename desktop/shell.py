@@ -18,6 +18,7 @@ import subprocess
 from PIL import Image
 
 import icons
+import recycle
 import theme as T
 import widgets as W
 import wm
@@ -99,9 +100,13 @@ class Shell:
 
     # ── the icons ───────────────────────────────────────────────────────────
     def refresh(self):
+        bin_full = bool(recycle.items())
         items = [
             {"label": "My Computer", "icon": "computer",
-             "data": ("builtin", ("filemgr", "/"))},
+             "data": ("builtin", ("mycomp", None))},
+            {"label": "Recycle Bin",
+             "icon": "recyclebin_full" if bin_full else "recyclebin_empty",
+             "data": ("builtin", ("recyclebin", None))},
             {"label": "Home", "icon": "home",
              "data": ("builtin", ("filemgr", os.path.expanduser("~")))},
             {"label": "kilix Settings", "icon": "settings",

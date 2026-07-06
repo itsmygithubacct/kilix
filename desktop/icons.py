@@ -416,6 +416,40 @@ def _wordpad(p):
     p.px(10, 2, K)                                          # nib
 
 
+def _recyclebin_empty(p):
+    p.rect(4, 3, 11, 4, fill=S, outline=K)          # lid
+    p.hline(6, 9, 2, S)                             # lid handle
+    p.px(6, 2, K); p.px(9, 2, K)
+    p.poly([(4, 5), (11, 5), (10, 14), (5, 14)], fill=S, outline=K)  # bin body
+    p.vline(7, 6, 13, G)                            # ridges
+    p.vline(6, 6, 13, G)
+    p.vline(9, 6, 13, G)
+    p.hline(5, 10, 6, W)                            # rim hilight
+
+
+def _recyclebin_full(p):
+    p.poly([(6, 0), (10, 1), (11, 3), (5, 3)], fill=W, outline=K)  # crumpled paper
+    p.px(7, 1, S); p.px(9, 2, S)
+    p.rect(4, 3, 11, 4, fill=S, outline=K)          # lid
+    p.hline(6, 9, 2, S)                             # lid handle
+    p.px(6, 2, K); p.px(9, 2, K)
+    p.poly([(4, 5), (11, 5), (10, 14), (5, 14)], fill=S, outline=K)  # bin body
+    p.vline(7, 6, 13, G)                            # ridges
+    p.vline(6, 6, 13, G)
+    p.vline(9, 6, 13, G)
+    p.hline(5, 10, 6, W)                            # rim hilight
+
+
+def _find(p):
+    p.rect(1, 3, 4, 4, fill=Y, outline=K)      # folder tab
+    p.rect(1, 4, 8, 10, fill=Y, outline=K)     # folder body
+    p.hline(2, 7, 5, W)                         # top hilight
+    p.rect(9, 7, 13, 11, fill=C, outline=K)    # magnifier lens
+    p.hline(10, 12, 8, W)                       # glass glint
+    p.rect(13, 11, 15, 13, fill=K)             # handle
+    p.px(14, 12, K)
+
+
 ICONS = {
     "computer": _computer, "display": _display, "drive": _drive,
     "folder": _folder, "folder_open": _folder_open,
@@ -429,6 +463,8 @@ ICONS = {
     "back": _arrow_left, "forward": _arrow_right, "up": _arrow_up,
     "calc": _calc, "cards": _cards, "charmap": _charmap, "help": _help,
     "mines": _mines, "paint": _paint, "wordpad": _wordpad,
+    "recyclebin_empty": _recyclebin_empty, "recyclebin_full": _recyclebin_full,
+    "find": _find,
 }
 
 _cache = {}
