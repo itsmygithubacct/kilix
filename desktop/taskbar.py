@@ -35,10 +35,12 @@ class Taskbar:
         if not wins:
             return []
         bx = x0 + START_W + 10
-        avail = (x1 - CLOCK_W - 8) - bx
-        bw = min(150, max(48, avail // len(wins) - 3))
+        lim = x1 - CLOCK_W - 8
+        bw = min(150, max(22, (lim - bx) // len(wins) - 3))
         out = []
         for w in wins:
+            if bx + bw - 1 > lim:     # never run under the clock
+                break
             out.append((w, bx, bx + bw - 1))
             bx += bw + 3
         return out
@@ -82,9 +84,11 @@ class Taskbar:
                 T.raised(d, *r)
                 o = 0
             icons.paint(fb, win.icon, r[0] + 3 + o, r[1] + 2 + o, 16)
-            d.text((r[0] + 23 + o, r[1] + 3 + o),
-                   T.ellipsize(T.FONT, win.title, bx1 - bx0 - 28),
-                   font=T.FONT, fill=T.TEXT)
+            tw = bx1 - bx0 - 28
+            if tw > 6:                # icon-only when squeezed
+                d.text((r[0] + 23 + o, r[1] + 3 + o),
+                       T.ellipsize(T.FONT, win.title, tw),
+                       font=T.FONT, fill=T.TEXT)
         # clock well
         cw = (x1 - CLOCK_W - 2, y0 + 4, x1 - 2, y1 - 3)
         T.sunken(d, *cw, fill=T.FACE)
@@ -102,13 +106,19 @@ class Taskbar:
         x0, y0, x1, y1 = self.rect()
         if not gev.press:
             return True
+        modal = self.desk.wm.modal_top()
         if gev.btn == 1 and x0 + 2 <= gev.x < x0 + 2 + START_W:
-            self.open_start_menu()
+            if modal:
+                self.desk.wm.activate(modal)
+            else:
+                self.open_start_menu()
             return True
         for win, bx0, bx1 in self._buttons():
             if bx0 <= gev.x <= bx1:
-                if gev.btn == 3:
-                    win._system_menu()
+                if modal:
+                    self.desk.wm.activate(modal)
+                elif gev.btn == 3:
+                    win._system_menu(bx0, y0)
                 elif win is self.desk.wm.active and not win.minimized:
                     self.desk.wm.minimize(win)
                 else:
@@ -118,6 +128,10 @@ class Taskbar:
 
     # the Start menu -----------------------------------------------------------
     def open_start_menu(self):
+        modal = self.desk.wm.modal_top()
+        if modal:                     # a modal dialog owns all input
+            self.desk.wm.activate(modal)
+            return
         if self.menu_open >= 0:       # pressing Start again closes it
             self.desk.menus.close_all()
             return
