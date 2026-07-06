@@ -26,5 +26,26 @@ def open(desk, name, arg=None):
                 desk.wm.activate(w)
                 return
         desk.wm.add(settings.SettingsWin(desk))
+    elif name == "calc":
+        from . import calc
+        desk.wm.add(calc.Calc(desk, arg))
+    elif name == "mines":
+        from . import mines
+        desk.wm.add(mines.Mines(desk, arg))
+    elif name == "sol":
+        from . import sol
+        desk.wm.add(sol.Solitaire(desk, arg))
+    elif name == "paint":
+        from . import paint
+        desk.wm.add(paint.Paint(desk, arg))
+    elif name == "wordpad":
+        from . import wordpad
+        desk.wm.add(wordpad.WordPad(desk, arg))
+    elif name == "charmap":
+        from . import charmap
+        desk.wm.add(charmap.CharMap(desk, arg))
+    elif name == "winhelp":
+        from . import winhelp
+        desk.wm.add(winhelp.Help(desk, arg))
     else:
         raise ValueError(f"unknown app {name!r}")
