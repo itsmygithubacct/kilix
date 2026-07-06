@@ -90,7 +90,7 @@ class Mines(wm.Window):
         self.running = False
         self.elapsed = 0
         if getattr(self, "field", None):
-            self.field.push = None
+            self.field.reset_press()
         self.invalidate()
 
     def _compute_counts(self):
@@ -148,6 +148,21 @@ class Mines(wm.Window):
         self.mark[r][c] = (self.mark[r][c] + 1) % 3
         self.invalidate()
 
+    def chord(self, r, c):
+        # reveal a number's neighbors when its flag count matches (may detonate)
+        if self.dead or self.won or not self.shown[r][c]:
+            return
+        n = self.counts[r][c]
+        if n == 0:
+            return
+        flags = sum(1 for nr, nc in self._neighbors(r, c)
+                    if self.mark[nr][nc] == 1)
+        if flags != n:
+            return
+        for nr, nc in self._neighbors(r, c):
+            if not self.shown[nr][nc] and self.mark[nr][nc] != 1:
+                self.reveal(nr, nc)
+
     def flags(self):
         return sum(row.count(1) for row in self.mark)
 
@@ -156,7 +171,8 @@ class Mines(wm.Window):
             return "dead"
         if self.won:
             return "cool"
-        if getattr(self, "field", None) and self.field.push is not None:
+        if getattr(self, "field", None) and (self.field.push is not None
+                                             or self.field.chord_cells):
             return "oh"
         return "smile"
 
@@ -195,6 +211,7 @@ class Mines(wm.Window):
                 self.desk, "About Minesweeper",
                 "kilix 95 Minesweeper\n"
                 "Left-click clears a square, right-click flags a mine.\n"
+                "Middle-click a number to clear around it.\n"
                 "Clear every safe square to win.",
                 icon="mines"))]
 
@@ -244,6 +261,13 @@ class _Field(W.Widget):
         super().__init__(x, y, w, h)
         self.win = win
         self.push = None                # cell previewed while the button is held
+        self.chord_cells = None         # neighbors previewed while chording
+        self.left = self.right = False  # held mouse buttons (for L+R chord)
+        self.chording = False
+
+    def reset_press(self):
+        self.push = self.chord_cells = None
+        self.left = self.right = self.chording = False
 
     def _cell(self, ev):
         c = (ev.x - self.x - FR) // CELL
@@ -252,22 +276,64 @@ class _Field(W.Widget):
             return r, c
         return None
 
+    def _chord_preview(self, cell):
+        w = self.win
+        cells = set()
+        if cell and w.shown[cell[0]][cell[1]] and w.counts[cell[0]][cell[1]]:
+            for nr, nc in w._neighbors(*cell):
+                if not w.shown[nr][nc] and w.mark[nr][nc] != 1:
+                    cells.add((nr, nc))
+        self.chord_cells = cells or None
+        self.invalidate()
+
     def on_mouse(self, ev):
         w = self.win
-        if w.dead or w.won:
-            return True
         cell = self._cell(ev)
-        if ev.press and ev.btn == 3:
-            if cell:
+        if w.dead or w.won:
+            self.reset_press()
+            return True
+        if ev.press:
+            if (ev.btn == 1 and self.left) or (ev.btn == 3 and self.right):
+                self.reset_press()                # same button re-pressed: prior release lost
+            if ev.btn == 2:                       # middle-button chord
+                self.chording = True
+                self._chord_preview(cell)
+                return True
+            if ev.btn == 1:
+                self.left = True
+            elif ev.btn == 3:
+                self.right = True
+            if self.left and self.right:          # simultaneous L+R chord
+                self.chording = True
+                self.push = None
+                self._chord_preview(cell)
+            elif ev.btn == 1:
+                self.push = cell
+                self.invalidate()
+            elif ev.btn == 3 and cell:
                 w.cycle_mark(*cell)
             return True
-        if ev.press and ev.btn == 1:
-            self.push = cell
+        if ev.move:
+            if self.chording:
+                self._chord_preview(cell)
+            elif self.push is not None:
+                self.push = cell
+                self.invalidate()
+            return True
+        # release (negative-space event)
+        was_chording = self.chording
+        if ev.btn == 1:
+            self.left = False
+        elif ev.btn == 3:
+            self.right = False
+        if was_chording:                          # fire once, on the first release
+            self.chording = False
+            self.left = self.right = False        # a chord clears both buttons (other release may be lost)
+            self.push = self.chord_cells = None
             self.invalidate()
-        elif ev.move and self.push is not None:
-            self.push = cell
-            self.invalidate()
-        elif not ev.press and not ev.move and ev.btn == 1:
+            if cell:
+                w.chord(*cell)
+        elif ev.btn == 1:
             hit = self.push
             self.push = None
             self.invalidate()
@@ -311,7 +377,9 @@ class _Field(W.Widget):
                     d.text((x + (CELL - tw) // 2, y + 1), s, font=T.BOLD,
                            fill=NUM[n])
             return
-        pushed = self.push == (r, c) and w.mark[r][c] != 1
+        pushed = (self.push == (r, c) or
+                  (self.chord_cells is not None and (r, c) in self.chord_cells)) \
+            and w.mark[r][c] != 1
         if pushed:
             d.rectangle([x, y, x1, y1], fill=T.FACE)
             d.line([(x, y), (x1, y)], fill=T.SHADOW)

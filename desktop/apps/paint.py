@@ -5,11 +5,17 @@ a bottom 28-swatch color bar with a fore/back indicator, and a sunken,
 scrollable canvas. Freehand tools stroke live; shape tools rubber-band a
 preview committed on release; the bucket floods with PIL's flood fill.
 """
+import os
+
 from PIL import Image, ImageDraw
 
 import theme as T
 import widgets as W
 import wm
+
+# save format by extension; unknown → PNG
+FORMATS = {".png": "PNG", ".bmp": "BMP", ".gif": "GIF",
+           ".jpg": "JPEG", ".jpeg": "JPEG"}
 
 TOP = T.MENU_H
 M = 3
@@ -38,6 +44,8 @@ class Paint(wm.Window):
     def __init__(self, desk, arg=None):
         super().__init__(desk, "untitled - Paint", 560, 420, icon="paint")
         self.min_w, self.min_h = 360, 260
+        self.path = None
+        self.modified = False
         self.tool = "pencil"
         self.fg, self.bg = (0, 0, 0), (255, 255, 255)
         cw, ch = self.client_size()
@@ -77,11 +85,100 @@ class Paint(wm.Window):
         self.bg = tuple(c[:3])
         self.palette.invalidate()
 
+    # ── title / dirty ────────────────────────────────────────────────────────
+    def _retitle(self):
+        name = os.path.basename(self.path) if self.path else "untitled"
+        star = "*" if self.modified else ""
+        self.title = f"{star}{name} - Paint"
+        self.invalidate()
+
+    def mark_dirty(self):
+        if not self.modified:
+            self.modified = True
+            self._retitle()
+
+    def mark_clean(self):
+        self.modified = False
+        self._retitle()
+
+    # ── file plumbing ────────────────────────────────────────────────────────
+    def _load(self, path):
+        path = os.path.expanduser(path)
+        try:
+            img = Image.open(path)
+            img.load()
+        except (OSError, ValueError, Image.DecompressionBombError) as e:
+            wm.msgbox(self.desk, "Paint", str(e), icon="error")
+            return
+        self.canvas.set_image(img)
+        self.path = path
+        self.desk.shell.add_recent(path)
+        self.mark_clean()
+
+    def _save(self, then=None, path=None):
+        target = os.path.expanduser(path) if path else self.path
+        if not target:
+            return self._save_as(then)
+        fmt = FORMATS.get(os.path.splitext(target)[1].lower(), "PNG")
+        try:
+            self.canvas.img.save(target, fmt)
+        except (OSError, KeyError, ValueError) as e:
+            wm.msgbox(self.desk, "Paint", str(e), icon="error")
+            return
+        self.path = target
+        self.desk.shell.add_recent(target)
+        self.mark_clean()
+        if then:
+            then()
+
+    def _save_as(self, then=None):
+        def do(path):
+            if path:
+                self._save(then, path=path)
+        wm.inputbox(self.desk, "Save As", "Save to path:",
+                    self.path or os.path.expanduser("~/untitled.png"), cb=do,
+                    icon="paint", width=340)
+
+    def _open(self):
+        def go():
+            wm.inputbox(self.desk, "Open", "Path to open:",
+                        os.path.dirname(self.path) + "/" if self.path
+                        else os.path.expanduser("~/"),
+                        cb=lambda p: p and self._load(p), icon="paint",
+                        width=340)
+        self._if_saved(go)
+
+    def _new(self):
+        def go():
+            self.path = None
+            self.canvas.new_image()
+            self.mark_clean()
+        self._if_saved(go)
+
+    def _if_saved(self, then):
+        if not self.modified:
+            then()
+            return
+
+        def do(ans):
+            if ans == "Yes":
+                self._save(then)
+            elif ans == "No":
+                then()
+        wm.msgbox(self.desk, "Paint",
+                  "The image has changed.\nSave the changes?",
+                  icon="warn", buttons=("Yes", "No", "Cancel"), cb=do)
+
+    def request_close(self):
+        self._if_saved(self.close)
+
     # ── menus ───────────────────────────────────────────────────────────────
     def _file_menu(self):
         MI, sep = W.MenuItem, W.sep
-        return [MI("New", action=self.canvas.new_image),
-                MI("Clear Image", action=self.canvas.clear),
+        return [MI("New", action=self._new),
+                MI("Open…", action=self._open),
+                MI("Save", action=self._save),
+                MI("Save As…", action=self._save_as),
                 sep(), MI("Close", action=self.request_close)]
 
     def _image_menu(self):
@@ -95,6 +192,18 @@ class Paint(wm.Window):
                 "kilix 95 Paint\nLeft-click draws with the foreground color,\n"
                 "right-click with the background color.",
                 icon="paint"))]
+
+    def on_key(self, ev):
+        if ev.ctrl and ev.key == "s":
+            self._save()
+            return True
+        if ev.ctrl and ev.key == "o":
+            self._open()
+            return True
+        if ev.ctrl and ev.key == "n":
+            self._new()
+            return True
+        return super().on_key(ev)
 
 
 # ── tool palette ────────────────────────────────────────────────────────────
@@ -219,9 +328,16 @@ class _Canvas(W.Widget):
         self.preview = None
         self.invalidate()
 
+    def set_image(self, img):
+        self.img = img.convert("RGB")
+        self.ox = self.oy = 0
+        self.preview = None
+        self.invalidate()
+
     def clear(self):
         ImageDraw.Draw(self.img).rectangle(
             [0, 0, self.img.width, self.img.height], fill=self.paint.bg)
+        self.paint.mark_dirty()
         self.invalidate()
 
     # ── geometry ────────────────────────────────────────────────────────────
@@ -320,11 +436,13 @@ class _Canvas(W.Widget):
         self.col = p.bg if (ev.btn == 3 or p.tool == "eraser") else p.fg
         if p.tool == "fill":
             ImageDraw.floodfill(self.img, b, self.col)
+            p.mark_dirty()
         elif p.tool == "dropper":
             c = self.img.getpixel(b)
             (p.set_bg if ev.btn == 3 else p.set_fg)(c)
         elif p.tool in WIDTHS:
             _stroke(ImageDraw.Draw(self.img), b, b, self.col, WIDTHS[p.tool])
+            p.mark_dirty()
         else:
             self.preview = (p.tool, self.start, b)
         self.invalidate()
@@ -335,6 +453,7 @@ class _Canvas(W.Widget):
             _stroke(ImageDraw.Draw(self.img), self.last, b, self.col,
                     WIDTHS[p.tool])
             self.last = b
+            p.mark_dirty()
         elif self.preview:
             self.preview = (p.tool, self.start, b)
         self.invalidate()
@@ -343,6 +462,7 @@ class _Canvas(W.Widget):
         if self.preview:
             _shape(ImageDraw.Draw(self.img), *self.preview, self.col)
             self.preview = None
+            self.paint.mark_dirty()
         self.invalidate()
 
 

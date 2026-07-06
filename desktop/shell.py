@@ -538,6 +538,10 @@ class Shell:
         if low.endswith(".desktop"):
             self.launch(parse_launcher(path), path)
             return
+        if low.endswith((".krt", ".rtf")):
+            self.open_app("wordpad", path)
+            self.add_recent(path)
+            return
         if low.endswith(IMG_EXT):
             self.open_app("viewer", path)
         elif low.endswith(AUDIO_EXT):

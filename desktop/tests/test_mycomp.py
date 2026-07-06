@@ -47,6 +47,38 @@ def test_drive_opens_filemgr():
     assert os.path.abspath(fw.path) == "/"
 
 
+# ── the Recycle Bin entry's icon reflects fullness ───────────────────────────
+def test_recycle_bin_icon_reflects_fullness():
+    recycle.empty()
+    d, win = _open()
+    assert _entry(win, "Recycle Bin")["icon"] == "recyclebin_empty"
+
+    p = os.path.join(d.shell.dir, "trashme.txt")
+    with open(p, "w") as f:
+        f.write("junk")
+    recycle.send(p)
+    win._refresh_bin()
+    assert _entry(win, "Recycle Bin")["icon"] == "recyclebin_full"
+
+    recycle.empty()
+    win._refresh_bin()
+    assert _entry(win, "Recycle Bin")["icon"] == "recyclebin_empty"
+
+
+# ── the cheap emptiness probe agrees with items() but reads no sidecars ───────
+def test_has_items_cheap_probe():
+    recycle.empty()
+    assert recycle.has_items() is False
+    p = os.path.join(tempfile.mkdtemp(), "probe.txt")
+    with open(p, "w") as f:
+        f.write("x")
+    recycle.send(p)
+    assert recycle.has_items() is True
+    assert bool(recycle.items()) is True
+    recycle.empty()
+    assert recycle.has_items() is False
+
+
 # ── Control Panel opens Settings ─────────────────────────────────────────────
 def test_control_panel_opens_settings():
     d, win = _open()
@@ -75,7 +107,9 @@ def test_recycle_bin():
 
 
 test_entries_exist()
+test_recycle_bin_icon_reflects_fullness()
 test_drive_opens_filemgr()
 test_control_panel_opens_settings()
 test_recycle_bin()
+test_has_items_cheap_probe()
 print("ok")
