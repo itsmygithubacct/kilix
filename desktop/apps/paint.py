@@ -9,6 +9,7 @@ import os
 
 from PIL import Image, ImageDraw
 
+import filedialog
 import theme as T
 import widgets as W
 import wm
@@ -16,6 +17,9 @@ import wm
 # save format by extension; unknown → PNG
 FORMATS = {".png": "PNG", ".bmp": "BMP", ".gif": "GIF",
            ".jpg": "JPEG", ".jpeg": "JPEG"}
+OPEN_FILTERS = [("Images", "*.png;*.bmp;*.gif;*.jpg;*.jpeg"),
+                ("All Files", "*.*")]
+SAVE_FILTERS = [("PNG Image", "*.png")]
 
 TOP = T.MENU_H
 M = 3
@@ -135,17 +139,15 @@ class Paint(wm.Window):
         def do(path):
             if path:
                 self._save(then, path=path)
-        wm.inputbox(self.desk, "Save As", "Save to path:",
-                    self.path or os.path.expanduser("~/untitled.png"), cb=do,
-                    icon="paint", width=340)
+        filedialog.save_file(self.desk, "Save As", do, filters=SAVE_FILTERS,
+                             filename=self.path or "untitled.png")
 
     def _open(self):
         def go():
-            wm.inputbox(self.desk, "Open", "Path to open:",
-                        os.path.dirname(self.path) + "/" if self.path
-                        else os.path.expanduser("~/"),
-                        cb=lambda p: p and self._load(p), icon="paint",
-                        width=340)
+            filedialog.open_file(
+                self.desk, "Open", lambda p: p and self._load(p),
+                filters=OPEN_FILTERS,
+                start=os.path.dirname(self.path) if self.path else None)
         self._if_saved(go)
 
     def _new(self):

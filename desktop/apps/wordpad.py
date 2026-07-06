@@ -6,6 +6,7 @@ flatten to plain .txt."""
 import json
 import os
 
+import filedialog
 import theme as T
 import widgets as W
 import wm
@@ -860,17 +861,20 @@ class WordPad(wm.Window):
         def do(path):
             if path:
                 self._save(then, path=path)
-        wm.inputbox(self.desk, "Save As", "Save to path (.krt or .txt):",
-                    self.path or os.path.expanduser("~/document.krt"), cb=do,
-                    icon="wordpad", width=340)
+        filedialog.save_file(
+            self.desk, "Save As", do,
+            start=os.path.dirname(self.path) if self.path else None,
+            filters=[("WordPad Documents", "*.krt"), ("Text Files", "*.txt"),
+                     ("All Files", "*.*")],
+            filename=os.path.basename(self.path) if self.path else "document.krt")
 
     def _open(self):
         def go():
-            wm.inputbox(self.desk, "Open", "Path to open:",
-                        os.path.dirname(self.path) + "/" if self.path
-                        else os.path.expanduser("~/"),
-                        cb=lambda p: p and self._load(p), icon="wordpad",
-                        width=340)
+            filedialog.open_file(
+                self.desk, "Open", lambda p: p and self._load(p),
+                start=os.path.dirname(self.path) if self.path else None,
+                filters=[("WordPad Documents", "*.krt;*.rtf"),
+                         ("Text Files", "*.txt"), ("All Files", "*.*")])
         self._if_saved(go)
 
     def _new(self):

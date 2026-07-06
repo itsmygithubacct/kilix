@@ -6,6 +6,7 @@ from PIL import Image
 
 import harness as H
 import widgets as W
+import filedialog
 from apps import paint as P
 
 
@@ -13,13 +14,13 @@ def _nonwhite(img):
     return sum(1 for px in img.getdata() if px != (255, 255, 255))
 
 
-def _drive_input(desk, path):
-    """Fill the topmost inputbox with path and accept it (Enter)."""
-    modal = desk.wm.windows[-1]
-    fld = next(w for w in modal.widgets if isinstance(w, W.TextField))
-    modal.set_focus(fld)
-    fld.set(path)
-    desk.dispatch_key(W.Ev(kind="key", key="Enter", text="\r"))
+def _drive_picker(desk, path):
+    """Type path into the topmost FileDialog's name field and confirm it."""
+    dlg = desk.wm.windows[-1]
+    assert isinstance(dlg, filedialog.FileDialog), type(dlg)
+    dlg._nav(os.path.dirname(path))
+    dlg.name.set(os.path.basename(path))
+    dlg._confirm()
 
 
 d = H.make_desk()
@@ -77,7 +78,7 @@ tmp = tempfile.mkdtemp(prefix="paint-test-")
 # ── Save As: writes a file that reopens with matching size/pixels ───────────
 spath = os.path.join(tmp, "art.png")
 win._save_as()
-_drive_input(d, spath)
+_drive_picker(d, spath)
 assert os.path.exists(spath), "Save As wrote nothing"
 assert win.path == spath and not win.modified, "save did not clear dirty"
 assert win.title == "art.png - Paint", win.title
@@ -98,15 +99,29 @@ src = Image.new("RGB", (37, 29), (0, 128, 0))
 src.putpixel((5, 5), (255, 0, 0))
 src.save(opath)
 win._open()                            # not modified now → opens straight away
-_drive_input(d, opath)
+_drive_picker(d, opath)
 assert cv.img.size == (37, 29), cv.img.size
 assert cv.img.getpixel((5, 5)) == (255, 0, 0)
 assert win.path == opath and not win.modified
 
-# ── bad Open path: an error box, no crash, canvas untouched ─────────────────
+# ── missing file in the picker: rejected in-dialog, canvas untouched ────────
 before = list(cv.img.getdata())
 win._open()
-_drive_input(d, os.path.join(tmp, "does-not-exist.png"))
+dlg = d.wm.windows[-1]
+assert isinstance(dlg, filedialog.FileDialog)
+dlg.name.set("does-not-exist.png")
+dlg._confirm()                         # warn box, picker stays open
+assert dlg in d.wm.windows and d.wm.modal_top() is not dlg
+d.wm.modal_top().close()               # dismiss the warning
+dlg._cancel()                          # close the picker
+d.render()
+
+# ── corrupt image: the picker accepts it, Paint reports the load error ──────
+bad = os.path.join(tmp, "broken.png")
+with open(bad, "wb") as f:
+    f.write(b"not an image")
+win._open()
+_drive_picker(d, bad)
 assert list(cv.img.getdata()) == before, "canvas changed on failed open"
 assert any(w.title == "Paint" for w in d.wm.windows), "no error box shown"
 d.render()                             # error box composes without hanging

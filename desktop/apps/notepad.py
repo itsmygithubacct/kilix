@@ -1,9 +1,13 @@
 """kilix desktop — Notepad. A plain text editor over widgets.TextArea."""
 import os
 
+import filedialog
 import theme as T
 import widgets as W
 import wm
+
+_FILTERS_OPEN = [("Text Documents", "*.txt;*.md;*.log"), ("All Files", "*.*")]
+_FILTERS_SAVE = [("Text Documents", "*.txt"), ("All Files", "*.*")]
 
 
 class Notepad(wm.Window):
@@ -73,17 +77,19 @@ class Notepad(wm.Window):
         def do(path):
             if path:
                 self._save(then, path=path)
-        wm.inputbox(self.desk, "Save As", "Save to path:",
-                    self.path or os.path.expanduser("~/"), cb=do,
-                    icon="notepad", width=340)
+        filedialog.save_file(self.desk, "Save As", do,
+                             start=os.path.dirname(self.path) if self.path
+                             else None, filters=_FILTERS_SAVE,
+                             filename=os.path.basename(self.path)
+                             if self.path else "")
 
     def _open(self):
         def go():
-            wm.inputbox(self.desk, "Open", "Path to open:",
-                        os.path.dirname(self.path) + "/" if self.path
-                        else os.path.expanduser("~/"),
-                        cb=lambda p: p and self._load(p), icon="notepad",
-                        width=340)
+            filedialog.open_file(self.desk, "Open",
+                                 lambda p: p and self._load(p),
+                                 start=os.path.dirname(self.path)
+                                 if self.path else None,
+                                 filters=_FILTERS_OPEN)
         self._if_saved(go)
 
     def _new(self):
