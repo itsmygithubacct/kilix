@@ -59,6 +59,12 @@ GAMES = {
                  "plus DOSBox if none is installed — into\n"
                  "~/.local/share/kilix/games, and play?",
     },
+    "dosbox": {
+        "label": "DOSBox", "icon": "dosbox",
+        "blurb": "Open an MS-DOS prompt (DOSBox) with C: mounted to\n"
+                 "~/.local/share/kilix/games. Fetches a dosbox-staging\n"
+                 "build there first if none is already installed.",
+    },
     "bashed-earth": {
         "label": "Bashed Earth", "icon": "tank",
         "blurb": "Clone and build Bashed Earth (terminal artillery\n"
@@ -107,6 +113,29 @@ def doom_ready(cp=None):
     exe = _find(ddir, "DOOM.EXE")
     wad = _find(ddir, "DOOM1.WAD") or _find(ddir, "DOOM.WAD")
     return (dosbox, exe) if exe and wad else None
+
+
+def dosbox_ready(cp=None):
+    """Path to a runnable dosbox if one is already available (no install):
+    config > $PATH > previously vendored."""
+    cp = cp or load()
+    cur = os.path.expanduser(cp.get("dosbox", "exe", fallback=""))
+    if cur and os.access(cur, os.X_OK):
+        return cur
+    for name in ("dosbox", "dosbox-staging", "dosbox-x"):
+        p = shutil.which(name)
+        if p:
+            return p
+    vend = os.path.join(GAMES_DIR, "dosbox-staging")
+    exe = _find(vend, "dosbox") if os.path.isdir(vend) else None
+    return exe if exe and os.access(exe, os.X_OK) else None
+
+
+def game_ready(game, cp=None):
+    """Installed-and-runnable check dispatched by game name (None if not)."""
+    cp = cp or load()
+    return {"doom": doom_ready, "dosbox": dosbox_ready,
+            "bashed-earth": bashed_ready}.get(game, lambda c=None: None)(cp)
 
 
 def _fetch(urls, dest, report):
@@ -263,6 +292,17 @@ def _write_settings(ddir, report):
     return conf
 
 
+def _write_dosbox_conf(report):
+    """The shared fullscreen/sound dosbox conf in the games dir (once)."""
+    os.makedirs(GAMES_DIR, exist_ok=True)
+    conf = os.path.join(GAMES_DIR, "dosbox-kilix.conf")
+    if not os.path.exists(conf):
+        with open(conf, "w") as f:
+            f.write(DOSBOX_CONF)
+        report("wrote dosbox-kilix.conf (fullscreen, sound on)")
+    return conf
+
+
 def _audio_check(report):
     import subprocess
     try:
@@ -344,6 +384,12 @@ def ensure(game, report=print):
         cp.set("doom", "dosbox", dosbox)
         cp.set("doom", "dir", ddir)
         payload = (dosbox, conf, _find(ddir, "DOOM.EXE"))
+    elif game == "dosbox":
+        dosbox = ensure_dosbox(cp, report)
+        conf = _write_dosbox_conf(report)
+        _audio_check(report)
+        cp.set("dosbox", "exe", dosbox)
+        payload = (dosbox, conf)
     elif game == "bashed-earth":
         exe = ensure_bashed(cp, report)
         cp.set("bashed-earth", "dir", os.path.dirname(exe))
@@ -367,6 +413,23 @@ def _launch_doom(payload):
         # already in our own tab: run DOSBox in-place through `kilix run`.
         # 640x400 = Doom's own 16:10, so DOSBox fullscreen has zero bars;
         # --fill then stretches the placement over the WHOLE pane.
+        os.environ["KILIX_IN_OVERLAY"] = "1"
+        os.execv(kilix, [kilix, "run", "--fill", "--size", "640x400"] + argv)
+    elif os.environ.get("DISPLAY"):
+        os.execv(dosbox, argv)                # plain X session
+    raise SystemExit("kilix games: no display (run inside kilix or X)")
+
+
+def _launch_dosbox(payload):
+    dosbox, conf = payload
+    kilix = os.path.join(KILIX_HOME, "kilix")
+    # boot to a DOS prompt with C: mounted at the games folder, so any DOS
+    # programs dropped there are one `C:` away
+    argv = [dosbox, "-conf", conf,
+            "-c", f'mount c "{GAMES_DIR}"', "-c", "c:"]
+    if os.environ.get("KITTY_WINDOW_ID") and os.access(kilix, os.X_OK):
+        # 640x400 = 80x25 VGA text, so the prompt is crisp; --fill stretches
+        # the placement over the whole pane (aspect=false in the conf)
         os.environ["KILIX_IN_OVERLAY"] = "1"
         os.execv(kilix, [kilix, "run", "--fill", "--size", "640x400"] + argv)
     elif os.environ.get("DISPLAY"):
@@ -399,6 +462,8 @@ def main():
         return
     if game == "doom":
         _launch_doom(payload)
+    elif game == "dosbox":
+        _launch_dosbox(payload)
     else:
         _launch_bashed(payload)
 
