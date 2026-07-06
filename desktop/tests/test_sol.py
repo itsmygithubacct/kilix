@@ -54,4 +54,40 @@ y1 = gy + win.tab_y + 30
 H.drag(d, x0, y0, x1, y1)
 assert not win.tab[0] and len(win.tab[1]) == 1, "King should drag to empty col"
 
+# ── deal-one moves exactly one per stock click ──
+win.draw3 = False
+win.new_game(seed=2)
+n = len(win.waste)
+H.click(d, gx + win._col_x(0) + 10, gy + win.top_y + 10)
+assert len(win.waste) == n + 1, "deal-one should move exactly one card"
+
+# ── draw-three: a stock click moves three, only the top is playable ──
+win.draw3 = True
+win.new_game(seed=2)
+assert not win.waste
+H.click(d, gx + win._col_x(0) + 10, gy + win.top_y + 10)
+assert len(win.waste) == 3, "draw-three should move three cards to the waste"
+assert win.fan == 3
+top = win.waste[-1]
+buried = win.waste[-2]
+# a press on the buried (left) part of the fan must not pick up anything
+H.press(d, gx + win._col_x(1) + 2, gy + win.top_y + 10)
+H.release(d, gx + win._col_x(1) + 2, gy + win.top_y + 10)
+assert win.drag is None, "only the top waste card is playable"
+# a press on the top (offset) card does pick it up
+wx = win._waste_x()
+assert wx == win._col_x(1) + 2 * sol.FAN_X
+H.press(d, gx + wx + sol.CW // 2, gy + win.top_y + 10)
+assert win.drag is not None and win.drag["src"] is win.waste
+assert win.drag["k"] == len(win.waste) - 1, "picked card is the top waste card"
+H.release(d, gx + wx + sol.CW // 2, gy + win.top_y + 10)
+assert win.waste[-1] is top and win.waste[-2] is buried
+
+# ── stock recycles when empty (draw-three) ──
+win.stock = []
+before = len(win.waste)
+assert before
+H.click(d, gx + win._col_x(0) + 10, gy + win.top_y + 10)
+assert len(win.stock) == before and not win.waste, "empty stock should recycle"
+
 print("ok")

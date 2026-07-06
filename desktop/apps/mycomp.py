@@ -7,13 +7,17 @@ opens the shared Recycle Bin window.
 """
 import os
 
-import icons
+import recycle
 import theme as T
 import widgets as W
 import wm
 
 STATUS_H = 20
-_BIN_ICON = "recyclebin_empty" if "recyclebin_empty" in icons.ICONS else "doc"
+
+
+def _bin_icon():
+    # mirror shell.refresh(): full when the bin holds items, else empty
+    return "recyclebin_full" if recycle.has_items() else "recyclebin_empty"
 
 
 class MyComputer(wm.Window):
@@ -28,6 +32,24 @@ class MyComputer(wm.Window):
             on_activate=self._activate))
         self.grid.set_items(self._entries())
         self.set_focus(self.grid)
+        self._bin_icon = _bin_icon()
+        self.desk.tick_hooks.append(self._refresh_bin)
+
+    def _refresh_bin(self, *_):
+        # keep the Recycle Bin entry's icon in sync with the bin's fullness
+        icon = _bin_icon()
+        if icon == self._bin_icon:
+            return
+        self._bin_icon = icon
+        for it in self.grid.items:
+            if it["data"] == ("bin", None):
+                it["icon"] = icon
+        self.grid.invalidate()
+
+    def close(self):
+        if self._refresh_bin in self.desk.tick_hooks:
+            self.desk.tick_hooks.remove(self._refresh_bin)
+        super().close()
 
     def _entries(self):
         return [
@@ -39,7 +61,7 @@ class MyComputer(wm.Window):
              "data": ("filemgr", self.desk.shell.dir)},
             {"label": "Control Panel", "icon": "settings",
              "data": ("settings", None)},
-            {"label": "Recycle Bin", "icon": _BIN_ICON,
+            {"label": "Recycle Bin", "icon": _bin_icon(),
              "data": ("bin", None)},
         ]
 

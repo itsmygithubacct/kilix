@@ -22,6 +22,7 @@ GAPX = 10
 MARGIN = 14
 FAN_DOWN = 5
 FAN_UP = 16
+FAN_X = 14                 # draw-three waste horizontal offset
 STEP = CW + GAPX
 
 
@@ -89,6 +90,9 @@ class Solitaire(wm.Window):
         self.tab = [[], [], [], [], [], [], []]
         self.drag = None          # active pick-up
         self.won = False
+        st = getattr(desk.shell, "state", None) or {}
+        self.draw3 = bool(st.get("sol_draw3", False))
+        self.fan = 0              # top waste cards shown fanned
         self.new_game()
 
     def on_resize(self):
@@ -131,6 +135,7 @@ class Solitaire(wm.Window):
                 self.tab[i].append(c)
         self.stock = deck
         self.waste = []
+        self.fan = 0
         self.drag = None
         self.won = False
         self.invalidate()
@@ -158,8 +163,18 @@ class Solitaire(wm.Window):
         return bool(run) and run[0].up
 
     def _after_take(self, src):
+        if src is self.waste and self.fan > 1:
+            self.fan -= 1                    # one fewer fanned card exposed
         if src in self.tab and src and not src[-1].up:
             src[-1].up = True
+
+    def _waste_fan(self):
+        """How many top waste cards are shown fanned (1 unless draw-three)."""
+        return max(1, min(self.fan, len(self.waste))) if self.waste else 0
+
+    def _waste_x(self):
+        """Left x of the top (playable) waste card."""
+        return self._col_x(1) + (self._waste_fan() - 1) * FAN_X
 
     def _check_win(self):
         if all(len(f) == 13 for f in self.found) and not self.won:
@@ -198,12 +213,16 @@ class Solitaire(wm.Window):
 
     def deal_stock(self):
         if self.stock:
-            c = self.stock.pop()
-            c.up = True
-            self.waste.append(c)
+            n = min(3 if self.draw3 else 1, len(self.stock))
+            for _ in range(n):
+                c = self.stock.pop()
+                c.up = True
+                self.waste.append(c)
+            self.fan = n
         elif self.waste:
             self.stock = [Card(c.rank, c.suit) for c in reversed(self.waste)]
             self.waste = []
+            self.fan = 0
         self.invalidate()
 
     # ── input ─────────────────────────────────────────────────────────────────
@@ -232,13 +251,13 @@ class Solitaire(wm.Window):
                 and self.top_y <= y < self.top_y + CH):
             self.deal_stock()
             return
-        # waste (top card)
-        if (self._col_x(1) <= x < self._col_x(1) + CW
-                and self.top_y <= y < self.top_y + CH and self.waste):
+        # waste (only the top card is playable; fanned in draw-three)
+        wx = self._waste_x()
+        if (self.waste and wx <= x < wx + CW
+                and self.top_y <= y < self.top_y + CH):
             if ev.clicks >= 2 and self.send_to_foundation(self.waste):
                 return
-            self._pick(self.waste, len(self.waste) - 1,
-                       self._col_x(1), self.top_y, x, y)
+            self._pick(self.waste, len(self.waste) - 1, wx, self.top_y, x, y)
             return
         # foundations (drag a card back off)
         for fi in range(4):
@@ -304,7 +323,11 @@ class Solitaire(wm.Window):
                        self._col_x(0) + 32, self.top_y + 40], outline=FELT_D)
         self._slot(d, self._col_x(1), self.top_y)      # waste
         if self.waste:
-            self._face(d, self._col_x(1), self.top_y, self.waste[-1])
+            n = self._waste_fan()
+            base = len(self.waste) - n
+            for k in range(n):
+                self._face(d, self._col_x(1) + k * FAN_X, self.top_y,
+                           self.waste[base + k])
         for fi in range(4):                            # foundations
             fx = self._col_x(3 + fi)
             self._slot(d, fx, self.top_y)
@@ -366,9 +389,20 @@ class Solitaire(wm.Window):
     # ── menus ─────────────────────────────────────────────────────────────────
     def _game_menu(self):
         MI, sep = W.MenuItem, W.sep
+        deal_label = "Draw one" if self.draw3 else "Draw three"
         return [MI("New Game", action=lambda: self.new_game()),
                 sep(),
+                MI(deal_label, action=self._toggle_draw3),
+                sep(),
                 MI("Close", action=self.request_close)]
+
+    def _toggle_draw3(self):
+        self.draw3 = not self.draw3
+        st = getattr(self.desk.shell, "state", None)
+        if st is not None:
+            st["sol_draw3"] = self.draw3
+            self.desk.shell._save_state()
+        self.new_game()
 
     def _help_menu(self):
         return [W.MenuItem(

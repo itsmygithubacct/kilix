@@ -109,6 +109,11 @@ def items():
     return out
 
 
+def has_items():
+    """True if the bin holds anything. Cheap: no sidecar reads (for tick hooks)."""
+    return any(not n.endswith(".info") for n in os.listdir(_store()))
+
+
 def restore(token):
     """Move a token back to its original path (disambiguated if occupied);
     return the path it landed at."""

@@ -1,10 +1,25 @@
 """Paint: pencil strokes pixels, the bucket floods, swatches set the color."""
+import os
+import tempfile
+
+from PIL import Image
+
 import harness as H
+import widgets as W
 from apps import paint as P
 
 
 def _nonwhite(img):
     return sum(1 for px in img.getdata() if px != (255, 255, 255))
+
+
+def _drive_input(desk, path):
+    """Fill the topmost inputbox with path and accept it (Enter)."""
+    modal = desk.wm.windows[-1]
+    fld = next(w for w in modal.widgets if isinstance(w, W.TextField))
+    modal.set_focus(fld)
+    fld.set(path)
+    desk.dispatch_key(W.Ev(kind="key", key="Enter", text="\r"))
 
 
 d = H.make_desk()
@@ -53,5 +68,47 @@ assert cv.preview is not None
 H.release(d, vx + 80, vy + 60)
 assert cv.preview is None
 assert _nonwhite(cv.img) > 0, "rect not committed on release"
+
+# ── dirty flag: an edit stars the title, a save clears it ────────────────────
+assert win.modified and win.title.startswith("*"), win.title
+
+tmp = tempfile.mkdtemp(prefix="paint-test-")
+
+# ── Save As: writes a file that reopens with matching size/pixels ───────────
+spath = os.path.join(tmp, "art.png")
+win._save_as()
+_drive_input(d, spath)
+assert os.path.exists(spath), "Save As wrote nothing"
+assert win.path == spath and not win.modified, "save did not clear dirty"
+assert win.title == "art.png - Paint", win.title
+reop = Image.open(spath)
+assert reop.size == cv.img.size, (reop.size, cv.img.size)
+assert list(reop.convert("RGB").getdata()) == list(cv.img.getdata()), \
+    "reopened pixels differ"
+
+# ── Save (no path) reuses the remembered path ───────────────────────────────
+win.canvas.clear()
+assert win.modified
+win._save()
+assert not win.modified and win.path == spath
+
+# ── Open: the canvas adopts a temp image of a different size ────────────────
+opath = os.path.join(tmp, "in.png")
+src = Image.new("RGB", (37, 29), (0, 128, 0))
+src.putpixel((5, 5), (255, 0, 0))
+src.save(opath)
+win._open()                            # not modified now → opens straight away
+_drive_input(d, opath)
+assert cv.img.size == (37, 29), cv.img.size
+assert cv.img.getpixel((5, 5)) == (255, 0, 0)
+assert win.path == opath and not win.modified
+
+# ── bad Open path: an error box, no crash, canvas untouched ─────────────────
+before = list(cv.img.getdata())
+win._open()
+_drive_input(d, os.path.join(tmp, "does-not-exist.png"))
+assert list(cv.img.getdata()) == before, "canvas changed on failed open"
+assert any(w.title == "Paint" for w in d.wm.windows), "no error box shown"
+d.render()                             # error box composes without hanging
 
 print("ok")

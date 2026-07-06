@@ -512,6 +512,8 @@ def for_path(path, is_dir=False):
     if is_dir:
         return "folder"
     low = path.lower()
+    if low.endswith((".krt", ".rtf")):
+        return "wordpad"
     if low.endswith((".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp",
                      ".ico", ".ppm", ".tiff")):
         return "doc_image"
