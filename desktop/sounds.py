@@ -21,6 +21,7 @@ import threading
 import wave
 
 RATE = 44100
+SYNTH_VERSION = 2          # bump when a synth changes so cached wavs regenerate
 _PLAYERS = ("paplay", "aplay", "ffplay", "play")     # WAV players
 _MEDIA_PLAYERS = ("ffplay", "mpv", "cvlc")           # non-WAV (kilix-amp formats)
 _AUDIO_EXT = (".wav", ".mp3", ".flac", ".ogg", ".oga", ".opus", ".m4a",
@@ -83,50 +84,93 @@ def _blank(dur):
     return [0.0] * int(dur * RATE)
 
 
+def _click(cut, dur=0.035, amp=0.6, decay=0.006, seed=95):
+    """A short filtered-noise transient — a soft mechanical tick, not a tone.
+    Higher cut = brighter click; faster decay = crisper."""
+    n = int(dur * RATE)
+    b = [0.0] * n
+    rnd = random.Random(seed)
+    prev = 0.0
+    for i in range(n):
+        prev += cut * (rnd.uniform(-1.0, 1.0) - prev)        # one-pole low-pass
+        b[i] = amp * math.exp(-i / (decay * RATE)) * prev    # fast percussive tail
+    return b
+
+
+# a few overtones give a warm, slightly inharmonic bell rather than a flat tone
+_BELL_PARTIALS = ((1.0, 1.0), (2.0, 0.45), (2.77, 0.22), (3.9, 0.10))
+
+
+def _bell(buf, freq, start, dur, amp=0.18):
+    n = int(dur * RATE)
+    s = int(start * RATE)
+    at = max(1, int(0.006 * RATE))
+    for i in range(n):
+        j = s + i
+        if not (0 <= j < len(buf)):
+            continue
+        env = min(1.0, i / at) * math.exp(-i / (dur * 0.5 * RATE))
+        t = i / RATE
+        v = sum(a * math.sin(2 * math.pi * freq * m * t) for m, a in _BELL_PARTIALS)
+        buf[j] += amp * env * v
+
+
+def _pad(buf, freq, start, dur, amp=0.1):
+    """A soft-attack sustained tone that swells in and fades slowly."""
+    _note(buf, freq, start, dur, amp=amp, kind="tri", a=0.16, r=0.5)
+
+
 # ── the sounds ───────────────────────────────────────────────────────────────
 def _startup():
-    b = _blank(1.15)
-    for f, t in ((C5, 0.0), (E5, 0.11), (G5, 0.22)):     # ascending arpeggio
-        _note(b, f, t, 0.20, amp=0.26, kind="tri")
-    for f in (C5, E5, G5, C6):                            # crowning major chord
-        _note(b, f, 0.34, 0.72, amp=0.17, kind="tri", a=0.01, r=0.4)
+    # a warm, welcoming boot chime: a soft major pad swells in under bells that
+    # rise and resolve up to the octave
+    b = _blank(1.9)
+    for f in (C4, E4, G4, C5):                            # pad chord swells in
+        _pad(b, f, 0.0, 1.75, amp=0.085)
+    for f, t in ((G4, 0.10), (C5, 0.34), (E5, 0.56),     # bells ascend, resolving
+                 (G5, 0.78), (C6, 1.00)):
+        _bell(b, f, t, 0.8, amp=0.16)
     return b
 
 
 def _shutdown():
-    b = _blank(1.05)
-    for f, t in ((C6, 0.0), (G5, 0.14), (E5, 0.28)):     # descending
-        _note(b, f, t, 0.20, amp=0.24, kind="tri")
-    for f in (C4, E4, G4):                                # low resolving chord
-        _note(b, f, 0.40, 0.6, amp=0.16, kind="tri", a=0.01, r=0.35)
+    # the companion: the same warmth settling down and resolving low
+    b = _blank(1.7)
+    for f in (C5, G4, E4, C4):                            # pad chord settles in
+        _pad(b, f, 0.05, 1.5, amp=0.085)
+    for f, t in ((G5, 0.10), (E5, 0.32), (C5, 0.54),     # bells descend, resolving
+                 (G4, 0.76), (C4, 0.98)):
+        _bell(b, f, t, 0.8, amp=0.15)
     return b
 
 
 def _error():
-    b = _blank(0.5)                                       # low double buzz
-    _note(b, 130.81, 0.0, 0.16, amp=0.3, kind="square", r=0.03)
-    _note(b, 130.81, 0.21, 0.24, amp=0.3, kind="square", r=0.05)
+    # soft, serious minor-third fall — rounded sine, not a harsh buzz
+    b = _blank(0.64)
+    _note(b, 196.0, 0.0, 0.26, amp=0.26, kind="sine", a=0.012, r=0.16)
+    _note(b, 155.56, 0.24, 0.36, amp=0.26, kind="sine", a=0.012, r=0.22)
+    _note(b, 392.0, 0.0, 0.2, amp=0.04, kind="sine", a=0.012, r=0.16)   # faint body
     return b
 
 
 def _exclamation():
-    b = _blank(0.4)                                       # two-tone alert
-    _note(b, E5, 0.0, 0.13, amp=0.26, kind="tri")
-    _note(b, A5, 0.13, 0.2, amp=0.26, kind="tri")
+    b = _blank(0.46)                                     # gentle two-tone alert
+    _note(b, E5, 0.0, 0.16, amp=0.2, kind="sine", a=0.008, r=0.1)
+    _note(b, A5, 0.15, 0.26, amp=0.2, kind="sine", a=0.008, r=0.16)
     return b
 
 
 def _asterisk():
-    b = _blank(0.45)                                      # soft ding + octave
-    _note(b, A5, 0.0, 0.42, amp=0.24, kind="sine", a=0.005, r=0.36)
-    _note(b, A5 * 2, 0.0, 0.3, amp=0.08, kind="sine", a=0.005, r=0.28)
+    b = _blank(0.5)                                      # soft ding + octave
+    _note(b, A5, 0.0, 0.46, amp=0.2, kind="sine", a=0.008, r=0.4)
+    _note(b, A5 * 2, 0.0, 0.3, amp=0.055, kind="sine", a=0.008, r=0.3)
     return b
 
 
 def _question():
-    b = _blank(0.4)                                       # rising two-tone
-    _note(b, D5, 0.0, 0.12, amp=0.24, kind="tri")
-    _note(b, G5, 0.12, 0.22, amp=0.24, kind="tri")
+    b = _blank(0.46)                                     # gentle rising two-tone
+    _note(b, D5, 0.0, 0.15, amp=0.2, kind="sine", a=0.008, r=0.1)
+    _note(b, G5, 0.15, 0.26, amp=0.2, kind="sine", a=0.008, r=0.16)
     return b
 
 
@@ -149,15 +193,11 @@ def _restore():
 
 
 def _open():
-    b = _blank(0.1)
-    _glide(b, E5, A5, 0.0, 0.07, amp=0.16)               # soft click up
-    return b
+    return _click(0.55, dur=0.03, amp=0.6, decay=0.005, seed=11)    # bright tick
 
 
 def _close():
-    b = _blank(0.1)
-    _glide(b, A5, E5, 0.0, 0.07, amp=0.16)               # soft click down
-    return b
+    return _click(0.34, dur=0.045, amp=0.6, decay=0.008, seed=23)   # softer tock
 
 
 def _recycle_empty():
@@ -215,11 +255,42 @@ def _write(path, samples):
     os.replace(tmp, path)                                # atomic swap
 
 
+_reconciled = False
+
+
+def _reconcile_version():
+    """Once per process: if the cached wavs were made by an older synth, drop
+    them so ensure() rebuilds them with the current code."""
+    global _reconciled
+    if _reconciled:
+        return
+    _reconciled = True
+    stamp = os.path.join(_data_dir(), ".synth-version")
+    try:
+        with open(stamp) as f:
+            if f.read().strip() == str(SYNTH_VERSION):
+                return
+    except OSError:
+        pass
+    for n in _GEN:                                       # stale/absent stamp: wipe
+        try:
+            os.unlink(path_for(n))
+        except OSError:
+            pass
+    try:
+        os.makedirs(_data_dir(), exist_ok=True)
+        with open(stamp, "w") as f:
+            f.write(str(SYNTH_VERSION))
+    except OSError:
+        pass
+
+
 def ensure(name):
     """Return the cached wav path for name, generating it if missing/invalid;
     None if name is unknown or generation fails."""
     if name not in _GEN:
         return None
+    _reconcile_version()
     p = path_for(name)
     if _valid(p):
         return p
