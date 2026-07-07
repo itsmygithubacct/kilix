@@ -77,8 +77,8 @@ def main():
 
     # right-click context: "Open in tab" / "Open in window"
     assert net.context is not None, "no context menu"
-    assert _labels(net.context) == ["Open in tab", "Open in window"], \
-        _labels(net.context)
+    assert _labels(net.context) == ["Open in tab", "Open in window",
+                                    "Open fullscreen"], _labels(net.context)
     ctx = {it.label: it for it in net.context}
 
     # "Open in window" streams the app's argv into a desktop window
