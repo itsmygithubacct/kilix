@@ -9,9 +9,13 @@ class FakeTerm:
     def __init__(self, cols=80, rows=24, cell_w=8, cell_h=16):
         self.cols, self.rows = cols, rows
         self.cell_w, self.cell_h = cell_w, cell_h
+        self.writes = []
 
     def refresh_size(self):
         pass
+
+    def write(self, data):
+        self.writes.append(data)
 
 
 # ── F01/F08: taskbar is hit-tested before windows that overlap it ────────────
@@ -198,6 +202,30 @@ def test_restore_tmux_wraps_delete():
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
+
+
+# ── W02: local t=t frame files must not be world-readable in /dev/shm ─────────
+def test_frame_files_are_private():
+    import base64
+    import os
+    import stat
+
+    t = FakeTerm(cols=4, rows=3, cell_w=8, cell_h=8)
+    d = desk_main.Desk(term=t)
+    try:
+        d.blit()
+        assert d._frame_dir and os.path.isdir(d._frame_dir)
+        assert stat.S_IMODE(os.stat(d._frame_dir).st_mode) == 0o700
+        files = os.listdir(d._frame_dir)
+        assert len(files) == 1, files
+        frame = os.path.join(d._frame_dir, files[0])
+        assert stat.S_IMODE(os.stat(frame).st_mode) == 0o600
+        payload = t.writes[-1].rsplit(";", 1)[1].removesuffix("\x1b\\")
+        assert base64.b64decode(payload).decode() == frame
+    finally:
+        frame_dir = d._frame_dir
+        d.cleanup_shm()
+    assert not frame_dir or not os.path.exists(frame_dir)
 
 
 for _name, _fn in sorted(list(globals().items())):

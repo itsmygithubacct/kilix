@@ -22,6 +22,7 @@ the desktop. No INCR, so a single paste is capped at the server's max request
 (hundreds of KB) — fine for text, and text is all the clipboard carries here.
 """
 import os
+from contextlib import contextmanager
 
 from Xlib import X, Xatom
 from Xlib import display as xdisplay
@@ -42,11 +43,8 @@ class SelectionBridge:
         self._text = None            # text we currently serve / last saw
         self._ok = False
 
-        if xauthority:
-            # python-xlib reads XAUTHORITY at connect time; the XPane already
-            # swaps it in for the same display, so this is a no-op there
-            os.environ["XAUTHORITY"] = xauthority
-        self.d = xdisplay.Display(display_name)
+        with xauthority_env(xauthority):
+            self.d = xdisplay.Display(display_name)
         self.d.xfixes_query_version()             # raises if XFixes is absent
         scr = self.d.screen()
         self.win = scr.root.create_window(
@@ -202,3 +200,19 @@ def _decode(value):
         return bytes(bytearray(value)).decode("utf-8", "replace")
     except Exception:
         return None
+
+
+@contextmanager
+def xauthority_env(path):
+    """Temporarily point python-xlib at an Xauthority file for one connect."""
+    old = os.environ.get("XAUTHORITY")
+    had = "XAUTHORITY" in os.environ
+    if path:
+        os.environ["XAUTHORITY"] = path
+    try:
+        yield
+    finally:
+        if had:
+            os.environ["XAUTHORITY"] = old
+        else:
+            os.environ.pop("XAUTHORITY", None)

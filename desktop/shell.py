@@ -329,16 +329,13 @@ class Shell:
             for it in real:
                 p = it["data"][1]
                 try:
-                    if os.path.isdir(p) and not os.path.islink(p):
-                        shutil.rmtree(p)
-                    else:
-                        os.unlink(p)
-                except OSError as e:
+                    recycle.send(p)
+                except (OSError, shutil.Error) as e:
                     wm.msgbox(self.desk, "Delete", str(e), icon="error")
             self.dir_changed(self.dir)
 
         wm.msgbox(self.desk, "Confirm Delete",
-                  f"Delete {names}?\nThis cannot be undone.",
+                  f"Send {names} to the Recycle Bin?",
                   icon="warn", buttons=("Yes", "No"), default=1, cb=do)
 
     def _new_folder(self):

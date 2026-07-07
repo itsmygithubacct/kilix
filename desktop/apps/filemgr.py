@@ -393,6 +393,8 @@ class FileWindow(wm.Window):
                         recycle.send(p)
                 except (OSError, shutil.Error) as e:
                     wm.msgbox(self.desk, "Delete", str(e), icon="error")
+            if not permanent:
+                self.desk.shell.refresh()
             self.desk.shell.dir_changed(self.path)
         msg = (f"Permanently delete {names}?\nThis cannot be undone."
                if permanent else f"Send {names} to the Recycle Bin?")

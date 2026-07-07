@@ -96,6 +96,21 @@ with tarfile.open(bad_tar, "r") as t:
 assert not os.path.exists(os.path.join(root, "escape.txt"))
 
 
+# Downloads must fail closed when the pinned checksum does not match.
+fetch_dir = tempfile.mkdtemp(prefix="games-fetch-test-")
+src = os.path.join(fetch_dir, "src.bin")
+dst = os.path.join(fetch_dir, "dst.bin")
+with open(src, "wb") as f:
+    f.write(b"not the expected artifact")
+try:
+    games._fetch("file://" + src, dst, lambda _msg: None,
+                 sha256="0" * 64)
+    assert False, "checksum mismatch was accepted"
+except RuntimeError as e:
+    assert "sha256 mismatch" in str(e)
+assert not os.path.exists(dst), "bad artifact must be removed"
+
+
 # F36: main() catches installer errors that don't subclass RuntimeError/OSError
 # (BadZipFile from a mirror serving HTML, TarError, configparser.Error) and
 # exits cleanly with the [Enter to close] path instead of dumping a traceback
