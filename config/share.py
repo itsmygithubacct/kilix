@@ -270,8 +270,7 @@ def main():
     ap.add_argument("--lan", action="store_true")
     ap.add_argument("--hls", action="store_true")   # accepted for symmetry (always on)
     ap.add_argument("--audio", action="store_true")  # desktop audio -> AAC in the HLS
-    ap.add_argument("--debug", action="store_true")  # encoder metrics -> runtime dir
-    ap.add_argument("--debug", action="store_true")  # ffmpeg encode fps/bitrate -> progress file
+    ap.add_argument("--debug", action="store_true")  # ffmpeg encode metrics (fps/bitrate) -> runtime dir
     a = ap.parse_args()
     if a.debug:
         os.environ["KILIX_DEBUG"] = "1"
