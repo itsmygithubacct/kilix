@@ -8,6 +8,7 @@
 # built yet. Fully self-contained; any extra args are forwarded to kitty.
 #
 #   ./kilix                   # launch kilix
+#   ./kilix update            # git pull the latest kilix into this checkout
 #   ./kilix --build           # build the forked kitty from ./src
 #   ./kilix --which           # print the kitty binary kilix uses + its version
 #   ./kilix --install-desktop # desktop entry + icon (own taskbar group)
@@ -32,6 +33,22 @@ _kx_env="${XDG_DATA_HOME:-$HOME/.local/share}/kilix/stream-env.sh"
 
 case "${1:-}" in
   --build) shift; exec "$KILIX_HOME/build.sh" "$@" ;;
+  update|--update)
+    # kilix update — git pull the latest kilix into this checkout. $KILIX_HOME
+    # is the repo the running kilix lives in (self-located above), which is
+    # ~/kilix on plebian-os. The desktop/config is pure Python, so a pull is
+    # all it takes; restart `kilix desktop` afterwards to load the changes.
+    if ! command -v git >/dev/null 2>&1; then
+      echo "kilix update: git not found" >&2; exit 1
+    fi
+    if [ ! -d "$KILIX_HOME/.git" ]; then
+      echo "kilix update: $KILIX_HOME is not a git checkout — nothing to pull" >&2
+      exit 1
+    fi
+    echo "kilix update: pulling $KILIX_HOME"
+    git -C "$KILIX_HOME" pull --ff-only || exit $?
+    echo "kilix update: done — restart 'kilix desktop' to load the changes."
+    exit 0 ;;
   --which)
     for b in "$FORK" "$PREBUILT"; do
       [ -x "$b" ] && { echo "$b"; exec "$b" --version; }
