@@ -487,11 +487,13 @@ class Taskbar:
                           action=lambda: shell.open_browser("chromium", "fullscreen")),
                    ]),
                 MI("Media Player", icon="amp",
-                   action=lambda: shell.open_app("amp"),
+                   # click opens the graphical picker to choose a track — a
+                   # right-click-only "Open File…" was too hidden to find
+                   action=lambda: shell.open_media_file(),
                    context=[
                        MI("Open File…", icon="amp",
                           action=lambda: shell.open_media_file()),
-                       MI("Open Empty",
+                       MI("Open Empty (no file)",
                           action=lambda: shell.open_app("amp")),
                    ]),
             ]
