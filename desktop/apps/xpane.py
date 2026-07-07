@@ -22,7 +22,7 @@ import wm
 import clipboard                  # one shared clipboard across panes/windows
 import stream                     # from config/ (main.py puts it on the path)
 import xinject
-from Xlib import display as xdisplay, X
+from Xlib import display as xdisplay, X, Xatom
 
 _here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -127,6 +127,16 @@ class XPane(wm.Window):
             self.clip = clipboard.SelectionBridge(desk, f":{n}", self.sup.xauth)
         except Exception:
             self.clip = None
+        # micro-WM on the private Xvfb: advertise just enough EWMH that the
+        # app's own title-bar buttons emit minimize/maximize requests, then
+        # translate those into kilix 95 window ops. Best-effort; the buttons
+        # simply stay inert (as before) on failure. KILIX_XPANE_WM=0 opts out.
+        self._wm_on = False
+        if os.environ.get("KILIX_XPANE_WM", "1") != "0":
+            try:
+                self._wm_setup()
+            except Exception:
+                self._wm_on = False
         self._born = time.time()
         # fill: a general app opened "in a window" should maximize; with no WM
         # on the Xvfb we resize its main window ourselves until it settles
@@ -194,6 +204,85 @@ class XPane(wm.Window):
         except Exception:
             pass
 
+    # ── micro-WM: the app's own min/max buttons drive the kilix window ───────
+    def _wm_setup(self):
+        """Advertise a minimal EWMH window manager on the private Xvfb. GTK/Qt
+        only send _NET_WM_STATE / WM_CHANGE_STATE requests (what the maximize
+        and minimize buttons do) when they believe a compliant WM is present —
+        so we plant the _NET_SUPPORTING_WM_CHECK beacon and list the states we
+        honour in _NET_SUPPORTED, then listen for those requests on the root.
+        We do NOT take SubstructureRedirect: the app maps its own windows as
+        before, we only observe."""
+        d = self.xd
+        root = d.screen().root
+        A = d.intern_atom
+        self._A_STATE = A("_NET_WM_STATE")
+        self._A_MAX_V = A("_NET_WM_STATE_MAXIMIZED_VERT")
+        self._A_MAX_H = A("_NET_WM_STATE_MAXIMIZED_HORZ")
+        self._A_FULLSCR = A("_NET_WM_STATE_FULLSCREEN")
+        self._A_CHANGE_STATE = A("WM_CHANGE_STATE")
+        a_check = A("_NET_SUPPORTING_WM_CHECK")
+        a_supported = A("_NET_SUPPORTED")
+        a_wm_name = A("_NET_WM_NAME")
+        a_utf8 = A("UTF8_STRING")
+        # the beacon window: root and it both point at it, and it carries a
+        # _NET_WM_NAME — the exact structure GTK validates a live WM through.
+        check = root.create_window(
+            -100, -100, 1, 1, 0, X.CopyFromParent,
+            window_class=X.InputOnly, visual=X.CopyFromParent)
+        check.change_property(a_check, Xatom.WINDOW, 32, [check.id])
+        check.change_property(a_wm_name, a_utf8, 8, b"kilix")
+        root.change_property(a_check, Xatom.WINDOW, 32, [check.id])
+        root.change_property(a_supported, Xatom.ATOM, 32,
+                             [self._A_STATE, self._A_MAX_V, self._A_MAX_H,
+                              self._A_FULLSCR])
+        # observe requests routed to the root (sent with SubstructureNotify),
+        # without redirecting the app's own map/configure traffic
+        root.change_attributes(event_mask=X.SubstructureNotifyMask)
+        d.flush()
+        self._wm_check = check
+        self._wm_on = True
+        self.desk.add_fd(d.fileno(), self._pump_wm)   # wake instantly on a click
+
+    def _pump_wm(self):
+        if not getattr(self, "_wm_on", False):
+            return
+        try:
+            n = self.xd.pending_events()
+        except Exception:
+            return
+        for _ in range(n):
+            try:
+                ev = self.xd.next_event()
+            except Exception:
+                return
+            try:
+                self._handle_wm(ev)
+            except Exception:
+                pass
+
+    def _handle_wm(self, ev):
+        if ev.type != X.ClientMessage:
+            return
+        try:
+            fmt, vals = ev.data
+        except Exception:
+            return
+        if fmt != 32:
+            return
+        ct = ev.client_type
+        if ct == self._A_STATE:
+            # [action, atom1, atom2, source, 0] — treat any maximize/fullscreen
+            # request as "the user hit maximize" and flip our window. Toggling
+            # (rather than obeying add/remove) keeps us in step with the app's
+            # button whether or not it echoes our state back.
+            if any(a in (self._A_MAX_V, self._A_MAX_H, self._A_FULLSCR)
+                   for a in vals[1:3]):
+                self.desk.wm.toggle_maximize(self)
+        elif ct == self._A_CHANGE_STATE:
+            if vals and vals[0] == 3:              # IconicState → minimize
+                self.desk.wm.minimize(self)
+
     # ── frames in ───────────────────────────────────────────────────────────
     def _pump(self):
         try:
@@ -231,6 +320,7 @@ class XPane(wm.Window):
         if self.app.poll() is not None or self.ff.poll() is not None:
             self.close()                          # app or capture gone: close
             return
+        self._pump_wm()                           # drain any min/max requests
         if self.fill and now < self._fill_deadline and now >= self._fill_at:
             self._fill_at = now + 0.5             # re-fill twice a second while
             self._fill_app_window()               # the app maps its main window
@@ -332,6 +422,8 @@ class XPane(wm.Window):
         self._dead = True
         if self.clip is not None:
             self.clip.close()
+        if getattr(self, "_wm_on", False):
+            self.desk.remove_fd(self.xd.fileno())
         self.desk.remove_fd(self.ff.stdout.fileno())
         if self._tick in self.desk.tick_hooks:
             self.desk.tick_hooks.remove(self._tick)
