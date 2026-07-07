@@ -518,6 +518,16 @@ class Shell:
         self._popen([kitten, "@", "launch", "--type=tab", "--tab-title",
                      "Terminal", "--cwd", cwd or os.path.expanduser("~")])
 
+    def run_maintenance(self, cmd, title):
+        """Run an update/maintenance command in a new kilix tab, pausing at the
+        end so its output — and any prompt, e.g. `pleb update`'s restart
+        question — stays readable. Backs the Start ▸ System launchers."""
+        self._spawn_kitty_launch(
+            ["--type=tab"],
+            f'{cmd}; echo; '
+            f'echo "== {title} finished — press Enter to close =="; read -r _',
+            title)
+
     def open_url(self, url):
         if url is None:
             wm.inputbox(self.desk, "Web Browser", "Address:", "https://",
@@ -648,6 +658,59 @@ class Shell:
         return [W.MenuItem(meta["label"], icon=meta["icon"],
                            action=lambda g=name: self.play_game(g))
                 for name, meta in games.GAMES.items()]
+
+    def system_menu_items(self):
+        """Start ▸ System: update + maintenance launchers, each shown only when
+        the thing it drives is actually present — so a bare kilix checkout only
+        offers `kilix update`, while a full Pleb/Plebian-OS box offers the whole
+        set. Every item runs in a visible tab (see run_maintenance)."""
+        home = os.path.expanduser("~")
+        items = []
+
+        def launcher(cmd, title, icon="run"):
+            return W.MenuItem(title, icon=icon,
+                              action=lambda c=cmd, t=title:
+                              self.run_maintenance(c, t))
+
+        # kilix, when this is a git checkout with the launcher
+        kilix = os.path.join(KILIX_HOME, "kilix")
+        if os.path.isdir(os.path.join(KILIX_HOME, ".git")) \
+                and os.path.exists(kilix):
+            items.append(launcher(f'"{kilix}" update', "Update kilix"))
+        # pleb, when the session manager is present
+        pleb = os.path.join(home, "pleb", "bin", "pleb")
+        if os.path.exists(pleb):
+            items.append(launcher(f'"{pleb}" update',
+                                  "Update Pleb (kilix + session)"))
+        # the whole Plebian-OS stack + dependency reinstall, when installed
+        pos = "/usr/local/bin/plebian-os-update"
+        if os.path.exists(pos):
+            items.append(launcher(pos, "Update Plebian-OS (kilix + pleb)"))
+        deps = "/usr/local/sbin/plebian-os-install-deps"
+        if os.path.exists(deps):
+            if items:
+                items.append(W.MenuItem("-"))
+            items.append(launcher(f'sudo "{deps}"', "Reinstall dependencies",
+                                  icon="settings"))
+
+        # any other executable *.sh shipped under the checkouts' scripts/ dirs
+        extra = []
+        for base in (os.path.join(home, "pleb", "scripts"),
+                     os.path.join(KILIX_HOME, "scripts")):
+            if not os.path.isdir(base):
+                continue
+            for fn in sorted(os.listdir(base)):
+                fp = os.path.join(base, fn)
+                if fn.endswith(".sh") and os.access(fp, os.X_OK):
+                    extra.append(W.MenuItem(
+                        fn, icon="exe", action=lambda p=fp, n=fn:
+                        self.run_maintenance(f'"{p}"', n)))
+        if extra:
+            if items:
+                items.append(W.MenuItem("-"))
+            items.append(W.MenuItem("Scripts", icon="folder", submenu=extra))
+
+        return items
 
     def play_game(self, game):
         """Plays immediately when games.conf points at a working install;
