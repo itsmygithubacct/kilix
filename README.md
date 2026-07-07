@@ -43,7 +43,13 @@ kitty you already have (and `~/.config/kitty`) completely untouched.
   kitty's X11 build deps — `x11 xrandr xinerama xcursor xi xkbcommon xkbcommon-x11
   x11-xcb dbus-1 gl` and `fontconfig`. kitty downloads a prebuilt deps bundle plus
   the Symbols Nerd Font Mono (the pane-button glyphs) from GitHub at build time, so
-  the first build needs network access.
+  the first build needs network access. **`scripts/install-build-deps.sh` installs
+  all of that** on Fedora/RHEL (dnf), Debian/Ubuntu (apt), Arch (pacman), and
+  openSUSE (zypper). Where the distro's Go is older than the fork needs (e.g. Fedora
+  ships 1.25), it enables Go's toolchain auto-download so `go build` fetches the
+  pinned version on demand — no manual Go install.
+- **For the pixel desktop and web-in-a-pane** (`kilix desktop` / `kilix browse`):
+  **Python 3 + Pillow** (also installed by `scripts/install-build-deps.sh`).
 - kitty **≥ 0.47** (the fork is 0.47.x) — required for the per-pane title bars.
 
 ## Quick start
@@ -73,7 +79,14 @@ To skip the build attempt and go straight to the prebuilt engine:
 ~/kilix/kilix          # run it (no buttons until you build the fork)
 ```
 
-To get the buttons once the build deps are installed: `~/kilix/kilix --build`.
+To get the buttons, install the build deps and build the fork:
+
+```bash
+~/kilix/scripts/install-build-deps.sh   # Go + X11 dev libs + Python/Pillow
+~/kilix/kilix --build                    # compile the clickable-chrome fork
+```
+
+(`scripts/install-build-deps.sh --verify` re-checks without installing.)
 
 Then, optionally:
 
