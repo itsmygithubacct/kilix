@@ -35,6 +35,7 @@ def bare_pane(desk, ff):
     p.ff = ff
     p.buf = bytearray()
     p.app_w = p.app_h = 4
+    p.w = p.h = 4                      # window == native for an un-resized pane
     p.fsize = 4 * 4 * 3
     p.frame_img = None
     p.compose_mask = None

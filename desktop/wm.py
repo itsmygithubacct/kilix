@@ -244,6 +244,14 @@ class Window:
         lx, ly = lev.x, lev.y
         wm = self.desk.wm
         if self.chromeless:
+            # a resizable chromeless window (e.g. an XPane app) still gets an
+            # edge resize grip; anything else goes straight to the app's skin.
+            if (self.resizable and gev.press and gev.btn == 1
+                    and self._capture is None):
+                edge = self._edge_at(lx, ly)
+                if edge:
+                    wm.begin_drag(self, edge, gev.x, gev.y)
+                    return True
             # no chrome: everything goes to the client widgets (the app's own
             # skin draws its titlebar / buttons and handles dragging)
             cev = lev
