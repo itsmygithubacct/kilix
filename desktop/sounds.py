@@ -334,6 +334,10 @@ _EVENT_IDS = {eid for eid, _ in _EVENTS}
 DEFAULT_SCHEME = "kilix 95"                              # built-in cue per event
 NO_SOUNDS = "No Sounds"                                  # all silent
 
+# Events with NO cue by default — silent unless the user assigns one in
+# Settings ▸ Sounds. (Minimize firing on every window minimize got noisy.)
+DEFAULT_SILENT = {"minimize"}
+
 _active = None                                           # dict: event_id -> path|None (overrides only)
 _active_name = DEFAULT_SCHEME
 
@@ -560,6 +564,8 @@ def _resolve(event_id):
     _ensure_loaded()
     if event_id in _active:
         return _active[event_id]                         # path or None (silent)
+    if event_id in DEFAULT_SILENT:
+        return None                                      # off by default (assignable)
     return ensure(event_id)                              # default built-in wav
 
 
