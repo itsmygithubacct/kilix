@@ -244,11 +244,17 @@ class Window:
         lx, ly = lev.x, lev.y
         wm = self.desk.wm
         if self.chromeless:
-            # a resizable chromeless window (e.g. an XPane app) still gets an
-            # edge resize grip; anything else goes straight to the app's skin.
+            # a resizable chromeless window (e.g. an XPane app) gets an edge
+            # resize grip and double-click-the-top-edge to maximize/restore
+            # (the app has no working window manager of its own); anything else
+            # goes straight to the app's skin.
             if (self.resizable and gev.press and gev.btn == 1
                     and self._capture is None):
-                edge = self._edge_at(lx, ly)
+                g = getattr(self, "_GRIP", T.BORDER + 2)
+                edge = "" if self.maximized else self._edge_at(lx, ly)
+                if gev.clicks == 2 and (edge or ly < g):
+                    wm.toggle_maximize(self)
+                    return True
                 if edge:
                     wm.begin_drag(self, edge, gev.x, gev.y)
                     return True
