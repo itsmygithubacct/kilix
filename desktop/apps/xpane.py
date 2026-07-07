@@ -65,6 +65,7 @@ class XPane(wm.Window):
     skin (title bar, buttons, dragging) is all the UI — Winamp-on-Win95 style.
     Clicks on the keyed-out (transparent) gaps fall through to the desktop."""
     _seq2 = 0
+    _GRIP = 8                              # resize-grip band (px) at the edges
 
     def __init__(self, desk, cmd, title, icon="exe", app_size=None,
                  fps=15, env=None, cwd=None, fill=False):
@@ -129,15 +130,37 @@ class XPane(wm.Window):
 
     def hit_test(self, gx, gy):
         # only the opaque skin pixels belong to us; clicks on the keyed-out
-        # gaps fall through to the desktop (icons) or windows behind
+        # gaps fall through to the desktop (icons) or windows behind — EXCEPT
+        # the resize-grip band at the edges, which we always claim so the window
+        # is grabbable even over the app's own transparent (rounded) corners.
         if not self.hit(gx, gy):
             return False
+        if self.resizable and not self.maximized:
+            lx, ly, g = gx - self.x, gy - self.y, self._GRIP
+            if lx < g or ly < g or lx >= self.w - g or ly >= self.h - g:
+                return True
         if self.compose_mask is None:
             return False
         try:
             return self.compose_mask.getpixel((gx - self.x, gy - self.y)) != 0
         except Exception:
             return False
+
+    def _edge_at(self, lx, ly):
+        # a wider resize grip than the default chrome frame — the app fills the
+        # window edge-to-edge with no visible border to aim at.
+        if not self.resizable or self.maximized:
+            return ""
+        g, e = self._GRIP, ""
+        if ly < g:
+            e += "n"
+        elif ly >= self.h - g:
+            e += "s"
+        if lx < g:
+            e += "w"
+        elif lx >= self.w - g:
+            e += "e"
+        return e
 
     def on_resize(self):
         # window resized: grow the surface widget to fill it (so clicks in the
