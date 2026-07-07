@@ -94,6 +94,12 @@ Then, optionally:
 ~/kilix/kilix --install-desktop   # app-menu entry + taskbar icon
 ```
 
+To pull the latest kilix into your checkout:
+
+```bash
+kilix update                      # git pull --ff-only in ~/kilix; then restart `kilix desktop`
+```
+
 Put `~/kilix` on your `PATH` (or `ln -s ~/kilix/kilix ~/.local/bin/kilix`) to just
 type `kilix`.
 
