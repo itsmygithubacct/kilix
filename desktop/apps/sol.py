@@ -30,6 +30,13 @@ def _red(c):
     return c.suit in (1, 2)
 
 
+def _overlap(a, b):
+    """Intersection area of two (x0,y0,x1,y1) rects (0 if disjoint)."""
+    w = min(a[2], b[2]) - max(a[0], b[0])
+    h = min(a[3], b[3]) - max(a[1], b[1])
+    return w * h if w > 0 and h > 0 else 0
+
+
 class Card:
     __slots__ = ("rank", "suit", "up")
 
@@ -292,14 +299,31 @@ class Solitaire(wm.Window):
         d = self.drag
         self.drag = None
         src, k = d["src"], d["k"]
-        px = d["x"] + CW // 2               # dropped card's center x
-        py = d["y"]
-        col = max(0, min(6, round((px - MARGIN) / STEP)))
-        if py < self.tab_y - 6:             # top row → foundation only
-            if col >= 3 and k == len(src) - 1:
-                self.send_to_foundation_at(src, col - 3)
-        else:
-            self.move_run(src, k, self.tab[col])
+        run = src[k:]
+        rr = (d["x"], d["y"], d["x"] + CW, d["y"] + CH)   # dragged run's top
+        best = None                                       # (area, kind, idx)
+        if len(run) == 1:                                 # single card → home
+            for fi in range(4):
+                fx = self._col_x(3 + fi)
+                if not self._can_found(run[0], self.found[fi]):
+                    continue
+                a = _overlap(rr, (fx, self.top_y, fx + CW, self.top_y + CH))
+                if a and (best is None or a > best[0]):
+                    best = (a, "found", fi)
+        for i in range(7):                                # any valid run → tab
+            pile = self.tab[i]
+            if not (self._valid_run(run)
+                    and self._can_stack(run[0], pile[-1] if pile else None)):
+                continue
+            tx = self._col_x(i)
+            bot = self._card_y(pile, len(pile)) + CH      # generous drop band
+            a = _overlap(rr, (tx, self.tab_y, tx + CW, bot))
+            if a and (best is None or a > best[0]):
+                best = (a, "tab", i)
+        if best and best[1] == "found":
+            self.send_to_foundation_at(src, best[2])
+        elif best:
+            self.move_run(src, k, self.tab[best[2]])
         self.invalidate()
 
     def send_to_foundation_at(self, src, fi):
@@ -322,17 +346,25 @@ class Solitaire(wm.Window):
             d.ellipse([self._col_x(0) + 16, self.top_y + 24,
                        self._col_x(0) + 32, self.top_y + 40], outline=FELT_D)
         self._slot(d, self._col_x(1), self.top_y)      # waste
-        if self.waste:
-            n = self._waste_fan()
-            base = len(self.waste) - n
+        w, fan = self.waste, self.fan
+        if self.drag and self.drag["src"] is self.waste:
+            w = w[:-1]                                 # dragged card revealed
+            if fan > 1:
+                fan -= 1                               # mirror _after_take
+        if w:
+            n = max(1, min(fan, len(w)))
+            base = len(w) - n
             for k in range(n):
                 self._face(d, self._col_x(1) + k * FAN_X, self.top_y,
-                           self.waste[base + k])
+                           w[base + k])
         for fi in range(4):                            # foundations
             fx = self._col_x(3 + fi)
             self._slot(d, fx, self.top_y)
-            if self.found[fi]:
-                self._face(d, fx, self.top_y, self.found[fi][-1])
+            f = self.found[fi]
+            if self.drag and self.drag["src"] is f:
+                f = f[:-1]                             # dragged card revealed
+            if f:
+                self._face(d, fx, self.top_y, f[-1])
             else:
                 _PIP[fi](d, fx + CW // 2, self.top_y + CH // 2, 11, FELT_D)
         for i in range(7):                             # tableau
