@@ -10,7 +10,11 @@ $XDG_DATA_HOME / $XDG_DATA_DIRS (spec defaults when unset); nothing about the
 host machine is hardcoded.
 """
 import os
+import shlex
 import shutil
+
+import widgets as W
+import wm
 
 # freedesktop main category → kilix bucket, in match priority order (a more
 # specific category wins over the generic Utility/System catch-alls)
@@ -293,12 +297,37 @@ def icon_for(entry):
 
 # ── launching ────────────────────────────────────────────────────────────────
 
-def launch(shell, entry):
-    """Synthesize a Shell launcher spec and run it via Shell.launch."""
+def launch(shell, entry, mode="tab"):
+    """Open a discovered app. mode "tab" (default) synthesizes a launcher spec
+    and runs it in a kilix tab; mode "window" streams it into a desktop window
+    via XPane, the way the media player runs."""
+    name = entry.get("name") or "app"
+    if mode == "window":
+        try:                               # malformed Exec must not kill the desktop
+            argv = shlex.split(entry.get("exec", ""))
+        except ValueError:
+            argv = []
+        if not argv:                       # discovered entries always have one
+            wm.msgbox(shell.desk, name, "Launcher has no Exec line.",
+                      icon="error")
+            return
+        shell.open_in_xpane(argv, name, icon=icon_for(entry),
+                            cwd=entry.get("workdir") or None)
+        return
     spec = {
-        "Name": entry.get("name") or "app",
+        "Name": name,
         "Exec": entry.get("exec", ""),
         "Path": entry.get("workdir") or "~",
         "X-Kilix-Open": "tab" if entry.get("terminal") else "run",
     }
     shell.launch(spec)
+
+
+def app_context(shell, entry):
+    """Right-click menu: run the app in a kilix tab or a desktop window."""
+    MI = W.MenuItem
+    items = [MI("Open in tab", action=lambda: launch(shell, entry, "tab"))]
+    if not entry.get("terminal"):          # no tty on Xvfb → dead window
+        items.append(
+            MI("Open in window", action=lambda: launch(shell, entry, "window")))
+    return items

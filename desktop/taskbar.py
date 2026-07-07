@@ -412,7 +412,8 @@ class Taskbar:
 
         def app_items(bucket):
             return [MI(e["name"], icon=xdgapps.icon_for(e),
-                       action=lambda e=e: xdgapps.launch(shell, e))
+                       action=lambda e=e: xdgapps.launch(shell, e),
+                       context=xdgapps.app_context(shell, e))
                     for e in groups.get(bucket, [])]
 
         def games():

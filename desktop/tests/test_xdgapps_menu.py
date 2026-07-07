@@ -74,6 +74,31 @@ def main():
     # empty buckets never appear
     assert _find(prog, "Office") is None
     assert _find(prog, "Development") is None
+
+    # right-click context: "Open in tab" / "Open in window"
+    assert net.context is not None, "no context menu"
+    assert _labels(net.context) == ["Open in tab", "Open in window"], \
+        _labels(net.context)
+    ctx = {it.label: it for it in net.context}
+
+    # "Open in window" streams the app's argv into a desktop window
+    shell = desk.shell
+    seen = {}
+    shell.open_in_xpane = lambda argv, title, **kw: seen.update(
+        argv=argv, title=title, kw=kw)
+    shell.launch = lambda spec, **kw: seen.update(spec=spec)
+    ctx["Open in window"].action()
+    assert seen["argv"] == ["/usr/bin/true"], seen.get("argv")
+    assert seen["title"] == "Sample Browser", seen.get("title")
+    assert seen["kw"].get("icon") == "browser", seen["kw"]
+    assert "spec" not in seen, "window mode must not go through launch"
+
+    # "Open in tab" (== the default click) routes through Shell.launch
+    seen.clear()
+    ctx["Open in tab"].action()
+    assert seen["spec"]["Name"] == "Sample Browser", seen.get("spec")
+    assert seen["spec"]["Exec"] == "/usr/bin/true", seen.get("spec")
+    assert "argv" not in seen, "tab mode must not open an xpane"
     desk.menus.close_all()
 
     # with nothing discovered, the menu looks exactly as before
