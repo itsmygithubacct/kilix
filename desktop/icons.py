@@ -318,6 +318,24 @@ def _tank(p):
     p.hline(2, 13, 12, S)
 
 
+def _lander(p):
+    # a lunar lander descending on a lit thruster (Terminal Lander)
+    p.rect(6, 2, 9, 3, fill=S, outline=K)          # ascent stage
+    p.rect(4, 4, 11, 8, fill=S, outline=K)         # descent module body
+    p.hline(5, 10, 4, W)                           # top hilight
+    p.rect(6, 5, 9, 7, fill=DB, outline=K)         # window
+    p.px(7, 6, C)                                  # glint
+    for x, y in ((4, 8), (3, 9), (2, 10), (2, 11)):
+        p.px(x, y, G)                              # left leg
+    p.hline(1, 3, 12, K)                           # left foot pad
+    for x, y in ((11, 8), (12, 9), (13, 10), (13, 11)):
+        p.px(x, y, G)                              # right leg
+    p.hline(12, 14, 12, K)                         # right foot pad
+    p.rect(7, 9, 8, 11, fill=Y)                    # thruster flame
+    p.px(7, 12, R)
+    p.px(8, 12, R)                                 # flame tip
+
+
 def _doom(p):
     # a cacodemon-ish grinning red sphere (all in-house pixel art)
     p.rect(4, 1, 11, 1, fill=DR)
@@ -500,6 +518,7 @@ ICONS = {
     "notepad": _notepad, "browser": _browser, "run": _run,
     "shutdown": _shutdown, "flame": _flame, "home": _home,
     "games": _games, "doom": _doom, "dosbox": _dosbox, "tank": _tank,
+    "lander": _lander,
     "amp": _amp,
     "question": _question, "info": _info, "warn": _warn, "error": _error,
     "back": _arrow_left, "forward": _arrow_right, "up": _arrow_up,

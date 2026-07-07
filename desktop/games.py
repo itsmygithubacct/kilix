@@ -49,6 +49,7 @@ DOSBOX_URL = ("https://github.com/dosbox-staging/dosbox-staging/releases/"
               f"{DOSBOX_VER}.tar.xz")
 
 BASHED_REPO = "https://github.com/itsmygithubacct/Bashed-Earth"
+LANDER_REPO = "https://github.com/itsmygithubacct/terminal_lander"
 AMP_REPO = "https://github.com/itsmygithubacct/kilix-amp"
 
 # the Start-menu registry (taskbar/shell build the Games submenu from this)
@@ -69,6 +70,12 @@ GAMES = {
         "label": "Bashed Earth", "icon": "tank",
         "blurb": "Clone and build Bashed Earth (terminal artillery\n"
                  "combat, github.com/itsmygithubacct/Bashed-Earth)\n"
+                 "into ~/.local/share/kilix/games, and play?",
+    },
+    "terminal-lander": {
+        "label": "Terminal Lander", "icon": "lander",
+        "blurb": "Clone and build Terminal Lander (a kitty-graphics\n"
+                 "lunar lander, github.com/itsmygithubacct/terminal_lander)\n"
                  "into ~/.local/share/kilix/games, and play?",
     },
 }
@@ -135,7 +142,8 @@ def game_ready(game, cp=None):
     """Installed-and-runnable check dispatched by game name (None if not)."""
     cp = cp or load()
     return {"doom": doom_ready, "dosbox": dosbox_ready,
-            "bashed-earth": bashed_ready}.get(game, lambda c=None: None)(cp)
+            "bashed-earth": bashed_ready,
+            "terminal-lander": lander_ready}.get(game, lambda c=None: None)(cp)
 
 
 def _fetch(urls, dest, report):
@@ -361,6 +369,16 @@ def ensure_bashed(cp, report):
         "needs gcc/clang, zlib, make", report)
 
 
+def lander_ready(cp=None):
+    return _repo_ready(cp or load(), "terminal-lander", "terminal-lander")
+
+
+def ensure_lander(cp, report):
+    return lander_ready(cp) or _clone_and_make(
+        LANDER_REPO, os.path.join(GAMES_DIR, "terminal-lander"),
+        "terminal-lander", "needs a C compiler + zlib, make", report)
+
+
 def amp_ready(cp=None):
     return _repo_ready(cp or load(), "kilix-amp", "kilix-amp")
 
@@ -393,6 +411,10 @@ def ensure(game, report=print):
     elif game == "bashed-earth":
         exe = ensure_bashed(cp, report)
         cp.set("bashed-earth", "dir", os.path.dirname(exe))
+        payload = exe
+    elif game == "terminal-lander":
+        exe = ensure_lander(cp, report)
+        cp.set("terminal-lander", "dir", os.path.dirname(exe))
         payload = exe
     elif game == "kilix-amp":
         exe = ensure_amp(cp, report)
@@ -437,8 +459,9 @@ def _launch_dosbox(payload):
     raise SystemExit("kilix games: no display (run inside kilix or X)")
 
 
-def _launch_bashed(exe):
-    # speaks the kitty graphics protocol itself: runs right here in the tab
+def _launch_native(exe):
+    # a native terminal game (Bashed Earth, Terminal Lander) that speaks the
+    # kitty graphics protocol itself: runs right here in the tab
     os.chdir(os.path.dirname(exe))
     os.execv(exe, [exe])
 
@@ -465,7 +488,7 @@ def main():
     elif game == "dosbox":
         _launch_dosbox(payload)
     else:
-        _launch_bashed(payload)
+        _launch_native(payload)
 
 
 if __name__ == "__main__":
