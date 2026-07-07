@@ -12,6 +12,7 @@ import icons
 import theme as T
 import widgets as W
 import wm
+import xdgapps
 
 START_W = 58
 CLOCK_W = 76
@@ -406,6 +407,13 @@ class Taskbar:
             return
         shell = self.desk.shell
         MI, sub = W.MenuItem, W.sep
+        # discovered freedesktop apps, grouped by category (scan once)
+        groups = xdgapps.grouped()
+
+        def app_items(bucket):
+            return [MI(e["name"], icon=xdgapps.icon_for(e),
+                       action=lambda e=e: xdgapps.launch(shell, e))
+                    for e in groups.get(bucket, [])]
 
         def games():
             builtin = [
@@ -414,10 +422,15 @@ class Taskbar:
                 MI("Solitaire", icon="cards",
                    action=lambda: shell.open_app("sol")),
             ]
-            return builtin + shell.game_menu_items()
+            items = builtin + shell.game_menu_items()
+            disc = app_items("Games")
+            if disc:
+                items.append(sub())
+                items.extend(disc)
+            return items
 
         def accessories():
-            return [
+            items = [
                 MI("Calculator", icon="calc",
                    action=lambda: shell.open_app("calc")),
                 MI("Character Map", icon="charmap",
@@ -433,6 +446,15 @@ class Taskbar:
                 MI("WordPad", icon="wordpad",
                    action=lambda: shell.open_app("wordpad")),
             ]
+            disc = app_items("Accessories")
+            if disc:
+                items.append(sub())
+                items.extend(disc)
+            return items
+
+        # discovered buckets that get their own Programs submenu
+        OTHER_BUCKETS = ["Development", "Education", "Graphics", "Internet",
+                         "Multimedia", "Office", "System", "Other"]
 
         def programs():
             items = [
@@ -451,6 +473,11 @@ class Taskbar:
             if user:
                 items.append(sub())
                 items.extend(user)
+            disc = [MI(b, icon="folder", submenu=app_items(b))
+                    for b in OTHER_BUCKETS if groups.get(b)]
+            if disc:
+                items.append(sub())
+                items.extend(disc)
             return items
 
         def documents():

@@ -482,6 +482,15 @@ def _taskmgr(p):
         p.hline(3, 8, y, G)
 
 
+def _app(p):
+    p.rect(2, 2, 13, 13, fill=S, outline=K)        # window shell
+    p.rect(3, 3, 12, 5, fill=DB)                    # navy title bar
+    p.px(11, 4, W)                                  # title button glint
+    p.rect(4, 7, 11, 11, fill=W, outline=G)         # client area
+    p.hline(5, 9, 8, B)                             # a couple lines of content
+    p.hline(5, 10, 10, B)
+
+
 ICONS = {
     "computer": _computer, "display": _display, "drive": _drive,
     "folder": _folder, "folder_open": _folder_open,
@@ -498,6 +507,7 @@ ICONS = {
     "mines": _mines, "paint": _paint, "wordpad": _wordpad,
     "recyclebin_empty": _recyclebin_empty, "recyclebin_full": _recyclebin_full,
     "find": _find, "taskmgr": _taskmgr, "soundcp": _soundcp,
+    "app": _app,
 }
 
 _cache = {}
