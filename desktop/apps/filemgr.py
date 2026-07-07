@@ -254,9 +254,9 @@ class FileWindow(wm.Window):
         def do(name):
             if name:
                 try:
-                    os.makedirs(os.path.join(self.path, name),
+                    os.makedirs(_shell.child_path(self.path, name),
                                 exist_ok=False)
-                except OSError as e:
+                except (OSError, ValueError) as e:
                     wm.msgbox(self.desk, "New Folder", str(e), icon="error")
                 self.desk.shell.dir_changed(self.path)
         wm.inputbox(self.desk, "New Folder", "Folder name:", "New Folder",
@@ -266,8 +266,8 @@ class FileWindow(wm.Window):
         def do(name):
             if name:
                 try:
-                    open(os.path.join(self.path, name), "x").close()
-                except OSError as e:
+                    open(_shell.child_path(self.path, name), "x").close()
+                except (OSError, ValueError) as e:
                     wm.msgbox(self.desk, "New File", str(e), icon="error")
                 self.desk.shell.dir_changed(self.path)
         wm.inputbox(self.desk, "New Text File", "File name:",
@@ -280,8 +280,16 @@ class FileWindow(wm.Window):
         def do(name):
             if name and name != os.path.basename(item["data"]):
                 try:
-                    os.rename(item["data"],
-                              os.path.join(self.path, name))
+                    target = _shell.child_path(self.path, name)
+                except ValueError as e:
+                    wm.msgbox(self.desk, "Rename", str(e), icon="error")
+                    return
+                if os.path.lexists(target):
+                    wm.msgbox(self.desk, "Rename",
+                              f"'{name}' already exists.", icon="error")
+                    return
+                try:
+                    os.rename(item["data"], target)
                 except OSError as e:
                     wm.msgbox(self.desk, "Rename", str(e), icon="error")
                 self.desk.shell.dir_changed(self.path)

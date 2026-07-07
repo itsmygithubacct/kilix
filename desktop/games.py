@@ -181,6 +181,26 @@ def _fetch(urls, dest, report):
     raise RuntimeError(f"all mirrors failed ({last})")
 
 
+def _inside(root, path):
+    root = os.path.abspath(root)
+    path = os.path.abspath(path)
+    return os.path.commonpath([root, path]) == root
+
+
+def _safe_extract_tar(tar, dest):
+    """Extract a tarball only if every member stays below dest."""
+    root = os.path.abspath(dest)
+    for m in tar.getmembers():
+        target = os.path.abspath(os.path.join(root, m.name))
+        if not _inside(root, target):
+            raise RuntimeError(f"unsafe path in archive: {m.name}")
+        if m.issym() or m.islnk():
+            raise RuntimeError(f"archive links are not supported: {m.name}")
+        if m.isdev() or m.isfifo():
+            raise RuntimeError(f"unsupported archive member: {m.name}")
+    tar.extractall(root)
+
+
 def ensure_dosbox(cp, report):
     """A runnable dosbox: config > $PATH > previously vendored > download."""
     cur = os.path.expanduser(cp.get("doom", "dosbox", fallback=""))
@@ -206,7 +226,7 @@ def ensure_dosbox(cp, report):
     _fetch(DOSBOX_URL, tar, report)
     report("unpacking dosbox-staging …")
     with tarfile.open(tar, "r:xz") as t:
-        t.extractall(vend)
+        _safe_extract_tar(t, vend)
     os.unlink(tar)
     exe = _find(vend, "dosbox")
     if not (exe and os.access(exe, os.X_OK)):

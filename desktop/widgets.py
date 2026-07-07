@@ -323,6 +323,8 @@ class TextField(Widget):
         self.text = text
         self.cur = min(self.cur, len(text))
         self.anchor = None
+        self.scroll = 0
+        self._reveal()
         self.invalidate()
 
     def _x_of(self, i):

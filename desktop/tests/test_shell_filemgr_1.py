@@ -2,6 +2,7 @@ import os
 import signal
 
 import harness as H
+import shell as shell_mod
 import widgets as W
 
 
@@ -96,6 +97,42 @@ def f35_rename_normal_still_works():
     assert not os.path.exists(os.path.join(d.shell.dir, "a.txt"))
 
 
+def f35_rename_rejects_path_name():
+    d = H.make_desk()
+    with open(os.path.join(d.shell.dir, "a.txt"), "w") as f:
+        f.write("AAA")
+    outside_name = os.path.basename(d.shell.dir) + "-renamed.txt"
+    outside = os.path.join(os.path.dirname(d.shell.dir), outside_name)
+    d.shell.refresh()
+    item = next(i for i in d.shell.grid.items if i["label"] == "a.txt")
+    d.shell._rename_item(item)
+    box = H.find_window(d, "Window")
+    box.focus.set("../" + outside_name)
+    H.key(d, "Enter")
+    assert os.path.exists(os.path.join(d.shell.dir, "a.txt"))
+    assert not os.path.exists(outside)
+
+
+def f58_launcher_write_error_dialog():
+    d = H.make_desk()
+    old = shell_mod.write_launcher
+
+    def boom(path, spec):
+        raise OSError("disk full")
+
+    shell_mod.write_launcher = boom
+    try:
+        d.shell.create_launcher_dialog(prefill_cmd="true")
+        dlg = H.find_window(d, "Window")
+        _btn(dlg, "OK").cb()
+    finally:
+        shell_mod.write_launcher = old
+
+    err = H.find_window(d, "Window")
+    assert err is not None and err.modal
+    assert err.title == "Create Launcher"
+
+
 # ── F55: context Delete on a selected icon deletes the whole selection ────────
 def f55_context_delete_multi():
     d = H.make_desk()
@@ -151,6 +188,8 @@ f53_array_state_json()
 f34_fifo_refused()
 f35_rename_no_clobber()
 f35_rename_normal_still_works()
+f35_rename_rejects_path_name()
+f58_launcher_write_error_dialog()
 f55_context_delete_multi()
 f55_context_delete_unselected_one()
 f56_dash_launcher_not_separator()

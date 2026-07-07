@@ -34,10 +34,22 @@ MODE_KEYS = {"kilix tab": "tab", "kilix os-window": "window",
 ICON_CHOICES = ["exe", "terminal", "doc", "doc_text", "doc_image", "folder",
                 "computer", "browser", "notepad", "settings", "display",
                 "drive", "home", "run", "flame"]
+NAME_ERROR = "Use a plain name, not a path."
 
 TEXT_EXT = (".txt", ".md", ".rst", ".log", ".conf", ".cfg", ".ini", ".json",
             ".yaml", ".yml", ".toml", ".py", ".sh", ".c", ".h", ".go", ".rs",
             ".js", ".ts", ".html", ".css", ".xml", ".csv", ".diff", ".patch")
+
+
+def child_path(base, name):
+    """Return base/name, but only for a single user-visible path component."""
+    if (not name or name in (".", "..") or "\0" in name
+            or os.path.isabs(name) or os.path.basename(name) != name
+            or (os.path.altsep and os.path.altsep in name)):
+        raise ValueError(NAME_ERROR)
+    return os.path.join(base, name)
+
+
 IMG_EXT = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".ico", ".ppm",
            ".tiff")
 # what the media player (kilix-amp, via libsndfile) can open, plus common
@@ -278,9 +290,17 @@ class Shell:
             if kind == "launcher":
                 spec = parse_launcher(path)
                 spec["Name"] = name
-                write_launcher(path, spec)
+                try:
+                    write_launcher(path, spec)
+                except OSError as e:
+                    wm.msgbox(self.desk, "Rename", str(e), icon="error")
+                    return
             else:
-                target = os.path.join(self.dir, name)
+                try:
+                    target = child_path(self.dir, name)
+                except ValueError as e:
+                    wm.msgbox(self.desk, "Rename", str(e), icon="error")
+                    return
                 if (os.path.lexists(target)
                         and os.path.abspath(target) != os.path.abspath(path)):
                     wm.msgbox(self.desk, "Rename",
@@ -325,8 +345,8 @@ class Shell:
         def do(name):
             if name:
                 try:
-                    os.makedirs(os.path.join(self.dir, name), exist_ok=False)
-                except OSError as e:
+                    os.makedirs(child_path(self.dir, name), exist_ok=False)
+                except (OSError, ValueError) as e:
                     wm.msgbox(self.desk, "New Folder", str(e), icon="error")
                 self.dir_changed(self.dir)
         wm.inputbox(self.desk, "New Folder", "Folder name:", "New Folder",
@@ -335,10 +355,10 @@ class Shell:
     def _new_file(self):
         def do(name):
             if name:
-                p = os.path.join(self.dir, name)
                 try:
+                    p = child_path(self.dir, name)
                     open(p, "x").close()
-                except OSError as e:
+                except (OSError, ValueError) as e:
                     wm.msgbox(self.desk, "New File", str(e), icon="error")
                 self.dir_changed(self.dir)
         wm.inputbox(self.desk, "New Text File", "File name:", "New File.txt",
@@ -441,7 +461,11 @@ class Shell:
                     out["Path"] = f_dir.text.strip()
             path = edit_path or unique_path(
                 os.path.join(self.dir, safe_name(name) + ".desktop"))
-            write_launcher(path, out)
+            try:
+                write_launcher(path, out)
+            except OSError as e:
+                wm.msgbox(desk, "Create Launcher", str(e), icon="error")
+                return
             win.close()
             self.dir_changed(self.dir)
 

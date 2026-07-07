@@ -204,6 +204,7 @@ class _WMRec:
 
     def toggle_maximize(self, w):
         self.calls.append(("max", w))
+        w.maximized = not getattr(w, "maximized", False)
 
     def minimize(self, w):
         self.calls.append(("min", w))
@@ -231,6 +232,17 @@ assert p.desk.wm.calls == [("max", p)], p.desk.wm.calls
 p = wm_pane()
 p._handle_wm(_cm(100, [1, 0, 103, 1, 0]))
 assert p.desk.wm.calls == [("max", p)], p.desk.wm.calls
+
+# repeated add/remove requests are state changes, not user-level toggles
+p = wm_pane()
+p._handle_wm(_cm(100, [1, 101, 0, 1, 0]))
+p._handle_wm(_cm(100, [1, 101, 0, 1, 0]))
+assert p.desk.wm.calls == [("max", p)], p.desk.wm.calls
+p._handle_wm(_cm(100, [0, 101, 0, 1, 0]))
+p._handle_wm(_cm(100, [0, 101, 0, 1, 0]))
+assert p.desk.wm.calls == [("max", p), ("max", p)], p.desk.wm.calls
+p._handle_wm(_cm(100, [2, 101, 0, 1, 0]))
+assert p.desk.wm.calls == [("max", p), ("max", p), ("max", p)]
 
 # an unrelated _NET_WM_STATE (e.g. _NET_WM_STATE_ABOVE) is ignored
 p = wm_pane()

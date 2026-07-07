@@ -2,8 +2,10 @@
 and an installer error that isn't RuntimeError/OSError must be shown, not
 leaked out of main() with the tab (F36). No network: conf files + stubs only."""
 import builtins
+import io
 import os
 import sys
+import tarfile
 import tempfile
 import zipfile
 
@@ -72,6 +74,26 @@ assert games.GAMES["kitty-brokeout"]["icon"] == "brokeout"
 write("")                                        # empty conf, no [kitty-brokeout]
 assert games.brokeout_ready(games.load()) is None
 assert games.game_ready("kitty-brokeout") is None
+
+
+# Tarball extraction must reject members that escape the destination. Python
+# 3.11's tarfile.extractall() does not filter these by default.
+root = tempfile.mkdtemp(prefix="games-tar-test-")
+bad_tar = os.path.join(root, "bad.tar")
+out_dir = os.path.join(root, "out")
+os.mkdir(out_dir)
+with tarfile.open(bad_tar, "w") as t:
+    data = b"escape"
+    ti = tarfile.TarInfo("../escape.txt")
+    ti.size = len(data)
+    t.addfile(ti, io.BytesIO(data))
+with tarfile.open(bad_tar, "r") as t:
+    try:
+        games._safe_extract_tar(t, out_dir)
+        assert False, "unsafe tar member was extracted"
+    except RuntimeError as e:
+        assert "unsafe path" in str(e)
+assert not os.path.exists(os.path.join(root, "escape.txt"))
 
 
 # F36: main() catches installer errors that don't subclass RuntimeError/OSError

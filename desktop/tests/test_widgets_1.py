@@ -153,4 +153,10 @@ bled = [x for x in range(ox + 8, ox + 48)
         if win.surface.getpixel((x, row)) == T.TEXT]
 assert not bled, ("F21: scrolled TextField bled text left of the box", bled)
 
+# programmatic updates must not inherit a stale horizontal scroll offset
+fld2.scroll = 500
+fld2.cur = len(fld2.text)
+fld2.set("abc")
+assert fld2.scroll == 0, ("TextField.set kept stale scroll", fld2.scroll)
+
 print("ok")

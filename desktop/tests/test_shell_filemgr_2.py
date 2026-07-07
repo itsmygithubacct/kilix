@@ -88,6 +88,28 @@ def test_filemgr_create_refreshes_desktop_grid():
         assert "New File.txt" in _labels(d.shell.grid), _labels(d.shell.grid)
 
 
+def test_filemgr_new_file_rejects_path_name():
+    d = H.make_desk()
+    parent = tempfile.mkdtemp()
+    root = os.path.join(parent, "root")
+    os.mkdir(root)
+    outside = os.path.join(parent, "escape.txt")
+    try:
+        win = filemgr.FileWindow(d, root)
+        d.wm.add(win)
+        win._new_file()
+        dlg = d.wm.modal_top()
+        import widgets as W
+        fld = next(w for w in dlg.widgets if isinstance(w, W.TextField))
+        fld.set("../escape.txt")
+        _click_dialog(d, "OK")
+
+        assert not os.path.exists(outside)
+        assert "escape.txt" not in _labels(win.grid)
+    finally:
+        shutil.rmtree(parent, ignore_errors=True)
+
+
 # ── F57: a shell-side creation refreshes an open File Manager on that dir ───
 def test_shell_create_refreshes_open_filemgr():
     with H.desktop_dir() as dd:
@@ -108,6 +130,23 @@ def test_shell_create_refreshes_open_filemgr():
         assert "made.txt" in _labels(d.shell.grid)
         # pre-fix the open File Manager never learned about the new file.
         assert "made.txt" in _labels(win.grid), _labels(win.grid)
+
+
+def test_shell_new_file_rejects_path_name():
+    with H.desktop_dir() as dd:
+        d = H.make_desk()
+        name = os.path.basename(dd) + "-escape.txt"
+        outside = os.path.join(os.path.dirname(dd), name)
+
+        d.shell._new_file()
+        dlg = d.wm.modal_top()
+        import widgets as W
+        fld = next(w for w in dlg.widgets if isinstance(w, W.TextField))
+        fld.set("../" + name)
+        _click_dialog(d, "OK")
+
+        assert not os.path.exists(outside)
+        assert name not in _labels(d.shell.grid)
 
 
 # ── F57: a File Manager NOT on the desktop dir still refreshes itself ───────
