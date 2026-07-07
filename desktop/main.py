@@ -334,37 +334,9 @@ class Desk:
 
     # ── shutdown screen ──────────────────────────────────────────────────────
     def shutdown(self):
-        """The classic full-screen 'It's now safe to turn off your computer.'
-        Painted on the quit path, held until a key or a few seconds. No-op
-        headless (self.term is None)."""
-        if self.term is None:
-            return
+        """Quit path. Plays the shutdown cue, then returns so the session just
+        ends — no 'It's now safe to turn off your computer' screen."""
         self.play_sound("shutdown")
-        img = Image.new("RGB", (self.w, self.h), (0, 0, 0))
-        d = W.drawer(img)
-        orange = (255, 160, 0)
-        big = T._find_font(T._candidates(True), max(20, self.h // 18))
-        lines = ["It's now safe to turn off", "your computer."]
-        lh = max(26, self.h // 14)
-        y = (self.h - lh * len(lines)) // 2
-        for ln in lines:
-            try:
-                lw = int(big.getlength(ln))
-            except AttributeError:
-                lw = T.text_w(big, ln)
-            d.text(((self.w - lw) // 2, y), ln, font=big, fill=orange)
-            y += lh
-        self.blit(img)
-        end = time.time() + 5
-        while time.time() < end:
-            r, _, _ = select.select([self.term.fd], [], [],
-                                    max(0.0, end - time.time()))
-            if r:
-                try:
-                    os.read(self.term.fd, 4096)
-                except OSError:
-                    pass
-                break
 
     def blit(self, img=None):
         if not self.term:
@@ -686,7 +658,7 @@ class Desk:
             pass
         finally:
             try:
-                self.shutdown()       # safe-to-power-off screen on the way out
+                self.shutdown()       # shutdown cue on the way out
             except Exception:
                 pass
             term.restore()
