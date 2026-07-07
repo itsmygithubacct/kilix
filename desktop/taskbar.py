@@ -521,6 +521,11 @@ class Taskbar:
             MI("Programs", icon="folder", submenu=programs()),
             MI("Documents", icon="doc_text", submenu=documents()),
             MI("Settings", icon="settings", submenu=settings_sub),
+        ]
+        sys_items = shell.system_menu_items()      # update/maintenance launchers
+        if sys_items:
+            items.append(MI("System", icon="computer", submenu=sys_items))
+        items += [
             MI("Find", icon="find", submenu=find_sub),
             sub(),
             MI("Create Launcher…", icon="exe",
