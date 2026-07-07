@@ -627,7 +627,7 @@ class Shell:
         try:
             self.desk.wm.add(xpane.XPane(
                 self.desk, list(argv), title, icon=icon,
-                cwd=cwd or os.path.expanduser("~")))
+                cwd=cwd or os.path.expanduser("~"), fill=True))
         except Exception as e:
             wm.msgbox(self.desk, title,
                       f"Could not open '{title}' in a window:\n{e}",
