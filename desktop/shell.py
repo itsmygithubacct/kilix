@@ -586,29 +586,13 @@ class Shell:
                 return p
         return None
 
-    _jitless = None
-
-    def _chromium_jitless(self):
-        """--js-flags=--jitless where chromium's V8 JIT SIGTRAPs — some VM CPU
-        virtualisation (VirtualBox) can't run its JIT-compiled code. Detected
-        via systemd-detect-virt, so bare metal keeps full-speed JIT. Cached."""
-        if Shell._jitless is None:
-            try:
-                vm = subprocess.run(["systemd-detect-virt", "--vm", "--quiet"],
-                                    timeout=3).returncode == 0
-            except Exception:
-                vm = False
-            Shell._jitless = ["--js-flags=--jitless"] if vm else []
-        return Shell._jitless
-
     def open_browser(self, which="firefox", mode=None, url=None):
         """Launch a web browser from the desktop.
 
-        Firefox opens in a Win95 desktop window by default. Chromium opens in a
-        tab by default, drawn by the headless `kilix browse` engine. In a VM,
-        chromium's V8 JIT SIGTRAPs on startup, so both chromium paths pass
-        --js-flags=--jitless (see _chromium_jitless + browse.py). mode
-        overrides: "window", "tab", "fullscreen".
+        Firefox opens in a Win95 desktop window by default — its GUI runs under
+        software rendering (e.g. in a VM). Chromium opens in a tab by default,
+        drawn by the headless `kilix browse` engine, because its GUI crashes
+        under software rendering. mode overrides: "window", "tab", "fullscreen".
         """
         url = url or self.BROWSER_HOME
         if which == "chromium":
@@ -620,10 +604,9 @@ class Shell:
             if mode == "tab":               # headless chromium, drawn in the tab
                 self._tab([os.path.join(KILIX_HOME, "kilix"), "browse", url],
                           "Chromium", None)
-            else:                           # GUI chromium
+            else:                           # GUI chromium (works where GL does)
                 self._browser_window(
-                    [self._first_on_path(self.CHROME_CANDS), "--no-sandbox",
-                     *self._chromium_jitless(), url],
+                    [self._first_on_path(self.CHROME_CANDS), "--no-sandbox", url],
                     "Chromium", mode)
             return
         # firefox — the default browser

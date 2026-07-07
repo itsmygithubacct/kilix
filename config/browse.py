@@ -46,26 +46,6 @@ def log(*a):
             f.write(f"[{time.time():.3f}] " + " ".join(str(x) for x in a) + "\n")
 
 
-_jitless_cache = None
-
-
-def _jitless_args():
-    """Chromium's V8 JIT emits machine code that SIGTRAPs under some VM CPU
-    virtualisation (notably VirtualBox), killing chrome on startup — so
-    `kilix browse` (and GUI chromium) crash in a VM. Running V8 interpreted
-    (--js-flags=--jitless) fixes it: slower JS, but it actually starts. Gated
-    on systemd-detect-virt so bare metal keeps full-speed JIT."""
-    global _jitless_cache
-    if _jitless_cache is None:
-        try:
-            vm = subprocess.run(["systemd-detect-virt", "--vm", "--quiet"],
-                                timeout=3).returncode == 0
-        except Exception:
-            vm = False
-        _jitless_cache = ["--js-flags=--jitless"] if vm else []
-    return _jitless_cache
-
-
 # ───────────────────────── CDP over --remote-debugging-pipe ─────────────────
 
 class CDP:
@@ -99,7 +79,6 @@ class CDP:
              "--no-first-run", "--no-default-browser-check",
              "--hide-scrollbars", "--mute-audio",
              "--autoplay-policy=no-user-gesture-required",
-             *_jitless_args(),
              f"--user-data-dir={profile}",
              f"--window-size={width},{height}", *extra_args, "about:blank"],
             pass_fds=(3, 4),
