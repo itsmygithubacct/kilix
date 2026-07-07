@@ -35,10 +35,28 @@ def open_amp(desk, path=None):
               icon="amp", buttons=("Install", "Cancel"), cb=answered)
 
 
+def _seed_sample(amp_dir):
+    """Copy the bundled sample track into ~/Music (where kilix-amp's Open
+    dialog opens) so the player has something to try on first use. Once."""
+    try:
+        src = os.path.join(amp_dir, "samples", "ode-to-joy.ogg")
+        if not os.path.isfile(src):
+            return
+        music = os.path.expanduser("~/Music")
+        os.makedirs(music, exist_ok=True)
+        dst = os.path.join(music, "Ode to Joy.ogg")
+        if not os.path.exists(dst):
+            import shutil
+            shutil.copyfile(src, dst)
+    except Exception:
+        pass
+
+
 def _spawn(desk, exe, path=None):
     if not exe:
         return
     d = os.path.dirname(exe)
+    _seed_sample(d)
     cmd = [exe] + ([os.path.abspath(os.path.expanduser(path))] if path
                    else [])
     desk.wm.add(xpane.XPane(
