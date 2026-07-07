@@ -16,8 +16,10 @@ import argparse
 import base64
 import os
 import select
+import shutil
 import signal
 import sys
+import tempfile
 import time
 
 _here = os.path.dirname(os.path.abspath(__file__))
@@ -143,6 +145,7 @@ class Desk:
         self.img_id = 1 + ((int(wid) if wid.isdigit() else os.getpid())
                            % 4000)
         self.seq = 0
+        self._frame_dir = None
         # WM/loop polish state
         self.switcher = None          # Alt+Tab overlay: {"wins", "sel"} or None
         self._tooltip = None          # current tooltip text or None
@@ -372,8 +375,12 @@ class Desk:
                             in_tmux=bool(os.environ.get("TMUX")))
             return
         self.seq = (self.seq + 1) % 8
-        path = f"/dev/shm/tty-graphics-protocol-kilix95-{self.wid}-{self.seq}.rgb"
-        with open(path, "wb") as f:
+        path = self._frame_path()
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        fd = os.open(path, flags, 0o600)
+        with os.fdopen(fd, "wb") as f:
             f.write(rgb)
         payload = base64.b64encode(path.encode()).decode()
         self.term.write(
@@ -381,13 +388,27 @@ class Desk:
             f"s={self.w},v={self.h},c={self.term.cols},r={self.term.rows},"
             f"q=2,C=1;{payload}\x1b\\")
 
+    def _frame_path(self):
+        if self._frame_dir is None:
+            root = "/dev/shm" if os.path.isdir("/dev/shm") \
+                and os.access("/dev/shm", os.W_OK) else None
+            self._frame_dir = tempfile.mkdtemp(
+                prefix=f"tty-graphics-protocol-kilix95-{self.wid}-",
+                dir=root)
+            os.chmod(self._frame_dir, 0o700)
+        return os.path.join(self._frame_dir, f"{self.seq}.rgb")
+
     def cleanup_shm(self):
-        for i in range(8):
-            try:
-                os.unlink(f"/dev/shm/tty-graphics-protocol-kilix95-"
-                          f"{self.wid}-{i}.rgb")
-            except OSError:
-                pass
+        if self._frame_dir:
+            shutil.rmtree(self._frame_dir, ignore_errors=True)
+            self._frame_dir = None
+        else:
+            for i in range(8):
+                try:
+                    os.unlink(f"/dev/shm/tty-graphics-protocol-kilix95-"
+                              f"{self.wid}-{i}.rgb")
+                except OSError:
+                    pass
 
     # ── input normalization ─────────────────────────────────────────────────
     def _norm_key(self, raw):

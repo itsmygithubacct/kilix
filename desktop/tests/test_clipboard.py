@@ -7,6 +7,7 @@ live ICCCM handshake against a real selection still needs VM validation.
 """
 import harness as H                 # noqa: sets sys.path for the imports below
 import clipboard
+import os
 from Xlib import X, Xatom
 from Xlib.ext import xfixes
 
@@ -162,5 +163,23 @@ assert b._text is None, "SelectionClear must drop our served text"
 assert clipboard._decode(b"hi") == "hi"
 assert clipboard._decode([104, 105]) == "hi"
 assert clipboard._decode(b"\xff\xfe") == "��"   # never raises
+
+
+# XAUTHORITY overrides are connect-local and must not leak to later launches.
+old = os.environ.get("XAUTHORITY")
+try:
+    os.environ["XAUTHORITY"] = "/tmp/host-xauth"
+    with clipboard.xauthority_env("/tmp/private-xauth"):
+        assert os.environ["XAUTHORITY"] == "/tmp/private-xauth"
+    assert os.environ["XAUTHORITY"] == "/tmp/host-xauth"
+    os.environ.pop("XAUTHORITY")
+    with clipboard.xauthority_env("/tmp/private-xauth"):
+        assert os.environ["XAUTHORITY"] == "/tmp/private-xauth"
+    assert "XAUTHORITY" not in os.environ
+finally:
+    if old is None:
+        os.environ.pop("XAUTHORITY", None)
+    else:
+        os.environ["XAUTHORITY"] = old
 
 print("test_clipboard OK")

@@ -99,10 +99,11 @@ class XPane(wm.Window):
             self.sup.start_xvfb(n, aw, ah, nocursor=True)
             e = dict(os.environ, DISPLAY=f":{n}",
                      XAUTHORITY=self.sup.xauth, **(env or {}))
-            # python-xlib reads XAUTHORITY at connect time; each pane connects
-            # once, right here, so the env swap is safe for other panes
-            os.environ["XAUTHORITY"] = self.sup.xauth
-            self.xd = xdisplay.Display(f":{n}")
+            # python-xlib reads XAUTHORITY at connect time. Scope the override
+            # to this connection so later host-display launches do not inherit
+            # a private Xvfb authority file.
+            with clipboard.xauthority_env(self.sup.xauth):
+                self.xd = xdisplay.Display(f":{n}")
             self._paint_root_chroma()
             self.app = self.sup.spawn("app", cmd, env=e, cwd=cwd,
                                       stdout=subprocess.DEVNULL,

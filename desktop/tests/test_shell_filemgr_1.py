@@ -1,8 +1,10 @@
 import os
 import signal
+import tempfile
 
 import harness as H
 import filedialog
+import recycle
 import shell as shell_mod
 import widgets as W
 
@@ -166,18 +168,31 @@ def f58_launcher_browse_quotes_program_path():
 
 # ── F55: context Delete on a selected icon deletes the whole selection ────────
 def f55_context_delete_multi():
-    d = H.make_desk()
-    for n in ("a.txt", "b.txt", "c.txt"):
-        open(os.path.join(d.shell.dir, n), "w").close()
-    d.shell.refresh()
-    idx = {i["label"]: n for n, i in enumerate(d.shell.grid.items)}
-    d.shell.grid.sel = {idx["a.txt"], idx["b.txt"], idx["c.txt"]}
-    item_a = d.shell.grid.items[idx["a.txt"]]
-    d.shell._context(item_a, H.ev("mouse", x=40, y=40))
-    _menu_item(d, "Delete…").action()       # pre-fix: deletes only a.txt
-    _btn(H.find_window(d, "Window"), "Yes").cb()
-    for n in ("a.txt", "b.txt", "c.txt"):
-        assert not os.path.exists(os.path.join(d.shell.dir, n)), f"{n} survived"
+    with H.desktop_dir():
+        old_bin = os.environ.get("KILIX_RECYCLE_DIR")
+        os.environ["KILIX_RECYCLE_DIR"] = tempfile.mkdtemp(
+            prefix="kilix95-shell-recbin-")
+        d = H.make_desk()
+        try:
+            for n in ("a.txt", "b.txt", "c.txt"):
+                open(os.path.join(d.shell.dir, n), "w").close()
+            d.shell.refresh()
+            idx = {i["label"]: n for n, i in enumerate(d.shell.grid.items)}
+            d.shell.grid.sel = {idx["a.txt"], idx["b.txt"], idx["c.txt"]}
+            item_a = d.shell.grid.items[idx["a.txt"]]
+            d.shell._context(item_a, H.ev("mouse", x=40, y=40))
+            _menu_item(d, "Delete…").action()       # pre-fix: deletes only a.txt
+            _btn(H.find_window(d, "Window"), "Yes").cb()
+            for n in ("a.txt", "b.txt", "c.txt"):
+                assert not os.path.exists(os.path.join(d.shell.dir, n)), \
+                    f"{n} survived"
+            names = sorted(i["name"] for i in recycle.items())
+            assert names == ["a.txt", "b.txt", "c.txt"], names
+        finally:
+            if old_bin is None:
+                os.environ.pop("KILIX_RECYCLE_DIR", None)
+            else:
+                os.environ["KILIX_RECYCLE_DIR"] = old_bin
 
 
 def f55_context_delete_unselected_one():

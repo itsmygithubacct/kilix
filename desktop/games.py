@@ -41,12 +41,14 @@ DOOM_URLS = [  # idgames mirrors of id Software's shareware installer
     "https://ftp.fu-berlin.de/pc/games/idgames/idstuff/doom/doom19s.zip",
     "https://youfailit.net/pub/idgames/idstuff/doom/doom19s.zip",
 ]
+DOOM_ZIP_SHA256 = "cacf0142b31ca1af00796b4a0339e07992ac5f21bc3f81e7532fe1b5e1b486e6"
 DOOM1_WAD_MD5 = "f0cefca49926d00903cf57551d901abe"      # shareware 1.9
 
 DOSBOX_VER = "v0.82.2"
 DOSBOX_URL = ("https://github.com/dosbox-staging/dosbox-staging/releases/"
               f"download/{DOSBOX_VER}/dosbox-staging-linux-x86_64-"
               f"{DOSBOX_VER}.tar.xz")
+DOSBOX_SHA256 = "bc229df72ea103b7865cdca67324772dbffa8e58866477e69a79638b723a0442"
 
 BASHED_REPO = "https://github.com/itsmygithubacct/Bashed-Earth"
 LANDER_REPO = "https://github.com/itsmygithubacct/terminal_lander"
@@ -154,7 +156,15 @@ def game_ready(game, cp=None):
             }.get(game, lambda c=None: None)(cp)
 
 
-def _fetch(urls, dest, report):
+def _sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _fetch(urls, dest, report, sha256=None):
     """Download the first URL that works, with a coarse progress line."""
     last = None
     for url in urls if isinstance(urls, list) else [urls]:
@@ -174,8 +184,15 @@ def _fetch(urls, dest, report):
                     if total and got * 10 // total > pct:
                         pct = got * 10 // total
                         report(f"  {pct * 10}% of {total // 1024} KB")
+            if sha256:
+                got_hash = _sha256(dest)
+                if got_hash != sha256:
+                    os.unlink(dest)
+                    raise RuntimeError(
+                        f"sha256 mismatch for {url.rsplit('/', 1)[-1]}: "
+                        f"{got_hash}")
             return
-        except OSError as e:
+        except (OSError, RuntimeError) as e:
             last = e
             report(f"  failed: {e}")
     raise RuntimeError(f"all mirrors failed ({last})")
@@ -223,7 +240,7 @@ def ensure_dosbox(cp, report):
             f"{CONF}")
     os.makedirs(vend, exist_ok=True)
     tar = os.path.join(vend, "dosbox.tar.xz")
-    _fetch(DOSBOX_URL, tar, report)
+    _fetch(DOSBOX_URL, tar, report, sha256=DOSBOX_SHA256)
     report("unpacking dosbox-staging …")
     with tarfile.open(tar, "r:xz") as t:
         _safe_extract_tar(t, vend)
@@ -245,7 +262,7 @@ def ensure_doom(cp, report):
         return ddir
     os.makedirs(ddir, exist_ok=True)
     outer = os.path.join(ddir, "doom19s.zip")
-    _fetch(DOOM_URLS, outer, report)
+    _fetch(DOOM_URLS, outer, report, sha256=DOOM_ZIP_SHA256)
     report("extracting the shareware episode …")
     with zipfile.ZipFile(outer) as z:
         z.extractall(ddir)
@@ -270,7 +287,8 @@ def ensure_doom(cp, report):
         raise RuntimeError("extraction yielded no DOOM.EXE/DOOM1.WAD")
     md5 = hashlib.md5(open(wad, "rb").read()).hexdigest()
     if md5 != DOOM1_WAD_MD5:
-        report(f"note: DOOM1.WAD md5 {md5} differs from the known 1.9 build")
+        raise RuntimeError(
+            f"DOOM1.WAD md5 {md5} differs from the known 1.9 build")
     return ddir
 
 
