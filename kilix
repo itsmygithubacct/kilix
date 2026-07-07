@@ -9,6 +9,7 @@
 #
 #   ./kilix                   # launch kilix
 #   ./kilix update            # git pull the latest kilix into this checkout
+#   ./kilix desktop           # launch Kilix 95 (built-in or external provider)
 #   ./kilix --build           # build the forked kitty from ./src
 #   ./kilix --which           # print the kitty binary kilix uses + its version
 #   ./kilix --install-desktop # desktop entry + icon (own taskbar group)
@@ -105,6 +106,62 @@ esac
 
 KITTEN="$(dirname "$BIN")/kitten"
 
+_kilix95_die() {
+  echo "kilix desktop: $*" >&2
+  exit 1
+}
+
+_kilix95_ensure_external() {
+  _k95_dir="${KILIX95_DIR:-$HOME/kilix-95}"
+  _k95_repo="${KILIX95_REPO:-https://github.com/itsmygithubacct/kilix-95.git}"
+
+  if [ -f "$_k95_dir/main.py" ]; then
+    _KILIX95_MAIN="$_k95_dir/main.py"
+    return 0
+  fi
+  if [ "${KILIX95_AUTO_INSTALL:-0}" != 1 ]; then
+    _kilix95_die "Kilix 95 is not installed at $_k95_dir; set KILIX95_AUTO_INSTALL=1 to clone $_k95_repo"
+  fi
+  if [ -e "$_k95_dir" ] && [ ! -d "$_k95_dir/.git" ]; then
+    _kilix95_die "$_k95_dir exists but is not a Kilix 95 checkout"
+  fi
+  command -v git >/dev/null 2>&1 || _kilix95_die "git is required to clone Kilix 95"
+
+  echo "kilix desktop: cloning Kilix 95 -> $_k95_dir" >&2
+  # shellcheck disable=SC2086  # optional --branch is intentionally unquoted-split
+  git clone ${KILIX95_BRANCH:+--branch "$KILIX95_BRANCH"} "$_k95_repo" "$_k95_dir" \
+    || _kilix95_die "git clone failed ($_k95_repo)"
+  if [ -n "${KILIX95_REF:-}" ]; then
+    git -C "$_k95_dir" fetch --tags origin >/dev/null 2>&1 || true
+    git -C "$_k95_dir" checkout --detach "$KILIX95_REF" \
+      || _kilix95_die "could not check out KILIX95_REF=$KILIX95_REF"
+  fi
+  [ -f "$_k95_dir/main.py" ] || _kilix95_die "missing main.py in $_k95_dir"
+  _KILIX95_MAIN="$_k95_dir/main.py"
+}
+
+_kilix95_select_main() {
+  _KILIX95_MAIN=
+  _k95_provider="${KILIX_DESKTOP_PROVIDER:-auto}"
+  _k95_builtin="$KILIX_HOME/desktop/main.py"
+
+  case "$_k95_provider" in
+    builtin)
+      [ -f "$_k95_builtin" ] || _kilix95_die "built-in desktop is not present at $_k95_builtin"
+      _KILIX95_MAIN="$_k95_builtin" ;;
+    external)
+      _kilix95_ensure_external ;;
+    auto)
+      if [ -f "$_k95_builtin" ]; then
+        _KILIX95_MAIN="$_k95_builtin"
+      else
+        _kilix95_ensure_external
+      fi ;;
+    *)
+      _kilix95_die "unknown KILIX_DESKTOP_PROVIDER=$_k95_provider (use auto, builtin, or external)" ;;
+  esac
+}
+
 # browse: Chrome (and video) rendered in a pane. Host it in its own overlay
 # WINDOW so it gets a title bar with a clickable close button — closing the
 # overlay exits the app and reveals the shell underneath, which is never
@@ -188,6 +245,7 @@ fi
 # wrapped-cleanup story as run; quit via Start > Shut Down (or Ctrl+Alt+Q).
 if [ "${1:-}" = "desktop" ]; then
   shift
+  _kilix95_select_main
   if [ -z "${KILIX_IN_OVERLAY:-}" ] && [ -n "${KITTY_WINDOW_ID:-}" ] \
        && [ -n "${KITTY_LISTEN_ON:-}" ] && [ -x "$KITTEN" ]; then
     # Only one kilix 95 desktop at a time: if one is already running in this
@@ -195,10 +253,14 @@ if [ "${1:-}" = "desktop" ]; then
     # the graphics transport. Find the window whose foreground process is the
     # desktop (kitty's cmdline: match sees only the launch command, not the
     # python child, so ask @ ls and check foreground_processes) and focus it.
-    _dwid="$("$KITTEN" @ ls 2>/dev/null | python3 -c 'import json,sys
+    _dwid="$(KILIX95_MAIN="$_KILIX95_MAIN" "$KITTEN" @ ls 2>/dev/null | python3 -c 'import json,os,sys
 try: d=json.load(sys.stdin)
 except Exception: sys.exit(0)
-ids=[w["id"] for o in d for t in o.get("tabs",[]) for w in t.get("windows",[]) if any("desktop/main.py" in a for p in w.get("foreground_processes",[]) for a in p.get("cmdline",[]))]
+targets={os.environ.get("KILIX95_MAIN","")}
+targets={t for t in targets if t}
+def is_desktop_arg(a):
+    return a in targets or a.endswith("/desktop/main.py") or a.endswith("/kilix-95/main.py")
+ids=[w["id"] for o in d for t in o.get("tabs",[]) for w in t.get("windows",[]) if any(is_desktop_arg(a) for p in w.get("foreground_processes",[]) for a in p.get("cmdline",[]))]
 print(ids[0] if ids else "")' 2>/dev/null)"
     if [ -n "$_dwid" ]; then
       "$KITTEN" @ focus-window --match "id:$_dwid" >/dev/null 2>&1
@@ -206,11 +268,17 @@ print(ids[0] if ids else "")' 2>/dev/null)"
     fi
     exec "$KITTEN" @ launch --type=tab --cwd=current --tab-title "desktop" \
       --env KILIX_IN_OVERLAY=1 --env "KILIX_STREAM=${KILIX_STREAM:-}" \
+      --env "KILIX_DESKTOP_PROVIDER=${KILIX_DESKTOP_PROVIDER:-}" \
+      --env "KILIX95_AUTO_INSTALL=${KILIX95_AUTO_INSTALL:-}" \
+      --env "KILIX95_DIR=${KILIX95_DIR:-}" \
+      --env "KILIX95_REPO=${KILIX95_REPO:-}" \
+      --env "KILIX95_BRANCH=${KILIX95_BRANCH:-}" \
+      --env "KILIX95_REF=${KILIX95_REF:-}" \
       -- "$_self" desktop "$@"
   fi
   rc=0
-  KILIX_HOME="$KILIX_HOME" KILIX_KITTEN="$KITTEN" \
-    python3 "$KILIX_HOME/desktop/main.py" "$@" || rc=$?
+  KILIX_HOME="$KILIX_HOME" KILIX95_HOME="$(dirname "$_KILIX95_MAIN")" \
+    KILIX_KITTEN="$KITTEN" python3 "$_KILIX95_MAIN" "$@" || rc=$?
   if [ "$rc" -ge 128 ]; then
     # the desktop uses ?1003h any-motion mouse tracking, like apprun
     printf '\033[<u\033[?1002l\033[?1003l\033[?1006l\033[?1016l\033[?2004l\033[?7h\033_Ga=d,d=A\033\\\033[?25h\033[?1049l'
