@@ -190,6 +190,20 @@ if [ "${1:-}" = "desktop" ]; then
   shift
   if [ -z "${KILIX_IN_OVERLAY:-}" ] && [ -n "${KITTY_WINDOW_ID:-}" ] \
        && [ -n "${KITTY_LISTEN_ON:-}" ] && [ -x "$KITTEN" ]; then
+    # Only one kilix 95 desktop at a time: if one is already running in this
+    # kitty, switch to it instead of opening a second — two desktops fight over
+    # the graphics transport. Find the window whose foreground process is the
+    # desktop (kitty's cmdline: match sees only the launch command, not the
+    # python child, so ask @ ls and check foreground_processes) and focus it.
+    _dwid="$("$KITTEN" @ ls 2>/dev/null | python3 -c 'import json,sys
+try: d=json.load(sys.stdin)
+except Exception: sys.exit(0)
+ids=[w["id"] for o in d for t in o.get("tabs",[]) for w in t.get("windows",[]) if any("desktop/main.py" in a for p in w.get("foreground_processes",[]) for a in p.get("cmdline",[]))]
+print(ids[0] if ids else "")' 2>/dev/null)"
+    if [ -n "$_dwid" ]; then
+      "$KITTEN" @ focus-window --match "id:$_dwid" >/dev/null 2>&1
+      exit 0
+    fi
     exec "$KITTEN" @ launch --type=tab --cwd=current --tab-title "desktop" \
       --env KILIX_IN_OVERLAY=1 --env "KILIX_STREAM=${KILIX_STREAM:-}" \
       -- "$_self" desktop "$@"
