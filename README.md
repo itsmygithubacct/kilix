@@ -234,6 +234,21 @@ fork build uses).
 kilix desktop                # opens "kilix 95" in a new kilix tab
 ```
 
+`kilix desktop` is a compatibility facade. By default it runs the built-in
+`desktop/` tree while this repository still carries one. Pleb/Plebian-OS can
+instead select an external desktop checkout:
+
+```bash
+KILIX_DESKTOP_PROVIDER=external \
+KILIX95_AUTO_INSTALL=1 \
+KILIX95_DIR=~/kilix-95 \
+kilix desktop
+```
+
+Relevant knobs: `KILIX_DESKTOP_PROVIDER=auto|builtin|external`,
+`KILIX95_DIR`, `KILIX95_REPO`, `KILIX95_BRANCH`, `KILIX95_REF`, and
+`KILIX95_AUTO_INSTALL=1` to allow a missing external checkout to be cloned.
+
 ![kilix 95 — the desktop with the media player, file manager and Notepad open](config/kilix95_with_amp.png)
 
 ![kilix 95 — from a shell to the desktop to Doom, all in kilix tabs](docs/kilix95-doom-demo.gif)
@@ -272,8 +287,9 @@ right-click menu everywhere. Built in:
 
 Quit via Start ▸ Shut Down… (or `Ctrl+Alt+Q`); the terminal underneath is
 untouched. All artwork is drawn in code — no Microsoft assets are bundled.
-Modules live in `desktop/` (see `desktop/README.md`). The desktop draws its
-own Win95 mouse pointer (pass `--no-cursor` if you'd rather not).
+Modules currently live in `desktop/` or an external `kilix-95` checkout. The
+desktop draws its own Win95 mouse pointer (pass `--no-cursor` if you'd rather
+not).
 
 ## Stream sessions to other devices (experimental)
 
