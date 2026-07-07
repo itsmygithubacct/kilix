@@ -50,6 +50,7 @@ DOSBOX_URL = ("https://github.com/dosbox-staging/dosbox-staging/releases/"
 
 BASHED_REPO = "https://github.com/itsmygithubacct/Bashed-Earth"
 LANDER_REPO = "https://github.com/itsmygithubacct/terminal_lander"
+BROKEOUT_REPO = "https://github.com/itsmygithubacct/kitty-brokeout"
 AMP_REPO = "https://github.com/itsmygithubacct/kilix-amp"
 
 # the Start-menu registry (taskbar/shell build the Games submenu from this)
@@ -76,6 +77,12 @@ GAMES = {
         "label": "Terminal Lander", "icon": "lander",
         "blurb": "Clone and build Terminal Lander (a kitty-graphics\n"
                  "lunar lander, github.com/itsmygithubacct/terminal_lander)\n"
+                 "into ~/.local/share/kilix/games, and play?",
+    },
+    "kitty-brokeout": {
+        "label": "Kitty Brokeout", "icon": "brokeout",
+        "blurb": "Clone and build Kitty Brokeout (a kitty-graphics\n"
+                 "brick breaker, github.com/itsmygithubacct/kitty-brokeout)\n"
                  "into ~/.local/share/kilix/games, and play?",
     },
 }
@@ -142,8 +149,9 @@ def game_ready(game, cp=None):
     """Installed-and-runnable check dispatched by game name (None if not)."""
     cp = cp or load()
     return {"doom": doom_ready, "dosbox": dosbox_ready,
-            "bashed-earth": bashed_ready,
-            "terminal-lander": lander_ready}.get(game, lambda c=None: None)(cp)
+            "bashed-earth": bashed_ready, "terminal-lander": lander_ready,
+            "kitty-brokeout": brokeout_ready
+            }.get(game, lambda c=None: None)(cp)
 
 
 def _fetch(urls, dest, report):
@@ -379,6 +387,16 @@ def ensure_lander(cp, report):
         "terminal-lander", "needs a C compiler + zlib, make", report)
 
 
+def brokeout_ready(cp=None):
+    return _repo_ready(cp or load(), "kitty-brokeout", "kitty-brokeout")
+
+
+def ensure_brokeout(cp, report):
+    return brokeout_ready(cp) or _clone_and_make(
+        BROKEOUT_REPO, os.path.join(GAMES_DIR, "kitty-brokeout"),
+        "kitty-brokeout", "needs a C compiler + zlib, make", report)
+
+
 def amp_ready(cp=None):
     return _repo_ready(cp or load(), "kilix-amp", "kilix-amp")
 
@@ -415,6 +433,10 @@ def ensure(game, report=print):
     elif game == "terminal-lander":
         exe = ensure_lander(cp, report)
         cp.set("terminal-lander", "dir", os.path.dirname(exe))
+        payload = exe
+    elif game == "kitty-brokeout":
+        exe = ensure_brokeout(cp, report)
+        cp.set("kitty-brokeout", "dir", os.path.dirname(exe))
         payload = exe
     elif game == "kilix-amp":
         exe = ensure_amp(cp, report)
