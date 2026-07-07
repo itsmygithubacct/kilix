@@ -486,16 +486,10 @@ class Taskbar:
                        MI("Open Fullscreen",
                           action=lambda: shell.open_browser("chromium", "fullscreen")),
                    ]),
+                # opens empty; the player has its own Open dialog (the eject
+                # button → a zenity file picker) for choosing tracks
                 MI("Media Player", icon="amp",
-                   # click opens the graphical picker to choose a track — a
-                   # right-click-only "Open File…" was too hidden to find
-                   action=lambda: shell.open_media_file(),
-                   context=[
-                       MI("Open File…", icon="amp",
-                          action=lambda: shell.open_media_file()),
-                       MI("Open Empty (no file)",
-                          action=lambda: shell.open_app("amp")),
-                   ]),
+                   action=lambda: shell.open_app("amp")),
             ]
             user = shell.launcher_menu_items()
             if user:

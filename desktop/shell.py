@@ -541,18 +541,6 @@ class Shell:
             f'echo "== {title} finished — press Enter to close =="; read -r _',
             title)
 
-    def open_media_file(self):
-        """Graphical picker → play the chosen file in the Media Player
-        (kilix-amp). It has no file dialog of its own inside the XPane, so the
-        desktop provides one and passes the file in on launch."""
-        import filedialog
-        from apps import amp
-        filedialog.open_file(
-            self.desk, "Open Media",
-            lambda p: p and amp.open_amp(self.desk, p),
-            filters=[("Audio", "*.mp3;*.ogg;*.wav;*.flac;*.mod;*.xm;*.s3m;"
-                      "*.it;*.mid"), ("All Files", "*.*")])
-
     def open_url(self, url):
         if url is None:
             wm.inputbox(self.desk, "Web Browser", "Address:", "https://",
