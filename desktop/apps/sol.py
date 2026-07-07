@@ -6,6 +6,8 @@ card drag back here. Cards, suits and backs are original pixel art.
 """
 import random
 
+from PIL import ImageFont
+
 import theme as T
 import widgets as W
 import wm
@@ -24,6 +26,8 @@ FAN_DOWN = 5
 FAN_UP = 16
 FAN_X = 14                 # draw-three waste horizontal offset
 STEP = CW + GAPX
+BASE_CLIENT_W = 2 * MARGIN + 7 * CW + 6 * GAPX
+BASE_CLIENT_H = 456 - 2 * T.BORDER - T.TITLE_H
 
 
 def _red(c):
@@ -89,14 +93,13 @@ class Solitaire(wm.Window):
         cw, _ = self.client_size()
         self.menubar = self.add(W.MenuBar(cw, [("Game", self._game_menu),
                                                ("Help", self._help_menu)]))
-        self.top_y = T.MENU_H + 14
-        self.tab_y = self.top_y + CH + 18
         self.stock = []           # face-down deck
         self.waste = []           # dealt cards (face up)
         self.found = [[], [], [], []]
         self.tab = [[], [], [], [], [], [], []]
         self.drag = None          # active pick-up
         self.won = False
+        self._layout()
         st = getattr(desk.shell, "state", None) or {}
         self.draw3 = bool(st.get("sol_draw3", False))
         self.fan = 0              # top waste cards shown fanned
@@ -104,16 +107,42 @@ class Solitaire(wm.Window):
 
     def on_resize(self):
         self.menubar.w = self.client_size()[0]
+        self._layout()
+        self.invalidate()
 
     # ── geometry ────────────────────────────────────────────────────────────
     @staticmethod
-    def _col_x(i):
-        return MARGIN + i * STEP
+    def _font_at(base, px):
+        path = getattr(base, "path", None)
+        if not path:
+            return base
+        return ImageFont.truetype(path, max(1, int(round(px))))
+
+    def _layout(self):
+        cw, ch = self.client_size()
+        scale = max(1.0, min(cw / BASE_CLIENT_W, ch / BASE_CLIENT_H))
+        self.scale = scale
+        self.card_w = max(CW, int(round(CW * scale)))
+        self.card_h = max(CH, int(round(CH * scale)))
+        self.gap_x = max(GAPX, int(round(GAPX * scale)))
+        self.fan_down = max(FAN_DOWN, int(round(FAN_DOWN * scale)))
+        self.fan_up = max(FAN_UP, int(round(FAN_UP * scale)))
+        self.fan_x = max(FAN_X, int(round(FAN_X * scale)))
+        self.step = self.card_w + self.gap_x
+        board_w = 7 * self.card_w + 6 * self.gap_x
+        natural_margin = max(MARGIN, int(round(MARGIN * scale)))
+        self.margin = max(natural_margin, (cw - board_w) // 2)
+        self.top_y = T.MENU_H + max(14, int(round(14 * scale)))
+        self.tab_y = self.top_y + self.card_h + max(18, int(round(18 * scale)))
+        self.rank_font = T.FONT if scale == 1 else self._font_at(T.FONT, 11 * scale)
+
+    def _col_x(self, i):
+        return self.margin + i * self.step
 
     def _card_y(self, pile, j):
         y = self.tab_y
         for k in range(j):
-            y += FAN_UP if pile[k].up else FAN_DOWN
+            y += self.fan_up if pile[k].up else self.fan_down
         return y
 
     def _tab_hit(self, i, py):
@@ -124,7 +153,7 @@ class Solitaire(wm.Window):
         for j in range(len(pile)):
             top = self._card_y(pile, j)
             bot = (self._card_y(pile, j + 1) if j + 1 < len(pile)
-                   else top + CH)
+                   else top + self.card_h)
             if top <= py < bot:
                 hit = j
         return hit
@@ -181,7 +210,7 @@ class Solitaire(wm.Window):
 
     def _waste_x(self):
         """Left x of the top (playable) waste card."""
-        return self._col_x(1) + (self._waste_fan() - 1) * FAN_X
+        return self._col_x(1) + (self._waste_fan() - 1) * self.fan_x
 
     def _check_win(self):
         if all(len(f) == 13 for f in self.found) and not self.won:
@@ -254,14 +283,14 @@ class Solitaire(wm.Window):
     def _board_press(self, ev):
         x, y = ev.x, ev.y
         # stock
-        if (self._col_x(0) <= x < self._col_x(0) + CW
-                and self.top_y <= y < self.top_y + CH):
+        if (self._col_x(0) <= x < self._col_x(0) + self.card_w
+                and self.top_y <= y < self.top_y + self.card_h):
             self.deal_stock()
             return
         # waste (only the top card is playable; fanned in draw-three)
         wx = self._waste_x()
-        if (self.waste and wx <= x < wx + CW
-                and self.top_y <= y < self.top_y + CH):
+        if (self.waste and wx <= x < wx + self.card_w
+                and self.top_y <= y < self.top_y + self.card_h):
             if ev.clicks >= 2 and self.send_to_foundation(self.waste):
                 return
             self._pick(self.waste, len(self.waste) - 1, wx, self.top_y, x, y)
@@ -269,7 +298,8 @@ class Solitaire(wm.Window):
         # foundations (drag a card back off)
         for fi in range(4):
             fx = self._col_x(3 + fi)
-            if (fx <= x < fx + CW and self.top_y <= y < self.top_y + CH
+            if (fx <= x < fx + self.card_w
+                    and self.top_y <= y < self.top_y + self.card_h
                     and self.found[fi]):
                 self._pick(self.found[fi], len(self.found[fi]) - 1,
                            fx, self.top_y, x, y)
@@ -277,7 +307,7 @@ class Solitaire(wm.Window):
         # tableau
         for i in range(7):
             tx = self._col_x(i)
-            if not (tx <= x < tx + CW):
+            if not (tx <= x < tx + self.card_w):
                 continue
             j = self._tab_hit(i, y)
             if j is None or not self.tab[i][j].up:
@@ -300,14 +330,17 @@ class Solitaire(wm.Window):
         self.drag = None
         src, k = d["src"], d["k"]
         run = src[k:]
-        rr = (d["x"], d["y"], d["x"] + CW, d["y"] + CH)   # dragged run's top
+        rr = (d["x"], d["y"], d["x"] + self.card_w,
+              d["y"] + self.card_h)                       # dragged run's top
         best = None                                       # (area, kind, idx)
         if len(run) == 1:                                 # single card → home
             for fi in range(4):
                 fx = self._col_x(3 + fi)
                 if not self._can_found(run[0], self.found[fi]):
                     continue
-                a = _overlap(rr, (fx, self.top_y, fx + CW, self.top_y + CH))
+                a = _overlap(rr, (fx, self.top_y,
+                                  fx + self.card_w,
+                                  self.top_y + self.card_h))
                 if a and (best is None or a > best[0]):
                     best = (a, "found", fi)
         for i in range(7):                                # any valid run → tab
@@ -316,8 +349,8 @@ class Solitaire(wm.Window):
                     and self._can_stack(run[0], pile[-1] if pile else None)):
                 continue
             tx = self._col_x(i)
-            bot = self._card_y(pile, len(pile)) + CH      # generous drop band
-            a = _overlap(rr, (tx, self.tab_y, tx + CW, bot))
+            bot = self._card_y(pile, len(pile)) + self.card_h
+            a = _overlap(rr, (tx, self.tab_y, tx + self.card_w, bot))
             if a and (best is None or a > best[0]):
                 best = (a, "tab", i)
         if best and best[1] == "found":
@@ -343,8 +376,11 @@ class Solitaire(wm.Window):
         if self.stock:
             self._back(d, self._col_x(0), self.top_y)
         else:
-            d.ellipse([self._col_x(0) + 16, self.top_y + 24,
-                       self._col_x(0) + 32, self.top_y + 40], outline=FELT_D)
+            s = self.scale
+            d.ellipse([self._col_x(0) + int(round(16 * s)),
+                       self.top_y + int(round(24 * s)),
+                       self._col_x(0) + int(round(32 * s)),
+                       self.top_y + int(round(40 * s))], outline=FELT_D)
         self._slot(d, self._col_x(1), self.top_y)      # waste
         w, fan = self.waste, self.fan
         if self.drag and self.drag["src"] is self.waste:
@@ -355,7 +391,7 @@ class Solitaire(wm.Window):
             n = max(1, min(fan, len(w)))
             base = len(w) - n
             for k in range(n):
-                self._face(d, self._col_x(1) + k * FAN_X, self.top_y,
+                self._face(d, self._col_x(1) + k * self.fan_x, self.top_y,
                            w[base + k])
         for fi in range(4):                            # foundations
             fx = self._col_x(3 + fi)
@@ -366,7 +402,9 @@ class Solitaire(wm.Window):
             if f:
                 self._face(d, fx, self.top_y, f[-1])
             else:
-                _PIP[fi](d, fx + CW // 2, self.top_y + CH // 2, 11, FELT_D)
+                _PIP[fi](d, fx + self.card_w // 2,
+                         self.top_y + self.card_h // 2,
+                         max(11, int(round(11 * self.scale))), FELT_D)
         for i in range(7):                             # tableau
             tx = self._col_x(i)
             if not self.tab[i]:
@@ -379,15 +417,17 @@ class Solitaire(wm.Window):
         if self.drag:                                  # floating pick-up
             dx, dy = self.drag["x"], self.drag["y"]
             for n, c in enumerate(self.drag["src"][self.drag["k"]:]):
-                self._face(d, dx, dy + n * FAN_UP, c)
+                self._face(d, dx, dy + n * self.fan_up, c)
 
     def _slot(self, d, x, y):
-        d.rectangle([x, y, x + CW - 1, y + CH - 1], outline=FELT_D)
+        d.rectangle([x, y, x + self.card_w - 1, y + self.card_h - 1],
+                    outline=FELT_D)
         self._round(d, x, y)
 
     def _round(self, d, x, y):
-        for cx, cy in ((x, y), (x + CW - 1, y),
-                       (x, y + CH - 1), (x + CW - 1, y + CH - 1)):
+        for cx, cy in ((x, y), (x + self.card_w - 1, y),
+                       (x, y + self.card_h - 1),
+                       (x + self.card_w - 1, y + self.card_h - 1)):
             d.point((cx, cy), fill=FELT)
 
     def _card(self, d, x, y, c):
@@ -397,26 +437,42 @@ class Solitaire(wm.Window):
             self._back(d, x, y)
 
     def _back(self, d, x, y):
-        d.rectangle([x, y, x + CW - 1, y + CH - 1], fill=(0, 0, 150),
+        pad = max(3, int(round(3 * self.scale)))
+        dot_step = max(6, int(round(6 * self.scale)))
+        dot_pad = max(6, int(round(6 * self.scale)))
+        d.rectangle([x, y, x + self.card_w - 1, y + self.card_h - 1],
+                    fill=(0, 0, 150),
                     outline=BLACK)
-        d.rectangle([x + 3, y + 3, x + CW - 4, y + CH - 4], outline=(120, 160,
-                                                                      255))
-        for gy in range(y + 6, y + CH - 5, 6):
-            for gx in range(x + 6, x + CW - 5, 6):
+        d.rectangle([x + pad, y + pad,
+                     x + self.card_w - pad - 1,
+                     y + self.card_h - pad - 1], outline=(120, 160, 255))
+        for gy in range(y + dot_pad, y + self.card_h - dot_pad + 1, dot_step):
+            for gx in range(x + dot_pad, x + self.card_w - dot_pad + 1,
+                            dot_step):
                 d.point((gx, gy), fill=(120, 160, 255))
         self._round(d, x, y)
 
     def _face(self, d, x, y, c):
-        d.rectangle([x, y, x + CW - 1, y + CH - 1], fill=T.WINDOW_BG,
+        d.rectangle([x, y, x + self.card_w - 1, y + self.card_h - 1],
+                    fill=T.WINDOW_BG,
                     outline=BLACK)
         self._round(d, x, y)
         col = RED if _red(c) else BLACK
         r = RANKS[c.rank]
-        d.text((x + 3, y + 2), r, font=T.FONT, fill=col)
-        _PIP[c.suit](d, x + 6, y + 20, 3, col)
-        _PIP[c.suit](d, x + CW // 2, y + CH // 2 + 3, 11, col)
-        rw = T.text_w(T.FONT, r)
-        d.text((x + CW - 4 - rw, y + CH - 15), r, font=T.FONT, fill=col)
+        s = self.scale
+        rank_font = self.rank_font
+        d.text((x + max(3, int(round(3 * s))),
+                y + max(2, int(round(2 * s)))), r, font=rank_font, fill=col)
+        _PIP[c.suit](d, x + max(6, int(round(6 * s))),
+                     y + max(20, int(round(20 * s))),
+                     max(3, int(round(3 * s))), col)
+        _PIP[c.suit](d, x + self.card_w // 2,
+                     y + self.card_h // 2 + max(3, int(round(3 * s))),
+                     max(11, int(round(11 * s))), col)
+        rw = T.text_w(rank_font, r)
+        d.text((x + self.card_w - max(4, int(round(4 * s))) - rw,
+                y + self.card_h - max(15, int(round(15 * s)))),
+               r, font=rank_font, fill=col)
 
     # ── menus ─────────────────────────────────────────────────────────────────
     def _game_menu(self):
