@@ -19,6 +19,7 @@ import theme as T
 import widgets as W
 import wm
 
+import clipboard                  # one shared clipboard across panes/windows
 import stream                     # from config/ (main.py puts it on the path)
 import xinject
 from Xlib import display as xdisplay, X
@@ -119,6 +120,13 @@ class XPane(wm.Window):
             raise
         self.add(_XSurface(self, aw, ah))
         self.set_focus(self.widgets[-1])
+        # bridge this pane's private CLIPBOARD to the shared hub. Best-effort:
+        # a copy/paste failure must never stop the app window from opening.
+        self.clip = None
+        try:
+            self.clip = clipboard.SelectionBridge(desk, f":{n}", self.sup.xauth)
+        except Exception:
+            self.clip = None
         self._born = time.time()
         # fill: a general app opened "in a window" should maximize; with no WM
         # on the Xvfb we resize its main window ourselves until it settles
@@ -322,6 +330,8 @@ class XPane(wm.Window):
         if self._dead:
             return
         self._dead = True
+        if self.clip is not None:
+            self.clip.close()
         self.desk.remove_fd(self.ff.stdout.fileno())
         if self._tick in self.desk.tick_hooks:
             self.desk.tick_hooks.remove(self._tick)
