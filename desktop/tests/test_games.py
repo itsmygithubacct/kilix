@@ -58,6 +58,14 @@ try:
 finally:
     _sh.which = _which
 
+# Terminal Lander is a first-class Games entry, built from source like Bashed
+# Earth; game_ready dispatches to lander_ready (None until it's cloned+built).
+assert "terminal-lander" in games.GAMES
+assert games.GAMES["terminal-lander"]["icon"] == "lander"
+write("")                                        # empty conf, no [terminal-lander]
+assert games.lander_ready(games.load()) is None
+assert games.game_ready("terminal-lander") is None
+
 
 # F36: main() catches installer errors that don't subclass RuntimeError/OSError
 # (BadZipFile from a mirror serving HTML, TarError, configparser.Error) and
