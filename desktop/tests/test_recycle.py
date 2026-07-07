@@ -1,6 +1,7 @@
 """Recycle Bin library in isolation (desktop/recycle.py)."""
 import os
 import tempfile
+import json
 
 import harness  # noqa: F401  (sets sys.path for desktop modules)
 import recycle
@@ -93,6 +94,72 @@ def test_survives_corrupt_sidecar():
     items = recycle.items()                         # must not raise
     assert len(items) == 1 and items[0]["token"] == tok
     assert items[0]["name"] == tok                  # degraded but listed
+
+
+def test_send_sidecar_failure_leaves_source():
+    b, work = _bin()
+    p = os.path.join(work, "note.txt")
+    with open(p, "w") as f:
+        f.write("hello")
+    old_dump = recycle.json.dump
+
+    def boom(*_args, **_kw):
+        raise OSError("sidecar failed")
+
+    recycle.json.dump = boom
+    try:
+        raised = False
+        try:
+            recycle.send(p)
+        except OSError:
+            raised = True
+    finally:
+        recycle.json.dump = old_dump
+    assert raised
+    assert os.path.exists(p)                         # source never moved away
+    assert recycle.items() == []
+    assert os.listdir(os.path.join(b, "files")) == []
+
+
+def test_items_sanitize_valid_json_bad_types():
+    b, _ = _bin()
+    fdir = os.path.join(b, "files")
+    os.makedirs(fdir, exist_ok=True)
+    bad = os.path.join(fdir, "badtoken")
+    good = os.path.join(fdir, "goodtoken")
+    with open(bad, "w") as f:
+        f.write("bad")
+    with open(good, "w") as f:
+        f.write("good")
+    with open(bad + ".info", "w") as f:
+        json.dump({"orig": {}, "name": [], "when": "bad",
+                   "size": "large", "is_dir": "no"}, f)
+    with open(good + ".info", "w") as f:
+        json.dump({"orig": "/tmp/good", "name": "good.txt",
+                   "when": 1.0, "size": 4, "is_dir": False}, f)
+    items = recycle.items()                          # pre-fix: sort TypeError
+    by_token = {it["token"]: it for it in items}
+    assert by_token["badtoken"]["name"] == "badtoken"
+    assert by_token["badtoken"]["orig"] == ""
+    assert isinstance(by_token["badtoken"]["when"], float)
+    assert isinstance(by_token["badtoken"]["size"], int)
+    assert by_token["badtoken"]["is_dir"] is False
+    assert by_token["goodtoken"]["name"] == "good.txt"
+
+
+def test_pathlike_token_cannot_purge_or_restore_outside_bin():
+    _, work = _bin()
+    victim = os.path.join(work, "victim.txt")
+    with open(victim, "w") as f:
+        f.write("keep")
+    recycle.purge(victim)
+    assert os.path.exists(victim)
+    try:
+        recycle.restore(victim)
+    except KeyError:
+        pass
+    else:
+        raise AssertionError("restore accepted an absolute token")
 
 
 def test_missing_bin_regenerates():

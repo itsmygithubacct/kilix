@@ -59,12 +59,16 @@ def _spawn(desk, exe, path=None):
     _seed_sample(d)
     cmd = [exe] + ([os.path.abspath(os.path.expanduser(path))] if path
                    else [])
-    desk.wm.add(xpane.XPane(
-        desk, cmd, "Media Player", icon="amp",
-        # no app_size: the region fills the desktop working area, so the
-        # skin can be dragged anywhere like Winamp and its stacked windows
-        # (EQ / playlist) are never clipped
-        # private, persistent config: window layout survives sessions and
-        # never collides with a user-level kilix-amp install
-        env={"XDG_CONFIG_HOME": os.path.join(d, ".xpane-config")},
-        cwd=d))
+    try:
+        desk.wm.add(xpane.XPane(
+            desk, cmd, "Media Player", icon="amp",
+            # no app_size: the region fills the desktop working area, so the
+            # skin can be dragged anywhere like Winamp and its stacked windows
+            # (EQ / playlist) are never clipped
+            # private, persistent config: window layout survives sessions and
+            # never collides with a user-level kilix-amp install
+            env={"XDG_CONFIG_HOME": os.path.join(d, ".xpane-config")},
+            cwd=d))
+    except Exception as e:
+        wm.msgbox(desk, "Media Player",
+                  f"Could not open Media Player:\n{e}", icon="error")

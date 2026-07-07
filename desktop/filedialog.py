@@ -6,6 +6,7 @@ absolute path, or cb(None) on Cancel. Fixed-size, Win95 idiom.
 """
 import fnmatch
 import os
+import stat
 
 import icons
 import theme as T
@@ -170,6 +171,18 @@ class FileDialog(wm.Window):
             return
         if self.save:
             if os.path.exists(p):
+                try:
+                    st = os.stat(p)
+                except OSError as e:
+                    wm.msgbox(self.desk, self.title, str(e), icon="warn")
+                    return
+                if not stat.S_ISREG(st.st_mode):
+                    wm.msgbox(self.desk, self.title,
+                              f"{os.path.basename(p) or p}\n"
+                              "Cannot replace this special file.",
+                              icon="warn")
+                    return
+
                 def ans(a, q=p):
                     if a == "Yes":
                         self._done(q)
