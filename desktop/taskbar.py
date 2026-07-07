@@ -428,7 +428,7 @@ class Taskbar:
             disc = app_items("Games")
             if disc:
                 items.append(sub())
-                items.extend(disc)
+                items.append(MI("System", icon="games", submenu=disc))
             return items
 
         def accessories():

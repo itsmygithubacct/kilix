@@ -51,10 +51,12 @@ def main():
     assert programs is not None and programs.submenu, "no Programs submenu"
     prog = programs.submenu
 
-    # Games app rides in the Games submenu
+    # discovered games nest in a "System" submenu under Games
     games = _find(prog, "Games").submenu
-    g = _find(games, "Sample Game")
-    assert g is not None, _labels(games)
+    system = _find(games, "System")
+    assert system is not None and system.submenu, _labels(games)
+    g = _find(system.submenu, "Sample Game")
+    assert g is not None, _labels(system.submenu)
     assert callable(g.action)
 
     # Accessories app rides in the Accessories submenu
@@ -111,8 +113,8 @@ def main():
     prog2 = _find(desk.menus.stack[0].items, "Programs").submenu
     assert _find(prog2, "Graphics") is None
     assert _find(prog2, "Internet") is None
-    # built-ins still there; discovered games/accessories gone
-    assert _find(_find(prog2, "Games").submenu, "Sample Game") is None
+    # built-ins still there; the "System" submenu vanishes with nothing found
+    assert _find(_find(prog2, "Games").submenu, "System") is None
     assert _find(prog2, "Media Player") is not None
     print("ok")
 
