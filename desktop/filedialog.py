@@ -17,12 +17,14 @@ _DEFAULT_FILTERS = [("All Files", "*.*")]
 
 class FileDialog(wm.Window):
     def __init__(self, desk, title, cb, save=False, start=None, filters=None,
-                 filename=""):
+                 filename="", pick_dir=False):
         super().__init__(desk, title, 460, 330, icon="folder_open",
                          resizable=False, modal=True)
         self.cb = cb
         self.save = save
-        self.filters = filters or _DEFAULT_FILTERS
+        self.pick_dir = pick_dir           # choose a folder instead of a file
+        self.filters = ([("Folders", "")] if pick_dir
+                        else (filters or _DEFAULT_FILTERS))
         self.cwd = os.path.expanduser("~")
         self._ancestors = []
         self._filled = False
@@ -40,12 +42,12 @@ class FileDialog(wm.Window):
                                        on_activate=self._activate,
                                        on_select=self._select))
 
-        self.add(W.Label(10, ch - 57, "File name:"))
+        self.add(W.Label(10, ch - 57, "Folder:" if pick_dir else "File name:"))
         self.name = self.add(W.TextField(80, ch - 60, cw - 80 - 95,
                                          os.path.basename(filename),
                                          on_enter=lambda _t: self._confirm()))
-        self.add(W.Button(cw - 85, ch - 61, 75, 23,
-                          "Save" if save else "Open", cb=self._confirm,
+        ok = "Select" if pick_dir else ("Save" if save else "Open")
+        self.add(W.Button(cw - 85, ch - 61, 75, 23, ok, cb=self._confirm,
                           default=True))
 
         self.add(W.Label(10, ch - 29, "Files of type:"))
@@ -109,7 +111,8 @@ class FileDialog(wm.Window):
             elif self._match(n):
                 files.append((n, full))
         items = [("folder", n, ("dir", f)) for n, f in dirs]
-        items += [(icons.for_path(f), n, ("file", f)) for n, f in files]
+        if not self.pick_dir:                       # folder mode: dirs only
+            items += [(icons.for_path(f), n, ("file", f)) for n, f in files]
         self.list.set_items(items)
         self._filled = True
         self._update_lookin()
@@ -131,7 +134,7 @@ class FileDialog(wm.Window):
     # ── selection ───────────────────────────────────────────────────────────
     def _select(self, item):
         kind, path = item[2]
-        if kind == "file":
+        if kind == "file" or (self.pick_dir and kind == "dir"):
             self.name.set(os.path.basename(path))
 
     def _activate(self, item):
@@ -145,6 +148,16 @@ class FileDialog(wm.Window):
     # ── confirm / cancel ────────────────────────────────────────────────────
     def _confirm(self):
         text = self.name.text.strip()
+        if self.pick_dir:
+            # Select chooses the current folder, or a typed/selected subfolder
+            p = os.path.abspath(os.path.join(
+                self.cwd, os.path.expanduser(text))) if text else self.cwd
+            if os.path.isdir(p):
+                self._done(p)
+            else:
+                wm.msgbox(self.desk, self.title,
+                          f"{text}\nis not a folder.", icon="warn")
+            return
         if not text:
             return
         p = os.path.expanduser(text)
@@ -198,3 +211,8 @@ def open_file(desk, title, cb, start=None, filters=None, filename=""):
 def save_file(desk, title, cb, start=None, filters=None, filename=""):
     return FileDialog(desk, title, cb, save=True, start=start,
                       filters=filters, filename=filename)
+
+
+def pick_folder(desk, title, cb, start=None):
+    """Choose a directory. cb(path) with the chosen folder, or cb(None)."""
+    return FileDialog(desk, title, cb, start=start, pick_dir=True)

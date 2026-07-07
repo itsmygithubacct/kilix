@@ -10,6 +10,7 @@ import fnmatch
 import os
 import time
 
+import filedialog
 import icons
 import theme as T
 import widgets as W
@@ -145,9 +146,9 @@ class FindFiles(wm.Window):
         self.invalidate()
 
     def _browse(self):
-        wm.inputbox(self.desk, "Look In", "Folder to search:",
-                    self.f_look.text, cb=lambda p: p and self.f_look.set(p),
-                    icon="find")
+        filedialog.pick_folder(self.desk, "Look In",
+                               lambda p: p and self.f_look.set(p),
+                               start=self.f_look.text or None)
 
     # ── the bounded walk (one chunk per loop pass) ───────────────────────────
     def _tick(self, now):
