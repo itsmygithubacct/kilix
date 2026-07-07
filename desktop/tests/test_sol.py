@@ -90,4 +90,46 @@ assert before
 H.click(d, gx + win._col_x(0) + 10, gy + win.top_y + 10)
 assert len(win.stock) == before and not win.waste, "empty stock should recycle"
 
+# ── BUG 1: dragging the top waste card reveals the card beneath at source ──
+from PIL import Image, ImageDraw
+
+win.draw3 = False
+beneath, top = Card(1, 0, True), Card(2, 1, True)   # A♠ under 2♥
+win.waste = [beneath, top]
+win.fan = 1
+win.drag = {"src": win.waste, "k": len(win.waste) - 1,
+            "gx": 0, "gy": 0, "x": 300, "y": 200}
+calls = []
+win._face = lambda dr, x, y, c: calls.append((x, y, c))
+cw, ch = win.client_size()
+img = Image.new("RGB", (cw, ch), (0, 0, 0))
+win.draw_client(ImageDraw.Draw(img), img)
+at_waste = [c for (x, y, c) in calls
+            if x == win._col_x(1) and y == win.top_y]
+assert at_waste == [beneath], "waste should show the card beneath the dragged one"
+floats = [(x, y) for (x, y, c) in calls if c is top]
+assert floats == [(300, 200)], "dragged card floats exactly once at the cursor"
+del win._face
+win.drag = None
+
+# ── BUG 2: a forgiving drop lands on the most-overlapped legal column ──
+win.found = [[], [], [], []]
+win.tab = [[] for _ in range(7)]
+win.tab[0] = [Card(5, 0, True)]                     # 5♠ run
+win.tab[2] = [Card(6, 1, True)]                     # 6♥ target (legal)
+# center-x rounds into column 3's half, yet the rect overlaps column 2 most
+win.drag = {"src": win.tab[0], "k": 0, "gx": 0, "gy": 0,
+            "x": win._col_x(2) + 25, "y": win.tab_y + 5}
+win._drop(0, 0)
+assert not win.tab[0] and len(win.tab[2]) == 2, "off-center drop lands on legal col"
+
+# ── BUG 2: a drop overlapping no legal target snaps back ──
+win.tab = [[] for _ in range(7)]
+win.found = [[], [], [], []]
+win.tab[0] = [Card(7, 0, True)]                     # 7♠, no empty-col/home fit
+win.drag = {"src": win.tab[0], "k": 0, "gx": 0, "gy": 0,
+            "x": win._col_x(3) + 5, "y": win.tab_y + 5}
+win._drop(0, 0)
+assert len(win.tab[0]) == 1, "no legal target → snap back"
+
 print("ok")
