@@ -9,6 +9,7 @@ down. Also here: InstallerWindow, a small log-tailing window that runs
 `games.py <target> --setup-only` and fires a callback on success.
 """
 import os
+import signal
 import subprocess
 import tempfile
 import time
@@ -459,7 +460,7 @@ class InstallerWindow(wm.Window):
             ["python3", os.path.join(_here, "games.py"), target,
              "--setup-only"],
             stdout=self.log, stderr=subprocess.STDOUT,
-            stdin=subprocess.DEVNULL)
+            stdin=subprocess.DEVNULL, start_new_session=True)
         self._done = False
         self._log_len = 0
         desk.tick_hooks.append(self._tick)
@@ -502,5 +503,16 @@ class InstallerWindow(wm.Window):
         if self._tick in self.desk.tick_hooks:
             self.desk.tick_hooks.remove(self._tick)
         if self.proc.poll() is None:
-            self.proc.terminate()
+            try:
+                os.killpg(self.proc.pid, signal.SIGTERM)
+                self.proc.wait(timeout=3)
+            except Exception:
+                try:
+                    os.killpg(self.proc.pid, signal.SIGKILL)
+                except Exception:
+                    pass
+                try:
+                    self.proc.wait(timeout=1)
+                except Exception:
+                    pass
         self.close()

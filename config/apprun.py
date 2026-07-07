@@ -58,6 +58,36 @@ def log(*a):
             f.write(f"[{time.time():.3f}] " + " ".join(str(x) for x in a) + "\n")
 
 
+def _close_proc_streams(p):
+    for stream_obj in (getattr(p, "stdin", None), getattr(p, "stdout", None),
+                       getattr(p, "stderr", None)):
+        if stream_obj is None:
+            continue
+        try:
+            stream_obj.close()
+        except Exception:
+            pass
+
+
+def _stop_proc(p, timeout=3):
+    if p is None:
+        return
+    try:
+        if p.poll() is None:
+            p.terminate()
+        p.wait(timeout=timeout)
+    except Exception:
+        try:
+            p.kill()
+        except Exception:
+            pass
+        try:
+            p.wait(timeout=1)
+        except Exception:
+            pass
+    _close_proc_streams(p)
+
+
 def find_xvfb():
     p = shutil.which("Xvfb")
     if p:
@@ -389,14 +419,8 @@ class AppPane:
         static screen was measured wasting ~2200 dup frames per session — and
         shifts back up on the first change (detected within 1/IDLE_FPS s)."""
         if self.ff is not None:
-            try:
-                self.ff.terminate()
-                self.ff.wait(timeout=2)
-            except Exception:
-                try:
-                    self.ff.kill()
-                except Exception:
-                    pass
+            _stop_proc(self.ff, timeout=2)
+            self.ff = None
         del self.ffbuf[:]                # drop any partial frame
         self.ff = subprocess.Popen(
             ["ffmpeg", "-loglevel", "quiet",
@@ -685,15 +709,7 @@ class AppPane:
             if getattr(self, "inj", None) is not None:
                 self.inj.release_all()   # no keys/buttons left stuck down
             for p in (self.app, self.ff, self.xvfb):
-                if p is not None:
-                    try:
-                        p.terminate()
-                        p.wait(timeout=3)
-                    except Exception:
-                        try:
-                            p.kill()
-                        except Exception:
-                            pass
+                _stop_proc(p)
             for i in range(8):
                 try:
                     os.unlink(f"/dev/shm/tty-graphics-protocol-kilix-run-"

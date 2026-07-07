@@ -12,6 +12,7 @@ import icons
 import sounds
 import widgets as W
 from apps import soundcp
+from apps import amp as amp_mod
 
 sounds.reset()                                           # start on the default
 
@@ -93,6 +94,26 @@ win._select_event(win.events_lb.items[eids.index("error")])
 win._preview()                                           # must not raise
 win.snd_dd.index = len(win.sound_paths)                  # "(None)": nothing to play
 win._preview()
+
+# ── direct Media Player launch failure shows an error instead of bubbling ────
+import games
+old_ready = games.amp_ready
+old_xpane = amp_mod.xpane.XPane
+try:
+    games.amp_ready = lambda: "/bin/true"
+
+    def boom(*_args, **_kw):
+        raise RuntimeError("no xvfb")
+
+    amp_mod.xpane.XPane = boom
+    win._set_sound_path("/clips/broken.mp3")
+    win._open_amp()                                         # must not raise
+    box = d.wm.modal_top()
+    assert box.title == "Media Player"
+    box.close()
+finally:
+    games.amp_ready = old_ready
+    amp_mod.xpane.XPane = old_xpane
 
 # ── the panel paints without error ──────────────────────────────────────────
 d.render()

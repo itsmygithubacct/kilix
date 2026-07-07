@@ -249,7 +249,7 @@ class Shell:
             if kind == "path":
                 items.append(MI("Create Launcher…", icon="exe",
                                 action=lambda: self.create_launcher_dialog(
-                                    prefill_cmd=arg)))
+                                    prefill_cmd=shell_quote(arg))))
         else:
             items = [
                 MI("New Launcher…", icon="exe",
@@ -401,7 +401,7 @@ class Shell:
         def browse_cmd():
             import filedialog
             filedialog.open_file(desk, "Choose Program",
-                                 lambda p: p and f_cmd.set(p))
+                                 lambda p: p and f_cmd.set(shell_quote(p)))
         win.add(W.Button(cw - 44, y - 1, 32, 23, "…", cb=browse_cmd))
         y += 28
         win.add(W.Label(12, y + 3, "Start in:"))
@@ -512,29 +512,34 @@ class Shell:
                 return cand
         return None
 
-    def _spawn_kitty_launch(self, opts, cmd, title, cwd=None):
+    def _spawn_kitty_launch(self, opts, cmd, title, cwd=None,
+                            pause_on_error=True):
         """Run shell command `cmd` in a new kilix tab/window."""
         kitten = self._kitten()
         if not kitten or not os.environ.get("KITTY_LISTEN_ON"):
             wm.msgbox(self.desk, "kilix",
                       "Cannot reach kilix remote control\n"
                       "(KITTY_LISTEN_ON is not set).", icon="error")
-            return
+            return False
+        script = cmd
+        if pause_on_error:
+            script = (f'{cmd}; rc=$?; [ $rc -ne 0 ] && '
+                      f'{{ echo; echo "[exit $rc -- Enter to close]"; '
+                      f'read -r _; }}; exit $rc')
         argv = [kitten, "@", "launch", *opts, "--tab-title", title,
                 "--cwd", cwd or os.path.expanduser("~"), "--",
-                "bash", "-lc", f'{cmd}; rc=$?; [ $rc -ne 0 ] && '
-                f'{{ echo; echo "[exit $rc — Enter to close]"; read -r; }}']
-        self._popen(argv)
+                "bash", "-lc", script]
+        return self._popen(argv)
 
     def _tab(self, argv, title, cwd=None):
         kitten = self._kitten()
         if not kitten or not os.environ.get("KITTY_LISTEN_ON"):
             wm.msgbox(self.desk, "kilix", "Cannot reach kilix remote control\n"
                       "(KITTY_LISTEN_ON is not set).", icon="error")
-            return
-        self._popen([kitten, "@", "launch", "--type=tab", "--tab-title",
-                     title, "--cwd", cwd or os.path.expanduser("~"), "--"]
-                    + argv)
+            return False
+        return self._popen([kitten, "@", "launch", "--type=tab", "--tab-title",
+                            title, "--cwd", cwd or os.path.expanduser("~"), "--"]
+                           + argv)
 
     def _popen(self, argv, cwd=None):
         try:
@@ -545,25 +550,29 @@ class Shell:
         except OSError as e:
             wm.msgbox(self.desk, "kilix", f"Launch failed:\n{e}",
                       icon="error")
+            return False
+        return True
 
     def open_terminal(self, cwd=None):
         kitten = self._kitten()
         if not kitten or not os.environ.get("KITTY_LISTEN_ON"):
             wm.msgbox(self.desk, "kilix", "Cannot reach kilix remote control\n"
                       "(KITTY_LISTEN_ON is not set).", icon="error")
-            return
-        self._popen([kitten, "@", "launch", "--type=tab", "--tab-title",
-                     "Terminal", "--cwd", cwd or os.path.expanduser("~")])
+            return False
+        return self._popen([kitten, "@", "launch", "--type=tab", "--tab-title",
+                            "Terminal", "--cwd", cwd or os.path.expanduser("~")])
 
     def run_maintenance(self, cmd, title):
         """Run an update/maintenance command in a new kilix tab, pausing at the
         end so its output — and any prompt, e.g. `pleb update`'s restart
         question — stays readable. Backs the Start ▸ System launchers."""
+        done = f"== {title} finished -- press Enter to close =="
         self._spawn_kitty_launch(
             ["--type=tab"],
-            f'{cmd}; echo; '
-            f'echo "== {title} finished — press Enter to close =="; read -r _',
-            title)
+            f'{cmd}; rc=$?; echo; printf "%s\\n" {shell_quote(done)}; '
+            f'read -r _; exit $rc',
+            title,
+            pause_on_error=False)
 
     def open_url(self, url):
         if url is None:
@@ -855,17 +864,18 @@ class Shell:
         """Relaunch the kilix 95 desktop on a fresh process (loads updated
         code), then quit this one — the new tab takes over."""
         kilix = os.path.join(KILIX_HOME, "kilix")
-        self._tab(["env", "KILIX_IN_OVERLAY=1", kilix, "desktop"], "kilix 95")
-        self.desk.quit()
+        if self._tab(["env", "KILIX_IN_OVERLAY=1", kilix, "desktop"],
+                     "kilix 95"):
+            self.desk.quit()
 
     def _update_and_restart(self):
         kilix = os.path.join(KILIX_HOME, "kilix")
-        self._spawn_kitty_launch(
+        if self._spawn_kitty_launch(
             ["--type=tab"],
-            f'{self._best_update_command()}; echo; '
+            f'{self._best_update_command()} && '
             f'exec env KILIX_IN_OVERLAY=1 "{kilix}" desktop',
-            "Update and Restart")
-        self.desk.quit()
+            "Update and Restart"):
+            self.desk.quit()
 
     def _best_update_command(self):
         """The most complete updater present: the whole-stack script, else

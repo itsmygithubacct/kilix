@@ -2,6 +2,9 @@
 with object.__new__ and driven with fake procs/pipes and a fake Xlib tree.
 Each assertion fails on the pre-fix code path."""
 import os
+import signal
+import subprocess
+import tempfile
 
 import harness as H          # noqa: sets up sys.path for the imports below
 import theme as T
@@ -264,6 +267,83 @@ assert p.desk.wm.calls == []
 
 # _pump_wm is inert when the micro-WM never came up (bare pane, no _wm_on)
 object.__new__(xpane.XPane)._pump_wm()          # must not raise
+
+
+# ── StreamSupervisor cleanup closes parent fds and removes pid/runtime files ──
+old_xdg = os.environ.get("XDG_RUNTIME_DIR")
+runtime = tempfile.mkdtemp(prefix="kilix95-stream-")
+os.environ["XDG_RUNTIME_DIR"] = runtime
+try:
+    sup = xpane.stream.StreamSupervisor(f"test-{os.getpid()}")
+    logf = open(os.path.join(sup.runtime_dir, "child.log"), "wb")
+    proc = sup.spawn("child", ["sh", "-c", "printf x"],
+                     stdout=subprocess.PIPE, stderr=logf)
+    proc.wait(timeout=5)
+    pidfile = os.path.join(sup.runtime_dir, "child.pid")
+    assert os.path.exists(pidfile)
+    root = sup.runtime_dir
+    sup.cleanup()
+    assert proc.stdout.closed
+    assert logf.closed
+    assert not os.path.exists(pidfile)
+    assert not os.path.exists(root)
+finally:
+    if old_xdg is None:
+        os.environ.pop("XDG_RUNTIME_DIR", None)
+    else:
+        os.environ["XDG_RUNTIME_DIR"] = old_xdg
+
+try:
+    xpane.stream.StreamSupervisor("../bad")
+except ValueError:
+    pass
+else:
+    raise AssertionError("StreamSupervisor accepted a path-like session name")
+
+
+# ── installer cancellation kills the setup process group ─────────────────────
+class FakeInstallProc:
+    pid = 12345
+
+    def __init__(self):
+        self._rc = None
+        self.waits = 0
+
+    def poll(self):
+        return self._rc
+
+    def wait(self, timeout=None):
+        self.waits += 1
+        self._rc = -signal.SIGTERM
+        return self._rc
+
+
+orig_popen = xpane.subprocess.Popen
+orig_killpg = xpane.os.killpg
+seen = {"signals": []}
+fake_proc = FakeInstallProc()
+
+def fake_popen(*args, **kw):
+    seen["start_new_session"] = kw.get("start_new_session")
+    return fake_proc
+
+def fake_killpg(pid, sig):
+    seen["signals"].append((pid, sig))
+
+d = H.make_desk()
+xpane.subprocess.Popen = fake_popen
+xpane.os.killpg = fake_killpg
+try:
+    installer = xpane.InstallerWindow(d, "amp", "Media Player")
+    assert seen["start_new_session"] is True
+    assert installer._tick in d.tick_hooks
+    installer.request_close()
+    assert seen["signals"] == [(fake_proc.pid, signal.SIGTERM)]
+    assert fake_proc.waits == 1
+    assert installer._tick not in d.tick_hooks
+finally:
+    xpane.subprocess.Popen = orig_popen
+    xpane.os.killpg = orig_killpg
 
 
 print("test_xpane OK")

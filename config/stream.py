@@ -18,36 +18,133 @@ token+TLS wsbridge (config/wsbridge.py), never these primitives.
 import atexit
 import fcntl
 import glob
+import json
 import os
 import secrets
 import shutil
 import signal
 import socket
+import stat
 import subprocess
 import time
+
+
+def _runtime_root():
+    base = os.environ.get("XDG_RUNTIME_DIR") or os.environ.get("TMPDIR") or "/tmp"
+    return os.path.abspath(os.path.join(base, "kilix"))
+
+
+def _safe_session_name(session):
+    if (not isinstance(session, str) or not session
+            or session in (".", "..", "locks")
+            or "\0" in session or os.path.isabs(session)
+            or os.path.basename(session) != session
+            or (os.path.altsep and os.path.altsep in session)):
+        raise ValueError("kilix: invalid stream session name")
+    return session
+
+
+def _safe_runtime_dir(root, path):
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return False
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid():
+        return False
+    root_real = os.path.realpath(root)
+    path_real = os.path.realpath(path)
+    return path_real.startswith(root_real + os.sep)
+
+
+def _proc_stat(pid):
+    try:
+        with open(f"/proc/{int(pid)}/stat") as f:
+            data = f.read()
+        tail = data.rsplit(") ", 1)[1].split()
+        return {"state": tail[0], "start": tail[19] if len(tail) > 19 else None}
+    except (OSError, ValueError, IndexError):
+        return {}
+
+
+def _proc_start_time(pid):
+    return _proc_stat(pid).get("start")
+
+
+def _read_pidfile(path):
+    try:
+        with open(path) as f:
+            data = f.read().strip()
+        meta = json.loads(data)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(meta, dict):
+        return None
+    pid = meta.get("pid")
+    start = meta.get("start")
+    if isinstance(pid, int) and pid > 0 and isinstance(start, str) and start:
+        return pid, start
+    return None
+
+
+def _pid_alive(pid):
+    st = _proc_stat(pid)
+    if st:
+        return st.get("state") != "Z"
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def _close_handles(handles):
+    for h in handles:
+        try:
+            h.close()
+        except Exception:
+            pass
 
 
 def kill_all():
     """Reap every kilix stream process (Xvnc/Xvfb/ffmpeg/bridge) recorded in the
     runtime dirs' pidfiles, and remove the session dirs. Backstop for a serve
     that was SIGKILLed (bypassing its own atexit/SIGTERM cleanup)."""
-    base = os.environ.get("XDG_RUNTIME_DIR") or os.environ.get("TMPDIR") or "/tmp"
-    root = os.path.join(base, "kilix")
+    root = _runtime_root()
     if not os.path.isdir(root):
         return 0
     killed = 0
-    for name in os.listdir(root):
-        d = os.path.join(root, name)
-        if name == "locks" or not os.path.isdir(d):
+    for ent in os.scandir(root):
+        if ent.name == "locks" or not ent.is_dir(follow_symlinks=False):
             continue
+        d = ent.path
+        if not _safe_runtime_dir(root, d):
+            continue
+        removable = True
         for pf in glob.glob(os.path.join(d, "*.pid")):
+            meta = _read_pidfile(pf)
+            if meta is None:
+                removable = False
+                continue
+            pid, start = meta
+            if _proc_start_time(pid) != start:
+                continue
             try:
-                pid = int(open(pf).read().strip())
                 os.kill(pid, signal.SIGTERM)
                 killed += 1
-            except (OSError, ValueError):
+            except OSError:
                 pass
-        shutil.rmtree(d, ignore_errors=True)
+            deadline = time.time() + 3
+            while _pid_alive(pid) and time.time() < deadline:
+                time.sleep(0.05)
+            if _pid_alive(pid):
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except OSError:
+                    pass
+            if _pid_alive(pid):
+                removable = False
+        if removable and _safe_runtime_dir(root, d):
+            shutil.rmtree(d, ignore_errors=True)
     return killed
 
 
@@ -226,21 +323,20 @@ def lan_ip():
 
 class StreamSupervisor:
     def __init__(self, session):
-        self.session = session
-        base = (os.environ.get("XDG_RUNTIME_DIR")
-                or os.environ.get("TMPDIR") or "/tmp")
-        self.runtime_dir = os.path.join(base, "kilix", session)
+        self.session = _safe_session_name(session)
+        self.runtime_root = _runtime_root()
+        self.runtime_dir = os.path.join(self.runtime_root, self.session)
         os.makedirs(self.runtime_dir, mode=0o700, exist_ok=True)
         # Display-number locks live in a SHARED dir (not the per-session runtime
         # dir), so the flock actually excludes OTHER concurrent serves from
         # picking the same X display before its socket appears.
-        self.lockdir = os.path.join(base, "kilix", "locks")
+        self.lockdir = os.path.join(self.runtime_root, "locks")
         os.makedirs(self.lockdir, mode=0o700, exist_ok=True)
         try:
             os.chmod(self.runtime_dir, 0o700)
         except OSError:
             pass
-        self.children = []     # list of (name, Popen)
+        self.children = []     # list of (name, Popen, parent_handles, pidfile)
         self._locks = []       # held flock fds reserving display numbers
         self._pulse_modules = []   # pactl null-sink module ids to unload
         self._cleaned = False
@@ -249,11 +345,26 @@ class StreamSupervisor:
 
     # ---- process bookkeeping ------------------------------------------------
     def spawn(self, name, argv, **kw):
-        p = subprocess.Popen(argv, **kw)
-        self.children.append((name, p))
+        handles = []
+        seen = set()
+        for key in ("stdin", "stdout", "stderr"):
+            h = kw.get(key)
+            if h is None or isinstance(h, int) or not hasattr(h, "close"):
+                continue
+            if id(h) in seen:
+                continue
+            seen.add(id(h))
+            handles.append(h)
         try:
-            with open(os.path.join(self.runtime_dir, f"{name}.pid"), "w") as f:
-                f.write(str(p.pid))
+            p = subprocess.Popen(argv, **kw)
+        except Exception:
+            _close_handles(handles)
+            raise
+        pidfile = os.path.join(self.runtime_dir, f"{name}.pid")
+        self.children.append((name, p, handles, pidfile))
+        try:
+            with open(pidfile, "w") as f:
+                json.dump({"pid": p.pid, "start": _proc_start_time(p.pid)}, f)
         except OSError:
             pass
         return p
@@ -262,14 +373,18 @@ class StreamSupervisor:
         if self._cleaned:
             return
         self._cleaned = True
-        for _name, p in reversed(self.children):
+        try:
+            atexit.unregister(self.cleanup)
+        except Exception:
+            pass
+        for _name, p, _handles, _pidfile in reversed(self.children):
             if p.poll() is None:
                 try:
                     p.terminate()
                 except Exception:
                     pass
         deadline = time.time() + 3
-        for _name, p in reversed(self.children):
+        for _name, p, handles, pidfile in reversed(self.children):
             try:
                 p.wait(timeout=max(0.0, deadline - time.time()))
             except Exception:
@@ -277,6 +392,24 @@ class StreamSupervisor:
                     p.kill()
                 except Exception:
                     pass
+                try:
+                    p.wait(timeout=1)
+                except Exception:
+                    pass
+            for stream in (getattr(p, "stdin", None), getattr(p, "stdout", None),
+                           getattr(p, "stderr", None)):
+                if stream is None:
+                    continue
+                try:
+                    stream.close()
+                except Exception:
+                    pass
+            _close_handles(handles)
+            try:
+                os.unlink(pidfile)
+            except OSError:
+                pass
+        self.children.clear()
         for fd in self._locks:
             try:
                 os.close(fd)
@@ -289,6 +422,8 @@ class StreamSupervisor:
             except Exception:
                 pass
         self._pulse_modules.clear()
+        if _safe_runtime_dir(self.runtime_root, self.runtime_dir):
+            shutil.rmtree(self.runtime_dir, ignore_errors=True)
 
     # ---- display allocation -------------------------------------------------
     def pick_display(self, lo=60, hi=120):

@@ -2,6 +2,7 @@ import os
 import signal
 
 import harness as H
+import filedialog
 import shell as shell_mod
 import widgets as W
 
@@ -133,6 +134,36 @@ def f58_launcher_write_error_dialog():
     assert err.title == "Create Launcher"
 
 
+def f58_launcher_context_quotes_desktop_path():
+    d = H.make_desk()
+    p = os.path.join(d.shell.dir, "two words;touch owned")
+    open(p, "w").close()
+    d.shell.refresh()
+    item = next(i for i in d.shell.grid.items if i["label"] == os.path.basename(p))
+    d.shell._context(item, H.ev("mouse", x=40, y=40))
+    _menu_item(d, "Create Launcher…").action()
+    dlg = H.find_window(d, "Window")
+    fields = [w for w in dlg.widgets if isinstance(w, W.TextField)]
+    assert fields[1].text == shell_mod.shell_quote(p)
+
+
+def f58_launcher_browse_quotes_program_path():
+    d = H.make_desk()
+    picked = os.path.join(d.shell.dir, "bad name;touch owned")
+    old = filedialog.open_file
+    try:
+        filedialog.open_file = lambda _desk, _title, cb, **_kw: cb(picked)
+        d.shell.create_launcher_dialog()
+        dlg = H.find_window(d, "Window")
+        browse = [w for w in dlg.widgets
+                  if isinstance(w, W.Button) and w.text == "…"][0]
+        browse.cb()
+        fields = [w for w in dlg.widgets if isinstance(w, W.TextField)]
+        assert fields[1].text == shell_mod.shell_quote(picked)
+    finally:
+        filedialog.open_file = old
+
+
 # ── F55: context Delete on a selected icon deletes the whole selection ────────
 def f55_context_delete_multi():
     d = H.make_desk()
@@ -190,6 +221,8 @@ f35_rename_no_clobber()
 f35_rename_normal_still_works()
 f35_rename_rejects_path_name()
 f58_launcher_write_error_dialog()
+f58_launcher_context_quotes_desktop_path()
+f58_launcher_browse_quotes_program_path()
 f55_context_delete_multi()
 f55_context_delete_unselected_one()
 f56_dash_launcher_not_separator()

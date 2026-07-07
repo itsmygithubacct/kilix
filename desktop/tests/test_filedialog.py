@@ -125,6 +125,21 @@ def test_save_prompts_on_overwrite():
     assert got["p"] == p
 
 
+def test_save_rejects_existing_special_file():
+    d = H.make_desk()
+    root = tempfile.mkdtemp()
+    fifo = os.path.join(root, "pipe")
+    os.mkfifo(fifo)
+    got = {}
+    dlg = filedialog.save_file(d, "Save As", lambda r: got.setdefault("p", r),
+                               start=root)
+    dlg.name.set("pipe")
+    dlg._confirm()
+    assert "p" not in got                            # no app callback to block
+    assert dlg in d.wm.windows
+    assert d.wm.modal_top() is not dlg               # warning msgbox on top
+
+
 def test_cancel_yields_none():
     d = H.make_desk()
     root = tempfile.mkdtemp()

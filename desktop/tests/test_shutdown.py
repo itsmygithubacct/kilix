@@ -38,6 +38,43 @@ w2 = d2.wm.windows[-1]
 _click(w2, "Cancel")
 assert w2 not in d2.wm.windows and d2.running
 
+# Restart only exits the old desktop after the replacement tab launches
+d3 = H.make_desk()
+d3.shell._tab = lambda *_args, **_kw: False
+d3.shell._restart_desktop()
+assert d3.running
+d3.shell._tab = lambda *_args, **_kw: True
+d3.shell._restart_desktop()
+assert not d3.running
+
+# Update-and-Restart gates the quit on launch success and gates restart on update
+d4 = H.make_desk()
+seen = {}
+d4.shell._best_update_command = lambda: "false"
+
+def _fake_spawn(opts, cmd, title, **kw):
+    seen.update({"opts": opts, "cmd": cmd, "title": title, "kw": kw})
+    return False
+
+d4.shell._spawn_kitty_launch = _fake_spawn
+d4.shell._update_and_restart()
+assert d4.running
+assert "false && exec env KILIX_IN_OVERLAY=1" in seen["cmd"]
+seen.clear()
+d4.shell._spawn_kitty_launch = lambda opts, cmd, title, **kw: (
+    seen.update({"cmd": cmd, "kw": kw}) or True)
+d4.shell._update_and_restart()
+assert not d4.running
+
+# Maintenance tabs preserve the command exit status after the pause
+d5 = H.make_desk()
+seen = {}
+d5.shell._spawn_kitty_launch = lambda opts, cmd, title, **kw: (
+    seen.update({"cmd": cmd, "kw": kw}) or True)
+d5.shell.run_maintenance("false", "Failing Task")
+assert seen["kw"]["pause_on_error"] is False
+assert "rc=$?" in seen["cmd"] and "exit $rc" in seen["cmd"]
+
 # Update-and-Restart uses the most complete updater available
 real_exists = os.path.exists
 try:
