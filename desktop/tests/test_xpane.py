@@ -71,6 +71,7 @@ assert closed == [1], "capture death must close the pane, not keep it alive"
 # both alive: heal position, do not close
 pane = object.__new__(xpane.XPane)
 pane._dead = False
+pane.fill = False                     # not a fill-to-maximize pane
 pane.app = FakeProc(rc=None)
 pane.ff = FakeProc(rc=None)
 log = []

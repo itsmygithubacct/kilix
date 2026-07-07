@@ -355,13 +355,18 @@ class StreamSupervisor:
             raise RuntimeError("kilix: Xvnc did not come up (see runtime log)")
         return p
 
-    def start_xvfb(self, n, w, h):
+    def start_xvfb(self, n, w, h, nocursor=False):
         xvfb = find_xvfb()
         if not xvfb:
             raise RuntimeError("kilix: Xvfb not found")
         auth = self.make_xauth(n)
         argv = [xvfb, f":{n}", "-screen", "0", f"{w}x{h}x24",
                 "-nolisten", "tcp", "-auth", auth] + _fontpath_args()
+        if nocursor:
+            # Xvfb draws a software cursor (the black root "X") into the
+            # framebuffer, so ffmpeg -draw_mouse 0 can't remove it; disable it
+            # entirely where the desktop paints its own pointer instead.
+            argv.append("-nocursor")
         logf = open(os.path.join(self.runtime_dir, f"xvfb-{n}.log"), "wb")
         p = self.spawn(f"xvfb-{n}", argv, stdout=logf, stderr=logf)
         if not self._wait_x(n):

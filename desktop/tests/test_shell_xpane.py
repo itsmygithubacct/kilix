@@ -11,8 +11,8 @@ class FakePane(wm.Window):
     with the error-dialog fallback)."""
     made = []
 
-    def __init__(self, desk, argv, title, icon="exe", cwd=None):
-        FakePane.made.append((argv, title, icon, cwd))
+    def __init__(self, desk, argv, title, icon="exe", cwd=None, fill=False):
+        FakePane.made.append((argv, title, icon, cwd, fill))
         super().__init__(desk, title, 400, 300, icon=icon)
 
 
@@ -37,10 +37,11 @@ def opens_window():
     assert len(d.wm.windows) == n0 + 1, "no window added"
     assert isinstance(d.wm.windows[-1], FakePane), \
         "the added window must be the pane itself, not an error dialog"
-    argv, title, icon, cwd = FakePane.made[-1]
+    argv, title, icon, cwd, fill = FakePane.made[-1]
     assert argv == ["xterm", "-e", "top"], argv
     assert title == "xterm" and icon == "terminal"
     assert cwd, "cwd must default to the home directory"
+    assert fill is True, "open_in_xpane must maximize the app to fill the window"
 
 
 # ── a raising XPane (Xvfb unavailable) shows an error box, no crash ──────────

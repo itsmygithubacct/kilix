@@ -63,7 +63,7 @@ class XPane(wm.Window):
     _seq2 = 0
 
     def __init__(self, desk, cmd, title, icon="exe", app_size=None,
-                 fps=15, env=None, cwd=None):
+                 fps=15, env=None, cwd=None, fill=False):
         sw, sh = desk.size()
         aw, ah = app_size or (sw, sh - T.TASKBAR_H)
         super().__init__(desk, title, aw, ah, x=0, y=0, icon=icon,
@@ -83,7 +83,8 @@ class XPane(wm.Window):
         # any failure past here leaks Xvfb/app/display-lock unless we clean up
         try:
             n = self.sup.pick_display()
-            self.sup.start_xvfb(n, aw, ah)
+            # the desktop paints its own pointer, so hide Xvfb's software cursor
+            self.sup.start_xvfb(n, aw, ah, nocursor=True)
             e = dict(os.environ, DISPLAY=f":{n}",
                      XAUTHORITY=self.sup.xauth, **(env or {}))
             # python-xlib reads XAUTHORITY at connect time; each pane connects
@@ -109,6 +110,11 @@ class XPane(wm.Window):
         self.add(_XSurface(self, aw, ah))
         self.set_focus(self.widgets[-1])
         self._born = time.time()
+        # fill: a general app opened "in a window" should maximize; with no WM
+        # on the Xvfb we resize its main window ourselves until it settles
+        self.fill = fill
+        self._fill_deadline = self._born + 15 if fill else 0.0
+        self._fill_at = 0.0
         desk.add_fd(self.ff.stdout.fileno(), self._pump)
         desk.tick_hooks.append(self._tick)
 
@@ -170,7 +176,35 @@ class XPane(wm.Window):
         if self.app.poll() is not None or self.ff.poll() is not None:
             self.close()                          # app or capture gone: close
             return
+        if self.fill and now < self._fill_deadline and now >= self._fill_at:
+            self._fill_at = now + 0.5             # re-fill twice a second while
+            self._fill_app_window()               # the app maps its main window
         self._keep_on_screen()
+
+    def _fill_app_window(self):
+        """No WM on the Xvfb: size the app's largest window to fill the pane, so
+        a general app opened 'in a window' maximizes instead of floating small."""
+        try:
+            best = None
+            for c in self.xd.screen().root.query_tree().children:
+                if c.get_attributes().map_state != X.IsViewable:
+                    continue
+                g = c.get_geometry()
+                if g.width <= 8 or g.height <= 8:  # skip tiny helper windows
+                    continue
+                area = g.width * g.height
+                if best is None or area > best[1]:
+                    best = (c, area, g)
+            if best:
+                c, _, g = best
+                if (g.x, g.y, g.width, g.height) != (0, 0, self.app_w,
+                                                     self.app_h):
+                    c.configure(x=0, y=0, width=self.app_w, height=self.app_h)
+                    self.xd.set_input_focus(c, X.RevertToPointerRoot,
+                                            X.CurrentTime)
+                    self.xd.sync()
+        except Exception:
+            pass
 
     def _keep_on_screen(self):
         """Keep every one of the app's windows fully within the visible
