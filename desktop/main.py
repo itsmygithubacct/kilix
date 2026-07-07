@@ -122,6 +122,8 @@ class Desk:
         self.dirty = True
         self.running = True
         self.clipboard = ""
+        self._clip_sinks = []         # realms that mirror the hub (XPanes, host)
+        self.clip_host = None         # host-X CLIPBOARD bridge (set up in run())
         self.draw_cursor = draw_cursor
         self.mouse_pos = (self.w // 2, self.h // 2)
         self.menus = W.MenuHost(self)
@@ -169,11 +171,32 @@ class Desk:
     def quit(self):
         self.running = False
 
-    def set_clipboard(self, text):
+    def add_clip_sink(self, sink):
+        """Register a realm (an XPane's Xvfb, the host X) that should mirror
+        the clipboard hub. `sink` is a callable(text)."""
+        self._clip_sinks.append(sink)
+
+    def remove_clip_sink(self, sink):
+        if sink in self._clip_sinks:
+            self._clip_sinks.remove(sink)
+
+    def set_clipboard(self, text, source=None):
+        """Publish `text` as the one clipboard. `source`, when given, is the
+        sink the copy came from — it is skipped in the fan-out so a read from
+        one realm never echoes straight back into it."""
         self.clipboard = text
-        if self.term:
+        # OSC 52 mirrors to the host terminal/tabs — but only when no host X
+        # bridge is active, or the two would fight over the host CLIPBOARD
+        if self.term and self.clip_host is None:
             b64 = base64.b64encode(text.encode()).decode()
             self.term.write(f"\x1b]52;c;{b64}\x07")
+        for sink in list(self._clip_sinks):
+            if sink is source:
+                continue
+            try:
+                sink(text)
+            except Exception:
+                pass
 
     def play_sound(self, name):
         """Fire-and-forget UI sound. No-op headless (term is None) or when the
@@ -594,6 +617,17 @@ class Desk:
             signal.signal(s, lambda *a: sys.exit(0))
         os.set_blocking(term.fd, False)
         term.enter()
+        # one clipboard across tabs/panes/windows: bridge the host X CLIPBOARD
+        # (where the terminal and its tabs live) into the hub. Best-effort — with
+        # no reachable host X (remote/nested share) OSC 52 stays the fallback.
+        if os.environ.get("KILIX_HOST_CLIP", "1") != "0" and \
+                os.environ.get("DISPLAY"):
+            try:
+                import clipboard as clip_mod
+                self.clip_host = clip_mod.SelectionBridge(
+                    self, os.environ["DISPLAY"])
+            except Exception:
+                self.clip_host = None
         try:
             import sounds
             sounds.warm()             # off-thread cache fill so no cue blocks the loop
