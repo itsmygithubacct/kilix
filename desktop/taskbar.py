@@ -39,7 +39,8 @@ class Taskbar:
         shell = self.desk.shell
         return [
             ("show_desktop", "Show Desktop", self._show_desktop),
-            ("browser", "Web Browser", lambda: shell.open_url(None)),
+            ("browser", "Web Browser",
+             lambda: shell.open_browser("firefox", "window")),
             ("folder_open", "File Manager",
              lambda: shell.open_app("filemgr")),
         ]
@@ -466,7 +467,25 @@ class Taskbar:
                    action=lambda: shell.open_app("filemgr")),
                 MI("Terminal", icon="terminal", action=shell.open_terminal),
                 MI("Web Browser", icon="browser",
-                   action=lambda: shell.open_url(None)),
+                   action=lambda: shell.open_browser("firefox", "window"),
+                   context=[
+                       MI("Open in Window",
+                          action=lambda: shell.open_browser("firefox", "window")),
+                       MI("Open in Tab",
+                          action=lambda: shell.open_browser("firefox", "tab")),
+                       MI("Open Fullscreen",
+                          action=lambda: shell.open_browser("firefox", "fullscreen")),
+                   ]),
+                MI("Chromium", icon="browser",
+                   action=lambda: shell.open_browser("chromium", "tab"),
+                   context=[
+                       MI("Open in Tab",
+                          action=lambda: shell.open_browser("chromium", "tab")),
+                       MI("Open in Window",
+                          action=lambda: shell.open_browser("chromium", "window")),
+                       MI("Open Fullscreen",
+                          action=lambda: shell.open_browser("chromium", "fullscreen")),
+                   ]),
                 MI("Media Player", icon="amp",
                    action=lambda: shell.open_app("amp")),
             ]

@@ -26,9 +26,10 @@ import wm
 _here = os.path.dirname(os.path.abspath(__file__))
 KILIX_HOME = os.environ.get("KILIX_HOME") or os.path.dirname(_here)
 
-OPEN_MODES = ["kilix tab", "kilix os-window", "kilix run (X11 app)",
-              "web browser"]
+OPEN_MODES = ["kilix tab", "kilix os-window", "kilix fullscreen",
+              "kilix run (X11 app)", "web browser"]
 MODE_KEYS = {"kilix tab": "tab", "kilix os-window": "window",
+             "kilix fullscreen": "fullscreen",
              "kilix run (X11 app)": "run", "web browser": "browse"}
 ICON_CHOICES = ["exe", "terminal", "doc", "doc_text", "doc_image", "folder",
                 "computer", "browser", "notepad", "settings", "display",
@@ -455,6 +456,10 @@ class Shell:
                       + split_cmd(cmd), name, cwd)
         elif mode == "window":
             self._spawn_kitty_launch(["--type=os-window"], cmd, name, cwd)
+        elif mode == "fullscreen":
+            # X11 app filling the whole screen, on a private Xvfb (XPane)
+            self.open_in_xpane(split_cmd(cmd), name, cwd=cwd,
+                               app_size=self.desk.size())
         else:
             self._spawn_kitty_launch(["--type=tab"], cmd, name, cwd)
 
@@ -520,6 +525,63 @@ class Shell:
             return
         self._tab([os.path.join(KILIX_HOME, "kilix"), "browse", url],
                   "browse", None)
+
+    FIREFOX_CANDS = ("firefox-esr", "firefox")
+    CHROME_CANDS = ("google-chrome", "google-chrome-stable", "chromium",
+                    "chromium-browser")
+    BROWSER_HOME = "https://duckduckgo.com/"
+
+    @staticmethod
+    def _first_on_path(cands):
+        for c in cands:
+            p = shutil.which(c)
+            if p:
+                return p
+        return None
+
+    def open_browser(self, which="firefox", mode=None, url=None):
+        """Launch a web browser from the desktop.
+
+        Firefox opens in a Win95 desktop window by default — its GUI runs under
+        software rendering (e.g. in a VM). Chromium opens in a tab by default,
+        drawn by the headless `kilix browse` engine, because its GUI crashes
+        under software rendering. mode overrides: "window", "tab", "fullscreen".
+        """
+        url = url or self.BROWSER_HOME
+        if which == "chromium":
+            if not self._first_on_path(self.CHROME_CANDS):
+                wm.msgbox(self.desk, "Chromium", "Chromium is not installed.",
+                          icon="error")
+                return
+            mode = mode or "tab"
+            if mode == "tab":               # headless chromium, drawn in the tab
+                self._tab([os.path.join(KILIX_HOME, "kilix"), "browse", url],
+                          "Chromium", None)
+            else:                           # GUI chromium (works where GL does)
+                self._browser_window(
+                    [self._first_on_path(self.CHROME_CANDS), "--no-sandbox", url],
+                    "Chromium", mode)
+            return
+        # firefox — the default browser
+        ff = self._first_on_path(self.FIREFOX_CANDS)
+        if not ff:
+            wm.msgbox(self.desk, "Firefox", "Firefox is not installed.",
+                      icon="error")
+            return
+        mode = mode or "window"
+        argv = [ff, "--no-remote", url]
+        if mode == "tab":
+            self._tab([os.path.join(KILIX_HOME, "kilix"), "run"] + argv,
+                      "Firefox", None)
+        else:                               # window / fullscreen
+            self._browser_window(argv, "Firefox", mode)
+
+    def _browser_window(self, argv, title, mode):
+        """Open a GUI browser as an XPane desktop window, sized per mode."""
+        sw, sh = self.desk.size()
+        size = (sw, sh) if mode == "fullscreen" \
+            else (int(sw * 0.82), int(sh * 0.82))
+        self.open_in_xpane(argv, title, icon="browser", app_size=size)
 
     def open_path(self, path, from_app=None):
         """The desktop's 'what do I do with this file' verb."""
@@ -619,14 +681,15 @@ class Shell:
         except Exception as e:            # an app must never take the desk down
             wm.msgbox(self.desk, "kilix 95", f"{app}: {e}", icon="error")
 
-    def open_in_xpane(self, argv, title, icon="exe", cwd=None):
+    def open_in_xpane(self, argv, title, icon="exe", cwd=None, app_size=None):
         """Open an X11 command (already-split argv) as a window ON the desktop,
-        the way apps/amp.py runs kilix-amp. An Xvfb/XPane failure shows an
-        error dialog — it must never take the desktop down."""
+        the way apps/amp.py runs kilix-amp. app_size (w, h) sizes the private
+        Xvfb / window; None fills the desktop (minus the taskbar). An Xvfb/XPane
+        failure shows an error dialog — it must never take the desktop down."""
         from apps import xpane
         try:
             self.desk.wm.add(xpane.XPane(
-                self.desk, list(argv), title, icon=icon,
+                self.desk, list(argv), title, icon=icon, app_size=app_size,
                 cwd=cwd or os.path.expanduser("~"), fill=True))
         except Exception as e:
             wm.msgbox(self.desk, title,

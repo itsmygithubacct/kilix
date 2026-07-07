@@ -299,10 +299,11 @@ def icon_for(entry):
 
 def launch(shell, entry, mode="tab"):
     """Open a discovered app. mode "tab" (default) synthesizes a launcher spec
-    and runs it in a kilix tab; mode "window" streams it into a desktop window
-    via XPane, the way the media player runs."""
+    and runs it in a kilix tab; "window" streams it into a Win95 desktop window
+    via XPane (the way the media player runs); "fullscreen" is the same, sized
+    to the whole screen."""
     name = entry.get("name") or "app"
-    if mode == "window":
+    if mode in ("window", "fullscreen"):
         try:                               # malformed Exec must not kill the desktop
             argv = shlex.split(entry.get("exec", ""))
         except ValueError:
@@ -311,8 +312,9 @@ def launch(shell, entry, mode="tab"):
             wm.msgbox(shell.desk, name, "Launcher has no Exec line.",
                       icon="error")
             return
+        size = shell.desk.size() if mode == "fullscreen" else None
         shell.open_in_xpane(argv, name, icon=icon_for(entry),
-                            cwd=entry.get("workdir") or None)
+                            cwd=entry.get("workdir") or None, app_size=size)
         return
     spec = {
         "Name": name,
@@ -330,4 +332,6 @@ def app_context(shell, entry):
     if not entry.get("terminal"):          # no tty on Xvfb → dead window
         items.append(
             MI("Open in window", action=lambda: launch(shell, entry, "window")))
+        items.append(
+            MI("Open fullscreen", action=lambda: launch(shell, entry, "fullscreen")))
     return items
