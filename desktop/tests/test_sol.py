@@ -132,4 +132,21 @@ win.drag = {"src": win.tab[0], "k": 0, "gx": 0, "gy": 0,
 win._drop(0, 0)
 assert len(win.tab[0]) == 1, "no legal target → snap back"
 
+# ── BUG 3: maximizing grows the board geometry, not just the felt ───────────
+win.new_game(seed=3)
+d.wm.toggle_maximize(win)
+assert win.maximized
+assert win.card_w > sol.CW and win.card_h > sol.CH, \
+    "maximized Solitaire should scale cards up"
+assert win.fan_x > sol.FAN_X and win.step > sol.STEP
+assert win.render().size == (win.w, win.h), "scaled Solitaire should render"
+gx, gy = win.client_origin()
+win.draw3 = False
+win.stock = [Card(1, 0)]
+win.waste = []
+win.fan = 0
+H.click(d, gx + win._col_x(0) + win.card_w // 2,
+        gy + win.top_y + win.card_h // 2)
+assert len(win.waste) == 1, "scaled stock click should still deal a card"
+
 print("ok")
