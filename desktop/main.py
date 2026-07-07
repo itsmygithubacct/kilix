@@ -571,6 +571,20 @@ class Desk:
             win.dirty = True
         self.dirty = True
 
+    def _first_run_help(self):
+        """First launch: open the Help book so a new user (e.g. a fresh
+        Plebian-OS boot into the kilix 95 desktop) gets oriented. A marker in
+        the persisted desktop state makes it pop exactly once."""
+        if self.shell.state.get("help_shown"):
+            return
+        self.shell.state["help_shown"] = True
+        self.shell._save_state()
+        try:
+            import apps
+            apps.open(self, "winhelp", None)
+        except Exception:
+            pass
+
     # ── main loop ───────────────────────────────────────────────────────────
     def run(self):
         term = self.term
@@ -586,6 +600,7 @@ class Desk:
         except Exception:
             pass
         self.play_sound("startup")
+        self._first_run_help()
         last_blink = time.time()
         self._last_blit = 0.0
         start = time.time()
