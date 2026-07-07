@@ -336,6 +336,17 @@ def _lander(p):
     p.px(8, 12, R)                                 # flame tip
 
 
+def _brokeout(p):
+    # a Breakout playfield: colored brick rows (separated by gaps), a ball,
+    # and a paddle. No black outlines — thin bricks would swallow them.
+    for x0, x1, col in ((1, 4, R), (6, 9, Y), (11, 14, N)):     # brick row 1
+        p.rect(x0, 2, x1, 4, fill=col)
+    for x0, x1, col in ((1, 4, C), (6, 9, DB), (11, 14, DR)):   # brick row 2
+        p.rect(x0, 5, x1, 7, fill=col)
+    p.rect(7, 10, 8, 11, fill=W)                                # the ball
+    p.rect(4, 13, 11, 14, fill=S, outline=G)                    # the paddle
+
+
 def _doom(p):
     # a cacodemon-ish grinning red sphere (all in-house pixel art)
     p.rect(4, 1, 11, 1, fill=DR)
@@ -518,7 +529,7 @@ ICONS = {
     "notepad": _notepad, "browser": _browser, "run": _run,
     "shutdown": _shutdown, "flame": _flame, "home": _home,
     "games": _games, "doom": _doom, "dosbox": _dosbox, "tank": _tank,
-    "lander": _lander,
+    "lander": _lander, "brokeout": _brokeout,
     "amp": _amp,
     "question": _question, "info": _info, "warn": _warn, "error": _error,
     "back": _arrow_left, "forward": _arrow_right, "up": _arrow_up,

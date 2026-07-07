@@ -66,6 +66,13 @@ write("")                                        # empty conf, no [terminal-land
 assert games.lander_ready(games.load()) is None
 assert games.game_ready("terminal-lander") is None
 
+# Kitty Brokeout is a first-class Games entry, built from source the same way.
+assert "kitty-brokeout" in games.GAMES
+assert games.GAMES["kitty-brokeout"]["icon"] == "brokeout"
+write("")                                        # empty conf, no [kitty-brokeout]
+assert games.brokeout_ready(games.load()) is None
+assert games.game_ready("kitty-brokeout") is None
+
 
 # F36: main() catches installer errors that don't subclass RuntimeError/OSError
 # (BadZipFile from a mirror serving HTML, TarError, configparser.Error) and
