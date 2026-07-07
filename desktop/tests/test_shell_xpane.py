@@ -11,7 +11,8 @@ class FakePane(wm.Window):
     with the error-dialog fallback)."""
     made = []
 
-    def __init__(self, desk, argv, title, icon="exe", cwd=None, fill=False):
+    def __init__(self, desk, argv, title, icon="exe", cwd=None, fill=False,
+                 app_size=None):
         FakePane.made.append((argv, title, icon, cwd, fill))
         super().__init__(desk, title, 400, 300, icon=icon)
 
