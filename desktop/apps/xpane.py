@@ -40,11 +40,15 @@ class _XSurface(W.Widget):
         self.pane = pane
 
     def draw(self, d, img):
-        if self.pane.frame_img is not None:
-            img.paste(self.pane.frame_img, (self.x, self.y))
+        p = self.pane
+        tw, th = p.w, p.h                    # scale the native frame to the window
+        fr = p.frame_img
+        if fr is not None:
+            if fr.size != (tw, th):
+                fr = fr.resize((tw, th))
+            img.paste(fr, (self.x, self.y))
         else:
-            img.paste(CHROMA, (self.x, self.y,
-                               self.x + self.w, self.y + self.h))
+            img.paste(CHROMA, (self.x, self.y, self.x + tw, self.y + th))
 
     def on_mouse(self, ev):
         self.pane.inject_mouse(ev)
@@ -68,6 +72,11 @@ class XPane(wm.Window):
         aw, ah = app_size or (sw, sh - T.TASKBAR_H)
         super().__init__(desk, title, aw, ah, x=0, y=0, icon=icon,
                          chromeless=True)
+        # resizable by scaling: the window resizes, but the app keeps rendering
+        # at its native Xvfb size (app_w/app_h) — the frame is scaled to fit and
+        # input coords are mapped back, so the Xvfb/ffmpeg never have to resize.
+        self.resizable = True
+        self.min_w, self.min_h = 240, 160
         XPane._seq2 += 1
         self.app_w, self.app_h = aw, ah
         self.frame_img = None
@@ -130,6 +139,19 @@ class XPane(wm.Window):
         except Exception:
             return False
 
+    def on_resize(self):
+        # window resized: grow the surface widget to fill it (so clicks in the
+        # enlarged area still land) — the frame is scaled at draw time — and keep
+        # the chroma mask matched to the new surface size for the compositor.
+        for w in self.widgets:
+            if isinstance(w, _XSurface):
+                w.w, w.h = self.w, self.h
+        if self.compose_mask is not None and \
+                self.compose_mask.size != (self.w, self.h):
+            self.compose_mask = self.compose_mask.resize(
+                (self.w, self.h), Image.NEAREST)
+        self.invalidate()
+
     def _paint_root_chroma(self):
         try:
             scr = self.xd.screen()
@@ -166,8 +188,10 @@ class XPane(wm.Window):
             # coefficients are positive), so this is an exact key.
             diff = ImageChops.difference(
                 self.frame_img, Image.new("RGB", self.frame_img.size, CHROMA))
-            self.compose_mask = diff.convert("L").point(
-                lambda v: 0 if v == 0 else 255)
+            mask = diff.convert("L").point(lambda v: 0 if v == 0 else 255)
+            if mask.size != (self.w, self.h):     # window resized: match surface
+                mask = mask.resize((self.w, self.h), Image.NEAREST)
+            self.compose_mask = mask
             self.invalidate()
 
     def _tick(self, now):
@@ -235,15 +259,17 @@ class XPane(wm.Window):
 
     # ── input out ───────────────────────────────────────────────────────────
     def inject_mouse(self, ev):
+        # the window may be scaled; map surface coords back to the native size
+        sx = self.app_w / self.w if self.w else 1.0
+        sy = self.app_h / self.h if self.h else 1.0
+        x, y = ev.x * sx, ev.y * sy
         try:
             if ev.wheel:
-                self.inj.move_click(ev.x, ev.y,
-                                    button=4 if ev.wheel < 0 else 5)
+                self.inj.move_click(x, y, button=4 if ev.wheel < 0 else 5)
             elif ev.move:
-                self.inj.move_click(ev.x, ev.y)
+                self.inj.move_click(x, y)
             else:
-                self.inj.move_click(ev.x, ev.y, button=ev.btn,
-                                    press=ev.press)
+                self.inj.move_click(x, y, button=ev.btn, press=ev.press)
         except Exception:
             pass
 
