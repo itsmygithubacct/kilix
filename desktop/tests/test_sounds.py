@@ -161,4 +161,25 @@ d.play_sound("startup")
 assert time.time() - t0 < 0.5
 sounds.reset()
 
+
+# ── character: open/close are short clicks; startup/shutdown are warm chimes ──
+def _dur(name):
+    with wave.open(sounds.ensure(name), "rb") as w:
+        return w.getnframes() / w.getframerate()
+
+assert _dur("open") < 0.06 and _dur("close") < 0.06, "open/close must be clicks"
+assert 1.4 < _dur("startup") < 2.1, "startup should be a warm chime"
+assert 1.3 < _dur("shutdown") < 2.0, "shutdown should be a warm chime"
+
+
+# ── a stale synth-version stamp wipes + regenerates the cached wavs ──────────
+stamp = os.path.join(sounds._data_dir(), ".synth-version")
+with open(stamp, "w") as f:
+    f.write("0")
+with open(sounds.path_for("startup"), "w") as f:
+    f.write("STALE")                                     # not a valid wav
+sounds._reconciled = False                               # allow a fresh reconcile
+assert sounds.ensure("startup"), "stale cache should regenerate"
+assert open(stamp).read().strip() == str(sounds.SYNTH_VERSION)
+
 print("ok")
