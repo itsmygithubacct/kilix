@@ -193,4 +193,65 @@ pane._keep_on_screen()
 # vw = min(1024, 640) = 640 -> nx = min(890, 640-120) = 520; y already fits
 assert child.configured == (520, 300), child.configured
 
+# ── micro-WM: the app's own title-bar buttons drive the kilix window via
+# _NET_WM_STATE / WM_CHANGE_STATE ClientMessages on the private Xvfb root ──────
+from Xlib.protocol import event as Xev
+
+
+class _WMRec:
+    def __init__(self):
+        self.calls = []
+
+    def toggle_maximize(self, w):
+        self.calls.append(("max", w))
+
+    def minimize(self, w):
+        self.calls.append(("min", w))
+
+
+def wm_pane():
+    p = object.__new__(xpane.XPane)
+    p._wm_on = True
+    p.desk = type("D", (), {"wm": _WMRec()})()
+    p._A_STATE, p._A_MAX_V, p._A_MAX_H, p._A_FULLSCR, p._A_CHANGE_STATE = (
+        100, 101, 102, 103, 104)
+    return p
+
+
+def _cm(ct, vals):
+    return Xev.ClientMessage(window=1, client_type=ct, data=(32, vals))
+
+
+# a maximize request (MAXIMIZED_VERT in the first atom slot) toggles our window
+p = wm_pane()
+p._handle_wm(_cm(100, [1, 101, 0, 1, 0]))
+assert p.desk.wm.calls == [("max", p)], p.desk.wm.calls
+
+# fullscreen (F11) in the second atom slot toggles it too
+p = wm_pane()
+p._handle_wm(_cm(100, [1, 0, 103, 1, 0]))
+assert p.desk.wm.calls == [("max", p)], p.desk.wm.calls
+
+# an unrelated _NET_WM_STATE (e.g. _NET_WM_STATE_ABOVE) is ignored
+p = wm_pane()
+p._handle_wm(_cm(100, [1, 555, 556, 1, 0]))
+assert p.desk.wm.calls == [], p.desk.wm.calls
+
+# WM_CHANGE_STATE -> IconicState minimizes; any other state does not
+p = wm_pane()
+p._handle_wm(_cm(104, [3, 0, 0, 0, 0]))
+assert p.desk.wm.calls == [("min", p)], p.desk.wm.calls
+p = wm_pane()
+p._handle_wm(_cm(104, [1, 0, 0, 0, 0]))       # NormalState
+assert p.desk.wm.calls == [], p.desk.wm.calls
+
+# non-ClientMessage events (the SubstructureNotify flood) are ignored
+p = wm_pane()
+p._handle_wm(type("E", (), {"type": X.MapNotify})())
+assert p.desk.wm.calls == []
+
+# _pump_wm is inert when the micro-WM never came up (bare pane, no _wm_on)
+object.__new__(xpane.XPane)._pump_wm()          # must not raise
+
+
 print("test_xpane OK")
