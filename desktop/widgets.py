@@ -1124,13 +1124,14 @@ class TabBar(Widget):
 
 class MenuItem:
     def __init__(self, label, action=None, icon=None, submenu=None,
-                 enabled=True, checked=False):
+                 enabled=True, checked=False, context=None):
         self.label = label            # "-" = separator
         self.action = action
         self.icon = icon
         self.submenu = submenu        # list[MenuItem]
         self.enabled = enabled
         self.checked = checked
+        self.context = context        # list[MenuItem] — right-click menu
 
 
 def sep():
@@ -1421,6 +1422,13 @@ class MenuHost:
             self.desk.dirty = True
             return True
         i = over.item_at(ev.x, ev.y)
+        if ev.press and ev.btn == 3:      # right-click opens an item's context
+            it = over.items[i] if i >= 0 else None
+            if it and it.enabled and it.context:
+                over.hot = i
+                self._eat_release = True  # swallow the matching right-release
+                self.open(it.context, ev.x, ev.y)
+            return True                   # a bare right-click never activates
         if ev.press and over.scrollable and i < 0:   # click a scroll arrow strip
             top, bot = over._content()
             if ev.y < top:
@@ -1441,11 +1449,11 @@ class MenuHost:
                 if it and it.submenu is not None and it.enabled:
                     self._cascade(over, it)
                 self.desk.dirty = True
-        elif not ev.press and ev.btn == 1:
+        elif not ev.press:
             if self._eat_release:          # release of the opening click (F12/F44)
                 self._eat_release = False
                 return True                # keep the menu open, select nothing
-            if i >= 0:
+            if ev.btn == 1 and i >= 0:
                 it = over.items[i]
                 if it.enabled and it.submenu is None and it.action:
                     self.close_all()

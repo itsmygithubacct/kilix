@@ -619,6 +619,20 @@ class Shell:
         except Exception as e:            # an app must never take the desk down
             wm.msgbox(self.desk, "kilix 95", f"{app}: {e}", icon="error")
 
+    def open_in_xpane(self, argv, title, icon="exe", cwd=None):
+        """Open an X11 command (already-split argv) as a window ON the desktop,
+        the way apps/amp.py runs kilix-amp. An Xvfb/XPane failure shows an
+        error dialog — it must never take the desktop down."""
+        from apps import xpane
+        try:
+            self.desk.wm.add(xpane.XPane(
+                self.desk, list(argv), title, icon=icon,
+                cwd=cwd or os.path.expanduser("~")))
+        except Exception as e:
+            wm.msgbox(self.desk, title,
+                      f"Could not open '{title}' in a window:\n{e}",
+                      icon="error")
+
     # ── recents ─────────────────────────────────────────────────────────────
     def add_recent(self, path):
         r = [p for p in self.state.get("recent", []) if p != path]
