@@ -376,10 +376,23 @@ class Shell:
         y += 28
         win.add(W.Label(12, y + 3, "Command:"))
         cmd0 = spec.get("URL") or spec.get("Exec") or prefill_cmd or ""
-        f_cmd = win.add(W.TextField(90, y, cw - 102, cmd0))
+        f_cmd = win.add(W.TextField(90, y, cw - 136, cmd0))
+
+        def browse_cmd():
+            import filedialog
+            filedialog.open_file(desk, "Choose Program",
+                                 lambda p: p and f_cmd.set(p))
+        win.add(W.Button(cw - 44, y - 1, 32, 23, "…", cb=browse_cmd))
         y += 28
         win.add(W.Label(12, y + 3, "Start in:"))
-        f_dir = win.add(W.TextField(90, y, cw - 102, spec.get("Path", "")))
+        f_dir = win.add(W.TextField(90, y, cw - 136, spec.get("Path", "")))
+
+        def browse_dir():
+            import filedialog
+            filedialog.pick_folder(desk, "Start in Folder",
+                                   lambda p: p and f_dir.set(p),
+                                   start=f_dir.text or None)
+        win.add(W.Button(cw - 44, y - 1, 32, 23, "…", cb=browse_dir))
         y += 28
         win.add(W.Label(12, y + 3, "Open in:"))
         mode0 = spec.get("X-Kilix-Open", "tab")
@@ -829,9 +842,20 @@ class Shell:
         for i, (name, col) in enumerate(WALL_COLORS):
             win.add(_Swatch(i, col, x, 26))
             x += sw_size + gap
-        win.add(W.Label(22, 70, "Wallpaper (PNG/JPG path, optional):"))
-        f_img = win.add(W.TextField(22, 108, cw - 130,
+        win.add(W.Label(22, 70, "Wallpaper (image file, optional):"))
+        f_img = win.add(W.TextField(22, 108, cw - 166,
                                     self.state.get("wall_image") or ""))
+
+        def browse_img():
+            import filedialog
+            filedialog.open_file(
+                desk, "Choose Wallpaper",
+                lambda p: p and f_img.set(p),
+                start=os.path.dirname(f_img.text) if f_img.text.strip()
+                else None,
+                filters=[("Images", "*.png;*.jpg;*.jpeg;*.bmp;*.gif"),
+                         ("All Files", "*.*")])
+        win.add(W.Button(cw - 140, 107, 30, 23, "…", cb=browse_img))
         modes = ["stretch", "tile", "center"]
         d_mode = win.add(W.Dropdown(cw - 100, 108, 78, modes,
                                     modes.index(self.state.get("wall_mode",

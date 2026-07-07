@@ -152,6 +152,56 @@ def test_inaccessible_nav_stays_put():
     assert d.wm.modal_top() is not dlg               # not-accessible warning shown
 
 
+# ── folder-picker mode (pick_folder) ─────────────────────────────────────────
+def test_pick_folder_lists_only_dirs():
+    d = H.make_desk()
+    root = tempfile.mkdtemp()
+    os.mkdir(os.path.join(root, "sub"))
+    open(os.path.join(root, "file.txt"), "w").close()
+    dlg = filedialog.pick_folder(d, "Look In", lambda p: None, start=root)
+    assert "sub" in _labels(dlg)                     # folders shown
+    assert "file.txt" not in _labels(dlg)            # files hidden
+
+
+def test_pick_folder_returns_current():
+    d = H.make_desk()
+    root = tempfile.mkdtemp()
+    got = {}
+    dlg = filedialog.pick_folder(d, "Look In",
+                                 lambda p: got.setdefault("p", p), start=root)
+    _click_button(dlg, "Select")                     # nothing picked → this folder
+    assert got["p"] == os.path.abspath(root)
+    assert dlg not in d.wm.windows
+
+
+def test_pick_folder_returns_selected_subdir():
+    d = H.make_desk()
+    root = tempfile.mkdtemp()
+    sub = os.path.join(root, "target")
+    os.mkdir(sub)
+    got = {}
+    dlg = filedialog.pick_folder(d, "Look In",
+                                 lambda p: got.setdefault("p", p), start=root)
+    dlg._select(_find(dlg, "target"))                # single-click a subfolder
+    assert dlg.name.text == "target"
+    _click_button(dlg, "Select")
+    assert got["p"] == sub
+
+
+def test_pick_folder_double_click_navigates_not_confirms():
+    d = H.make_desk()
+    root = tempfile.mkdtemp()
+    sub = os.path.join(root, "deep")
+    os.mkdir(sub)
+    got = {}
+    dlg = filedialog.pick_folder(d, "Look In",
+                                 lambda p: got.setdefault("p", p), start=root)
+    dlg._activate(_find(dlg, "deep"))                # double-click enters it
+    assert dlg.cwd == sub and "p" not in got         # navigated, not chosen yet
+    _click_button(dlg, "Select")
+    assert got["p"] == sub                           # now the entered folder
+
+
 if __name__ == "__main__":
     for _name, _fn in sorted(globals().items()):
         if _name.startswith("test_") and callable(_fn):
