@@ -8,6 +8,7 @@ import tempfile
 import harness as H
 import recycle
 import wm
+import widgets as W
 from apps import filemgr
 
 
@@ -32,6 +33,20 @@ def _select(win, label):
 
 def _labels(win):
     return [it["label"] for it in win.grid.items]
+
+
+def _field(desk):
+    dlg = desk.wm.modal_top()
+    return next(w for w in dlg.widgets if isinstance(w, W.TextField))
+
+
+def _click_dialog(desk, label):
+    dlg = desk.wm.modal_top()
+    for wdg in dlg.widgets:
+        if isinstance(wdg, W.Button) and wdg.text == label:
+            wdg.cb()
+            return
+    raise AssertionError(f"no {label!r} button in dialog")
 
 
 def test_copy_paste_makes_duplicate():
@@ -78,12 +93,7 @@ def test_delete_sends_to_recycle():
     sel = [_select(win, "trash.txt")]
     win._delete(sel)
     # confirm dialog: fire its Yes button
-    dlg = d.wm.modal_top()
-    import widgets as W
-    for wdg in dlg.widgets:
-        if isinstance(wdg, W.Button) and wdg.text == "Yes":
-            wdg.cb()
-            break
+    _click_dialog(d, "Yes")
     assert not os.path.exists(p)                                # gone from disk
     items = recycle.items()
     assert len(items) == 1 and items[0]["name"] == "trash.txt"  # in the bin
@@ -102,6 +112,38 @@ def test_drop_moves_into_folder():
     win._drop([src], box)
     assert not os.path.exists(os.path.join(root, "m.txt"))
     assert os.path.exists(os.path.join(root, "box", "m.txt"))
+
+
+def test_rename_refuses_existing_name():
+    d = H.make_desk()
+    root = tempfile.mkdtemp()
+    with open(os.path.join(root, "a.txt"), "w") as f:
+        f.write("A")
+    with open(os.path.join(root, "b.txt"), "w") as f:
+        f.write("B")
+    win = _win(d, root)
+    win._rename(_select(win, "a.txt"))
+    _field(d).set("b.txt")
+    _click_dialog(d, "OK")
+
+    assert os.path.exists(os.path.join(root, "a.txt"))
+    with open(os.path.join(root, "b.txt")) as f:
+        assert f.read() == "B"
+
+
+def test_rename_rejects_path_name():
+    d = H.make_desk()
+    root = tempfile.mkdtemp()
+    outside = os.path.join(os.path.dirname(root), "escape.txt")
+    with open(os.path.join(root, "a.txt"), "w") as f:
+        f.write("A")
+    win = _win(d, root)
+    win._rename(_select(win, "a.txt"))
+    _field(d).set("../escape.txt")
+    _click_dialog(d, "OK")
+
+    assert os.path.exists(os.path.join(root, "a.txt"))
+    assert not os.path.exists(outside)
 
 
 def test_properties_reports_size():

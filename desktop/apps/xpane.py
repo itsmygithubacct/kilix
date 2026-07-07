@@ -272,13 +272,19 @@ class XPane(wm.Window):
             return
         ct = ev.client_type
         if ct == self._A_STATE:
-            # [action, atom1, atom2, source, 0] — treat any maximize/fullscreen
-            # request as "the user hit maximize" and flip our window. Toggling
-            # (rather than obeying add/remove) keeps us in step with the app's
-            # button whether or not it echoes our state back.
+            # [action, atom1, atom2, source, 0]; action is
+            # 0=remove, 1=add, 2=toggle. Keep repeated add/remove messages
+            # idempotent so an app reasserting state cannot flip the pane back.
             if any(a in (self._A_MAX_V, self._A_MAX_H, self._A_FULLSCR)
                    for a in vals[1:3]):
-                self.desk.wm.toggle_maximize(self)
+                action = vals[0] if vals else 2
+                maximized = getattr(self, "maximized", False)
+                if action == 1 and not maximized:
+                    self.desk.wm.toggle_maximize(self)
+                elif action == 0 and maximized:
+                    self.desk.wm.toggle_maximize(self)
+                elif action == 2:
+                    self.desk.wm.toggle_maximize(self)
         elif ct == self._A_CHANGE_STATE:
             if vals and vals[0] == 3:              # IconicState → minimize
                 self.desk.wm.minimize(self)
