@@ -487,7 +487,13 @@ class Taskbar:
                           action=lambda: shell.open_browser("chromium", "fullscreen")),
                    ]),
                 MI("Media Player", icon="amp",
-                   action=lambda: shell.open_app("amp")),
+                   action=lambda: shell.open_app("amp"),
+                   context=[
+                       MI("Open File…", icon="amp",
+                          action=lambda: shell.open_media_file()),
+                       MI("Open Empty",
+                          action=lambda: shell.open_app("amp")),
+                   ]),
             ]
             user = shell.launcher_menu_items()
             if user:
