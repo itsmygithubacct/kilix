@@ -541,6 +541,18 @@ class Shell:
             f'echo "== {title} finished — press Enter to close =="; read -r _',
             title)
 
+    def open_media_file(self):
+        """Graphical picker → play the chosen file in the Media Player
+        (kilix-amp). It has no file dialog of its own inside the XPane, so the
+        desktop provides one and passes the file in on launch."""
+        import filedialog
+        from apps import amp
+        filedialog.open_file(
+            self.desk, "Open Media",
+            lambda p: p and amp.open_amp(self.desk, p),
+            filters=[("Audio", "*.mp3;*.ogg;*.wav;*.flac;*.mod;*.xm;*.s3m;"
+                      "*.it;*.mid"), ("All Files", "*.*")])
+
     def open_url(self, url):
         if url is None:
             wm.inputbox(self.desk, "Web Browser", "Address:", "https://",
@@ -795,13 +807,63 @@ class Shell:
                     "", cb=do, icon="run", width=320)
 
     def shutdown_dialog(self):
-        def do(ans):
-            if ans == "Shut Down":
-                self.desk.quit()
-        wm.msgbox(self.desk, "Shut Down kilix 95",
-                  "Are you sure you want to shut down the desktop?\n"
-                  "(Your kilix terminal stays running.)",
-                  icon="shutdown", buttons=("Shut Down", "Cancel"), cb=do)
+        desk = self.desk
+        win = wm.Window(desk, "Shut Down kilix 95", 300, 250,
+                        icon="shutdown", resizable=False, modal=True)
+        cw, ch = win.client_size()
+        win.add(W.Label(14, 12, "What do you want to do?"))
+
+        def choose(fn):
+            def go():
+                win.close()
+                fn()
+            return go
+
+        # one machine action (power off); the rest act on the desktop session
+        opts = [
+            ("Shut Down", self._power_off),          # turn the computer off
+            ("Restart", self._restart_desktop),      # relaunch the desktop
+            ("Exit to Terminal", desk.quit),         # leave the desktop → shell
+            ("Update and Restart", self._update_and_restart),
+        ]
+        y = 40
+        for label, fn in opts:
+            win.add(W.Button(14, y, cw - 28, 26, label, cb=choose(fn)))
+            y += 32
+        win.add(W.Button(cw - 90, y + 6, 76, 24, "Cancel", cb=win.close))
+        desk.wm.add(win)
+
+    # ── shutdown actions ────────────────────────────────────────────────────
+    def _power_off(self):
+        # run in a tab so a permission error (rather than a silent no-op) shows
+        self._spawn_kitty_launch(["--type=tab"], "systemctl poweroff",
+                                 "Shut Down")
+
+    def _restart_desktop(self):
+        """Relaunch the kilix 95 desktop on a fresh process (loads updated
+        code), then quit this one — the new tab takes over."""
+        kilix = os.path.join(KILIX_HOME, "kilix")
+        self._tab(["env", "KILIX_IN_OVERLAY=1", kilix, "desktop"], "kilix 95")
+        self.desk.quit()
+
+    def _update_and_restart(self):
+        kilix = os.path.join(KILIX_HOME, "kilix")
+        self._spawn_kitty_launch(
+            ["--type=tab"],
+            f'{self._best_update_command()}; echo; '
+            f'exec env KILIX_IN_OVERLAY=1 "{kilix}" desktop',
+            "Update and Restart")
+        self.desk.quit()
+
+    def _best_update_command(self):
+        """The most complete updater present: the whole-stack script, else
+        `pleb update`, else `kilix update`."""
+        if os.path.exists("/usr/local/bin/plebian-os-update"):
+            return "/usr/local/bin/plebian-os-update"
+        pleb = os.path.join(os.path.expanduser("~"), "pleb", "bin", "pleb")
+        if os.path.exists(pleb):
+            return f'"{pleb}" update'
+        return f'"{os.path.join(KILIX_HOME, "kilix")}" update'
 
     def about_dialog(self):
         wm.msgbox(self.desk, "About kilix 95",
