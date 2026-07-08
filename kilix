@@ -149,6 +149,14 @@ _kilix_remote_control() {
   KILIX_KITTEN="$KITTEN" exec python3 "$KILIX_HOME/config/remote.py" "$@"
 }
 
+_kilix_restore_pane_tty() {
+  # pop kbd protocol; disable mouse (btn-event/SGR/pixels) + bracketed paste;
+  # re-enable autowrap; delete all images; show cursor; leave alt screen. Each
+  # code is a no-op if the pane app already restored it.
+  printf '\033[<u\033[?1002l\033[?1003l\033[?1006l\033[?1016l\033[?2004l\033[?7h\033_Ga=d,d=A\033\\\033[?25h\033[?1049l'
+  stty sane 2>/dev/null || true
+}
+
 _kilix_screen_size_usage() {
   cat >&2 <<EOF
 usage: $_self screen-size [show|larger [STEP]|smaller [STEP]|reset|set POINTS|+POINTS|-POINTS|POINTS]
@@ -410,13 +418,7 @@ if [ "${1:-}" = "browse" ]; then
   else
     python3 "$KILIX_HOME/config/browse.py" "$@" || rc=$?
   fi
-  if [ "$rc" -ge 128 ]; then
-    # pop kbd protocol; disable mouse (btn-event/SGR/pixels) + bracketed
-    # paste; re-enable autowrap; delete all images; show cursor; leave alt
-    # screen. Each is a no-op if the state wasn't set, so this is safe.
-    printf '\033[<u\033[?1002l\033[?1003l\033[?1006l\033[?1016l\033[?2004l\033[?7h\033_Ga=d,d=A\033\\\033[?25h\033[?1049l'
-    stty sane 2>/dev/null || true
-  fi
+  [ "$rc" -eq 0 ] || _kilix_restore_pane_tty
   exit "$rc"
 fi
 
@@ -448,13 +450,7 @@ if [ "${1:-}" = "run" ]; then
   fi
   rc=0
   python3 "$KILIX_HOME/config/apprun.py" "$@" || rc=$?
-  if [ "$rc" -ge 128 ]; then
-    # apprun uses ?1003h (any-motion) mouse tracking, so this fallback must
-    # pop ?1003l too — otherwise a signal-killed kitten leaves the shell
-    # flooded with motion reports. ?1002l is a harmless no-op here.
-    printf '\033[<u\033[?1002l\033[?1003l\033[?1006l\033[?1016l\033[?2004l\033[?7h\033_Ga=d,d=A\033\\\033[?25h\033[?1049l'
-    stty sane 2>/dev/null || true
-  fi
+  [ "$rc" -eq 0 ] || _kilix_restore_pane_tty
   exit "$rc"
 fi
 
@@ -514,11 +510,7 @@ print(ids[0] if ids else "")' 2>/dev/null)"
     *)
       _kilix_desktop_die "internal error: no desktop mode selected" ;;
   esac
-  if [ "$rc" -ge 128 ]; then
-    # the desktop uses ?1003h any-motion mouse tracking, like apprun
-    printf '\033[<u\033[?1002l\033[?1003l\033[?1006l\033[?1016l\033[?2004l\033[?7h\033_Ga=d,d=A\033\\\033[?25h\033[?1049l'
-    stty sane 2>/dev/null || true
-  fi
+  [ "$rc" -eq 0 ] || _kilix_restore_pane_tty
   exit "$rc"
 fi
 
