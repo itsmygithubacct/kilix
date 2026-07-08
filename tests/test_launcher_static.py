@@ -64,6 +64,8 @@ class KilixLauncherTests(unittest.TestCase):
 
     def test_title_bar_screen_tracks_font_resize(self):
         window = (ROOT / "src" / "kitty" / "window.py").read_text()
+        titlebar = (ROOT / "src" / "kitty" / "window_title_bar.py").read_text()
+        self.assertIn("self.cell_height = cell_height", titlebar)
         self.assertIn("self._title_bar_screen.cell_width != cell_width", window)
         self.assertIn("self._title_bar_screen.cell_height != cell_height", window)
 
