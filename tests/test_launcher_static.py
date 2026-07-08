@@ -44,20 +44,28 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("load_config_file", launcher)
 
     def test_clickable_chrome_battery_indicator_is_wired(self):
-        titlebar = (ROOT / "src" / "kitty" / "window_title_bar.py").read_text()
+        battery = (ROOT / "src" / "kitty" / "kilix_battery.py").read_text()
+        tabbar = (ROOT / "src" / "kitty" / "tab_bar.py").read_text()
         tabs = (ROOT / "src" / "kitty" / "tabs.py").read_text()
         conf = (ROOT / "config" / "kitty.conf").read_text()
         readme = (ROOT / "README.md").read_text()
 
-        self.assertIn("KILIX_CHROME_BATTERY", titlebar)
-        self.assertIn("KILIX_BATTERY_SUPPLY_DIR", titlebar)
-        self.assertIn("s.lower() == 'discharging'", titlebar)
-        self.assertIn("_BATTERY_TOGGLE_ACTION", titlebar)
+        self.assertIn("KILIX_CHROME_BATTERY", battery)
+        self.assertIn("KILIX_BATTERY_SUPPLY_DIR", battery)
+        self.assertIn("s.lower() == 'discharging'", battery)
+        self.assertIn("BATTERY_TOGGLE_ACTION", battery)
+        self.assertIn("kilix_toggle_battery_percent", battery)
+        self.assertIn("battery_segment", tabbar)
+        self.assertIn("action_at", tabbar)
         self.assertIn("toggle_battery_percent", tabs)
-        self.assertIn("kilix_toggle_battery_percent", tabs)
         self.assertIn("U+F0079", conf)
         self.assertIn("U+F0083", conf)
         self.assertIn("Battery-in-chrome", readme)
+
+    def test_title_bar_screen_tracks_font_resize(self):
+        window = (ROOT / "src" / "kitty" / "window.py").read_text()
+        self.assertIn("self._title_bar_screen.cell_width != cell_width", window)
+        self.assertIn("self._title_bar_screen.cell_height != cell_height", window)
 
     def test_clickable_chrome_font_size_buttons_are_local(self):
         titlebar = (ROOT / "src" / "kitty" / "window_title_bar.py").read_text()

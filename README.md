@@ -16,7 +16,7 @@ kitty you already have (and `~/.config/kitty`) completely untouched.
 - **Clickable pane buttons** `+ - → ↓ ▢ ✕` — local font size, split-right /
   split-down, maximize, and close controls that highlight on hover.
 - **Battery-in-chrome** — on laptops, a green/yellow/red battery item appears at the
-  far right of the pane chrome while the battery is discharging; click it to show
+  far right of the page strip while the battery is discharging; click it to show
   percentage.
 - **Pane title menu** — click a pane's title for Tilix-style actions: rename, copy title,
   reset, clear, split right/down, close.
@@ -153,8 +153,8 @@ also lives on the `▢` button and `Ctrl+Alt+Z`).
 The active pane's header is highlighted (bright blue); inactive panes are grayed —
 matching Tilix's active-pane cue.
 
-When Linux reports a laptop battery is **discharging**, the far right of the title-bar
-chrome shows a battery status item. It is green above 50%, yellow at 50% and below,
+When Linux reports a laptop battery is **discharging**, the far right of the page
+strip shows a battery status item. It is green above 50%, yellow at 50% and below,
 red at 20% and below, and clicking it toggles between icon and percentage. Set
 `KILIX_CHROME_BATTERY=0` to hide it.
 
@@ -534,10 +534,12 @@ gtk-update-icon-cache -f ~/.local/share/icons/hicolor 2>/dev/null || true
 `./src` is a submodule of the
 [kitty fork](https://github.com/itsmygithubacct/kitty/tree/clickable-chrome)
 (branch `clickable-chrome`). It's a **full fork** — kilix keeps whatever changes make the
-best experience. The clickable-button feature is two Python files:
+best experience. The clickable-button feature is these Python files:
 
-- `kitty/window_title_bar.py` — draws `+ - → ↓ ▢ ✕` and the conditional battery
-  item in each pane title bar, recording which cells map to which kitty action.
+- `kitty/window_title_bar.py` — draws `+ - → ↓ ▢ ✕` in each pane title bar,
+  recording which cells map to which kitty action.
+- `kitty/kilix_battery.py` and `kitty/tab_bar.py` — read the Linux battery status and
+  draw the conditional battery item at the far right of the page strip.
 - `kitty/tabs.py` — `handle_window_title_bar_mouse` dispatches a button's action on a
   single left-click (`boss.combine`), double-click toggles maximize, and the quadrant
   drag-to-split hit-test uses the pane's true diagonals (rejecting drops on a maximized
