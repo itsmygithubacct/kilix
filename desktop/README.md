@@ -14,9 +14,9 @@ SGR-pixel mouse reporting (`?1003h`/`?1016h`), so mouse coordinates map
 1:1 onto framebuffer pixels. Rendering is damage-driven: the loop only
 repaints when something is dirty (input, clock tick, caret blink).
 
-Reuses from `config/`: `browse.Term` (raw mode + input parsing) and
-`gfx.py` (inline graphics for streamed sessions). Nothing else — the
-toolkit below is self-contained.
+Reuses the host through `config/kilix_sdk`: `kilix_sdk.term` provides raw mode
+and input parsing, while `kilix_sdk.graphics` provides inline graphics for
+streamed sessions. Nothing else — the toolkit below is self-contained.
 
 ## Modules
 
