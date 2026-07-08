@@ -24,13 +24,13 @@ import time
 
 _here = os.path.dirname(os.path.abspath(__file__))
 KILIX_HOME = os.environ.get("KILIX_HOME") or os.path.dirname(_here)
-sys.path.insert(0, os.path.join(KILIX_HOME, "config"))   # browse (Term), gfx
+sys.path.insert(0, os.path.join(KILIX_HOME, "config"))   # kilix_sdk
 sys.path.insert(0, _here)
 
 from PIL import Image
 
-import browse                        # Term: raw mode + kitty kbd/mouse parsing
-import gfx                           # inline t=d frames for streamed sessions
+from kilix_sdk import graphics as kilix_graphics
+from kilix_sdk import term as kilix_term
 import icons
 import shell as shell_mod
 import taskbar as taskbar_mod
@@ -38,14 +38,14 @@ import theme as T
 import widgets as W
 import wm as wm_mod
 
-# keys browse's parser doesn't map (it never needed F-keys): add them
-browse.SPECIAL_TILDE.update({
+# keys the host terminal parser doesn't map (it never needed F-keys): add them
+kilix_term.SPECIAL_TILDE.update({
     11: ("F1", "F1", 112), 12: ("F2", "F2", 113), 13: ("F3", "F3", 114),
     14: ("F4", "F4", 115), 15: ("F5", "F5", 116), 17: ("F6", "F6", 117),
     18: ("F7", "F7", 118), 19: ("F8", "F8", 119), 20: ("F9", "F9", 120),
     21: ("F10", "F10", 121), 23: ("F11", "F11", 122),
     24: ("F12", "F12", 123)})
-browse.SPECIAL_CSI.update({
+kilix_term.SPECIAL_CSI.update({
     "P": ("F1", "F1", 112), "Q": ("F2", "F2", 113),
     "S": ("F4", "F4", 115)})
 
@@ -63,8 +63,8 @@ for _i in range(10):
     _KEYPAD[57399 + _i] = (str(_i), str(_i))
 
 
-class DeskTerm(browse.Term):
-    """browse.Term with any-motion mouse tracking (hover, drags)."""
+class DeskTerm(kilix_term.Term):
+    """Kilix terminal parser with any-motion mouse tracking (hover, drags)."""
 
     def enter(self):
         import tty
@@ -104,7 +104,7 @@ class DeskTerm(browse.Term):
             # clients (mirrors blit_direct's in_tmux path).
             delete = "\x1b_Ga=d,d=A\x1b\\"
             if os.environ.get("KILIX_STREAM") == "1" and os.environ.get("TMUX"):
-                delete = gfx._tmux_wrap(delete)
+                delete = kilix_graphics.wrap_tmux_passthrough(delete)
             self.write("\x1b[<u\x1b[?1003l\x1b[?1006l\x1b[?1016l\x1b[?2004l"
                        "\x1b[?7h" + delete + "\x1b[?25h\x1b[?1049l")
         finally:
@@ -138,7 +138,7 @@ class Desk:
         self._owner_btn = 0           # button that captured mouse_owner/drag
         self._buttons = 0
         self._last_click = (0.0, -99, -99, 0, 0)
-        # graphics transport (mirrors browse.py)
+        # graphics transport (mirrors the host browser transport)
         self.stream = os.environ.get("KILIX_STREAM") == "1"
         wid = os.environ.get("KITTY_WINDOW_ID", str(os.getpid()))
         self.wid = wid
@@ -370,9 +370,9 @@ class Desk:
         self._last_blit = time.time()
         rgb = (img if img is not None else self.fb).tobytes()
         if self.stream:
-            gfx.blit_direct(self.term, rgb, self.w, self.h,
-                            self.term.cols, self.term.rows, self.img_id,
-                            in_tmux=bool(os.environ.get("TMUX")))
+            kilix_graphics.blit_direct(
+                self.term, rgb, self.w, self.h, self.term.cols,
+                self.term.rows, self.img_id, in_tmux=bool(os.environ.get("TMUX")))
             return
         self.seq = (self.seq + 1) % 8
         path = self._frame_path()

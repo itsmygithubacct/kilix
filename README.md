@@ -32,6 +32,9 @@ kitty you already have (and `~/.config/kitty`) completely untouched.
 - **kilix 95** — a Windows 95-style desktop environment in a tab (`kilix desktop`):
   start bar, launchers, file manager, and a Settings app that edits the kilix
   config live.
+- **Host SDK for desktops** — external desktop providers import stable helpers
+  from `config/kilix_sdk` instead of depending on raw `config/browse.py` /
+  `config/gfx.py` internals.
 - **Self-contained** — prefers its bundled fork build, and falls back to a prebuilt kitty if you haven't built it.
 
 ## Requirements

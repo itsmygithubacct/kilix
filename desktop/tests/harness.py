@@ -2,8 +2,8 @@
 
 Plain helpers, no framework. Tests are plain-assert scripts run by run.py,
 one subprocess each: build a Desk with term=None, feed it synthetic
-widgets.Ev the way Desk.run would, or drive browse.Term.read_input over a
-pipe fd with raw terminal bytes.
+widgets.Ev the way Desk.run would, or drive kilix_sdk.term.Term.read_input over
+a pipe fd with raw terminal bytes.
 """
 import atexit
 import contextlib
@@ -18,8 +18,8 @@ KILIX_HOME = os.environ.get("KILIX_HOME") or os.path.dirname(_desktop)
 sys.path.insert(0, os.path.join(KILIX_HOME, "config"))
 sys.path.insert(0, _desktop)
 
-import browse
-import main as desk_main   # import patches browse F-key tables, like the live desk
+from kilix_sdk import term as kilix_term
+import main as desk_main   # import patches host F-key tables, like the live desk
 import widgets as W
 
 _dirs = []                 # temp desktop dirs owned by this process
@@ -123,13 +123,13 @@ def type_text(desk, s):
             key(desk, ch)
 
 
-# ── raw byte-stream parsing (browse.Term over a pipe fd) ────────────────────
+# ── raw byte-stream parsing (kilix_sdk.term.Term over a pipe fd) ────────────
 
 def make_term():
-    """(term, write_fd): a browse.Term reading a non-blocking pipe.
+    """(term, write_fd): a kilix_sdk.term.Term reading a non-blocking pipe.
     os.write(write_fd, ...) then term.read_input(); term.inbuf shows what
     stalled. Caller closes both fds (or lets the test process exit)."""
-    t = object.__new__(browse.Term)
+    t = object.__new__(kilix_term.Term)
     r, w = os.pipe()
     os.set_blocking(r, False)
     t.fd = r
@@ -138,7 +138,7 @@ def make_term():
 
 
 def term_feed(data, chunks=None):
-    """Feed raw terminal bytes through browse.Term.read_input and return the
+    """Feed raw terminal bytes through kilix_sdk.term.Term.read_input and return the
     parsed event dicts. chunks = byte offsets to split the writes at, with
     read_input called after every chunk (adversarial framing;
     chunks=range(len(data)) is byte-by-byte)."""
