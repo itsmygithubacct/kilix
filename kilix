@@ -8,6 +8,10 @@
 # built yet. Fully self-contained; any extra args are forwarded to kitty.
 #
 #   ./kilix                   # launch kilix
+#   ./kilix ls [--panes]      # list live kilix pages/tabs or panes in this instance
+#   ./kilix focus <id>        # focus a live tab/pane by ID
+#   ./kilix watch <pane-id>   # best-effort read-only text watch of a live pane
+#   ./kilix mux [name]        # open a tmux-backed kilix tab for real attach/view
 #   ./kilix update            # git pull the latest kilix into this checkout
 #   ./kilix desktop           # launch the configured desktop provider
 #   ./kilix --build           # build the forked kitty from ./src
@@ -130,6 +134,21 @@ _kilix_desktop_die() {
   exit 1
 }
 
+_kilix_remote_control() {
+  [ -x "$KITTEN" ] || { echo "kilix $1: kitten not found next to $BIN" >&2; exit 1; }
+  if [ -z "${KITTY_LISTEN_ON:-}" ]; then
+    echo "kilix $1: no live kilix remote-control socket (run this inside kilix, or set KITTY_LISTEN_ON)" >&2
+    exit 1
+  fi
+  KILIX_KITTEN="$KITTEN" exec python3 "$KILIX_HOME/config/remote.py" "$@"
+}
+
+case "${1:-}" in
+  ls|focus|watch)
+    _remote_cmd="$1"; shift
+    _kilix_remote_control "$_remote_cmd" "$@" ;;
+esac
+
 _kilix95_checkout_ref() {
   [ -n "${KILIX95_REF:-}" ] || return 0
   git -C "$_k95_dir" fetch --tags origin >/dev/null 2>&1 || true
@@ -163,8 +182,9 @@ _kilix95_ensure_external() {
   command -v git >/dev/null 2>&1 || _kilix_desktop_die "git is required to clone Kilix 95"
 
   echo "kilix desktop: cloning Kilix 95 -> $_k95_dir" >&2
-  # shellcheck disable=SC2086  # optional --branch is intentionally unquoted-split
-  git clone ${KILIX95_BRANCH:+--branch "$KILIX95_BRANCH"} "$_k95_repo" "$_k95_dir" \
+  _clone_args=()
+  [ -n "${KILIX95_BRANCH:-}" ] && _clone_args=(--branch "$KILIX95_BRANCH")
+  git clone "${_clone_args[@]}" "$_k95_repo" "$_k95_dir" \
     || _kilix_desktop_die "git clone failed ($_k95_repo)"
   _kilix95_checkout_ref
   [ -f "$_k95_dir/main.py" ] || _kilix_desktop_die "missing main.py in $_k95_dir"
@@ -353,6 +373,28 @@ fi
 if [ "${1:-}" = "share" ]; then
   shift
   KILIX_KITTY="$BIN" exec python3 "$KILIX_HOME/config/share.py" "$@"
+fi
+
+# mux: open a kilix tab that is backed by the private tmux server from the
+# start. Unlike `kilix watch`, this is real terminal multiplexing: attach/view
+# can reconnect to it later because the shell is born inside tmux.
+if [ "${1:-}" = "mux" ]; then
+  shift
+  case "${1:-}" in
+    -h|--help)
+      echo "usage: $_self mux [a|attach] [session-name]" >&2
+      exit 0 ;;
+    a|attach)
+      shift ;;
+  esac
+  [ $# -le 1 ] || { echo "usage: $_self mux [a|attach] [session-name]" >&2; exit 2; }
+  _mux_name="${1:-main}"
+  if [ -z "${KILIX_IN_OVERLAY:-}" ] && [ -n "${KITTY_WINDOW_ID:-}" ] \
+       && [ -n "${KITTY_LISTEN_ON:-}" ] && [ -x "$KITTEN" ]; then
+    exec "$KITTEN" @ launch --type=tab --cwd=current --tab-title "mux:$_mux_name" \
+      --env KILIX_IN_OVERLAY=1 --env KILIX_STREAM=1 -- "$_self" serve "$_mux_name"
+  fi
+  exec "$_self" serve "$_mux_name"
 fi
 
 # screensaver: a terminal screensaver in this pane (default: matrix). The

@@ -442,7 +442,8 @@ def amp_ready(cp=None):
 def ensure_amp(cp, report):
     return amp_ready(cp) or _clone_and_make(
         AMP_REPO, os.path.join(APPS_DIR, "kilix-amp"), "kilix-amp",
-        "needs libsdl2-dev, libsdl2-image-dev, libsndfile1-dev, zlib1g-dev",
+        "needs libsdl2-dev, libsdl2-image-dev, libsndfile1-dev, "
+        "zlib1g-dev, libfluidsynth-dev, fluidsynth, fluid-soundfont-gm",
         report)
 
 
