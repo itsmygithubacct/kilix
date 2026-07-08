@@ -18,6 +18,8 @@ kitty you already have (and `~/.config/kitty`) completely untouched.
 - **Battery-in-chrome** — on laptops, a green/yellow/red battery item appears at the
   far right of the page strip while the battery is discharging; click it to show
   percentage.
+- **Date/time-in-chrome** — the page strip shows the local date and time
+  immediately to the left of the battery item.
 - **Pane title menu** — click a pane's title for Tilix-style actions: rename, copy title,
   reset, clear, split right/down, close.
 - **Drag-to-split by quadrant** — drag a pane's header onto another pane's edge to split it (Tilix's model).
@@ -153,10 +155,12 @@ also lives on the `▢` button and `Ctrl+Alt+Z`).
 The active pane's header is highlighted (bright blue); inactive panes are grayed —
 matching Tilix's active-pane cue.
 
-When Linux reports a laptop battery is **discharging**, the far right of the page
-strip shows a battery status item. It is green above 50%, yellow at 50% and below,
-red at 20% and below, and clicking it toggles between icon and percentage. Set
-`KILIX_CHROME_BATTERY=0` to hide it.
+The far right of the page strip shows the local date and time. When Linux reports
+a laptop battery is **discharging**, a battery status item appears to its right.
+It is green above 50%, yellow at 50% and below, red at 20% and below, and
+clicking it toggles between icon and percentage. Set `KILIX_CHROME_CLOCK=0` to
+hide the clock, `KILIX_CHROME_CLOCK_FORMAT` to any `strftime` format to change
+it, or `KILIX_CHROME_BATTERY=0` to hide the battery item.
 
 **Drag-to-split by quadrant** (Tilix's model): drag a pane by its title bar onto another
 pane and drop on that pane's **top / bottom / left / right** triangle — a live half-pane
@@ -538,8 +542,9 @@ best experience. The clickable-button feature is these Python files:
 
 - `kitty/window_title_bar.py` — draws `+ - → ↓ ▢ ✕` in each pane title bar,
   recording which cells map to which kitty action.
-- `kitty/kilix_battery.py` and `kitty/tab_bar.py` — read the Linux battery status and
-  draw the conditional battery item at the far right of the page strip.
+- `kitty/kilix_battery.py` and `kitty/tab_bar.py` — draw the date/time status and
+  read the Linux battery status for the conditional battery item at the far right
+  of the page strip.
 - `kitty/tabs.py` — `handle_window_title_bar_mouse` dispatches a button's action on a
   single left-click (`boss.combine`), double-click toggles maximize, and the quadrant
   drag-to-split hit-test uses the pane's true diagonals (rejecting drops on a maximized

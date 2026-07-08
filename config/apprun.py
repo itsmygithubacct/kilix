@@ -212,7 +212,7 @@ class EncoderFeed:
 class AppPane:
     def __init__(self, cmd, app_w, app_h, fps, serve=False, lan=False, hls=False,
                  audio=False, mse=False, webrtc=False, no_pane=False,
-                 fill=False):
+                 fill=False, auto_fit=False):
         self.cmd = cmd
         self.app_w, self.app_h = app_w, app_h   # None → sized from the pane
         self.fill = fill
@@ -269,6 +269,11 @@ class AppPane:
         self.xd = None
         self._cap_fps = fps              # current pane-capture rate (QW5)
         self._last_change = time.time()
+        self._fit_window_id = None
+        self._last_window_fit = 0.0
+        fit_env = os.environ.get("KILIX_RUN_AUTO_FIT")
+        self._auto_fit = (fit_env.lower() not in ("0", "false", "no", "off")
+                          if fit_env is not None else auto_fit)
         if self.term:
             self.compute_layout()
 
@@ -469,34 +474,72 @@ class AppPane:
         except OSError:
             pass
 
+    def _visible_app_windows(self):
+        root = self.xd.screen().root
+        out = []
+        for c in root.query_tree().children:
+            try:
+                if c.get_attributes().map_state != X.IsViewable:
+                    continue
+                g = c.get_geometry()
+                if g.width <= 8 or g.height <= 8:
+                    continue
+                out.append((c, g))
+            except Exception:
+                pass
+        return out
+
+    def fit_app_window(self, force=False):
+        """Resize the topmost visible app window to the private display.
+
+        VirtualBox maps the VM console as a later top-level window after the
+        manager has already started. With no WM on Xvfb, that late window keeps
+        its default small size unless kilix keeps fitting the active top-level.
+        """
+        windows = self._visible_app_windows()
+        if not windows:
+            return False
+        c, g = windows[-1]               # XQueryTree children are bottom→top
+        full = (0, 0, self.app_w, self.app_h)
+        cid = getattr(c, "id", None)
+        if force or cid != self._fit_window_id \
+                or (g.x, g.y, g.width, g.height) != full:
+            c.configure(x=0, y=0, width=self.app_w, height=self.app_h)
+            self.xd.set_input_focus(c, X.RevertToPointerRoot, X.CurrentTime)
+            xtest.fake_input(self.xd, X.MotionNotify,
+                             x=self.app_w // 2, y=self.app_h // 2)
+            self.xd.sync()
+            self._fit_window_id = cid
+            log("fit app window", hex(cid) if isinstance(cid, int) else cid)
+        return True
+
     def focus_app_window(self):
         """No WM on the Xvfb: size the app's window to fill the virtual
         screen (small apps like xclock default to a tiny window in the
         top-left corner otherwise), focus it, and park the pointer inside
         (PointerRoot focus follows the pointer)."""
-        root = self.xd.screen().root
         deadline = time.time() + 15
         while time.time() < deadline:
-            for c in root.query_tree().children:
-                try:
-                    if c.get_attributes().map_state == X.IsViewable:
-                        # fill the screen so the whole --size is the app, not
-                        # black padding; apps free to ignore the hint keep
-                        # their size (then they letterbox as before)
-                        c.configure(x=0, y=0, width=self.app_w, height=self.app_h)
-                        self.xd.set_input_focus(c, X.RevertToPointerRoot,
-                                                X.CurrentTime)
-                        xtest.fake_input(self.xd, X.MotionNotify,
-                                         x=self.app_w // 2, y=self.app_h // 2)
-                        self.xd.sync()
-                        log("focused app window", hex(c.id))
-                        return
-                except Exception:
-                    pass
+            if self.fit_app_window(force=True):
+                return
             if self.app.poll() is not None:
                 raise RuntimeError(f"app exited (rc={self.app.returncode})")
             time.sleep(0.25)
         log("no app window appeared; capturing root anyway")
+
+    def maintain_app_window(self, now):
+        """Keep late-mapped top-level windows filling the pane.
+
+        This is intentionally periodic instead of event-driven: it avoids a
+        second X event hook and still catches app-spawned windows within a
+        fraction of a second.
+        """
+        if not getattr(self, "_auto_fit", True) or self.xd is None:
+            return
+        if now - getattr(self, "_last_window_fit", 0.0) < 0.5:
+            return
+        self._last_window_fit = now
+        self.fit_app_window()
 
     # ---- pixel layer -------------------------------------------------------
     def pump_frames(self):
@@ -679,6 +722,7 @@ class AppPane:
                     self.do_resize()
                 now = time.time()
                 self.tick_capture(now)
+                self.maintain_app_window(now)
                 # A first placement can be dropped right after startup (seen
                 # as a pane that stays black while the app clearly has output;
                 # q=2 means we never hear the error). Placement is otherwise
@@ -728,6 +772,7 @@ def main():
     app_w = app_h = None                 # default: sized from the pane
     fps = 20
     serve = lan = hls = audio = mse = webrtc = fill = False
+    auto_fit = None
     no_pane = os.environ.get("KILIX_NO_PANE") == "1"
     while args and args[0].startswith("--"):
         if args[0] == "--size" and len(args) > 1:
@@ -763,6 +808,12 @@ def main():
         elif args[0] == "--fill":           # stretch over the whole pane
             fill = True
             args = args[1:]
+        elif args[0] == "--refit-windows":  # keep late top-levels full-screen
+            auto_fit = True
+            args = args[1:]
+        elif args[0] == "--no-refit-windows":
+            auto_fit = False
+            args = args[1:]
         elif args[0] == "--debug":          # fps/bandwidth metrics -> status + file
             os.environ["KILIX_DEBUG"] = "1"
             args = args[1:]
@@ -778,9 +829,12 @@ def main():
                  "[--hls] [--mse] [--webrtc] [--audio] [--no-pane] [--debug] "
                  "command [args…]\n"
                  "  --size defaults to the pane's pixel size")
+    if auto_fit is None:
+        auto_fit = os.path.basename(args[0]).lower() in (
+            "virtualbox", "virtualboxvm", "vbox")
     AppPane(args, app_w, app_h, fps, serve=serve, lan=lan, hls=hls,
             audio=audio, mse=mse, webrtc=webrtc, no_pane=no_pane,
-            fill=fill).run()
+            fill=fill, auto_fit=auto_fit).run()
 
 
 if __name__ == "__main__":

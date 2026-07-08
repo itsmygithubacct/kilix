@@ -306,7 +306,10 @@ class Term:
 
     def _parse_csi(self, params, final):
         if final in ("M", "m") and params.startswith("<"):
-            b, x, y = (int(v) for v in params[1:].split(";"))
+            try:
+                b, x, y = (int(v) for v in params[1:].split(";"))
+            except ValueError:
+                return None
             # SGR-pixel coords are already 0-based (kitty/mouse.c: round(global_x))
             return {"kind": "mouse", "b": b, "x": x, "y": y,
                     "press": final == "M"}
