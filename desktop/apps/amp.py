@@ -31,7 +31,8 @@ def open_amp(desk, path=None):
               "github.com/itsmygithubacct/kilix-amp) into\n"
               "~/.local/share/kilix/apps?\n"
               "(Needs libsdl2-dev, libsdl2-image-dev,\n"
-              "libsndfile1-dev and zlib1g-dev to compile.)",
+              "libsndfile1-dev, zlib1g-dev, libfluidsynth-dev,\n"
+              "and a GM SoundFont for MIDI playback.)",
               icon="amp", buttons=("Install", "Cancel"), cb=answered)
 
 

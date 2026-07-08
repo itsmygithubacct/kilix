@@ -48,6 +48,8 @@ kitty you already have (and `~/.config/kitty`) completely untouched.
   openSUSE (zypper). Where the distro's Go is older than the fork needs (e.g. Fedora
   ships 1.25), it enables Go's toolchain auto-download so `go build` fetches the
   pinned version on demand — no manual Go install.
+- The same dependency installer also includes kilix-amp's SDL/libsndfile/
+  FluidSynth packages, so the desktop Media Player can build and play MIDI.
 - **For the pixel desktop and web-in-a-pane** (`kilix desktop` / `kilix browse`):
   **Python 3 + Pillow** (also installed by `scripts/install-build-deps.sh`).
 - kitty **≥ 0.47** (the fork is 0.47.x) — required for the per-pane title bars.
@@ -79,6 +81,15 @@ To skip the build attempt and go straight to the prebuilt engine:
 ~/kilix/kilix          # run it (no buttons until you build the fork)
 ```
 
+Release builders can make that fallback deterministic by pinning the version and
+checksum:
+
+```bash
+KILIX_PREBUILT_VERSION=0.47.0 \
+KILIX_PREBUILT_SHA256=<sha256-of-kitty-txz> \
+~/kilix/bootstrap.sh
+```
+
 To get the buttons, install the build deps and build the fork:
 
 ```bash
@@ -98,6 +109,15 @@ To pull the latest kilix into your checkout:
 
 ```bash
 kilix update                      # git pull --ff-only in ~/kilix; then restart `kilix desktop`
+```
+
+To inspect a running kilix instance:
+
+```bash
+kilix ls                          # list live pages/tabs
+kilix ls --panes                  # list individual pane IDs
+kilix focus <tab-or-pane-id>      # jump to a live tab or pane
+kilix watch <pane-id>             # best-effort read-only text watch
 ```
 
 Put `~/kilix` on your `PATH` (or `ln -s ~/kilix/kilix ~/.local/bin/kilix`) to just
@@ -138,7 +158,27 @@ a "page" you flip between. The page strip (kitty's powerline tab bar) is always
 visible across the top and ends with a clickable **`+`** to open a new page. You can
 **drag a tab to reorder** it, **middle-click a tab to close** it, press **`F12`** for a
 visual page chooser (kilix's stand-in for Tilix's session sidebar), and **`F2`** to
-rename the current page. The page shortcuts are in [Keybindings](#keybindings-tilix-layout).
+rename the current page. Run `kilix ls` from inside kilix to list the live pages,
+their tab IDs, pane counts, titles, and current working directories. The page
+shortcuts are in [Keybindings](#keybindings-tilix-layout).
+
+### Live tab and pane control
+
+```bash
+kilix ls                  # tabs/pages
+kilix ls --panes          # individual pane IDs
+kilix focus 45            # focus tab or pane 45
+kilix focus pane:74       # disambiguate when needed
+kilix watch 74            # poll pane 74 as read-only text
+kilix watch --once 74     # one snapshot
+```
+
+These commands use kitty remote control against the current live GUI instance.
+`kilix focus` can jump to a tab or pane; `kilix watch` is intentionally
+read-only and polls `kitten @ get-text`, so it is useful for shell output and
+simple full-screen programs but is not real multiplexing. It does not carry
+graphics, mouse state, or a second interactive PTY. For true attach/view, start
+the session under tmux with `kilix serve` or `kilix mux <name>`.
 
 ## Browse the web in a pane (experimental)
 
@@ -306,6 +346,8 @@ token. Everything here is *opt-in* — plain kilix is unchanged.
 ```bash
 kilix serve            # start (or re-attach) a persistent session named "main"
 kilix serve work       # …or a named one
+kilix mux work         # open/create-or-attach that tmux session in a kilix tab
+kilix mux a work       # same, explicit attach/create form
 kilix attach work      # attach read-write (from anywhere, incl. over SSH)
 kilix view work        # attach READ-ONLY (a safe way to let someone watch)
 kilix serve ls         # list sessions   ·   kilix serve kill work
@@ -315,7 +357,11 @@ This runs a **private tmux server** (its own socket under the kilix runtime dir 
 your `~/.tmux.conf` is never touched) that keeps the session alive across
 disconnects and lets several devices attach at once. Text, colors, and inline
 images (`kilix icat`) come through; kilix forces images to inline transmission so
-they survive the hop. From another machine it's just SSH:
+they survive the hop. This is separate from top-level `kilix ls`, which lists
+the live tabs in the current GUI instance. `kilix mux <name>` is a convenience
+for opening a new GUI tab whose shell is born inside `kilix serve <name>`; it
+creates the tmux session if missing or attaches it if already running, so it can
+later be reattached or viewed. From another machine it's just SSH:
 
 ```bash
 ssh -t you@host ~/kilix/kilix attach work     # take over
