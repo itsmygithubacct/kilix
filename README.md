@@ -121,6 +121,8 @@ kilix ls                          # list live pages/tabs
 kilix ls --panes                  # list individual pane IDs
 kilix focus <tab-or-pane-id>      # jump to a live tab or pane
 kilix watch <pane-id>             # best-effort read-only text watch
+kilix screen-size larger          # increase terminal scale (font_size +2pt)
+kilix screen-size smaller         # decrease terminal scale (font_size -2pt)
 ```
 
 Put `~/kilix` on your `PATH` (or `ln -s ~/kilix/kilix ~/.local/bin/kilix`) to just
@@ -448,6 +450,8 @@ full rationale live in `~/research/kilix/`.
 | Close pane | `Ctrl+Alt+W` |
 | Focus pane ↑ ↓ ← → | `Alt+Arrows` |
 | Resize pane | `Ctrl+Shift+Arrows` |
+| Increase / decrease terminal scale | `Ctrl+Shift+=` / `Ctrl+Shift+-` |
+| Reset terminal scale | `Ctrl+Shift+Backspace` |
 | Move/swap pane | `Ctrl+Alt+Arrows` |
 | Zoom/maximize pane (toggle) | `Ctrl+Alt+Z` |
 | Broadcast input to all panes in page | `Ctrl+Alt+B` |

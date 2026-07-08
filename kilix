@@ -12,6 +12,7 @@
 #   ./kilix focus <id>        # focus a live tab/pane by ID
 #   ./kilix watch <pane-id>   # best-effort read-only text watch of a live pane
 #   ./kilix mux [name]        # open a tmux-backed kilix tab for real attach/view
+#   ./kilix screen-size ...   # show/increase/decrease/reset terminal scale
 #   ./kilix update            # git pull the latest kilix into this checkout
 #   ./kilix desktop           # launch the configured desktop provider
 #   ./kilix --build           # build the forked kitty from ./src
@@ -27,7 +28,9 @@ PREBUILT="$KILIX_HOME/kitty.app/bin/kitty"      # official prebuilt kitty (fallb
 
 # kilix's own config dir: kitty loads kitty.conf from it AND uses
 # kitty.app.png / kitty.app-128.png in it as the window icon.
-export KITTY_CONFIG_DIRECTORY="$KILIX_HOME/config"
+# KILIX_CONFIG_DIRECTORY is a narrow override for tests and custom packaging;
+# normal launches deliberately ignore any inherited KITTY_CONFIG_DIRECTORY.
+export KITTY_CONFIG_DIRECTORY="${KILIX_CONFIG_DIRECTORY:-$KILIX_HOME/config}"
 
 # No-sudo streaming deps (Xvfb / Xvnc / vncpasswd / python-xlib unpacked by
 # scripts/install-stream-deps.sh on hosts that lack them): pull in their
@@ -115,11 +118,13 @@ if [ -x "$FORK" ]; then
   BIN="$FORK"                                     # prefer the clickable-chrome fork
 elif [ -x "$PREBUILT" ]; then
   BIN="$PREBUILT"                                 # fall back to the prebuilt binary
+elif [ "${1:-}" = "screen-size" ] || [ "${1:-}" = "font-size" ]; then
+  BIN=""                                          # config-only command; no bootstrap side effect
 else
   # nothing available yet: try building the fork, else pull the prebuilt binary
   if "$KILIX_HOME/build.sh"; then BIN="$FORK"; else "$KILIX_HOME/bootstrap.sh"; BIN="$PREBUILT"; fi
 fi
-[ -x "$BIN" ] || { echo "kilix: no runnable kitty (build and bootstrap both failed)" >&2; exit 1; }
+[ -z "${BIN:-}" ] || [ -x "$BIN" ] || { echo "kilix: no runnable kitty (build and bootstrap both failed)" >&2; exit 1; }
 
 case "${1:-}" in
   # kitty subcommands (kitty +kitten icat …): + must be kitty's first arg,
@@ -127,7 +132,8 @@ case "${1:-}" in
   +*) exec "$BIN" "$@" ;;
 esac
 
-KITTEN="$(dirname "$BIN")/kitten"
+KITTEN="${KILIX_KITTEN:-}"
+[ -n "${BIN:-}" ] && KITTEN="$(dirname "$BIN")/kitten"
 
 _kilix_desktop_die() {
   echo "kilix desktop: $*" >&2
@@ -143,10 +149,162 @@ _kilix_remote_control() {
   KILIX_KITTEN="$KITTEN" exec python3 "$KILIX_HOME/config/remote.py" "$@"
 }
 
+_kilix_screen_size_usage() {
+  cat >&2 <<EOF
+usage: $_self screen-size [show|larger [STEP]|smaller [STEP]|reset|set POINTS|+POINTS|-POINTS|POINTS]
+
+Adjusts Kilix's terminal scale by changing kitty's font_size. Larger text means
+fewer terminal rows/columns fit on the same fullscreen display; smaller text
+means more rows/columns fit.
+EOF
+}
+
+_kilix_screen_size_config() {
+  printf '%s\n' "${KITTY_CONFIG_DIRECTORY:-$KILIX_HOME/config}/kitty.conf"
+}
+
+_kilix_screen_size_current() {
+  _conf="$(_kilix_screen_size_config)"
+  if [ -f "$_conf" ]; then
+    awk '$1 == "font_size" { v = $2 } END { if (v != "") print v; else print "11.0" }' "$_conf"
+  else
+    printf '11.0\n'
+  fi
+}
+
+_kilix_screen_size_format() {
+  awk -v v="$1" 'BEGIN {
+    if (v < 4) v = 4;
+    if (v > 110) v = 110;
+    if (v == int(v)) printf "%d\n", v;
+    else {
+      s = sprintf("%.2f", v);
+      sub(/0+$/, "", s);
+      sub(/[.]$/, "", s);
+      print s;
+    }
+  }'
+}
+
+_kilix_screen_size_calc() {
+  awk -v cur="$1" -v delta="$2" 'BEGIN { printf "%.4f\n", cur + delta }' \
+    | while IFS= read -r _v; do _kilix_screen_size_format "$_v"; done
+}
+
+_kilix_screen_size_valid() {
+  awk -v v="$1" 'BEGIN { exit !(v ~ /^[0-9]+([.][0-9]+)?$/ && v + 0 >= 4 && v + 0 <= 110) }'
+}
+
+_kilix_screen_size_step_valid() {
+  awk -v v="$1" 'BEGIN { exit !(v ~ /^[0-9]+([.][0-9]+)?$/) }'
+}
+
+_kilix_screen_size_write_config() {
+  _size="$1"
+  _conf="$(_kilix_screen_size_config)"
+  _line="$(printf '%-30s %s' font_size "$_size")"
+  mkdir -p "$(dirname "$_conf")"
+  _tmp="$(mktemp)" || return 1
+  if [ -f "$_conf" ]; then
+    awk -v line="$_line" '
+      { lines[NR] = $0 }
+      $1 == "font_size" { last = NR }
+      END {
+        if (NR == 0) {
+          print "# -- kilix screen-size --";
+          print line;
+          exit;
+        }
+        for (i = 1; i <= NR; i++) {
+          if (i == last) print line;
+          else print lines[i];
+        }
+        if (!last) {
+          print "";
+          print "# -- kilix screen-size --";
+          print line;
+        }
+      }' "$_conf" >"$_tmp"
+  else
+    printf '%s\n%s\n' "# -- kilix screen-size --" "$_line" >"$_tmp"
+  fi
+  mv "$_tmp" "$_conf"
+}
+
+_kilix_screen_size_apply_live() {
+  _size="$1"
+  if [ -n "${KITTY_LISTEN_ON:-}" ] && [ -x "$KITTEN" ]; then
+    "$KITTEN" @ action load_config_file >/dev/null 2>&1 || true
+    "$KITTEN" @ set-font-size --all "$_size" >/dev/null 2>&1 || true
+  elif [ -n "${KITTY_PID:-}" ] && [[ "$KITTY_PID" =~ ^[0-9]+$ ]]; then
+    kill -USR1 "$KITTY_PID" 2>/dev/null || true
+  fi
+}
+
+_kilix_screen_size_cmd() {
+  _action="${1:-show}"
+  [ $# -gt 0 ] && shift
+  _cur="$(_kilix_screen_size_current)"
+  case "$_action" in
+    show|status|get)
+      printf 'font_size %s\n' "$_cur"
+      return 0 ;;
+    larger|increase|up|plus)
+      _step="${1:-2}"
+      [ $# -le 1 ] || { _kilix_screen_size_usage; return 2; }
+      _kilix_screen_size_step_valid "$_step" || { _kilix_screen_size_usage; return 2; }
+      _new="$(_kilix_screen_size_calc "$_cur" "$_step")" ;;
+    smaller|decrease|down|minus)
+      _step="${1:-2}"
+      [ $# -le 1 ] || { _kilix_screen_size_usage; return 2; }
+      _kilix_screen_size_step_valid "$_step" || { _kilix_screen_size_usage; return 2; }
+      _new="$(_kilix_screen_size_calc "$_cur" "-$_step")" ;;
+    reset|default)
+      [ $# -eq 0 ] || { _kilix_screen_size_usage; return 2; }
+      _new="11.0" ;;
+    set)
+      [ $# -eq 1 ] || { _kilix_screen_size_usage; return 2; }
+      _kilix_screen_size_valid "$1" || { _kilix_screen_size_usage; return 2; }
+      _new="$1" ;;
+    +*)
+      [ $# -eq 0 ] || { _kilix_screen_size_usage; return 2; }
+      _step="${_action#+}"
+      _kilix_screen_size_step_valid "$_step" || { _kilix_screen_size_usage; return 2; }
+      _new="$(_kilix_screen_size_calc "$_cur" "$_step")" ;;
+    -*)
+      [ $# -eq 0 ] || { _kilix_screen_size_usage; return 2; }
+      _step="${_action#-}"
+      _kilix_screen_size_step_valid "$_step" || { _kilix_screen_size_usage; return 2; }
+      _new="$(_kilix_screen_size_calc "$_cur" "-$_step")" ;;
+    [0-9]*)
+      [ $# -eq 0 ] || { _kilix_screen_size_usage; return 2; }
+      _kilix_screen_size_valid "$_action" || { _kilix_screen_size_usage; return 2; }
+      _new="$_action" ;;
+    -h|--help|help)
+      _kilix_screen_size_usage
+      return 0 ;;
+    *)
+      _kilix_screen_size_usage
+      return 2 ;;
+  esac
+  _new="$(_kilix_screen_size_format "$_new")"
+  if ! _kilix_screen_size_valid "$_new"; then
+    echo "kilix screen-size: font size must be between 4 and 110 points" >&2
+    return 2
+  fi
+  _kilix_screen_size_write_config "$_new"
+  _kilix_screen_size_apply_live "$_new"
+  printf 'font_size %s\n' "$_new"
+}
+
 case "${1:-}" in
   ls|focus|watch)
     _remote_cmd="$1"; shift
     _kilix_remote_control "$_remote_cmd" "$@" ;;
+  screen-size|font-size)
+    _remote_cmd="$1"; shift
+    _kilix_screen_size_cmd "$@"
+    exit $? ;;
 esac
 
 _kilix95_checkout_ref() {
