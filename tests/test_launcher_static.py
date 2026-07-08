@@ -34,6 +34,22 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn('"PANE_ID"', remote)
         self.assertIn('"foreground_processes"', remote)
 
+    def test_clickable_chrome_battery_indicator_is_wired(self):
+        titlebar = (ROOT / "src" / "kitty" / "window_title_bar.py").read_text()
+        tabs = (ROOT / "src" / "kitty" / "tabs.py").read_text()
+        conf = (ROOT / "config" / "kitty.conf").read_text()
+        readme = (ROOT / "README.md").read_text()
+
+        self.assertIn("KILIX_CHROME_BATTERY", titlebar)
+        self.assertIn("KILIX_BATTERY_SUPPLY_DIR", titlebar)
+        self.assertIn("s.lower() == 'discharging'", titlebar)
+        self.assertIn("_BATTERY_TOGGLE_ACTION", titlebar)
+        self.assertIn("toggle_battery_percent", tabs)
+        self.assertIn("kilix_toggle_battery_percent", tabs)
+        self.assertIn("U+F0079", conf)
+        self.assertIn("U+F0083", conf)
+        self.assertIn("Battery-in-chrome", readme)
+
     def test_focus_watch_and_mux_commands_are_wired(self):
         launcher = (ROOT / "kilix").read_text()
         remote = (ROOT / "config" / "remote.py").read_text()
