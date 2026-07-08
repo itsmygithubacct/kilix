@@ -70,6 +70,17 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("`+` | increase font size for this Kilix window", readme)
         self.assertIn("`-` | decrease font size for this Kilix window", readme)
 
+    def test_bell_is_quiet_by_default_but_visible_in_chrome(self):
+        conf = (ROOT / "config" / "kitty.conf").read_text()
+        settings = (ROOT / "desktop" / "apps" / "settings.py").read_text()
+
+        self.assertIn("enable_audio_bell              no", conf)
+        self.assertIn("window_alert_on_bell           no", conf)
+        self.assertIn('bell_on_tab                    "● "', conf)
+        self.assertIn("{fmt.fg.red}{bell_symbol}", conf)
+        self.assertIn("{fmt.fg.yellow}{activity_symbol}", conf)
+        self.assertIn('("enable_audio_bell", "Audio bell", "bool", "no")', settings)
+
     def test_focus_watch_and_mux_commands_are_wired(self):
         launcher = (ROOT / "kilix").read_text()
         remote = (ROOT / "config" / "remote.py").read_text()

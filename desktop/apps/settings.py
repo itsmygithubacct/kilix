@@ -34,7 +34,7 @@ APPEARANCE = [
 ]
 BEHAVIOR = [
     ("scrollback_lines", "Scrollback lines", "text", None),
-    ("enable_audio_bell", "Audio bell", "bool", "yes"),
+    ("enable_audio_bell", "Audio bell", "bool", "no"),
     ("copy_on_select", "Copy on select", "bool", "no"),
     ("confirm_os_window_close", "Confirm window close (panes)", "text", None),
     ("mouse_hide_wait", "Hide mouse after (s)", "text", None),
