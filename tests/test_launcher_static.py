@@ -34,6 +34,15 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn('"PANE_ID"', remote)
         self.assertIn('"foreground_processes"', remote)
 
+    def test_screen_size_command_is_wired(self):
+        launcher = (ROOT / "kilix").read_text()
+        self.assertIn("screen-size|font-size)", launcher)
+        self.assertIn("_kilix_screen_size_cmd", launcher)
+        self.assertIn("font_size", launcher)
+        self.assertIn("KILIX_CONFIG_DIRECTORY", launcher)
+        self.assertIn("set-font-size --all", launcher)
+        self.assertIn("load_config_file", launcher)
+
     def test_clickable_chrome_battery_indicator_is_wired(self):
         titlebar = (ROOT / "src" / "kitty" / "window_title_bar.py").read_text()
         tabs = (ROOT / "src" / "kitty" / "tabs.py").read_text()
