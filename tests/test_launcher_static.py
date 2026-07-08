@@ -59,6 +59,17 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("U+F0083", conf)
         self.assertIn("Battery-in-chrome", readme)
 
+    def test_clickable_chrome_font_size_buttons_are_local(self):
+        titlebar = (ROOT / "src" / "kitty" / "window_title_bar.py").read_text()
+        readme = (ROOT / "README.md").read_text()
+
+        self.assertIn("' + ', 'change_font_size current +2.0'", titlebar)
+        self.assertIn("' - ', 'change_font_size current -2.0'", titlebar)
+        self.assertNotIn("' + ', 'change_font_size all +2.0'", titlebar)
+        self.assertNotIn("' - ', 'change_font_size all -2.0'", titlebar)
+        self.assertIn("`+` | increase font size for this Kilix window", readme)
+        self.assertIn("`-` | decrease font size for this Kilix window", readme)
+
     def test_focus_watch_and_mux_commands_are_wired(self):
         launcher = (ROOT / "kilix").read_text()
         remote = (ROOT / "config" / "remote.py").read_text()

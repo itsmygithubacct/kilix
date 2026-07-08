@@ -13,8 +13,8 @@ kitty you already have (and `~/.config/kitty`) completely untouched.
 
 ## Features
 
-- **Clickable pane buttons** `→ ↓ ▢ ✕` — split-right / split-down / maximize / close,
-  drawn as Nerd Font icons that highlight on hover.
+- **Clickable pane buttons** `+ - → ↓ ▢ ✕` — local font size, split-right /
+  split-down, maximize, and close controls that highlight on hover.
 - **Battery-in-chrome** — on laptops, a green/yellow/red battery item appears at the
   far right of the pane chrome while the battery is discharging; click it to show
   percentage.
@@ -130,20 +130,23 @@ type `kilix`.
 
 ## Clickable buttons (the headline feature)
 
-Every pane's title bar shows these split/maximize/close buttons on the right (bold):
+Every pane's title bar shows these font/split/maximize/close buttons on the right (bold):
 
-| Button | Click does | Same as key |
+| Button | Click does | Same as |
 |---|---|---|
+| `+` | increase font size for this Kilix window | `change_font_size current +2.0` |
+| `-` | decrease font size for this Kilix window | `change_font_size current -2.0` |
 | `→` | split right — new pane to the right | `Ctrl+Alt+R` |
 | `↓` | split down — new pane below | `Ctrl+Alt+D` |
 | `▢` | maximize / zoom the pane | `Ctrl+Alt+Z` |
 | `✕` | close the pane | `Ctrl+Alt+W` |
 
-The buttons are drawn as **Nerd Font icons** — a bold right/down arrow for the splits
-(pointing where the new pane lands), a maximize glyph, and a close ✕ — and they
-**highlight under the cursor**. Clicking a header focuses the pane, and a click on the
-title itself opens the **pane action menu** — rename, copy title, reset, clear, split
-right/down, close (maximize also lives on the `▢` button and `Ctrl+Alt+Z`).
+The buttons are drawn as text or **Nerd Font icons** — `+`/`-` for local font
+size, bold arrows for splits (pointing where the new pane lands), a maximize
+glyph, and a close ✕ — and they **highlight under the cursor**. Clicking a
+header focuses the pane, and a click on the title itself opens the **pane action
+menu** — rename, copy title, reset, clear, split right/down, close (maximize
+also lives on the `▢` button and `Ctrl+Alt+Z`).
 The active pane's header is highlighted (bright blue); inactive panes are grayed —
 matching Tilix's active-pane cue.
 
@@ -530,8 +533,8 @@ gtk-update-icon-cache -f ~/.local/share/icons/hicolor 2>/dev/null || true
 (branch `clickable-chrome`). It's a **full fork** — kilix keeps whatever changes make the
 best experience. The clickable-button feature is two Python files:
 
-- `kitty/window_title_bar.py` — draws `→ ↓ ▢ ✕` and the conditional battery item
-  in each pane title bar, recording which cells map to which kitty action.
+- `kitty/window_title_bar.py` — draws `+ - → ↓ ▢ ✕` and the conditional battery
+  item in each pane title bar, recording which cells map to which kitty action.
 - `kitty/tabs.py` — `handle_window_title_bar_mouse` dispatches a button's action on a
   single left-click (`boss.combine`), double-click toggles maximize, and the quadrant
   drag-to-split hit-test uses the pane's true diagonals (rejecting drops on a maximized
