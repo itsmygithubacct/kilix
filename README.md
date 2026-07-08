@@ -236,7 +236,7 @@ kilix desktop                # opens "kilix 95" in a new kilix tab
 
 `kilix desktop` is a compatibility facade. By default it runs the built-in
 `desktop/` tree while this repository still carries one. Pleb/Plebian-OS can
-instead select an external desktop checkout:
+instead select an external checkout, a custom command, or no desktop:
 
 ```bash
 KILIX_DESKTOP_PROVIDER=external \
@@ -245,9 +245,11 @@ KILIX95_DIR=~/kilix-95 \
 kilix desktop
 ```
 
-Relevant knobs: `KILIX_DESKTOP_PROVIDER=auto|builtin|external`,
-`KILIX95_DIR`, `KILIX95_REPO`, `KILIX95_BRANCH`, `KILIX95_REF`, and
-`KILIX95_AUTO_INSTALL=1` to allow a missing external checkout to be cloned.
+Relevant knobs: `KILIX_DESKTOP_PROVIDER=auto|builtin|external|command|none`,
+`KILIX_DESKTOP_COMMAND`, `KILIX_DESKTOP_NAME`, `KILIX95_DIR`, `KILIX95_REPO`,
+`KILIX95_BRANCH`, `KILIX95_REF`, and `KILIX95_AUTO_INSTALL=1` to allow a
+missing external checkout to be cloned. `kilix update` also honors
+`KILIX_REF` for exact ref checkout.
 
 ![kilix 95 — the desktop with the media player, file manager and Notepad open](config/kilix95_with_amp.png)
 

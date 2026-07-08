@@ -136,7 +136,7 @@ class Desktop:
         self.inj = xinject.Injector(xd, self.w, self.h)
         self.hlsdir = os.path.join(self.sup.runtime_dir, "hls")
         self.sup.start_hls(n, self.w, self.h, self.hlsdir, fps=self.a.fps,
-                           debug=self.a.debug)
+                           debug=self.a.debug, audio=self.monitor)
         self.hlsjs = self.sup.ensure_hlsjs()
         self.token = self.sup.mint_token()
         self.http_port = stream.free_port()
