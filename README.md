@@ -253,6 +253,7 @@ playing X-COM: UFO Defense under DOSBox entirely through a pane.
 
 | Key | Action |
 |---|---|
+| `F10` | toggle app-window auto-fit when enabled (for Steam/VM fullscreen tests) |
 | `Ctrl+Q` | quit (everything else is forwarded to the app) |
 
 Requires `ffmpeg`, `python3-xlib`, and `Xvfb` — either on `PATH` or unpacked
