@@ -704,9 +704,56 @@ class Shell:
 
     def system_menu_items(self):
         """Start ▸ System: update + maintenance launchers, each shown only when
-        the thing it drives is actually present — so a bare kilix checkout only
-        offers `kilix update`, while a full Pleb/Plebian-OS box offers the whole
-        set. Every item runs in a visible tab (see run_maintenance)."""
+        the thing it drives is actually present. Every item runs in a visible tab
+        (see run_maintenance)."""
+        items = [
+            W.MenuItem("Install", icon="folder", submenu=self.install_menu_items()),
+            W.MenuItem("Update", icon="folder", submenu=self.update_menu_items()),
+        ]
+        scripts = self.extra_script_menu_items()
+        if scripts:
+            items.append(W.MenuItem("Scripts", icon="folder", submenu=scripts))
+        return items
+
+    def desktop_script(self, name):
+        return os.path.join(_here, "scripts", name)
+
+    def tool_installed(self, name):
+        if shutil.which(name):
+            return True
+        home = os.path.expanduser("~")
+        for base in (os.path.join(home, ".local", "bin"),
+                     "/usr/local/bin", "/usr/bin"):
+            path = os.path.join(base, name)
+            if os.path.exists(path) and os.access(path, os.X_OK):
+                return True
+        return False
+
+    def script_launcher(self, script_name, title, icon="run"):
+        script = self.desktop_script(script_name)
+        return W.MenuItem(title, icon=icon,
+                          action=lambda s=script, t=title:
+                          self.run_maintenance(shell_quote(s), t))
+
+    def install_menu_items(self):
+        """Start ▸ System ▸ Install."""
+        items = [
+            self.script_launcher("install-claude-code.sh", "Install Claude Code"),
+            self.script_launcher("install-codex.sh", "Install Codex"),
+            self.script_launcher("install-google-chrome.sh",
+                                 "Install Google Chrome", icon="browser"),
+        ]
+        deps = "/usr/local/sbin/plebian-os-install-deps"
+        if os.path.exists(deps):
+            items.append(W.MenuItem("-"))
+            items.append(W.MenuItem(
+                "Reinstall dependencies", icon="settings",
+                action=lambda: self.run_maintenance(f'sudo "{deps}"',
+                                                    "Reinstall dependencies")))
+        return items
+
+    def update_menu_items(self):
+        """Start ▸ System ▸ Update."""
         home = os.path.expanduser("~")
         items = []
 
@@ -714,6 +761,15 @@ class Shell:
             return W.MenuItem(title, icon=icon,
                               action=lambda c=cmd, t=title:
                               self.run_maintenance(c, t))
+
+        items.append(self.script_launcher("update-system.sh", "Update System",
+                                          icon="settings"))
+        if self.tool_installed("claude"):
+            items.append(self.script_launcher("update-claude-code.py",
+                                              "Update Claude Code"))
+        if self.tool_installed("codex"):
+            items.append(self.script_launcher("update-codex.py",
+                                              "Update Codex"))
 
         # kilix, when this is a git checkout with the launcher
         kilix = os.path.join(KILIX_HOME, "kilix")
@@ -729,13 +785,12 @@ class Shell:
         pos = "/usr/local/bin/plebian-os-update"
         if os.path.exists(pos):
             items.append(launcher(pos, "Update Plebian-OS (kilix + pleb)"))
-        deps = "/usr/local/sbin/plebian-os-install-deps"
-        if os.path.exists(deps):
-            if items:
-                items.append(W.MenuItem("-"))
-            items.append(launcher(f'sudo "{deps}"', "Reinstall dependencies",
-                                  icon="settings"))
 
+        return items
+
+    def extra_script_menu_items(self):
+        """Executable *.sh files under checkout scripts dirs."""
+        home = os.path.expanduser("~")
         # any other executable *.sh shipped under the checkouts' scripts/ dirs
         extra = []
         for base in (os.path.join(home, "pleb", "scripts"),
@@ -748,12 +803,7 @@ class Shell:
                     extra.append(W.MenuItem(
                         fn, icon="exe", action=lambda p=fp, n=fn:
                         self.run_maintenance(f'"{p}"', n)))
-        if extra:
-            if items:
-                items.append(W.MenuItem("-"))
-            items.append(W.MenuItem("Scripts", icon="folder", submenu=extra))
-
-        return items
+        return extra
 
     def play_game(self, game):
         """Plays immediately when games.conf points at a working install;
