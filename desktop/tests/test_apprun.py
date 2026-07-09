@@ -1,5 +1,6 @@
 """config/apprun.py process cleanup regressions, without starting X/ffmpeg."""
 import os
+import sys
 
 import harness  # noqa: F401  (sets config/ on sys.path)
 import apprun
@@ -130,6 +131,7 @@ pane = object.__new__(apprun.AppPane)
 pane.app_w, pane.app_h = 800, 600
 pane.xd = FakeXD([manager, vm])       # root children: bottom -> top
 pane._auto_fit = True
+pane._fit_suspended = False
 pane._fit_window_id = 1
 pane._last_window_fit = 0.0
 fake_inputs = []
@@ -143,5 +145,67 @@ try:
     assert fake_inputs, "fit must park the pointer inside the newly active window"
 finally:
     apprun.xtest.fake_input = orig_fake_input
+
+
+class FakeInjector:
+    def __init__(self):
+        self.keys = []
+
+    def key(self, key, etype):
+        self.keys.append((key, etype))
+
+
+pane = object.__new__(apprun.AppPane)
+pane._auto_fit = True
+pane._fit_suspended = False
+pane.prev_status = "old"
+pane.inj = FakeInjector()
+fit_calls = []
+pane.fit_app_window = lambda force=False: fit_calls.append(force) or True
+
+pane.on_key({"key": "F10", "mods": 1, "event": 1})
+assert pane._fit_suspended is True
+assert pane.prev_status is None
+assert pane.inj.keys == [("F10", 1)]
+assert fit_calls == []
+
+pane.on_key({"key": "F10", "mods": 1, "event": 3})
+assert pane._fit_suspended is True
+assert pane.inj.keys[-1] == ("F10", 3)
+
+pane.on_key({"key": "F10", "mods": 1, "event": 1})
+assert pane._fit_suspended is False
+assert fit_calls == [True]
+
+pane._auto_fit = False
+pane.on_key({"key": "F10", "mods": 1, "event": 1})
+assert pane._fit_suspended is False
+assert fit_calls == [True]
+assert pane.inj.keys[-1] == ("F10", 1)
+
+orig_argv = sys.argv
+orig_app_pane = apprun.AppPane
+seen = {}
+
+
+class CapturingAppPane:
+    def __init__(self, args, app_w, app_h, fps, **kw):
+        seen.update(args=args, app_w=app_w, app_h=app_h, fps=fps, kw=kw)
+
+    def run(self):
+        seen["ran"] = True
+
+
+try:
+    apprun.AppPane = CapturingAppPane
+    sys.argv = ["apprun.py", "steam"]
+    apprun.main()
+finally:
+    apprun.AppPane = orig_app_pane
+    sys.argv = orig_argv
+
+assert seen["args"] == ["steam"]
+assert seen["kw"]["auto_fit"] is True
+assert seen["ran"] is True
 
 print("test_apprun OK")

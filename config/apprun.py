@@ -274,6 +274,7 @@ class AppPane:
         fit_env = os.environ.get("KILIX_RUN_AUTO_FIT")
         self._auto_fit = (fit_env.lower() not in ("0", "false", "no", "off")
                           if fit_env is not None else auto_fit)
+        self._fit_suspended = False
         if self.term:
             self.compute_layout()
 
@@ -536,6 +537,8 @@ class AppPane:
         """
         if not getattr(self, "_auto_fit", True) or self.xd is None:
             return
+        if getattr(self, "_fit_suspended", False):
+            return
         if now - getattr(self, "_last_window_fit", 0.0) < 0.5:
             return
         self._last_window_fit = now
@@ -633,8 +636,13 @@ class AppPane:
             dbg = (f" · cap{self._dbg['cfps']:.0f} blit{self._dbg['fps']:.0f}/s "
                    f"{self._dbg['kbps']:.0f}kb/s")
         serve = f" · VNC :{self.rfb_port}" if self.serve else ""
+        fit = ""
+        if getattr(self, "_auto_fit", False):
+            fit = (" · F10 fit:off" if getattr(self, "_fit_suspended", False)
+                   else " · F10 fit:on")
         body = (f" kilix run — {' '.join(self.cmd)[:28]} · {self.disp} "
-                f"{self.app_w}x{self.app_h} · {self.frames}f{serve}{dbg} · Ctrl+Q")
+                f"{self.app_w}x{self.app_h} · {self.frames}f{serve}{dbg}"
+                f"{fit} · Ctrl+Q")
         body = body[:self.term.cols].ljust(self.term.cols)
         s = f"\x1b[{self.term.rows};1H\x1b[0;7m{body}\x1b[0m"
         if s != self.prev_status:
@@ -647,6 +655,12 @@ class AppPane:
         etype = ev.get("event", 1)
         if (mods & 4) and ev["key"] == "q" and etype == 1:
             raise KeyboardInterrupt
+        if (ev["key"] == "F10" and etype == 1
+                and getattr(self, "_auto_fit", False)):
+            self._fit_suspended = not getattr(self, "_fit_suspended", False)
+            self.prev_status = None
+            if not self._fit_suspended:
+                self.fit_app_window(force=True)
         if etype == 2:
             return                       # Xvfb autorepeats held keys itself
         self.inj.key(ev["key"], etype)
@@ -831,7 +845,7 @@ def main():
                  "  --size defaults to the pane's pixel size")
     if auto_fit is None:
         auto_fit = os.path.basename(args[0]).lower() in (
-            "virtualbox", "virtualboxvm", "vbox")
+            "virtualbox", "virtualboxvm", "vbox", "steam")
     AppPane(args, app_w, app_h, fps, serve=serve, lan=lan, hls=hls,
             audio=audio, mse=mse, webrtc=webrtc, no_pane=no_pane,
             fill=fill, auto_fit=auto_fit).run()
