@@ -12,6 +12,7 @@ import os
 import re
 import signal
 import subprocess
+from typing import NamedTuple
 
 import shell as _shell
 import theme as T
@@ -19,26 +20,118 @@ import widgets as W
 import wm
 
 MARKER = "# ── kilix desktop settings ──"
+ENV_MARKER = "# -- kilix settings env --"
 
-# (key, label, kind, extra) — kind: text | choice | bool
-APPEARANCE = [
-    ("font_family", "Font family", "text", None),
-    ("font_size", "Font size", "text", None),
-    ("foreground", "Text color", "color", None),
-    ("background", "Background color", "color", None),
-    ("background_opacity", "Background opacity", "text", None),
-    ("cursor_shape", "Cursor shape", "choice",
-     ["block", "beam", "underline"]),
-    ("tab_bar_style", "Tab bar style", "choice",
-     ["fade", "separator", "powerline", "slant", "hidden"]),
-]
-BEHAVIOR = [
-    ("scrollback_lines", "Scrollback lines", "text", None),
-    ("enable_audio_bell", "Audio bell", "bool", "no"),
-    ("copy_on_select", "Copy on select", "bool", "no"),
-    ("confirm_os_window_close", "Confirm window close (panes)", "text", None),
-    ("mouse_hide_wait", "Hide mouse after (s)", "text", None),
-    ("cursor_blink_interval", "Cursor blink interval", "text", None),
+
+class SettingSpec(NamedTuple):
+    source: str
+    key: str
+    label: str
+    kind: str
+    default: str
+    extra: object = None
+
+
+def K(key, label, kind="text", default="", extra=None):
+    return SettingSpec("kitty", key, label, kind, default, extra)
+
+
+def E(key, label, kind="text", default="", extra=None):
+    return SettingSpec("env", key, label, kind, default, extra)
+
+
+def L(key, label, default, line):
+    return SettingSpec("line", key, label, "bool", default, line)
+
+
+# kind: text | color | choice | bool. Bool extra is (true_value, false_value).
+SETTING_PAGES = [
+    ("Look", [
+        K("font_family", "Font family"),
+        K("font_size", "Font size", default="11.0"),
+        K("foreground", "Text color", "color"),
+        K("background", "Background color", "color"),
+        K("background_opacity", "Background opacity"),
+        K("cursor_shape", "Cursor shape", "choice", "block",
+          ["block", "beam", "underline"]),
+        K("tab_bar_style", "Page strip style", "choice", "powerline",
+          ["fade", "separator", "powerline", "slant", "hidden", "custom"]),
+        K("tab_powerline_style", "Powerline shape", "choice", "slanted",
+          ["slanted", "round", "angled"]),
+    ]),
+    ("Terminal", [
+        K("scrollback_lines", "Scrollback lines", default="10000"),
+        E("KILIX_SHELL_INTEGRATION", "Kilix bash rc", "bool", "1", ("1", "0")),
+        K("enable_audio_bell", "Audio bell", "bool", "no"),
+        K("window_alert_on_bell", "Urgency on bell", "bool", "no"),
+        K("copy_on_select", "Copy on select", "bool", "clipboard",
+          ("clipboard", "no")),
+        K("confirm_os_window_close", "Confirm close panes", default="-1"),
+        K("mouse_hide_wait", "Hide mouse after (s)"),
+        K("cursor_blink_interval", "Cursor blink interval"),
+        K("software_mouse_cursor", "Software pointer", "choice", "block",
+          ["block", "pointer", "none"]),
+        L("right_click_context_menu", "Right-click menu", "yes",
+          "mouse_map right press ungrabbed show_context_menu"),
+        L("middle_paste_selection", "Middle paste selection", "yes",
+          "mouse_map middle release ungrabbed paste_from_selection"),
+        K("allow_remote_control", "Remote control", "bool", "yes"),
+        K("listen_on", "Remote socket", default="unix:@kilix-{kitty_pid}"),
+    ]),
+    ("Chrome", [
+        E("KILIX_CHROME_CLOCK", "Show clock", "bool", "1", ("1", "0")),
+        E("KILIX_CHROME_CLOCK_FORMAT", "Clock format", default="%Y-%m-%d %H:%M"),
+        E("KILIX_CHROME_BATTERY", "Show battery", "bool", "1", ("1", "0")),
+        E("KILIX_BATTERY_SUPPLY_DIR", "Battery supply dir"),
+        K("tab_bar_min_tabs", "Show page strip at", default="1"),
+        K("tab_bar_show_new_tab_button", "New-page button", "bool", "yes"),
+        K("window_title_bar", "Pane title bars", "choice", "top",
+          ["top", "bottom", "none"]),
+        K("window_title_bar_min_windows", "Title bars at panes", default="1"),
+        K("window_title_bar_align", "Title alignment", "choice", "left",
+          ["left", "center", "right"]),
+        K("draw_minimal_borders", "Minimal borders", "bool", "yes"),
+        K("enabled_layouts", "Enabled layouts", default="splits,stack,tall,grid"),
+        K("inactive_text_alpha", "Inactive text alpha", default="0.7"),
+    ]),
+    ("Desktop", [
+        E("KILIX_DESKTOP_PROVIDER", "Provider", "choice", "auto",
+          ["auto", "builtin", "external", "command", "none"]),
+        E("KILIX_DESKTOP_COMMAND", "Custom command"),
+        E("KILIX_DESKTOP_NAME", "Tab title", default="desktop"),
+        E("KILIX95_AUTO_INSTALL", "Auto-install external", "bool", "0",
+          ("1", "0")),
+        E("KILIX95_TRUST_EXISTING_CHECKOUT", "Trust checkout origin", "bool",
+          "0", ("1", "0")),
+        E("KILIX95_DIR", "External checkout", default="~/kilix-95"),
+        E("KILIX95_REPO", "External repo",
+          default="https://github.com/itsmygithubacct/kilix-95.git"),
+        E("KILIX95_BRANCH", "External branch"),
+        E("KILIX95_REF", "External ref"),
+    ]),
+    ("Apps", [
+        E("KILIX_RUN_AUTO_FIT", "Auto-fit X apps", "bool", "1", ("1", "0")),
+        E("KILIX_NO_PANE", "Headless run default", "bool", "0", ("1", "0")),
+        E("KILIX_DEBUG", "Debug metrics", "bool", "0", ("1", "0")),
+        E("KILIX_HW", "Prefer hardware encode", "bool", "0", ("1", "0")),
+        E("KILIX_BROWSE_LOG", "Browser log path"),
+        E("KILIX_RUN_LOG", "Run log path"),
+        E("KILIX_XFONTS", "X font path"),
+        E("KILIX_BRIDGE_TOKEN", "Bridge token"),
+    ]),
+    ("Files", [
+        E("KILIX_DESKTOP_DIR", "Desktop folder"),
+        E("KILIX_RECYCLE_DIR", "Recycle folder"),
+        E("KILIX_SAVER_IDLE", "Screensaver idle (s)", default="180"),
+        E("KILIX_HOST_CLIP", "Host clipboard bridge", "bool", "1", ("1", "0")),
+        E("KILIX_NO_SOUND", "Disable sounds", "bool", "0", ("1", "0")),
+        E("KILIX_XPANE_WM", "XPane window controls", "bool", "1", ("1", "0")),
+    ]),
+    ("Build", [
+        E("KILIX_REF", "Update ref"),
+        E("KILIX_PREBUILT_VERSION", "Prebuilt version"),
+        E("KILIX_PREBUILT_SHA256", "Prebuilt SHA256"),
+    ]),
 ]
 
 
@@ -48,8 +141,38 @@ def config_path():
     return os.path.join(d, "kitty.conf")
 
 
+def env_config_path():
+    d = os.environ.get("KITTY_CONFIG_DIRECTORY") or os.path.join(
+        _shell.KILIX_HOME, "config")
+    return os.environ.get("KILIX_ENV_CONFIG") or os.path.join(d, "kilix.env")
+
+
 def _is_true(s):
     return s.lower() in ("yes", "y", "true", "1")
+
+
+def _bool_values(spec):
+    if isinstance(spec.extra, tuple) and len(spec.extra) == 2:
+        return spec.extra
+    return "yes", "no"
+
+
+def _bool_checked(spec, val):
+    val = spec.default if val is None else val
+    true_value, false_value = _bool_values(spec)
+    if val == true_value:
+        return True
+    if val == false_value:
+        return False
+    return _is_true(val)
+
+
+def _field_default(spec):
+    if spec.kind == "choice" and spec.default:
+        return spec.default
+    if spec.kind == "choice" and spec.extra:
+        return spec.extra[0]
+    return spec.default
 
 
 def get_key(text, key):
@@ -68,6 +191,53 @@ def set_key(text, key, value):
     if MARKER not in text:
         text = text.rstrip("\n") + f"\n\n{MARKER}\n"
     return text.rstrip("\n") + "\n" + line + "\n"
+
+
+def has_line(text, line):
+    wanted = line.strip()
+    return any(ln.strip() == wanted for ln in text.splitlines())
+
+
+def set_line(text, line):
+    if has_line(text, line):
+        return text
+    if MARKER not in text:
+        text = text.rstrip("\n") + f"\n\n{MARKER}\n"
+    return text.rstrip("\n") + "\n" + line.rstrip() + "\n"
+
+
+def unset_line(text, line):
+    wanted = line.strip()
+    lines = [ln for ln in text.splitlines() if ln.strip() != wanted]
+    return "\n".join(lines) + ("\n" if text.endswith("\n") and lines else "")
+
+
+def get_env_key(text, key):
+    pat = re.compile(rf"^\s*(?:export\s+)?{re.escape(key)}=(.*?)\s*$", re.M)
+    hits = pat.findall(text)
+    return hits[-1] if hits else None
+
+
+def _clean_env_value(value):
+    return value.replace("\r", " ").replace("\n", " ").strip()
+
+
+def set_env_key(text, key, value):
+    value = _clean_env_value(value)
+    line = f"{key}={value}"
+    pat = re.compile(rf"^\s*(?:export\s+)?{re.escape(key)}=.*$", re.M)
+    hits = list(pat.finditer(text))
+    if hits:
+        last = hits[-1]
+        return text[:last.start()] + line + text[last.end():]
+    if ENV_MARKER not in text:
+        text = text.rstrip("\n") + f"\n\n{ENV_MARKER}\n"
+    return text.rstrip("\n") + "\n" + line + "\n"
+
+
+def unset_env_key(text, key):
+    pat = re.compile(rf"^\s*(?:export\s+)?{re.escape(key)}=.*\n?", re.M)
+    return pat.sub("", text)
 
 
 class _Swatch(W.Widget):
@@ -89,47 +259,64 @@ class _Swatch(W.Widget):
 
 class SettingsWin(wm.Window):
     def __init__(self, desk):
-        super().__init__(desk, "kilix Settings", 500, 420, icon="settings")
-        self.min_w, self.min_h = 420, 320
+        super().__init__(desk, "kilix Settings", 560, 520, icon="settings")
+        self.min_w, self.min_h = 520, 420
         self.path = config_path()
+        self.env_path = env_config_path()
         try:
             with open(self.path, encoding="utf-8", errors="replace") as f:
-                self.buffer = f.read()
+                self.kitty_buffer = f.read()
         except OSError:
-            self.buffer = ""
+            self.kitty_buffer = ""
+        try:
+            with open(self.env_path, encoding="utf-8", errors="replace") as f:
+                self.env_buffer = f.read()
+        except OSError:
+            self.env_buffer = ""
+        self.buffer = self.kitty_buffer
+        self._last_saved_env_buffer = self.env_buffer
         cw, ch = self.client_size()
+        self.page_specs = [spec for _, spec in SETTING_PAGES]
+        tab_labels = [label for label, _ in SETTING_PAGES] + ["kitty.conf"]
+        self.raw_tab = len(SETTING_PAGES)
         self.tabs = self.add(W.TabBar(6, 6, cw - 12,
-                                      ["Appearance", "Behavior", "kitty.conf"],
-                                      cb=self._switch_tab))
+                                      tab_labels, cb=self._switch_tab))
         self.fields = {}              # key -> (kind, widget)
-        self.panels = [[], [], []]
-        for tab_i, spec in ((0, APPEARANCE), (1, BEHAVIOR)):
+        self.field_specs = {}          # key -> SettingSpec
+        self.panels = [[] for _ in tab_labels]
+        for tab_i, spec in enumerate(self.page_specs):
             y = 44
-            for key, label, kind, extra in spec:
+            for item in spec:
+                key, label, kind, extra = item.key, item.label, item.kind, item.extra
                 lw = self.add(W.Label(18, y + 4, label + ":"))
                 self.panels[tab_i].append(lw)
                 if kind == "choice":
-                    wd = self.add(W.Dropdown(200, y, 180, extra))
+                    wd = self.add(W.Dropdown(250, y, 230, extra))
                 elif kind == "bool":
-                    wd = self.add(W.Checkbox(200, y + 3, "enabled"))
-                    wd.default_val = extra
+                    wd = self.add(W.Checkbox(250, y + 3, "enabled"))
+                    wd.default_val = item.default
                 else:
-                    wd = self.add(W.TextField(200, y, 180))
+                    wd = self.add(W.TextField(250, y, 230))
                     if kind == "color":
-                        sw = self.add(_Swatch(388, y, wd))
+                        sw = self.add(_Swatch(488, y, wd))
                         self.panels[tab_i].append(sw)
                         wd.on_change = lambda *_: self.invalidate()
                 self.fields[key] = (kind, wd)
+                self.field_specs[key] = item
                 self.panels[tab_i].append(wd)
-                y += 30
-        note_y = 44 + 30 * max(len(APPEARANCE), len(BEHAVIOR)) + 6
-        note = self.add(W.Label(
-            18, note_y, "Applied live to this kilix — no restart needed.",
-            font=T.SMALL, color=T.SHADOW))
-        self.panels[0].append(note)
+                y += 28
+            note_y = y + 4
+            note_text = (
+                "kitty.conf changes reload live; kilix.env changes affect new launches."
+                if any(s.source == "env" for s in spec)
+                else "Applied live to this kilix by reloading kitty.conf."
+            )
+            note = self.add(W.Label(18, note_y, note_text, font=T.SMALL,
+                                    color=T.SHADOW))
+            self.panels[tab_i].append(note)
         self.ta = self.add(W.TextArea(6, self.tabs.y + W.TabBar.H + 2,
-                                      cw - 12, ch - 84, self.buffer))
-        self.panels[2].append(self.ta)
+                                      cw - 12, ch - 84, self.kitty_buffer))
+        self.panels[self.raw_tab].append(self.ta)
         self.b_ok = self.add(W.Button(cw - 244, ch - 33, 72, 23, "OK",
                                       default=True,
                                       cb=lambda: self._apply(close=True)))
@@ -157,20 +344,23 @@ class SettingsWin(wm.Window):
         self.status.y = ch - 28
 
     def draw_client(self, d, img):
-        if self.tabs.active != 2:
+        if self.tabs.active != self.raw_tab:
             cw, ch = self.client_size()
             T.raised(d, 6, self.tabs.y + W.TabBar.H - 2, cw - 7, ch - 44)
             # redraw widgets over the panel face happens in the widget pass;
             # the panel is drawn first because draw_client precedes widgets
 
     def _switch_tab(self, i):
-        if self._cur_tab == 2:
-            self.buffer = self.ta.text()   # keep raw edits made on the conf tab
-        if i != 2:
+        if self._cur_tab == self.raw_tab:
+            self.kitty_buffer = self.ta.text()   # keep raw edits made on the conf tab
+            self.buffer = self.kitty_buffer
+        else:
+            self._form_to_buffer()
+        if i != self.raw_tab:
             self._populate()
         else:
             self._form_to_buffer()
-            self.ta.set_text(self.buffer)
+            self.ta.set_text(self.kitty_buffer)
         self._cur_tab = i
         for tab_i, panel in enumerate(self.panels):
             for wdg in panel:
@@ -180,58 +370,111 @@ class SettingsWin(wm.Window):
         self.invalidate()
 
     # form <-> buffer -----------------------------------------------------
+    def _current_value(self, spec):
+        if spec.source == "env":
+            return get_env_key(self.env_buffer, spec.key)
+        if spec.source == "line":
+            return "yes" if has_line(self.kitty_buffer, spec.extra) else "no"
+        return get_key(self.kitty_buffer, spec.key)
+
     def _populate(self):
         for key, (kind, wd) in self.fields.items():
-            val = get_key(self.buffer, key)
+            spec = self.field_specs[key]
+            val = self._current_value(spec)
             if kind == "bool":
-                wd.checked = _is_true(val if val is not None
-                                      else wd.default_val)
+                wd.checked = _bool_checked(spec, val)
             elif kind == "choice":
                 if val is not None and val not in wd.options:
                     wd.options.append(val)   # keep a valid non-listed value
-                if val in wd.options:
-                    wd.index = wd.options.index(val)
+                shown = val if val is not None else _field_default(spec)
+                if shown in wd.options:
+                    wd.index = wd.options.index(shown)
             else:
-                wd.set(val if val is not None else "")
+                shown = val if val is not None else _field_default(spec)
+                wd.set(shown if shown is not None else "")
 
     def _form_to_buffer(self):
         # only rewrite a key when its value actually changed, so keys absent
         # from the file stay absent and untouched values keep their formatting
         for key, (kind, wd) in self.fields.items():
-            cur = get_key(self.buffer, key)
+            spec = self.field_specs[key]
+            cur = self._current_value(spec)
+            default = _field_default(spec)
             if kind == "bool":
-                v = "yes" if wd.checked else "no"
-                if _is_true(v) == _is_true(cur if cur is not None
-                                           else wd.default_val):
+                true_value, false_value = _bool_values(spec)
+                v = true_value if wd.checked else false_value
+                if wd.checked == _bool_checked(spec, cur):
                     continue
             elif kind == "choice":
                 v = wd.value
-                if v == (cur if cur is not None else wd.options[0]):
+                if v == (cur if cur is not None else default):
                     continue
             else:
                 v = wd.text.strip()
-                if not v or v == (cur or ""):
+                if spec.source == "env" and not v:
+                    if cur is not None:
+                        self.env_buffer = unset_env_key(self.env_buffer, key)
                     continue
-            self.buffer = set_key(self.buffer, key, v)
+                if not v or v == (cur if cur is not None else default):
+                    continue
+            if spec.source == "env":
+                self.env_buffer = set_env_key(self.env_buffer, key, v)
+            elif spec.source == "line":
+                self.kitty_buffer = set_line(self.kitty_buffer, spec.extra) if wd.checked else unset_line(self.kitty_buffer, spec.extra)
+                self.buffer = self.kitty_buffer
+            else:
+                self.kitty_buffer = set_key(self.kitty_buffer, key, v)
+                self.buffer = self.kitty_buffer
 
     # apply ----------------------------------------------------------------
     def _apply(self, close=False):
-        if self.tabs.active == 2:
-            self.buffer = self.ta.text()
+        old_env = self._last_saved_env_buffer
+        if self.tabs.active == self.raw_tab:
+            self.kitty_buffer = self.ta.text()
+            self.buffer = self.kitty_buffer
         else:
             self._form_to_buffer()
         try:
             with open(self.path, "w", encoding="utf-8") as f:
-                f.write(self.buffer)
+                f.write(self.kitty_buffer)
         except OSError as e:
             wm.msgbox(self.desk, "kilix Settings", f"Cannot write config:\n{e}",
                       icon="error")
             return
+        if self.env_buffer != old_env or os.path.exists(self.env_path):
+            try:
+                os.makedirs(os.path.dirname(self.env_path), exist_ok=True)
+                with open(self.env_path, "w", encoding="utf-8") as f:
+                    f.write(self.env_buffer)
+                self._last_saved_env_buffer = self.env_buffer
+            except OSError as e:
+                wm.msgbox(self.desk, "kilix Settings",
+                          f"Cannot write runtime config:\n{e}", icon="error")
+                return
+        self._apply_env_live()
         msg = self._reload_live()
+        if self.env_buffer != old_env:
+            msg += " Runtime settings saved for new launches."
         self.status.set(msg)
         self.invalidate()
         if close:
             self.close()
+
+    def _apply_env_live(self):
+        env_specs = [s for spec in self.page_specs for s in spec
+                     if s.source == "env"]
+        for spec in env_specs:
+            val = get_env_key(self.env_buffer, spec.key)
+            if val is None or val == "":
+                os.environ.pop(spec.key, None)
+            else:
+                os.environ[spec.key] = val
+        if hasattr(self.desk, "saver_idle"):
+            try:
+                self.desk.saver_idle = float(
+                    os.environ.get("KILIX_SAVER_IDLE") or 180)
+            except ValueError:
+                self.desk.saver_idle = 180.0
 
     def _reload_live(self):
         kitten = self.desk.shell._kitten()
