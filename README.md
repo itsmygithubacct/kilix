@@ -309,10 +309,10 @@ kilix desktop
 ```
 
 Relevant knobs: `KILIX_DESKTOP_PROVIDER=auto|builtin|external|command|none`,
-`KILIX_DESKTOP_COMMAND`, `KILIX_DESKTOP_NAME`, `KILIX95_DIR`, `KILIX95_REPO`,
-`KILIX95_BRANCH`, `KILIX95_REF`, and `KILIX95_AUTO_INSTALL=1` to allow a
-missing external checkout to be cloned. `kilix update` also honors
-`KILIX_REF` for exact ref checkout.
+`KILIX_DESKTOP_COMMAND`, `KILIX_DESKTOP_NAME`, `KILIX_DESKTOP_FLAVOR=95|xp`,
+`KILIX95_DIR`, `KILIX95_REPO`, `KILIX95_BRANCH`, `KILIX95_REF`, and
+`KILIX95_AUTO_INSTALL=1` to allow a missing external checkout to be cloned.
+`kilix update` also honors `KILIX_REF` for exact ref checkout.
 
 ![kilix 95 — the desktop with the media player, file manager and Notepad open](config/kilix95_with_amp.png)
 
@@ -599,8 +599,8 @@ Edit `config/kitty.conf`, or use Start ▸ Settings in kilix 95:
 
 Kilix-only runtime knobs live in `config/kilix.env` and are also exposed in
 Start ▸ Settings. That includes chrome clock/battery toggles, Kilix 95 provider
-selection, desktop/recycle paths, host clipboard sync, X app behavior,
-streaming/debug options and build/update pins.
+and flavor selection, desktop/recycle paths, host clipboard sync, X app
+behavior, streaming/debug options and build/update pins.
 
 ## License
 
