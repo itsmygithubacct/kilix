@@ -97,6 +97,8 @@ SETTING_PAGES = [
     ("Desktop", [
         E("KILIX_DESKTOP_PROVIDER", "Provider", "choice", "auto",
           ["auto", "builtin", "external", "command", "none"]),
+        E("KILIX_DESKTOP_FLAVOR", "Flavor", "choice", "95",
+          ["95", "xp"]),
         E("KILIX_DESKTOP_COMMAND", "Custom command"),
         E("KILIX_DESKTOP_NAME", "Tab title", default="desktop"),
         E("KILIX95_AUTO_INSTALL", "Auto-install external", "bool", "0",

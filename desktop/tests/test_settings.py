@@ -137,6 +137,12 @@ with conf("font_size 12\n") as path:
     env_text = read(env_path_for(path))
     assert "KILIX_CHROME_CLOCK=1" in env_text
 
+    kind, flavor = win.fields["KILIX_DESKTOP_FLAVOR"]
+    flavor.index = flavor.options.index("xp")
+    win._apply()
+    env_text = read(env_path_for(path))
+    assert "KILIX_DESKTOP_FLAVOR=xp" in env_text
+
 
 # ── F52: a non-UTF-8 kitty.conf must not make Settings unopenable ───────────
 with conf(b"# note: caf\xe9 sync\nfont_size 13\n", binary=True) as path:
