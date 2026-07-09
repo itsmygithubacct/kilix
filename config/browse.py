@@ -10,7 +10,7 @@ Renders current Chrome inside a kilix/kitty pane:
   - copy: Ctrl+C also exports the DOM selection via OSC 52
 
 Usage: browse.py [url]     (run inside kilix; `kilix browse <url>`)
-Keys : Ctrl+L url bar · Alt+←/→ history · Ctrl+R reload · Ctrl+Q quit
+Keys : Ctrl+L url bar · Alt+←/→ or Backspace history · Ctrl+R reload · Ctrl+Q quit
        Shift+drag = native terminal selection of the glyph text
 Design doc: ~/research/kilix/browser-kitten-implementation.md
 """
@@ -394,6 +394,23 @@ TRANSPARENT_CSS = (
 INJECT_JS = ("(function(){var s=document.createElement('style');"
              f"s.textContent={json.dumps(TRANSPARENT_CSS)};"
              "(document.head||document.documentElement).appendChild(s);})()")
+EDITABLE_FOCUS_JS = r"""(() => {
+  const e = document.activeElement;
+  if (!e) return false;
+  if (e.isContentEditable) return true;
+  const tag = (e.tagName || "").toLowerCase();
+  if (tag === "textarea") return !e.readOnly && !e.disabled;
+  if (tag !== "input") return e.getAttribute && e.getAttribute("role") === "textbox";
+  const type = (e.getAttribute("type") || "text").toLowerCase();
+  return !["button", "checkbox", "color", "file", "hidden", "image",
+           "radio", "range", "reset", "submit"].includes(type)
+         && !e.readOnly && !e.disabled;
+})()"""
+TOOLBAR_PREFIX = " [<] [>] [R] "
+TOOLBAR_BACK = range(1, 4)
+TOOLBAR_FORWARD = range(5, 8)
+TOOLBAR_RELOAD = range(9, 12)
+TOOLBAR_URL_START = len(TOOLBAR_PREFIX)
 
 RGB_RE = re.compile(r"rgba?\((\d+),\s*(\d+),\s*(\d+)")
 
@@ -736,9 +753,9 @@ class Browse:
     def render_status(self):
         cols = self.term.cols
         if self.url_edit is not None:
-            body = f" URL: {self.url_edit}▏"
+            body = f"{TOOLBAR_PREFIX}URL: {self.url_edit}▏"
         else:
-            body = f" {self.title[:40]} — {self.url}  [{self.status_msg}]"
+            body = f"{TOOLBAR_PREFIX}{self.title[:40]} — {self.url}  [{self.status_msg}]"
         body = body[:cols].ljust(cols)
         return f"\x1b[{self.term.rows};1H\x1b[0;7m{body}\x1b[0m"
 
@@ -763,11 +780,13 @@ class Browse:
         if ctrl and key == "q":
             raise KeyboardInterrupt
         if ctrl and key == "r":
-            self.cdp.send("Page.reload", {}, session=self.sess)
-            self.status_msg = "reloading…"
+            self.reload()
             return
         if alt and key in ("ArrowLeft", "ArrowRight"):
             return self.history(-1 if key == "ArrowLeft" else +1)
+        if key == "Backspace" and not (ctrl or alt or (mods & 1)):
+            if not self.active_element_accepts_text():
+                return self.history(-1)
         if ctrl and key == "c":
             self.copy_selection()   # and fall through: forward to page
         self.forward_key(ev)
@@ -821,7 +840,9 @@ class Browse:
             return
         self.cur_x, self.cur_y = x, y
         self._repaint_cursor()    # the pointer follows on every path
-        if y >= self.page_h:      # status row: ignore
+        if y >= self.page_h:
+            if press and (b & 3) == 0:
+                self.toolbar_click(x)
             return
         mods = ((8 if b & 4 else 0) | (1 if b & 8 else 0) | (2 if b & 16 else 0))
         if b & 64:  # wheel: 64 up, 65 down
@@ -864,6 +885,11 @@ class Browse:
         self.snap_dirty = True
 
     # ---- commands ----------------------------------------------------------
+    def reload(self):
+        self.cdp.send("Page.reload", {}, session=self.sess)
+        self.status_msg = "reloading…"
+        self.glyph_dirty = True
+
     def history(self, step):
         try:
             h = self.cdp.call("Page.getNavigationHistory", session=self.sess)
@@ -873,8 +899,32 @@ class Browse:
                               {"entryId": h["entries"][idx]["id"]},
                               session=self.sess)
                 self.status_msg = "navigating…"
+                self.glyph_dirty = True
         except Exception as e:
             log("history:", e)
+
+    def toolbar_click(self, x):
+        col = int(x / max(self.term.cell_w, 1))
+        if col in TOOLBAR_BACK:
+            self.history(-1)
+        elif col in TOOLBAR_FORWARD:
+            self.history(+1)
+        elif col in TOOLBAR_RELOAD:
+            self.reload()
+        elif col >= TOOLBAR_URL_START:
+            self.url_edit = ""
+            self.glyph_dirty = True
+
+    def active_element_accepts_text(self):
+        try:
+            r = self.cdp.call("Runtime.evaluate",
+                              {"expression": EDITABLE_FOCUS_JS,
+                               "returnByValue": True}, session=self.sess,
+                              timeout=1)
+            return bool(r.get("result", {}).get("value"))
+        except Exception as e:
+            log("editable-focus:", e)
+            return True
 
     def copy_selection(self):
         try:
