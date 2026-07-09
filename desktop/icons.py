@@ -143,6 +143,15 @@ def _terminal(p):
     p.hline(3, 5, 8, G)
 
 
+def _mux(p):
+    _terminal(p)
+    p.rect(9, 8, 14, 14, fill=S, outline=K)         # attached terminal
+    p.rect(10, 9, 13, 13, fill=K)
+    p.hline(11, 12, 10, N)
+    p.px(13, 10, N)
+    p.rect(6, 10, 8, 11, fill=B, outline=K)         # link between panes
+
+
 def _dosbox(p):
     p.rect(1, 1, 14, 10, fill=S, outline=K)        # beige monitor shell
     p.rect(3, 2, 12, 8, fill=K)                    # black CRT
@@ -525,7 +534,7 @@ ICONS = {
     "folder": _folder, "folder_open": _folder_open,
     "doc": _doc, "doc_text": _doc_text, "doc_image": _doc_image,
     "doc_audio": _doc_audio,
-    "exe": _exe, "terminal": _terminal, "settings": _settings,
+    "exe": _exe, "terminal": _terminal, "mux": _mux, "settings": _settings,
     "notepad": _notepad, "browser": _browser, "run": _run,
     "shutdown": _shutdown, "flame": _flame, "home": _home,
     "games": _games, "doom": _doom, "dosbox": _dosbox, "tank": _tank,

@@ -159,6 +159,7 @@ class KilixLauncherTests(unittest.TestCase):
     def test_focus_watch_and_mux_commands_are_wired(self):
         launcher = (ROOT / "kilix").read_text()
         remote = (ROOT / "config" / "remote.py").read_text()
+        shell = (ROOT / "desktop" / "shell.py").read_text()
         self.assertIn('if [ "${1:-}" = "mux" ]; then', launcher)
         self.assertIn('"$KITTEN" @ launch --type=tab', launcher)
         self.assertIn('a|attach)', launcher)
@@ -170,6 +171,8 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn('"get-text"', remote)
         self.assertIn('"--interval"', remote)
         self.assertIn("refusing to watch the current pane", remote)
+        self.assertIn('"Mux Terminal"', shell)
+        self.assertIn('def open_mux_terminal', shell)
 
     def test_external_kilix95_clone_uses_array(self):
         text = (ROOT / "kilix").read_text()
