@@ -159,9 +159,9 @@ The far right of the page strip shows the local date and time. When Linux report
 a laptop battery is **discharging**, a battery status item appears to its right.
 It is green above 50%, yellow at 50% and below, red at 20% and below, and
 shows the percentage to the left of the battery icon. Clicking it toggles the
-percentage on/off. Set `KILIX_CHROME_CLOCK=0` to hide the clock,
-`KILIX_CHROME_CLOCK_FORMAT` to any `strftime` format to change it, or
-`KILIX_CHROME_BATTERY=0` to hide the battery item.
+percentage on/off. Use Start ▸ Settings ▸ Chrome in kilix 95, or edit
+`config/kilix.env`, to hide the clock, change `KILIX_CHROME_CLOCK_FORMAT`, or
+hide the battery item.
 
 **Drag-to-split by quadrant** (Tilix's model): drag a pane by its title bar onto another
 pane and drop on that pane's **top / bottom / left / right** triangle — a live half-pane
@@ -323,9 +323,11 @@ right-click menu everywhere. Built in:
 
 - **File Manager** — browse, open, rename, delete, new folder/file,
   properties, "open terminal here".
-- **kilix Settings** — edits this kilix's `config/kitty.conf` (form tabs for
-  the common knobs + a raw editor tab) and applies it **live** to the running
-  kilix via remote control (fallback: SIGUSR1).
+- **kilix Settings** — edits this kilix's `config/kitty.conf` and
+  `config/kilix.env` (GUI tabs for terminal, chrome, desktop, app, storage and
+  build/update knobs, plus a raw `kitty.conf` editor). `kitty.conf` changes apply
+  **live** via remote control (fallback: SIGUSR1); `kilix.env` changes are used
+  by new launches.
 - **Notepad** and an **image viewer**.
 - **Games** — Start ▸ Programs ▸ Games. Each entry plays immediately if
   `~/.config/kilix/games.conf` already points at a working install, otherwise
@@ -584,7 +586,7 @@ toolchain env at `~/.kitty-fork-buildenv`, `build.sh` sources it automatically.
 
 ## Tweaks
 
-Edit `config/kitty.conf`:
+Edit `config/kitty.conf`, or use Start ▸ Settings in kilix 95:
 
 - **Quieter page strip:** `tab_bar_min_tabs 2` (hide it until a 2nd page) and
   `tab_bar_show_new_tab_button no` (hide the `+`).
@@ -592,6 +594,11 @@ Edit `config/kitty.conf`:
 - **Active-pane accent:** `active_border_color` (and `window_title_bar_active_background`).
 - **Inactive dimming:** `inactive_text_alpha` (`1.0` = no dim).
 - **Rebind the buttons:** edit the action strings in `src/kitty/window_title_bar.py`.
+
+Kilix-only runtime knobs live in `config/kilix.env` and are also exposed in
+Start ▸ Settings. That includes chrome clock/battery toggles, Kilix 95 provider
+selection, desktop/recycle paths, host clipboard sync, X app behavior,
+streaming/debug options and build/update pins.
 
 ## License
 

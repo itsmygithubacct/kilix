@@ -124,7 +124,32 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn('bell_on_tab                    "● "', conf)
         self.assertIn("{fmt.fg.red}{bell_symbol}", conf)
         self.assertIn("{fmt.fg.yellow}{activity_symbol}", conf)
-        self.assertIn('("enable_audio_bell", "Audio bell", "bool", "no")', settings)
+        self.assertIn('K("enable_audio_bell", "Audio bell", "bool", "no")', settings)
+        self.assertIn('K("window_alert_on_bell", "Urgency on bell", "bool", "no")', settings)
+
+    def test_kilix_env_settings_are_gui_backed(self):
+        launcher = (ROOT / "kilix").read_text()
+        settings = (ROOT / "desktop" / "apps" / "settings.py").read_text()
+        env_conf = (ROOT / "config" / "kilix.env").read_text()
+
+        self.assertIn("KILIX_ENV_CONFIG", launcher)
+        self.assertIn("kilix.env", launcher)
+        self.assertIn("KILIX_CHROME_CLOCK|KILIX_CHROME_CLOCK_FORMAT", launcher)
+        self.assertIn("KILIX_DESKTOP_PROVIDER|KILIX_DESKTOP_COMMAND", launcher)
+        self.assertIn("KILIX_RUN_AUTO_FIT|KILIX_NO_PANE", launcher)
+        self.assertIn("KILIX_SHELL_INTEGRATION", launcher)
+        self.assertIn("KILIX_NO_SOUND|KILIX_XPANE_WM", launcher)
+        self.assertIn("SETTING_PAGES", settings)
+        for key in (
+            "KILIX_CHROME_CLOCK", "KILIX_CHROME_BATTERY",
+            "KILIX_DESKTOP_PROVIDER", "KILIX95_AUTO_INSTALL",
+            "KILIX_RUN_AUTO_FIT", "KILIX_HW", "KILIX_DESKTOP_DIR",
+            "KILIX_NO_SOUND", "KILIX_SHELL_INTEGRATION", "KILIX_REF",
+        ):
+            self.assertIn(key, settings)
+        self.assertIn("get_env_key", settings)
+        self.assertIn("set_env_key", settings)
+        self.assertIn("KILIX_CHROME_CLOCK=0", env_conf)
 
     def test_focus_watch_and_mux_commands_are_wired(self):
         launcher = (ROOT / "kilix").read_text()

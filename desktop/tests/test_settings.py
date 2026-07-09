@@ -40,6 +40,10 @@ def read(path):
         return f.read()
 
 
+def env_path_for(conf_path):
+    return os.path.join(os.path.dirname(conf_path), "kilix.env")
+
+
 # ── F06: raw editor edits survive a tab roundtrip and reach disk ────────────
 with conf("font_size 12\n") as path:
     import apps
@@ -48,10 +52,10 @@ with conf("font_size 12\n") as path:
     win = H.find_window(d, "SettingsWin")
     assert win is not None
 
-    win._switch_tab(2)                       # go to the raw kitty.conf tab
+    win._switch_tab(win.raw_tab)             # go to the raw kitty.conf tab
     win.ta.set_text(win.ta.text() + "map ctrl+j scroll_line_down\n")
     win._switch_tab(0)                       # leave tab 2 …
-    win._switch_tab(2)                       # … and come back
+    win._switch_tab(win.raw_tab)             # … and come back
     assert "map ctrl+j scroll_line_down" in win.ta.text(), \
         "F06: raw edit did not survive a tab roundtrip"
 
@@ -111,6 +115,27 @@ with conf(odd) as path:
     assert "tab_bar_style custom" in after   # untouched keys preserved
     assert settings.get_key(after, "font_size") == "11.5"
     assert "copy_on_select" not in after     # still no unrelated defaults
+
+
+# ── Runtime settings are stored in kilix.env, not kitty.conf ────────────────
+with conf("font_size 12\n") as path:
+    d = H.make_desk()
+    import apps
+    apps.open(d, "settings", None)
+    win = H.find_window(d, "SettingsWin")
+
+    kind, wd = win.fields["KILIX_CHROME_CLOCK"]
+    assert wd.checked, "env default for KILIX_CHROME_CLOCK should be enabled"
+    wd.checked = False
+    win._apply()
+    env_text = read(env_path_for(path))
+    assert "KILIX_CHROME_CLOCK=0" in env_text
+    assert "KILIX_CHROME_CLOCK" not in read(path)
+
+    wd.checked = True
+    win._apply()
+    env_text = read(env_path_for(path))
+    assert "KILIX_CHROME_CLOCK=1" in env_text
 
 
 # ── F52: a non-UTF-8 kitty.conf must not make Settings unopenable ───────────

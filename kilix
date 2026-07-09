@@ -32,6 +32,29 @@ PREBUILT="$KILIX_HOME/kitty.app/bin/kitty"      # official prebuilt kitty (fallb
 # normal launches deliberately ignore any inherited KITTY_CONFIG_DIRECTORY.
 export KITTY_CONFIG_DIRECTORY="${KILIX_CONFIG_DIRECTORY:-$KILIX_HOME/config}"
 
+_kilix_load_env_config() {
+  _conf="${KILIX_ENV_CONFIG:-$KITTY_CONFIG_DIRECTORY/kilix.env}"
+  [ -f "$_conf" ] || return 0
+  while IFS= read -r _line || [ -n "$_line" ]; do
+    _line="${_line%$'\r'}"
+    case "$_line" in ''|\#*) continue ;; esac
+    case "$_line" in *=*) ;; *) continue ;; esac
+    _key="${_line%%=*}"
+    _val="${_line#*=}"
+    case "$_key" in
+      KILIX_CHROME_CLOCK|KILIX_CHROME_CLOCK_FORMAT|KILIX_CHROME_BATTERY|KILIX_BATTERY_SUPPLY_DIR|\
+      KILIX_DESKTOP_PROVIDER|KILIX_DESKTOP_COMMAND|KILIX_DESKTOP_NAME|KILIX_DESKTOP_DIR|\
+      KILIX95_AUTO_INSTALL|KILIX95_DIR|KILIX95_REPO|KILIX95_BRANCH|KILIX95_REF|KILIX95_TRUST_EXISTING_CHECKOUT|\
+      KILIX_RECYCLE_DIR|KILIX_SAVER_IDLE|KILIX_HOST_CLIP|KILIX_NO_SOUND|KILIX_XPANE_WM|\
+      KILIX_RUN_AUTO_FIT|KILIX_NO_PANE|KILIX_DEBUG|KILIX_HW|KILIX_BROWSE_LOG|KILIX_RUN_LOG|\
+      KILIX_XFONTS|KILIX_BRIDGE_TOKEN|KILIX_SHELL_INTEGRATION|\
+      KILIX_REF|KILIX_PREBUILT_VERSION|KILIX_PREBUILT_SHA256)
+        export "$_key=$_val" ;;
+    esac
+  done < "$_conf"
+}
+_kilix_load_env_config
+
 # No-sudo streaming deps (Xvfb / Xvnc / vncpasswd / python-xlib unpacked by
 # scripts/install-stream-deps.sh on hosts that lack them): pull in their
 # PATH / LD_LIBRARY_PATH / PYTHONPATH so the serve modes find them. A no-op
@@ -661,7 +684,8 @@ fi
 export KILIX_HOME
 KILIX_SHELL=()
 _ushell="${SHELL:-$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7)}"
-if [ -f "$KILIX_HOME/config/kilix.bashrc" ] && [ "${_ushell##*/}" = bash ]; then
+if [ "${KILIX_SHELL_INTEGRATION:-1}" != 0 ] \
+     && [ -f "$KILIX_HOME/config/kilix.bashrc" ] && [ "${_ushell##*/}" = bash ]; then
   KILIX_SHELL=(-o "shell=$_ushell --rcfile $KILIX_HOME/config/kilix.bashrc")
 fi
 
