@@ -221,8 +221,9 @@ deleted on exit.
 | Key | Action |
 |---|---|
 | `Ctrl+L` | edit the URL (bare words search DuckDuckGo) |
-| `Alt+←` / `Alt+→` | history back / forward |
-| `Ctrl+R` | reload |
+| `[<]` / `[>]` toolbar, `Alt+←` / `Alt+→` | history back / forward |
+| `Backspace` | history back when the page is not editing text |
+| `[R]` toolbar, `Ctrl+R` | reload |
 | `Ctrl+C` | copy the mouse-drag selection (OSC 52 → clipboard) |
 | `Ctrl+Q` | quit |
 

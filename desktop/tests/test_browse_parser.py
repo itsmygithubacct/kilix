@@ -104,4 +104,59 @@ pg.url_edit = ""
 pg.url_edit_key(kp_ev)                             # URL bar
 assert pg.url_edit == "", repr(pg.url_edit)
 
+# Plain Backspace is browser Back when the page is not editing text, but still
+# reaches Chrome in focused input/textarea/contenteditable contexts.
+class StubCDP:
+    def __init__(self, editable=False):
+        self.editable = editable
+        self.sent = []
+
+    def send(self, method, params=None, **_kw):
+        self.sent.append((method, params or {}))
+
+    def call(self, method, params=None, **_kw):
+        if method == "Runtime.evaluate":
+            return {"result": {"value": self.editable}}
+        if method == "Page.getNavigationHistory":
+            return {"currentIndex": 1, "entries": [{"id": 10}, {"id": 11}]}
+        raise AssertionError(method)
+
+
+back_ev = {"kind": "key", "key": "Backspace", "code": "Backspace",
+           "vk": 8, "mods": 1, "text": ""}
+pg = object.__new__(browse.Browse)
+pg.cdp = StubCDP(editable=False)
+pg.sess = None
+pg.url_edit = None
+pg.status_msg = ""
+pg.glyph_dirty = False
+pg.on_key(back_ev)
+assert pg.cdp.sent == [("Page.navigateToHistoryEntry", {"entryId": 10})], pg.cdp.sent
+
+pg = object.__new__(browse.Browse)
+pg.cdp = StubCDP(editable=True)
+pg.sess = None
+pg.url_edit = None
+pg.on_key(back_ev)
+assert pg.cdp.sent[0][0] == "Input.dispatchKeyEvent", pg.cdp.sent
+
+
+class FakeTerm:
+    cols = 80
+    rows = 24
+    cell_w = 10
+
+
+pg = object.__new__(browse.Browse)
+pg.cdp = StubCDP()
+pg.sess = None
+pg.term = FakeTerm()
+pg.url_edit = None
+pg.status_msg = "ready"
+pg.title = "Example"
+pg.url = "https://example.com"
+assert "[<] [>] [R]" in pg.render_status()
+pg.toolbar_click(95)                                # R button (col 9)
+assert pg.cdp.sent[-1][0] == "Page.reload", pg.cdp.sent
+
 print("ok")
