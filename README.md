@@ -177,10 +177,10 @@ The buttons only exist in the **fork build** — the prebuilt fallback is a plai
 Tilix groups panes into **sessions**; kilix maps each session to a kitty **tab** —
 a "page" you flip between. The page strip (kitty's powerline tab bar) is always
 visible across the top and ends with a clickable **`+`** to open a new page. You can
-**drag a tab to reorder** it, **middle-click a tab to close** it, press **`F12`** for a
-visual page chooser (kilix's stand-in for Tilix's session sidebar), and **`F2`** to
-rename the current page. Run `kilix ls` from inside kilix to list the live pages,
-their tab IDs, pane counts, titles, and current working directories. The page
+**drag a tab to reorder** it, press **`F12`** for a visual page chooser (kilix's
+stand-in for Tilix's session sidebar), and **`F2`** to rename the current page.
+Run `kilix ls` from inside kilix to list the live pages, their tab IDs, pane
+counts, titles, and current working directories. The page
 shortcuts are in [Keybindings](#keybindings-tilix-layout).
 
 ### Live tab and pane control
