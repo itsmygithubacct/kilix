@@ -16,8 +16,8 @@ kitty you already have (and `~/.config/kitty`) completely untouched.
 - **Clickable pane buttons** `+ - → ↓ ▢ ✕` — local font size, split-right /
   split-down, maximize, and close controls that highlight on hover.
 - **Battery-in-chrome** — on laptops, a green/yellow/red battery item appears at the
-  far right of the page strip while the battery is discharging; click it to show
-  percentage.
+  far right of the page strip while the battery is discharging, with the percentage
+  shown to the left of the battery icon; click it to hide/show the percentage.
 - **Date/time-in-chrome** — the page strip shows the local date and time
   immediately to the left of the battery item.
 - **Pane title menu** — click a pane's title for Tilix-style actions: rename, copy title,
@@ -158,9 +158,10 @@ matching Tilix's active-pane cue.
 The far right of the page strip shows the local date and time. When Linux reports
 a laptop battery is **discharging**, a battery status item appears to its right.
 It is green above 50%, yellow at 50% and below, red at 20% and below, and
-clicking it toggles between icon and percentage. Set `KILIX_CHROME_CLOCK=0` to
-hide the clock, `KILIX_CHROME_CLOCK_FORMAT` to any `strftime` format to change
-it, or `KILIX_CHROME_BATTERY=0` to hide the battery item.
+shows the percentage to the left of the battery icon. Clicking it toggles the
+percentage on/off. Set `KILIX_CHROME_CLOCK=0` to hide the clock,
+`KILIX_CHROME_CLOCK_FORMAT` to any `strftime` format to change it, or
+`KILIX_CHROME_BATTERY=0` to hide the battery item.
 
 **Drag-to-split by quadrant** (Tilix's model): drag a pane by its title bar onto another
 pane and drop on that pane's **top / bottom / left / right** triangle — a live half-pane
