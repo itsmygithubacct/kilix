@@ -64,6 +64,12 @@ _kx_env="${XDG_DATA_HOME:-$HOME/.local/share}/kilix/stream-env.sh"
 
 case "${1:-}" in
   --build) shift; exec "$KILIX_HOME/build.sh" "$@" ;;
+  --kilix-version|kilix-version)
+    # The Plebian-OS release version of this kilix checkout. (Plain `--version`
+    # is passed through to the kitty engine by --which/exec, so this is a
+    # distinct flag for the launcher's own version.)
+    cat "$KILIX_HOME/VERSION" 2>/dev/null || echo unknown
+    exit 0 ;;
   update|--update)
     # kilix update — git pull the latest kilix into this checkout. $KILIX_HOME
     # is the repo the running kilix lives in (self-located above), which is

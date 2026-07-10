@@ -157,10 +157,9 @@ class Window:
         d.rectangle([0, 0, self.w - 1, self.h - 1], fill=T.FACE)
         T.frame(d, 0, 0, self.w - 1, self.h - 1)
         active = self.desk.wm.active is self
-        tb = T.TITLE_A if active else T.TITLE_I
         tx0, ty0 = T.BORDER, T.BORDER
         tx1, ty1 = self.w - T.BORDER - 1, T.BORDER + T.TITLE_H - 3
-        d.rectangle([tx0, ty0, tx1, ty1], fill=tb)
+        T.titlebar(d, tx0, ty0, tx1, ty1, active=active)
         icons.paint(img, self.icon, tx0 + 2, ty0, 16)
         label = T.ellipsize(T.BOLD, self.title, self.w - 90)
         d.text((tx0 + 22, ty0 + 1), label, font=T.BOLD,

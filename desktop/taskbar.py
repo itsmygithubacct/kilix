@@ -14,7 +14,8 @@ import widgets as W
 import wm
 import xdgapps
 
-START_W = 58
+# The Start-button width is a flavor metric now (theme.START_W: 58 for 95, 64
+# for xp) so it varies with KILIX_DESKTOP_FLAVOR — read T.START_W at the use sites.
 CLOCK_W = 76
 QL_BTN = 23                       # quick-launch button width
 
@@ -47,7 +48,7 @@ class Taskbar:
 
     def _ql_rect(self):
         x0, y0, x1, y1 = self.rect()
-        lx = x0 + 2 + START_W + 6
+        lx = x0 + 2 + T.START_W + 6
         return lx, y0 + 4, lx + len(self._ql_defs()) * QL_BTN + 3, y1 - 3
 
     def _ql_buttons(self):
@@ -118,19 +119,13 @@ class Taskbar:
     # drawing --------------------------------------------------------------
     def draw(self, fb, d):
         x0, y0, x1, y1 = self.rect()
-        d.rectangle([x0, y0, x1, y1], fill=T.FACE)
-        d.line([(x0, y0), (x1, y0)], fill=T.LIGHT)   # raised top edge
+        T.taskbar(d, x0, y0, x1, y1)
         # Start
-        sb = (x0 + 2, y0 + 4, x0 + 2 + START_W - 1, y1 - 3)
-        if self.menu_open >= 0:
-            T.pressed(d, *sb)
-            off = 1
-        else:
-            T.raised(d, *sb)
-            off = 0
-        icons.paint(fb, "flame", sb[0] + 4 + off, sb[1] + 2 + off, 16)
-        d.text((sb[0] + 24 + off, sb[1] + 3 + off), "Start", font=T.BOLD,
-               fill=T.TEXT)
+        sb = (x0 + 2, y0 + 4, x0 + 2 + T.START_W - 1, y1 - 3)
+        off, txcol = T.start_button(d, *sb, is_pressed=self.menu_open >= 0)
+        icons.paint(fb, T.START_ICON, sb[0] + 4 + off, sb[1] + 2 + off, 16)
+        d.text((sb[0] + 24 + off, sb[1] + 3 + off), T.START_LABEL, font=T.BOLD,
+               fill=txcol)
         # quick launch
         self._draw_quicklaunch(fb, d)
         # task buttons
@@ -210,7 +205,7 @@ class Taskbar:
         if not gev.press:
             return True
         modal = self.desk.wm.modal_top()
-        if gev.btn == 1 and x0 + 2 <= gev.x < x0 + 2 + START_W:
+        if gev.btn == 1 and x0 + 2 <= gev.x < x0 + 2 + T.START_W:
             if modal:
                 self.desk.wm.activate(modal)
             else:
