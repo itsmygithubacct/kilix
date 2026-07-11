@@ -23,9 +23,22 @@ WHEP, sub-500 ms), --audio (AAC from a PipeWire null sink), --no-pane
 from its single capture (E4 fan-out) and the capture rate downshifts on
 an idle screen (QW5).
 
+Tab-fill + scalable: with no --size, the private X screen tracks the
+pane — it starts at the pane's pixel size and a pane resize RESIZES the
+display (RandR RRSetScreenSize on the Xvfb, debounced), refits the app
+window, and restarts the capture, so the app always fills the tab 1:1.
+--size pins the app resolution (games) and pane resizes then rescale the
+picture on the GPU as before. Efficient/tiled: consecutive frames are
+diffed into a changed row band and only that rectangle is retransmitted,
+composed onto the displayed image via the kitty animation protocol
+(a=f frame edits) — locally through /dev/shm and inline (t=d) when
+streamed; full frames are sent only at start, after resizes, and when
+most of the frame changed.
+
 Known limits (prototype): apps that grab the pointer (e.g. DOSBox
 autolock) see relative motion, so the app cursor and the pane cursor can
-drift; the X screen size is fixed at startup — pane resizes rescale the
+drift; with --size or broadcast tiers (--serve/--hls/--mse/--webrtc) the
+X screen size stays fixed at startup — those pane resizes rescale the
 picture instead of resizing the app.
 """
 import json
@@ -45,11 +58,54 @@ import stream   # Xvnc/Xvfb + VNC/HLS/bridge supervisor for serve modes
 
 try:
     from Xlib import X, display as xdisplay
-    from Xlib.ext import xtest
+    from Xlib.ext import randr, xtest
 except ImportError:
     sys.exit("kilix run: python3-xlib is required (apt install python3-xlib)")
 
 LOG_PATH = os.environ.get("KILIX_RUN_LOG")
+
+# The private display's framebuffer allocation; RRSetScreenSize can move the
+# visible screen anywhere up to this. 4K default ≈ 24 MB of Xvfb framebuffer.
+DEFAULT_MAX_SCREEN = "3840x2160"
+
+
+def randr_prepare(xd):
+    """Disable the (decorative) CRTC on the private display so RRSetScreenSize
+    can move the screen size freely. Xvfb rejects SetScreenSize while a CRTC is
+    active (BadMatch) and implements no RRCreateMode, so mode switching is not
+    an option — but with the CRTC off, arbitrary sizes up to the framebuffer
+    allocation work. Returns True when the display is resizable this way."""
+    try:
+        root = xd.screen().root
+        res = randr.get_screen_resources(root)
+        if not res.crtcs:
+            return False
+        randr.set_crtc_config(xd, res.crtcs[0], res.config_timestamp,
+                              0, 0, 0, randr.Rotate_0, [])
+        xd.sync()
+        return True
+    except Exception as e:
+        log("randr_prepare failed:", type(e).__name__, e)
+        return False
+
+
+def randr_set_screen_size(xd, w, h):
+    """Resize the private display's screen (and root window) to w×h pixels.
+    Physical size is derived at ~96 dpi (only toolkit font scaling reads it).
+    Returns True on success."""
+    try:
+        root = xd.screen().root
+        randr.set_screen_size(root, w, h,
+                              max(1, w * 254 // 960), max(1, h * 254 // 960))
+        xd.sync()
+        g = root.get_geometry()
+        if (g.width, g.height) != (w, h):
+            log("randr_set_screen_size: no-op", g.width, g.height)
+            return False
+        return True
+    except Exception as e:
+        log("randr_set_screen_size failed:", type(e).__name__, e)
+        return False
 
 
 def log(*a):
@@ -233,6 +289,18 @@ class AppPane:
         self.http_port = self.token = self.tls_fp = None
         self.rtsp_port = self.webrtc_port = None
         self.term = None if no_pane else RunTerm()
+        # Tab-fill: with no --size and no broadcast tier, the private display
+        # tracks the pane — it can then be resized live (RandR) when the pane
+        # resizes. --size pins the app resolution; the network tiers bake WxH
+        # into every encoder argv, so their display stays fixed too.
+        self.resizable = (app_w is None and not no_pane
+                          and not (serve or lan or hls or mse or webrtc))
+        try:
+            mw, mh = (int(v) for v in os.environ.get(
+                "KILIX_RUN_MAX", DEFAULT_MAX_SCREEN).lower().split("x"))
+        except ValueError:
+            mw, mh = (int(v) for v in DEFAULT_MAX_SCREEN.split("x"))
+        self.max_w, self.max_h = max(640, mw) & ~1, max(480, mh) & ~1
         if self.app_w is None and no_pane:
             self.app_w, self.app_h = 1280, 720
         if self.app_w is None:
@@ -245,6 +313,12 @@ class AppPane:
             t = self.term
             self.app_w = max(320, int(t.cols * t.cell_w)) & ~1
             self.app_h = max(200, int((t.rows - 1) * t.cell_h)) & ~1
+        if self.resizable:
+            # only pane-tracked displays live inside the max framebuffer
+            # allocation; an explicit --size (or tier/headless size) is pinned
+            # exactly as given, like before.
+            self.app_w, self.app_h = (min(self.app_w, self.max_w),
+                                      min(self.app_h, self.max_h))
         self.wid = os.environ.get("KITTY_WINDOW_ID", str(os.getpid()))
         self.seq = 0
         # In a streamed/served session (KILIX_STREAM=1) inline the pixels (t=d)
@@ -261,6 +335,10 @@ class AppPane:
         self._dbg = {"t0": time.time(), "cap": 0, "blit": 0, "bytes": 0,
                      "cfps": 0.0, "fps": 0.0, "kbps": 0.0}
         self.resized = False
+        self._resize_deadline = None
+        self._base_wh = None             # dims of the displayed base image
+        self._place_t = 0.0              # last FULL placement (a=T) write
+        self._band_seq = 0               # unique names for band shm files
         self.status = "starting…"
         self.prev_status = None
         self.last_frame = None
@@ -319,8 +397,14 @@ class AppPane:
     def _start_xvfb(self):
         # Xvfb (with -auth, via the supervisor) so the private display is not
         # reachable by other local users on its /tmp/.X11-unix socket.
+        # When the display tracks the pane, allocate the framebuffer at the
+        # maximum (RRSetScreenSize can only move within the allocation) and
+        # shrink the visible screen to the pane before the app starts.
         n = self.sup.pick_display()
-        self.sup.start_xvfb(n, self.app_w, self.app_h)
+        if self.resizable:
+            self.sup.start_xvfb(n, self.max_w, self.max_h)
+        else:
+            self.sup.start_xvfb(n, self.app_w, self.app_h)
         self.disp = f":{n}"
         self.disp_n = n
         self.xvfb = None                 # owned by the supervisor
@@ -405,13 +489,26 @@ class AppPane:
             log("webrtc on", self.webrtc_port, "rtsp", self.rtsp_port)
 
     def start_app_and_capture(self):
+        # Connect to the private display FIRST and shrink its screen to the
+        # pane before the app starts, so the app's very first screen-size
+        # query already sees the pane-tracked geometry.
+        self.xd = xdisplay.Display(self.disp)
+        if self.resizable:
+            if randr_prepare(self.xd) and randr_set_screen_size(
+                    self.xd, self.app_w, self.app_h):
+                log(f"display sized to pane: {self.app_w}x{self.app_h}")
+            else:
+                # RandR unavailable: the screen stays at the framebuffer max,
+                # but the app window is still fitted (and captured) at pane
+                # size, so only whole-screen size queries see the difference.
+                self.resizable = False
+                log("display resize unavailable; window-fit fallback")
         env = dict(os.environ, DISPLAY=self.disp)
         if self.pulse_sink:
             env["PULSE_SINK"] = self.pulse_sink   # route app audio to our sink
         self.app = subprocess.Popen(self.cmd, env=env,
                                     stdout=subprocess.DEVNULL,
                                     stderr=subprocess.DEVNULL)
-        self.xd = xdisplay.Display(self.disp)
         if self.term:
             self.inj = xinject.Injector(self.xd, self.app_w, self.app_h)
         self.focus_app_window()
@@ -561,14 +658,21 @@ class AppPane:
             frame = bytes(self.ffbuf[:fsize])
             del self.ffbuf[:fsize]
             self._dbg["cap"] += 1            # frames captured (before change-detect)
-        if frame is not None and frame != self.last_frame:
+        if frame is not None:
+            prev = self.last_frame
+            band = None
+            if prev is not None and len(prev) == len(frame):
+                # one diff serves both the change gate and the damage band
+                band = gfx.diff_band(prev, frame, self.app_w, self.app_h)
+                if band is None:
+                    return                   # identical frame: nothing to do
             self.last_frame = frame
             now = time.time()
             self._last_change = now
-            self.feed.offer(frame, now)      # E4: same frame feeds the encoders
+            self.feed.offer(frame, now)      # E4: encoders always get FULL frames
             if self._cap_fps != self.fps:    # QW5: activity — back to full rate
                 self._spawn_capture(self.fps)
-            self.blit(frame)
+            self.blit(frame, band=band)
 
     def tick_capture(self, now):
         """Idle housekeeping each loop pass: QW5 capture downshift and the E4
@@ -579,15 +683,58 @@ class AppPane:
         self.feed.keepalive(self.last_frame, now)
         self.feed.pump()
 
-    def blit(self, rgb):
+    def blit(self, rgb, band=None):
+        """Send one frame to the pane. With a damage `band` (y0, band_h) from
+        diff_band and an in-place base image of the current size, only the
+        changed row band is transmitted and composed onto the displayed image
+        (kitty a=f frame edit); otherwise the full frame is (re)placed (a=T).
+        A band covering most of the frame falls back to a full placement —
+        the terminal-side compose costs a full-frame re-upload regardless, so
+        past that point the plain path is strictly cheaper."""
+        w, h = self.app_w, self.app_h
+        now = time.time()
+        in_tmux = bool(os.environ.get("TMUX"))
+        # Band edits only when the displayed base image matches, the damage is
+        # small enough to be worth it, AND a full placement went out recently.
+        # The periodic full re-place (and the all-full warmup window) is what
+        # recovers silently-dropped placements (q=2 hides errors) and gives
+        # late tmux attachers of a streamed session a base image to edit —
+        # kitty drops a=f edits for images a client never received.
+        if band is not None and (
+                getattr(self, "_base_wh", None) != (w, h)
+                or band[1] > int(h * 0.65)
+                or now - self._place_t > 5
+                or now - getattr(self, "_loop_start", 0) < 4):
+            band = None
         wire = 0
-        if self.stream:
+        if band is not None:
+            y0, bh = band
+            data = rgb[y0 * w * 3:(y0 + bh) * w * 3]
+            if self.stream:
+                wire = gfx.blit_frame_edit(self.term, data, w, bh, 0, y0,
+                                           self.img_id, in_tmux=in_tmux)
+            else:
+                # unique per-blit names: a lagging kitty must ENOENT on a
+                # stale escape, never mmap a slot reused with a different
+                # band geometry (kitty deletes each file after reading).
+                self._band_seq += 1
+                name = (f"tty-graphics-protocol-kilix-run-"
+                        f"{self.wid}-b{self._band_seq}.rgb")
+                path = "/dev/shm/" + name
+                with open(path, "wb") as f:
+                    f.write(data)
+                self.term.write(
+                    gfx.build_frame_edit_file(path, w, bh, 0, y0, 1))
+                wire = len(data)             # shm band volume (not on wire)
+        elif self.stream:
             # streamed session: inline the pixels (t=d) — the /dev/shm path of
             # the local branch below is meaningless to a kitty on another box.
-            wire = gfx.blit_direct(self.term, rgb, self.app_w, self.app_h,
+            wire = gfx.blit_direct(self.term, rgb, w, h,
                                    self.img_cols, self.img_rows, self.img_id,
                                    self.off_row + 1, self.off_col + 1,
-                                   in_tmux=bool(os.environ.get("TMUX")))
+                                   in_tmux=in_tmux)
+            self._base_wh = (w, h)
+            self._place_t = now
         else:
             import base64
             self.seq = (self.seq + 1) % 8
@@ -599,9 +746,11 @@ class AppPane:
             self.term.write(
                 f"\x1b[{self.off_row + 1};{self.off_col + 1}H"
                 f"\x1b_Ga=T,i=1,p=1,z=-1,t=t,f=24,"
-                f"s={self.app_w},v={self.app_h},"
+                f"s={w},v={h},"
                 f"c={self.img_cols},r={self.img_rows},q=2,C=1;{payload}\x1b\\")
             wire = len(rgb)                  # local shm pixel volume (not on wire)
+            self._base_wh = (w, h)
+            self._place_t = now
         self._blit_t = time.time()
         self.frames += 1
         self._dbg["blit"] += 1
@@ -640,9 +789,10 @@ class AppPane:
         if getattr(self, "_auto_fit", False):
             fit = (" · F10 fit:off" if getattr(self, "_fit_suspended", False)
                    else " · F10 fit:on")
+        size_tag = "≡pane" if self.resizable else "fixed"
         body = (f" kilix run — {' '.join(self.cmd)[:28]} · {self.disp} "
-                f"{self.app_w}x{self.app_h} · {self.frames}f{serve}{dbg}"
-                f"{fit} · Ctrl+Q")
+                f"{self.app_w}x{self.app_h} {size_tag} · {self.frames}f"
+                f"{serve}{dbg}{fit} · Ctrl+Q")
         body = body[:self.term.cols].ljust(self.term.cols)
         s = f"\x1b[{self.term.rows};1H\x1b[0;7m{body}\x1b[0m"
         if s != self.prev_status:
@@ -673,12 +823,38 @@ class AppPane:
 
     # ---- lifecycle ---------------------------------------------------------
     def do_resize(self):
+        """Apply a (debounced) pane resize.
+
+        Tab-fill: when the display tracks the pane, resize the private X
+        screen to the new pane pixel size (stop capture → RRSetScreenSize →
+        refit app window → restart capture), so the app itself resizes with
+        the tab instead of being rescaled. Fixed-size runs (--size, tiers)
+        keep the old behavior: recompute the GPU-scaled placement only.
+        """
         self.term.refresh_size()
+        if self.resizable:
+            t = self.term
+            w = max(320, int(t.cols * t.cell_w)) & ~1
+            h = max(200, int((t.rows - 1) * t.cell_h)) & ~1
+            w, h = min(w, self.max_w), min(h, self.max_h)
+            if (w, h) != (self.app_w, self.app_h) and self.xd is not None:
+                if self.ff is not None:          # capture size is baked into
+                    _stop_proc(self.ff, timeout=2)   # ffmpeg's argv — restart
+                    self.ff = None
+                if randr_set_screen_size(self.xd, w, h):
+                    self.app_w, self.app_h = w, h
+                    if getattr(self, "inj", None) is not None:
+                        self.inj.app_w, self.inj.app_h = w, h
+                    self.fit_app_window(force=True)
+                    log(f"pane resize -> display {w}x{h}")
+                else:
+                    self.resizable = False       # degrade to GPU scaling
+                self._spawn_capture(self.fps)
         self.compute_layout()
         self.prev_status = None
-        # placement (i=1,p=1) is replaced on next blit; clear stale cells
+        # placement (i=…,p=1) is replaced on next blit; clear stale cells
         self.term.write("\x1b[2J")
-        self.last_frame = None           # force a re-blit at the new size
+        self.last_frame = None           # force a full re-blit at the new size
         if self.ffbuf:
             del self.ffbuf[:]
 
@@ -731,10 +907,20 @@ class AppPane:
                             self.on_mouse(ev)
                         elif ev["kind"] == "paste":
                             self.on_paste(ev["text"])
+                now = time.time()
                 if self.resized:
                     self.resized = False
+                    # debounce: dragging a pane split fires SIGWINCH storms;
+                    # apply once things settle (display+capture restarts are
+                    # not free). Fixed-size runs relayout immediately.
+                    if self.resizable:
+                        self._resize_deadline = now + 0.30
+                    else:
+                        self.do_resize()
+                if getattr(self, "_resize_deadline", None) and \
+                        now >= self._resize_deadline:
+                    self._resize_deadline = None
                     self.do_resize()
-                now = time.time()
                 self.tick_capture(now)
                 self.maintain_app_window(now)
                 # A first placement can be dropped right after startup (seen
@@ -768,10 +954,11 @@ class AppPane:
                 self.inj.release_all()   # no keys/buttons left stuck down
             for p in (self.app, self.ff, self.xvfb):
                 _stop_proc(p)
-            for i in range(8):
+            import glob
+            for f in glob.glob(f"/dev/shm/tty-graphics-protocol-kilix-run-"
+                               f"{self.wid}-*.rgb"):
                 try:
-                    os.unlink(f"/dev/shm/tty-graphics-protocol-kilix-run-"
-                              f"{self.wid}-{i}.rgb")
+                    os.unlink(f)
                 except OSError:
                     pass
             if self.sup is not None:

@@ -245,12 +245,29 @@ kilix run --size 640x400 dosbox           # …or fix it (e.g. a DOS game's nati
 
 `kilix run` puts a real X11 app **inside the pane**: the app gets its own
 private off-screen X server (Xvfb), its frames are streamed into the pane via
-the kitty graphics protocol (GPU-scaled and letterboxed), and the pane's
-keyboard and mouse are forwarded back with XTest — key *releases* included, so
-games can hold keys. It's `kilix browse` generalized from Chrome to anything
-with an X window; think of it as a tiling WM turned inside-out — the app's
-pixels come to the pane instead of the WM arranging app windows. Proven by
-playing X-COM: UFO Defense under DOSBox entirely through a pane.
+the kitty graphics protocol, and the pane's keyboard and mouse are forwarded
+back with XTest — key *releases* included, so games can hold keys. It's
+`kilix browse` generalized from Chrome to anything with an X window; think of
+it as a tiling WM turned inside-out — the app's pixels come to the pane
+instead of the WM arranging app windows. Proven by playing X-COM: UFO Defense
+under DOSBox entirely through a pane.
+
+**Tab-fill & scalable.** With no `--size`, the app's screen *tracks the pane*:
+it starts at the pane's exact pixel size and a pane resize **resizes the
+app's display** (RandR on the private Xvfb, debounced), refits the app window,
+and restarts the capture — so GUI apps fill the tab 1:1 and re-tile with your
+splits exactly like terminal programs. `--size WxH` pins the app resolution
+(a DOS game's native res); the picture is then GPU-scaled and letterboxed
+into the pane as before. `KILIX_RUN_MAX` (default `3840x2160`) caps how large
+the pane-tracked display can grow.
+
+**Efficient (tiled updates).** Consecutive frames are diffed and only the
+changed row band is retransmitted, composed onto the displayed image in place
+via the kitty animation protocol (`a=f` frame edits) — locally through
+`/dev/shm`, inline (`t=d`) when streamed. Full frames are sent only at start,
+after resizes, and when most of the frame changed, so a blinking cursor or a
+small animation no longer costs a full-frame retransmit; the desktop
+(`kilix desktop`) blits the same way.
 
 | Key | Action |
 |---|---|
@@ -262,8 +279,9 @@ without root into `~/.local/share/kilix/xvfb`:
 `apt-get download xvfb && dpkg -x xvfb_*.deb ~/.local/share/kilix/xvfb`.
 Python prototype (`config/apprun.py`). Known limits: no sound routing; apps
 that grab the pointer (DOSBox's autolock) see relative motion, so the app
-cursor and the pane cursor can drift; the app's screen size is fixed at
-launch — resizing the pane rescales the picture instead of the app.
+cursor and the pane cursor can drift; with `--size` or the broadcast tiers
+(`--serve`/`--hls`/`--mse`/`--webrtc`) the app's screen size stays fixed at
+launch — those pane resizes rescale the picture instead of the app.
 
 **Their own window.** `browse` opens in a kitty **overlay window** — a pane
 with its own title bar and a clickable close (`✕`) button — so closing the
