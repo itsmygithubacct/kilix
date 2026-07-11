@@ -364,15 +364,67 @@ class Desk:
         ends — no 'It's now safe to turn off your computer' screen."""
         self.play_sound("shutdown")
 
-    def blit(self, img=None):
+    def blit(self, img=None, force_full=False):
         if not self.term:
             return
-        self._last_blit = time.time()
         rgb = (img if img is not None else self.fb).tobytes()
+        in_tmux = bool(os.environ.get("TMUX"))
+        # Damage path: when the screen already shows the desktop fb at the
+        # current size, diff against the previous fb frame and edit only the
+        # changed row band of the displayed image (a=f) instead of resending
+        # the whole framebuffer — a clock tick or one window's frame no longer
+        # costs a full w*h*3 retransmit. System-screen blits (img=), size
+        # changes, and force_full (the run loop's keepalive re-blits, which
+        # exist to recover placements kitty dropped while settling — a band
+        # edit cannot recover a missing placement) fall through to a full
+        # placement, which re-arms the band path by recording what's on
+        # screen. _last_blit is stamped only when bytes are transmitted, so
+        # the keepalive cadence tracks real retransmissions.
+        band = None
+        if (not force_full and img is None
+                and hasattr(kilix_graphics, "diff_band")
+                and getattr(self, "_prev_rgb", None) is not None
+                and len(self._prev_rgb) == len(rgb)
+                and getattr(self, "_blit_base", None)
+                == ("fb", self.w, self.h)):
+            band = kilix_graphics.diff_band(self._prev_rgb, rgb,
+                                            self.w, self.h)
+            if band is None:
+                self._prev_rgb = rgb
+                return                     # frame unchanged: nothing to send
+            if band[1] > int(self.h * 0.65):
+                band = None                # mostly changed: full frame wins
+        if img is None:
+            self._prev_rgb = rgb
+        self._last_blit = time.time()
+        if band is not None:
+            y0, bh = band
+            data = rgb[y0 * self.w * 3:(y0 + bh) * self.w * 3]
+            if self.stream:
+                kilix_graphics.blit_frame_edit(self.term, data, self.w, bh,
+                                               0, y0, self.img_id,
+                                               in_tmux=in_tmux)
+                return
+            # unique per-blit names: a lagging kitty must ENOENT on a stale
+            # escape, never mmap a slot reused with a different band geometry
+            # (kitty deletes each file after reading; the dir is cleaned up).
+            self._band_n = getattr(self, "_band_n", 0) + 1
+            path = os.path.join(os.path.dirname(self._frame_path()),
+                                f"band-{self._band_n}.rgb")
+            flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            fd = os.open(path, flags, 0o600)
+            with os.fdopen(fd, "wb") as f:
+                f.write(data)
+            self.term.write(kilix_graphics.build_frame_edit_file(
+                path, self.w, bh, 0, y0, self.img_id))
+            return
+        self._blit_base = ("fb" if img is None else "img", self.w, self.h)
         if self.stream:
             kilix_graphics.blit_direct(
                 self.term, rgb, self.w, self.h, self.term.cols,
-                self.term.rows, self.img_id, in_tmux=bool(os.environ.get("TMUX")))
+                self.term.rows, self.img_id, in_tmux=in_tmux)
             return
         self.seq = (self.seq + 1) % 8
         path = self._frame_path()
@@ -722,7 +774,7 @@ class Desk:
                 # for the first seconds and slowly forever after
                 age = now - self._last_blit
                 if age >= 0.5 and now - start < 5 or age >= 10:
-                    self.blit()
+                    self.blit(force_full=True)   # heal dropped placements
                 self.render()
         except KeyboardInterrupt:
             pass
