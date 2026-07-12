@@ -65,7 +65,10 @@ class Taskbar:
 
     # system tray (left of the clock) --------------------------------------
     def _tray_defs(self):
-        return [("display", "Display"), ("speaker", "Volume")]
+        entries = []
+        if getattr(self.desk, "password_nag", False):
+            entries.append(("password", "Default password — click to change it"))
+        return entries + [("display", "Display"), ("speaker", "Volume")]
 
     def _tray_rect(self):
         x0, y0, x1, y1 = self.rect()
@@ -170,6 +173,8 @@ class Taskbar:
         for name, tip, ix0, ix1 in self._tray_icons():
             if name == "speaker":
                 self._draw_speaker(d, ix0, cy, self._muted())
+            elif name == "password":
+                icons.paint(fb, "warn", ix0, cy - 8, 16)
             else:
                 icons.paint(fb, name, ix0, cy - 8, 16)
 
@@ -270,6 +275,22 @@ class Taskbar:
         elif name == "display":
             self._close_popup()
             self.desk.shell.display_properties()
+        elif name == "password":
+            self._close_popup()
+            self.desk.shell.change_password_dialog()
+
+    def show_password_balloon(self):
+        """Show a dismissible reminder; the tray icon remains persistent."""
+        self._close_popup()
+        width, height = 254, 100
+        x0, y0, x1, y1 = self.rect()
+        screen_w, _screen_h = self.desk.size()
+        tray_right = self._tray_rect()[2]
+        x = max(4, min(tray_right - width + 16, screen_w - width - 2))
+        popup = _PasswordBalloon(
+            self.desk, self, x, max(0, y0 - height - 1))
+        self.desk.wm.add(popup)
+        self._popup, self._popup_owner = popup, "password"
 
     def _toggle_popup(self, kind):
         if self._popup_owner == kind:
@@ -628,6 +649,31 @@ class _VolFlyout(_Popup):
         t = "Volume"
         d.text(((w - T.text_w(T.FONT, t)) // 2, 5), t, font=T.FONT,
                fill=T.TEXT)
+
+
+class _PasswordBalloon(_Popup):
+    def __init__(self, desk, taskbar, x, y):
+        super().__init__(desk, taskbar, 254, 100, x, y)
+        self.add(W.Label(34, 9, "Change your password", bold=True))
+        self.add(W.Label(34, 27, "This account still uses the default"))
+        self.add(W.Label(34, 41, "password 'plebian'. Change it to"))
+        self.add(W.Label(34, 55, "secure the computer."))
+        change = self.add(W.Button(34, 72, 96, 22, "Change…",
+                                   cb=self._change, default=True))
+        self.add(W.Button(140, 72, 74, 22, "Later", cb=self._dismiss))
+        self.set_focus(change)
+
+    def _change(self):
+        self.tb._close_popup()
+        self.desk.shell.change_password_dialog()
+
+    def _dismiss(self):
+        self.tb._close_popup()
+
+    def draw_client(self, d, img):
+        w, h = self.client_size()
+        T.raised(d, 0, 0, w - 1, h - 1)
+        icons.paint(img, "warn", 8, 10, 22)
 
 
 class _ClockPopup(_Popup):

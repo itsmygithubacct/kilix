@@ -1,0 +1,44 @@
+name: test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - name: Check out pinned sources and fork
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Install test-only OS packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ffmpeg python3-pil python3-xlib shellcheck xvfb
+
+      - name: Check shell and Python syntax
+        run: |
+          bash -n kilix bootstrap.sh build.sh scripts/install-build-deps.sh
+          shellcheck -x kilix bootstrap.sh build.sh scripts/install-build-deps.sh
+          python3 -m compileall -q config desktop scripts tests
+          git diff --check "$(git hash-object -t tree /dev/null)" HEAD -- . ':(exclude)src'
+
+      - name: Run host tests
+        run: python3 -m unittest discover -s tests -p 'test_*.py'
+
+      - name: Run desktop tests
+        run: |
+          for test_file in desktop/tests/test_*.py; do
+            python3 "$test_file"
+          done

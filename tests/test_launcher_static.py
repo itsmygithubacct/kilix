@@ -21,7 +21,12 @@ class KilixLauncherTests(unittest.TestCase):
     def test_update_supports_kilix_ref(self):
         text = (ROOT / "kilix").read_text()
         self.assertIn('if [ -n "${KILIX_REF:-}" ]; then', text)
-        self.assertIn('git -C "$KILIX_HOME" checkout --detach "$KILIX_REF"', text)
+        self.assertIn("'FETCH_HEAD^{commit}'", text)
+        self.assertIn('git -C "$KILIX_HOME" checkout --detach "$_target"', text)
+        self.assertIn("status --porcelain --untracked-files=normal", text)
+        self.assertIn("KILIX_TRUST_EXISTING_CHECKOUT", text)
+        self.assertIn('merge --ff-only "origin/$_branch"', text)
+        self.assertIn("fork rebuild failed", text)
 
     def test_ls_lists_live_tabs_via_kitty_remote_control(self):
         launcher = (ROOT / "kilix").read_text()
@@ -42,6 +47,26 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("KILIX_CONFIG_DIRECTORY", launcher)
         self.assertIn("set-font-size --all", launcher)
         self.assertIn("load_config_file", launcher)
+
+    def test_runtime_config_is_outside_the_checkout(self):
+        launcher = (ROOT / "kilix").read_text()
+        settings = (ROOT / "desktop" / "apps" / "settings.py").read_text()
+        self.assertIn('KILIX_USER_CONFIG_DIRECTORY="${XDG_CONFIG_HOME:-$HOME/.config}/kilix"', launcher)
+        self.assertIn("include .kilix-defaults.conf", launcher)
+        self.assertIn("_kilix_refresh_managed_link", launcher)
+        self.assertIn("_kilix_finish_config_migration", launcher)
+        self.assertIn('export KILIX_ENV_CONFIG=', launcher)
+        self.assertIn('os.environ.get("XDG_CONFIG_HOME")', settings)
+        self.assertIn('XDG_CACHE_HOME:-$HOME/.cache', launcher)
+
+    def test_authoritative_provider_contract_is_enforced(self):
+        launcher = (ROOT / "kilix").read_text()
+        self.assertIn("check-desktop-provider.py", launcher)
+        self.assertIn("external authoritative provider", launcher)
+        self.assertIn("KILIX95_ALLOW_MUTABLE_REF", launcher)
+        self.assertIn("KILIX95_ALLOW_UNPINNED_INSTALL", launcher)
+        self.assertIn('fetch --force origin "$KILIX95_REF"', launcher)
+        self.assertIn("'FETCH_HEAD^{commit}'", launcher)
 
     def test_clickable_chrome_status_items_are_wired(self):
         battery = (ROOT / "src" / "kitty" / "kilix_battery.py").read_text()
@@ -186,6 +211,17 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("KILIX_PREBUILT_SHA256", text)
         self.assertIn(".kitty.txz.sha256", text)
         self.assertIn("sha256sum -c --status", text)
+
+    def test_fork_build_has_no_mutable_default_bundle(self):
+        text = (ROOT / "build.sh").read_text()
+        self.assertIn("KILIX_BUILD_MODE", text)
+        self.assertIn("refusing mutable kitty CI dependency URL", text)
+        self.assertNotIn(
+            "deps_url=\"${KILIX_KITTY_DEPS_URL:-https://download.calibre-ebook.com",
+            text,
+        )
+        self.assertIn("_sysconfigdata_", text)
+        self.assertIn("libfontconfig.so", text)
 
 
 if __name__ == "__main__":

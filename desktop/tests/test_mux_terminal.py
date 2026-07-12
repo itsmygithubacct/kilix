@@ -1,5 +1,5 @@
-import icons
 import harness as H
+import icons
 
 
 def test_mux_icon_renders():

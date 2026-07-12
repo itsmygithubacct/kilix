@@ -4,6 +4,7 @@ leaked out of main() with the tab (F36). No network: conf files + stubs only."""
 import builtins
 import io
 import os
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -94,6 +95,85 @@ with tarfile.open(bad_tar, "r") as t:
     except RuntimeError as e:
         assert "unsafe path" in str(e)
 assert not os.path.exists(os.path.join(root, "escape.txt"))
+
+# ZIP extraction has the same traversal guarantee as tar extraction.
+bad_zip = os.path.join(root, "bad.zip")
+with zipfile.ZipFile(bad_zip, "w") as archive:
+    archive.writestr("../zip-escape.txt", b"escape")
+with zipfile.ZipFile(bad_zip) as archive:
+    try:
+        games._safe_extract_zip(archive, out_dir)
+        assert False, "unsafe ZIP member was extracted"
+    except RuntimeError as error:
+        assert "unsafe path" in str(error)
+assert not os.path.exists(os.path.join(root, "zip-escape.txt"))
+
+for ref in (games.BASHED_REF, games.LANDER_REF, games.BROKEOUT_REF,
+            games.AMP_REF):
+    assert len(ref) == 40 and all(c in "0123456789abcdef" for c in ref)
+
+
+# An interrupted source init (a .git directory with no HEAD) is repaired from
+# a separately prepared checkout, without leaving another partial directory.
+clone_root = tempfile.mkdtemp(prefix="games-clone-recovery-")
+seed = os.path.join(clone_root, "seed")
+dest = os.path.join(clone_root, "installed")
+subprocess.run(["git", "init", "-q", "-b", "main", seed], check=True)
+subprocess.run(["git", "-C", seed, "config", "user.name", "Test"], check=True)
+subprocess.run(["git", "-C", seed, "config", "user.email", "test@example.invalid"], check=True)
+game_bin = os.path.join(seed, "game")
+with open(game_bin, "w") as f:
+    f.write("#!/bin/sh\nexit 0\n")
+os.chmod(game_bin, 0o755)
+subprocess.run(["git", "-C", seed, "add", "game"], check=True)
+subprocess.run(["git", "-C", seed, "commit", "-qm", "game"], check=True)
+ref = subprocess.check_output(
+    ["git", "-C", seed, "rev-parse", "HEAD"], text=True).strip()
+subprocess.run(["git", "init", "-q", dest], check=True)  # interrupted old run
+recovered = games._clone_and_make(
+    seed, ref, dest, "game", "unused", lambda _msg: None)
+assert os.access(recovered, os.X_OK)
+assert subprocess.check_output(
+    ["git", "-C", dest, "rev-parse", "HEAD"], text=True).strip() == ref
+assert not [name for name in os.listdir(clone_root) if ".partial-" in name]
+
+failed_dest = os.path.join(clone_root, "failed-install")
+try:
+    games._clone_and_make(
+        seed, "0" * 40, failed_dest, "game", "unused", lambda _msg: None)
+    assert False, "missing ref unexpectedly installed"
+except RuntimeError:
+    pass
+assert not os.path.exists(failed_dest)
+assert not [name for name in os.listdir(clone_root) if ".partial-" in name]
+
+
+# Managed ready checks cannot bypass the origin/ref/clean-source contract, but
+# an explicitly different path remains a trusted user-managed executable.
+import configparser
+ready_cp = configparser.ConfigParser(interpolation=None)
+ready_cp.add_section("fixture")
+ready_cp.set("fixture", "dir", dest)
+assert games._repo_ready(ready_cp, "fixture", "game", dest, seed, ref) == recovered
+subprocess.run(["git", "-C", dest, "remote", "set-url", "origin", "bad-origin"],
+               check=True)
+assert games._repo_ready(ready_cp, "fixture", "game", dest, seed, ref) is None
+subprocess.run(["git", "-C", dest, "remote", "set-url", "origin", seed], check=True)
+with open(os.path.join(dest, "game"), "a") as f:
+    f.write("# modified\n")
+assert games._repo_ready(ready_cp, "fixture", "game", dest, seed, ref) is None
+subprocess.run(["git", "-C", dest, "reset", "--hard", ref],
+               check=True, capture_output=True)
+
+external = os.path.join(clone_root, "external")
+os.mkdir(external)
+external_bin = os.path.join(external, "game")
+with open(external_bin, "w") as f:
+    f.write("#!/bin/sh\nexit 0\n")
+os.chmod(external_bin, 0o755)
+ready_cp.set("fixture", "dir", external)
+assert games._repo_ready(
+    ready_cp, "fixture", "game", dest, seed, ref) == external_bin
 
 
 # Downloads must fail closed when the pinned checksum does not match.

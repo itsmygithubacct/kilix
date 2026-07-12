@@ -54,11 +54,16 @@ X-Kilix-Open=tab          ; tab | window | run (X11 via kilix run) | browse
 
 ## Settings app
 
-Edits `$KITTY_CONFIG_DIRECTORY/kitty.conf` (i.e. `config/kitty.conf`).
-Form tabs rewrite only the managed keys (last occurrence, preserving the
-rest of the file); the `kitty.conf` tab is the raw file. Apply reloads the
-running kilix live via `kitten @ action load_config_file`, falling back to
-`SIGUSR1` at `$KITTY_PID`.
+Edits `$KITTY_CONFIG_DIRECTORY/kitty.conf` (normally the XDG per-user Kilix
+config, which includes but never rewrites the tracked `config/kitty.conf`
+defaults). Form tabs rewrite only the managed keys (last occurrence,
+preserving the rest of the user file); the `kitty.conf` tab is the raw file.
+Apply reloads the running kilix live via `kitten @ action load_config_file`,
+falling back to `SIGUSR1` at `$KITTY_PID`.
+
+This tree is the compatibility fallback. The external `kilix-95` repository is
+authoritative; both providers declare `provider.json` and must pass the same
+SDK/API and security-feature checks before the launcher executes them.
 
 ## Testing without a terminal
 

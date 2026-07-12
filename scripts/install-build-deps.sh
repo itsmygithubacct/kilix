@@ -14,9 +14,11 @@
 #
 # Go: the fork's go.mod pins a Go version newer than some distros ship. Rather
 # than install Go by hand, this enables Go's own toolchain auto-download
-# (GOTOOLCHAIN=auto, written to ~/.kitty-fork-buildenv, which build.sh sources)
+# (an exact `GOTOOLCHAIN=goX.Y.Z+auto` in ~/.kitty-fork-buildenv, which
+# build.sh sources)
 # whenever the system Go is older than required — so `go build` fetches the
-# pinned toolchain on demand.
+# exact toolchain named by go.mod (and verifies it through Go's module checksum
+# mechanism) rather than resolving an open-ended "latest" toolchain.
 #
 # Usage:  scripts/install-build-deps.sh            # install
 #         scripts/install-build-deps.sh --verify   # re-check + print status
@@ -26,13 +28,18 @@ KILIX_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILDENV="$HOME/.kitty-fork-buildenv"
 
 # pkg-config modules the fork links against (see build.sh).
-PC_DEPS="x11 xrandr xinerama xcursor xi xkbcommon xkbcommon-x11 x11-xcb dbus-1 gl fontconfig"
+PC_DEPS="x11 xrandr xinerama xcursor xi xkbcommon xkbcommon-x11 x11-xcb dbus-1 gl fontconfig libpng lcms2 cairo-fc harfbuzz libcrypto libxxhash"
 AMP_PC_DEPS="sdl2 SDL2_image sndfile zlib fluidsynth"
 
 log(){ printf 'kilix: %s\n' "$*" >&2; }
 
-# Go version the fork requires, read from its go.mod (falls back to 1.26).
-required_go(){ awk '/^go [0-9]/{print $2; exit}' "$KILIX_HOME/src/go.mod" 2>/dev/null || echo "1.26.0"; }
+# Exact Go toolchain the fork requires, read from go.mod (falls back to its
+# language version, then a conservative project default).
+language_go(){ awk '/^go [0-9]/{print $2; found=1; exit} END{if (!found) print "1.26.0"}' \
+  "$KILIX_HOME/src/go.mod" 2>/dev/null; }
+pinned_go(){ awk '/^toolchain go[0-9]/{sub(/^go/, "", $2); print $2; found=1; exit} \
+  END{if (!found) exit 1}' "$KILIX_HOME/src/go.mod" 2>/dev/null || language_go; }
+required_go(){ pinned_go; }
 
 # Compare dotted versions: ver_ge A B  -> true if A >= B.
 ver_ge(){ [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" = "$2" ]; }
@@ -49,18 +56,21 @@ verify() {
     fi
   done
   for tool in gcc make pkg-config git curl; do
-    command -v "$tool" >/dev/null 2>&1 && echo "   $tool: $(command -v "$tool")" \
-      || { echo "   $tool: MISSING"; ok=0; }
+    if command -v "$tool" >/dev/null 2>&1; then
+      echo "   $tool: $(command -v "$tool")"
+    else
+      echo "   $tool: MISSING"; ok=0
+    fi
   done
   local req; req="$(required_go)"
   if command -v go >/dev/null 2>&1; then
     local gv; gv="$(go version | awk '{print $3}' | sed 's/^go//')"
     if ver_ge "$gv" "$req"; then
       echo "   go: $gv (>= $req)"
-    elif [ "$(go env GOTOOLCHAIN 2>/dev/null)" != "local" ] || grep -q GOTOOLCHAIN "$BUILDENV" 2>/dev/null; then
-      echo "   go: $gv (< $req, but toolchain auto-download is enabled)"
+    elif grep -q '^export GOTOOLCHAIN=go[0-9].*[+]auto$' "$BUILDENV" 2>/dev/null; then
+      echo "   go: $gv (< $req, but exact toolchain $(pinned_go) is configured)"
     else
-      echo "   go: $gv (< $req — the fork needs $req; enable GOTOOLCHAIN=auto)"; ok=0
+      echo "   go: $gv (< $req — run this installer to pin the required toolchain)"; ok=0
     fi
   else
     echo "   go: MISSING (need $req or a Go that can auto-download it)"; ok=0
@@ -74,57 +84,77 @@ verify() {
 
 # ---- enable Go toolchain auto-download when the system Go is too old ----------
 ensure_go_toolchain() {
-  local req; req="$(required_go)"
+  local req pin; req="$(required_go)"; pin="$(pinned_go)"
   command -v go >/dev/null 2>&1 || return 0
   local gv; gv="$(go version | awk '{print $3}' | sed 's/^go//')"
   if ver_ge "$gv" "$req"; then
     log "system Go $gv satisfies the fork's requirement ($req)"
     return 0
   fi
-  if ! grep -q 'GOTOOLCHAIN' "$BUILDENV" 2>/dev/null; then
+  if grep -q "^export GOTOOLCHAIN=go${pin}+auto$" "$BUILDENV" 2>/dev/null; then
+    return 0
+  elif grep -q '^export GOTOOLCHAIN=' "$BUILDENV" 2>/dev/null; then
+    local tmp; tmp="$(mktemp)"
+    awk -v value="export GOTOOLCHAIN=go${pin}+auto" \
+      '/^export GOTOOLCHAIN=/{if (!done) print value; done=1; next} {print}' \
+      "$BUILDENV" >"$tmp"
+    mv "$tmp" "$BUILDENV"
+    log "replaced mutable GOTOOLCHAIN setting with go${pin}+auto"
+  else
     {
       echo "# kilix fork build env — sourced by build.sh. Auto-generated."
       echo "# System Go ($gv) is older than the fork needs ($req); let Go fetch"
-      echo "# the pinned toolchain on demand instead of installing it by hand."
-      echo "export GOTOOLCHAIN=auto"
+      echo "# the exact go.mod toolchain on demand instead of resolving latest."
+      echo "export GOTOOLCHAIN=go${pin}+auto"
     } >> "$BUILDENV"
-    log "system Go $gv < $req — enabled GOTOOLCHAIN=auto in $BUILDENV"
+    log "system Go $gv < $req — pinned GOTOOLCHAIN=go${pin}+auto in $BUILDENV"
   fi
 }
 
 # ---- per-distro installs -----------------------------------------------------
 fedora_install() {
   local pc pkgs="gcc make pkgconf-pkg-config git curl golang python3 python3-devel python3-pillow SDL2-devel SDL2_image-devel libsndfile-devel zlib-devel fluidsynth fluidsynth-devel fluid-soundfont-gm"
+  local -a packages
   for pc in $PC_DEPS; do pkgs="$pkgs pkgconfig($pc)"; done
   echo "==> Fedora/RHEL detected — installing system-wide via dnf"
-  sudo dnf install -y $pkgs
+  read -r -a packages <<<"$pkgs"
+  sudo dnf install -y "${packages[@]}"
 }
 
 debian_install() {
   local pkgs="build-essential pkg-config git curl golang-go python3 python3-dev python3-pil \
     libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxkbcommon-dev \
     libxkbcommon-x11-dev libx11-xcb-dev libdbus-1-dev libgl1-mesa-dev libfontconfig-dev \
+    libpng-dev liblcms2-dev libcairo2-dev libharfbuzz-dev libssl-dev libxxhash-dev \
     libsdl2-dev libsdl2-image-dev libsndfile1-dev zlib1g-dev libfluidsynth-dev fluidsynth fluid-soundfont-gm"
+  local -a packages
   echo "==> Debian/Ubuntu detected — installing system-wide via apt-get"
   sudo apt-get update
-  sudo apt-get install -y $pkgs
+  read -r -a packages <<<"$pkgs"
+  sudo apt-get install -y "${packages[@]}"
 }
 
 arch_install() {
   local pkgs="base-devel pkgconf git curl go python python-pillow \
     libx11 libxrandr libxinerama libxcursor libxi libxkbcommon mesa dbus fontconfig \
+    libpng lcms2 cairo harfbuzz openssl xxhash \
     sdl2 sdl2_image libsndfile zlib fluidsynth soundfont-fluid"
+  local -a packages
   echo "==> Arch detected — installing system-wide via pacman"
-  sudo pacman -S --needed --noconfirm $pkgs
+  read -r -a packages <<<"$pkgs"
+  sudo pacman -S --needed --noconfirm "${packages[@]}"
 }
 
 suse_install() {
   local pkgs="gcc make pkg-config git curl go python3 python3-devel python3-Pillow \
     libX11-devel libXrandr-devel libXinerama-devel libXcursor-devel libXi-devel \
     libxkbcommon-devel libxkbcommon-x11-devel dbus-1-devel Mesa-libGL-devel fontconfig-devel \
+    libpng16-devel liblcms2-devel cairo-devel harfbuzz-devel libopenssl-devel libxxhash-devel \
     libSDL2-devel libSDL2_image-devel libsndfile-devel zlib-devel fluidsynth-devel fluidsynth fluid-soundfont-gm"
+  local -a packages
   echo "==> openSUSE detected — installing system-wide via zypper"
-  sudo zypper --non-interactive install $pkgs
+  read -r -a packages <<<"$pkgs"
+  sudo zypper --non-interactive install "${packages[@]}"
 }
 
 # ---- dispatch ----------------------------------------------------------------

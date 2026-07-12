@@ -296,13 +296,19 @@ def _osc52(desk, text):
 class TextField(Widget):
     focusable = True
 
-    def __init__(self, x, y, w, text="", on_enter=None, on_change=None):
+    def __init__(self, x, y, w, text="", on_enter=None, on_change=None,
+                 mask=False):
         super().__init__(x, y, w, 21)
         self.text = text
         self.cur = len(text)
         self.anchor = None            # selection anchor (char index) or None
         self.scroll = 0               # first visible pixel
         self.on_enter, self.on_change = on_enter, on_change
+        self.mask = mask
+
+    def _disp(self):
+        """Visible value; masked fields never render their secret text."""
+        return ("•" * len(self.text)) if self.mask else self.text
 
     # selection helpers
     def _sel(self):
@@ -328,17 +334,18 @@ class TextField(Widget):
         self.invalidate()
 
     def _x_of(self, i):
-        return 4 + T.text_w(T.FONT, self.text[:i]) - self.scroll
+        return 4 + T.text_w(T.FONT, self._disp()[:i]) - self.scroll
 
     def _idx_at(self, px):
         px += self.scroll - 4
-        for i in range(len(self.text) + 1):
-            if T.text_w(T.FONT, self.text[:i]) >= px:
+        disp = self._disp()
+        for i in range(len(disp) + 1):
+            if T.text_w(T.FONT, disp[:i]) >= px:
                 return i
-        return len(self.text)
+        return len(disp)
 
     def _reveal(self):
-        cx = 4 + T.text_w(T.FONT, self.text[:self.cur])
+        cx = 4 + T.text_w(T.FONT, self._disp()[:self.cur])
         if cx - self.scroll > self.w - 8:
             self.scroll = cx - self.w + 8
         if cx - self.scroll < 4:
@@ -358,15 +365,16 @@ class TextField(Widget):
         ox = 2 - self.scroll                      # x of text[0] within strip
         s = self._sel()
         focused = self.window and self.window.focus is self
+        disp = self._disp()
         if s and focused:
-            sx0 = ox + T.text_w(T.FONT, self.text[:s[0]])
-            sx1 = ox + T.text_w(T.FONT, self.text[:s[1]])
+            sx0 = ox + T.text_w(T.FONT, disp[:s[0]])
+            sx1 = ox + T.text_w(T.FONT, disp[:s[1]])
             sd.rectangle([max(0, sx0), ty - 1, min(iw, sx1), ty + 13],
                          fill=T.SEL_BG)
-        sd.text((ox, ty), self.text, font=T.FONT, fill=T.TEXT)
+        sd.text((ox, ty), disp, font=T.FONT, fill=T.TEXT)
         if s and focused:
-            sd.text((ox + T.text_w(T.FONT, self.text[:s[0]]), ty),
-                    self.text[s[0]:s[1]], font=T.FONT, fill=T.SEL_TX)
+            sd.text((ox + T.text_w(T.FONT, disp[:s[0]]), ty),
+                    disp[s[0]:s[1]], font=T.FONT, fill=T.SEL_TX)
         img.paste(strip, (x0 + 2, y0 + 2))
         if focused and self.window.caret_on:
             cx = x0 + self._x_of(self.cur)
@@ -414,7 +422,8 @@ class TextField(Widget):
         elif ev.ctrl and k in ("c", "x"):
             s = self._sel()
             if s:
-                _osc52(self.desk, self.text[s[0]:s[1]])
+                if not self.mask:
+                    _osc52(self.desk, self.text[s[0]:s[1]])
                 if k == "x":
                     changed = self._del_sel()
         elif ev.ctrl and k == "v":

@@ -13,7 +13,17 @@ def kilix_home() -> str:
 
 
 def config_dir() -> str:
-    """Return the Kilix host config directory."""
+    """Return the writable per-user Kilix configuration directory."""
+    override = os.environ.get("KITTY_CONFIG_DIRECTORY")
+    if override:
+        return os.path.abspath(os.path.expanduser(override))
+    xdg = os.environ.get("XDG_CONFIG_HOME") or os.path.join(
+        os.path.expanduser("~"), ".config")
+    return os.path.join(os.path.abspath(os.path.expanduser(xdg)), "kilix")
+
+
+def defaults_dir() -> str:
+    """Return the read-only tracked configuration/default-assets directory."""
     return os.path.join(kilix_home(), "config")
 
 
@@ -31,4 +41,10 @@ def kitten_candidates() -> tuple[str, str]:
     )
 
 
-__all__ = ["config_dir", "kilix_home", "kitten_candidates", "launcher"]
+__all__ = [
+    "config_dir",
+    "defaults_dir",
+    "kilix_home",
+    "kitten_candidates",
+    "launcher",
+]

@@ -29,8 +29,10 @@ sys.path.insert(0, _here)
 
 from PIL import Image
 
+from kilix_sdk import require_compatible as require_kilix_sdk
 from kilix_sdk import graphics as kilix_graphics
 from kilix_sdk import term as kilix_term
+require_kilix_sdk("1.0")
 import icons
 import shell as shell_mod
 import taskbar as taskbar_mod
@@ -132,6 +134,7 @@ class Desk:
         self.wm = wm_mod.WM(self)
         self.shell = shell_mod.Shell(self)
         self.taskbar = taskbar_mod.Taskbar(self)
+        self.password_nag = False
         self.fd_hooks = {}            # fd -> callback (XPane video feeds etc.)
         self.tick_hooks = []          # callables(now), each loop pass
         self.mouse_owner = None
@@ -681,6 +684,25 @@ class Desk:
         except Exception:
             pass
 
+    def _refresh_password_nag(self):
+        """Refresh the persistent tray warning from the helper's state."""
+        try:
+            import security
+            self.password_nag = bool(self.term) and security.is_default_password()
+        except Exception:
+            self.password_nag = False
+        self.dirty = True
+
+    def _first_run_password_nag(self):
+        """Show one reminder balloon per session while the default remains."""
+        if not self.password_nag or getattr(self, "_pw_balloon_shown", False):
+            return
+        self._pw_balloon_shown = True
+        try:
+            self.taskbar.show_password_balloon()
+        except Exception:
+            pass
+
     # ── main loop ───────────────────────────────────────────────────────────
     def run(self):
         term = self.term
@@ -707,7 +729,9 @@ class Desk:
         except Exception:
             pass
         self.play_sound("startup")
+        self._refresh_password_nag()
         self._first_run_help()
+        self._first_run_password_nag()
         last_blink = time.time()
         self._last_blit = 0.0
         start = time.time()
