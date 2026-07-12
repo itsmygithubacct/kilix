@@ -7,9 +7,17 @@ kitty's GPU-rendered speed. For Tilix users who want kitty underneath, and
 anyone who wants clickable split/maximize/close chrome on kitty.
 
 It runs its own kitty binary with its own config and icon, so it leaves any
-kitty you already have (and `~/.config/kitty`) completely untouched.
+kitty you already have completely untouched. Tracked defaults stay in
+`config/`; writable settings live in `${XDG_CONFIG_HOME:-~/.config}/kilix`.
 
 ![kilix — pages strip with + button, per-pane title bars with clickable split/maximize/close buttons, splits, and icat](config/kilix_demo.png)
+
+## Release 0.1.1
+
+Version 0.1.1 moves mutable settings/build state to XDG directories, hardens
+origin/ref-aware updates and downloadable assets, versions the host SDK and
+desktop-provider contract, and makes external Kilix 95 the authoritative
+provider with a security-compatible bundled fallback.
 
 ## Features
 
@@ -41,21 +49,25 @@ kitty you already have (and `~/.config/kitty`) completely untouched.
 
 ## Requirements
 
-- **Linux only**, x86_64 or arm64. (No macOS/Windows: the prebuilt fallback is a
-  Linux `.txz`, the fork build needs X11 dev libraries, and the launcher installs
-  an XDG `.desktop` entry + icons.)
+- **Linux only**, x86_64 or arm64 for the prebuilt engine. The clickable-chrome
+  fork build currently supports x86_64. (No macOS/Windows.)
 - A running graphical session — **X11 or Wayland** (`$DISPLAY` or `$WAYLAND_DISPLAY`).
   It's a GUI terminal; it won't run headless / over plain SSH.
 - **To run the prebuilt kitty** (no buttons): `git`, `curl`, `tar`.
 - **To build the fork** (the buttons): **Go ≥ 1.26**, a C compiler, `pkg-config`, and
-  kitty's X11 build deps — `x11 xrandr xinerama xcursor xi xkbcommon xkbcommon-x11
-  x11-xcb dbus-1 gl` and `fontconfig`. kitty downloads a prebuilt deps bundle plus
-  the Symbols Nerd Font Mono (the pane-button glyphs) from GitHub at build time, so
-  the first build needs network access. **`scripts/install-build-deps.sh` installs
+  kitty's build deps — `x11 xrandr xinerama xcursor xi xkbcommon xkbcommon-x11
+  x11-xcb dbus-1 gl fontconfig libpng lcms2 cairo-fc harfbuzz libcrypto` and
+  `libxxhash`. By default the build uses these signed package-manager
+  dependencies and downloads only the immutable, SHA-256-pinned Symbols Nerd
+  Font release. An offline/release build may instead set
+  `KILIX_BUILD_MODE=bundle` with an immutable `KILIX_KITTY_DEPS_URL` and matching
+  SHA-256; mutable kitty CI bundle URLs are rejected. **`scripts/install-build-deps.sh` installs
   all of that** on Fedora/RHEL (dnf), Debian/Ubuntu (apt), Arch (pacman), and
   openSUSE (zypper). Where the distro's Go is older than the fork needs (e.g. Fedora
-  ships 1.25), it enables Go's toolchain auto-download so `go build` fetches the
-  pinned version on demand — no manual Go install.
+  ships 1.25), it configures the exact `toolchain` version from `go.mod` so Go
+  can fetch that checksum-verified toolchain on demand. `build.sh` forces that
+  exact version even if the host has a newer Go — no open-ended latest lookup
+  and no manual Go install.
 - The same dependency installer also includes kilix-amp's SDL/libsndfile/
   FluidSynth packages, so the desktop Media Player can build and play MIDI.
 - **For the pixel desktop and web-in-a-pane** (`kilix desktop` / `kilix browse`):
@@ -73,24 +85,27 @@ git clone --recursive https://github.com/itsmygithubacct/kilix.git ~/kilix
 Run `git submodule update --init` — until then kilix just uses the prebuilt
 fallback.)
 
-On the **first run**, kilix tries to build the fork; if the build deps are missing
-the build fails and kilix **automatically downloads a prebuilt kitty instead** — a
-working Tilix-styled terminal, but **without the clickable buttons**.
+On the **first run**, kilix tries to build the fork. If build dependencies are
+missing it falls back to `bootstrap.sh`. For supply-chain safety, downloading a
+prebuilt now requires a pinned version + SHA-256 (recommended) or explicit
+`--allow-unverified` consent; Kilix never silently executes an unverified asset.
 
 | Engine | Buttons? | Needs |
 |---|---|---|
 | **Fork build** (`kilix --build`) | ✅ `→ ↓ ▢ ✕` | Go ≥ 1.26 + X11 build deps |
 | **Prebuilt fallback** (`bootstrap.sh`) | ❌ no buttons | `git`, `curl`, `tar` |
 
-To skip the build attempt and go straight to the prebuilt engine:
+To skip the build attempt and go straight to a verified prebuilt engine:
 
 ```bash
-~/kilix/bootstrap.sh   # download the prebuilt kitty
+KILIX_PREBUILT_VERSION=0.47.0 \
+KILIX_PREBUILT_SHA256=<sha256-of-kitty-txz> \
+~/kilix/bootstrap.sh
 ~/kilix/kilix          # run it (no buttons until you build the fork)
 ```
 
-Release builders can make that fallback deterministic by pinning the version and
-checksum:
+The version and checksum are mandatory unless a user explicitly passes
+`--allow-unverified` after reviewing the printed release URL:
 
 ```bash
 KILIX_PREBUILT_VERSION=0.47.0 \
@@ -128,6 +143,7 @@ kilix focus <tab-or-pane-id>      # jump to a live tab or pane
 kilix watch <pane-id>             # best-effort read-only text watch
 kilix screen-size larger          # increase terminal scale (font_size +2pt)
 kilix screen-size smaller         # decrease terminal scale (font_size -2pt)
+kilix status                      # version/commit, engine, XDG config, provider contract
 ```
 
 Put `~/kilix` on your `PATH` (or `ln -s ~/kilix/kilix ~/.local/bin/kilix`) to just
@@ -160,7 +176,8 @@ a laptop battery is **discharging**, a battery status item appears to its right.
 It is green above 50%, yellow at 50% and below, red at 20% and below, and
 shows the percentage to the left of the battery icon. Clicking it toggles the
 percentage on/off. Use Start ▸ Settings ▸ Chrome in kilix 95, or edit
-`config/kilix.env`, to hide the clock, change `KILIX_CHROME_CLOCK_FORMAT`, or
+`${XDG_CONFIG_HOME:-~/.config}/kilix/kilix.env`, to hide the clock, change
+`KILIX_CHROME_CLOCK_FORMAT`, or
 hide the battery item.
 
 **Drag-to-split by quadrant** (Tilix's model): drag a pane by its title bar onto another
@@ -290,7 +307,7 @@ app exits it and drops you back to the shell underneath. `run` opens in a
 its own tab and closing the app's tab exits the app. Either way the shell
 session is never taken over. This uses kitty remote control, which kilix's
 config enables (`allow_remote_control yes` + a per-instance `listen_on`
-socket); remove those two lines from `config/kitty.conf` and the app runs
+socket); override those two settings in your XDG `kilix/kitty.conf` and the app runs
 in-place in the current pane instead.
 
 ## Screensaver
@@ -302,7 +319,7 @@ kilix screensaver matrix     # …or by name
 
 Terminal screensavers live in `config/screensavers/` as small, self-contained
 C programs. kilix compiles the one you ask for on first use (cached under
-`.build/`, gitignored) and runs it in the current pane — press `q` or `Ctrl-C`
+`${XDG_CACHE_HOME:-~/.cache}/kilix/screensavers`) and runs it in the current pane — press `q` or `Ctrl-C`
 to quit. `matrix` is efficient green digital-rain: diff-rendered with one
 synchronized write per frame, so it's a couple of percent of a core even
 full-screen. Drop another `<name>.c` into that directory and
@@ -315,9 +332,11 @@ fork build uses).
 kilix desktop                # opens "kilix 95" in a new kilix tab
 ```
 
-`kilix desktop` is a compatibility facade. By default it runs the built-in
-`desktop/` tree while this repository still carries one. Pleb/Plebian-OS can
-instead select an external checkout, a custom command, or no desktop:
+`kilix desktop` is a versioned provider facade. The separate `kilix-95`
+repository is the authoritative desktop. `auto` prefers an installed external
+checkout; the bundled `desktop/` tree is an explicitly reported compatibility
+fallback. Both must pass the same provider API, Kilix SDK, and security-feature
+contract before execution (`kilix status` shows the selected provider).
 
 ```bash
 KILIX_DESKTOP_PROVIDER=external \
@@ -330,7 +349,10 @@ Relevant knobs: `KILIX_DESKTOP_PROVIDER=auto|builtin|external|command|none`,
 `KILIX_DESKTOP_COMMAND`, `KILIX_DESKTOP_NAME`, `KILIX_DESKTOP_FLAVOR=95|xp`,
 `KILIX95_DIR`, `KILIX95_REPO`, `KILIX95_BRANCH`, `KILIX95_REF`, and
 `KILIX95_AUTO_INSTALL=1` to allow a missing external checkout to be cloned.
-`kilix update` also honors `KILIX_REF` for exact ref checkout.
+Automatic installs require `KILIX95_REF` to be a full immutable commit SHA;
+mutable tags/branches require the explicit `KILIX95_ALLOW_MUTABLE_REF=1` trust
+override. `kilix update` similarly honors `KILIX_REF` by fetching it from the
+validated origin and checking out the resolved commit detached.
 
 ![kilix 95 — the desktop with the media player, file manager and Notepad open](config/kilix95_with_amp.png)
 
@@ -343,8 +365,8 @@ right-click menu everywhere. Built in:
 
 - **File Manager** — browse, open, rename, delete, new folder/file,
   properties, "open terminal here".
-- **kilix Settings** — edits this kilix's `config/kitty.conf` and
-  `config/kilix.env` (GUI tabs for terminal, chrome, desktop, app, storage and
+- **kilix Settings** — edits this user's XDG `kitty.conf` and `kilix.env`
+  (GUI tabs for terminal, chrome, desktop, app, storage and
   build/update knobs, plus a raw `kitty.conf` editor). `kitty.conf` changes apply
   **live** via remote control (fallback: SIGUSR1); `kilix.env` changes are used
   by new launches.
@@ -470,8 +492,8 @@ h264_vaapi — auto-detected; `x11grab`), `Xvfb`, `python3-xlib`, and the
 `websockets` Python module; `Xvnc` (TightVNC/TigerVNC) only for `--serve`;
 `pactl` (PulseAudio/PipeWire) only for `--audio`; `openssl` for `--lan` TLS.
 First use vendors noVNC, hls.js, mpegts.js and (for `--webrtc`) the MediaMTX
-binary into `~/.local/share/kilix/` (one-time network). Design notes and the
-full rationale live in `~/research/kilix/`.
+binary into `~/.local/share/kilix/` (one-time network). The implementation
+rationale is captured in the nearby source comments and regression tests.
 
 ## Keybindings (Tilix layout)
 
@@ -504,8 +526,9 @@ full rationale live in `~/research/kilix/`.
 
 kilix launches kitty with `--class kilix`, so its windows get their own
 `WM_CLASS`/`app_id` and **group separately from any plain kitty instances** in your
-taskbar/dock. It also sets `KITTY_CONFIG_DIRECTORY` to `./config`, so kitty loads
-kilix's `kitty.conf` and its icon from there.
+taskbar/dock. It sets `KITTY_CONFIG_DIRECTORY` to the XDG Kilix config directory;
+its generated `kitty.conf` includes tracked defaults from `./config` and keeps
+user overrides outside the checkout.
 
 - **On X11**, the window icon is the config-dir `kitty.app.png` / `kitty.app-128.png`
   (the kilix "kitty-on-fire" icon) — it works even without installing anything.
@@ -528,13 +551,17 @@ doesn't appear immediately (icon caches are lazy).
 - **`kilix` exits with no window / over SSH?** It's a GUI terminal and needs a local
   graphical session (`$DISPLAY` / `$WAYLAND_DISPLAY`); it won't run headless.
 - **First run spews a compile and fails?** That's the fork build failing for lack of
-  deps — kilix then falls back to the prebuilt automatically. Run `~/kilix/bootstrap.sh`
-  first to skip the build attempt entirely.
+  deps — Kilix then attempts the prebuilt fallback. Supply a pinned version and
+  SHA-256 to `bootstrap.sh` to skip the build attempt entirely.
 
 ## Uninstall
 
 ```bash
-rm -rf ~/kilix                                       # the whole project (incl. downloaded kitty.app)
+rm -rf ~/kilix                                       # project + downloaded engine
+# Optional: remove settings/state only if you do not want to preserve them:
+rm -rf "${XDG_CONFIG_HOME:-$HOME/.config}/kilix" \
+       "${XDG_STATE_HOME:-$HOME/.local/state}/kilix" \
+       "${XDG_CACHE_HOME:-$HOME/.cache}/kilix"
 # only if you ran --install-desktop:
 rm -f  ~/.local/share/applications/kilix.desktop
 rm -f  ~/.local/share/icons/hicolor/*/apps/kilix.png
@@ -547,8 +574,8 @@ gtk-update-icon-cache -f ~/.local/share/icons/hicolor 2>/dev/null || true
 - **Why a fork of kitty?** Stock kitty can't put clickable buttons in its window chrome,
   so kilix ships a fork (the `./src` submodule) that wires title-bar clicks to kitty
   actions. It's a full fork kilix evolves freely — the buttons plus quality-of-life fixes.
-- **Does it touch my normal kitty?** No. kilix runs its own binary, its own config dir
-  (`./config` via `KITTY_CONFIG_DIRECTORY`), and its own `--class`, so your system kitty
+- **Does it touch my normal kitty?** No. kilix runs its own binary, its own XDG
+  config directory, and its own `--class`, so your system kitty
   and `~/.config/kitty` are untouched.
 - **Does it work on Wayland?** Yes — splits, buttons, and keybindings all work; only the
   icon mechanism differs (see [Taskbar identity & icon](#taskbar-identity--icon)).
@@ -579,10 +606,10 @@ carries quality-of-life fixes on top — e.g. `glfw/linux_notify.c` raises the D
 notification-server probe timeout to silence a spurious "Notify NoReply" warning at
 startup. Branch history: clickable chrome, double-fire fix, DBus-warning fix.
 
-**Build / rebuild:** `kilix --build` (or `./build.sh`). Needs Go ≥ 1.26 plus the X11
-build deps from [Requirements](#requirements); kitty downloads a prebuilt bundle for the
-rest. The binary lands at `./src/kitty/launcher/kitty`. If you keep a machine-specific
-toolchain env at `~/.kitty-fork-buildenv`, `build.sh` sources it automatically.
+**Build / rebuild:** `kilix --build` (or `./build.sh`). Needs Go ≥ 1.26 plus the
+system build deps from [Requirements](#requirements). The binary lands at
+`./src/kitty/launcher/kitty`. If you keep a machine-specific toolchain env at
+`~/.kitty-fork-buildenv`, `build.sh` sources it automatically.
 
 > **Python edits are live on the next launch — no rebuild needed.** Only C changes
 > require `--build`. To rebind the buttons, edit the action strings in
@@ -606,7 +633,9 @@ toolchain env at `~/.kitty-fork-buildenv`, `build.sh` sources it automatically.
 
 ## Tweaks
 
-Edit `config/kitty.conf`, or use Start ▸ Settings in kilix 95:
+Use Start ▸ Settings in kilix 95, or edit
+`${XDG_CONFIG_HOME:-~/.config}/kilix/kitty.conf`. It includes the tracked
+`config/kitty.conf` defaults; add overrides to the user file.
 
 - **Quieter page strip:** `tab_bar_min_tabs 2` (hide it until a 2nd page) and
   `tab_bar_show_new_tab_button no` (hide the `+`).
@@ -615,7 +644,7 @@ Edit `config/kitty.conf`, or use Start ▸ Settings in kilix 95:
 - **Inactive dimming:** `inactive_text_alpha` (`1.0` = no dim).
 - **Rebind the buttons:** edit the action strings in `src/kitty/window_title_bar.py`.
 
-Kilix-only runtime knobs live in `config/kilix.env` and are also exposed in
+Kilix-only runtime knobs live in the XDG `kilix/kilix.env` and are also exposed in
 Start ▸ Settings. That includes chrome clock/battery toggles, Kilix 95 provider
 and flavor selection, desktop/recycle paths, host clipboard sync, X app
 behavior, streaming/debug options and build/update pins.

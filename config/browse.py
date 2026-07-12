@@ -12,7 +12,6 @@ Renders current Chrome inside a kilix/kitty pane:
 Usage: browse.py [url]     (run inside kilix; `kilix browse <url>`)
 Keys : Ctrl+L url bar · Alt+←/→ or Backspace history · Ctrl+R reload · Ctrl+Q quit
        Shift+drag = native terminal selection of the glyph text
-Design doc: ~/research/kilix/browser-kitten-implementation.md
 """
 import array
 import base64

@@ -6,6 +6,7 @@ defaults), and F52 (non-UTF-8 kitty.conf makes Settings unopenable).
 """
 import contextlib
 import os
+import stat
 import tempfile
 
 import harness as H
@@ -42,6 +43,21 @@ def read(path):
 
 def env_path_for(conf_path):
     return os.path.join(os.path.dirname(conf_path), "kilix.env")
+
+
+# Private config replacement is atomic and replaces a stale symlink rather
+# than following it into an unrelated file.
+with tempfile.TemporaryDirectory(prefix="kilix-settings-atomic-") as d:
+    unrelated = os.path.join(d, "unrelated")
+    target = os.path.join(d, "kitty.conf")
+    with open(unrelated, "w", encoding="utf-8") as f:
+        f.write("keep\n")
+    os.symlink(unrelated, target)
+    settings._atomic_write_private(target, "font_size 14\n")
+    assert not os.path.islink(target)
+    assert read(target) == "font_size 14\n"
+    assert read(unrelated) == "keep\n"
+    assert stat.S_IMODE(os.stat(target).st_mode) == 0o600
 
 
 # ── F06: raw editor edits survive a tab roundtrip and reach disk ────────────

@@ -5,6 +5,7 @@
 
 # Runtime state
 /.last-update-check
+/.kilix-fork-built-ref
 
 # Python bytecode, anywhere
 __pycache__/

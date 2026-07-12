@@ -884,6 +884,48 @@ class Shell:
                     "Type the name of a program to open it in a kilix tab:",
                     "", cb=do, icon="run", width=320)
 
+    def change_password_dialog(self):
+        """Open a masked change-password dialog backed by the OS helper."""
+        import security
+        desk = self.desk
+        win = wm.Window(desk, "Change Password", 322, 210,
+                        icon="warn", resizable=False, modal=True)
+        cw = win.client_size()[0]
+        win.add(W.Label(12, 12, "Set a new login password for this account."))
+        win.add(W.Label(12, 42, "New password:"))
+        new = win.add(W.TextField(122, 40, cw - 134, "", mask=True))
+        win.add(W.Label(12, 70, "Confirm:"))
+        confirm = win.add(W.TextField(122, 68, cw - 134, "", mask=True))
+        status = win.add(W.Label(12, 96, "", color=T.SHADOW))
+
+        def fail(message):
+            status.set(message)
+            win.invalidate()
+
+        def apply(*_):
+            if not new.text:
+                return fail("Enter a new password.")
+            if new.text != confirm.text:
+                return fail("The passwords do not match.")
+            if new.text == "plebian":
+                return fail("Choose something other than the default.")
+            ok, message = security.change_password(new.text)
+            if ok:
+                win.close()
+                desk._refresh_password_nag()
+                wm.msgbox(desk, "Password Changed", message, icon="info")
+            else:
+                fail(message[:46])
+
+        new.on_enter = lambda *_: win.set_focus(confirm)
+        confirm.on_enter = apply
+        win.add(W.Button(cw - 168, 130, 76, 24, "OK", cb=apply,
+                         default=True))
+        win.add(W.Button(cw - 84, 130, 76, 24, "Cancel", cb=win.close))
+        win.set_focus(new)
+        desk.wm.add(win)
+        return win
+
     def shutdown_dialog(self):
         desk = self.desk
         win = wm.Window(desk, "Shut Down kilix 95", 300, 250,

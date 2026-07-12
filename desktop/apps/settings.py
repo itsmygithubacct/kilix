@@ -1,7 +1,9 @@
 """kilix desktop — kilix Settings (the control panel).
 
-Edits the kilix configuration (config/kitty.conf, i.e. whatever
-$KITTY_CONFIG_DIRECTORY points at). Two form tabs cover the common knobs;
+Edits the writable per-user Kilix configuration (normally
+``$XDG_CONFIG_HOME/kilix``; ``$KITTY_CONFIG_DIRECTORY`` overrides it). The
+tracked ``config/`` tree contains defaults and is never rewritten. Form tabs
+cover the common knobs;
 the third tab is the raw file in a text editor. Apply writes the file and
 live-reloads the running kilix via `kitten @ action load_config_file`,
 falling back to SIGUSR1 at $KITTY_PID. Only the managed lines are rewritten
@@ -12,6 +14,7 @@ import os
 import re
 import signal
 import subprocess
+import tempfile
 from typing import NamedTuple
 
 import shell as _shell
@@ -105,6 +108,10 @@ SETTING_PAGES = [
           ("1", "0")),
         E("KILIX95_TRUST_EXISTING_CHECKOUT", "Trust checkout origin", "bool",
           "0", ("1", "0")),
+        E("KILIX95_ALLOW_MUTABLE_REF", "Allow mutable ref", "bool", "0",
+          ("1", "0")),
+        E("KILIX95_ALLOW_UNPINNED_INSTALL", "Allow unpinned install", "bool",
+          "0", ("1", "0")),
         E("KILIX95_DIR", "External checkout", default="~/kilix-95"),
         E("KILIX95_REPO", "External repo",
           default="https://github.com/itsmygithubacct/kilix-95.git"),
@@ -131,21 +138,39 @@ SETTING_PAGES = [
     ]),
     ("Build", [
         E("KILIX_REF", "Update ref"),
+        E("KILIX_ALLOW_MUTABLE_REF", "Allow mutable update ref", "bool", "0",
+          ("1", "0")),
+        E("KILIX_REPO", "Expected update origin",
+          default="https://github.com/itsmygithubacct/kilix.git"),
+        E("KILIX_TRUST_EXISTING_CHECKOUT", "Trust update origin", "bool", "0",
+          ("1", "0")),
         E("KILIX_PREBUILT_VERSION", "Prebuilt version"),
         E("KILIX_PREBUILT_SHA256", "Prebuilt SHA256"),
+        E("KILIX_ALLOW_UNVERIFIED_PREBUILT", "Allow unverified prebuilt", "bool",
+          "0", ("1", "0")),
+        E("KILIX_BUILD_MODE", "Fork dependencies", "choice", "system",
+          ["system", "bundle"]),
+        E("KILIX_KITTY_DEPS_URL", "Kitty deps URL"),
+        E("KILIX_KITTY_DEPS_SHA256", "Kitty deps SHA256"),
+        E("KILIX_NERD_FONT_URL", "Nerd Font URL"),
+        E("KILIX_NERD_FONT_SHA256", "Nerd Font SHA256"),
+        E("KILIX_NERD_FONT_FILE_SHA256", "Nerd Font file SHA256"),
+        E("KILIX_GO_TOOLCHAIN", "Exact Go toolchain", default="go1.26.4"),
     ]),
 ]
 
 
 def config_path():
     d = os.environ.get("KITTY_CONFIG_DIRECTORY") or os.path.join(
-        _shell.KILIX_HOME, "config")
+        os.environ.get("XDG_CONFIG_HOME") or os.path.join(
+            os.path.expanduser("~"), ".config"), "kilix")
     return os.path.join(d, "kitty.conf")
 
 
 def env_config_path():
     d = os.environ.get("KITTY_CONFIG_DIRECTORY") or os.path.join(
-        _shell.KILIX_HOME, "config")
+        os.environ.get("XDG_CONFIG_HOME") or os.path.join(
+            os.path.expanduser("~"), ".config"), "kilix")
     return os.environ.get("KILIX_ENV_CONFIG") or os.path.join(d, "kilix.env")
 
 
@@ -242,6 +267,30 @@ def unset_env_key(text, key):
     return pat.sub("", text)
 
 
+def _atomic_write_private(path, text):
+    """Replace a user config atomically without following a destination link."""
+    directory = os.path.dirname(path)
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=f".{os.path.basename(path)}.", dir=directory)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            fd = None
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+        tmp = None
+    finally:
+        if fd is not None:
+            os.close(fd)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
 class _Swatch(W.Widget):
     """Live color preview next to a #rrggbb text field."""
 
@@ -269,7 +318,12 @@ class SettingsWin(wm.Window):
             with open(self.path, encoding="utf-8", errors="replace") as f:
                 self.kitty_buffer = f.read()
         except OSError:
-            self.kitty_buffer = ""
+            defaults = os.path.join(_shell.KILIX_HOME, "config", "kitty.conf")
+            self.kitty_buffer = (
+                "# Kilix user overrides. Tracked defaults are loaded first.\n"
+                "include .kilix-defaults.conf\n"
+                if os.path.isfile(defaults) else ""
+            )
         try:
             with open(self.env_path, encoding="utf-8", errors="replace") as f:
                 self.env_buffer = f.read()
@@ -437,17 +491,14 @@ class SettingsWin(wm.Window):
         else:
             self._form_to_buffer()
         try:
-            with open(self.path, "w", encoding="utf-8") as f:
-                f.write(self.kitty_buffer)
+            _atomic_write_private(self.path, self.kitty_buffer)
         except OSError as e:
             wm.msgbox(self.desk, "kilix Settings", f"Cannot write config:\n{e}",
                       icon="error")
             return
         if self.env_buffer != old_env or os.path.exists(self.env_path):
             try:
-                os.makedirs(os.path.dirname(self.env_path), exist_ok=True)
-                with open(self.env_path, "w", encoding="utf-8") as f:
-                    f.write(self.env_buffer)
+                _atomic_write_private(self.env_path, self.env_buffer)
                 self._last_saved_env_buffer = self.env_buffer
             except OSError as e:
                 wm.msgbox(self.desk, "kilix Settings",
