@@ -57,7 +57,9 @@ class BuildPreparationTests(unittest.TestCase):
 
         self.env = dict(os.environ)
         for key in tuple(self.env):
-            if key.startswith("KILIX_KITTY_DEPS_") or key.startswith("KILIX_NERD_FONT_"):
+            if (key.startswith("KILIX_KITTY_DEPS_") or
+                    key.startswith("KILIX_NERD_FONT_") or
+                    key in ("KILIX_BUILD_JOBS", "GOMAXPROCS")):
                 self.env.pop(key)
         self.env.update({
             "HOME": str(self.base / "home"),
@@ -135,6 +137,7 @@ class BuildPreparationTests(unittest.TestCase):
             "from pathlib import Path\n"
             "import os, sys\n"
             "Path('../setup-action').write_text(sys.argv[1])\n"
+            "Path('../go-build-jobs').write_text(os.environ['GOMAXPROCS'])\n"
             "p = Path('kitty/launcher/kitty')\n"
             "p.parent.mkdir(parents=True, exist_ok=True)\n"
             "p.write_text('#!/bin/sh\\nexit 0\\n')\n"
@@ -147,6 +150,19 @@ class BuildPreparationTests(unittest.TestCase):
         result = self.run_build(env)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((self.checkout / "setup-action").read_text(), "build")
+        self.assertEqual((self.checkout / "go-build-jobs").read_text(), "1")
+
+        env["KILIX_BUILD_JOBS"] = "3"
+        result = self.run_build(env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.checkout / "go-build-jobs").read_text(), "3")
+
+    def test_invalid_build_parallelism_is_rejected(self):
+        env = dict(self.env)
+        env["KILIX_BUILD_JOBS"] = "0"
+        result = self.run_build(env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("expected a positive integer", result.stderr)
 
 
 if __name__ == "__main__":

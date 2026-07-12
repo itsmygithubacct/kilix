@@ -37,6 +37,17 @@ _go_toolchain="${KILIX_GO_TOOLCHAIN:-${_go_toolchain:-go1.26.4}}"
   || { echo "kilix: invalid exact KILIX_GO_TOOLCHAIN=$_go_toolchain" >&2; exit 2; }
 export GOTOOLCHAIN="$_go_toolchain"
 
+# Go's default package parallelism follows GOMAXPROCS. Large generated packages
+# in the pinned kitty fork can require well over 1 GiB per compiler process, so
+# an unconstrained build can OOM an otherwise supported small installation.
+# Default to one package compiler at a time; operators with more memory can opt
+# into higher parallelism explicitly.
+_build_jobs="${KILIX_BUILD_JOBS:-${GOMAXPROCS:-1}}"
+case "$_build_jobs" in
+  ''|*[!0-9]*|0) echo "kilix: invalid KILIX_BUILD_JOBS/GOMAXPROCS=$_build_jobs (expected a positive integer)" >&2; exit 2 ;;
+esac
+export GOMAXPROCS="$_build_jobs"
+
 CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/kilix/build"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/kilix"
 font_archive="$CACHE_DIR/NerdFontsSymbolsOnly-v3.4.0.tar.xz"
@@ -206,7 +217,7 @@ if [ "${KILIX_BUILD_PREPARE_ONLY:-0}" = 1 ]; then
 fi
 
 cd "$KILIX_HOME/src"
-echo "kilix: building forked kitty in $KILIX_HOME/src ($mode dependencies) ..."
+echo "kilix: building forked kitty in $KILIX_HOME/src ($mode dependencies, $GOMAXPROCS Go package job(s)) ..."
 if [ "$mode" = bundle ]; then
   ./dev.sh build "$@"
 else
