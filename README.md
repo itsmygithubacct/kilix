@@ -609,7 +609,10 @@ startup. Branch history: clickable chrome, double-fire fix, DBus-warning fix.
 **Build / rebuild:** `kilix --build` (or `./build.sh`). Needs Go ≥ 1.26 plus the
 system build deps from [Requirements](#requirements). The binary lands at
 `./src/kitty/launcher/kitty`. If you keep a machine-specific toolchain env at
-`~/.kitty-fork-buildenv`, `build.sh` sources it automatically.
+`~/.kitty-fork-buildenv`, `build.sh` sources it automatically. Go package
+compilation defaults to one job so the fork can build on memory-constrained
+systems; set `KILIX_BUILD_JOBS` to a larger positive integer to trade memory for
+build speed.
 
 > **Python edits are live on the next launch — no rebuild needed.** Only C changes
 > require `--build`. To rebind the buttons, edit the action strings in
