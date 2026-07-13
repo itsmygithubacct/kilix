@@ -29,7 +29,43 @@ if [[ $- == *i* ]]; then
     fi
 fi
 
-# 4. Streamed session (`kilix serve`, KILIX_STREAM=1): inline images must use
+# 4. Pleb sessions (Plebian-OS): the whole desktop is this kilix — there is no
+#    window manager, so a GUI app launched from a prompt would open an
+#    unmanaged X11 window the session cannot manage or show properly. Alias the
+#    common GUI apps to `kilix run <app>`, which gives each one a private X
+#    server streamed into a tab. Detection: the XDG session markers exported by
+#    pleb-session. Force on/off with KILIX_RUN_ALIASES=1/0; add apps with
+#    KILIX_RUN_ALIAS_APPS="foo bar". Only real PATH commands are wrapped (an
+#    alias or function you defined in ~/.bashrc wins), and rcfiles are read by
+#    interactive shells only — scripts exec'ing these binaries are unaffected.
+case "${KILIX_RUN_ALIASES:-}" in
+    1|yes|true|on)  _kilix_run_aliases=1 ;;
+    0|no|false|off) _kilix_run_aliases=0 ;;
+    *) if [ "${XDG_SESSION_DESKTOP:-}" = pleb ] || [ "${XDG_CURRENT_DESKTOP:-}" = Pleb ]; then
+           _kilix_run_aliases=1
+       else
+           _kilix_run_aliases=0
+       fi ;;
+esac
+if [ "$_kilix_run_aliases" = 1 ]; then
+    _kilix_bin="$(command -v kilix)" || _kilix_bin="${KILIX_HOME:-$HOME/kilix}/kilix"
+    # The default list is every GUI program a stock Plebian-OS install ships
+    # (see plebian-os provision/install-deps.sh: the browsers, xterm, zenity,
+    # and the x11-utils viewers), plus common alternate names and gimp.
+    for _kilix_app in chromium chromium-browser firefox firefox-esr gimp \
+                      xterm uxterm zenity xmessage xev xfontsel xfd \
+                      editres viewres \
+                      ${KILIX_RUN_ALIAS_APPS:-}; do
+        if [ "$(type -t "$_kilix_app" 2>/dev/null)" = file ]; then
+            # shellcheck disable=SC2139  # expand $_kilix_bin now, by design
+            alias "$_kilix_app"="$(printf '%q run %q' "$_kilix_bin" "$_kilix_app")"
+        fi
+    done
+    unset _kilix_app _kilix_bin
+fi
+unset _kilix_run_aliases
+
+# 5. Streamed session (`kilix serve`, KILIX_STREAM=1): inline images must use
 #    direct transmission or they won't survive a remote/tmux attach. Force icat
 #    to stream + unicode-placeholders so images render on every attached device.
 #    (No effect on a normal local kilix shell, where KILIX_STREAM is unset.)
