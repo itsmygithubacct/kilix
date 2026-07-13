@@ -56,8 +56,9 @@ provider with a security-compatible bundled fallback.
 - **To run the prebuilt kitty** (no buttons): `git`, `curl`, `tar`.
 - **To build the fork** (the buttons): **Go ≥ 1.26**, a C compiler, `pkg-config`, and
   kitty's build deps — `x11 xrandr xinerama xcursor xi xkbcommon xkbcommon-x11
-  x11-xcb dbus-1 gl fontconfig libpng lcms2 cairo-fc harfbuzz libcrypto` and
-  `libxxhash`. By default the build uses these signed package-manager
+  x11-xcb dbus-1 gl fontconfig libpng lcms2 cairo-fc harfbuzz libcrypto`,
+  `libxxhash`, Wayland protocols/headers, and SIMDe headers. By default the
+  build uses these signed package-manager
   dependencies and downloads only the immutable, SHA-256-pinned Symbols Nerd
   Font release. An offline/release build may instead set
   `KILIX_BUILD_MODE=bundle` with an immutable `KILIX_KITTY_DEPS_URL` and matching
