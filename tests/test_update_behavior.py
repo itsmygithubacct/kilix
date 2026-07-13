@@ -34,6 +34,9 @@ class UpdateBehaviorTests(unittest.TestCase):
         (self.seed / "build.sh").write_text(
             "#!/bin/sh\n"
             "set -eu\n"
+            # kilix invokes build.sh from the caller's cwd; anchor to this
+            # checkout so the simulated failure can never touch other trees.
+            "cd \"$(dirname \"$0\")\"\n"
             "[ -z \"${FAKE_KILIX_BUILD_CALLS:-}\" ] || "
             "echo called >>\"$FAKE_KILIX_BUILD_CALLS\"\n"
             "if [ \"${FAKE_KILIX_BUILD_FAIL:-0}\" = 1 ]; then\n"
