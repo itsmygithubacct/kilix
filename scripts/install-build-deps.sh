@@ -28,7 +28,7 @@ KILIX_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILDENV="$HOME/.kitty-fork-buildenv"
 
 # pkg-config modules the fork links against (see build.sh).
-PC_DEPS="x11 xrandr xinerama xcursor xi xkbcommon xkbcommon-x11 x11-xcb dbus-1 gl fontconfig libpng lcms2 cairo-fc harfbuzz libcrypto libxxhash"
+PC_DEPS="x11 xrandr xinerama xcursor xi xkbcommon xkbcommon-x11 x11-xcb dbus-1 gl fontconfig libpng lcms2 cairo-fc harfbuzz libcrypto libxxhash wayland-client wayland-cursor wayland-egl wayland-protocols"
 AMP_PC_DEPS="sdl2 SDL2_image sndfile zlib fluidsynth"
 
 log(){ printf 'kilix: %s\n' "$*" >&2; }
@@ -62,6 +62,11 @@ verify() {
       echo "   $tool: MISSING"; ok=0
     fi
   done
+  if printf '%s\n' '#include <simde/x86/avx2.h>' | gcc -E -x c - >/dev/null 2>&1; then
+    echo "   SIMDe headers: yes"
+  else
+    echo "   SIMDe headers: MISSING"; ok=0
+  fi
   local req; req="$(required_go)"
   if command -v go >/dev/null 2>&1; then
     local gv; gv="$(go version | awk '{print $3}' | sed 's/^go//')"
@@ -77,9 +82,12 @@ verify() {
   fi
   python3 -c "import PIL; print('   Pillow:', PIL.__version__)" 2>/dev/null \
     || { echo "   Pillow: MISSING (the desktop/browse pixel planes need it)"; ok=0; }
-  [ "$ok" = 1 ] && echo "==> OK — fork build + desktop prerequisites ready." \
-                || echo "==> INCOMPLETE — see above."
-  return 0
+  if [ "$ok" = 1 ]; then
+    echo "==> OK — fork build + desktop prerequisites ready."
+  else
+    echo "==> INCOMPLETE — see above."
+    return 1
+  fi
 }
 
 # ---- enable Go toolchain auto-download when the system Go is too old ----------
@@ -113,7 +121,7 @@ ensure_go_toolchain() {
 
 # ---- per-distro installs -----------------------------------------------------
 fedora_install() {
-  local pc pkgs="gcc make pkgconf-pkg-config git curl golang python3 python3-devel python3-pillow SDL2-devel SDL2_image-devel libsndfile-devel zlib-devel fluidsynth fluidsynth-devel fluid-soundfont-gm"
+  local pc pkgs="gcc make pkgconf-pkg-config git curl golang python3 python3-devel python3-pillow simde-devel wayland-devel wayland-protocols-devel SDL2-devel SDL2_image-devel libsndfile-devel zlib-devel fluidsynth fluidsynth-devel fluid-soundfont-gm"
   local -a packages
   for pc in $PC_DEPS; do pkgs="$pkgs pkgconfig($pc)"; done
   echo "==> Fedora/RHEL detected — installing system-wide via dnf"
@@ -126,6 +134,7 @@ debian_install() {
     libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxkbcommon-dev \
     libxkbcommon-x11-dev libx11-xcb-dev libdbus-1-dev libgl1-mesa-dev libfontconfig-dev \
     libpng-dev liblcms2-dev libcairo2-dev libharfbuzz-dev libssl-dev libxxhash-dev \
+    libsimde-dev libwayland-dev wayland-protocols \
     libsdl2-dev libsdl2-image-dev libsndfile1-dev zlib1g-dev libfluidsynth-dev fluidsynth fluid-soundfont-gm"
   local -a packages
   echo "==> Debian/Ubuntu detected — installing system-wide via apt-get"
@@ -137,7 +146,7 @@ debian_install() {
 arch_install() {
   local pkgs="base-devel pkgconf git curl go python python-pillow \
     libx11 libxrandr libxinerama libxcursor libxi libxkbcommon mesa dbus fontconfig \
-    libpng lcms2 cairo harfbuzz openssl xxhash \
+    libpng lcms2 cairo harfbuzz openssl xxhash simde wayland wayland-protocols \
     sdl2 sdl2_image libsndfile zlib fluidsynth soundfont-fluid"
   local -a packages
   echo "==> Arch detected — installing system-wide via pacman"
@@ -150,6 +159,7 @@ suse_install() {
     libX11-devel libXrandr-devel libXinerama-devel libXcursor-devel libXi-devel \
     libxkbcommon-devel libxkbcommon-x11-devel dbus-1-devel Mesa-libGL-devel fontconfig-devel \
     libpng16-devel liblcms2-devel cairo-devel harfbuzz-devel libopenssl-devel libxxhash-devel \
+    simde-devel wayland-devel wayland-protocols-devel \
     libSDL2-devel libSDL2_image-devel libsndfile-devel zlib-devel fluidsynth-devel fluidsynth fluid-soundfont-gm"
   local -a packages
   echo "==> openSUSE detected — installing system-wide via zypper"

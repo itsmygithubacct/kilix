@@ -223,6 +223,15 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("_sysconfigdata_", text)
         self.assertIn("libfontconfig.so", text)
 
+    def test_build_dependency_installer_covers_pinned_kitty_headers(self):
+        text = (ROOT / "scripts" / "install-build-deps.sh").read_text()
+        for package in ("libsimde-dev", "libwayland-dev", "wayland-protocols"):
+            self.assertIn(package, text)
+        self.assertIn("wayland-client wayland-cursor wayland-egl wayland-protocols",
+                      text)
+        self.assertIn("#include <simde/x86/avx2.h>", text)
+        self.assertIn("return 1", text)
+
 
 if __name__ == "__main__":
     unittest.main()
