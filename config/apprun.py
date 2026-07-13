@@ -70,11 +70,10 @@ DEFAULT_MAX_SCREEN = "3840x2160"
 
 
 def randr_prepare(xd):
-    """Disable the (decorative) CRTC on the private display so RRSetScreenSize
-    can move the screen size freely. Xvfb rejects SetScreenSize while a CRTC is
-    active (BadMatch) and implements no RRCreateMode, so mode switching is not
-    an option — but with the CRTC off, arbitrary sizes up to the framebuffer
-    allocation work. Returns True when the display is resizable this way."""
+    """Disable the CRTC on the private display so RRSetScreenSize can move the
+    screen size freely (Xvfb rejects SetScreenSize while a CRTC is active with
+    BadMatch). Must run before every resize now that randr_set_monitor_mode
+    re-enables the CRTC. Returns True when the display is resizable this way."""
     try:
         root = xd.screen().root
         res = randr.get_screen_resources(root)
@@ -106,6 +105,48 @@ def randr_set_screen_size(xd, w, h):
     except Exception as e:
         log("randr_set_screen_size failed:", type(e).__name__, e)
         return False
+
+
+def randr_set_monitor_mode(xd, w, h, old_mode=None):
+    """Re-enable the CRTC with a real w×h mode after an RRSetScreenSize, so
+    the OUTPUT (monitor) geometry matches the screen. Toolkits place and size
+    windows against the monitor, and with the CRTC merely disabled they fall
+    back to the output's preferred mode — the framebuffer allocation — so a
+    self-centering app (GIMP, most GTK/Qt) maps its window outside the
+    captured pane box, hiding its menu bar behind nothing reachable. Xvfb
+    does implement RRCreateMode & friends (verified on 21.x; older notes
+    claiming otherwise were wrong). On failure the CRTC simply stays off,
+    which is the previous behavior: only whole-monitor size queries see the
+    stale size. Returns the active kilix mode id, or None."""
+    try:
+        root = xd.screen().root
+        res = randr.get_screen_resources(root)
+        if not res.crtcs or not res.outputs:
+            return None
+        crtc, output = res.crtcs[0], res.outputs[0]
+        name = f"kilix-{w}x{h}"
+        # Degenerate timings: only width/height matter to a virtual display;
+        # totals stay non-zero so refresh math never divides by zero.
+        info = (0, w, h, w * h * 60, w, w, w, 0, h, h, h, len(name), 0)
+        mid = randr.create_mode(root, info, name).mode
+        xd.sync()
+        randr.add_output_mode(xd, output, mid)
+        res = randr.get_screen_resources(root)   # config_timestamp moved
+        randr.set_crtc_config(xd, crtc, res.config_timestamp,
+                              0, 0, mid, randr.Rotate_0, [output])
+        xd.sync()
+        if old_mode:
+            try:
+                randr.delete_output_mode(xd, output, old_mode)
+                randr.destroy_mode(xd, old_mode)
+                xd.sync()
+            except Exception:
+                pass                             # stale mode: cosmetic only
+        return mid
+    except Exception as e:
+        log("randr_set_monitor_mode failed (CRTC left off):",
+            type(e).__name__, e)
+        return None
 
 
 def log(*a):
@@ -349,6 +390,7 @@ class AppPane:
         self._last_change = time.time()
         self._fit_window_id = None
         self._last_window_fit = 0.0
+        self._randr_mode = None          # active kilix-created RandR mode id
         fit_env = os.environ.get("KILIX_RUN_AUTO_FIT")
         self._auto_fit = (fit_env.lower() not in ("0", "false", "no", "off")
                           if fit_env is not None else auto_fit)
@@ -496,6 +538,8 @@ class AppPane:
         if self.resizable:
             if randr_prepare(self.xd) and randr_set_screen_size(
                     self.xd, self.app_w, self.app_h):
+                self._randr_mode = randr_set_monitor_mode(
+                    self.xd, self.app_w, self.app_h)
                 log(f"display sized to pane: {self.app_w}x{self.app_h}")
             else:
                 # RandR unavailable: the screen stays at the framebuffer max,
@@ -625,21 +669,55 @@ class AppPane:
             time.sleep(0.25)
         log("no app window appeared; capturing root anyway")
 
+    def clamp_app_windows(self):
+        """WM-less guard: pull any regular top-level that sticks out of the
+        visible screen back inside it, shrinking it to the screen first when
+        it is bigger. An app that restores saved geometry, or that mapped
+        against stale monitor info before a resize, otherwise leaves its
+        menu bar outside the captured pane box with no WM to drag it back.
+        Windows already fully inside — dialogs, the fitted main window — are
+        untouched, and override-redirect windows (menus, tooltips) are never
+        moved."""
+        dirty = False
+        for c, g in self._visible_app_windows():
+            try:
+                if c.get_attributes().override_redirect:
+                    continue
+                kw = {}
+                w, h = min(g.width, self.app_w), min(g.height, self.app_h)
+                if (w, h) != (g.width, g.height):
+                    kw["width"], kw["height"] = w, h
+                x = min(max(g.x, 0), self.app_w - w)
+                y = min(max(g.y, 0), self.app_h - h)
+                if (x, y) != (g.x, g.y):
+                    kw["x"], kw["y"] = x, y
+                if kw:
+                    c.configure(**kw)
+                    dirty = True
+                    log("clamped window", hex(getattr(c, "id", 0)),
+                        f"{g.width}x{g.height}+{g.x}+{g.y} -> {w}x{h}+{x}+{y}")
+            except Exception:
+                pass
+        if dirty:
+            self.xd.sync()
+
     def maintain_app_window(self, now):
-        """Keep late-mapped top-level windows filling the pane.
+        """Keep late-mapped top-level windows filling the pane (--fit apps
+        like VirtualBox), and every top-level inside the visible screen
+        (all apps).
 
         This is intentionally periodic instead of event-driven: it avoids a
         second X event hook and still catches app-spawned windows within a
         fraction of a second.
         """
-        if not getattr(self, "_auto_fit", True) or self.xd is None:
-            return
-        if getattr(self, "_fit_suspended", False):
+        if self.xd is None or getattr(self, "_fit_suspended", False):
             return
         if now - getattr(self, "_last_window_fit", 0.0) < 0.5:
             return
         self._last_window_fit = now
-        self.fit_app_window()
+        if getattr(self, "_auto_fit", True):
+            self.fit_app_window()
+        self.clamp_app_windows()
 
     # ---- pixel layer -------------------------------------------------------
     def pump_frames(self):
@@ -841,7 +919,10 @@ class AppPane:
                 if self.ff is not None:          # capture size is baked into
                     _stop_proc(self.ff, timeout=2)   # ffmpeg's argv — restart
                     self.ff = None
-                if randr_set_screen_size(self.xd, w, h):
+                if randr_prepare(self.xd) and \
+                        randr_set_screen_size(self.xd, w, h):
+                    self._randr_mode = randr_set_monitor_mode(
+                        self.xd, w, h, old_mode=self._randr_mode)
                     self.app_w, self.app_h = w, h
                     if getattr(self, "inj", None) is not None:
                         self.inj.app_w, self.inj.app_h = w, h
