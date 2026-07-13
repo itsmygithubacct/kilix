@@ -224,7 +224,10 @@ if [ -f "$_kx_env" ]; then
 fi
 
 case "${1:-}" in
-  --build) shift; exec "$KILIX_HOME/build.sh" "$@" ;;
+  # build.sh is invoked from the checkout root everywhere: it is cwd-independent
+  # today, but running it from the caller's directory would let any future
+  # cwd-relative path in it touch an unrelated tree.
+  --build) shift; cd "$KILIX_HOME"; exec "$KILIX_HOME/build.sh" "$@" ;;
   --kilix-version|kilix-version)
     # The Plebian-OS release version of this kilix checkout. (Plain `--version`
     # is passed through to the kitty engine by --which/exec, so this is a
@@ -403,7 +406,7 @@ case "${1:-}" in
 
       if command -v go >/dev/null 2>&1; then
         echo "kilix update: rebuilding existing fork engine"
-        if ! "$KILIX_HOME/build.sh"; then
+        if ! (cd "$KILIX_HOME" && "$KILIX_HOME/build.sh"); then
           echo "kilix update: fork rebuild failed" >&2
           _kilix_update_rollback \
             || echo "kilix update: WARNING: automatic rollback failed" >&2
@@ -476,7 +479,7 @@ elif [ "${1:-}" = "screen-size" ] || [ "${1:-}" = "font-size" ]; then
   BIN=""                                          # config-only command; no bootstrap side effect
 else
   # nothing available yet: try building the fork, else pull the prebuilt binary
-  if "$KILIX_HOME/build.sh"; then BIN="$FORK"; else "$KILIX_HOME/bootstrap.sh"; BIN="$PREBUILT"; fi
+  if (cd "$KILIX_HOME" && "$KILIX_HOME/build.sh"); then BIN="$FORK"; else "$KILIX_HOME/bootstrap.sh"; BIN="$PREBUILT"; fi
 fi
 [ -z "${BIN:-}" ] || [ -x "$BIN" ] || { echo "kilix: no runnable kitty (build and bootstrap both failed)" >&2; exit 1; }
 
