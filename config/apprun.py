@@ -828,14 +828,16 @@ class AppPane:
             self._place_t = now
         else:
             import base64
-            self.seq = (self.seq + 1) % 8
+            # t=t files are one-shot capabilities.  Never recycle a pathname:
+            # kitty may consume an older escape after later frames were sent.
+            self.seq += 1
             name = f"tty-graphics-protocol-kilix-run-{self.wid}-{self.seq}.rgb"
             path = self._frame_path(name)
             gfx.write_frame(path, rgb)
             payload = base64.b64encode(path.encode()).decode()
             self.term.write(
                 f"\x1b[{self.off_row + 1};{self.off_col + 1}H"
-                f"\x1b_Ga=T,i=1,p=1,z=-1,t=t,f=24,"
+                f"\x1b_Ga=T,i=1,p=1,z=-1,t=t,f=24,N=1,"
                 f"s={w},v={h},"
                 f"c={self.img_cols},r={self.img_rows},q=2,C=1;{payload}\x1b\\")
             wire = len(rgb)                  # local shm pixel volume (not on wire)

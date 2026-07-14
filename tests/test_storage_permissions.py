@@ -46,6 +46,14 @@ class StoragePermissionTests(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(directory.stat().st_mode), 0o700)
             self.assertEqual(stat.S_IMODE(frame.stat().st_mode), 0o600)
 
+    def test_frame_writer_rejects_collisions_without_changing_original(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            frame = Path(tmp) / "tty-graphics-protocol-frame.rgb"
+            gfx.write_frame(str(frame), b"original")
+            with self.assertRaises(FileExistsError):
+                gfx.write_frame(str(frame), b"replacement")
+            self.assertEqual(frame.read_bytes(), b"original")
+
     def test_session_log_writer_is_private_and_rejects_symlinks(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "session.log"

@@ -7,11 +7,15 @@ These pin the invariants the escape builders can't see on their own:
 - the desktops' fb/img (_blit_base) machine re-arms after img= blits and
   force_full keepalives actually transmit
 """
+import base64
 import os
 import sys
+import tempfile
 import time
 import unittest
+from io import BytesIO
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "config"))
@@ -54,6 +58,11 @@ def make_apppane(w=1000, h=500, stream=False):
     p.img_cols, p.img_rows = 100, 25
     p.off_col = p.off_row = 0
     return p
+
+
+def local_frame_path(escape):
+    payload = escape.rsplit(";", 1)[1].split("\x1b\\", 1)[0]
+    return base64.b64decode(payload).decode()
 
 
 class AppPaneBlitStateTests(unittest.TestCase):
@@ -112,20 +121,73 @@ class AppPaneBlitStateTests(unittest.TestCase):
         self.assertIn("a=T", p.term.escapes())
 
     def test_local_band_files_are_unique(self):
-        p = make_apppane(stream=False)
-        p.blit(self._frame(p, 0))
-        made = []
-        for i in (1, 2):
-            p.blit(self._frame(p, i), band=(3, 2))
-        for w in p.term.writes:
-            if "a=f" in w:
-                made.append(w)
-        self.assertEqual(len(made), 2)
-        self.assertNotEqual(made[0], made[1])        # distinct shm paths
-        # cleanup the files the fake blits created
-        import glob
-        for f in glob.glob("/dev/shm/tty-graphics-protocol-kilix-run-42-*.rgb"):
-            os.unlink(f)
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+                os.environ, {"KILIX_SESSION_HOME": tmp}):
+            p = make_apppane(stream=False)
+            p.blit(self._frame(p, 0))
+            made = []
+            for i in (1, 2):
+                p.blit(self._frame(p, i), band=(3, 2))
+            for write in p.term.writes:
+                if "a=f" in write:
+                    made.append(write)
+            self.assertEqual(len(made), 2)
+            self.assertNotEqual(made[0], made[1])    # distinct session paths
+            self.assertTrue(all("N=1" in write for write in made))
+
+    def test_local_full_frames_never_reuse_eight_slot_ring(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+                os.environ, {"KILIX_SESSION_HOME": tmp}):
+            p = make_apppane(w=2, h=2, stream=False)
+            for i in range(10):
+                p.blit(self._frame(p, i))
+            paths = [local_frame_path(write) for write in p.term.writes]
+            self.assertEqual(len(paths), 10)
+            self.assertEqual(len(set(paths)), 10)
+            self.assertTrue(all("tty-graphics-protocol" in p for p in paths))
+            self.assertTrue(all(Path(p).is_file() for p in paths))
+            self.assertTrue(all("N=1" in write for write in p.term.writes))
+
+
+class BrowserLocalFrameTests(unittest.TestCase):
+    def test_both_present_paths_share_monotonic_names(self):
+        import browse
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as tmp:
+            b = object.__new__(browse.Browse)
+            b.term = FakeTerm()
+            b.wid = "browser-test"
+            b.seq = 0
+            b.stream = False
+            b.img_id = 9
+            b.view_rows = b.term.rows - 1
+            b.frame_dir = tmp
+            b.cursor = False
+            b.last_img = None
+            b._cur_saved = None
+            b.frames = 0
+            b.scroll_x = b.scroll_y = 0
+            b.glyph_dirty = False
+
+            # Exercise both Browse.blit (new screencast frame) and _present
+            # (software-pointer repaint).  Ten writes cross the old eight-slot
+            # wrap boundary and must all remain distinct.
+            for i in range(10):
+                img = Image.new("RGB", (2, 2), (i, i, i))
+                if i % 2:
+                    buf = BytesIO()
+                    img.save(buf, format="PNG")
+                    b.blit(base64.b64encode(buf.getvalue()).decode(), {})
+                else:
+                    b.last_img = img
+                    b._present()
+            paths = [local_frame_path(write) for write in b.term.writes]
+            self.assertEqual(len(paths), 10)
+            self.assertEqual(len(set(paths)), 10)
+            self.assertTrue(all("tty-graphics-protocol" in p for p in paths))
+            self.assertTrue(all(Path(p).is_file() for p in paths))
+            self.assertTrue(all("N=1" in write for write in b.term.writes))
 
 
 class DeskBlitStateTests(unittest.TestCase):
