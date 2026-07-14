@@ -599,14 +599,14 @@ class Browse:
                             self.term.cols, self.view_rows, self.img_id,
                             1, 1, in_tmux=bool(os.environ.get("TMUX")))
         else:
-            self.seq = (self.seq + 1) % 8
+            self.seq += 1
             name = f"tty-graphics-protocol-kilix-{self.wid}-{self.seq}.rgb"
             path = os.path.join(self.frame_dir, name)
             gfx.write_frame(path, img.tobytes())
             payload = base64.b64encode(path.encode()).decode()
             # c/r pin the placement to the full pane rect so half-res frames are
             # GPU-scaled back up; at full resolution it is a 1:1 no-op.
-            self.term.write(f"\x1b[H\x1b_Ga=T,i=1,p=1,z=-1,t=t,f=24,"
+            self.term.write(f"\x1b[H\x1b_Ga=T,i=1,p=1,z=-1,t=t,f=24,N=1,"
                             f"s={w},v={h},c={self.term.cols},r={self.view_rows},"
                             f"q=2,C=1;{payload}\x1b\\")
         sx, sy = meta.get("scrollOffsetX", 0), meta.get("scrollOffsetY", 0)
@@ -665,12 +665,12 @@ class Browse:
                             self.term.cols, self.view_rows, self.img_id,
                             1, 1, in_tmux=bool(os.environ.get("TMUX")))
             return
-        self.seq = (self.seq + 1) % 8
+        self.seq += 1
         name = f"tty-graphics-protocol-kilix-{self.wid}-{self.seq}.rgb"
         path = os.path.join(self.frame_dir, name)
         gfx.write_frame(path, img.tobytes())
         payload = base64.b64encode(path.encode()).decode()
-        self.term.write(f"\x1b[H\x1b_Ga=T,i=1,p=1,z=-1,t=t,f=24,"
+        self.term.write(f"\x1b[H\x1b_Ga=T,i=1,p=1,z=-1,t=t,f=24,N=1,"
                         f"s={w},v={h},c={self.term.cols},r={self.view_rows},"
                         f"q=2,C=1;{payload}\x1b\\")
 

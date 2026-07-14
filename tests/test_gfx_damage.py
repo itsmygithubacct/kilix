@@ -76,12 +76,32 @@ class DiffBandTests(unittest.TestCase):
         self.assertEqual(bytes(patched), b)
 
 
+class FullFrameEscapeTests(unittest.TestCase):
+    def test_direct_full_frame_is_transient_on_start_chunk_only(self):
+        # In a chunked direct upload the first command is retained as kitty's
+        # start command; continuation chunks carry payload/m= only.  The
+        # transient hint therefore belongs on the first command, not every
+        # continuation.
+        import random
+        rgb = random.Random(1).randbytes(200 * 100 * 3)
+        esc = gfx.build_direct(rgb, 200, 100, 80, 25, 11)
+        apcs = esc.split("\x1b\\")[:-1]
+        self.assertGreater(len(apcs), 1)
+        for i, apc in enumerate(apcs):
+            head = apc.split("\x1b_G", 1)[1].split(";", 1)[0]
+            if i == 0:
+                self.assertIn("a=T", head)
+                self.assertIn("N=1", head)
+            else:
+                self.assertNotIn("N=1", head)
+
+
 class FrameEditEscapeTests(unittest.TestCase):
     def test_direct_edit_header_keys(self):
         esc = gfx.build_frame_edit(b"\x01\x02\x03" * 40, 40, 1, 0, 12, 7)
         head = esc.split(";", 1)[0]
         for key in ("a=f", "i=7", "r=1", "x=0", "y=12",
-                    "t=d", "f=24", "o=z", "s=40", "v=1", "q=2"):
+                    "t=d", "f=24", "o=z", "N=1", "s=40", "v=1", "q=2"):
             self.assertIn(key, head)
         # no placement/cursor keys: frame edits repaint in place
         self.assertNotIn("p=", head)
@@ -114,7 +134,12 @@ class FrameEditEscapeTests(unittest.TestCase):
             self.assertIn("i=9", head)
             self.assertIn("r=1", head)
             self.assertIn(f"m={1 if i < len(apcs) - 1 else 0}", head)
-            if i > 0:
+            if i == 0:
+                self.assertIn("N=1", head)
+            else:
+                # The saved start command supplies N=1 after kitty routes this
+                # chunk via the repeated a=f/i=/r=1 keys.
+                self.assertNotIn("N=1", head)
                 self.assertNotIn("s=", head)
                 self.assertNotIn("x=", head)
         joined = "".join(
@@ -131,7 +156,7 @@ class FrameEditEscapeTests(unittest.TestCase):
         esc = gfx.build_frame_edit_file(path, 80, 4, 0, 33, 5)
         head = esc.split(";", 1)[0]
         for key in ("a=f", "i=5", "r=1", "x=0", "y=33",
-                    "t=t", "f=24", "s=80", "v=4", "q=2"):
+                    "t=t", "f=24", "N=1", "s=80", "v=4", "q=2"):
             self.assertIn(key, head)
         payload = esc.split(";", 1)[1].split("\x1b", 1)[0]
         self.assertEqual(base64.b64decode(payload).decode(), path)

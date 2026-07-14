@@ -3,6 +3,7 @@
 import gfx as _gfx
 
 CHUNK = _gfx.CHUNK
+write_frame = _gfx.write_frame
 build_direct = _gfx.build_direct
 blit_direct = _gfx.blit_direct
 # damage (tiled/partial) updates: diff consecutive frames into a changed row
@@ -18,6 +19,6 @@ def wrap_tmux_passthrough(apc: str) -> str:
     return _gfx._tmux_wrap(apc)
 
 
-__all__ = ["CHUNK", "build_direct", "blit_direct", "diff_band",
+__all__ = ["CHUNK", "write_frame", "build_direct", "blit_direct", "diff_band",
            "build_frame_edit", "blit_frame_edit", "build_frame_edit_file",
            "wrap_tmux_passthrough"]

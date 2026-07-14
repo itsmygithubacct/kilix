@@ -222,10 +222,33 @@ def test_frame_files_are_private():
         assert stat.S_IMODE(os.stat(frame).st_mode) == 0o600
         payload = t.writes[-1].rsplit(";", 1)[1].removesuffix("\x1b\\")
         assert base64.b64decode(payload).decode() == frame
+        assert "N=1" in t.writes[-1]
     finally:
         frame_dir = d._frame_dir
         d.cleanup_shm()
     assert not frame_dir or not os.path.exists(frame_dir)
+
+
+# ── W03: delayed t=t readers can never observe a recycled frame path ─────────
+def test_frame_paths_are_monotonic_past_eight_writes():
+    import base64
+    import os
+
+    t = FakeTerm(cols=4, rows=3, cell_w=8, cell_h=8)
+    d = desk_main.Desk(term=t)
+    try:
+        for _ in range(10):
+            d.blit(force_full=True)
+        paths = [base64.b64decode(
+            write.rsplit(";", 1)[1].removesuffix("\x1b\\")).decode()
+            for write in t.writes]
+        assert len(paths) == 10
+        assert len(set(paths)) == 10, paths
+        assert all("tty-graphics-protocol" in path for path in paths)
+        assert all(os.path.isfile(path) for path in paths)
+        assert all("N=1" in write for write in t.writes)
+    finally:
+        d.cleanup_shm()
 
 
 for _name, _fn in sorted(list(globals().items())):

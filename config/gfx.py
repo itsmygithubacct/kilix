@@ -38,7 +38,11 @@ def session_dir(*parts: str) -> str:
 
 
 def write_frame(path: str, data: bytes) -> None:
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    # Every t=t path is a one-shot capability handed to the terminal.  Never
+    # truncate an existing path: a delayed reader of an older escape must see
+    # either its original bytes or ENOENT, never a newer frame written into
+    # the same name.
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     fd = os.open(path, flags, 0o600)
@@ -81,7 +85,7 @@ def build_direct(rgb: bytes, w: int, h: int, cols: int, rows: int, img_id: int,
             # a=T transmit+display, t=d inline, o=z zlib, f=24 RGB, z=-1 below
             # text, q=2 suppress ALL responses (mandatory under multi-client
             # attach — no N-terminal response storm), C=1 keep cursor put.
-            ctrl = (f"a=T,i={img_id},p=1,z=-1,t=d,f=24,o=z,"
+            ctrl = (f"a=T,i={img_id},p=1,z=-1,t=d,f=24,o=z,N=1,"
                     f"s={w},v={h},c={cols},r={rows},q=2,C=1,m={more}")
         else:
             ctrl = f"m={more}"
@@ -195,7 +199,7 @@ def build_frame_edit(rgb: bytes, w: int, h: int, x: int, y: int,
     for idx, ch in enumerate(chunks):
         more = 1 if idx < n - 1 else 0
         if idx == 0:
-            ctrl = (f"a=f,i={img_id},r=1,x={x},y={y},t=d,f=24,o=z,"
+            ctrl = (f"a=f,i={img_id},r=1,x={x},y={y},t=d,f=24,o=z,N=1,"
                     f"s={w},v={h},q=2,m={more}")
         else:
             ctrl = f"a=f,i={img_id},r=1,q=2,m={more}"
@@ -220,5 +224,5 @@ def build_frame_edit_file(path: str, w: int, h: int, x: int, y: int,
     partial-update path. kitty deletes the file after reading when its name
     contains 'tty-graphics-protocol' (the caller should name it so)."""
     payload = base64.b64encode(path.encode()).decode()
-    return (f"\x1b_Ga=f,i={img_id},r=1,x={x},y={y},t=t,f=24,"
+    return (f"\x1b_Ga=f,i={img_id},r=1,x={x},y={y},t=t,f=24,N=1,"
             f"s={w},v={h},q=2;{payload}\x1b\\")

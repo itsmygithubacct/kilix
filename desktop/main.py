@@ -419,12 +419,7 @@ class Desk:
             self._band_n = getattr(self, "_band_n", 0) + 1
             path = os.path.join(os.path.dirname(self._frame_path()),
                                 f"band-{self._band_n}.rgb")
-            flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
-            if hasattr(os, "O_NOFOLLOW"):
-                flags |= os.O_NOFOLLOW
-            fd = os.open(path, flags, 0o600)
-            with os.fdopen(fd, "wb") as f:
-                f.write(data)
+            kilix_graphics.write_frame(path, data)
             self.term.write(kilix_graphics.build_frame_edit_file(
                 path, self.w, bh, 0, y0, self.img_id))
             return
@@ -434,17 +429,12 @@ class Desk:
                 self.term, rgb, self.w, self.h, self.term.cols,
                 self.term.rows, self.img_id, in_tmux=in_tmux)
             return
-        self.seq = (self.seq + 1) % 8
+        self.seq += 1
         path = self._frame_path()
-        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
-        fd = os.open(path, flags, 0o600)
-        with os.fdopen(fd, "wb") as f:
-            f.write(rgb)
+        kilix_graphics.write_frame(path, rgb)
         payload = base64.b64encode(path.encode()).decode()
         self.term.write(
-            f"\x1b[H\x1b_Ga=T,i={self.img_id},p=1,z=-1,t=t,f=24,"
+            f"\x1b[H\x1b_Ga=T,i={self.img_id},p=1,z=-1,t=t,f=24,N=1,"
             f"s={self.w},v={self.h},c={self.term.cols},r={self.term.rows},"
             f"q=2,C=1;{payload}\x1b\\")
 

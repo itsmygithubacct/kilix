@@ -57,6 +57,9 @@ class KilixSdkBoundaryTests(unittest.TestCase):
         self.assertTrue(wrapped.startswith("\x1bPtmux;"))
         self.assertIn("\x1b\x1b_G", wrapped)
 
+    def test_graphics_exposes_exclusive_frame_writer(self):
+        self.assertIs(graphics.write_frame, __import__("gfx").write_frame)
+
 
 if __name__ == "__main__":
     unittest.main()
