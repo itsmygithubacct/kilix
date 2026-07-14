@@ -149,6 +149,79 @@ finally:
     xpane.stream.StreamSupervisor = orig_sup
 
 
+# ── private-display auth: the capture process must inherit the same
+# DISPLAY/XAUTHORITY values as the app. Xvfb rejects ffmpeg otherwise,
+# and the pane immediately disappears when _tick sees the dead capture. ────────
+class CaptureSup:
+    instances = []
+
+    def __init__(self, session):
+        self.session = session
+        self.xauth = "/tmp/kilix-private-xauth"
+        self.spawns = {}
+        self.fds = []
+        CaptureSup.instances.append(self)
+
+    def pick_display(self):
+        return 77
+
+    def start_xvfb(self, *args, **kwargs):
+        pass
+
+    def spawn(self, name, argv, **kwargs):
+        self.spawns[name] = {"argv": argv, "kwargs": kwargs}
+        if name == "cap":
+            rfd, wfd = os.pipe()
+            self.fds.extend((rfd, wfd))
+            return FakeProc(fd=rfd)
+        return FakeProc()
+
+    def cleanup(self, *_):
+        for fd in self.fds:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        self.fds.clear()
+
+
+d = H.make_desk()
+orig_sup = xpane.stream.StreamSupervisor
+orig_display = xpane.xdisplay.Display
+orig_injector = xpane.xinject.Injector
+orig_bridge = xpane.clipboard.SelectionBridge
+orig_paint = xpane.XPane._paint_root_chroma
+old_wm = os.environ.get("KILIX_XPANE_WM")
+xpane.stream.StreamSupervisor = CaptureSup
+xpane.xdisplay.Display = lambda *_: object()
+xpane.xinject.Injector = lambda *_: object()
+xpane.clipboard.SelectionBridge = lambda *_: None
+xpane.XPane._paint_root_chroma = lambda self: None
+os.environ["KILIX_XPANE_WM"] = "0"
+pane = None
+try:
+    pane = xpane.XPane(d, ["true"], "T", app_size=(32, 24))
+    calls = CaptureSup.instances[-1].spawns
+    app_env = calls["app"]["kwargs"]["env"]
+    cap_env = calls["cap"]["kwargs"]["env"]
+    assert app_env["DISPLAY"] == ":77"
+    assert app_env["XAUTHORITY"] == "/tmp/kilix-private-xauth"
+    assert cap_env["DISPLAY"] == ":77"
+    assert cap_env["XAUTHORITY"] == "/tmp/kilix-private-xauth"
+finally:
+    if pane is not None:
+        pane._teardown()
+    xpane.stream.StreamSupervisor = orig_sup
+    xpane.xdisplay.Display = orig_display
+    xpane.xinject.Injector = orig_injector
+    xpane.clipboard.SelectionBridge = orig_bridge
+    xpane.XPane._paint_root_chroma = orig_paint
+    if old_wm is None:
+        os.environ.pop("KILIX_XPANE_WM", None)
+    else:
+        os.environ["KILIX_XPANE_WM"] = old_wm
+
+
 # ── F43: _keep_on_screen must clamp against the CURRENT visible region, not
 # the stale capture size, or windows parked past a shrunk edge stay
 # mouse-unreachable ──────────────────────────────────────────────────────────

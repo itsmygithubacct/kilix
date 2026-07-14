@@ -116,6 +116,8 @@ class XPane(wm.Window):
                         "-framerate", str(fps),               # only pointer
                         "-video_size", f"{aw}x{ah}", "-i", f":{n}",
                         "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                # ffmpeg is another client of the authenticated private Xvfb.
+                env=e,
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
             os.set_blocking(self.ff.stdout.fileno(), False)
         except Exception:
