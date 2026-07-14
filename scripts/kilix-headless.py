@@ -27,8 +27,13 @@ import termios
 HERE = os.path.dirname(os.path.abspath(__file__))
 APPRUN = os.path.abspath(os.path.join(HERE, "..", "config", "apprun.py"))
 
+os.umask(0o077)
 env = dict(os.environ, KILIX_NO_PANE="1")
-envfile = os.path.expanduser("~/.local/share/kilix/stream-env.sh")
+storage = os.environ.get(
+    "KILIX_STORAGE_HOME", os.path.expanduser("~/.local/gpu_terminal/kilix"))
+envfile = os.path.join(os.environ.get("KILIX_DATA_HOME",
+                                     os.path.join(storage, "data")),
+                       "stream-env.sh")
 if os.path.exists(envfile):          # no-sudo Debian prefix: import its exports
     out = subprocess.run(["bash", "-c", f". '{envfile}'; env"],
                          capture_output=True, text=True).stdout

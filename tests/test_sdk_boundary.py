@@ -18,14 +18,28 @@ class KilixSdkBoundaryTests(unittest.TestCase):
         self.assertEqual(Path(paths.defaults_dir()), ROOT / "config")
         self.assertEqual(Path(paths.launcher()), ROOT / "kilix")
 
-    def test_user_config_uses_xdg_and_honors_override(self):
+    def test_user_config_uses_project_storage_and_honors_override(self):
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch.dict(os.environ, {
-                    "XDG_CONFIG_HOME": tmp, "KITTY_CONFIG_DIRECTORY": ""}):
-                self.assertEqual(Path(paths.config_dir()), Path(tmp) / "kilix")
+                    "KILIX_STORAGE_HOME": tmp,
+                    "KITTY_CONFIG_DIRECTORY": ""}):
+                self.assertEqual(Path(paths.config_dir()), Path(tmp) / "config")
             override = str(Path(tmp) / "custom")
             with mock.patch.dict(os.environ, {"KITTY_CONFIG_DIRECTORY": override}):
                 self.assertEqual(Path(paths.config_dir()), Path(override))
+
+    def test_gpu_terminal_source_layout_and_external_provider(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            with mock.patch.dict(os.environ, {"HOME": str(home)}, clear=False):
+                os.environ.pop("GPU_TERMINAL_SOURCE_HOME", None)
+                os.environ.pop("KILIX95_DIR", None)
+                self.assertEqual(Path(paths.source_home()), home / "gpu_terminal")
+                self.assertEqual(
+                    Path(paths.kilix95_home()), home / "gpu_terminal" / "kilix-95")
+            custom = Path(tmp) / "sources" / "desktop"
+            with mock.patch.dict(os.environ, {"KILIX95_DIR": str(custom)}):
+                self.assertEqual(Path(paths.kilix95_home()), custom)
 
     def test_sdk_contract_is_versioned(self):
         self.assertEqual(kilix_sdk.SDK_API_VERSION, (1, 0))

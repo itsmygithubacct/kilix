@@ -121,7 +121,8 @@ class Desktop:
                 "-o", f"initial_window_height={self.h}",
                 "-o", "remember_window_size=no",
                 "-o", "confirm_os_window_close=0"]
-        logf = open(os.path.join(self.sup.runtime_dir, "kitty.log"), "wb")
+        logf = stream._private_open(
+            os.path.join(self.sup.runtime_dir, "kitty.log"), "wb")
         self.sup.spawn("kitty", argv, env=env, stdout=logf, stderr=logf)
         xd = xdisplay.Display(f":{n}")
         deadline = time.time() + 15

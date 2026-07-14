@@ -1,14 +1,14 @@
 """kilix desktop — Recycle Bin backing store (no UI).
 
-Deleted files/dirs are moved under the bin (default ~/.local/share/kilix/
-recycled) into a per-item opaque token, beside a JSON sidecar recording the
+Deleted files/dirs are moved under Kilix's private data directory into a
+per-item opaque token, beside a JSON sidecar recording the
 original path, deletion time, name, size and is_dir. The sidecars ARE the
 index: items() rescans them each call, so a missing or corrupt sidecar
 degrades to a best-effort entry instead of desyncing the bin. No network.
 
 Location: $KILIX_RECYCLE_DIR wins; else the bin sits beside the desktop
 folder (a sibling of $KILIX_DESKTOP_DIR when set — so redirecting the desktop
-to a temp dir isolates the bin too); else ~/.local/share/kilix/recycled.
+to a temp dir isolates the bin too); else the canonical Kilix data root.
 """
 import json
 import math
@@ -16,6 +16,8 @@ import os
 import shutil
 import time
 import uuid
+
+import storage
 
 
 def _base():
@@ -26,9 +28,7 @@ def _base():
     if desk:
         return os.path.join(os.path.dirname(
             os.path.abspath(os.path.expanduser(desk))), "recycled")
-    return os.path.join(
-        os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share"),
-        "kilix", "recycled")
+    return storage.data_dir("recycled")
 
 
 def _store():

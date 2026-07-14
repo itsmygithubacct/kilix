@@ -3,7 +3,7 @@
 
 Renders current Chrome inside a kilix/kitty pane:
   - pixel layer: CDP screencast frames blitted via the kitty graphics
-    protocol at z=-1 (below text), through /dev/shm temp files
+    protocol at z=-1 (below text), through private Kilix session files
   - glyph layer: page text drawn as real terminal cells (selectable),
     harvested from DOMSnapshot; Chrome's own text ink is made transparent
   - input: kitty keyboard protocol + SGR-pixel mouse, forwarded over CDP
@@ -20,7 +20,9 @@ import json
 import os
 import re
 import select
+import shutil
 import signal
+import stat
 import struct
 import subprocess
 import sys
@@ -41,8 +43,46 @@ LOG_PATH = os.environ.get("KILIX_BROWSE_LOG")
 
 def log(*a):
     if LOG_PATH:
-        with open(LOG_PATH, "a") as f:
+        flags = os.O_APPEND | os.O_CREAT | os.O_WRONLY
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        fd = os.open(LOG_PATH, flags, 0o600)
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "a") as f:
             f.write(f"[{time.time():.3f}] " + " ".join(str(x) for x in a) + "\n")
+
+
+def profile_lock_state(lock):
+    """Return absent, live, stale, or unknown for Chromium's SingletonLock."""
+    if not os.path.lexists(lock):
+        return "absent"
+    try:
+        target = os.readlink(lock)
+        holder_pid = int(target.rsplit("-", 1)[1])
+    except (OSError, ValueError, IndexError):
+        return "unknown"
+    try:
+        os.kill(holder_pid, 0)
+    except ProcessLookupError:
+        return "stale"
+    except PermissionError:
+        return "live"
+    return "live"
+
+
+def remove_stale_profile_singletons(profile):
+    """Remove only Chromium-created symlinks after proving its PID is dead."""
+    lock = os.path.join(profile, "SingletonLock")
+    if profile_lock_state(lock) != "stale":
+        return False
+    for name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+        path = os.path.join(profile, name)
+        try:
+            if stat.S_ISLNK(os.lstat(path).st_mode):
+                os.unlink(path)
+        except FileNotFoundError:
+            pass
+    return True
 
 
 # ───────────────────────── CDP over --remote-debugging-pipe ─────────────────
@@ -443,30 +483,42 @@ class Browse:
         self._cur_paint = 0.0
         extra = ()
         self.temp_profile = None
+        self.frame_dir = gfx.session_dir(
+            "graphics", f"browse-{self.wid}-{os.getpid()}")
         if incognito:
             # throwaway profile, deleted on exit: no history/cookies survive
             import tempfile
-            profile = tempfile.mkdtemp(prefix="kilix-browse-incognito-")
+            profile = tempfile.mkdtemp(
+                prefix="kilix-browse-incognito-",
+                dir=gfx.session_dir("browse-profiles"))
             self.temp_profile = profile
             extra = ("--incognito",)
         else:
-            profile = os.path.join(os.environ.get("XDG_STATE_HOME",
-                                   os.path.expanduser("~/.local/state")),
-                                   "kilix", "browse-profile")
-            os.makedirs(profile, exist_ok=True)
+            state = os.environ.get("KILIX_STATE_DIRECTORY") or os.path.join(
+                os.environ.get("KILIX_STORAGE_HOME", os.path.expanduser(
+                    "~/.local/gpu_terminal/kilix")), "state")
+            profile = os.path.join(state, "browse-profile")
+            os.makedirs(profile, mode=0o700, exist_ok=True)
+            os.chmod(profile, 0o700)
             # Chrome refuses to share a profile: if another browse instance
             # holds the SingletonLock, fall back to a disposable profile.
             lock = os.path.join(profile, "SingletonLock")
-            if os.path.lexists(lock):
-                try:
-                    holder_pid = int(os.readlink(lock).rsplit("-", 1)[1])
-                    alive = os.path.exists(f"/proc/{holder_pid}")
-                except (OSError, ValueError, IndexError):
-                    alive = False
-                if alive:
-                    profile = f"{profile}-{os.getpid()}"
-                    self.temp_profile = profile
-        self.cdp = CDP(url, self.page_w, self.page_h, profile, extra)
+            lock_state = profile_lock_state(lock)
+            if lock_state == "stale":
+                remove_stale_profile_singletons(profile)
+            elif lock_state in ("live", "unknown"):
+                import tempfile
+                profile = tempfile.mkdtemp(
+                    prefix="kilix-browse-shared-profile-",
+                    dir=gfx.session_dir("browse-profiles"))
+                self.temp_profile = profile
+        try:
+            self.cdp = CDP(url, self.page_w, self.page_h, profile, extra)
+        except Exception:
+            shutil.rmtree(self.frame_dir, ignore_errors=True)
+            if self.temp_profile:
+                shutil.rmtree(self.temp_profile, ignore_errors=True)
+            raise
         self.sess = None
         self.runs = []               # cached glyph runs (doc coords)
         self.scroll_x = self.scroll_y = 0.0
@@ -549,9 +601,8 @@ class Browse:
         else:
             self.seq = (self.seq + 1) % 8
             name = f"tty-graphics-protocol-kilix-{self.wid}-{self.seq}.rgb"
-            path = "/dev/shm/" + name
-            with open(path, "wb") as f:
-                f.write(img.tobytes())
+            path = os.path.join(self.frame_dir, name)
+            gfx.write_frame(path, img.tobytes())
             payload = base64.b64encode(path.encode()).decode()
             # c/r pin the placement to the full pane rect so half-res frames are
             # GPU-scaled back up; at full resolution it is a 1:1 no-op.
@@ -616,9 +667,8 @@ class Browse:
             return
         self.seq = (self.seq + 1) % 8
         name = f"tty-graphics-protocol-kilix-{self.wid}-{self.seq}.rgb"
-        path = "/dev/shm/" + name
-        with open(path, "wb") as f:
-            f.write(img.tobytes())
+        path = os.path.join(self.frame_dir, name)
+        gfx.write_frame(path, img.tobytes())
         payload = base64.b64encode(path.encode()).decode()
         self.term.write(f"\x1b[H\x1b_Ga=T,i=1,p=1,z=-1,t=t,f=24,"
                         f"s={w},v={h},c={self.term.cols},r={self.view_rows},"
@@ -1049,14 +1099,9 @@ class Browse:
             # the alt screen vanishes when the alt screen is left
             self.term.restore()
             self.cdp.close()
-            for i in range(8):
-                try:
-                    os.unlink(f"/dev/shm/tty-graphics-protocol-kilix-"
-                              f"{self.wid}-{i}.rgb")
-                except OSError:
-                    pass
+            import shutil
+            shutil.rmtree(self.frame_dir, ignore_errors=True)
             if self.temp_profile:
-                import shutil
                 shutil.rmtree(self.temp_profile, ignore_errors=True)
         if err:
             print(f"kilix browse: {err}", file=sys.stderr)

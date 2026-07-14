@@ -2,7 +2,7 @@
 """kilix desktop — a Windows 95-style desktop environment in a kilix pane.
 
 The whole desktop is rendered as pixels (PIL framebuffer, blitted through
-the kitty graphics protocol — the same t=t /dev/shm path `kilix browse`
+the kitty graphics protocol via private Kilix session files
 uses, or inline t=d in streamed sessions) with pixel-precise SGR mouse
 input. Start bar, overlapping windows, desktop launchers, a file manager,
 Notepad, an image viewer and a Settings app that edits the kilix config
@@ -26,6 +26,11 @@ _here = os.path.dirname(os.path.abspath(__file__))
 KILIX_HOME = os.environ.get("KILIX_HOME") or os.path.dirname(_here)
 sys.path.insert(0, os.path.join(KILIX_HOME, "config"))   # kilix_sdk
 sys.path.insert(0, _here)
+
+import storage
+_pycache = storage.cache_dir("desktop-pycache")
+os.makedirs(_pycache, exist_ok=True)
+sys.pycache_prefix = _pycache
 
 from PIL import Image
 
@@ -445,8 +450,8 @@ class Desk:
 
     def _frame_path(self):
         if self._frame_dir is None:
-            root = "/dev/shm" if os.path.isdir("/dev/shm") \
-                and os.access("/dev/shm", os.W_OK) else None
+            root = storage.session_dir("desktop-frames")
+            os.makedirs(root, mode=0o700, exist_ok=True)
             self._frame_dir = tempfile.mkdtemp(
                 prefix=f"tty-graphics-protocol-kilix95-{self.wid}-",
                 dir=root)
@@ -457,13 +462,6 @@ class Desk:
         if self._frame_dir:
             shutil.rmtree(self._frame_dir, ignore_errors=True)
             self._frame_dir = None
-        else:
-            for i in range(8):
-                try:
-                    os.unlink(f"/dev/shm/tty-graphics-protocol-kilix95-"
-                              f"{self.wid}-{i}.rgb")
-                except OSError:
-                    pass
 
     # ── input normalization ─────────────────────────────────────────────────
     def _norm_key(self, raw):

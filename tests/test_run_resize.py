@@ -4,7 +4,7 @@ Runs the real choreography apprun.do_resize performs against a real Xvfb:
 disable the CRTC (randr_prepare), RRSetScreenSize to several pane-like sizes
 (randr_set_screen_size), refit a live client window, and capture exact-size
 frames with ffmpeg x11grab after each resize. Skipped when Xvfb, ffmpeg, or
-python-xlib are unavailable (the unpacked ~/.local/share/kilix/xvfb copy
+python-xlib are unavailable (the unpacked Kilix-private dependency copy
 counts, same as apprun's find_xvfb).
 
 The display number is chosen by Xvfb itself (-displayfd), so the test never
@@ -27,8 +27,10 @@ def _find_xvfb():
     p = shutil.which("Xvfb")
     if p:
         return p
-    data = os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share"))
-    p = os.path.join(data, "kilix", "xvfb", "usr", "bin", "Xvfb")
+    data = os.environ.get("KILIX_DATA_HOME") or os.path.join(
+        os.environ.get("KILIX_STORAGE_HOME", os.path.expanduser(
+            "~/.local/gpu_terminal/kilix")), "data")
+    p = os.path.join(data, "deps", "usr", "bin", "Xvfb")
     return p if os.access(p, os.X_OK) else None
 
 

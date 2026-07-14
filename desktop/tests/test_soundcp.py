@@ -2,9 +2,9 @@
 import os
 import tempfile
 
-# isolate the sound cache + scheme store from the real ~/.local/share
+# isolate the sound cache + scheme store from the real Kilix data root
 _cache = tempfile.mkdtemp(prefix="kilix95-soundcp-")
-os.environ["XDG_DATA_HOME"] = _cache
+os.environ["KILIX_DATA_HOME"] = _cache
 os.environ["KILIX_NO_SOUND"] = "1"                       # no players spawn
 
 import harness as H

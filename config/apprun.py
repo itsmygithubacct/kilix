@@ -6,7 +6,7 @@ each app gets a private off-screen X server and its pixels are streamed
 into a pane, so GUI apps tile exactly like terminal programs.
 
   - display : a per-instance Xvfb (found on PATH, or the user-space copy
-    under $XDG_DATA_HOME/kilix/xvfb/usr/bin/Xvfb)
+    under ~/.local/gpu_terminal/kilix/data/xvfb/usr/bin/Xvfb)
   - pixels  : ffmpeg x11grab -> raw RGB pipe -> kitty graphics protocol,
     letterboxed into the pane by the GPU via the c=/r= cell-scaling
   - input   : kitty keyboard protocol (with press/release reporting, so
@@ -31,7 +31,7 @@ window, and restarts the capture, so the app always fills the tab 1:1.
 picture on the GPU as before. Efficient/tiled: consecutive frames are
 diffed into a changed row band and only that rectangle is retransmitted,
 composed onto the displayed image via the kitty animation protocol
-(a=f frame edits) — locally through /dev/shm and inline (t=d) when
+(a=f frame edits) — locally through private Kilix session files and inline (t=d) when
 streamed; full frames are sent only at start, after resizes, and when
 most of the frame changed.
 
@@ -151,7 +151,7 @@ def randr_set_monitor_mode(xd, w, h, old_mode=None):
 
 def log(*a):
     if LOG_PATH:
-        with open(LOG_PATH, "a") as f:
+        with stream._private_open(LOG_PATH, "a") as f:
             f.write(f"[{time.time():.3f}] " + " ".join(str(x) for x in a) + "\n")
 
 
@@ -189,13 +189,16 @@ def find_xvfb():
     p = shutil.which("Xvfb")
     if p:
         return p
-    data = os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share"))
-    p = os.path.join(data, "kilix", "xvfb", "usr", "bin", "Xvfb")
+    data = os.environ.get("KILIX_DATA_HOME") or os.path.join(
+        os.environ.get("KILIX_STORAGE_HOME", os.path.expanduser(
+            "~/.local/gpu_terminal/kilix")), "data")
+    p = os.path.join(data, "xvfb", "usr", "bin", "Xvfb")
     if os.access(p, os.X_OK):
         return p
     sys.exit("kilix run: Xvfb not found — install xvfb, or unpack the .deb "
-             "into ~/.local/share/kilix/xvfb (apt-get download xvfb && "
-             "dpkg -x xvfb_*.deb ~/.local/share/kilix/xvfb)")
+             "into ~/.local/gpu_terminal/kilix/data/xvfb (apt-get download "
+             "xvfb && dpkg -x xvfb_*.deb "
+             "~/.local/gpu_terminal/kilix/data/xvfb)")
 
 
 # legacy CSI ~ numbers for F1-F12 (browse's tables stop at PageDown)
@@ -361,10 +364,12 @@ class AppPane:
             self.app_w, self.app_h = (min(self.app_w, self.max_w),
                                       min(self.app_h, self.max_h))
         self.wid = os.environ.get("KITTY_WINDOW_ID", str(os.getpid()))
+        self.frame_dir = gfx.session_dir(
+            "graphics", f"run-{self.wid}-{os.getpid()}")
         self.seq = 0
         # In a streamed/served session (KILIX_STREAM=1) inline the pixels (t=d)
         # so a remote kitty can render them; otherwise use the fast local t=t
-        # /dev/shm path. img_id is stable per producer so two apps reaching one
+        # private session path. img_id is stable per producer so two apps reaching one
         # client terminal never collide on the graphics id.
         self.stream = os.environ.get("KILIX_STREAM") == "1"
         self.img_id = 1 + ((int(self.wid) if self.wid.isdigit()
@@ -385,6 +390,7 @@ class AppPane:
         self.last_frame = None
         self.ffbuf = bytearray()
         self.xvfb = self.app = self.ff = None
+
         self.xd = None
         self._cap_fps = fps              # current pane-capture rate (QW5)
         self._last_change = time.time()
@@ -397,6 +403,14 @@ class AppPane:
         self._fit_suspended = False
         if self.term:
             self.compute_layout()
+
+    def _frame_path(self, name):
+        frame_dir = getattr(self, "frame_dir", None)
+        if frame_dir is None:
+            frame_dir = gfx.session_dir(
+                "graphics", f"run-{self.wid}-{os.getpid()}")
+            self.frame_dir = frame_dir
+        return os.path.join(frame_dir, name)
 
     # ---- geometry ----------------------------------------------------------
     def compute_layout(self):
@@ -798,14 +812,13 @@ class AppPane:
                 self._band_seq += 1
                 name = (f"tty-graphics-protocol-kilix-run-"
                         f"{self.wid}-b{self._band_seq}.rgb")
-                path = "/dev/shm/" + name
-                with open(path, "wb") as f:
-                    f.write(data)
+                path = self._frame_path(name)
+                gfx.write_frame(path, data)
                 self.term.write(
                     gfx.build_frame_edit_file(path, w, bh, 0, y0, 1))
                 wire = len(data)             # shm band volume (not on wire)
         elif self.stream:
-            # streamed session: inline the pixels (t=d) — the /dev/shm path of
+            # streamed session: inline the pixels (t=d) — the local file path of
             # the local branch below is meaningless to a kitty on another box.
             wire = gfx.blit_direct(self.term, rgb, w, h,
                                    self.img_cols, self.img_rows, self.img_id,
@@ -817,9 +830,8 @@ class AppPane:
             import base64
             self.seq = (self.seq + 1) % 8
             name = f"tty-graphics-protocol-kilix-run-{self.wid}-{self.seq}.rgb"
-            path = "/dev/shm/" + name
-            with open(path, "wb") as f:
-                f.write(rgb)
+            path = self._frame_path(name)
+            gfx.write_frame(path, rgb)
             payload = base64.b64encode(path.encode()).decode()
             self.term.write(
                 f"\x1b[{self.off_row + 1};{self.off_col + 1}H"
@@ -846,7 +858,8 @@ class AppPane:
         log(f"metrics cap={d['cfps']:.1f}/s blit={d['fps']:.1f}/s "
             f"wire={d['kbps']:.0f}kbps {self.app_w}x{self.app_h}")
         try:
-            with open(os.path.join(self.sup.runtime_dir, "metrics.jsonl"), "a") as f:
+            with stream._private_open(
+                    os.path.join(self.sup.runtime_dir, "metrics.jsonl"), "a") as f:
                 f.write(json.dumps({"t": round(time.time(), 1),
                                     "cap_fps": round(d["cfps"], 1),
                                     "blit_fps": round(d["fps"], 1),
@@ -1035,13 +1048,9 @@ class AppPane:
                 self.inj.release_all()   # no keys/buttons left stuck down
             for p in (self.app, self.ff, self.xvfb):
                 _stop_proc(p)
-            import glob
-            for f in glob.glob(f"/dev/shm/tty-graphics-protocol-kilix-run-"
-                               f"{self.wid}-*.rgb"):
-                try:
-                    os.unlink(f)
-                except OSError:
-                    pass
+            frame_dir = getattr(self, "frame_dir", None)
+            if frame_dir:
+                shutil.rmtree(frame_dir, ignore_errors=True)
             if self.sup is not None:
                 self.sup.cleanup()
         if err:

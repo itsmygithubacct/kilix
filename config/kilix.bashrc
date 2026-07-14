@@ -18,12 +18,13 @@ if [ -n "${KITTY_INSTALLATION_DIR:-}" ] && \
 fi
 
 # 3. kilix-only prompt. Drop your prompt customisation in
-#    ~/kilix/config/prompt.bash (kilix-local, not committed) to have it apply
+#    ~/gpu_terminal/kilix/config/prompt.bash (kilix-local, not committed) to have it apply
 #    to kilix sessions only. If that file is absent, kilix falls back to a
 #    synth-shell prompt when you have one installed.
 if [[ $- == *i* ]]; then
-    if [ -f "${KILIX_HOME:-$HOME/kilix}/config/prompt.bash" ]; then
-        . "${KILIX_HOME:-$HOME/kilix}/config/prompt.bash"
+    _kilix_source_root="${GPU_TERMINAL_SOURCE_HOME:-$HOME/gpu_terminal}"
+    if [ -f "${KILIX_HOME:-$_kilix_source_root/kilix}/config/prompt.bash" ]; then
+        . "${KILIX_HOME:-$_kilix_source_root/kilix}/config/prompt.bash"
     elif [ -f "$HOME/.config/synth-shell/synth-shell-prompt.sh" ]; then
         . "$HOME/.config/synth-shell/synth-shell-prompt.sh"
     fi
@@ -48,7 +49,8 @@ case "${KILIX_RUN_ALIASES:-}" in
        fi ;;
 esac
 if [ "$_kilix_run_aliases" = 1 ]; then
-    _kilix_bin="$(command -v kilix)" || _kilix_bin="${KILIX_HOME:-$HOME/kilix}/kilix"
+    _kilix_source_root="${GPU_TERMINAL_SOURCE_HOME:-$HOME/gpu_terminal}"
+    _kilix_bin="$(command -v kilix)" || _kilix_bin="${KILIX_HOME:-$_kilix_source_root/kilix}/kilix"
     # The default list is every GUI program a stock Plebian-OS install ships
     # (see plebian-os provision/install-deps.sh: the browsers, xterm, zenity,
     # and the x11-utils viewers), plus common alternate names and gimp.

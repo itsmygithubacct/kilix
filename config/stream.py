@@ -30,8 +30,10 @@ import time
 
 
 def _runtime_root():
-    base = os.environ.get("XDG_RUNTIME_DIR") or os.environ.get("TMPDIR") or "/tmp"
-    return os.path.abspath(os.path.join(base, "kilix"))
+    base = os.environ.get("KILIX_SESSION_HOME") or os.path.join(
+        os.environ.get("KILIX_STORAGE_HOME", os.path.expanduser(
+            "~/.local/gpu_terminal/kilix")), "session")
+    return os.path.abspath(os.path.join(base, "stream"))
 
 
 def _safe_session_name(session):
@@ -105,6 +107,22 @@ def _close_handles(handles):
             pass
 
 
+def _private_dir(path):
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    os.chmod(path, 0o700)
+    return path
+
+
+def _private_open(path, mode):
+    flags = os.O_CREAT | os.O_WRONLY
+    flags |= os.O_APPEND if mode.startswith("a") else os.O_TRUNC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    fd = os.open(path, flags, 0o600)
+    os.fchmod(fd, 0o600)
+    return os.fdopen(fd, mode)
+
+
 def kill_all():
     """Reap every kilix stream process (Xvnc/Xvfb/ffmpeg/bridge) recorded in the
     runtime dirs' pidfiles, and remove the session dirs. Backstop for a serve
@@ -149,7 +167,9 @@ def kill_all():
 
 
 def _data_home():
-    return os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share"))
+    return os.environ.get("KILIX_DATA_HOME") or os.path.join(
+        os.environ.get("KILIX_STORAGE_HOME", os.path.expanduser(
+            "~/.local/gpu_terminal/kilix")), "data")
 
 
 def _whoami():
@@ -171,7 +191,7 @@ def find_xvfb():
     p = shutil.which("Xvfb")
     if p:
         return p
-    p = os.path.join(_data_home(), "kilix", "xvfb", "usr", "bin", "Xvfb")
+    p = os.path.join(_data_home(), "deps", "usr", "bin", "Xvfb")
     return p if os.access(p, os.X_OK) else None
 
 
@@ -324,18 +344,14 @@ def lan_ip():
 class StreamSupervisor:
     def __init__(self, session):
         self.session = _safe_session_name(session)
-        self.runtime_root = _runtime_root()
+        self.runtime_root = _private_dir(_runtime_root())
         self.runtime_dir = os.path.join(self.runtime_root, self.session)
-        os.makedirs(self.runtime_dir, mode=0o700, exist_ok=True)
+        _private_dir(self.runtime_dir)
         # Display-number locks live in a SHARED dir (not the per-session runtime
         # dir), so the flock actually excludes OTHER concurrent serves from
         # picking the same X display before its socket appears.
         self.lockdir = os.path.join(self.runtime_root, "locks")
-        os.makedirs(self.lockdir, mode=0o700, exist_ok=True)
-        try:
-            os.chmod(self.runtime_dir, 0o700)
-        except OSError:
-            pass
+        _private_dir(self.lockdir)
         self.children = []     # list of (name, Popen, parent_handles, pidfile)
         self._locks = []       # held flock fds reserving display numbers
         self._pulse_modules = []   # pactl null-sink module ids to unload
@@ -363,7 +379,7 @@ class StreamSupervisor:
         pidfile = os.path.join(self.runtime_dir, f"{name}.pid")
         self.children.append((name, p, handles, pidfile))
         try:
-            with open(pidfile, "w") as f:
+            with _private_open(pidfile, "w") as f:
                 json.dump({"pid": p.pid, "start": _proc_start_time(p.pid)}, f)
         except OSError:
             pass
@@ -459,8 +475,7 @@ class StreamSupervisor:
         ANY local user connect (screenshot/keylog/inject). With -auth on the server
         and XAUTHORITY set on the clients we launch, only our processes get in."""
         path = os.path.join(self.runtime_dir, f"Xauth-{n}")
-        open(path, "a").close()
-        os.chmod(path, 0o600)
+        _private_open(path, "a").close()
         subprocess.run(["xauth", "-f", path, "add", f":{n}",
                         "MIT-MAGIC-COOKIE-1", secrets.token_hex(16)],
                        check=True, capture_output=True)
@@ -484,7 +499,7 @@ class StreamSupervisor:
             # the screen is unchanged between updates (E6: VNC is the
             # text-efficiency tier; Tight beats H.264 on terminals).
             argv += ["-SecurityTypes", "VncAuth", "-CompareFB", "2"]
-        logf = open(os.path.join(self.runtime_dir, f"xvnc-{n}.log"), "wb")
+        logf = _private_open(os.path.join(self.runtime_dir, f"xvnc-{n}.log"), "wb")
         p = self.spawn(f"xvnc-{n}", argv, stdout=logf, stderr=logf)
         if not self._wait_x(n):
             raise RuntimeError("kilix: Xvnc did not come up (see runtime log)")
@@ -502,7 +517,7 @@ class StreamSupervisor:
             # framebuffer, so ffmpeg -draw_mouse 0 can't remove it; disable it
             # entirely where the desktop paints its own pointer instead.
             argv.append("-nocursor")
-        logf = open(os.path.join(self.runtime_dir, f"xvfb-{n}.log"), "wb")
+        logf = _private_open(os.path.join(self.runtime_dir, f"xvfb-{n}.log"), "wb")
         p = self.spawn(f"xvfb-{n}", argv, stdout=logf, stderr=logf)
         if not self._wait_x(n):
             raise RuntimeError("kilix: Xvfb did not come up")
@@ -555,7 +570,7 @@ class StreamSupervisor:
         return argv
 
     def _spawn_enc(self, name, argv, piped):
-        logf = open(os.path.join(self.runtime_dir, f"{name}.log"), "wb")
+        logf = _private_open(os.path.join(self.runtime_dir, f"{name}.log"), "wb")
         return self.spawn(name, argv, stdout=logf, stderr=logf,
                           stdin=subprocess.PIPE if piped else subprocess.DEVNULL)
 
@@ -603,7 +618,7 @@ class StreamSupervisor:
     def ensure_mediamtx(self):
         """One-time download of the pinned MediaMTX release into the kilix data
         dir (same pattern as noVNC/hls.js vendoring). Returns the binary path."""
-        d = os.path.join(_data_home(), "kilix", "mediamtx")
+        d = os.path.join(_data_home(), "mediamtx")
         exe = os.path.join(d, "mediamtx")
         if os.access(exe, os.X_OK):
             return exe
@@ -632,7 +647,7 @@ class StreamSupervisor:
         addr = "" if lan else "127.0.0.1"
         conf = os.path.join(self.runtime_dir, "mediamtx.yml")
         udp_port = free_port()
-        with open(conf, "w") as f:
+        with _private_open(conf, "w") as f:
             f.write(f"""\
 logLevel: warn
 api: no
@@ -662,8 +677,7 @@ paths:
   {path}:
     source: publisher
 """)
-        os.chmod(conf, 0o600)
-        logf = open(os.path.join(self.runtime_dir, "mediamtx.log"), "wb")
+        logf = _private_open(os.path.join(self.runtime_dir, "mediamtx.log"), "wb")
         p = self.spawn("mediamtx", [exe, conf], stdout=logf, stderr=logf)
         if not wait_port(rtsp_port):
             raise RuntimeError("kilix: MediaMTX did not come up (see runtime log)")
@@ -703,7 +717,7 @@ paths:
     def tls_cert(self):
         """First-use self-signed cert for the --lan HTTPS bridge.
         Returns (cert_path, key_path, sha256_fingerprint)."""
-        d = os.path.join(_data_home(), "kilix", "tls")
+        d = os.path.join(_data_home(), "tls")
         os.makedirs(d, mode=0o700, exist_ok=True)
         cert = os.path.join(d, "cert.pem")
         key = os.path.join(d, "key.pem")
@@ -720,7 +734,7 @@ paths:
 
     # ---- browser / HLS bridge ----------------------------------------------
     def ensure_novnc(self):
-        d = os.path.join(_data_home(), "kilix", "novnc")
+        d = os.path.join(_data_home(), "novnc")
         if not os.path.exists(os.path.join(d, "vnc.html")):
             os.makedirs(os.path.dirname(d), exist_ok=True)
             subprocess.run(["git", "clone", "--depth", "1", "-b", "v1.5.0",
@@ -729,7 +743,7 @@ paths:
         return d
 
     def ensure_hlsjs(self):
-        d = os.path.join(_data_home(), "kilix", "hlsjs")
+        d = os.path.join(_data_home(), "hlsjs")
         f = os.path.join(d, "hls.min.js")
         if not os.path.exists(f):
             os.makedirs(d, exist_ok=True)
@@ -739,7 +753,7 @@ paths:
         return d
 
     def ensure_mpegtsjs(self):
-        d = os.path.join(_data_home(), "kilix", "mpegtsjs")
+        d = os.path.join(_data_home(), "mpegtsjs")
         f = os.path.join(d, "mpegts.js")
         if not os.path.exists(f):
             os.makedirs(d, exist_ok=True)
@@ -770,7 +784,7 @@ paths:
         if tls:
             argv += ["--tls-cert", tls[0], "--tls-key", tls[1]]
         env = dict(os.environ, KILIX_BRIDGE_TOKEN=token)
-        logf = open(os.path.join(self.runtime_dir, "bridge.log"), "wb")
+        logf = _private_open(os.path.join(self.runtime_dir, "bridge.log"), "wb")
         return self.spawn("bridge", argv, stdout=logf, stderr=logf, env=env)
 
     # ---- connect instructions ----------------------------------------------

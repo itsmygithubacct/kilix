@@ -8,16 +8,26 @@ anyone who wants clickable split/maximize/close chrome on kitty.
 
 It runs its own kitty binary with its own config and icon, so it leaves any
 kitty you already have completely untouched. Tracked defaults stay in
-`config/`; writable settings live in `${XDG_CONFIG_HOME:-~/.config}/kilix`.
+`config/`; every Kilix-owned writable file lives below
+`~/.local/gpu_terminal/kilix`.
+
+The default layout is `config/` for user settings, `state/` for persistent
+state, `cache/` for regenerable data, `session/` for sockets and frame files,
+`data/` for optional downloads, `build/` for compiled fork generations, and
+`prebuilt/` for the fallback kitty bundle. `KILIX_STORAGE_HOME` relocates the
+complete tree. Freedesktop launchers/icons are the intentional exception:
+`--install-desktop` uses the standard XDG application paths.
 
 ![kilix — pages strip with + button, per-pane title bars with clickable split/maximize/close buttons, splits, and icat](config/kilix_demo.png)
 
-## Release 0.1.1
+## Release 0.1.2
 
-Version 0.1.1 moves mutable settings/build state to XDG directories, hardens
-origin/ref-aware updates and downloadable assets, versions the host SDK and
-desktop-provider contract, and makes external Kilix 95 the authoritative
-provider with a security-compatible bundled fallback.
+Version 0.1.2 standardizes source checkouts under `~/gpu_terminal`, keeps all
+writable state under `~/.local/gpu_terminal`, isolates bundled Kilix from the
+external Kilix-95 provider, makes browser/session data private, and records
+builds from exact committed kitty-fork sources. It retains the origin/ref-aware
+updates, pinned downloadable assets, versioned host SDK, and provider contract
+introduced in 0.1.1.
 
 ## Features
 
@@ -78,8 +88,9 @@ provider with a security-compatible bundled fallback.
 ## Quick start
 
 ```bash
-git clone --recursive https://github.com/itsmygithubacct/kilix.git ~/kilix
-~/kilix/kilix
+mkdir -p ~/gpu_terminal
+git clone --recursive https://github.com/itsmygithubacct/kilix.git ~/gpu_terminal/kilix
+~/gpu_terminal/kilix/kilix
 ```
 
 (`--recursive` pulls `./src`, the kitty-fork submodule. Cloned without it?
@@ -101,8 +112,8 @@ To skip the build attempt and go straight to a verified prebuilt engine:
 ```bash
 KILIX_PREBUILT_VERSION=0.47.0 \
 KILIX_PREBUILT_SHA256=<sha256-of-kitty-txz> \
-~/kilix/bootstrap.sh
-~/kilix/kilix          # run it (no buttons until you build the fork)
+~/gpu_terminal/kilix/bootstrap.sh
+~/gpu_terminal/kilix/kilix          # run it (no buttons until you build the fork)
 ```
 
 The version and checksum are mandatory unless a user explicitly passes
@@ -111,14 +122,14 @@ The version and checksum are mandatory unless a user explicitly passes
 ```bash
 KILIX_PREBUILT_VERSION=0.47.0 \
 KILIX_PREBUILT_SHA256=<sha256-of-kitty-txz> \
-~/kilix/bootstrap.sh
+~/gpu_terminal/kilix/bootstrap.sh
 ```
 
 To get the buttons, install the build deps and build the fork:
 
 ```bash
-~/kilix/scripts/install-build-deps.sh   # Go + X11 dev libs + Python/Pillow
-~/kilix/kilix --build                    # compile the clickable-chrome fork
+~/gpu_terminal/kilix/scripts/install-build-deps.sh   # Go + X11 dev libs + Python/Pillow
+~/gpu_terminal/kilix/kilix --build                    # compile the clickable-chrome fork
 ```
 
 (`scripts/install-build-deps.sh --verify` re-checks without installing.)
@@ -126,13 +137,13 @@ To get the buttons, install the build deps and build the fork:
 Then, optionally:
 
 ```bash
-~/kilix/kilix --install-desktop   # app-menu entry + taskbar icon
+~/gpu_terminal/kilix/kilix --install-desktop   # app-menu entry + taskbar icon
 ```
 
 To pull the latest kilix into your checkout:
 
 ```bash
-kilix update                      # git pull --ff-only in ~/kilix; then restart `kilix desktop`
+kilix update                      # verified fast-forward in ~/gpu_terminal/kilix
 ```
 
 To inspect a running kilix instance:
@@ -144,11 +155,11 @@ kilix focus <tab-or-pane-id>      # jump to a live tab or pane
 kilix watch <pane-id>             # best-effort read-only text watch
 kilix screen-size larger          # increase terminal scale (font_size +2pt)
 kilix screen-size smaller         # decrease terminal scale (font_size -2pt)
-kilix status                      # version/commit, engine, XDG config, provider contract
+kilix status                      # version/commit, engine, writable config, provider contract
 ```
 
-Put `~/kilix` on your `PATH` (or `ln -s ~/kilix/kilix ~/.local/bin/kilix`) to just
-type `kilix`.
+Put `~/gpu_terminal/kilix` on your `PATH` (or
+`ln -s ~/gpu_terminal/kilix/kilix ~/.local/bin/kilix`) to just type `kilix`.
 
 ## Clickable buttons (the headline feature)
 
@@ -177,7 +188,7 @@ a laptop battery is **discharging**, a battery status item appears to its right.
 It is green above 50%, yellow at 50% and below, red at 20% and below, and
 shows the percentage to the left of the battery icon. Clicking it toggles the
 percentage on/off. Use Start ▸ Settings ▸ Chrome in kilix 95, or edit
-`${XDG_CONFIG_HOME:-~/.config}/kilix/kilix.env`, to hide the clock, change
+`~/.local/gpu_terminal/kilix/config/kilix.env`, to hide the clock, change
 `KILIX_CHROME_CLOCK_FORMAT`, or
 hide the battery item.
 
@@ -233,7 +244,7 @@ like any terminal text (shift+drag). Mouse clicks, wheel scrolling, and typing
 are forwarded to the page, a software pointer tracks the mouse (headless
 Chrome draws none; `--no-cursor` opts out), and hovering triggers real hover
 effects. Normal sessions keep history/cookies in
-`~/.local/state/kilix/browse-profile`; `--incognito` uses a throwaway profile
+`~/.local/gpu_terminal/kilix/state/browse-profile`; `--incognito` uses a throwaway profile
 deleted on exit.
 
 | Key | Action |
@@ -281,8 +292,9 @@ the pane-tracked display can grow.
 
 **Efficient (tiled updates).** Consecutive frames are diffed and only the
 changed row band is retransmitted, composed onto the displayed image in place
-via the kitty animation protocol (`a=f` frame edits) — locally through
-`/dev/shm`, inline (`t=d`) when streamed. Full frames are sent only at start,
+via the kitty animation protocol (`a=f` frame edits) — locally through private
+files in `~/.local/gpu_terminal/kilix/session`, inline (`t=d`) when streamed.
+Full frames are sent only at start,
 after resizes, and when most of the frame changed, so a blinking cursor or a
 small animation no longer costs a full-frame retransmit; the desktop
 (`kilix desktop`) blits the same way.
@@ -293,8 +305,8 @@ small animation no longer costs a full-frame retransmit; the desktop
 | `Ctrl+Q` | quit (everything else is forwarded to the app) |
 
 Requires `ffmpeg`, `python3-xlib`, and `Xvfb` — either on `PATH` or unpacked
-without root into `~/.local/share/kilix/xvfb`:
-`apt-get download xvfb && dpkg -x xvfb_*.deb ~/.local/share/kilix/xvfb`.
+without root into `~/.local/gpu_terminal/kilix/data/xvfb`:
+`apt-get download xvfb && dpkg -x xvfb_*.deb ~/.local/gpu_terminal/kilix/data/xvfb`.
 Python prototype (`config/apprun.py`). Known limits: no sound routing; apps
 that grab the pointer (DOSBox's autolock) see relative motion, so the app
 cursor and the pane cursor can drift; with `--size` or the broadcast tiers
@@ -320,7 +332,7 @@ kilix screensaver matrix     # …or by name
 
 Terminal screensavers live in `config/screensavers/` as small, self-contained
 C programs. kilix compiles the one you ask for on first use (cached under
-`${XDG_CACHE_HOME:-~/.cache}/kilix/screensavers`) and runs it in the current pane — press `q` or `Ctrl-C`
+`~/.local/gpu_terminal/kilix/cache/screensavers`) and runs it in the current pane — press `q` or `Ctrl-C`
 to quit. `matrix` is efficient green digital-rain: diff-rendered with one
 synchronized write per frame, so it's a couple of percent of a core even
 full-screen. Drop another `<name>.c` into that directory and
@@ -342,9 +354,14 @@ contract before execution (`kilix status` shows the selected provider).
 ```bash
 KILIX_DESKTOP_PROVIDER=external \
 KILIX95_AUTO_INSTALL=1 \
-KILIX95_DIR=~/kilix-95 \
+KILIX95_DIR=~/gpu_terminal/kilix-95 \
 kilix desktop
 ```
+
+By default the checkout is discovered as the sibling
+`~/gpu_terminal/kilix-95`, while its writable XP desktop state (including its
+wallpaper selection) stays under `~/.local/gpu_terminal/kilix-95`. The bundled
+fallback keeps independent state under `~/.local/gpu_terminal/kilix`.
 
 Relevant knobs: `KILIX_DESKTOP_PROVIDER=auto|builtin|external|command|none`,
 `KILIX_DESKTOP_COMMAND`, `KILIX_DESKTOP_NAME`, `KILIX_DESKTOP_FLAVOR=95|xp`,
@@ -366,14 +383,14 @@ right-click menu everywhere. Built in:
 
 - **File Manager** — browse, open, rename, delete, new folder/file,
   properties, "open terminal here".
-- **kilix Settings** — edits this user's XDG `kitty.conf` and `kilix.env`
+- **kilix Settings** — edits this user's private `kitty.conf` and `kilix.env`
   (GUI tabs for terminal, chrome, desktop, app, storage and
   build/update knobs, plus a raw `kitty.conf` editor). `kitty.conf` changes apply
   **live** via remote control (fallback: SIGUSR1); `kilix.env` changes are used
   by new launches.
 - **Notepad** and an **image viewer**.
 - **Games** — Start ▸ Programs ▸ Games. Each entry plays immediately if
-  `~/.config/kilix/games.conf` already points at a working install, otherwise
+  `~/.local/gpu_terminal/kilix-95/config/games.conf` already points at a working install, otherwise
   one consented click sets it up (paths saved to that file) and launches it in
   a tab: **Doom** downloads the official shareware episode plus a
   dosbox-staging build if no dosbox is installed (fullscreen, fire on Space,
@@ -385,10 +402,10 @@ right-click menu everywhere. Built in:
   skin composites onto the desktop — drag it by its own titlebar; clicks on the
   gaps fall through to the desktop icons. First run clones + builds
   [itsmygithubacct/kilix-amp](https://github.com/itsmygithubacct/kilix-amp),
-  a Winamp 2.x clone, into `~/.local/share/kilix/apps`.
+  a Winamp 2.x clone, into `~/.local/gpu_terminal/kilix-95/data/apps`.
 - **Create Launcher…** (Start menu or right-click the desktop) writes
   freedesktop-style `.desktop` files into the desktop folder
-  (`~/.local/share/kilix/desktop`, override with `$KILIX_DESKTOP_DIR`); plain
+  (`~/.local/gpu_terminal/kilix-95/data/desktop`, override with `$KILIX_DESKTOP_DIR`); plain
   files and folders dropped there show up as icons too. Launchers open in a
   new kilix tab / OS window, through `kilix run` for X11 apps, or in
   `kilix browse` for URLs.
@@ -430,8 +447,8 @@ creates the tmux session if missing or attaches it if already running, so it can
 later be reattached or viewed. From another machine it's just SSH:
 
 ```bash
-ssh -t you@host ~/kilix/kilix attach work     # take over
-ssh -t you@host ~/kilix/kilix view  work      # watch, read-only
+ssh -t you@host ~/gpu_terminal/kilix/kilix attach work     # take over
+ssh -t you@host ~/gpu_terminal/kilix/kilix view  work      # watch, read-only
 ```
 
 Needs `tmux`. Animated `browse`/`run` panes work but are throttled over tmux —
@@ -493,7 +510,7 @@ h264_vaapi — auto-detected; `x11grab`), `Xvfb`, `python3-xlib`, and the
 `websockets` Python module; `Xvnc` (TightVNC/TigerVNC) only for `--serve`;
 `pactl` (PulseAudio/PipeWire) only for `--audio`; `openssl` for `--lan` TLS.
 First use vendors noVNC, hls.js, mpegts.js and (for `--webrtc`) the MediaMTX
-binary into `~/.local/share/kilix/` (one-time network). The implementation
+binary into `~/.local/gpu_terminal/kilix/data/` (one-time network). The implementation
 rationale is captured in the nearby source comments and regression tests.
 
 ## Keybindings (Tilix layout)
@@ -558,11 +575,9 @@ doesn't appear immediately (icon caches are lazy).
 ## Uninstall
 
 ```bash
-rm -rf ~/kilix                                       # project + downloaded engine
+rm -rf ~/gpu_terminal/kilix                          # project source
 # Optional: remove settings/state only if you do not want to preserve them:
-rm -rf "${XDG_CONFIG_HOME:-$HOME/.config}/kilix" \
-       "${XDG_STATE_HOME:-$HOME/.local/state}/kilix" \
-       "${XDG_CACHE_HOME:-$HOME/.cache}/kilix"
+rm -rf "$HOME/.local/gpu_terminal/kilix"
 # only if you ran --install-desktop:
 rm -f  ~/.local/share/applications/kilix.desktop
 rm -f  ~/.local/share/icons/hicolor/*/apps/kilix.png
@@ -609,8 +624,11 @@ startup. Branch history: clickable chrome, double-fire fix, DBus-warning fix.
 
 **Build / rebuild:** `kilix --build` (or `./build.sh`). Needs Go ≥ 1.26 plus the
 system build deps from [Requirements](#requirements). The binary lands at
-`./src/kitty/launcher/kitty`. If you keep a machine-specific toolchain env at
-`~/.kitty-fork-buildenv`, `build.sh` sources it automatically. Go package
+`~/.local/gpu_terminal/kilix/build/current/src/kitty/launcher/kitty`. The build
+uses an exact committed-source snapshot, refuses a dirty `./src`, and records
+that commit as `source-id`, so generated objects and binaries never land in
+`./src`. Put a machine-specific toolchain environment in
+`~/.local/gpu_terminal/kilix/config/build.env`. Go package
 compilation defaults to one job so the fork can build on memory-constrained
 systems; set `KILIX_BUILD_JOBS` to a larger positive integer to trade memory for
 build speed.
@@ -622,14 +640,13 @@ build speed.
 ## Layout
 
 ```
-~/kilix/
+~/gpu_terminal/kilix/
 ├── kilix              # launcher (this is what you run)
 ├── build.sh           # builds the forked kitty in ./src
 ├── bootstrap.sh       # pulls the prebuilt kitty (fallback engine)
 ├── config/            # kitty.conf + kilix icons (kitty.app*.png, kilix-512.png)
 ├── desktop/           # the "kilix 95" desktop environment (kilix desktop)
-├── src/               # the kitty fork (submodule → itsmygithubacct/kitty @ clickable-chrome)
-├── kitty.app/         # prebuilt kitty fallback (downloaded on demand)
+├── src/               # tracked kitty fork; remains clean after builds
 ├── README.md
 ├── LICENSE            # GPLv3 (kitty is GPLv3)
 └── .gitignore
@@ -638,7 +655,7 @@ build speed.
 ## Tweaks
 
 Use Start ▸ Settings in kilix 95, or edit
-`${XDG_CONFIG_HOME:-~/.config}/kilix/kitty.conf`. It includes the tracked
+`~/.local/gpu_terminal/kilix/config/kitty.conf`. It includes the tracked
 `config/kitty.conf` defaults; add overrides to the user file.
 
 - **Quieter page strip:** `tab_bar_min_tabs 2` (hide it until a 2nd page) and

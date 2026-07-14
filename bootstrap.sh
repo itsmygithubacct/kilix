@@ -2,7 +2,7 @@
 # kilix bootstrap — ensure a local, up-to-date PREBUILT kitty binary bundle.
 #
 # Downloads the official prebuilt kitty release (no compilation, no build deps)
-# into $KILIX_HOME/kitty.app. Re-pulls only when kitty is missing or older than
+# into Kilix's per-user storage. Re-pulls only when kitty is missing or older than
 # the latest published release. Release builders can pin the bundle with
 # KILIX_PREBUILT_VERSION and verify it with KILIX_PREBUILT_SHA256.
 #
@@ -12,12 +12,17 @@
 #   ./bootstrap.sh --allow-unverified  # explicitly trust an unverified asset
 #   KILIX_PREBUILT_VERSION=0.47.0 KILIX_PREBUILT_SHA256=... ./bootstrap.sh
 set -euo pipefail
+umask 077
 
-KILIX_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-APP="$KILIX_HOME/kitty.app"
+GPU_TERMINAL_HOME="${GPU_TERMINAL_HOME:-$HOME/.local/gpu_terminal}"
+KILIX_STORAGE_HOME="${KILIX_STORAGE_HOME:-$GPU_TERMINAL_HOME/kilix}"
+KILIX_PREBUILT_HOME="${KILIX_PREBUILT_HOME:-$KILIX_STORAGE_HOME/prebuilt/kitty.app}"
+KILIX_STATE_DIRECTORY="${KILIX_STATE_DIRECTORY:-$KILIX_STORAGE_HOME/state}"
+KILIX_SESSION_HOME="${KILIX_SESSION_HOME:-$KILIX_STORAGE_HOME/session}"
+APP="$KILIX_PREBUILT_HOME"
 BIN="$APP/bin/kitty"
 SHA_STAMP="$APP/.kitty.txz.sha256"
-STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/kilix"
+STATE_DIR="$KILIX_STATE_DIRECTORY"
 STAMP="$STATE_DIR/prebuilt-last-update-check"
 VERSION_FEED="https://sw.kovidgoyal.net/kitty/current-version.txt"
 PINNED_VERSION="${KILIX_PREBUILT_VERSION:-}"
@@ -35,12 +40,8 @@ for a in "$@"; do
 done
 log(){ printf 'kilix: %s\n' "$*" >&2; }
 
-# Preserve the old throttle timestamp while removing legacy source-tree state.
 mkdir -p "$STATE_DIR"
-if [ -f "$KILIX_HOME/.last-update-check" ] && [ ! -e "$STAMP" ]; then
-  mv "$KILIX_HOME/.last-update-check" "$STAMP" 2>/dev/null \
-    || cp -p "$KILIX_HOME/.last-update-check" "$STAMP" 2>/dev/null || true
-fi
+chmod 0700 "$KILIX_STORAGE_HOME" "$STATE_DIR" 2>/dev/null || true
 
 if [ -n "$PINNED_SHA256" ] && [ -z "$PINNED_VERSION" ]; then
   log "KILIX_PREBUILT_SHA256 requires KILIX_PREBUILT_VERSION"
@@ -97,7 +98,9 @@ if [ -z "$PINNED_SHA256" ]; then
   log "WARNING: checksum verification explicitly disabled for $url"
 fi
 log "fetching kitty $latest ($KARCH)${have:+ — replacing $have}"
-tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+mkdir -p "$KILIX_SESSION_HOME"
+chmod 0700 "$KILIX_SESSION_HOME" 2>/dev/null || true
+tmp="$(mktemp -d "$KILIX_SESSION_HOME/bootstrap.XXXXXX")"; trap 'rm -rf "$tmp"' EXIT
 curl -fL --retry 3 --max-time 300 -o "$tmp/kitty.txz" "$url"
 if [ -n "$PINNED_SHA256" ]; then
   command -v sha256sum >/dev/null 2>&1 || { log "KILIX_PREBUILT_SHA256 set but sha256sum is missing"; exit 1; }

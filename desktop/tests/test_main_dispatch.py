@@ -204,7 +204,7 @@ def test_restore_tmux_wraps_delete():
                 os.environ[k] = v
 
 
-# ── W02: local t=t frame files must not be world-readable in /dev/shm ─────────
+# ── W02: local t=t frame files must stay private in project session data ───────
 def test_frame_files_are_private():
     import base64
     import os

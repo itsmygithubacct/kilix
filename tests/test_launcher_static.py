@@ -51,13 +51,39 @@ class KilixLauncherTests(unittest.TestCase):
     def test_runtime_config_is_outside_the_checkout(self):
         launcher = (ROOT / "kilix").read_text()
         settings = (ROOT / "desktop" / "apps" / "settings.py").read_text()
-        self.assertIn('KILIX_USER_CONFIG_DIRECTORY="${XDG_CONFIG_HOME:-$HOME/.config}/kilix"', launcher)
+        self.assertIn('KILIX_USER_CONFIG_DIRECTORY="$KILIX_CONFIG_HOME"', launcher)
         self.assertIn("include .kilix-defaults.conf", launcher)
         self.assertIn("_kilix_refresh_managed_link", launcher)
-        self.assertIn("_kilix_finish_config_migration", launcher)
+        self.assertNotIn("_kilix_finish_config_migration", launcher)
+        self.assertNotIn("_kilix_migrate_directory", launcher)
         self.assertIn('export KILIX_ENV_CONFIG=', launcher)
-        self.assertIn('os.environ.get("XDG_CONFIG_HOME")', settings)
-        self.assertIn('XDG_CACHE_HOME:-$HOME/.cache', launcher)
+        self.assertIn('from kilix_sdk.paths import config_dir', settings)
+        self.assertIn('KILIX_CACHE_HOME="${KILIX_CACHE_HOME:-$KILIX_STORAGE_HOME/cache}"', launcher)
+        self.assertIn('FORK="$KILIX_BUILD_DIRECTORY/current/src/kitty/launcher/kitty"', launcher)
+
+    def test_source_and_provider_storage_are_separate(self):
+        launcher = (ROOT / "kilix").read_text()
+        settings = (ROOT / "desktop" / "apps" / "settings.py").read_text()
+        self.assertIn(
+            'GPU_TERMINAL_SOURCE_HOME="${GPU_TERMINAL_SOURCE_HOME:-$HOME/gpu_terminal}"',
+            launcher)
+        self.assertIn(
+            'KILIX95_DIR="${KILIX95_DIR:-$GPU_TERMINAL_SOURCE_HOME/kilix-95}"',
+            launcher)
+        self.assertIn(
+            'KILIX95_STORAGE_HOME="${KILIX95_STORAGE_HOME:-$GPU_TERMINAL_HOME/kilix-95}"',
+            launcher)
+        self.assertIn('--env "KILIX95_DATA_HOME=$KILIX95_DATA_HOME"', launcher)
+        self.assertIn('default="~/gpu_terminal/kilix-95"', settings)
+
+    def test_runtime_roots_are_not_loaded_from_persisted_config(self):
+        launcher = (ROOT / "kilix").read_text()
+        loader = launcher.split("_kilix_load_env_file()", 1)[1].split(
+            "_kilix_load_env_file \"$KILIX_DEFAULT_CONFIG_DIRECTORY", 1)[0]
+        self.assertNotIn("KILIX_STORAGE_HOME|", loader)
+        self.assertNotIn("KILIX95_STORAGE_HOME|", loader)
+        self.assertIn("_KILIX_ENV_EXPLICIT", loader)
+        self.assertIn("[[ ! -v $_key ]]", loader)
 
     def test_authoritative_provider_contract_is_enforced(self):
         launcher = (ROOT / "kilix").read_text()

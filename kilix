@@ -4,8 +4,9 @@
 # Runs the forked kitty built from ./src (the "clickable-chrome" fork: each pane
 # title bar gets clickable [|] [-] [maximize] [x] buttons) with the
 # kilix configuration (Tilix-like per-pane title bars, splits, keybindings,
-# theming). Falls back to a prebuilt kitty in ./kitty.app if the fork is not
-# built yet. Fully self-contained; any extra args are forwarded to kitty.
+# theming). Falls back to a prebuilt kitty in the Kilix storage directory if
+# the fork is not built yet. Fully self-contained; any extra args are forwarded
+# to kitty.
 #
 #   ./kilix                   # launch kilix
 #   ./kilix ls [--panes]      # list live kilix pages/tabs or panes in this instance
@@ -20,32 +21,54 @@
 #   ./kilix --which           # print the kitty binary kilix uses + its version
 #   ./kilix --install-desktop # desktop entry + icon (own taskbar group)
 set -euo pipefail
+umask 077
 
 # Resolve symlinks so `ln -s .../kilix ~/.local/bin/kilix` still finds the project.
 _self="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 KILIX_HOME="$(cd "$(dirname "$_self")" && pwd)"
-FORK="$KILIX_HOME/src/kitty/launcher/kitty"     # built from ./src (clickable chrome)
-PREBUILT="$KILIX_HOME/kitty.app/bin/kitty"      # official prebuilt kitty (fallback)
+GPU_TERMINAL_SOURCE_HOME="${GPU_TERMINAL_SOURCE_HOME:-$HOME/gpu_terminal}"
+GPU_TERMINAL_HOME="${GPU_TERMINAL_HOME:-$HOME/.local/gpu_terminal}"
+KILIX_STORAGE_HOME="${KILIX_STORAGE_HOME:-$GPU_TERMINAL_HOME/kilix}"
+KILIX_CONFIG_HOME="${KILIX_CONFIG_HOME:-$KILIX_STORAGE_HOME/config}"
+KILIX_STATE_DIRECTORY="${KILIX_STATE_DIRECTORY:-$KILIX_STORAGE_HOME/state}"
+KILIX_CACHE_HOME="${KILIX_CACHE_HOME:-$KILIX_STORAGE_HOME/cache}"
+KILIX_SESSION_HOME="${KILIX_SESSION_HOME:-$KILIX_STORAGE_HOME/session}"
+KILIX_DATA_HOME="${KILIX_DATA_HOME:-$KILIX_STORAGE_HOME/data}"
+KILIX_BUILD_DIRECTORY="${KILIX_BUILD_DIRECTORY:-$KILIX_STORAGE_HOME/build}"
+KILIX_PREBUILT_HOME="${KILIX_PREBUILT_HOME:-$KILIX_STORAGE_HOME/prebuilt/kitty.app}"
+KILIX95_STORAGE_HOME="${KILIX95_STORAGE_HOME:-$GPU_TERMINAL_HOME/kilix-95}"
+KILIX95_CONFIG_HOME="${KILIX95_CONFIG_HOME:-$KILIX95_STORAGE_HOME/config}"
+KILIX95_STATE_HOME="${KILIX95_STATE_HOME:-$KILIX95_STORAGE_HOME/state}"
+KILIX95_CACHE_HOME="${KILIX95_CACHE_HOME:-$KILIX95_STORAGE_HOME/cache}"
+KILIX95_SESSION_HOME="${KILIX95_SESSION_HOME:-$KILIX95_STORAGE_HOME/session}"
+KILIX95_DATA_HOME="${KILIX95_DATA_HOME:-$KILIX95_STORAGE_HOME/data}"
+export GPU_TERMINAL_SOURCE_HOME GPU_TERMINAL_HOME
+export KILIX_STORAGE_HOME KILIX_CONFIG_HOME
+export KILIX_STATE_DIRECTORY KILIX_CACHE_HOME KILIX_SESSION_HOME KILIX_DATA_HOME
+export KILIX_BUILD_DIRECTORY KILIX_PREBUILT_HOME
+export KILIX95_STORAGE_HOME KILIX95_CONFIG_HOME KILIX95_STATE_HOME
+export KILIX95_CACHE_HOME KILIX95_SESSION_HOME KILIX95_DATA_HOME
 
+FORK="$KILIX_BUILD_DIRECTORY/current/src/kitty/launcher/kitty"
+PREBUILT="$KILIX_PREBUILT_HOME/bin/kitty"
+
+# A fresh install owns this complete tree. Legacy XDG/source-tree locations are
+# deliberately never moved: provider storage is isolated and launch is free of
+# cross-project data mutations.
+mkdir -p "$KILIX_CACHE_HOME" "$KILIX_SESSION_HOME"
+chmod 0700 "$KILIX_STORAGE_HOME" "$KILIX_CACHE_HOME" "$KILIX_SESSION_HOME" \
+  2>/dev/null || true
+export KITTY_CACHE_DIRECTORY="${KITTY_CACHE_DIRECTORY:-$KILIX_CACHE_HOME/kitty}"
+export KITTY_RUNTIME_DIRECTORY="${KITTY_RUNTIME_DIRECTORY:-$KILIX_SESSION_HOME/kitty}"
 # Tracked files under ./config are immutable defaults.  Normal runtime changes
-# live under XDG_CONFIG_HOME so Settings/screen-size never dirty the checkout.
+# live under the Kilix storage root so Settings/screen-size never dirty the checkout.
 # The generated user kitty.conf includes the tracked default file, which means
 # new defaults arrive on update without overwriting user overrides.  The
 # KILIX_CONFIG_DIRECTORY override remains available for tests/custom packaging.
 KILIX_DEFAULT_CONFIG_DIRECTORY="$KILIX_HOME/config"
-KILIX_USER_CONFIG_DIRECTORY="${XDG_CONFIG_HOME:-$HOME/.config}/kilix"
-KILIX_STATE_DIRECTORY="${XDG_STATE_HOME:-$HOME/.local/state}/kilix"
+KILIX_USER_CONFIG_DIRECTORY="$KILIX_CONFIG_HOME"
 _KILIX_DEFAULTS_LINK="$KILIX_USER_CONFIG_DIRECTORY/.kilix-defaults.conf"
 _KILIX_CONFIG_MARKER="# Kilix user overrides. Tracked defaults are loaded first."
-
-_kilix_write_migrated_kitty() {
-  _source="$1" _target="$2" _tmp="$(mktemp "${2}.tmp.XXXXXX")"
-  {
-    printf '%s\n' "$_KILIX_CONFIG_MARKER" "include .kilix-defaults.conf"
-    cat "$_source"
-  } >"$_tmp"
-  mv "$_tmp" "$_target"
-}
 
 _kilix_refresh_managed_link() {
   _target="$1" _source="$2"
@@ -74,6 +97,7 @@ _kilix_refresh_generated_include() {
 
 _kilix_init_user_config() {
   mkdir -p "$KILIX_USER_CONFIG_DIRECTORY"
+  chmod 0700 "$KILIX_USER_CONFIG_DIRECTORY" 2>/dev/null || true
   _user_kitty="$KILIX_USER_CONFIG_DIRECTORY/kitty.conf"
   _user_env="$KILIX_USER_CONFIG_DIRECTORY/kilix.env"
 
@@ -81,27 +105,12 @@ _kilix_init_user_config() {
     "$KILIX_DEFAULT_CONFIG_DIRECTORY/kitty.conf"
 
   if [ ! -e "$_user_kitty" ]; then
-    if [ -d "$KILIX_HOME/.git" ] \
-         && ! git -C "$KILIX_HOME" diff --quiet HEAD -- config/kitty.conf 2>/dev/null; then
-      # Preserve settings written by releases that edited the tracked file.
-      _kilix_write_migrated_kitty \
-        "$KILIX_DEFAULT_CONFIG_DIRECTORY/kitty.conf" "$_user_kitty"
-      _KILIX_MIGRATED_KITTY=1
-      echo "kilix: migrated modified config/kitty.conf to $_user_kitty" >&2
-    else
-      printf '%s\n%s\n' "$_KILIX_CONFIG_MARKER" \
-        'include .kilix-defaults.conf' >"$_user_kitty"
-    fi
+    printf '%s\n%s\n' "$_KILIX_CONFIG_MARKER" \
+      'include .kilix-defaults.conf' >"$_user_kitty"
   fi
   _kilix_refresh_generated_include "$_user_kitty"
   if [ ! -e "$_user_env" ]; then
-    if [ -d "$KILIX_HOME/.git" ] \
-         && ! git -C "$KILIX_HOME" diff --quiet HEAD -- config/kilix.env 2>/dev/null; then
-      cp "$KILIX_DEFAULT_CONFIG_DIRECTORY/kilix.env" "$_user_env"
-      echo "kilix: migrated modified config/kilix.env to $_user_env" >&2
-    else
-      printf '%s\n' '# Kilix user runtime overrides (KEY=value; not shell code).' >"$_user_env"
-    fi
+    printf '%s\n' '# Kilix user runtime overrides (KEY=value; not shell code).' >"$_user_env"
   fi
   chmod 600 "$_user_kitty" "$_user_env" 2>/dev/null || true
 
@@ -113,58 +122,6 @@ _kilix_init_user_config() {
   done
 }
 
-_kilix_finish_config_migration() {
-  # Only normalize a checkout whose *only* tracked changes are the two legacy
-  # mutable config files. This preserves arbitrary developer/user work while
-  # allowing old Settings-written checkouts to become safely updateable.
-  [ -d "$KILIX_HOME/.git" ] || return 0
-  _dirty_names="$(git -C "$KILIX_HOME" diff --name-only HEAD -- 2>/dev/null || true)"
-  [ -n "$_dirty_names" ] || return 0
-  while IFS= read -r _dirty_name; do
-    case "$_dirty_name" in
-      config/kitty.conf|config/kilix.env) ;;
-      *) return 0 ;;
-    esac
-  done <<EOF
-$_dirty_names
-EOF
-
-  for _rel in config/kitty.conf config/kilix.env; do
-    git -C "$KILIX_HOME" diff --quiet HEAD -- "$_rel" 2>/dev/null && continue
-    _source="$KILIX_HOME/$_rel"
-    case "$_rel" in
-      config/kitty.conf)
-        _target="$KILIX_USER_CONFIG_DIRECTORY/kitty.conf"
-        if cmp -s "$_source" "$_target"; then
-          _kilix_write_migrated_kitty "$_source" "$_target"
-        elif [ "${_KILIX_MIGRATED_KITTY:-0}" != 1 ]; then
-          _backup="$KILIX_USER_CONFIG_DIRECTORY/source-tree-kitty.conf"
-          cp "$_source" "$_backup"
-          printf '\n# Settings migrated from the old source tree.\ninclude source-tree-kitty.conf\n' \
-            >>"$_target"
-        fi ;;
-      config/kilix.env)
-        _target="$KILIX_USER_CONFIG_DIRECTORY/kilix.env"
-        if ! cmp -s "$_source" "$_target"; then
-          {
-            printf '\n%s\n' '# Settings migrated from the old source tree.'
-            cat "$_source"
-          } >>"$_target"
-        fi ;;
-    esac
-    # The active XDG copy now contains the old settings. Reset only this known
-    # legacy file/index entry, then restore the committed bytes atomically.
-    git -C "$KILIX_HOME" reset -q HEAD -- "$_rel" || return 1
-    _tmp="$(mktemp "${_source}.tmp.XXXXXX")" || return 1
-    if ! git -C "$KILIX_HOME" show "HEAD:$_rel" >"$_tmp"; then
-      rm -f "$_tmp"; return 1
-    fi
-    chmod --reference="$_source" "$_tmp" 2>/dev/null || chmod 0644 "$_tmp"
-    mv "$_tmp" "$_source"
-    echo "kilix: completed source-tree settings migration for $_rel" >&2
-  done
-}
-
 if [ -n "${KILIX_CONFIG_DIRECTORY:-}" ]; then
   export KITTY_CONFIG_DIRECTORY="$KILIX_CONFIG_DIRECTORY"
 else
@@ -173,17 +130,8 @@ else
 fi
 export KILIX_ENV_CONFIG="${KILIX_ENV_CONFIG:-$KITTY_CONFIG_DIRECTORY/kilix.env}"
 
-# Older Pleb releases left their fork-build marker in this checkout. Preserve
-# it under XDG state so it no longer dirties or pollutes source trees.
-if [ -f "$KILIX_HOME/.kilix-fork-built-ref" ] \
-     && [ ! -e "$KILIX_STATE_DIRECTORY/fork-built-ref" ]; then
-  mkdir -p "$KILIX_STATE_DIRECTORY"
-  mv "$KILIX_HOME/.kilix-fork-built-ref" \
-     "$KILIX_STATE_DIRECTORY/fork-built-ref" 2>/dev/null \
-    || cp -p "$KILIX_HOME/.kilix-fork-built-ref" \
-       "$KILIX_STATE_DIRECTORY/fork-built-ref" 2>/dev/null || true
-fi
-
+declare -A _KILIX_ENV_SEEN=()
+declare -A _KILIX_ENV_EXPLICIT=()
 _kilix_load_env_file() {
   _conf="$1"
   [ -f "$_conf" ] || return 0
@@ -205,7 +153,16 @@ _kilix_load_env_file() {
       KILIX_PREBUILT_VERSION|KILIX_PREBUILT_SHA256|KILIX_ALLOW_UNVERIFIED_PREBUILT|\
       KILIX_BUILD_MODE|KILIX_KITTY_DEPS_URL|KILIX_KITTY_DEPS_SHA256|\
       KILIX_NERD_FONT_URL|KILIX_NERD_FONT_SHA256|KILIX_NERD_FONT_FILE_SHA256|KILIX_GO_TOOLCHAIN)
-        export "$_key=$_val" ;;
+        # An explicit process environment wins over persisted settings. Storage
+        # roots are intentionally absent from this allowlist: they determine
+        # where this file is found and must be supplied by the launcher/service.
+        if [[ ! ${_KILIX_ENV_SEEN[$_key]+yes} ]]; then
+          _KILIX_ENV_SEEN["$_key"]=1
+          [[ ! -v $_key ]] || _KILIX_ENV_EXPLICIT["$_key"]=1
+        fi
+        if [[ ! ${_KILIX_ENV_EXPLICIT[$_key]+yes} ]]; then
+          export "$_key=$_val"
+        fi ;;
     esac
   done < "$_conf"
 }
@@ -213,11 +170,17 @@ _kilix_load_env_file "$KILIX_DEFAULT_CONFIG_DIRECTORY/kilix.env"
 [ "$KILIX_ENV_CONFIG" = "$KILIX_DEFAULT_CONFIG_DIRECTORY/kilix.env" ] \
   || _kilix_load_env_file "$KILIX_ENV_CONFIG"
 
+# Source checkouts are siblings under ~/gpu_terminal by default. Resolve this
+# only after loading user runtime settings so KILIX95_DIR remains configurable,
+# while every writable provider root stays independently anchored above.
+KILIX95_DIR="${KILIX95_DIR:-$GPU_TERMINAL_SOURCE_HOME/kilix-95}"
+export KILIX95_DIR
+
 # No-sudo streaming deps (Xvfb / Xvnc / vncpasswd / python-xlib unpacked by
 # scripts/install-stream-deps.sh on hosts that lack them): pull in their
 # PATH / LD_LIBRARY_PATH / PYTHONPATH so the serve modes find them. A no-op
 # where the deps are already system-installed (the file won't exist).
-_kx_env="${XDG_DATA_HOME:-$HOME/.local/share}/kilix/stream-env.sh"
+_kx_env="$KILIX_DATA_HOME/stream-env.sh"
 if [ -f "$_kx_env" ]; then
   # shellcheck disable=SC1090
   . "$_kx_env"
@@ -245,7 +208,7 @@ case "${1:-}" in
     else _status_engine=missing
     fi
     _status_provider="${KILIX_DESKTOP_PROVIDER:-auto}"
-    _status_provider_dir="${KILIX95_DIR:-$HOME/kilix-95}"
+    _status_provider_dir="$KILIX95_DIR"
     case "$_status_provider" in
       auto)
         if [ -f "$_status_provider_dir/main.py" ]; then
@@ -294,8 +257,6 @@ case "${1:-}" in
       echo "kilix update: set KILIX_TRUST_EXISTING_CHECKOUT=1 only if you trust it" >&2
       exit 1
     fi
-    _kilix_finish_config_migration \
-      || { echo "kilix update: could not complete legacy config migration" >&2; exit 1; }
     if [ -n "$(git -C "$KILIX_HOME" status --porcelain --untracked-files=normal 2>/dev/null)" ]; then
       echo "kilix update: refusing to overwrite a modified checkout" >&2
       echo "kilix update: user settings belong in $KILIX_USER_CONFIG_DIRECTORY" >&2
@@ -363,45 +324,9 @@ case "${1:-}" in
     fi
     if [ "$_fork_needs_rebuild" = 1 ]; then
       mkdir -p "$KILIX_STATE_DIRECTORY"
-      _engine_backup="$(mktemp -d "$KILIX_STATE_DIRECTORY/update-engine.XXXXXX")"
-      mkdir -p "$_engine_backup/src"
-      _engine_manifest="$_engine_backup/manifest"
-      : >"$_engine_manifest"
-      for _engine_file in \
-        "$KILIX_HOME/src/kitty/launcher/kitty" \
-        "$KILIX_HOME/src/kitty/launcher/kitten"; do
-        [ ! -f "$_engine_file" ] || printf '%s\n' "${_engine_file#"$KILIX_HOME/src/"}" \
-          >>"$_engine_manifest"
-      done
-      find "$KILIX_HOME/src/kitty" -maxdepth 1 -type f -name '*.so' -printf 'kitty/%f\n' \
-        >>"$_engine_manifest" 2>/dev/null || true
-      find "$KILIX_HOME/src/kittens" -type f -name '*.so' -printf 'kittens/%P\n' \
-        >>"$_engine_manifest" 2>/dev/null || true
-      while IFS= read -r _engine_rel; do
-        [ -n "$_engine_rel" ] || continue
-        mkdir -p "$_engine_backup/src/$(dirname "$_engine_rel")"
-        cp -p "$KILIX_HOME/src/$_engine_rel" \
-          "$_engine_backup/src/$_engine_rel"
-      done <"$_engine_manifest"
-      [ ! -e "$_fork_stamp" ] || cp -p "$_fork_stamp" "$_engine_backup/fork-built-ref"
-
       _kilix_update_rollback() {
         echo "kilix update: rolling sources and engine back to $_before" >&2
         _kilix_rollback_sources || return 1
-        find "$KILIX_HOME/src/kitty" -maxdepth 1 -type f -name '*.so' -delete \
-          2>/dev/null || true
-        find "$KILIX_HOME/src/kittens" -type f -name '*.so' -delete \
-          2>/dev/null || true
-        rm -f "$KILIX_HOME/src/kitty/launcher/kitty" \
-          "$KILIX_HOME/src/kitty/launcher/kitten"
-        if [ -d "$_engine_backup/src" ]; then
-          cp -a "$_engine_backup/src/." "$KILIX_HOME/src/"
-        fi
-        if [ -f "$_engine_backup/fork-built-ref" ]; then
-          cp -p "$_engine_backup/fork-built-ref" "$_fork_stamp"
-        else
-          rm -f "$_fork_stamp"
-        fi
       }
 
       if command -v go >/dev/null 2>&1; then
@@ -410,14 +335,12 @@ case "${1:-}" in
           echo "kilix update: fork rebuild failed" >&2
           _kilix_update_rollback \
             || echo "kilix update: WARNING: automatic rollback failed" >&2
-          rm -rf "$_engine_backup"
           exit 1
         fi
       else
         echo "kilix update: Go not found; cannot rebuild the changed fork engine" >&2
         _kilix_update_rollback \
           || echo "kilix update: WARNING: automatic rollback failed" >&2
-        rm -rf "$_engine_backup"
         exit 1
       fi
       if [ "$_src_after" != none ]; then
@@ -425,7 +348,6 @@ case "${1:-}" in
         printf '%s\n' "$_fork_stamp_wanted" >"$_stamp_tmp"
         mv "$_stamp_tmp" "$_fork_stamp"
       fi
-      rm -rf "$_engine_backup"
     fi
     echo "kilix update: done — restart 'kilix desktop' to load the changes."
     exit 0 ;;
@@ -695,7 +617,7 @@ _kilix_desktop_validate() {
 }
 
 _kilix95_ensure_external() {
-  _k95_dir="${KILIX95_DIR:-$HOME/kilix-95}"
+  _k95_dir="$KILIX95_DIR"
   _k95_repo="${KILIX95_REPO:-https://github.com/itsmygithubacct/kilix-95.git}"
 
   if [ -f "$_k95_dir/main.py" ]; then
@@ -732,6 +654,7 @@ _kilix95_ensure_external() {
   echo "kilix desktop: cloning Kilix 95 -> $_k95_dir" >&2
   _clone_args=()
   [ -n "${KILIX95_BRANCH:-}" ] && _clone_args=(--branch "$KILIX95_BRANCH")
+  mkdir -p "$(dirname "$_k95_dir")"
   git clone "${_clone_args[@]}" "$_k95_repo" "$_k95_dir" \
     || _kilix_desktop_die "git clone failed ($_k95_repo)"
   _kilix95_checkout_ref
@@ -765,7 +688,7 @@ _kilix_desktop_select() {
     external)
       _kilix95_ensure_external ;;
     auto)
-      _auto_external="${KILIX95_DIR:-$HOME/kilix-95}"
+      _auto_external="$KILIX95_DIR"
       if [ -f "$_auto_external/main.py" ]; then
         _kilix95_ensure_external
       elif [ -f "$_k95_builtin" ]; then
@@ -878,15 +801,31 @@ print(ids[0] if ids else "")' 2>/dev/null)"
     fi
     exec "$KITTEN" @ launch --type=tab --cwd=current --tab-title "${KILIX_DESKTOP_NAME:-desktop}" \
       --env KILIX_IN_OVERLAY=1 --env "KILIX_STREAM=${KILIX_STREAM:-}" \
+      --env "GPU_TERMINAL_SOURCE_HOME=$GPU_TERMINAL_SOURCE_HOME" \
+      --env "GPU_TERMINAL_HOME=$GPU_TERMINAL_HOME" \
+      --env "KILIX_STORAGE_HOME=$KILIX_STORAGE_HOME" \
+      --env "KILIX_CONFIG_HOME=$KILIX_CONFIG_HOME" \
+      --env "KILIX_STATE_DIRECTORY=$KILIX_STATE_DIRECTORY" \
+      --env "KILIX_CACHE_HOME=$KILIX_CACHE_HOME" \
+      --env "KILIX_SESSION_HOME=$KILIX_SESSION_HOME" \
+      --env "KILIX_DATA_HOME=$KILIX_DATA_HOME" \
+      --env "KILIX_BUILD_DIRECTORY=$KILIX_BUILD_DIRECTORY" \
+      --env "KILIX_PREBUILT_HOME=$KILIX_PREBUILT_HOME" \
       --env "KILIX_DESKTOP_PROVIDER=${KILIX_DESKTOP_PROVIDER:-}" \
       --env "KILIX_DESKTOP_COMMAND=${KILIX_DESKTOP_COMMAND:-}" \
       --env "KILIX_DESKTOP_NAME=${KILIX_DESKTOP_NAME:-}" \
       --env "KILIX_DESKTOP_FLAVOR=${KILIX_DESKTOP_FLAVOR:-}" \
       --env "KILIX95_AUTO_INSTALL=${KILIX95_AUTO_INSTALL:-}" \
-      --env "KILIX95_DIR=${KILIX95_DIR:-}" \
+      --env "KILIX95_DIR=$KILIX95_DIR" \
       --env "KILIX95_REPO=${KILIX95_REPO:-}" \
       --env "KILIX95_BRANCH=${KILIX95_BRANCH:-}" \
       --env "KILIX95_REF=${KILIX95_REF:-}" \
+      --env "KILIX95_STORAGE_HOME=$KILIX95_STORAGE_HOME" \
+      --env "KILIX95_CONFIG_HOME=$KILIX95_CONFIG_HOME" \
+      --env "KILIX95_STATE_HOME=$KILIX95_STATE_HOME" \
+      --env "KILIX95_CACHE_HOME=$KILIX95_CACHE_HOME" \
+      --env "KILIX95_SESSION_HOME=$KILIX95_SESSION_HOME" \
+      --env "KILIX95_DATA_HOME=$KILIX95_DATA_HOME" \
       -- "$_self" desktop "$@"
   fi
   rc=0
@@ -898,8 +837,15 @@ print(ids[0] if ids else "")' 2>/dev/null)"
       KILIX_HOME="$KILIX_HOME" KILIX_KITTEN="$KITTEN" \
         sh -c "$KILIX_DESKTOP_COMMAND" "${KILIX_DESKTOP_NAME:-desktop}" "$@" || rc=$? ;;
     python)
+      if [ "$_KILIX_DESKTOP_MAIN" = "$KILIX_HOME/desktop/main.py" ]; then
+        _desktop_pycache="$KILIX_CACHE_HOME/desktop-pycache"
+      else
+        _desktop_pycache="${KILIX95_CACHE_HOME:-$KILIX95_STORAGE_HOME/cache}/pycache"
+      fi
+      mkdir -p "$_desktop_pycache"
       KILIX_HOME="$KILIX_HOME" KILIX95_HOME="$(dirname "$_KILIX_DESKTOP_MAIN")" \
-        KILIX_KITTEN="$KITTEN" python3 "$_KILIX_DESKTOP_MAIN" "$@" || rc=$? ;;
+        KILIX_KITTEN="$KITTEN" PYTHONPYCACHEPREFIX="$_desktop_pycache" \
+        python3 "$_KILIX_DESKTOP_MAIN" "$@" || rc=$? ;;
     *)
       _kilix_desktop_die "internal error: no desktop mode selected" ;;
   esac
@@ -942,8 +888,9 @@ fi
 
 # screensaver: a terminal screensaver in this pane (default: matrix). The
 # screensavers are small self-contained C programs in config/screensavers/,
-# compiled on first use and cached under .build/ (needs a C compiler, like the
-# fork build). Usage: `kilix screensaver` or `kilix screensaver <name>`.
+# compiled on first use and cached under the Kilix cache root (needs a C
+# compiler, like the fork build). Usage: `kilix screensaver` or
+# `kilix screensaver <name>`.
 if [ "${1:-}" = "screensaver" ]; then
   shift
   # Host it in an overlay window (own title bar + close ✕) like browse/run, so
@@ -955,14 +902,8 @@ if [ "${1:-}" = "screensaver" ]; then
   fi
   _ss="${1:-matrix}"; [ $# -gt 0 ] && shift
   _sssrc="$KILIX_HOME/config/screensavers/$_ss.c"
-  _sscache="${XDG_CACHE_HOME:-$HOME/.cache}/kilix/screensavers"
+  _sscache="$KILIX_CACHE_HOME/screensavers"
   _ssbin="$_sscache/$_ss"
-  _sslegacy="$KILIX_HOME/config/screensavers/.build/$_ss"
-  if [ -x "$_sslegacy" ] && [ ! -e "$_ssbin" ]; then
-    mkdir -p "$_sscache"
-    mv "$_sslegacy" "$_ssbin" 2>/dev/null \
-      || cp "$_sslegacy" "$_ssbin" 2>/dev/null || true
-  fi
   if [ ! -f "$_sssrc" ]; then
     echo "kilix: no screensaver '$_ss'. Available:" >&2
     for _f in "$KILIX_HOME"/config/screensavers/*.c; do
@@ -984,12 +925,12 @@ fi
 # lets several devices attach at once: read-write (attach) or read-only (view).
 # KILIX_STREAM=1 is set in the session so `kilix browse/run/icat` use inline
 # (t=d) graphics that survive a remote attach. Reach it from another device over
-# SSH, e.g.  ssh -t user@host ~/kilix/kilix attach
+# SSH, e.g.  ssh -t user@host ~/gpu_terminal/kilix/kilix attach
 case "${1:-}" in
   serve|attach|view)
     command -v tmux >/dev/null 2>&1 || {
       echo "kilix $1: needs tmux (session multiplexing) — not found" >&2; exit 1; }
-    _rundir="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/kilix"
+    _rundir="$KILIX_SESSION_HOME/tmux"
     if mkdir -p "$_rundir"; then chmod 700 "$_rundir" 2>/dev/null || true; fi
     _sock="$_rundir/tmux.sock"
     _tconf="$KILIX_HOME/config/tmux.conf"

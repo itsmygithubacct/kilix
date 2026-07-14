@@ -1,7 +1,7 @@
 """kilix desktop — kilix Settings (the control panel).
 
-Edits the writable per-user Kilix configuration (normally
-``$XDG_CONFIG_HOME/kilix``; ``$KITTY_CONFIG_DIRECTORY`` overrides it). The
+Edits the writable per-user Kilix configuration (normally under
+``~/.local/gpu_terminal/kilix``; ``$KITTY_CONFIG_DIRECTORY`` overrides it). The
 tracked ``config/`` tree contains defaults and is never rewritten. Form tabs
 cover the common knobs;
 the third tab is the raw file in a text editor. Apply writes the file and
@@ -21,6 +21,7 @@ import shell as _shell
 import theme as T
 import widgets as W
 import wm
+import storage
 
 MARKER = "# ── kilix desktop settings ──"
 ENV_MARKER = "# -- kilix settings env --"
@@ -112,7 +113,8 @@ SETTING_PAGES = [
           ("1", "0")),
         E("KILIX95_ALLOW_UNPINNED_INSTALL", "Allow unpinned install", "bool",
           "0", ("1", "0")),
-        E("KILIX95_DIR", "External checkout", default="~/kilix-95"),
+        E("KILIX95_DIR", "External checkout",
+          default="~/gpu_terminal/kilix-95"),
         E("KILIX95_REPO", "External repo",
           default="https://github.com/itsmygithubacct/kilix-95.git"),
         E("KILIX95_BRANCH", "External branch"),
@@ -161,16 +163,20 @@ SETTING_PAGES = [
 
 
 def config_path():
-    d = os.environ.get("KITTY_CONFIG_DIRECTORY") or os.path.join(
-        os.environ.get("XDG_CONFIG_HOME") or os.path.join(
-            os.path.expanduser("~"), ".config"), "kilix")
+    try:
+        from kilix_sdk.paths import config_dir
+        d = config_dir()
+    except ImportError:
+        d = os.environ.get("KITTY_CONFIG_DIRECTORY") or storage.config_dir()
     return os.path.join(d, "kitty.conf")
 
 
 def env_config_path():
-    d = os.environ.get("KITTY_CONFIG_DIRECTORY") or os.path.join(
-        os.environ.get("XDG_CONFIG_HOME") or os.path.join(
-            os.path.expanduser("~"), ".config"), "kilix")
+    try:
+        from kilix_sdk.paths import config_dir
+        d = config_dir()
+    except ImportError:
+        d = os.environ.get("KITTY_CONFIG_DIRECTORY") or storage.config_dir()
     return os.environ.get("KILIX_ENV_CONFIG") or os.path.join(d, "kilix.env")
 
 
