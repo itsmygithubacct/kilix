@@ -234,6 +234,37 @@ case "$mode" in
   *) echo "kilix: invalid KILIX_BUILD_MODE=$mode (use system or bundle)" >&2; exit 2 ;;
 esac
 
+select_system_python() {
+  local candidate version
+  local -a candidates
+  if [ -n "${KILIX_PYTHON:-}" ]; then
+    candidates=("$KILIX_PYTHON")
+  else
+    candidates=(python3.14 python3.13 python3.12 python3)
+  fi
+  for candidate in "${candidates[@]}"; do
+    if [[ "$candidate" == */* ]]; then
+      [ -x "$candidate" ] || continue
+    else
+      candidate="$(command -v "$candidate" 2>/dev/null || true)"
+      [ -n "$candidate" ] || continue
+    fi
+    version="$("$candidate" -c 'import sys; print(".".join(map(str, sys.version_info[:3])))' 2>/dev/null || true)"
+    if [ -n "$version" ] && [ "$(printf '%s\n%s\n' "$version" 3.12 | sort -V | head -1)" = 3.12 ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  echo "kilix: current kitty source requires Python >= 3.12 to build" >&2
+  echo "kilix: install a newer Python or set KILIX_PYTHON=/path/to/python3.12+" >&2
+  return 1
+}
+
+_python=""
+if [ "$mode" = system ]; then
+  _python="$(select_system_python)"
+fi
+
 # Upstream kitty writes launchers, extensions, generated protocols and Go
 # objects beside its sources. Build a tracked-file snapshot outside the
 # checkout so ./src remains physically pristine after every build.
@@ -354,11 +385,17 @@ echo "kilix: building forked kitty in $BUILD_SRC ($mode dependencies, $GOMAXPROC
 if [ "$mode" = bundle ]; then
   ./dev.sh build "$@"
 else
-  command -v python3 >/dev/null 2>&1 \
-    || { echo "kilix: python3 is required for a system-dependency build" >&2; exit 1; }
+  _python_libdir="$("$_python" -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR") or "")')"
+  if [ -n "$_python_libdir" ] && [ -d "$_python_libdir" ]; then
+    # The build runs its newly linked launcher for code generation. Make a
+    # non-system Python visible immediately and retain that location as the
+    # launcher's runtime search path.
+    export LD_LIBRARY_PATH="$_python_libdir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    export LD_RUN_PATH="$_python_libdir${LD_RUN_PATH:+:$LD_RUN_PATH}"
+  fi
   # The `develop` action assumes bypy's DEVELOP_ROOT bundle. The ordinary
   # source `build` action is the upstream path that links host dependencies.
-  python3 setup.py build "$@"
+  "$_python" setup.py build "$@"
 fi
 
 launcher="$BUILD_SRC/kitty/launcher/kitty"

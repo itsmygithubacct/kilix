@@ -64,7 +64,7 @@ introduced in 0.1.1.
 - A running graphical session — **X11 or Wayland** (`$DISPLAY` or `$WAYLAND_DISPLAY`).
   It's a GUI terminal; it won't run headless / over plain SSH.
 - **To run the prebuilt kitty** (no buttons): `git`, `curl`, `tar`.
-- **To build the fork** (the buttons): **Go ≥ 1.26**, a C compiler, `pkg-config`, and
+- **To build the fork** (the buttons): **Go ≥ 1.26**, **Python ≥ 3.12**, a C compiler, `pkg-config`, and
   kitty's build deps — `x11 xrandr xinerama xcursor xi xkbcommon xkbcommon-x11
   x11-xcb dbus-1 gl fontconfig libpng lcms2 cairo-fc harfbuzz libcrypto`,
   `libxxhash`, Wayland protocols/headers, and SIMDe headers. By default the
@@ -78,7 +78,10 @@ introduced in 0.1.1.
   ships 1.25), it configures the exact `toolchain` version from `go.mod` so Go
   can fetch that checksum-verified toolchain on demand. `build.sh` forces that
   exact version even if the host has a newer Go — no open-ended latest lookup
-  and no manual Go install.
+  and no manual Go install. Current kitty source also uses Python 3.12 syntax;
+  `build.sh` selects `python3.14`, `python3.13`, or `python3.12` in that order.
+  Set `KILIX_PYTHON=/path/to/python3.12+` when the desired interpreter is not
+  on `PATH`.
 - The same dependency installer also includes kilix-amp's SDL/libsndfile/
   FluidSynth packages, so the desktop Media Player can build and play MIDI.
 - **For the pixel desktop and web-in-a-pane** (`kilix desktop` / `kilix browse`):
@@ -104,7 +107,7 @@ prebuilt now requires a pinned version + SHA-256 (recommended) or explicit
 
 | Engine | Buttons? | Needs |
 |---|---|---|
-| **Fork build** (`kilix --build`) | ✅ `→ ↓ ▢ ✕` | Go ≥ 1.26 + X11 build deps |
+| **Fork build** (`kilix --build`) | ✅ `→ ↓ ▢ ✕` | Go ≥ 1.26 + Python ≥ 3.12 + X11 build deps |
 | **Prebuilt fallback** (`bootstrap.sh`) | ❌ no buttons | `git`, `curl`, `tar` |
 
 To skip the build attempt and go straight to a verified prebuilt engine:
@@ -622,7 +625,8 @@ carries quality-of-life fixes on top — e.g. `glfw/linux_notify.c` raises the D
 notification-server probe timeout to silence a spurious "Notify NoReply" warning at
 startup. Branch history: clickable chrome, double-fire fix, DBus-warning fix.
 
-**Build / rebuild:** `kilix --build` (or `./build.sh`). Needs Go ≥ 1.26 plus the
+**Build / rebuild:** `kilix --build` (or `./build.sh`). Needs Go ≥ 1.26,
+Python ≥ 3.12, plus the
 system build deps from [Requirements](#requirements). The binary lands at
 `~/.local/gpu_terminal/kilix/build/current/src/kitty/launcher/kitty`. The build
 uses an exact committed-source snapshot, refuses a dirty `./src`, and records
@@ -631,7 +635,9 @@ that commit as `source-id`, so generated objects and binaries never land in
 `~/.local/gpu_terminal/kilix/config/build.env`. Go package
 compilation defaults to one job so the fork can build on memory-constrained
 systems; set `KILIX_BUILD_JOBS` to a larger positive integer to trade memory for
-build speed.
+build speed. Set `KILIX_PYTHON` in `build.env` when Python 3.12+ is installed
+outside the normal `PATH`; the build records its library directory in the
+launcher so that an isolated interpreter remains usable at runtime.
 
 > **Python edits are live on the next launch — no rebuild needed.** Only C changes
 > require `--build`. To rebind the buttons, edit the action strings in

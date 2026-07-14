@@ -152,7 +152,7 @@ _kilix_load_env_file() {
       KILIX_REF|KILIX_REPO|KILIX_TRUST_EXISTING_CHECKOUT|KILIX_ALLOW_MUTABLE_REF|\
       KILIX_PREBUILT_VERSION|KILIX_PREBUILT_SHA256|KILIX_ALLOW_UNVERIFIED_PREBUILT|\
       KILIX_BUILD_MODE|KILIX_KITTY_DEPS_URL|KILIX_KITTY_DEPS_SHA256|\
-      KILIX_NERD_FONT_URL|KILIX_NERD_FONT_SHA256|KILIX_NERD_FONT_FILE_SHA256|KILIX_GO_TOOLCHAIN)
+      KILIX_NERD_FONT_URL|KILIX_NERD_FONT_SHA256|KILIX_NERD_FONT_FILE_SHA256|KILIX_GO_TOOLCHAIN|KILIX_PYTHON)
         # An explicit process environment wins over persisted settings. Storage
         # roots are intentionally absent from this allowlist: they determine
         # where this file is found and must be supplied by the launcher/service.
