@@ -130,6 +130,21 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("self._title_bar_screen.cell_width != cell_width", window)
         self.assertIn("self._title_bar_screen.cell_height != cell_height", window)
 
+    def test_fullscreen_is_content_only_and_restores_chrome_on_exit(self):
+        state = (ROOT / "src" / "kitty" / "state.c").read_text()
+        monitor = (ROOT / "src" / "kitty" / "child-monitor.c").read_text()
+        window = (ROOT / "src" / "kitty" / "window.py").read_text()
+        tabbar = (ROOT / "src" / "kitty" / "tab_bar.py").read_text()
+        pyi = (ROOT / "src" / "kitty" / "fast_data_types.pyi").read_text()
+
+        self.assertIn("!is_os_window_fullscreen(os_window) && !OPT(tab_bar_hidden)", state)
+        self.assertIn("is_os_window_fullscreen(os_window) || os_window->num_tabs == 0", state)
+        self.assertIn("MW(is_os_window_fullscreen, METH_VARARGS)", state)
+        self.assertIn("const bool content_only_fullscreen = is_os_window_fullscreen(os_window)", monitor)
+        self.assertIn("not is_os_window_fullscreen(self.os_window_id)", window)
+        self.assertIn("def is_os_window_fullscreen(os_window_id: int) -> bool", pyi)
+        self.assertIn("set_tab_bar_render_data(self.os_window_id, self.screen, 0, 0, 0, 0)", tabbar)
+
     def test_clickable_chrome_font_size_buttons_are_local(self):
         titlebar = (ROOT / "src" / "kitty" / "window_title_bar.py").read_text()
         readme = (ROOT / "README.md").read_text()
