@@ -50,9 +50,33 @@ required_go(){ pinned_go; }
 # Compare dotted versions: ver_ge A B  -> true if A >= B.
 ver_ge(){ [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" = "$2" ]; }
 
+build_python() {
+  local candidate version
+  local -a candidates
+  if [ -n "${KILIX_PYTHON:-}" ]; then
+    candidates=("$KILIX_PYTHON")
+  else
+    candidates=(python3.14 python3.13 python3.12 python3)
+  fi
+  for candidate in "${candidates[@]}"; do
+    if [[ "$candidate" == */* ]]; then
+      [ -x "$candidate" ] || continue
+    else
+      candidate="$(command -v "$candidate" 2>/dev/null || true)"
+      [ -n "$candidate" ] || continue
+    fi
+    version="$("$candidate" -c 'import sys; print(".".join(map(str, sys.version_info[:3])))' 2>/dev/null || true)"
+    if [ -n "$version" ] && ver_ge "$version" 3.12; then
+      printf '%s\t%s\n' "$candidate" "$version"
+      return 0
+    fi
+  done
+  return 1
+}
+
 # ---- verify ------------------------------------------------------------------
 verify() {
-  local ok=1 m
+  local ok=1 m py_info
   echo "==> verifying build prerequisites:"
   for m in $PC_DEPS $AMP_PC_DEPS; do
     if pkg-config --exists "$m" 2>/dev/null; then
@@ -72,6 +96,12 @@ verify() {
     echo "   SIMDe headers: yes"
   else
     echo "   SIMDe headers: MISSING"; ok=0
+  fi
+  if py_info="$(build_python)"; then
+    echo "   build Python: ${py_info#*$'\t'} (${py_info%%$'\t'*})"
+  else
+    echo "   build Python: MISSING (need >= 3.12; set KILIX_PYTHON if installed elsewhere)"
+    ok=0
   fi
   local req; req="$(required_go)"
   if command -v go >/dev/null 2>&1; then

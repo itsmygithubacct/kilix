@@ -1,7 +1,9 @@
 import hashlib
 import os
+import shlex
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -55,6 +57,13 @@ class BuildPreparationTests(unittest.TestCase):
             archive.add(font_tree / "SymbolsNerdFontMono-Regular.ttf",
                         arcname="SymbolsNerdFontMono-Regular.ttf")
 
+        self.build_python = self.base / "python3.12"
+        self.build_python.write_text(
+            "#!/bin/sh\n"
+            "case \"${1:-}:$2\" in *sys.version_info*) echo 3.12.0; exit 0;; esac\n"
+            f'exec {shlex.quote(sys.executable)} "$@"\n')
+        self.build_python.chmod(0o755)
+
         self.env = dict(os.environ)
         for key in tuple(self.env):
             if (key.startswith("KILIX_KITTY_DEPS_") or
@@ -65,6 +74,7 @@ class BuildPreparationTests(unittest.TestCase):
             "HOME": str(self.base / "home"),
             "KILIX_STORAGE_HOME": str(self.base / "storage"),
             "KILIX_BUILD_MODE": "bundle",
+            "KILIX_PYTHON": str(self.build_python),
             "KILIX_BUILD_PREPARE_ONLY": "1",
             "KILIX_KITTY_DEPS_URL": self.deps.as_uri(),
             "KILIX_KITTY_DEPS_SHA256": sha256(self.deps),
@@ -183,6 +193,20 @@ class BuildPreparationTests(unittest.TestCase):
         result = self.run_build(env)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("expected a positive integer", result.stderr)
+
+    def test_system_mode_rejects_old_python(self):
+        old_python = self.base / "python3.11"
+        old_python.write_text("#!/bin/sh\necho 3.11.0\n")
+        old_python.chmod(0o755)
+        env = dict(self.env)
+        env["KILIX_BUILD_MODE"] = "system"
+        env["KILIX_PYTHON"] = str(old_python)
+        env.pop("KILIX_BUILD_PREPARE_ONLY")
+        env.pop("KILIX_KITTY_DEPS_URL")
+        env.pop("KILIX_KITTY_DEPS_SHA256")
+        result = self.run_build(env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("requires Python >= 3.12", result.stderr)
 
     def test_dirty_git_source_is_rejected_before_preparation(self):
         self.init_src_git()

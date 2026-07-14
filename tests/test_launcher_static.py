@@ -169,8 +169,8 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("visible_items_in_row >= MAX_TABS_PER_ROW", tabbar)
         self.assertIn("visible_items_in_row += 1", tabbar)
         self.assertIn("rows = split_tab_bar_rows(data)[:s.lines]", tabbar)
-        self.assertIn("def tab_id_at(self, x: int, y: int | None = None)", tabbar)
-        self.assertIn("def action_at(self, x: int, y: int | None = None)", tabbar)
+        self.assertIn("def tab_id_at(self, x: int, y: int)", tabbar)
+        self.assertIn("def action_at(self, x: int, y: int)", tabbar)
         self.assertNotIn("TAB_CLOSE_ACTION", tabbar)
         self.assertNotIn("kilix_close_active_app_tab", tabbar)
         self.assertNotIn("GLFW_MOUSE_BUTTON_MIDDLE", tabs)
@@ -271,6 +271,8 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("wayland-client wayland-cursor wayland-egl wayland-protocols",
                       text)
         self.assertIn("#include <simde/x86/avx2.h>", text)
+        self.assertIn("KILIX_PYTHON", text)
+        self.assertIn("need >= 3.12", text)
         self.assertIn("return 1", text)
 
 
