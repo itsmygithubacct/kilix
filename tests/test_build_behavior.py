@@ -63,8 +63,7 @@ class BuildPreparationTests(unittest.TestCase):
                 self.env.pop(key)
         self.env.update({
             "HOME": str(self.base / "home"),
-            "XDG_CACHE_HOME": str(self.base / "cache"),
-            "XDG_STATE_HOME": str(self.base / "state"),
+            "KILIX_STORAGE_HOME": str(self.base / "storage"),
             "KILIX_BUILD_MODE": "bundle",
             "KILIX_BUILD_PREPARE_ONLY": "1",
             "KILIX_KITTY_DEPS_URL": self.deps.as_uri(),
@@ -84,27 +83,43 @@ class BuildPreparationTests(unittest.TestCase):
             env=env or self.env, capture_output=True, text=True,
         )
 
+    def init_src_git(self):
+        subprocess.run(["git", "init", "-b", "main"], cwd=self.src,
+                       check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=self.src, check=True)
+        subprocess.run([
+            "git", "-c", "user.name=Kilix Test",
+            "-c", "user.email=test@example.invalid", "commit", "-m", "source",
+        ], cwd=self.src, check=True, capture_output=True)
+        return subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=self.src, check=True,
+            capture_output=True, text=True).stdout.strip()
+
     def test_bundle_is_relocated_and_fontconfig_removed(self):
         result = self.run_build()
         self.assertEqual(result.returncode, 0, result.stderr)
-        root = self.src / "dependencies" / "linux-amd64"
+        root = (self.base / "storage" / "build" / "prepared" / "src" /
+                "dependencies" / "linux-amd64")
         pc = (root / "lib" / "pkgconfig" / "demo.pc").read_text()
         sysconfig = (root / "lib" / "python3.14" /
                      "_sysconfigdata_test.py").read_text()
-        self.assertIn(str(root), pc)
-        self.assertIn(str(root), sysconfig)
+        self.assertIn(str(root.resolve()), pc)
+        self.assertIn(str(root.resolve()), sysconfig)
         self.assertNotIn("/sw/sw", pc + sysconfig)
         self.assertFalse((root / "lib" / "libfontconfig.so").exists())
         self.assertEqual(
-            (self.src / "fonts" /
+            (self.base / "storage" / "build" / "prepared" / "src" / "fonts" /
              "SymbolsNerdFontMono-Regular.ttf").read_bytes(), self.font_bytes)
+        self.assertEqual(list(self.src.rglob("*.so")), [])
 
     def test_corrupt_cache_and_extracted_font_self_heal(self):
         self.assertEqual(self.run_build().returncode, 0)
-        cached = (self.base / "cache" / "kilix" / "build" /
+        cached = (self.base / "storage" / "cache" / "build" /
                   f"kitty-dependencies-{sha256(self.deps)}.tar.xz")
         cached.write_bytes(b"corrupt")
-        installed_font = self.src / "fonts" / "SymbolsNerdFontMono-Regular.ttf"
+        installed_font = (self.base / "storage" / "build" / "prepared" /
+                          "src" / "fonts" /
+                          "SymbolsNerdFontMono-Regular.ttf")
         installed_font.write_bytes(b"partial")
         result = self.run_build()
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -149,13 +164,18 @@ class BuildPreparationTests(unittest.TestCase):
         env.pop("KILIX_KITTY_DEPS_SHA256")
         result = self.run_build(env)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual((self.checkout / "setup-action").read_text(), "build")
-        self.assertEqual((self.checkout / "go-build-jobs").read_text(), "1")
+        current = self.base / "storage" / "build" / "current"
+        self.assertEqual((current / "setup-action").read_text(), "build")
+        self.assertEqual((current / "go-build-jobs").read_text(), "1")
+        source_id = (current / "source-id").read_text().strip()
+        self.assertTrue(source_id.startswith("tree-sha256:"), source_id)
 
         env["KILIX_BUILD_JOBS"] = "3"
         result = self.run_build(env)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual((self.checkout / "go-build-jobs").read_text(), "3")
+        self.assertEqual((current / "go-build-jobs").read_text(), "3")
+        self.assertEqual((current / "source-id").read_text().strip(), source_id)
+        self.assertFalse((self.checkout / "setup-action").exists())
 
     def test_invalid_build_parallelism_is_rejected(self):
         env = dict(self.env)
@@ -163,6 +183,33 @@ class BuildPreparationTests(unittest.TestCase):
         result = self.run_build(env)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("expected a positive integer", result.stderr)
+
+    def test_dirty_git_source_is_rejected_before_preparation(self):
+        self.init_src_git()
+        (self.src / "setup.py").write_text("# modified\n")
+        result = self.run_build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("refusing to build from a modified ./src", result.stderr)
+        self.assertFalse((self.base / "storage" / "build" / "prepared").exists())
+
+    def test_clean_git_build_records_exact_source_commit(self):
+        (self.src / "setup.py").write_text(
+            "from pathlib import Path\n"
+            "p = Path('kitty/launcher/kitty')\n"
+            "p.parent.mkdir(parents=True, exist_ok=True)\n"
+            "p.write_text('#!/bin/sh\\nexit 0\\n')\n"
+            "p.chmod(0o755)\n")
+        head = self.init_src_git()
+        env = dict(self.env)
+        env["KILIX_BUILD_MODE"] = "system"
+        env.pop("KILIX_BUILD_PREPARE_ONLY")
+        env.pop("KILIX_KITTY_DEPS_URL")
+        env.pop("KILIX_KITTY_DEPS_SHA256")
+        result = self.run_build(env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        source_id = (self.base / "storage" / "build" / "current" /
+                     "source-id").read_text().strip()
+        self.assertEqual(source_id, head)
 
 
 if __name__ == "__main__":

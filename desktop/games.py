@@ -2,11 +2,11 @@
 """kilix 95 — the Games section: registry + on-demand installers.
 
 `games.py doom` is what Start ▸ Programs ▸ Games ▸ Doom runs (in a new kilix
-tab). If ~/.config/kilix/games.conf points at a working DOSBox and Doom, it
+tab). If Kilix's desktop games config points at a working DOSBox and Doom, it
 boots straight in; otherwise it downloads the official shareware episode
 (id's doom19s.zip from the idgames mirrors — the shareware episode is freely
 redistributable) and, when no dosbox is installed, a dosbox-staging release
-build, stores everything under ~/.local/share/kilix/games/, writes the
+build, stores everything under ~/.local/gpu_terminal/kilix/data/desktop-games/,
 config, and boots. Nothing is written inside the kilix tree.
 
 No DOS needed for the install: doom19s.zip's DEICE parts (DOOMS_19.1/.2)
@@ -26,15 +26,12 @@ import tempfile
 import urllib.request
 import zipfile
 
+import storage
+
 HOME = os.path.expanduser("~")
-CONF = os.path.join(os.environ.get("XDG_CONFIG_HOME")
-                    or os.path.join(HOME, ".config"), "kilix", "games.conf")
-GAMES_DIR = os.path.join(os.environ.get("XDG_DATA_HOME")
-                         or os.path.join(HOME, ".local", "share"),
-                         "kilix", "games")
-APPS_DIR = os.path.join(os.environ.get("XDG_DATA_HOME")
-                        or os.path.join(HOME, ".local", "share"),
-                        "kilix", "apps")
+CONF = storage.config_dir("desktop-games.conf")
+GAMES_DIR = storage.data_dir("desktop-games")
+APPS_DIR = storage.data_dir("desktop-apps")
 KILIX_HOME = (os.environ.get("KILIX_HOME")
               or os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -67,31 +64,31 @@ GAMES = {
         "label": "Doom", "icon": "doom",
         "blurb": "Download the official shareware episode (~2.4 MB) —\n"
                  "plus DOSBox if none is installed — into\n"
-                 "~/.local/share/kilix/games, and play?",
+                 "Kilix's private data directory, and play?",
     },
     "dosbox": {
         "label": "DOSBox", "icon": "dosbox",
         "blurb": "Open an MS-DOS prompt (DOSBox) with C: mounted to\n"
-                 "~/.local/share/kilix/games. Fetches a dosbox-staging\n"
+                 "Kilix's private data directory. Fetches a dosbox-staging\n"
                  "build there first if none is already installed.",
     },
     "bashed-earth": {
         "label": "Bashed Earth", "icon": "tank",
         "blurb": "Clone and build Bashed Earth (terminal artillery\n"
                  "combat, github.com/itsmygithubacct/Bashed-Earth)\n"
-                 "into ~/.local/share/kilix/games, and play?",
+                 "into Kilix's private data directory, and play?",
     },
     "terminal-lander": {
         "label": "Terminal Lander", "icon": "lander",
         "blurb": "Clone and build Terminal Lander (a kitty-graphics\n"
                  "lunar lander, github.com/itsmygithubacct/terminal_lander)\n"
-                 "into ~/.local/share/kilix/games, and play?",
+                 "into Kilix's private data directory, and play?",
     },
     "kitty-brokeout": {
         "label": "Kitty Brokeout", "icon": "brokeout",
         "blurb": "Clone and build Kitty Brokeout (a kitty-graphics\n"
                  "brick breaker, github.com/itsmygithubacct/kitty-brokeout)\n"
-                 "into ~/.local/share/kilix/games, and play?",
+                 "into Kilix's private data directory, and play?",
     },
 }
 

@@ -19,6 +19,7 @@ from PIL import Image, ImageChops
 import theme as T
 import widgets as W
 import wm
+import storage
 
 import clipboard                  # one shared clipboard across panes/windows
 import stream                     # from config/ (main.py puts it on the path)
@@ -455,8 +456,11 @@ class InstallerWindow(wm.Window):
         self.on_ok = on_ok
         cw, ch = self.client_size()
         self.ta = self.add(W.TextArea(6, 6, cw - 12, ch - 12, ""))
+        log_dir = storage.session_dir("desktop-installer-logs")
+        os.makedirs(log_dir, mode=0o700, exist_ok=True)
         self.log = tempfile.NamedTemporaryFile(
-            mode="w+", prefix=f"kilix-install-{target}-", suffix=".log")
+            mode="w+", prefix=f"kilix-install-{target}-", suffix=".log",
+            dir=log_dir)
         self.proc = subprocess.Popen(
             ["python3", os.path.join(_here, "games.py"), target,
              "--setup-only"],

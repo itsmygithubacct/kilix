@@ -9,6 +9,7 @@ its install dir so it never fights the user's own kilix-amp setup.
 import os
 
 import wm
+import storage
 from . import xpane
 
 
@@ -29,7 +30,7 @@ def open_amp(desk, path=None):
               "The media player isn't built yet.\n\n"
               "Clone and build kilix-amp (a Winamp 2.x clone,\n"
               "github.com/itsmygithubacct/kilix-amp) into\n"
-              "~/.local/share/kilix/apps?\n"
+              "~/.local/gpu_terminal/kilix/data/desktop-apps?\n"
               "(Needs libsdl2-dev, libsdl2-image-dev,\n"
               "libsndfile1-dev, zlib1g-dev, libfluidsynth-dev,\n"
               "and a GM SoundFont for MIDI playback.)",
@@ -68,7 +69,10 @@ def _spawn(desk, exe, path=None):
             # (EQ / playlist) are never clipped
             # private, persistent config: window layout survives sessions and
             # never collides with a user-level kilix-amp install
-            env={"XDG_CONFIG_HOME": os.path.join(d, ".xpane-config")},
+            env={
+                "XDG_CONFIG_HOME": storage.config_dir("app-state"),
+                "XDG_DATA_HOME": storage.data_dir("app-state"),
+            },
             cwd=d))
     except Exception as e:
         wm.msgbox(desk, "Media Player",

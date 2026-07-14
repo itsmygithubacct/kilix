@@ -25,6 +25,7 @@ def main():
     for name in names:
         env = dict(os.environ)
         env["KILIX_DESKTOP_DIR"] = tempfile.mkdtemp(prefix="kilix95-test-")
+        env["KILIX_STORAGE_HOME"] = tempfile.mkdtemp(prefix="kilix-storage-")
         t0 = time.time()
         try:
             p = subprocess.run([sys.executable, os.path.join(HERE, name)],
@@ -38,6 +39,7 @@ def main():
                    + "\n[timeout after 30s]")
         finally:
             shutil.rmtree(env["KILIX_DESKTOP_DIR"], ignore_errors=True)
+            shutil.rmtree(env["KILIX_STORAGE_HOME"], ignore_errors=True)
         print(f"{'PASS' if ok else 'FAIL'}  {name}  ({time.time() - t0:.1f}s)")
         if not ok:
             failed.append(name)

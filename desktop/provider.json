@@ -1,6 +1,6 @@
 {
   "name": "kilix-builtin-compat",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "provider_api": 1,
   "requires_kilix_sdk": "1.0",
   "security_features": [

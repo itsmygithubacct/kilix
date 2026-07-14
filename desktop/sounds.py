@@ -2,7 +2,7 @@
 
 Original synthesized Win95-style cues; NO external assets. Short mono .wav
 files generated in pure Python (wave + math + struct), cached under
-~/.local/share/kilix/sounds and regenerated when missing. A *scheme* maps each
+the Kilix private data directory and regenerated when missing. A *scheme* maps each
 system event to a sound file (any format) or silence, defaulting to the
 built-in cue; the active scheme persists to sounds/scheme.json, named schemes
 to sounds/schemes/<name>.json. Playback is fire-and-forget through a detached
@@ -20,6 +20,8 @@ import subprocess
 import threading
 import wave
 
+import storage
+
 RATE = 44100
 SYNTH_VERSION = 2          # bump when a synth changes so cached wavs regenerate
 _PLAYERS = ("paplay", "aplay", "ffplay", "play")     # WAV players
@@ -34,9 +36,7 @@ C4, E4, G4 = 261.63, 329.63, 392.0
 
 
 def _data_dir():
-    base = os.environ.get("XDG_DATA_HOME") or os.path.join(
-        os.path.expanduser("~"), ".local", "share")
-    return os.path.join(base, "kilix", "sounds")
+    return storage.data_dir("desktop-sounds")
 
 
 # ── synthesis primitives ────────────────────────────────────────────────────

@@ -2,7 +2,7 @@
 
 Owns the wallpaper, the icon grid, the launcher files and every "open
 something" verb. The desktop folder is a real directory
-(~/.local/share/kilix/desktop by default, override with $KILIX_DESKTOP_DIR):
+(under ~/.local/gpu_terminal/kilix/data by default; override with $KILIX_DESKTOP_DIR):
 plain files and directories dropped there appear as icons, and "Create
 Launcher…" writes freedesktop-style .desktop files there. Programs launch
 into new kilix tabs/windows over kitty remote control; X11 apps go through
@@ -22,6 +22,7 @@ import recycle
 import theme as T
 import widgets as W
 import wm
+import storage
 
 _here = os.path.dirname(os.path.abspath(__file__))
 KILIX_HOME = os.environ.get("KILIX_HOME") or os.path.dirname(_here)
@@ -76,10 +77,9 @@ class Shell:
         self.desk = desk
         self.dir = os.path.expanduser(
             os.environ.get("KILIX_DESKTOP_DIR")
-            or os.path.join(os.environ.get("XDG_DATA_HOME")
-                            or "~/.local/share", "kilix", "desktop"))
+            or storage.data_dir("desktop"))
         self.dir = os.path.expanduser(self.dir)
-        os.makedirs(self.dir, exist_ok=True)
+        storage.ensure_private_dir(self.dir)
         self.state_path = os.path.join(self.dir, ".state.json")
         self.state = {"wall_color": list(T.DESKTOP), "wall_image": None,
                       "wall_mode": "stretch", "recent": []}
@@ -106,8 +106,9 @@ class Shell:
 
     def _save_state(self):
         try:
-            with open(self.state_path, "w") as f:
-                json.dump(self.state, f, indent=1)
+            storage.atomic_write_private(
+                self.state_path,
+                lambda stream: json.dump(self.state, stream, indent=1))
         except OSError:
             pass
 
@@ -506,8 +507,12 @@ class Shell:
         k = os.environ.get("KILIX_KITTEN")
         if k and os.access(k, os.X_OK):
             return k
-        for cand in (os.path.join(KILIX_HOME, "src/kitty/launcher/kitten"),
-                     os.path.join(KILIX_HOME, "kitty.app/bin/kitten"),
+        storage_home = os.environ.get(
+            "KILIX_STORAGE_HOME", os.path.expanduser(
+                "~/.local/gpu_terminal/kilix"))
+        for cand in (os.path.join(storage_home,
+                                  "build/current/src/kitty/launcher/kitten"),
+                     os.path.join(storage_home, "prebuilt/kitty.app/bin/kitten"),
                      shutil.which("kitten")):
             if cand and os.access(cand, os.X_OK):
                 return cand
@@ -836,7 +841,7 @@ class Shell:
                 go()
         wm.msgbox(self.desk, "Games",
                   f"{meta['label']} isn't set up yet.\n\n{meta['blurb']}\n"
-                  "(Paths are remembered in ~/.config/kilix/games.conf.)",
+                  "(Paths are remembered in Kilix's private config directory.)",
                   icon=meta["icon"], buttons=("Install", "Cancel"),
                   cb=answered)
 

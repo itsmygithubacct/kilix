@@ -14,7 +14,7 @@
 #
 # Go: the fork's go.mod pins a Go version newer than some distros ship. Rather
 # than install Go by hand, this enables Go's own toolchain auto-download
-# (an exact `GOTOOLCHAIN=goX.Y.Z+auto` in ~/.kitty-fork-buildenv, which
+# (an exact `GOTOOLCHAIN=goX.Y.Z+auto` in Kilix's private build.env, which
 # build.sh sources)
 # whenever the system Go is older than required — so `go build` fetches the
 # exact toolchain named by go.mod (and verifies it through Go's module checksum
@@ -23,9 +23,15 @@
 # Usage:  scripts/install-build-deps.sh            # install
 #         scripts/install-build-deps.sh --verify   # re-check + print status
 set -euo pipefail
+umask 077
 
 KILIX_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BUILDENV="$HOME/.kitty-fork-buildenv"
+GPU_TERMINAL_HOME="${GPU_TERMINAL_HOME:-$HOME/.local/gpu_terminal}"
+KILIX_STORAGE_HOME="${KILIX_STORAGE_HOME:-$GPU_TERMINAL_HOME/kilix}"
+KILIX_CONFIG_HOME="${KILIX_CONFIG_HOME:-$KILIX_STORAGE_HOME/config}"
+BUILDENV="${KILIX_BUILD_ENV:-$KILIX_CONFIG_HOME/build.env}"
+mkdir -p "$KILIX_CONFIG_HOME"
+chmod 0700 "$KILIX_STORAGE_HOME" "$KILIX_CONFIG_HOME" 2>/dev/null || true
 
 # pkg-config modules the fork links against (see build.sh).
 PC_DEPS="x11 xrandr xinerama xcursor xi xkbcommon xkbcommon-x11 x11-xcb dbus-1 gl fontconfig libpng lcms2 cairo-fc harfbuzz libcrypto libxxhash wayland-client wayland-cursor wayland-egl wayland-protocols"
@@ -102,7 +108,7 @@ ensure_go_toolchain() {
   if grep -q "^export GOTOOLCHAIN=go${pin}+auto$" "$BUILDENV" 2>/dev/null; then
     return 0
   elif grep -q '^export GOTOOLCHAIN=' "$BUILDENV" 2>/dev/null; then
-    local tmp; tmp="$(mktemp)"
+    local tmp; tmp="$(mktemp "$KILIX_CONFIG_HOME/.build.env.XXXXXX")"
     awk -v value="export GOTOOLCHAIN=go${pin}+auto" \
       '/^export GOTOOLCHAIN=/{if (!done) print value; done=1; next} {print}' \
       "$BUILDENV" >"$tmp"
@@ -115,6 +121,7 @@ ensure_go_toolchain() {
       echo "# the exact go.mod toolchain on demand instead of resolving latest."
       echo "export GOTOOLCHAIN=go${pin}+auto"
     } >> "$BUILDENV"
+    chmod 0600 "$BUILDENV"
     log "system Go $gv < $req — pinned GOTOOLCHAIN=go${pin}+auto in $BUILDENV"
   fi
 }

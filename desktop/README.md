@@ -8,7 +8,8 @@ Start ▸ Shut Down…, or `Ctrl+Alt+Q`.
 
 The whole desktop is a PIL RGB framebuffer blitted through the kitty
 graphics protocol — the same transport `kilix browse` uses: `t=t` via
-`/dev/shm` locally, inline `t=d` when `KILIX_STREAM=1` (inside
+private files under the Kilix session root locally, inline `t=d` when
+`KILIX_STREAM=1` (inside
 `kilix serve` sessions). Input is the kitty keyboard protocol plus
 SGR-pixel mouse reporting (`?1003h`/`?1016h`), so mouse coordinates map
 1:1 onto framebuffer pixels. Rendering is damage-driven: the loop only
@@ -38,7 +39,8 @@ gives every widget drag behavior for free.
 
 ## The desktop folder
 
-`~/.local/share/kilix/desktop` (override: `$KILIX_DESKTOP_DIR`). Real files
+`~/.local/gpu_terminal/kilix/data/desktop` (override:
+`$KILIX_DESKTOP_DIR`). Real files
 and directories in it appear as desktop icons; `*.desktop` files (created by
 **Create Launcher…**) appear as shortcuts. Launcher spec, freedesktop-style:
 

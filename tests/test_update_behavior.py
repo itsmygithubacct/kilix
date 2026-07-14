@@ -37,13 +37,20 @@ class UpdateBehaviorTests(unittest.TestCase):
             # kilix invokes build.sh from the caller's cwd; anchor to this
             # checkout so the simulated failure can never touch other trees.
             "cd \"$(dirname \"$0\")\"\n"
+            "build=${KILIX_BUILD_DIRECTORY:?}\n"
             "[ -z \"${FAKE_KILIX_BUILD_CALLS:-}\" ] || "
             "echo called >>\"$FAKE_KILIX_BUILD_CALLS\"\n"
             "if [ \"${FAKE_KILIX_BUILD_FAIL:-0}\" = 1 ]; then\n"
-            "  printf broken > src/kitty/launcher/kitty\n"
-            "  printf broken > src/kitty/fast_data_types.so\n"
+            "  printf broken > \"$build/failed-build\"\n"
             "  exit 23\n"
-            "fi\n")
+            "fi\n"
+            "rm -rf \"$build/previous\"\n"
+            "[ ! -d \"$build/current\" ] || mv \"$build/current\" \"$build/previous\"\n"
+            "mkdir -p \"$build/current/src/kitty/launcher\"\n"
+            "printf '#!/bin/sh\\nexit 0\\n' > \"$build/current/src/kitty/launcher/kitty\"\n"
+            "printf '#!/bin/sh\\nexit 0\\n' > \"$build/current/src/kitty/launcher/kitten\"\n"
+            "chmod +x \"$build/current/src/kitty/launcher/kitty\" \"$build/current/src/kitty/launcher/kitten\"\n"
+            "git -C src rev-parse HEAD > \"$build/current/source-id\" 2>/dev/null || printf unversioned > \"$build/current/source-id\"\n")
         (self.seed / "build.sh").chmod(0o755)
         (self.seed / ".gitignore").write_text("src/\n")
         git("add", "kilix", "VERSION", "build.sh", ".gitignore", cwd=self.seed)
@@ -56,6 +63,7 @@ class UpdateBehaviorTests(unittest.TestCase):
             "KILIX_REPO": str(self.remote),
             "KILIX_CONFIG_DIRECTORY": str(self.config),
             "HOME": str(root / "home"),
+            "KILIX_STORAGE_HOME": str(root / "storage"),
         })
 
     def tearDown(self):
@@ -96,33 +104,22 @@ class UpdateBehaviorTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("origin is", result.stderr)
 
-    def test_legacy_tracked_config_is_migrated_and_checkout_cleaned(self):
-        config = self.seed / "config"
-        config.mkdir()
-        (config / "kitty.conf").write_text("font_size 11\n")
-        (config / "kilix.env").write_text("# defaults\n")
-        git("add", "config", cwd=self.seed)
-        git("commit", "-m", "config defaults", cwd=self.seed)
-        git("push", "origin", "main", cwd=self.seed)
-        synced = self._update()
-        self.assertEqual(synced.returncode, 0, synced.stderr)
-
-        tracked = self.checkout / "config" / "kitty.conf"
-        tracked.write_text("font_size 17\n# legacy user setting\n")
+    def test_legacy_xdg_tree_is_never_moved(self):
+        old_root = Path(self.temp.name) / "xdg" / "kilix"
+        old_root.mkdir(parents=True)
+        sentinel = old_root / "keep-me"
+        sentinel.write_text("legacy bytes\n")
         env = dict(self.env)
         env.pop("KILIX_CONFIG_DIRECTORY", None)
-        env["XDG_CONFIG_HOME"] = str(Path(self.temp.name) / "xdg")
+        env["KILIX_STORAGE_HOME"] = str(Path(self.temp.name) / "storage")
+        env["XDG_CONFIG_HOME"] = str(old_root.parent)
         result = subprocess.run(
-            [str(self.checkout / "kilix"), "update"], env=env,
+            [str(self.checkout / "kilix"), "screen-size", "show"], env=env,
             capture_output=True, text=True,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(tracked.read_text(), "font_size 11\n")
-        self.assertEqual(
-            git("status", "--porcelain", "--untracked-files=no",
-                cwd=self.checkout, capture=True).stdout, "")
-        user = Path(env["XDG_CONFIG_HOME"]) / "kilix" / "kitty.conf"
-        self.assertIn("font_size 17", user.read_text())
+        self.assertEqual(sentinel.read_text(), "legacy bytes\n")
+        user = Path(env["KILIX_STORAGE_HOME"]) / "config" / "kitty.conf"
         self.assertIn("include .kilix-defaults.conf", user.read_text())
 
     def test_exact_ref_is_fetched_and_checked_out_detached(self):
@@ -165,12 +162,15 @@ class UpdateBehaviorTests(unittest.TestCase):
                 capture=True).stdout.strip(), before)
 
     def test_fork_rebuild_failure_is_reported_nonzero(self):
-        fork = self.checkout / "src" / "kitty" / "launcher" / "kitty"
+        fork = (Path(self.env["KILIX_STORAGE_HOME"]) / "build" / "current" /
+                "src" / "kitty" / "launcher" / "kitty")
         fork.parent.mkdir(parents=True)
         fork.write_text("#!/bin/sh\necho original\n")
         fork.chmod(0o755)
-        extension = fork.parents[1] / "fast_data_types.so"
-        extension.write_text("original-extension")
+        kitten = fork.with_name("kitten")
+        kitten.write_text("#!/bin/sh\nexit 0\n")
+        kitten.chmod(0o755)
+        (fork.parents[3] / "source-id").write_text("original")
         before = git("rev-parse", "HEAD", cwd=self.checkout,
                      capture=True).stdout.strip()
         target = self._publish("engine-change")
@@ -182,7 +182,7 @@ class UpdateBehaviorTests(unittest.TestCase):
             git("rev-parse", "HEAD", cwd=self.checkout,
                 capture=True).stdout.strip(), before)
         self.assertIn("original", fork.read_text())
-        self.assertEqual(extension.read_text(), "original-extension")
+        self.assertIn("original", fork.read_text())
 
         # The failed target remains retryable; a successful rebuild advances it.
         retry = self._update()
@@ -197,16 +197,20 @@ class UpdateBehaviorTests(unittest.TestCase):
         git("init", "-b", "main", cwd=src)
         git("config", "user.email", "test@example.invalid", cwd=src)
         git("config", "user.name", "Kilix Test", cwd=src)
-        fork = src / "kitty" / "launcher" / "kitty"
+        fork = (Path(self.env["KILIX_STORAGE_HOME"]) / "build" / "current" /
+                "src" / "kitty" / "launcher" / "kitty")
         fork.parent.mkdir(parents=True)
         fork.write_text("#!/bin/sh\nexit 0\n")
         fork.chmod(0o755)
+        kitten = fork.with_name("kitten")
+        kitten.write_text("#!/bin/sh\nexit 0\n")
+        kitten.chmod(0o755)
         (src / "source.txt").write_text("source\n")
         git("add", "source.txt", cwd=src)
         git("commit", "-m", "source", cwd=src)
         calls = Path(self.temp.name) / "build-calls"
         env = dict(self.env)
-        env["XDG_STATE_HOME"] = str(Path(self.temp.name) / "state")
+        env["KILIX_STORAGE_HOME"] = str(Path(self.temp.name) / "storage")
         env["FAKE_KILIX_BUILD_CALLS"] = str(calls)
 
         first = subprocess.run(
@@ -219,7 +223,7 @@ class UpdateBehaviorTests(unittest.TestCase):
         self.assertEqual(second.returncode, 0, second.stderr)
         self.assertEqual(calls.read_text().splitlines(), ["called"])
         head = git("rev-parse", "HEAD", cwd=src, capture=True).stdout.strip()
-        stamp = Path(env["XDG_STATE_HOME"]) / "kilix" / "fork-built-ref"
+        stamp = Path(env["KILIX_STORAGE_HOME"]) / "state" / "fork-built-ref"
         self.assertEqual(stamp.read_text().strip(), f"{self.checkout}\t{head}")
 
 

@@ -15,6 +15,30 @@ def digest(path):
 
 
 class UserConfigBehaviorTests(unittest.TestCase):
+    def test_explicit_runtime_environment_wins_over_persisted_setting(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = Path(tmp) / "storage"
+            config = storage / "config"
+            config.mkdir(parents=True)
+            (config / "kilix.env").write_text("KILIX_DESKTOP_PROVIDER=none\n")
+            env = dict(os.environ)
+            env.update({
+                "KILIX_STORAGE_HOME": str(storage),
+                "KILIX_DESKTOP_PROVIDER": "command",
+            })
+            result = subprocess.run(
+                [str(ROOT / "kilix"), "status"], env=env,
+                capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("desktop provider: command", result.stdout)
+
+            env.pop("KILIX_DESKTOP_PROVIDER")
+            result = subprocess.run(
+                [str(ROOT / "kilix"), "status"], env=env,
+                capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("desktop provider: none", result.stdout)
+
     def test_screen_size_writes_xdg_override_not_tracked_default(self):
         tracked = ROOT / "config" / "kitty.conf"
         before = digest(tracked)
@@ -24,20 +48,21 @@ class UserConfigBehaviorTests(unittest.TestCase):
             env.pop("KILIX_CONFIG_DIRECTORY", None)
             env.pop("KITTY_CONFIG_DIRECTORY", None)
             env.pop("KILIX_ENV_CONFIG", None)
+            storage = root / "storage"
             env.update({"HOME": str(root / "home"),
-                        "XDG_CONFIG_HOME": str(root / "xdg")})
+                        "KILIX_STORAGE_HOME": str(storage)})
             result = subprocess.run(
                 [str(ROOT / "kilix"), "screen-size", "set", "14"],
                 env=env, capture_output=True, text=True,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
-            user = root / "xdg" / "kilix" / "kitty.conf"
+            user = storage / "config" / "kitty.conf"
             text = user.read_text()
             self.assertIn("include .kilix-defaults.conf", text)
             self.assertIn("font_size", text)
             self.assertIn("14", text)
-            self.assertTrue((root / "xdg" / "kilix" / "kilix.env").exists())
-            defaults = root / "xdg" / "kilix" / ".kilix-defaults.conf"
+            self.assertTrue((storage / "config" / "kilix.env").exists())
+            defaults = storage / "config" / ".kilix-defaults.conf"
             self.assertEqual(defaults.resolve(), tracked)
         self.assertEqual(digest(tracked), before)
 
@@ -56,8 +81,9 @@ class UserConfigBehaviorTests(unittest.TestCase):
             env.pop("KILIX_CONFIG_DIRECTORY", None)
             env.pop("KITTY_CONFIG_DIRECTORY", None)
             env.pop("KILIX_ENV_CONFIG", None)
+            storage = root / "storage"
             env.update({"HOME": str(root / "home"),
-                        "XDG_CONFIG_HOME": str(root / "xdg")})
+                        "KILIX_STORAGE_HOME": str(storage)})
             initial = subprocess.run(
                 [str(first / "kilix"), "screen-size", "show"], env=env,
                 capture_output=True, text=True)
@@ -67,10 +93,10 @@ class UserConfigBehaviorTests(unittest.TestCase):
                 [str(second / "kilix"), "screen-size", "show"], env=env,
                 capture_output=True, text=True)
             self.assertEqual(moved.returncode, 0, moved.stderr)
-            defaults = root / "xdg" / "kilix" / ".kilix-defaults.conf"
+            defaults = storage / "config" / ".kilix-defaults.conf"
             self.assertEqual(defaults.resolve(), second / "config" / "kitty.conf")
             self.assertIn("include .kilix-defaults.conf",
-                          (root / "xdg" / "kilix" / "kitty.conf").read_text())
+                          (storage / "config" / "kitty.conf").read_text())
 
 
 if __name__ == "__main__":

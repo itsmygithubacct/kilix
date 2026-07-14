@@ -4,9 +4,9 @@ import tempfile
 import time
 import wave
 
-# isolate the cache from the real ~/.local/share so tests don't pollute it
+# isolate the cache from the real Kilix data root
 _cache = tempfile.mkdtemp(prefix="kilix95-snd-")
-os.environ["XDG_DATA_HOME"] = _cache
+os.environ["KILIX_DATA_HOME"] = _cache
 
 import harness as H
 import sounds
@@ -17,7 +17,7 @@ made = sounds.ensure_all()
 assert set(made) == set(sounds.names())
 for name, path in made.items():
     assert path and os.path.isfile(path), name
-    assert path == os.path.join(_cache, "kilix", "sounds", name + ".wav")
+    assert path == os.path.join(_cache, "desktop-sounds", name + ".wav")
     with wave.open(path, "rb") as w:                     # readable + non-empty
         assert w.getnchannels() == 1
         assert w.getsampwidth() == 2

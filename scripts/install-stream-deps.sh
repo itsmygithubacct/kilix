@@ -4,15 +4,19 @@
 # vncpasswd is not required). Two backends, auto-detected:
 #
 #   Debian/Ubuntu : NO ROOT — apt-get download + dpkg -x into a private prefix
-#                   (~/.local/share/kilix/deps) + a stream-env.sh the launcher
+#                   (~/.local/gpu_terminal/kilix/data/deps) + a stream-env.sh
 #                   sources. Also fetches any missing library/data deps.
 #   Fedora/RHEL   : sudo dnf install (system-wide).
 #
 # Usage:  scripts/install-stream-deps.sh            # install
 #         scripts/install-stream-deps.sh --verify   # re-check + print status
 set -euo pipefail
+umask 077
 
-DATA="${XDG_DATA_HOME:-$HOME/.local/share}/kilix"
+GPU_TERMINAL_HOME="${GPU_TERMINAL_HOME:-$HOME/.local/gpu_terminal}"
+KILIX_STORAGE_HOME="${KILIX_STORAGE_HOME:-$GPU_TERMINAL_HOME/kilix}"
+DATA="${KILIX_DATA_HOME:-$KILIX_STORAGE_HOME/data}"
+SESSION="${KILIX_SESSION_HOME:-$KILIX_STORAGE_HOME/session}"
 PREFIX="$DATA/deps"
 ENVFILE="$DATA/stream-env.sh"
 TRIPLET="$(dpkg-architecture -qDEB_HOST_MULTIARCH 2>/dev/null || echo x86_64-linux-gnu)"
@@ -53,6 +57,7 @@ fedora_install() {
 # ---- Debian / apt (no root, unpack into a prefix) ----------------------------
 write_env() {
   mkdir -p "$DATA"
+  chmod 0700 "$KILIX_STORAGE_HOME" "$DATA" 2>/dev/null || true
   local xkb="" fonts="" d
   [ -d "$PREFIX/usr/share/X11/xkb" ] && xkb="$PREFIX/usr/share/X11/xkb"
   for d in "$PREFIX/usr/share/fonts/X11/misc" "$PREFIX/usr/share/fonts/X11/75dpi" \
@@ -87,7 +92,9 @@ debian_install() {
   done
   need="$(echo "$need" | xargs -n1 2>/dev/null | sort -u | xargs)"
   echo "==> $(echo "$need" | wc -w) package(s) not installed system-wide; fetching those."
-  local WORK; WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
+  mkdir -p "$SESSION"
+  chmod 0700 "$SESSION" 2>/dev/null || true
+  local WORK; WORK="$(mktemp -d "$SESSION/stream-deps.XXXXXX")"; trap 'rm -rf "$WORK"' EXIT
   cd "$WORK"; local got=0
   for p in $need; do apt-get download "$p" >/dev/null 2>&1 && got=$((got+1)) || echo "   (skip: $p)"; done
   echo "==> downloaded $got .deb(s); unpacking into $PREFIX"

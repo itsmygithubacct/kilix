@@ -1,9 +1,10 @@
 """kilix — direct (t=d) kitty graphics transmission for streamed/remote sessions.
 
 The fast LOCAL path used by apprun.py / browse.py writes each raw-RGB frame to a
-/dev/shm file and sends the terminal only that PATH via the graphics protocol's
-temporary-file mode (t=t). That path is meaningless to a kitty running on another
-machine, so a streamed/attached session would show a blank pane.
+private file under the Kilix session root and sends the terminal only that PATH
+via the graphics protocol's temporary-file mode (t=t). That path is meaningless
+to a kitty running on another machine, so a streamed/attached session would show
+a blank pane.
 
 When a session is streamed (KILIX_STREAM=1, exported by `kilix serve`), frames
 must instead be carried INLINE in the escape stream. `blit_direct` zlib-compresses
@@ -16,12 +17,33 @@ This module is intentionally dependency-free (stdlib only) and has no side effec
 beyond `term.write`, so `build_direct` can be unit-tested without a terminal.
 """
 import base64
+import os
 import zlib
 
 # kitty requires direct-transmission data to be chunked into pieces no larger
 # than 4096 bytes; 4096 % 4 == 0 so every base64 slice is independently valid
 # (kitty concatenates the slices before decoding).
 CHUNK = 4096
+
+
+def session_dir(*parts: str) -> str:
+    """Create and return a private Kilix session directory."""
+    root = os.environ.get("KILIX_SESSION_HOME") or os.path.join(
+        os.environ.get("KILIX_STORAGE_HOME", os.path.expanduser(
+            "~/.local/gpu_terminal/kilix")), "session")
+    path = os.path.abspath(os.path.join(root, *parts))
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    os.chmod(path, 0o700)
+    return path
+
+
+def write_frame(path: str, data: bytes) -> None:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    fd = os.open(path, flags, 0o600)
+    with os.fdopen(fd, "wb") as stream:
+        stream.write(data)
 
 
 def _tmux_wrap(apc: str) -> str:

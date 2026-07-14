@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the forked kitty (clickable chrome) that lives in ./src.
+# Build the forked kitty (clickable chrome) from ./src into per-user storage.
 #
 # The default build uses the host's signed package-manager dependencies and the
 # pinned kitty source checkout directly.  An upstream CI dependency bundle may
@@ -7,11 +7,32 @@
 # are both mandatory.  Kilix deliberately has no default for kitty's mutable
 # /ci/ bundle URL.
 set -euo pipefail
+umask 077
 
 KILIX_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -f "$HOME/.kitty-fork-buildenv" ]; then
+GPU_TERMINAL_HOME="${GPU_TERMINAL_HOME:-$HOME/.local/gpu_terminal}"
+KILIX_STORAGE_HOME="${KILIX_STORAGE_HOME:-$GPU_TERMINAL_HOME/kilix}"
+KILIX_CONFIG_HOME="${KILIX_CONFIG_HOME:-$KILIX_STORAGE_HOME/config}"
+KILIX_CACHE_HOME="${KILIX_CACHE_HOME:-$KILIX_STORAGE_HOME/cache}"
+KILIX_STATE_DIRECTORY="${KILIX_STATE_DIRECTORY:-$KILIX_STORAGE_HOME/state}"
+KILIX_BUILD_DIRECTORY="${KILIX_BUILD_DIRECTORY:-$KILIX_STORAGE_HOME/build}"
+KILIX_SYSDEPS_HOME="${KILIX_SYSDEPS_HOME:-$KILIX_STORAGE_HOME/dependencies/kitty-sysdeps}"
+KILIX_BUILD_ENV="${KILIX_BUILD_ENV:-$KILIX_CONFIG_HOME/build.env}"
+export GPU_TERMINAL_HOME KILIX_STORAGE_HOME KILIX_CONFIG_HOME KILIX_CACHE_HOME
+export KILIX_STATE_DIRECTORY KILIX_BUILD_DIRECTORY KILIX_SYSDEPS_HOME
+
+mkdir -p "$KILIX_CONFIG_HOME" "$(dirname "$KILIX_SYSDEPS_HOME")"
+chmod 0700 "$KILIX_STORAGE_HOME" "$KILIX_CONFIG_HOME" 2>/dev/null || true
+if [ -f "$KILIX_BUILD_ENV" ]; then
   # shellcheck disable=SC1091
-  . "$HOME/.kitty-fork-buildenv"
+  # shellcheck disable=SC1090
+  . "$KILIX_BUILD_ENV"
+fi
+if [ -d "$KILIX_SYSDEPS_HOME/usr" ]; then
+  _sysdeps_lib="$KILIX_SYSDEPS_HOME/usr/lib/x86_64-linux-gnu"
+  export PATH="$KILIX_SYSDEPS_HOME/usr/bin:$PATH"
+  export PKG_CONFIG_PATH="$_sysdeps_lib/pkgconfig:$KILIX_SYSDEPS_HOME/usr/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+  export LIBRARY_PATH="$_sysdeps_lib:$KILIX_SYSDEPS_HOME/usr/lib:${LIBRARY_PATH:-}"
 fi
 
 case "$(uname -s):$(uname -m)" in
@@ -47,11 +68,15 @@ case "$_build_jobs" in
   ''|*[!0-9]*|0) echo "kilix: invalid KILIX_BUILD_JOBS/GOMAXPROCS=$_build_jobs (expected a positive integer)" >&2; exit 2 ;;
 esac
 export GOMAXPROCS="$_build_jobs"
+# The build snapshot intentionally has no .git directory. Newer Go toolchains
+# otherwise walk above it and fail while trying to stamp unrelated VCS state.
+export GOFLAGS="${GOFLAGS:+$GOFLAGS }-buildvcs=false"
 
-CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/kilix/build"
-STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/kilix"
+CACHE_DIR="$KILIX_CACHE_HOME/build"
+STATE_DIR="$KILIX_STATE_DIRECTORY"
+export GOCACHE="${GOCACHE:-$CACHE_DIR/go-build}"
+export GOMODCACHE="${GOMODCACHE:-$CACHE_DIR/go-mod}"
 font_archive="$CACHE_DIR/NerdFontsSymbolsOnly-v3.4.0.tar.xz"
-font_file="$KILIX_HOME/src/fonts/SymbolsNerdFontMono-Regular.ttf"
 font_url="${KILIX_NERD_FONT_URL:-https://github.com/ryanoasis/nerd-fonts/releases/download/v3.4.0/NerdFontsSymbolsOnly.tar.xz}"
 font_sha="${KILIX_NERD_FONT_SHA256:-7f8c090da3b0eaa7108646bf34cbbb6ed13d5358a72460522108b06c7ecd716a}"
 font_file_sha="${KILIX_NERD_FONT_FILE_SHA256:-f0f624d9b474bea1662cf7e862d44aebe1ae1f6c7f9cb7a0ca5d0e5ac9561c60}"
@@ -101,7 +126,7 @@ prepare_font() {
   fi
   fetch_verified "$font_url" "$font_archive" "$font_sha" "Nerd Font archive"
   mkdir -p "$(dirname "$font_file")"
-  tmpdir="$(mktemp -d "$KILIX_HOME/src/fonts/.extract.XXXXXX")"
+  tmpdir="$(mktemp -d "$BUILD_SRC/fonts/.extract.XXXXXX")"
   if ! tar -xf "$font_archive" -C "$tmpdir" SymbolsNerdFontMono-Regular.ttf; then
     rm -rf "$tmpdir"
     return 1
@@ -127,7 +152,7 @@ prepare_dependency_bundle() {
   [[ "$expected" =~ ^[0-9a-fA-F]{64}$ ]] \
     || { echo "kilix: bundle mode requires KILIX_KITTY_DEPS_SHA256" >&2; return 2; }
   archive="$CACHE_DIR/kitty-dependencies-${expected,,}.tar.xz"
-  deps_root="$KILIX_HOME/src/dependencies/linux-amd64"
+  deps_root="$BUILD_SRC/dependencies/linux-amd64"
   stamp="$deps_root/.kilix-prepared-bundle"
   wanted="$deps_root"$'\t'"${expected,,}"
   fetch_verified "$url" "$archive" "$expected" "kitty dependency bundle"
@@ -136,8 +161,8 @@ prepare_dependency_bundle() {
     return 0
   fi
 
-  mkdir -p "$KILIX_HOME/src/dependencies"
-  tmp="$(mktemp -d "$KILIX_HOME/src/dependencies/.extract.XXXXXX")"
+  mkdir -p "$BUILD_SRC/dependencies"
+  tmp="$(mktemp -d "$BUILD_SRC/dependencies/.extract.XXXXXX")"
   # Reject lexical traversal before invoking tar. The verified upstream bundle
   # legitimately contains symlinks, so extraction otherwise follows upstream.
   if tar -tf "$archive" | awk '
@@ -205,19 +230,127 @@ case "$mode" in
       || { echo "kilix: dependency bundle variables require KILIX_BUILD_MODE=bundle" >&2; exit 2; } ;;
   bundle)
     [ -n "${KILIX_KITTY_DEPS_URL:-}" ] \
-      || { echo "kilix: bundle mode requires KILIX_KITTY_DEPS_URL" >&2; exit 2; }
-    prepare_dependency_bundle "$KILIX_KITTY_DEPS_URL" "${KILIX_KITTY_DEPS_SHA256:-}" ;;
+      || { echo "kilix: bundle mode requires KILIX_KITTY_DEPS_URL" >&2; exit 2; } ;;
   *) echo "kilix: invalid KILIX_BUILD_MODE=$mode (use system or bundle)" >&2; exit 2 ;;
 esac
+
+# Upstream kitty writes launchers, extensions, generated protocols and Go
+# objects beside its sources. Build a tracked-file snapshot outside the
+# checkout so ./src remains physically pristine after every build.
+src_head=""
+if git -C "$KILIX_HOME/src" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  src_head="$(git -C "$KILIX_HOME/src" rev-parse --verify HEAD)"
+  if [ -n "$(git -C "$KILIX_HOME/src" status --porcelain=v1 \
+      --untracked-files=all --ignore-submodules=none)" ]; then
+    echo "kilix: refusing to build from a modified ./src checkout" >&2
+    echo "kilix: commit/stash the kitty fork changes so source-id names exact bytes" >&2
+    exit 1
+  fi
+fi
+mkdir -p "$CACHE_DIR" "$STATE_DIR" "$KILIX_BUILD_DIRECTORY/generations"
+chmod 0700 "$CACHE_DIR" "$STATE_DIR" "$KILIX_BUILD_DIRECTORY" \
+  "$KILIX_BUILD_DIRECTORY/generations" 2>/dev/null || true
+stage="$(mktemp -d "$KILIX_BUILD_DIRECTORY/generations/build.XXXXXX")"
+cleanup_stage() {
+  [ -z "${stage:-}" ] || rm -rf "$stage"
+}
+trap cleanup_stage EXIT HUP INT TERM
+BUILD_SRC="$stage/src"
+mkdir -p "$BUILD_SRC"
+if [ -n "$src_head" ]; then
+  git -C "$KILIX_HOME/src" archive --format=tar "$src_head" \
+    | tar -C "$BUILD_SRC" -xf -
+else
+  # Packaging/test source trees need not contain Git metadata.
+  cp -a "$KILIX_HOME/src/." "$BUILD_SRC/"
+fi
+source_id="$src_head"
+if [ -z "$source_id" ]; then
+  source_id="tree-sha256:$(python3 - "$BUILD_SRC" <<'PY'
+import hashlib
+import os
+import stat
+import sys
+
+root = os.path.abspath(sys.argv[1])
+digest = hashlib.sha256()
+for parent, dirs, files in os.walk(root):
+    dirs.sort()
+    files.sort()
+    for name in files:
+        path = os.path.join(parent, name)
+        rel = os.path.relpath(path, root).encode("utf-8", "surrogateescape")
+        info = os.lstat(path)
+        digest.update(rel + b"\0" + oct(stat.S_IMODE(info.st_mode)).encode() + b"\0")
+        if stat.S_ISLNK(info.st_mode):
+            digest.update(os.readlink(path).encode("utf-8", "surrogateescape"))
+        else:
+            with open(path, "rb") as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(chunk)
+        digest.update(b"\0")
+print(digest.hexdigest())
+PY
+)"
+fi
+font_file="$BUILD_SRC/fonts/SymbolsNerdFontMono-Regular.ttf"
+
+promote_current() {
+  local old="$KILIX_BUILD_DIRECTORY/previous" old_target target link_tmp
+  if [ -L "$old" ]; then
+    old_target="$(readlink "$old")"
+    rm -f "$old"
+    case "$old_target" in
+      generations/build.*) rm -rf "${KILIX_BUILD_DIRECTORY:?}/$old_target" ;;
+    esac
+  else
+    rm -rf "$old"
+  fi
+  if [ -e "$KILIX_BUILD_DIRECTORY/current" ]; then
+    mv "$KILIX_BUILD_DIRECTORY/current" "$old"
+  fi
+  target="generations/${stage##*/}"
+  link_tmp="$KILIX_BUILD_DIRECTORY/.current.$$"
+  if ! ln -s "$target" "$link_tmp" \
+       || ! mv -Tf "$link_tmp" "$KILIX_BUILD_DIRECTORY/current"; then
+    rm -f "$link_tmp"
+    [ ! -e "$old" ] || mv "$old" "$KILIX_BUILD_DIRECTORY/current"
+    return 1
+  fi
+  stage=""
+}
+
+promote_prepared() {
+  local old_target target link_tmp
+  if [ -L "$KILIX_BUILD_DIRECTORY/prepared" ]; then
+    old_target="$(readlink "$KILIX_BUILD_DIRECTORY/prepared")"
+    rm -f "$KILIX_BUILD_DIRECTORY/prepared"
+    case "$old_target" in
+      generations/build.*) rm -rf "${KILIX_BUILD_DIRECTORY:?}/$old_target" ;;
+    esac
+  else
+    rm -rf "$KILIX_BUILD_DIRECTORY/prepared"
+  fi
+  target="generations/${stage##*/}"
+  link_tmp="$KILIX_BUILD_DIRECTORY/.prepared.$$"
+  ln -s "$target" "$link_tmp"
+  mv -Tf "$link_tmp" "$KILIX_BUILD_DIRECTORY/prepared"
+  stage=""
+}
+
+if [ "$mode" = bundle ]; then
+  prepare_dependency_bundle "$KILIX_KITTY_DEPS_URL" "${KILIX_KITTY_DEPS_SHA256:-}"
+fi
 prepare_font
 
 if [ "${KILIX_BUILD_PREPARE_ONLY:-0}" = 1 ]; then
-  echo "kilix: dependency preparation complete"
+  promote_prepared
+  echo "kilix: dependency preparation complete -> $KILIX_BUILD_DIRECTORY/prepared/src"
   exit 0
 fi
 
-cd "$KILIX_HOME/src"
-echo "kilix: building forked kitty in $KILIX_HOME/src ($mode dependencies, $GOMAXPROCS Go package job(s)) ..."
+cd "$BUILD_SRC"
+echo "kilix: building forked kitty in $BUILD_SRC ($mode dependencies, $GOMAXPROCS Go package job(s)) ..."
 if [ "$mode" = bundle ]; then
   ./dev.sh build "$@"
 else
@@ -228,9 +361,12 @@ else
   python3 setup.py build "$@"
 fi
 
-launcher="$KILIX_HOME/src/kitty/launcher/kitty"
+launcher="$BUILD_SRC/kitty/launcher/kitty"
 [ -x "$launcher" ] || { echo "kilix: build finished but $launcher is missing" >&2; exit 1; }
-head="$(git -C "$KILIX_HOME/src" rev-parse HEAD 2>/dev/null || true)"
+head="$src_head"
+printf '%s\n' "$source_id" >"$stage/source-id"
+promote_current
+launcher="$KILIX_BUILD_DIRECTORY/current/src/kitty/launcher/kitty"
 if [ -n "$head" ]; then
   mkdir -p "$STATE_DIR"
   stamp_tmp="$(mktemp "$STATE_DIR/fork-built-ref.tmp.XXXXXX")"
