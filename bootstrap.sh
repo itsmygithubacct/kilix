@@ -20,6 +20,7 @@ KILIX_PREBUILT_HOME="${KILIX_PREBUILT_HOME:-$KILIX_STORAGE_HOME/prebuilt/kitty.a
 KILIX_STATE_DIRECTORY="${KILIX_STATE_DIRECTORY:-$KILIX_STORAGE_HOME/state}"
 KILIX_SESSION_HOME="${KILIX_SESSION_HOME:-$KILIX_STORAGE_HOME/session}"
 APP="$KILIX_PREBUILT_HOME"
+APP_PARENT="$(dirname -- "$APP")"
 BIN="$APP/bin/kitty"
 SHA_STAMP="$APP/.kitty.txz.sha256"
 STATE_DIR="$KILIX_STATE_DIRECTORY"
@@ -97,8 +98,15 @@ fi
 if [ -z "$PINNED_SHA256" ]; then
   log "WARNING: checksum verification explicitly disabled for $url"
 fi
+if ! mkdir -p -- "$APP_PARENT"; then
+  log "cannot create prebuilt engine directory: $APP_PARENT"
+  exit 1
+fi
+if ! mkdir -p -- "$KILIX_SESSION_HOME"; then
+  log "cannot create bootstrap session directory: $KILIX_SESSION_HOME"
+  exit 1
+fi
 log "fetching kitty $latest ($KARCH)${have:+ — replacing $have}"
-mkdir -p "$KILIX_SESSION_HOME"
 chmod 0700 "$KILIX_SESSION_HOME" 2>/dev/null || true
 tmp="$(mktemp -d "$KILIX_SESSION_HOME/bootstrap.XXXXXX")"; trap 'rm -rf "$tmp"' EXIT
 curl -fL --retry 3 --max-time 300 -o "$tmp/kitty.txz" "$url"
