@@ -537,7 +537,7 @@ rationale is captured in the nearby source comments and regression tests.
 | Jump to page 1–10 | `Ctrl+Alt+1` … `Ctrl+Alt+0` |
 | Page chooser (Tilix sidebar) | `F12` |
 | Rename page | `F2` |
-| Fullscreen | `F11` |
+| Content-only fullscreen (hide page strip and pane chrome) | `F11` |
 | New OS window (same dir) | `Ctrl+Shift+N` |
 
 ## Taskbar identity & icon
