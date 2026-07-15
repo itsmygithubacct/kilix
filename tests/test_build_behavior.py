@@ -1,11 +1,14 @@
+import fcntl
 import hashlib
 import os
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -157,6 +160,91 @@ class BuildPreparationTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("support Linux x86_64 only", result.stderr)
 
+    def test_state_outside_storage_is_rejected_before_writes(self):
+        escaped = self.base / "escaped-state"
+        env = dict(self.env)
+        env["KILIX_STATE_DIRECTORY"] = str(escaped)
+        result = self.run_build(env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("strict descendant", result.stderr)
+        self.assertFalse(escaped.exists())
+
+        escaped_build = self.base / "escaped-build"
+        escaped_build.mkdir()
+        sentinel = escaped_build / "keep"
+        sentinel.write_text("keep\n")
+        env = dict(self.env)
+        env["KILIX_BUILD_DIRECTORY"] = str(escaped_build)
+        result = self.run_build(env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("strict descendants", result.stderr)
+        self.assertEqual(sentinel.read_text(), "keep\n")
+
+        build = self.base / "storage" / "build"
+        build.mkdir(parents=True)
+        outside = self.base / "outside-generations"
+        outside.mkdir()
+        generations = build / "generations"
+        generations.symlink_to(outside, target_is_directory=True)
+        result = self.run_build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unsafe generations directory", result.stderr)
+        self.assertEqual(list(outside.iterdir()), [])
+
+    def test_transaction_lock_serializes_and_inherited_fd_is_reentrant(self):
+        state = self.base / "storage" / "state"
+        state.mkdir(parents=True)
+        state.chmod(0o700)
+        lock_path = state / "build-update.lock"
+        lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        os.chmod(lock_path, 0o600)
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            blocked = subprocess.Popen(
+                [str(self.checkout / "build.sh")], cwd=self.checkout,
+                env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True,
+            )
+            time.sleep(0.2)
+            self.assertIsNone(blocked.poll(), "second build bypassed the lock")
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            _, blocked_stderr = blocked.communicate(timeout=20)
+            self.assertEqual(blocked.returncode, 0, blocked_stderr)
+
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            env = dict(self.env)
+            env["KILIX_TRANSACTION_LOCK_FD"] = str(lock_fd)
+            inherited = subprocess.run(
+                [str(self.checkout / "build.sh")], cwd=self.checkout,
+                env=env, pass_fds=(lock_fd,), capture_output=True, text=True,
+                timeout=20,
+            )
+            self.assertEqual(inherited.returncode, 0, inherited.stderr)
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
+
+    def test_inherited_transaction_fd_must_name_canonical_lock(self):
+        state = self.base / "storage" / "state"
+        state.mkdir(parents=True)
+        state.chmod(0o700)
+        canonical = state / "build-update.lock"
+        canonical.touch(mode=0o600)
+        canonical.chmod(0o600)
+        wrong = self.base / "wrong-lock"
+        wrong_fd = os.open(wrong, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            env = dict(self.env)
+            env["KILIX_TRANSACTION_LOCK_FD"] = str(wrong_fd)
+            result = subprocess.run(
+                [str(self.checkout / "build.sh")], cwd=self.checkout,
+                env=env, pass_fds=(wrong_fd,), capture_output=True, text=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("wrong file", result.stderr)
+        finally:
+            os.close(wrong_fd)
+
     def test_system_mode_uses_upstream_source_build_action(self):
         (self.src / "setup.py").write_text(
             "from pathlib import Path\n"
@@ -166,7 +254,10 @@ class BuildPreparationTests(unittest.TestCase):
             "p = Path('kitty/launcher/kitty')\n"
             "p.parent.mkdir(parents=True, exist_ok=True)\n"
             "p.write_text('#!/bin/sh\\nexit 0\\n')\n"
-            "p.chmod(0o755)\n")
+            "p.chmod(0o755)\n"
+            "k = p.with_name('kitten')\n"
+            "k.write_text('#!/bin/sh\\nexit 0\\n')\n"
+            "k.chmod(0o755)\n")
         env = dict(self.env)
         env["KILIX_BUILD_MODE"] = "system"
         env.pop("KILIX_BUILD_PREPARE_ONLY")
@@ -222,7 +313,10 @@ class BuildPreparationTests(unittest.TestCase):
             "p = Path('kitty/launcher/kitty')\n"
             "p.parent.mkdir(parents=True, exist_ok=True)\n"
             "p.write_text('#!/bin/sh\\nexit 0\\n')\n"
-            "p.chmod(0o755)\n")
+            "p.chmod(0o755)\n"
+            "k = p.with_name('kitten')\n"
+            "k.write_text('#!/bin/sh\\nexit 0\\n')\n"
+            "k.chmod(0o755)\n")
         head = self.init_src_git()
         env = dict(self.env)
         env["KILIX_BUILD_MODE"] = "system"
@@ -234,6 +328,95 @@ class BuildPreparationTests(unittest.TestCase):
         source_id = (self.base / "storage" / "build" / "current" /
                      "source-id").read_text().strip()
         self.assertEqual(source_id, head)
+        stamp = self.base / "storage" / "state" / "fork-built-ref"
+        self.assertEqual(
+            stamp.read_bytes(),
+            f"{self.checkout.resolve()}\t{head}\n".encode(),
+        )
+        info = stamp.stat()
+        self.assertEqual(stat.S_IMODE(info.st_mode), 0o600)
+        self.assertEqual(info.st_nlink, 1)
+
+    def test_missing_kitten_is_rejected_before_promotion(self):
+        (self.src / "setup.py").write_text(
+            "from pathlib import Path\n"
+            "p = Path('kitty/launcher/kitty')\n"
+            "p.parent.mkdir(parents=True, exist_ok=True)\n"
+            "p.write_text('#!/bin/sh\\nexit 0\\n')\n"
+            "p.chmod(0o755)\n")
+        env = dict(self.env)
+        env["KILIX_BUILD_MODE"] = "system"
+        env.pop("KILIX_BUILD_PREPARE_ONLY")
+        env.pop("KILIX_KITTY_DEPS_URL")
+        env.pop("KILIX_KITTY_DEPS_SHA256")
+        result = self.run_build(env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("launcher is missing or unsafe", result.stderr)
+        self.assertFalse(
+            (self.base / "storage" / "build" / "current").exists())
+
+    def test_stamp_publication_failure_restores_current_and_previous_exactly(self):
+        (self.src / "setup.py").write_text(
+            "from pathlib import Path\n"
+            "p = Path('kitty/launcher/kitty')\n"
+            "p.parent.mkdir(parents=True, exist_ok=True)\n"
+            "p.write_text('#!/bin/sh\\nexit 0\\n')\n"
+            "p.chmod(0o755)\n"
+            "k = p.with_name('kitten')\n"
+            "k.write_text('#!/bin/sh\\nexit 0\\n')\n"
+            "k.chmod(0o755)\n")
+        head = self.init_src_git()
+        build = self.base / "storage" / "build"
+        generations = build / "generations"
+        old_current = generations / "build.OldCurrent"
+        old_previous = generations / "build.OldPrevious"
+        old_current.mkdir(parents=True)
+        old_previous.mkdir()
+        (old_current / "marker").write_text("current\n")
+        (old_previous / "marker").write_text("previous\n")
+        current = build / "current"
+        previous = build / "previous"
+        current.symlink_to("generations/build.OldCurrent")
+        previous.symlink_to("generations/build.OldPrevious")
+        current_before = (current.lstat().st_dev, current.lstat().st_ino,
+                          os.readlink(current))
+        previous_before = (previous.lstat().st_dev, previous.lstat().st_ino,
+                           os.readlink(previous))
+        stamp = self.base / "storage" / "state" / "fork-built-ref"
+        stamp.parent.mkdir()
+        stamp.write_text(f"{self.checkout.resolve()}\t{head}\n")
+        stamp.chmod(0o600)
+        stamp_before = stamp.read_bytes(), stat.S_IMODE(stamp.stat().st_mode)
+
+        bindir = self.base / "fail-stamp-bin"
+        bindir.mkdir()
+        mv = bindir / "mv"
+        real_mv = shutil.which("mv")
+        mv.write_text(
+            "#!/bin/sh\n"
+            "case \"$*\" in *fork-built-ref*) exit 31;; esac\n"
+            f"exec {shlex.quote(real_mv)} \"$@\"\n")
+        mv.chmod(0o755)
+        env = dict(self.env)
+        env["KILIX_BUILD_MODE"] = "system"
+        env["PATH"] = str(bindir) + os.pathsep + env["PATH"]
+        env.pop("KILIX_BUILD_PREPARE_ONLY")
+        env.pop("KILIX_KITTY_DEPS_URL")
+        env.pop("KILIX_KITTY_DEPS_SHA256")
+        result = self.run_build(env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(
+            (current.lstat().st_dev, current.lstat().st_ino,
+             os.readlink(current)), current_before)
+        self.assertEqual(
+            (previous.lstat().st_dev, previous.lstat().st_ino,
+             os.readlink(previous)), previous_before)
+        self.assertEqual(
+            (stamp.read_bytes(), stat.S_IMODE(stamp.stat().st_mode)),
+            stamp_before)
+        self.assertEqual((old_current / "marker").read_text(), "current\n")
+        self.assertEqual((old_previous / "marker").read_text(), "previous\n")
+        self.assertEqual(list(build.glob(".previous.*")), [])
 
 
 if __name__ == "__main__":

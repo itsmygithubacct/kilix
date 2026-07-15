@@ -9,7 +9,7 @@
 set -euo pipefail
 umask 077
 
-KILIX_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+KILIX_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 GPU_TERMINAL_HOME="${GPU_TERMINAL_HOME:-$HOME/.local/gpu_terminal}"
 KILIX_STORAGE_HOME="${KILIX_STORAGE_HOME:-$GPU_TERMINAL_HOME/kilix}"
 KILIX_CONFIG_HOME="${KILIX_CONFIG_HOME:-$KILIX_STORAGE_HOME/config}"
@@ -21,19 +21,139 @@ KILIX_BUILD_ENV="${KILIX_BUILD_ENV:-$KILIX_CONFIG_HOME/build.env}"
 export GPU_TERMINAL_HOME KILIX_STORAGE_HOME KILIX_CONFIG_HOME KILIX_CACHE_HOME
 export KILIX_STATE_DIRECTORY KILIX_BUILD_DIRECTORY KILIX_SYSDEPS_HOME
 
-mkdir -p "$KILIX_CONFIG_HOME" "$(dirname "$KILIX_SYSDEPS_HOME")"
-chmod 0700 "$KILIX_STORAGE_HOME" "$KILIX_CONFIG_HOME" 2>/dev/null || true
+validate_private_storage_layout() {
+  local storage private home source
+  storage="$(realpath -m -- "$KILIX_STORAGE_HOME" 2>/dev/null)" || return 1
+  home="$(realpath -m -- "$HOME" 2>/dev/null)" || return 1
+  source="$(realpath -m -- "$KILIX_HOME" 2>/dev/null)" || return 1
+  if [ "$storage" = / ] || [ "$storage" = "$home" ] \
+       || [ "$storage" = "$source" ]; then
+    echo "kilix: refusing broad or source-tree storage root: $storage" >&2
+    return 1
+  fi
+  case "$storage" in "$source"/*)
+    echo "kilix: refusing storage inside the Kilix source checkout" >&2
+    return 1 ;;
+  esac
+  case "$source" in "$storage"/*)
+    echo "kilix: refusing storage that contains the Kilix source checkout" >&2
+    return 1 ;;
+  esac
+  for private in "$KILIX_CONFIG_HOME" "$KILIX_CACHE_HOME" \
+                 "$KILIX_STATE_DIRECTORY" "$KILIX_BUILD_DIRECTORY" \
+                 "$KILIX_SYSDEPS_HOME"; do
+    private="$(realpath -m -- "$private" 2>/dev/null)" || return 1
+    case "$private" in "$storage"/*) ;;
+      *) echo "kilix: writable roots must be strict descendants of Kilix storage: $private" >&2
+         return 1 ;;
+    esac
+  done
+}
+
+ensure_private_directory() {
+  local path="$1" label="$2" owner mode
+  if [ -e "$path" ] || [ -L "$path" ]; then
+    if [ ! -d "$path" ] || [ -L "$path" ]; then
+      echo "kilix: refusing unsafe $label directory: $path" >&2
+      return 1
+    fi
+  else
+    mkdir -p -- "$path" || return 1
+  fi
+  owner="$(stat -c '%u' -- "$path" 2>/dev/null)" || return 1
+  [ "$owner" = "$(id -u)" ] || {
+    echo "kilix: $label directory is not owned by the current user: $path" >&2
+    return 1
+  }
+  chmod 0700 -- "$path" || return 1
+  mode="$(stat -c '%a' -- "$path" 2>/dev/null)" || return 1
+  [ "$mode" = 700 ] || {
+    echo "kilix: $label directory is not mode 0700: $path" >&2
+    return 1
+  }
+}
+
 if [ -f "$KILIX_BUILD_ENV" ]; then
   # shellcheck disable=SC1091
   # shellcheck disable=SC1090
   . "$KILIX_BUILD_ENV"
 fi
+validate_private_storage_layout
+ensure_private_directory "$KILIX_STORAGE_HOME" storage
+ensure_private_directory "$KILIX_CONFIG_HOME" config
+ensure_private_directory "$KILIX_CACHE_HOME" cache
+ensure_private_directory "$KILIX_STATE_DIRECTORY" state
+ensure_private_directory "$KILIX_BUILD_DIRECTORY" build
+ensure_private_directory "$(dirname "$KILIX_SYSDEPS_HOME")" dependencies
+validate_private_storage_layout
 if [ -d "$KILIX_SYSDEPS_HOME/usr" ]; then
   _sysdeps_lib="$KILIX_SYSDEPS_HOME/usr/lib/x86_64-linux-gnu"
   export PATH="$KILIX_SYSDEPS_HOME/usr/bin:$PATH"
   export PKG_CONFIG_PATH="$_sysdeps_lib/pkgconfig:$KILIX_SYSDEPS_HOME/usr/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
   export LIBRARY_PATH="$_sysdeps_lib:$KILIX_SYSDEPS_HOME/usr/lib:${LIBRARY_PATH:-}"
 fi
+
+acquire_transaction_lock() {
+  local lock_root lock_path fd fd_path path_identity fd_identity lock_was_present=0
+  if ! command -v flock >/dev/null 2>&1; then
+    echo "kilix: flock not found; cannot serialize build/update" >&2
+    return 1
+  fi
+  ensure_private_directory "$KILIX_STATE_DIRECTORY" state || return 1
+  lock_root="$(cd "$KILIX_STATE_DIRECTORY" && pwd -P)" || return 1
+  lock_path="$lock_root/build-update.lock"
+  if [ -e "$lock_path" ] || [ -L "$lock_path" ]; then
+    lock_was_present=1
+    if [ ! -f "$lock_path" ] || [ -L "$lock_path" ] \
+         || [ "$(stat -c '%u:%a:%h' -- "$lock_path" 2>/dev/null)" \
+              != "$(id -u):600:1" ]; then
+      echo "kilix: refusing unsafe transaction lock: $lock_path" >&2
+      return 1
+    fi
+  fi
+  if [ -n "${KILIX_TRANSACTION_LOCK_FD:-}" ]; then
+    fd="$KILIX_TRANSACTION_LOCK_FD"
+    case "$fd" in ''|*[!0-9]*)
+      echo "kilix: invalid inherited KILIX_TRANSACTION_LOCK_FD" >&2
+      return 1 ;;
+    esac
+    fd_path="/proc/$$/fd/$fd"
+    [ -e "$fd_path" ] || {
+      echo "kilix: inherited transaction-lock FD is not open" >&2
+      return 1
+    }
+    [ "$lock_was_present" = 1 ] || {
+      echo "kilix: canonical transaction lock does not exist" >&2
+      return 1
+    }
+  else
+    exec {_kilix_transaction_lock_fd}>"$lock_path" || return 1
+    fd="$_kilix_transaction_lock_fd"
+    KILIX_TRANSACTION_LOCK_FD="$fd"
+    export KILIX_TRANSACTION_LOCK_FD
+    fd_path="/proc/$$/fd/$fd"
+  fi
+  [ "$lock_was_present" = 1 ] || chmod 0600 "$lock_path" 2>/dev/null || return 1
+  if [ ! -f "$lock_path" ] || [ -L "$lock_path" ] \
+       || [ "$(stat -c '%u:%a:%h' -- "$lock_path" 2>/dev/null)" \
+            != "$(id -u):600:1" ]; then
+    echo "kilix: transaction lock is not a private regular file" >&2
+    return 1
+  fi
+  path_identity="$(stat -c '%d:%i' -- "$lock_path" 2>/dev/null)" || return 1
+  fd_identity="$(stat -Lc '%d:%i' -- "$fd_path" 2>/dev/null)" || return 1
+  if [ "$fd_identity" != "$path_identity" ]; then
+    echo "kilix: inherited transaction-lock FD points to the wrong file" >&2
+    return 1
+  fi
+  flock -x "$fd" || return 1
+  KILIX_TRANSACTION_LOCK_PATH="$lock_path"
+  export KILIX_TRANSACTION_LOCK_PATH
+}
+
+acquire_transaction_lock
+command -v timeout >/dev/null 2>&1 \
+  || { echo "kilix: timeout not found; cannot verify built launchers" >&2; exit 1; }
 
 case "$(uname -s):$(uname -m)" in
   Linux:x86_64|Linux:amd64) ;;
@@ -278,14 +398,23 @@ if git -C "$KILIX_HOME/src" rev-parse --is-inside-work-tree >/dev/null 2>&1; the
     exit 1
   fi
 fi
-mkdir -p "$CACHE_DIR" "$STATE_DIR" "$KILIX_BUILD_DIRECTORY/generations"
-chmod 0700 "$CACHE_DIR" "$STATE_DIR" "$KILIX_BUILD_DIRECTORY" \
-  "$KILIX_BUILD_DIRECTORY/generations" 2>/dev/null || true
+ensure_private_directory "$CACHE_DIR" build-cache
+ensure_private_directory "$STATE_DIR" state
+ensure_private_directory "$KILIX_BUILD_DIRECTORY" build
+ensure_private_directory "$KILIX_BUILD_DIRECTORY/generations" generations
 stage="$(mktemp -d "$KILIX_BUILD_DIRECTORY/generations/build.XXXXXX")"
+stamp_tmp=""
 cleanup_stage() {
-  [ -z "${stage:-}" ] || rm -rf "$stage"
+  local rc=$?
+  trap - EXIT
+  [ -z "${stage:-}" ] || rm -rf -- "$stage"
+  [ -z "${stamp_tmp:-}" ] || rm -f -- "$stamp_tmp"
+  exit "$rc"
 }
-trap cleanup_stage EXIT HUP INT TERM
+trap cleanup_stage EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 BUILD_SRC="$stage/src"
 mkdir -p "$BUILD_SRC"
 if [ -n "$src_head" ]; then
@@ -326,46 +455,137 @@ PY
 fi
 font_file="$BUILD_SRC/fonts/SymbolsNerdFontMono-Regular.ttf"
 
-promote_current() {
-  local old="$KILIX_BUILD_DIRECTORY/previous" old_target target link_tmp
-  if [ -L "$old" ]; then
-    old_target="$(readlink "$old")"
-    rm -f "$old"
-    case "$old_target" in
-      generations/build.*) rm -rf "${KILIX_BUILD_DIRECTORY:?}/$old_target" ;;
-    esac
-  else
-    rm -rf "$old"
+generation_target_syntax_is_safe() {
+  local target="$1" suffix
+  case "$target" in generations/build.*) ;; *) return 1 ;; esac
+  suffix="${target#generations/build.}"
+  case "$suffix" in ''|*[!A-Za-z0-9]*) return 1 ;; esac
+}
+
+generation_target_is_referenced() {
+  local target="$1" ref
+  for ref in "$KILIX_BUILD_DIRECTORY/current" \
+             "$KILIX_BUILD_DIRECTORY/previous" \
+             "$KILIX_BUILD_DIRECTORY/prepared"; do
+    if [ -L "$ref" ] && [ "$(readlink -- "$ref" 2>/dev/null || true)" = "$target" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+retire_build_entry() {
+  local entry="$1" target candidate build_root candidate_root
+  if [ -L "$entry" ]; then
+    target="$(readlink -- "$entry")" || return 1
+    rm -f -- "$entry" || return 1
+    generation_target_syntax_is_safe "$target" || return 0
+    generation_target_is_referenced "$target" && return 0
+    candidate="$KILIX_BUILD_DIRECTORY/$target"
+    [ -d "$candidate" ] && [ ! -L "$candidate" ] || return 0
+    build_root="$(cd "$KILIX_BUILD_DIRECTORY" && pwd -P)" || return 1
+    candidate_root="$(cd "$candidate" && pwd -P)" || return 1
+    [ "$candidate_root" = "$build_root/$target" ] || return 0
+    rm -rf -- "$candidate" || return 1
+  elif [ -e "$entry" ]; then
+    rm -rf -- "$entry" || return 1
   fi
-  if [ -e "$KILIX_BUILD_DIRECTORY/current" ]; then
-    mv "$KILIX_BUILD_DIRECTORY/current" "$old"
+}
+
+promote_current() {
+  local current="$KILIX_BUILD_DIRECTORY/current"
+  local old="$KILIX_BUILD_DIRECTORY/previous"
+  local parked="$KILIX_BUILD_DIRECTORY/.previous.$$"
+  local target link_tmp promotion_ok=1 rollback_ok=1
+  local previous_parked=0 current_moved=0 new_installed=0
+  if [ -e "$parked" ] || [ -L "$parked" ]; then
+    echo "kilix: refusing stale previous-generation transaction: $parked" >&2
+    return 1
+  fi
+  # Do not let handled termination signals split the short generation+stamp
+  # commit. Failures below restore current explicitly; SIGKILL remains outside
+  # the guarantees of a shell transaction.
+  trap '' HUP INT TERM
+  if [ -e "$old" ] || [ -L "$old" ]; then
+    if mv -- "$old" "$parked"; then
+      previous_parked=1
+    else
+      promotion_ok=0
+    fi
+  fi
+  if [ "$promotion_ok" = 1 ] && { [ -e "$current" ] || [ -L "$current" ]; }; then
+    if mv -- "$current" "$old"; then
+      current_moved=1
+    else
+      promotion_ok=0
+    fi
   fi
   target="generations/${stage##*/}"
   link_tmp="$KILIX_BUILD_DIRECTORY/.current.$$"
-  if ! ln -s "$target" "$link_tmp" \
-       || ! mv -Tf "$link_tmp" "$KILIX_BUILD_DIRECTORY/current"; then
-    rm -f "$link_tmp"
-    [ ! -e "$old" ] || mv "$old" "$KILIX_BUILD_DIRECTORY/current"
-    return 1
+  if [ "$promotion_ok" = 1 ]; then
+    if ln -s -- "$target" "$link_tmp" \
+         && mv -Tf -- "$link_tmp" "$current"; then
+      new_installed=1
+    else
+      rm -f -- "$link_tmp" || rollback_ok=0
+      promotion_ok=0
+    fi
   fi
-  stage=""
+  if [ "$promotion_ok" = 1 ] && [ -n "$stamp_tmp" ]; then
+    if ! mv -Tf -- "$stamp_tmp" "$STATE_DIR/fork-built-ref"; then
+      promotion_ok=0
+    else
+      stamp_tmp=""
+    fi
+  fi
+  if [ "$promotion_ok" = 1 ] && [ -z "$head" ]; then
+    if [ -d "$STATE_DIR/fork-built-ref" ] \
+         && [ ! -L "$STATE_DIR/fork-built-ref" ]; then
+      promotion_ok=0
+    elif ! rm -f -- "$STATE_DIR/fork-built-ref"; then
+      promotion_ok=0
+    fi
+  fi
+  if [ "$promotion_ok" = 1 ]; then
+    stage=""
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    if [ "$previous_parked" = 1 ] \
+         && ! retire_build_entry "$parked"; then
+      echo "kilix: WARNING: committed build but old previous generation remains at $parked" >&2
+    fi
+    return 0
+  fi
+
+  if [ "$new_installed" = 1 ]; then
+    if ! rm -f -- "$current"; then
+      # Keep the generation alive if its live link could not be removed.
+      stage=""
+      rollback_ok=0
+    fi
+  fi
+  if [ "$current_moved" = 1 ] && ! mv -- "$old" "$current"; then
+    rollback_ok=0
+  fi
+  if [ "$previous_parked" = 1 ] && ! mv -- "$parked" "$old"; then
+    rollback_ok=0
+  fi
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  [ "$rollback_ok" = 1 ] \
+    || echo "kilix: promotion rollback was incomplete" >&2
+  return 1
 }
 
 promote_prepared() {
-  local old_target target link_tmp
-  if [ -L "$KILIX_BUILD_DIRECTORY/prepared" ]; then
-    old_target="$(readlink "$KILIX_BUILD_DIRECTORY/prepared")"
-    rm -f "$KILIX_BUILD_DIRECTORY/prepared"
-    case "$old_target" in
-      generations/build.*) rm -rf "${KILIX_BUILD_DIRECTORY:?}/$old_target" ;;
-    esac
-  else
-    rm -rf "$KILIX_BUILD_DIRECTORY/prepared"
-  fi
+  local target link_tmp
+  retire_build_entry "$KILIX_BUILD_DIRECTORY/prepared" || return 1
   target="generations/${stage##*/}"
   link_tmp="$KILIX_BUILD_DIRECTORY/.prepared.$$"
-  ln -s "$target" "$link_tmp"
-  mv -Tf "$link_tmp" "$KILIX_BUILD_DIRECTORY/prepared"
+  ln -s -- "$target" "$link_tmp"
+  mv -Tf -- "$link_tmp" "$KILIX_BUILD_DIRECTORY/prepared"
   stage=""
 }
 
@@ -398,16 +618,32 @@ else
   "$_python" setup.py build "$@"
 fi
 
+probe_launcher() {
+  timeout --kill-after=2 15 "$1" --version >/dev/null 2>&1
+}
+
 launcher="$BUILD_SRC/kitty/launcher/kitty"
-[ -x "$launcher" ] || { echo "kilix: build finished but $launcher is missing" >&2; exit 1; }
+kitten="$BUILD_SRC/kitty/launcher/kitten"
+for built_launcher in "$launcher" "$kitten"; do
+  if [ ! -f "$built_launcher" ] || [ -L "$built_launcher" ] \
+       || [ ! -x "$built_launcher" ]; then
+    echo "kilix: build finished but launcher is missing or unsafe: $built_launcher" >&2
+    exit 1
+  fi
+  if ! probe_launcher "$built_launcher"; then
+    echo "kilix: built launcher failed its version probe: $built_launcher" >&2
+    exit 1
+  fi
+done
 head="$src_head"
 printf '%s\n' "$source_id" >"$stage/source-id"
-promote_current
-launcher="$KILIX_BUILD_DIRECTORY/current/src/kitty/launcher/kitty"
 if [ -n "$head" ]; then
   mkdir -p "$STATE_DIR"
+  chmod 0700 "$STATE_DIR" 2>/dev/null || true
   stamp_tmp="$(mktemp "$STATE_DIR/fork-built-ref.tmp.XXXXXX")"
   printf '%s\t%s\n' "$KILIX_HOME" "$head" >"$stamp_tmp"
-  mv "$stamp_tmp" "$STATE_DIR/fork-built-ref"
+  chmod 0600 "$stamp_tmp"
 fi
+promote_current
+launcher="$KILIX_BUILD_DIRECTORY/current/src/kitty/launcher/kitty"
 echo "kilix: built -> $launcher"
