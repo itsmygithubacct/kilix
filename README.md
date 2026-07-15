@@ -374,6 +374,13 @@ Automatic installs require `KILIX95_REF` to be a full immutable commit SHA;
 mutable tags/branches require the explicit `KILIX95_ALLOW_MUTABLE_REF=1` trust
 override. `kilix update` similarly honors `KILIX_REF` by fetching it from the
 validated origin and checking out the resolved commit detached.
+Direct updates and fork builds serialize on the private
+`~/.local/gpu_terminal/kilix/state/build-update.lock`. An outer installer that
+already holds this lock must pass its open, locked descriptor to Kilix as
+`KILIX_TRANSACTION_LOCK_FD` (and preserve that descriptor across `exec`);
+Kilix validates that it names the canonical lock before treating it as
+reentrant. The resolved path is exported to children as
+`KILIX_TRANSACTION_LOCK_PATH`.
 
 ![kilix 95 — the desktop with the media player, file manager and Notepad open](config/kilix95_with_amp.png)
 
