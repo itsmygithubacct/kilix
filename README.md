@@ -25,9 +25,14 @@ complete tree. Freedesktop launchers/icons are the intentional exception:
 Version 0.1.2 standardizes source checkouts under `~/gpu_terminal`, keeps all
 writable state under `~/.local/gpu_terminal`, isolates bundled Kilix from the
 external Kilix-95 provider, makes browser/session data private, and records
-builds from exact committed kitty-fork sources. It retains the origin/ref-aware
-updates, pinned downloadable assets, versioned host SDK, and provider contract
-introduced in 0.1.1.
+builds from exact committed kitty-fork sources. Fork builds publish one
+canonical, contained generation and source stamp; direct Kilix, Pleb,
+Plebian-OS update, and first-boot paths share one private transaction lock.
+Failed updates restore the exact source, `current` and `previous` generation
+links, and stamp before safely collecting unreferenced generations; both
+`kitty` and `kitten` must pass bounded launcher probes before commit. It
+retains the origin/ref-aware updates, pinned downloadable assets, versioned
+host SDK, and provider contract introduced in 0.1.1.
 
 ## Features
 
