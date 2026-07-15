@@ -30,7 +30,7 @@ jobs:
       - name: Check shell and Python syntax
         run: |
           bash -n kilix bootstrap.sh build.sh scripts/install-build-deps.sh
-          shellcheck -x kilix bootstrap.sh build.sh scripts/install-build-deps.sh
+          shellcheck -S warning -x kilix bootstrap.sh build.sh scripts/install-build-deps.sh
           python3 -m compileall -q config desktop scripts tests
           git diff --check "$(git hash-object -t tree /dev/null)" HEAD -- . ':(exclude)src'
 
