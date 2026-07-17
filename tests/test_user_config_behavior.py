@@ -1,6 +1,7 @@
 import hashlib
 import os
 import shutil
+import stat
 import subprocess
 import tempfile
 import unittest
@@ -64,6 +65,12 @@ class UserConfigBehaviorTests(unittest.TestCase):
             self.assertTrue((storage / "config" / "kilix.env").exists())
             defaults = storage / "config" / ".kilix-defaults.conf"
             self.assertEqual(defaults.resolve(), tracked)
+            password = storage / "session" / "rc-password"
+            rc_config = storage / "session" / "rc-password.conf"
+            self.assertEqual(stat.S_IMODE(password.stat().st_mode), 0o600)
+            self.assertEqual(stat.S_IMODE(rc_config.stat().st_mode), 0o600)
+            self.assertRegex(password.read_text().strip(), r"^[0-9a-f]{64}$")
+            self.assertNotIn(password.read_text().strip(), user.read_text())
         self.assertEqual(digest(tracked), before)
 
     def test_managed_links_follow_a_moved_checkout(self):

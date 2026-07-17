@@ -327,9 +327,12 @@ app exits it and drops you back to the shell underneath. `run` opens in a
 **new tab** (titled after the app), so the launching shell stays visible in
 its own tab and closing the app's tab exits the app. Either way the shell
 session is never taken over. This uses kitty remote control, which kilix's
-config enables (`allow_remote_control yes` + a per-instance `listen_on`
-socket); override those two settings in your XDG `kilix/kitty.conf` and the app runs
-in-place in the current pane instead.
+config enables in password-policy mode with a per-instance `listen_on` socket.
+The bundled policy permits only reload, font-size, and self-fullscreen without
+a password. Launch/list/focus/watch use a private, locally generated credential;
+uncredentialed launch/read/send/close requests remain denied. Override those
+settings in your XDG `kilix/kitty.conf` and the app runs in-place in the current
+pane instead.
 
 ## Screensaver
 
@@ -553,6 +556,7 @@ rationale is captured in the nearby source comments and regression tests.
 | Page chooser (Tilix sidebar) | `F12` |
 | Rename page | `F2` |
 | Content-only fullscreen (hide page strip and pane chrome) | `F11` |
+| Toggle this tab's OS window fullscreen from a shell | `kilix fullscreen` |
 | New OS window (same dir) | `Ctrl+Shift+N` |
 
 ## Taskbar identity & icon

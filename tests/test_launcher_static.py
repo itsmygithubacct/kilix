@@ -31,9 +31,9 @@ class KilixLauncherTests(unittest.TestCase):
     def test_ls_lists_live_tabs_via_kitty_remote_control(self):
         launcher = (ROOT / "kilix").read_text()
         remote = (ROOT / "config" / "remote.py").read_text()
-        self.assertIn("ls|focus|watch)", launcher)
+        self.assertIn("ls|focus|watch|fullscreen)", launcher)
         self.assertIn('KILIX_KITTEN="$KITTEN" exec python3 "$KILIX_HOME/config/remote.py"', launcher)
-        self.assertIn('run_kitten(["ls"])', remote)
+        self.assertIn('run_kitten(["ls"], authenticated=True)', remote)
         self.assertIn('"--panes"', remote)
         self.assertIn('"TAB_ID"', remote)
         self.assertIn('"PANE_ID"', remote)
@@ -136,6 +136,8 @@ class KilixLauncherTests(unittest.TestCase):
         window = (ROOT / "src" / "kitty" / "window.py").read_text()
         tabbar = (ROOT / "src" / "kitty" / "tab_bar.py").read_text()
         pyi = (ROOT / "src" / "kitty" / "fast_data_types.pyi").read_text()
+        fork_glfw_tests = (ROOT / "src" / "kitty_tests" / "glfw.py").read_text()
+        fork_window_tests = (ROOT / "src" / "kitty_tests" / "window.py").read_text()
 
         self.assertIn("!is_os_window_fullscreen(os_window) && !OPT(tab_bar_hidden)", state)
         self.assertIn("is_os_window_fullscreen(os_window) || os_window->num_tabs == 0", state)
@@ -144,6 +146,9 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("not is_os_window_fullscreen(self.os_window_id)", window)
         self.assertIn("def is_os_window_fullscreen(os_window_id: int) -> bool", pyi)
         self.assertIn("set_tab_bar_render_data(self.os_window_id, self.screen, 0, 0, 0, 0)", tabbar)
+        self.assertIn("test_fullscreen_state_change_relayouts_without_resize", fork_glfw_tests)
+        self.assertIn("test_remote_fullscreen_exit_is_not_an_error", fork_glfw_tests)
+        self.assertIn("test_title_bar_visibility_restores_after_fullscreen", fork_window_tests)
 
     def test_clickable_chrome_font_size_buttons_are_local(self):
         titlebar = (ROOT / "src" / "kitty" / "window_title_bar.py").read_text()
@@ -227,7 +232,8 @@ class KilixLauncherTests(unittest.TestCase):
         remote = (ROOT / "config" / "remote.py").read_text()
         shell = (ROOT / "desktop" / "shell.py").read_text()
         self.assertIn('if [ "${1:-}" = "mux" ]; then', launcher)
-        self.assertIn('"$KITTEN" @ launch --type=tab', launcher)
+        self.assertIn('@ --password-file "$KILIX_RC_PASSWORD_FILE"', launcher)
+        self.assertIn('launch --type=tab --cwd=current --self', launcher)
         self.assertIn('a|attach)', launcher)
         self.assertIn('-- "$_self" serve "$_mux_name"', launcher)
         self.assertIn('exec "$_self" serve "$_mux_name"', launcher)
@@ -235,10 +241,30 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn('"focus-tab"', remote)
         self.assertIn('"focus-window"', remote)
         self.assertIn('"get-text"', remote)
+        self.assertIn('def cmd_fullscreen', remote)
+        self.assertIn('"resize-os-window", "--self", "--action", "toggle-fullscreen"', remote)
         self.assertIn('"--interval"', remote)
         self.assertIn("refusing to watch the current pane", remote)
         self.assertIn('"Mux Terminal"', shell)
         self.assertIn('def open_mux_terminal', shell)
+
+    def test_remote_control_is_policy_restricted(self):
+        conf = (ROOT / "config" / "kitty.conf").read_text()
+        policy = (ROOT / "config" / "kilix_rc_auth.py").read_text()
+        remote = (ROOT / "config" / "remote.py").read_text()
+        settings = (ROOT / "desktop" / "apps" / "settings.py").read_text()
+        self.assertIn("allow_remote_control           password", conf)
+        self.assertIn('remote_control_password        "" kilix_rc_auth.py', conf)
+        self.assertIn('payload.get("self") is True', policy)
+        self.assertIn('payload.get("action") == "toggle-fullscreen"', policy)
+        self.assertIn("not from_socket", policy)
+        self.assertIn("via_tty=True", remote)
+        self.assertIn("_kilix_init_rc_password", (ROOT / "kilix").read_text())
+        self.assertIn('"%s" launch ls focus-window focus-tab get-text',
+                      (ROOT / "kilix").read_text())
+        self.assertNotIn('command == "launch"', policy)
+        self.assertNotIn('command == "get-text"', policy)
+        self.assertIn('["password", "no", "yes"]', settings)
 
     def test_external_kilix95_clone_uses_array(self):
         text = (ROOT / "kilix").read_text()
