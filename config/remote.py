@@ -13,6 +13,7 @@ from typing import Any
 
 
 KITTEN = os.environ.get("KILIX_KITTEN", "kitten")
+RC_PASSWORD_FILE = os.environ.get("KILIX_RC_PASSWORD_FILE", "")
 
 
 def fail(command: str, message: str, code: int = 1) -> int:
@@ -20,10 +21,20 @@ def fail(command: str, message: str, code: int = 1) -> int:
     return code
 
 
-def run_kitten(args: list[str]) -> subprocess.CompletedProcess[str]:
+def run_kitten(
+    args: list[str], *, authenticated: bool = False, via_tty: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    command = [KITTEN, "@"]
+    if authenticated and RC_PASSWORD_FILE:
+        command.extend(["--password-file", RC_PASSWORD_FILE])
+    env = None
+    if via_tty:
+        env = os.environ.copy()
+        env.pop("KITTY_LISTEN_ON", None)
     return subprocess.run(
-        [KITTEN, "@", *args],
+        [*command, *args],
         check=False,
+        env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -31,7 +42,7 @@ def run_kitten(args: list[str]) -> subprocess.CompletedProcess[str]:
 
 
 def load_state(command: str) -> list[dict[str, Any]]:
-    proc = run_kitten(["ls"])
+    proc = run_kitten(["ls"], authenticated=True)
     if proc.returncode != 0:
         detail = proc.stderr.strip() or f"kitten exited {proc.returncode}"
         raise RuntimeError(f"could not query live kilix tabs via KITTY_LISTEN_ON={os.environ.get('KITTY_LISTEN_ON', '')}: {detail}")
@@ -248,9 +259,13 @@ def cmd_focus(argv: list[str]) -> int:
     except RuntimeError as exc:
         return fail("focus", str(exc))
     if kind == "tab":
-        proc = run_kitten(["focus-tab", "--match", f"id:{target_id}"])
+        proc = run_kitten(
+            ["focus-tab", "--match", f"id:{target_id}"], authenticated=True,
+        )
     else:
-        proc = run_kitten(["focus-window", "--match", f"id:{target_id}"])
+        proc = run_kitten(
+            ["focus-window", "--match", f"id:{target_id}"], authenticated=True,
+        )
     if proc.returncode != 0:
         return fail("focus", proc.stderr.strip() or f"kitten exited {proc.returncode}")
     print(f"kilix focus: focused {kind} {target_id}")
@@ -282,7 +297,7 @@ def cmd_watch(argv: list[str]) -> int:
         base_args.extend(["--ansi", "--add-cursor"])
     try:
         while True:
-            proc = run_kitten(base_args)
+            proc = run_kitten(base_args, authenticated=True)
             if proc.returncode != 0:
                 return fail("watch", proc.stderr.strip() or f"kitten exited {proc.returncode}")
             if not ns.once:
@@ -298,6 +313,23 @@ def cmd_watch(argv: list[str]) -> int:
         return 130
 
 
+def cmd_fullscreen(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="kilix fullscreen",
+        description="Toggle content-only fullscreen for this tab's OS window",
+    )
+    parser.parse_args(argv)
+    proc = run_kitten([
+        "resize-os-window", "--self", "--action", "toggle-fullscreen",
+    ], via_tty=True)
+    if proc.returncode != 0:
+        return fail(
+            "fullscreen",
+            proc.stderr.strip() or f"kitten exited {proc.returncode}",
+        )
+    return 0
+
+
 def main(argv: list[str]) -> int:
     if not argv:
         return fail("", "missing command", 2)
@@ -308,6 +340,8 @@ def main(argv: list[str]) -> int:
         return cmd_focus(rest)
     if command == "watch":
         return cmd_watch(rest)
+    if command == "fullscreen":
+        return cmd_fullscreen(rest)
     return fail(command, "unknown remote-control command", 2)
 
 

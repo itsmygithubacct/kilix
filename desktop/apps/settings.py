@@ -79,7 +79,8 @@ SETTING_PAGES = [
           "mouse_map right press ungrabbed show_context_menu"),
         L("middle_paste_selection", "Middle paste selection", "yes",
           "mouse_map middle release ungrabbed paste_from_selection"),
-        K("allow_remote_control", "Remote control", "bool", "yes"),
+        K("allow_remote_control", "Remote control", "choice", "password",
+          ["password", "no", "yes"]),
         K("listen_on", "Remote socket", default="unix:@kilix-{kitty_pid}"),
     ]),
     ("Chrome", [

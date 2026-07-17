@@ -518,6 +518,14 @@ class Shell:
                 return cand
         return None
 
+    def _kitten_remote(self, kitten, command):
+        argv = [kitten, "@"]
+        password_file = os.environ.get("KILIX_RC_PASSWORD_FILE")
+        if password_file:
+            argv.extend(["--password-file", password_file])
+        argv.append(command)
+        return argv
+
     def _spawn_kitty_launch(self, opts, cmd, title, cwd=None,
                             pause_on_error=True):
         """Run shell command `cmd` in a new kilix tab/window."""
@@ -532,7 +540,8 @@ class Shell:
             script = (f'{cmd}; rc=$?; [ $rc -ne 0 ] && '
                       f'{{ echo; echo "[exit $rc -- Enter to close]"; '
                       f'read -r _; }}; exit $rc')
-        argv = [kitten, "@", "launch", *opts, "--tab-title", title,
+        argv = [*self._kitten_remote(kitten, "launch"), *opts,
+                "--self", "--tab-title", title,
                 "--cwd", cwd or os.path.expanduser("~"), "--",
                 "bash", "-lc", script]
         return self._popen(argv)
@@ -543,7 +552,8 @@ class Shell:
             wm.msgbox(self.desk, "kilix", "Cannot reach kilix remote control\n"
                       "(KITTY_LISTEN_ON is not set).", icon="error")
             return False
-        return self._popen([kitten, "@", "launch", "--type=tab", "--tab-title",
+        return self._popen([*self._kitten_remote(kitten, "launch"),
+                            "--type=tab", "--self", "--tab-title",
                             title, "--cwd", cwd or os.path.expanduser("~"), "--"]
                            + argv)
 
@@ -565,7 +575,8 @@ class Shell:
             wm.msgbox(self.desk, "kilix", "Cannot reach kilix remote control\n"
                       "(KITTY_LISTEN_ON is not set).", icon="error")
             return False
-        return self._popen([kitten, "@", "launch", "--type=tab", "--tab-title",
+        return self._popen([*self._kitten_remote(kitten, "launch"),
+                            "--type=tab", "--self", "--tab-title",
                             "Terminal", "--cwd", cwd or os.path.expanduser("~")])
 
     def open_mux_terminal(self, session="main", cwd=None):

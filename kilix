@@ -12,6 +12,7 @@
 #   ./kilix ls [--panes]      # list live kilix pages/tabs or panes in this instance
 #   ./kilix focus <id>        # focus a live tab/pane by ID
 #   ./kilix watch <pane-id>   # best-effort read-only text watch of a live pane
+#   ./kilix fullscreen        # toggle this tab's OS window fullscreen
 #   ./kilix mux [name]        # open a tmux-backed kilix tab for real attach/view
 #   ./kilix screen-size ...   # show/increase/decrease/reset terminal scale
 #   ./kilix status            # show version, engine, config, and provider
@@ -172,10 +173,51 @@ _kilix_init_user_config() {
 
   # Refresh managed symlinks on every launch so moving/reinstalling the checkout
   # does not strand the XDG configuration at an obsolete absolute path.
-  for _icon in kitty.app.png kitty.app-128.png kilix-512.png; do
-    _kilix_refresh_managed_link "$KILIX_USER_CONFIG_DIRECTORY/$_icon" \
-      "$KILIX_DEFAULT_CONFIG_DIRECTORY/$_icon" 2>/dev/null || true
+  for _asset in kitty.app.png kitty.app-128.png kilix-512.png kilix_rc_auth.py; do
+    _kilix_refresh_managed_link "$KILIX_USER_CONFIG_DIRECTORY/$_asset" \
+      "$KILIX_DEFAULT_CONFIG_DIRECTORY/$_asset" 2>/dev/null || true
   done
+}
+
+_kilix_init_rc_password() {
+  local password_file="$KILIX_SESSION_HOME/rc-password"
+  local config_file="$KILIX_SESSION_HOME/rc-password.conf"
+  local tmp password metadata
+  if [ ! -e "$password_file" ] && [ ! -L "$password_file" ]; then
+    tmp="$(mktemp "$KILIX_SESSION_HOME/.rc-password.XXXXXX")" || return 1
+    password="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
+    if [[ ! "$password" =~ ^[0-9a-f]{64}$ ]]; then
+      rm -f -- "$tmp"
+      echo "kilix: could not generate a remote-control password" >&2
+      return 1
+    fi
+    printf '%s\n' "$password" >"$tmp"
+    chmod 0600 "$tmp" || { rm -f -- "$tmp"; return 1; }
+    ln "$tmp" "$password_file" 2>/dev/null || true
+    rm -f -- "$tmp"
+  fi
+  if [ ! -f "$password_file" ] || [ -L "$password_file" ]; then
+    echo "kilix: refusing unsafe remote-control password file" >&2
+    return 1
+  fi
+  metadata="$(stat -c '%u:%a:%h' -- "$password_file" 2>/dev/null)" || return 1
+  if [ "$metadata" != "$(id -u):600:1" ]; then
+    echo "kilix: remote-control password file must be private" >&2
+    return 1
+  fi
+  password="$(tr -d '\n' <"$password_file")"
+  if [[ ! "$password" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "kilix: remote-control password file is invalid" >&2
+    return 1
+  fi
+  tmp="$(mktemp "$KILIX_SESSION_HOME/.rc-config.XXXXXX")" || return 1
+  printf 'remote_control_password "%s" launch ls focus-window focus-tab get-text\n' \
+    "$password" >"$tmp"
+  chmod 0600 "$tmp" || { rm -f -- "$tmp"; return 1; }
+  mv -f -- "$tmp" "$config_file"
+  KILIX_RC_PASSWORD_FILE="$password_file"
+  KILIX_RC_CONFIG_FILE="$config_file"
+  export KILIX_RC_PASSWORD_FILE KILIX_RC_CONFIG_FILE
 }
 
 if [ -n "${KILIX_CONFIG_DIRECTORY:-}" ]; then
@@ -184,6 +226,7 @@ else
   _kilix_init_user_config
   export KITTY_CONFIG_DIRECTORY="$KILIX_USER_CONFIG_DIRECTORY"
 fi
+_kilix_init_rc_password || exit 1
 export KILIX_ENV_CONFIG="${KILIX_ENV_CONFIG:-$KITTY_CONFIG_DIRECTORY/kilix.env}"
 
 declare -A _KILIX_ENV_SEEN=()
@@ -1001,7 +1044,7 @@ _kilix_screen_size_cmd() {
 }
 
 case "${1:-}" in
-  ls|focus|watch)
+  ls|focus|watch|fullscreen)
     _remote_cmd="$1"; shift
     _kilix_remote_control "$_remote_cmd" "$@" ;;
   screen-size|font-size)
@@ -1134,7 +1177,8 @@ if [ "${1:-}" = "browse" ]; then
     # exits and the shell returns to its prompt (hidden under the overlay
     # until it is closed). The overlay re-enters this launcher with
     # KILIX_IN_OVERLAY=1, taking the in-place branch below.
-    exec "$KITTEN" @ launch --type=overlay --cwd=current \
+    exec "$KITTEN" @ --password-file "$KILIX_RC_PASSWORD_FILE" \
+      launch --type=overlay --cwd=current --self \
       --env KILIX_IN_OVERLAY=1 --env "KILIX_STREAM=${KILIX_STREAM:-}" \
       -- "$_self" browse "$@"
   fi
@@ -1175,7 +1219,8 @@ if [ "${1:-}" = "run" ]; then
     done
     # KILIX_IN_OVERLAY doubles as the generic "already relaunched into our
     # own kitty window" guard, whatever the window type.
-    exec "$KITTEN" @ launch --type=tab --cwd=current --tab-title "$_app" \
+    exec "$KITTEN" @ --password-file "$KILIX_RC_PASSWORD_FILE" \
+      launch --type=tab --cwd=current --self --tab-title "$_app" \
       --env KILIX_IN_OVERLAY=1 --env "KILIX_STREAM=${KILIX_STREAM:-}" \
       -- "$_self" run "$@"
   fi
@@ -1201,7 +1246,7 @@ if [ "${1:-}" = "desktop" ]; then
     # python child, so ask @ ls and check foreground_processes) and focus it.
     _dwid=""
     if [ "$_KILIX_DESKTOP_MODE" = python ]; then
-      _dwid="$(KILIX_DESKTOP_MAIN="$_KILIX_DESKTOP_MAIN" "$KITTEN" @ ls 2>/dev/null | python3 -c 'import json,os,sys
+      _dwid="$(KILIX_DESKTOP_MAIN="$_KILIX_DESKTOP_MAIN" "$KITTEN" @ --password-file "$KILIX_RC_PASSWORD_FILE" ls 2>/dev/null | python3 -c 'import json,os,sys
 try: d=json.load(sys.stdin)
 except Exception: sys.exit(0)
 targets={os.environ.get("KILIX_DESKTOP_MAIN","")}
@@ -1212,10 +1257,11 @@ ids=[w["id"] for o in d for t in o.get("tabs",[]) for w in t.get("windows",[]) i
 print(ids[0] if ids else "")' 2>/dev/null)"
     fi
     if [ -n "$_dwid" ]; then
-      "$KITTEN" @ focus-window --match "id:$_dwid" >/dev/null 2>&1
+      "$KITTEN" @ --password-file "$KILIX_RC_PASSWORD_FILE" focus-window --match "id:$_dwid" >/dev/null 2>&1
       exit 0
     fi
-    exec "$KITTEN" @ launch --type=tab --cwd=current --tab-title "${KILIX_DESKTOP_NAME:-desktop}" \
+    exec "$KITTEN" @ --password-file "$KILIX_RC_PASSWORD_FILE" \
+      launch --type=tab --cwd=current --self --tab-title "${KILIX_DESKTOP_NAME:-desktop}" \
       --env KILIX_IN_OVERLAY=1 --env "KILIX_STREAM=${KILIX_STREAM:-}" \
       --env "GPU_TERMINAL_SOURCE_HOME=$GPU_TERMINAL_SOURCE_HOME" \
       --env "GPU_TERMINAL_HOME=$GPU_TERMINAL_HOME" \
@@ -1296,7 +1342,8 @@ if [ "${1:-}" = "mux" ]; then
   _mux_name="${1:-main}"
   if [ -z "${KILIX_IN_OVERLAY:-}" ] && [ -n "${KITTY_WINDOW_ID:-}" ] \
        && [ -n "${KITTY_LISTEN_ON:-}" ] && [ -x "$KITTEN" ]; then
-    exec "$KITTEN" @ launch --type=tab --cwd=current --tab-title "mux:$_mux_name" \
+    exec "$KITTEN" @ --password-file "$KILIX_RC_PASSWORD_FILE" \
+      launch --type=tab --cwd=current --self --tab-title "mux:$_mux_name" \
       --env KILIX_IN_OVERLAY=1 --env KILIX_STREAM=1 -- "$_self" serve "$_mux_name"
   fi
   exec "$_self" serve "$_mux_name"
@@ -1313,7 +1360,8 @@ if [ "${1:-}" = "screensaver" ]; then
   # it can be dismissed with a click and reveals the shell underneath.
   if [ -z "${KILIX_IN_OVERLAY:-}" ] && [ -n "${KITTY_WINDOW_ID:-}" ] \
        && [ -n "${KITTY_LISTEN_ON:-}" ] && [ -x "$KITTEN" ]; then
-    exec "$KITTEN" @ launch --type=overlay --cwd=current \
+    exec "$KITTEN" @ --password-file "$KILIX_RC_PASSWORD_FILE" \
+      launch --type=overlay --cwd=current --self \
       --env KILIX_IN_OVERLAY=1 -- "$_self" screensaver "$@"
   fi
   _ss="${1:-matrix}"; [ $# -gt 0 ] && shift
@@ -1427,4 +1475,7 @@ fi
 
 # --class kilix: own WM_CLASS/app_id so kilix groups separately from kitty
 # in the taskbar and picks up the kilix icon via kilix.desktop.
-exec "$BIN" --class kilix "${KILIX_SHELL[@]}" "$@"
+exec "$BIN" --class kilix \
+  --config "$KITTY_CONFIG_DIRECTORY/kitty.conf" \
+  --config "$KILIX_RC_CONFIG_FILE" \
+  "${KILIX_SHELL[@]}" "$@"
