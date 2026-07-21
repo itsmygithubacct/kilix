@@ -32,8 +32,10 @@ picture on the GPU as before. Efficient/tiled: consecutive frames are
 diffed into a changed row band and only that rectangle is retransmitted,
 composed onto the displayed image via the kitty animation protocol
 (a=f frame edits) — locally through private Kilix session files and inline (t=d) when
-streamed; full frames are sent only at start, after resizes, and when
-most of the frame changed.
+streamed. Once a same-sized base image exists, even full-height damage uses an
+in-place edit: retransmitting the placement during browser scrolling can expose
+the terminal background for a frame. Full placements establish the base at
+startup/resize and periodically refresh streamed sessions for late attachers.
 
 Known limits (prototype): apps that grab the pointer (e.g. DOSBox
 autolock) see relative motion, so the app cursor and the pane cursor can
@@ -780,23 +782,23 @@ class AppPane:
         diff_band and an in-place base image of the current size, only the
         changed row band is transmitted and composed onto the displayed image
         (kitty a=f frame edit); otherwise the full frame is (re)placed (a=T).
-        A band covering most of the frame falls back to a full placement —
-        the terminal-side compose costs a full-frame re-upload regardless, so
-        past that point the plain path is strictly cheaper."""
+        Large same-sized bands deliberately remain frame edits. A full a=T
+        replacement can briefly remove the old placement before the new image
+        is ready, which shows up as black flashes during browser scrolling."""
         w, h = self.app_w, self.app_h
         now = time.time()
         in_tmux = bool(os.environ.get("TMUX"))
-        # Band edits only when the displayed base image matches, the damage is
-        # small enough to be worth it, AND a full placement went out recently.
-        # The periodic full re-place (and the all-full warmup window) is what
-        # recovers silently-dropped placements (q=2 hides errors) and gives
-        # late tmux attachers of a streamed session a base image to edit —
-        # kitty drops a=f edits for images a client never received.
+        # Band edits require a same-sized displayed base. Local sessions keep
+        # that base for their entire lifetime: replacing it on large damage or
+        # an elapsed timer makes scrolling flash the terminal background. Only
+        # streamed sessions retain the periodic/all-full warmup refresh needed
+        # to give late tmux attachers a base image to edit; kitty drops a=f
+        # edits for images a client never received.
         if band is not None and (
                 getattr(self, "_base_wh", None) != (w, h)
-                or band[1] > int(h * 0.65)
-                or now - self._place_t > 5
-                or now - getattr(self, "_loop_start", 0) < 4):
+                or (self.stream and (
+                    now - self._place_t > 5
+                    or now - getattr(self, "_loop_start", 0) < 4))):
             band = None
         wire = 0
         if band is not None:

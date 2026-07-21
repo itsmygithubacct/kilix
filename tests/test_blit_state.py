@@ -1,9 +1,9 @@
 """Blit state machines: band-vs-full decisions in AppPane.blit and Desk.blit.
 
 These pin the invariants the escape builders can't see on their own:
-- the 65%-of-height threshold flips band edits to full placements
+- full-height local damage remains an in-place edit (scrolling must not flash)
 - a stale base image (size mismatch after a resize) forces a full placement
-- the periodic full re-place fires even while frames keep changing
+- streamed sessions retain their warmup and periodic full base refreshes
 - the desktops' fb/img (_blit_base) machine re-arms after img= blits and
   force_full keepalives actually transmit
 """
@@ -84,13 +84,40 @@ class AppPaneBlitStateTests(unittest.TestCase):
         self.assertIn("a=f", esc)
         self.assertNotIn("a=T", esc)
 
-    def test_band_above_65pct_goes_full(self):
-        p = make_apppane(stream=True)
-        p.blit(self._frame(p, 0))
-        p.term.writes.clear()
-        big = int(p.app_h * 0.65) + 1
-        p.blit(self._frame(p, 2), band=(0, big))
-        self.assertIn("a=T", p.term.escapes())
+    def test_full_height_local_band_stays_in_place(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+                os.environ, {"KILIX_SESSION_HOME": tmp}):
+            p = make_apppane(stream=False)
+            p.blit(self._frame(p, 0))
+            p.term.writes.clear()
+            p.blit(self._frame(p, 2), band=(0, p.app_h))
+            esc = p.term.escapes()
+            self.assertIn("a=f", esc)
+            self.assertNotIn("a=T", esc)
+
+    def test_local_band_does_not_periodically_replace_base(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+                os.environ, {"KILIX_SESSION_HOME": tmp}):
+            p = make_apppane(stream=False)
+            p.blit(self._frame(p, 0))
+            p._place_t = time.time() - 6
+            p.term.writes.clear()
+            p.blit(self._frame(p, 1), band=(5, 2))
+            esc = p.term.escapes()
+            self.assertIn("a=f", esc)
+            self.assertNotIn("a=T", esc)
+
+    def test_local_warmup_band_stays_in_place(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+                os.environ, {"KILIX_SESSION_HOME": tmp}):
+            p = make_apppane(stream=False)
+            p.blit(self._frame(p, 0))
+            p._loop_start = time.time()
+            p.term.writes.clear()
+            p.blit(self._frame(p, 1), band=(5, 2))
+            esc = p.term.escapes()
+            self.assertIn("a=f", esc)
+            self.assertNotIn("a=T", esc)
 
     def test_stale_base_size_forces_full(self):
         p = make_apppane(stream=True)
