@@ -58,6 +58,28 @@ assert feed(b"\x1b[<0;0;0M")[0]["y"] == 0                    # was -1
 m = feed(b"\x1b[<64;512;300M")[0]
 assert (m["x"], m["y"]) == (512, 300), m                     # was (511, 299)
 
+# A live high-rate motion capture contained one frame whose leading ESC was
+# absent. It used to become a paste event, so xinject typed ``[<35;...M`` into
+# the hosted X11 application's focused text field.
+captured = (b"\x1b[<35;789;377M[<35;788;373M"
+            b"\x1b[<35;787;370M")
+evs = feed(captured)
+assert len(evs) == 3 and all(e["kind"] == "mouse" for e in evs), evs
+assert [(e["x"], e["y"]) for e in evs] == [
+    (789, 377), (788, 373), (787, 370)], evs
+
+# Recover both a missing ESC and a missing complete CSI introducer at every
+# read boundary. Raw text before an orphan remains text, not collateral loss.
+for orphan in (b"[<35;788;373M", b"<35;788;373M"):
+    for i in range(len(orphan) + 1):
+        evs = feed(orphan, chunks=[i])
+        assert len(evs) == 1 and evs[0]["kind"] == "mouse", (i, evs)
+    evs = feed(orphan, chunks=range(len(orphan)))
+    assert len(evs) == 1 and evs[0]["kind"] == "mouse", evs
+evs = feed(b"prefix[<35;788;373M")
+assert evs[0] == {"kind": "paste", "text": "prefix"}, evs
+assert evs[1]["kind"] == "mouse", evs
+
 # ── F00: lock-modifier text, incl. CapsLock case and CapsLock+Shift cancel ──
 assert feed(b"\x1b[97;129u")[0]["text"] == "a"              # NumLock LED on
 assert feed(b"\x1b[97;65u")[0]["text"] == "A"               # CapsLock: a -> A
