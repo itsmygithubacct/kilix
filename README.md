@@ -41,8 +41,9 @@ host SDK, and provider contract introduced in 0.1.1.
 - **Battery-in-chrome** — on laptops, a green/yellow/red battery item appears at the
   far right of the page strip while the battery is discharging, with the percentage
   shown to the left of the battery icon; click it to hide/show the percentage.
-- **Date/time-in-chrome** — the page strip shows the local date and time
-  immediately to the left of the battery item.
+- **Date/time-in-chrome** — the page strip shows a high-contrast local date and
+  time immediately to the left of the battery item. Click its calendar icon for
+  a navigable month widget, or the date/time text for a live date widget.
 - **Pane title menu** — click a pane's title for Tilix-style actions: rename, copy title,
   reset, clear, split right/down, close.
 - **Drag-to-split by quadrant** — drag a pane's header onto another pane's edge to split it (Tilix's model).
@@ -191,8 +192,10 @@ also lives on the `▢` button and `Ctrl+Alt+Z`).
 The active pane's header is highlighted (bright blue); inactive panes are grayed —
 matching Tilix's active-pane cue.
 
-The far right of the page strip shows the local date and time. When Linux reports
-a laptop battery is **discharging**, a battery status item appears to its right.
+The far right of the page strip shows the local date and time in the normal
+terminal foreground color. Click the calendar icon for a navigable month widget,
+or click the date/time text for a live local-date, clock, and timezone widget.
+When Linux reports a laptop battery is **discharging**, a battery status item appears to its right.
 It is green above 50%, yellow at 50% and below, red at 20% and below, and
 shows the percentage to the left of the battery icon. Clicking it toggles the
 percentage on/off. Use Start ▸ Settings ▸ Chrome in kilix 95, or edit
@@ -627,8 +630,9 @@ best experience. The clickable-button feature is these Python files:
 
 - `kitty/window_title_bar.py` — draws `+ - → ↓ ▢ ✕` in each pane title bar,
   recording which cells map to which kitty action.
-- `kitty/kilix_battery.py` and `kitty/tab_bar.py` — draw the date/time status and
-  read the Linux battery status for the conditional battery item at the far right
+- `kitty/kilix_battery.py`, `kitty/tab_bar.py`, and `kittens/kilix_clock/` —
+  draw the clickable date/time status and its calendar/date widgets, and read
+  the Linux battery status for the conditional battery item at the far right
   of the page strip.
 - `kitty/tabs.py` — `handle_window_title_bar_mouse` dispatches a button's action on a
   single left-click (`boss.combine`), double-click toggles maximize, and the quadrant
