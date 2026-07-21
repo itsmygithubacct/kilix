@@ -7,17 +7,17 @@ Start ▸ Shut Down…, or `Ctrl+Alt+Q`.
 ## How it works
 
 The whole desktop is a PIL RGB framebuffer blitted through the kitty
-graphics protocol — the same transport `kilix browse` uses: `t=t` via
-private files under the Kilix session root locally, inline `t=d` when
-`KILIX_STREAM=1` (inside
-`kilix serve` sessions). Input is the kitty keyboard protocol plus
+graphics protocol — the same shared `FramePresenter` used by `kilix browse`:
+bounded POSIX shared memory (`t=s`) locally, compressed inline data (`t=d`)
+when `KILIX_STREAM=1` (inside `kilix serve` sessions). Input is the kitty
+keyboard protocol plus
 SGR-pixel mouse reporting (`?1003h`/`?1016h`), so mouse coordinates map
 1:1 onto framebuffer pixels. Rendering is damage-driven: the loop only
 repaints when something is dirty (input, clock tick, caret blink).
 
 Reuses the host through `config/kilix_sdk`: `kilix_sdk.term` provides raw mode
-and input parsing, while `kilix_sdk.graphics` provides inline graphics for
-streamed sessions. Nothing else — the toolkit below is self-contained.
+and input parsing, while `kilix_sdk.graphics` provides the damage-aware shared
+presenter. Nothing else — the toolkit below is self-contained.
 
 ## Modules
 

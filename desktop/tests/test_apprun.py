@@ -63,7 +63,9 @@ pane.disp = ":99"
 
 new_capture = FakeProc()
 orig_popen = apprun.subprocess.Popen
+old_damage = os.environ.get("KILIX_XDAMAGE_CAPTURE")
 try:
+    os.environ["KILIX_XDAMAGE_CAPTURE"] = "0"
     apprun.subprocess.Popen = lambda *_args, **_kw: new_capture
     pane._spawn_capture(2)
     assert old_capture.terminated
@@ -72,6 +74,10 @@ try:
     assert pane.ffbuf == bytearray()
 finally:
     apprun.subprocess.Popen = orig_popen
+    if old_damage is None:
+        os.environ.pop("KILIX_XDAMAGE_CAPTURE", None)
+    else:
+        os.environ["KILIX_XDAMAGE_CAPTURE"] = old_damage
     new_capture.stdout.close()
 
 

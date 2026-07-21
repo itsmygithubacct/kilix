@@ -22,6 +22,7 @@ class KilixSdkBoundaryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch.dict(os.environ, {
                     "KILIX_STORAGE_HOME": tmp,
+                    "KILIX_CONFIG_HOME": "",
                     "KITTY_CONFIG_DIRECTORY": ""}):
                 self.assertEqual(Path(paths.config_dir()), Path(tmp) / "config")
             override = str(Path(tmp) / "custom")
@@ -56,6 +57,12 @@ class KilixSdkBoundaryTests(unittest.TestCase):
         wrapped = graphics.wrap_tmux_passthrough("\x1b_Ga=d,d=A\x1b\\")
         self.assertTrue(wrapped.startswith("\x1bPtmux;"))
         self.assertIn("\x1b\x1b_G", wrapped)
+
+    def test_graphics_exposes_shared_presenter_contract(self):
+        self.assertIs(graphics.FramePresenter,
+                      __import__("gfx").FramePresenter)
+        self.assertEqual(graphics.FRAME_BYTES, 3)
+        self.assertTrue(callable(graphics.diff_rect))
 
     def test_graphics_exposes_exclusive_frame_writer(self):
         self.assertIs(graphics.write_frame, __import__("gfx").write_frame)

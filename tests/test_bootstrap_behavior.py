@@ -16,17 +16,9 @@ class BootstrapBehaviorTests(unittest.TestCase):
     @staticmethod
     def _clean_env(root, bindir):
         env = dict(os.environ)
-        for name in (
-            "GPU_TERMINAL_HOME",
-            "KILIX_STORAGE_HOME",
-            "KILIX_PREBUILT_HOME",
-            "KILIX_STATE_DIRECTORY",
-            "KILIX_SESSION_HOME",
-            "KILIX_PREBUILT_VERSION",
-            "KILIX_PREBUILT_SHA256",
-            "KILIX_ALLOW_UNVERIFIED_PREBUILT",
-        ):
-            env.pop(name, None)
+        for name in tuple(env):
+            if name.startswith("KILIX_") or name == "GPU_TERMINAL_HOME":
+                env.pop(name)
         env.update({
             "HOME": str(root / "home"),
             "PATH": str(bindir) + os.pathsep + env["PATH"],

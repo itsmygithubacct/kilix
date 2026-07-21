@@ -31,11 +31,13 @@ jobs:
         run: |
           bash -n kilix bootstrap.sh build.sh scripts/install-build-deps.sh
           shellcheck -S warning -x kilix bootstrap.sh build.sh scripts/install-build-deps.sh
-          python3 -m compileall -q config desktop scripts tests
+          python3 -m compileall -q config desktop scripts tests third_party/kitty-frame-presenter/src
           git diff --check "$(git hash-object -t tree /dev/null)" HEAD -- . ':(exclude)src'
 
       - name: Run host tests
-        run: python3 -m unittest discover -s tests -p 'test_*.py'
+        run: |
+          python3 -m unittest discover -s tests -p 'test_*.py'
+          python3 -m unittest discover -s third_party/kitty-frame-presenter/tests -p 'test_*.py'
 
       - name: Run desktop tests
         run: |

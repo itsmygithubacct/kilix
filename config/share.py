@@ -5,7 +5,7 @@ kitty cannot start on TightVNC's Xvnc (missing Xkb extension), so the desktop
 runs on Xvfb; pixels go out as HLS (H.264 — any browser/player, many viewers)
 and a remote viewer's keyboard/mouse are injected with XTest (the same mechanism
 `kilix run` uses). Inside this nested kilix, browse/run/icat keep their fast
-local t=t graphics — the network boundary here is pure pixels.
+local POSIX shared-memory graphics — the network boundary here is pure pixels.
 
 Loopback by default (reach it over SSH); --lan serves the LAN over TLS + token.
 Self-contained: serves the HLS segments, vendored hls.js, a view+control page,
@@ -110,7 +110,7 @@ class Desktop:
         os.environ["XAUTHORITY"] = self.sup.xauth   # only our children reach :n
         kitty = os.environ.get("KILIX_KITTY") or "kitty"
         env = dict(os.environ, DISPLAY=f":{n}", LIBGL_ALWAYS_SOFTWARE="1")
-        env.pop("KILIX_STREAM", None)     # nested kilix uses fast local t=t graphics
+        env.pop("KILIX_STREAM", None)  # nested kilix uses local t=s graphics
         self.monitor = None
         if self.a.audio:                  # whole-desktop audio -> AAC in the HLS
             sink, self.monitor = self.sup.make_null_sink(f"share-{os.getpid()}")

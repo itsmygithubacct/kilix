@@ -1,281 +1,242 @@
-"""Blit state machines: band-vs-full decisions in AppPane.blit and Desk.blit.
+"""Integration tests for the shared presenter in each Kilix renderer."""
 
-These pin the invariants the escape builders can't see on their own:
-- full-height local damage remains an in-place edit (scrolling must not flash)
-- a stale base image (size mismatch after a resize) forces a full placement
-- streamed sessions retain their warmup and periodic full base refreshes
-- the desktops' fb/img (_blit_base) machine re-arms after img= blits and
-  force_full keepalives actually transmit
-"""
 import base64
 import os
+import re
 import sys
-import tempfile
 import time
 import unittest
 from io import BytesIO
 from pathlib import Path
-from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "config"))
 sys.path.insert(0, str(ROOT / "desktop"))
 
+import gfx
+
 
 class FakeTerm:
     cols, rows = 100, 26
     cell_w, cell_h = 10.0, 20.0
+    SHM = re.compile(r"\x1b_G([^;]*\bt=s\b[^;]*);([A-Za-z0-9+/=]+)\x1b\\")
 
-    def __init__(self):
+    def __init__(self, consume_shm=True):
         self.writes = []
+        self.payloads = []
+        self.shm_names = []
+        self.consume_shm = consume_shm
 
-    def write(self, s):
-        self.writes.append(s)
+    def write(self, value):
+        self.writes.append(value)
+        if not self.consume_shm:
+            return
+        for match in self.SHM.finditer(value):
+            name = base64.b64decode(match.group(2)).decode("ascii")
+            path = "/dev/shm/" + name.lstrip("/")
+            with open(path, "rb") as stream:
+                self.payloads.append(stream.read())
+            self.shm_names.append(name)
+            os.unlink(path)
 
     def escapes(self):
         return "".join(self.writes)
 
 
-def make_apppane(w=1000, h=500, stream=False):
-    """An AppPane shell with just the attributes blit() touches — no X, no
-    processes, no tty."""
+def make_apppane(width=100, height=50, stream=False, warmup=False):
     import apprun
-    p = object.__new__(apprun.AppPane)
-    p.term = FakeTerm()
-    p.app_w, p.app_h = w, h
-    p.stream = stream
-    p.img_id = 7
-    p.wid = "42"
-    p.seq = 0
-    p._band_seq = 0
-    p._base_wh = None
-    p._place_t = 0.0
-    p._loop_start = time.time() - 10     # past the warmup window
-    p.frames = 0
-    p.debug = False
-    p._dbg = {"t0": time.time(), "cap": 0, "blit": 0, "bytes": 0,
-              "cfps": 0.0, "fps": 0.0, "kbps": 0.0}
-    p.img_cols, p.img_rows = 100, 25
-    p.off_col = p.off_row = 0
-    return p
+    pane = object.__new__(apprun.AppPane)
+    pane.term = FakeTerm()
+    pane.app_w, pane.app_h = width, height
+    pane.stream = stream
+    pane.img_id = 7
+    pane.wid = "42"
+    pane.fps = 0
+    pane.frames = 0
+    pane.debug = False
+    pane._dbg = {"t0": time.time(), "cap": 0, "blit": 0, "bytes": 0,
+                 "cfps": 0.0, "fps": 0.0, "kbps": 0.0}
+    pane.img_cols, pane.img_rows = 10, 5
+    pane.off_col = pane.off_row = 0
+    pane.presenter = gfx.FramePresenter(
+        pane.term, pane.img_id, stream=stream,
+        stream_warmup_seconds=4 if warmup else 0)
+    return pane
 
 
-def local_frame_path(escape):
-    payload = escape.rsplit(";", 1)[1].split("\x1b\\", 1)[0]
-    return base64.b64decode(payload).decode()
+def solid(pane, value=0):
+    return bytes([value]) * (pane.app_w * pane.app_h * 3)
 
 
-class AppPaneBlitStateTests(unittest.TestCase):
-    def setUp(self):
+def poke(frame, width, x, y, value=255):
+    changed = bytearray(frame)
+    at = (y * width + x) * 3
+    changed[at:at + 3] = bytes((value, value, value))
+    return bytes(changed)
+
+
+class AppPanePresenterTests(unittest.TestCase):
+    def tearDown(self):
         os.environ.pop("TMUX", None)
 
-    def _frame(self, p, fill=0):
-        return bytes([fill]) * (p.app_w * p.app_h * 3)
+    def test_first_frame_is_full_then_exact_rect(self):
+        pane = make_apppane(stream=True)
+        try:
+            first = solid(pane)
+            pane.blit(first)
+            pane.term.writes.clear()
+            result = pane.blit(poke(first, pane.app_w, 17, 11))
+            self.assertEqual(result.rects, ((17, 11, 1, 1),))
+            self.assertIn("a=f", pane.term.escapes())
+            self.assertNotIn("a=T", pane.term.escapes())
+        finally:
+            pane.presenter.close()
 
-    def test_first_blit_is_full_then_bands(self):
-        p = make_apppane(stream=True)
-        f0 = self._frame(p, 0)
-        p.blit(f0)                                   # no band: full
-        self.assertIn("a=T", p.term.escapes())
-        self.assertEqual(p._base_wh, (p.app_w, p.app_h))
-        p.term.writes.clear()
-        p.blit(self._frame(p, 1), band=(10, 4))     # small band: a=f edit
-        esc = p.term.escapes()
-        self.assertIn("a=f", esc)
-        self.assertNotIn("a=T", esc)
+    def test_full_height_local_change_stays_in_place(self):
+        pane = make_apppane(stream=False)
+        try:
+            pane.blit(solid(pane))
+            pane.term.writes.clear()
+            pane.blit(solid(pane, 2))
+            self.assertIn("a=f", pane.term.escapes())
+            self.assertNotIn("a=T", pane.term.escapes())
+            self.assertIn("t=s", pane.term.escapes())
+            self.assertNotIn("t=t", pane.term.escapes())
+        finally:
+            pane.presenter.close()
 
-    def test_full_height_local_band_stays_in_place(self):
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
-                os.environ, {"KILIX_SESSION_HOME": tmp}):
-            p = make_apppane(stream=False)
-            p.blit(self._frame(p, 0))
-            p.term.writes.clear()
-            p.blit(self._frame(p, 2), band=(0, p.app_h))
-            esc = p.term.escapes()
-            self.assertIn("a=f", esc)
-            self.assertNotIn("a=T", esc)
+    def test_local_updates_do_not_periodically_replace_base(self):
+        pane = make_apppane(stream=False)
+        try:
+            first = solid(pane)
+            pane.blit(first)
+            pane.presenter._last_full_at -= 60
+            pane.term.writes.clear()
+            pane.blit(poke(first, pane.app_w, 2, 3))
+            self.assertIn("a=f", pane.term.escapes())
+            self.assertNotIn("a=T", pane.term.escapes())
+        finally:
+            pane.presenter.close()
 
-    def test_local_band_does_not_periodically_replace_base(self):
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
-                os.environ, {"KILIX_SESSION_HOME": tmp}):
-            p = make_apppane(stream=False)
-            p.blit(self._frame(p, 0))
-            p._place_t = time.time() - 6
-            p.term.writes.clear()
-            p.blit(self._frame(p, 1), band=(5, 2))
-            esc = p.term.escapes()
-            self.assertIn("a=f", esc)
-            self.assertNotIn("a=T", esc)
+    def test_size_change_forces_full_placement(self):
+        pane = make_apppane(stream=True)
+        try:
+            pane.blit(solid(pane))
+            pane.app_w, pane.app_h = 80, 40
+            pane.term.writes.clear()
+            pane.blit(solid(pane, 1))
+            self.assertIn("a=T", pane.term.escapes())
+            self.assertNotIn("a=f", pane.term.escapes())
+        finally:
+            pane.presenter.close()
 
-    def test_local_warmup_band_stays_in_place(self):
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
-                os.environ, {"KILIX_SESSION_HOME": tmp}):
-            p = make_apppane(stream=False)
-            p.blit(self._frame(p, 0))
-            p._loop_start = time.time()
-            p.term.writes.clear()
-            p.blit(self._frame(p, 1), band=(5, 2))
-            esc = p.term.escapes()
-            self.assertIn("a=f", esc)
-            self.assertNotIn("a=T", esc)
+    def test_stream_warmup_and_periodic_keyframes(self):
+        pane = make_apppane(stream=True, warmup=True)
+        try:
+            first = solid(pane)
+            pane.blit(first)
+            pane.term.writes.clear()
+            pane.blit(poke(first, pane.app_w, 1, 1))
+            self.assertIn("a=T", pane.term.escapes())
+            pane.presenter.started_at -= 10
+            pane.presenter._last_full_at -= 10
+            pane.term.writes.clear()
+            pane.blit(poke(first, pane.app_w, 2, 2))
+            self.assertIn("a=T", pane.term.escapes())
+        finally:
+            pane.presenter.close()
 
-    def test_stale_base_size_forces_full(self):
-        p = make_apppane(stream=True)
-        p.blit(self._frame(p, 0))
-        p.app_w, p.app_h = 800, 400                  # simulated resize
-        p.term.writes.clear()
-        p.blit(self._frame(p, 1), band=(5, 2))      # band vs stale base
-        esc = p.term.escapes()
-        self.assertIn("a=T", esc)
-        self.assertNotIn("a=f", esc)
-        self.assertEqual(p._base_wh, (800, 400))
-
-    def test_periodic_full_replace_fires_while_animating(self):
-        p = make_apppane(stream=True)
-        p.blit(self._frame(p, 0))
-        p._place_t = time.time() - 6                 # older than the 5s cadence
-        p.term.writes.clear()
-        p.blit(self._frame(p, 1), band=(5, 2))
-        self.assertIn("a=T", p.term.escapes())       # full re-place, not a band
-
-    def test_warmup_window_forces_full(self):
-        p = make_apppane(stream=True)
-        p.blit(self._frame(p, 0))
-        p._loop_start = time.time()                  # inside the 4s warmup
-        p._place_t = time.time()
-        p.term.writes.clear()
-        p.blit(self._frame(p, 1), band=(5, 2))
-        self.assertIn("a=T", p.term.escapes())
-
-    def test_local_band_files_are_unique(self):
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
-                os.environ, {"KILIX_SESSION_HOME": tmp}):
-            p = make_apppane(stream=False)
-            p.blit(self._frame(p, 0))
-            made = []
-            for i in (1, 2):
-                p.blit(self._frame(p, i), band=(3, 2))
-            for write in p.term.writes:
-                if "a=f" in write:
-                    made.append(write)
-            self.assertEqual(len(made), 2)
-            self.assertNotEqual(made[0], made[1])    # distinct session paths
-            self.assertTrue(all("N=1" in write for write in made))
-
-    def test_local_full_frames_never_reuse_eight_slot_ring(self):
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
-                os.environ, {"KILIX_SESSION_HOME": tmp}):
-            p = make_apppane(w=2, h=2, stream=False)
-            for i in range(10):
-                p.blit(self._frame(p, i))
-            paths = [local_frame_path(write) for write in p.term.writes]
-            self.assertEqual(len(paths), 10)
-            self.assertEqual(len(set(paths)), 10)
-            self.assertTrue(all("tty-graphics-protocol" in p for p in paths))
-            self.assertTrue(all(Path(p).is_file() for p in paths))
-            self.assertTrue(all("N=1" in write for write in p.term.writes))
+    def test_shared_memory_ring_reuses_only_consumed_names(self):
+        pane = make_apppane(width=4, height=4, stream=False)
+        try:
+            for value in range(10):
+                pane.blit(solid(pane, value), force_full=True)
+            self.assertEqual(len(pane.term.payloads), 10)
+            self.assertLessEqual(len(set(pane.term.shm_names)), 3)
+            self.assertEqual(pane.term.payloads[-1], solid(pane, 9))
+        finally:
+            pane.presenter.close()
 
 
-class BrowserLocalFrameTests(unittest.TestCase):
-    def test_both_present_paths_share_monotonic_names(self):
+class BrowserPresenterTests(unittest.TestCase):
+    def test_screencast_and_pointer_repaint_share_presenter(self):
         import browse
         from PIL import Image
 
-        with tempfile.TemporaryDirectory() as tmp:
-            b = object.__new__(browse.Browse)
-            b.term = FakeTerm()
-            b.wid = "browser-test"
-            b.seq = 0
-            b.stream = False
-            b.img_id = 9
-            b.view_rows = b.term.rows - 1
-            b.frame_dir = tmp
-            b.cursor = False
-            b.last_img = None
-            b._cur_saved = None
-            b.frames = 0
-            b.scroll_x = b.scroll_y = 0
-            b.glyph_dirty = False
-
-            # Exercise both Browse.blit (new screencast frame) and _present
-            # (software-pointer repaint).  Ten writes cross the old eight-slot
-            # wrap boundary and must all remain distinct.
-            for i in range(10):
-                img = Image.new("RGB", (2, 2), (i, i, i))
-                if i % 2:
-                    buf = BytesIO()
-                    img.save(buf, format="PNG")
-                    b.blit(base64.b64encode(buf.getvalue()).decode(), {})
-                else:
-                    b.last_img = img
-                    b._present()
-            paths = [local_frame_path(write) for write in b.term.writes]
-            self.assertEqual(len(paths), 10)
-            self.assertEqual(len(set(paths)), 10)
-            self.assertTrue(all("tty-graphics-protocol" in p for p in paths))
-            self.assertTrue(all(Path(p).is_file() for p in paths))
-            self.assertTrue(all("N=1" in write for write in b.term.writes))
+        browser = object.__new__(browse.Browse)
+        browser.term = FakeTerm()
+        browser.wid = "browser-test"
+        browser.stream = False
+        browser.img_id = 9
+        browser.view_rows = browser.term.rows - 1
+        browser.page_w = browser.page_h = 2
+        browser.cursor = False
+        browser.last_img = None
+        browser._cur_saved = None
+        browser.frames = 0
+        browser.scroll_x = browser.scroll_y = 0
+        browser.glyph_dirty = False
+        browser.presenter = gfx.FramePresenter(browser.term, browser.img_id)
+        try:
+            browser.last_img = Image.new("RGB", (2, 2), (1, 1, 1))
+            browser._present()
+            encoded = BytesIO()
+            Image.new("RGB", (2, 2), (2, 2, 2)).save(encoded, format="PNG")
+            browser.blit(base64.b64encode(encoded.getvalue()).decode(), {})
+            self.assertIn("a=T", browser.term.escapes())
+            self.assertIn("a=f", browser.term.escapes())
+            self.assertTrue(all("t=s" in write for write in browser.term.writes))
+        finally:
+            browser.presenter.close()
 
 
-class DeskBlitStateTests(unittest.TestCase):
-    """The builtin desktop's Desk.blit fb/img machine, on a Desk constructed
-    in offscreen (screenshot) mode and given a fake term afterwards."""
-
+class DeskPresenterTests(unittest.TestCase):
     def setUp(self):
-        os.environ.pop("TMUX", None)
-        os.environ["KILIX_STREAM"] = "1"             # keep blits off /dev/shm
+        os.environ["KILIX_STREAM"] = "1"
         import main as desk_main
-        self.desk_main = desk_main
         self.desk = desk_main.Desk(term=None, size=(320, 200))
         self.desk.term = FakeTerm()
         self.desk.stream = True
         self.desk.img_id = 3
 
     def tearDown(self):
+        self.desk.cleanup_shm()
         os.environ.pop("KILIX_STREAM", None)
 
-    def test_fb_full_then_band_then_img_rearms(self):
-        d = self.desk
-        d.blit()                                     # first fb blit: full
-        self.assertIn("a=T", d.term.escapes())
-        d.term.writes.clear()
-        # dirty one strip of the fb -> band edit
-        from PIL import ImageDraw
-        ImageDraw.Draw(d.fb).rectangle([0, 50, 319, 60], fill=(255, 0, 0))
-        d.blit()
-        self.assertIn("a=f", d.term.escapes())
-        self.assertNotIn("a=T", d.term.escapes())
-        # a system-screen blit (img=) puts a foreign image on screen …
-        d.term.writes.clear()
-        from PIL import Image
-        d.blit(img=Image.new("RGB", (320, 200), (9, 9, 9)))
-        self.assertIn("a=T", d.term.escapes())
-        # … so the NEXT fb blit must re-place in full even with a tiny change
-        d.term.writes.clear()
-        ImageDraw.Draw(d.fb).rectangle([0, 80, 319, 82], fill=(0, 255, 0))
-        d.blit()
-        esc = d.term.escapes()
-        self.assertIn("a=T", esc)
-        self.assertNotIn("a=f", esc)
+    def test_fb_rect_then_system_image_rearms_content(self):
+        from PIL import Image, ImageDraw
+        desk = self.desk
+        desk.blit()
+        desk.term.writes.clear()
+        ImageDraw.Draw(desk.fb).rectangle([10, 50, 30, 60], fill=(255, 0, 0))
+        result = desk.blit()
+        self.assertEqual(result.rects, ((10, 50, 21, 11),))
+        self.assertIn("a=f", desk.term.escapes())
+        desk.term.writes.clear()
+        desk.blit(img=Image.new("RGB", (320, 200), (9, 9, 9)))
+        self.assertIn("a=T", desk.term.escapes())
+        desk.term.writes.clear()
+        desk.blit()
+        self.assertIn("a=T", desk.term.escapes())
 
-    def test_unchanged_fb_sends_nothing_but_keepalive_heals(self):
-        d = self.desk
-        d.blit()
-        d.term.writes.clear()
-        d.blit()                                     # unchanged fb: no bytes
-        self.assertEqual(d.term.escapes(), "")
-        d.blit(force_full=True)                      # keepalive: full re-place
-        self.assertIn("a=T", d.term.escapes())
+    def test_unchanged_frame_sends_nothing_but_keepalive_heals(self):
+        desk = self.desk
+        desk.blit()
+        desk.term.writes.clear()
+        desk.blit()
+        self.assertEqual(desk.term.escapes(), "")
+        desk.blit(force_full=True)
+        self.assertIn("a=T", desk.term.escapes())
 
-    def test_last_blit_stamped_only_on_transmit(self):
-        d = self.desk
-        d.blit()
-        t0 = d._last_blit
-        time.sleep(0.02)
-        d.blit()                                     # no-op: stamp unchanged
-        self.assertEqual(d._last_blit, t0)
-        d.blit(force_full=True)
-        self.assertGreater(d._last_blit, t0)
+    def test_last_blit_changes_only_on_transmit(self):
+        desk = self.desk
+        desk.blit()
+        first = desk._last_blit
+        time.sleep(0.01)
+        desk.blit()
+        self.assertEqual(desk._last_blit, first)
+        desk.blit(force_full=True)
+        self.assertGreater(desk._last_blit, first)
 
 
 if __name__ == "__main__":

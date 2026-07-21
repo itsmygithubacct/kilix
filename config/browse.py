@@ -511,8 +511,9 @@ class Browse:
         self._cur_paint = 0.0
         extra = ()
         self.temp_profile = None
-        self.frame_dir = gfx.session_dir(
-            "graphics", f"browse-{self.wid}-{os.getpid()}")
+        self.presenter = gfx.FramePresenter(
+            self.term, self.img_id, stream=self.stream,
+            in_tmux=bool(os.environ.get("TMUX")))
         if incognito:
             # throwaway profile, deleted on exit: no history/cookies survive
             import tempfile
@@ -543,7 +544,7 @@ class Browse:
         try:
             self.cdp = CDP(url, self.page_w, self.page_h, profile, extra)
         except Exception:
-            shutil.rmtree(self.frame_dir, ignore_errors=True)
+            self.presenter.close()
             if self.temp_profile:
                 shutil.rmtree(self.temp_profile, ignore_errors=True)
             raise
@@ -554,6 +555,8 @@ class Browse:
         self.last_input = 0.0
         self.last_snap = 0.0
         self.frames = 0
+        self.pending_screencast = None
+        self._next_frame_at = 0.0
         self.half_res = False        # sustained animation: screencast at half size
         self.frame_times = []
         self.status_msg = "loading…"
@@ -613,6 +616,7 @@ class Browse:
 
     # ---- pixel layer -------------------------------------------------------
     def blit(self, b64jpeg, meta):
+        had_frame = self.last_img is not None
         img = Image.open(BytesIO(base64.b64decode(b64jpeg)))
         if img.mode != "RGB":
             img = img.convert("RGB")
@@ -621,26 +625,17 @@ class Browse:
         if self.cursor:
             self._stamp_cursor()
         w, h = img.size
-        if self.stream:
-            # streamed session: inline the pixels (t=d). See config/gfx.py.
-            gfx.blit_direct(self.term, img.tobytes(), w, h,
-                            self.term.cols, self.view_rows, self.img_id,
-                            1, 1, in_tmux=bool(os.environ.get("TMUX")))
-        else:
-            self.seq += 1
-            name = f"tty-graphics-protocol-kilix-{self.wid}-{self.seq}.rgb"
-            path = os.path.join(self.frame_dir, name)
-            gfx.write_frame(path, img.tobytes())
-            payload = base64.b64encode(path.encode()).decode()
-            # c/r pin the placement to the full pane rect so half-res frames are
-            # GPU-scaled back up; at full resolution it is a 1:1 no-op.
-            self.term.write(f"\x1b[H\x1b_Ga=T,i=1,p=1,z=-1,t=t,f=24,N=1,"
-                            f"s={w},v={h},c={self.term.cols},r={self.view_rows},"
-                            f"q=2,C=1;{payload}\x1b\\")
         sx, sy = meta.get("scrollOffsetX", 0), meta.get("scrollOffsetY", 0)
+        # Metadata is document motion; FramePresenter wants where old screen
+        # pixels moved. Scale CSS-pixel offsets to the current screencast size.
+        scroll = None
+        if had_frame and (sx, sy) != (self.scroll_x, self.scroll_y):
+            scroll = (round((self.scroll_x - sx) * w / max(1, self.page_w)),
+                      round((self.scroll_y - sy) * h / max(1, self.page_h)))
         if (sx, sy) != (self.scroll_x, self.scroll_y):
             self.scroll_x, self.scroll_y = sx, sy
             self.glyph_dirty = True
+        self._present(scroll=scroll)
         self.frames += 1
         if self.frames == 1 or self.frames % 60 == 0:
             log(f"frames={self.frames} size={w}x{h} scroll={self.scroll_y}")
@@ -685,22 +680,16 @@ class Browse:
         self._stamp_cursor()
         self._present()
 
-    def _present(self):
+    def _present(self, scroll=None):
         img = self.last_img
         w, h = img.size
-        if self.stream:
-            gfx.blit_direct(self.term, img.tobytes(), w, h,
-                            self.term.cols, self.view_rows, self.img_id,
-                            1, 1, in_tmux=bool(os.environ.get("TMUX")))
-            return
-        self.seq += 1
-        name = f"tty-graphics-protocol-kilix-{self.wid}-{self.seq}.rgb"
-        path = os.path.join(self.frame_dir, name)
-        gfx.write_frame(path, img.tobytes())
-        payload = base64.b64encode(path.encode()).decode()
-        self.term.write(f"\x1b[H\x1b_Ga=T,i=1,p=1,z=-1,t=t,f=24,N=1,"
-                        f"s={w},v={h},c={self.term.cols},r={self.view_rows},"
-                        f"q=2,C=1;{payload}\x1b\\")
+        if getattr(self, "presenter", None) is None:
+            self.presenter = gfx.FramePresenter(
+                self.term, self.img_id, stream=self.stream,
+                in_tmux=bool(os.environ.get("TMUX")))
+        return self.presenter.present(
+            img.tobytes(), w, h, self.term.cols, self.view_rows,
+            content_key="browser", scroll=scroll)
 
     # ---- glyph layer -------------------------------------------------------
     def snapshot(self):
@@ -1031,6 +1020,9 @@ class Browse:
 
     # ---- resize ------------------------------------------------------------
     def do_resize(self):
+        if self.pending_screencast is not None:
+            self._ack_screencast(self.pending_screencast)
+            self.pending_screencast = None
         self.term.refresh_size()
         self.view_rows = self.term.rows - 1
         self.page_w = int(self.term.cols * self.term.cell_w)
@@ -1047,6 +1039,7 @@ class Browse:
                            "everyNthFrame": 1}, session=s)
         except Exception as e:
             log("resize:", e)
+        self.presenter.invalidate()
         self.prev_glyphs = None
         self.snap_dirty = self.glyph_dirty = True
         log(f"resize -> {self.page_w}x{self.page_h} "
@@ -1056,17 +1049,12 @@ class Browse:
     def on_cdp_event(self, m):
         meth, params = m.get("method"), m.get("params", {})
         if meth == "Page.screencastFrame":
-            self.blit(params["data"], params.get("metadata", {}))
-            self.adapt_resolution()
-            # cap ~30fps: the ack is the throttle (CDP sends nothing until
-            # acked). Only bites during animation; static pages are
-            # damage-driven and idle at 0.
-            dt = time.time() - getattr(self, "_last_frame_t", 0)
-            if dt < 0.033:
-                time.sleep(0.033 - dt)
-            self._last_frame_t = time.time()
-            self.cdp.send("Page.screencastFrameAck",
-                          {"sessionId": params["sessionId"]}, session=self.sess)
+            # CDP sends no next screencast frame until this one is acked. Hold
+            # the compressed JPEG until the pacing deadline so input remains
+            # responsive and no stale frame is decoded/copied just to drop it.
+            if self.pending_screencast is not None:
+                self._ack_screencast(self.pending_screencast)
+            self.pending_screencast = params
         elif meth == "Page.loadEventFired":
             self.status_msg = "ready"
             self.snap_dirty = True
@@ -1078,6 +1066,24 @@ class Browse:
             if not fr.get("parentId"):
                 self.url = fr.get("url", self.url)
                 self.glyph_dirty = True
+
+    def _ack_screencast(self, params):
+        self.cdp.send("Page.screencastFrameAck",
+                      {"sessionId": params["sessionId"]}, session=self.sess)
+
+    def flush_screencast(self, now=None):
+        if self.pending_screencast is None:
+            return False
+        now = time.monotonic() if now is None else now
+        if now < self._next_frame_at:
+            return False
+        params = self.pending_screencast
+        self.pending_screencast = None
+        self.blit(params["data"], params.get("metadata", {}))
+        self.adapt_resolution()
+        self._ack_screencast(params)
+        self._next_frame_at = now + 1 / 30
+        return True
 
     def run(self):
         signal.signal(signal.SIGWINCH, lambda *a: setattr(self, "resized", True))
@@ -1093,7 +1099,11 @@ class Browse:
             # make the very first document transparent too (navigate raced
             # addScript for about:blank only; real doc gets it via injection)
             while True:
-                r, _, _ = select.select([self.term.fd, self.cdp], [], [], 0.2)
+                timeout = 0.2
+                if self.pending_screencast is not None:
+                    timeout = min(timeout, max(
+                        0.0, self._next_frame_at - time.monotonic()))
+                r, _, _ = select.select([self.term.fd, self.cdp], [], [], timeout)
                 if self.cdp in r or self.cdp.buf:
                     for m in self.cdp.pump():
                         self.on_cdp_event(m)
@@ -1108,6 +1118,8 @@ class Browse:
                             self.on_mouse(ev)
                         elif ev["kind"] == "paste":
                             self.on_paste(ev["text"])
+                self.flush_screencast()
+                self.presenter.flush()
                 if self.resized:
                     self.resized = False
                     self.do_resize()
@@ -1126,9 +1138,8 @@ class Browse:
             # restore the terminal FIRST: anything printed while still in
             # the alt screen vanishes when the alt screen is left
             self.term.restore()
+            self.presenter.close()
             self.cdp.close()
-            import shutil
-            shutil.rmtree(self.frame_dir, ignore_errors=True)
             if self.temp_profile:
                 shutil.rmtree(self.temp_profile, ignore_errors=True)
         if err:

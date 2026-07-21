@@ -24,6 +24,11 @@ def main():
     failed = []
     for name in names:
         env = dict(os.environ)
+        # The suite is commonly launched from a running Kilix shell, whose
+        # exported runtime/config variables must not leak into test defaults.
+        for key in tuple(env):
+            if key.startswith("KILIX_") or key.startswith("KITTY_"):
+                env.pop(key)
         env["KILIX_DESKTOP_DIR"] = tempfile.mkdtemp(prefix="kilix95-test-")
         env["KILIX_STORAGE_HOME"] = tempfile.mkdtemp(prefix="kilix-storage-")
         t0 = time.time()
