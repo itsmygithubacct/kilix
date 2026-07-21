@@ -20,6 +20,15 @@ complete tree. Freedesktop launchers/icons are the intentional exception:
 
 ![kilix — pages strip with + button, per-pane title bars with clickable split/maximize/close buttons, splits, and icat](config/kilix_demo.png)
 
+## Release 0.1.3
+
+Version 0.1.3 adds the Kilix 1.1 provider SDK. A shared immutable content
+catalog now drives both desktop providers, while `XAppSession` owns private X
+display authentication, application/capture processes, XDamage-to-ffmpeg
+fallback, input injection, and teardown. These boundaries keep provider code
+focused on presentation and make every catalog checkout recursive, pinned,
+verified, and atomically selected.
+
 ## Release 0.1.2
 
 Version 0.1.2 standardizes source checkouts under `~/gpu_terminal`, keeps all
@@ -60,7 +69,8 @@ host SDK, and provider contract introduced in 0.1.1.
   config live.
 - **Host SDK for desktops** — external desktop providers import stable helpers
   from `config/kilix_sdk` instead of depending on raw `config/browse.py` /
-  `config/gfx.py` internals.
+  `config/gfx.py` internals. SDK 1.1 includes shared content installation and
+  authenticated private-X-application sessions.
 - **Self-contained** — prefers its bundled fork build, and falls back to a prebuilt kitty if you haven't built it.
 
 ## Requirements
@@ -103,7 +113,7 @@ git clone --recursive https://github.com/itsmygithubacct/kilix.git ~/gpu_termina
 ```
 
 (`--recursive` pulls the Kitty fork and the pinned
-`kitty-frame-presenter` submodule. Cloned without it? Run
+`kitty-frame-presenter` and `kilix-content` submodules. Cloned without them? Run
 `git submodule update --init --recursive`; the base terminal can use its
 prebuilt fallback, but pixel applications need the presenter.)
 

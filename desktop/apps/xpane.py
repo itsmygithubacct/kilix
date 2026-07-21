@@ -25,6 +25,7 @@ import clipboard                  # one shared clipboard across panes/windows
 import stream                     # from config/ (main.py puts it on the path)
 import xcapture
 import xinject
+from kilix_sdk import xapp as xapp_sdk
 from Xlib import display as xdisplay, X, Xatom
 
 _here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -95,49 +96,23 @@ class XPane(wm.Window):
         self.ff = None
         initial_frame = None
         self._dead = False
-        self.sup = stream.StreamSupervisor(
-            f"desk-xpane-{os.getpid()}-{XPane._seq2}")
+        self.xapp = xapp_sdk.XAppSession(
+            f"desk-xpane-{os.getpid()}-{XPane._seq2}", aw, ah, fps)
+        self.sup = self.xapp.supervisor
         # any failure past here leaks Xvfb/app/display-lock unless we clean up
         try:
-            n = self.sup.pick_display()
             # the desktop paints its own pointer, so hide Xvfb's software cursor
-            self.sup.start_xvfb(n, aw, ah, nocursor=True)
-            e = dict(os.environ, DISPLAY=f":{n}",
-                     XAUTHORITY=self.sup.xauth, **(env or {}))
-            # python-xlib reads XAUTHORITY at connect time. Scope the override
-            # to this connection so later host-display launches do not inherit
-            # a private Xvfb authority file.
-            with clipboard.xauthority_env(self.sup.xauth):
-                self.xd = xdisplay.Display(f":{n}")
+            n = self.xapp.start_xvfb(nocursor=True)
+            self.xd = self.xapp.connect()
             self._paint_root_chroma()
-            self.app = self.sup.spawn("app", cmd, env=e, cwd=cwd,
-                                      stdout=subprocess.DEVNULL,
-                                      stderr=subprocess.DEVNULL)
-            self.inj = xinject.Injector(self.xd, aw, ah)
-            try:
-                if os.environ.get("KILIX_XDAMAGE_CAPTURE", "1") == "0":
-                    raise xcapture.CaptureUnavailable("disabled")
-                candidate = xcapture.XDamageCapture(
-                    f":{n}", aw, ah, draw_cursor=False)
-                try:
-                    initial_frame = candidate.snapshot()
-                except Exception:
-                    candidate.close()
-                    raise
-                self.capture = candidate
-            except Exception:
-                self.capture = None
-                self.ff = self.sup.spawn(
-                    "cap", ["ffmpeg", "-loglevel", "quiet",
-                            "-f", "x11grab", "-draw_mouse", "0",
-                            "-framerate", str(fps),
-                            "-video_size", f"{aw}x{ah}", "-i", f":{n}",
-                            "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
-                    env=e, stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL)
-                os.set_blocking(self.ff.stdout.fileno(), False)
+            self.app = self.xapp.launch_app(cmd, env=env, cwd=cwd)
+            self.inj = self.xapp.make_injector()
+            started = self.xapp.start_capture(draw_cursor=False)
+            self.capture = self.xapp.capture
+            self.ff = self.xapp.capture_process
+            initial_frame = started.initial_frame
         except Exception:
-            self.sup.cleanup()
+            self.xapp.close()
             raise
         self.add(_XSurface(self, aw, ah))
         self.set_focus(self.widgets[-1])
@@ -145,7 +120,8 @@ class XPane(wm.Window):
         # a copy/paste failure must never stop the app window from opening.
         self.clip = None
         try:
-            self.clip = clipboard.SelectionBridge(desk, f":{n}", self.sup.xauth)
+            self.clip = clipboard.SelectionBridge(
+                desk, self.xapp.display, self.xapp.xauthority)
         except Exception:
             self.clip = None
         # micro-WM on the private Xvfb: advertise just enough EWMH that the
@@ -469,13 +445,12 @@ class XPane(wm.Window):
             self.desk.remove_fd(self.xd.fileno())
         if getattr(self, "capture", None) is not None:
             self.desk.remove_fd(self.capture.fileno())
-            self.capture.close()
-            self.capture = None
         elif self.ff is not None:
             self.desk.remove_fd(self.ff.stdout.fileno())
         if self._tick in self.desk.tick_hooks:
             self.desk.tick_hooks.remove(self._tick)
-        self.sup.cleanup()
+        self.xapp.close()
+        self.capture = self.ff = None
 
     def close(self):
         self._teardown()

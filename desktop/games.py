@@ -19,14 +19,12 @@ import configparser
 import hashlib
 import os
 import shutil
-import stat
 import sys
 import tarfile
-import tempfile
-import urllib.request
 import zipfile
 
 import storage
+from kilix_sdk import content as kilix_content
 
 HOME = os.path.expanduser("~")
 CONF = storage.config_dir("desktop-games.conf")
@@ -49,47 +47,39 @@ DOSBOX_URL = ("https://github.com/dosbox-staging/dosbox-staging/releases/"
               f"{DOSBOX_VER}.tar.xz")
 DOSBOX_SHA256 = "bc229df72ea103b7865cdca67324772dbffa8e58866477e69a79638b723a0442"
 
-BASHED_REPO = "https://github.com/itsmygithubacct/Bashed-Earth"
-BASHED_REF = "aa65fbd937c346d287b53afc54cddee63c874699"
-LANDER_REPO = "https://github.com/itsmygithubacct/terminal_lander"
-LANDER_REF = "4b686f7dc86b86a1550f9f657eed39110eb91ba7"
-BROKEOUT_REPO = "https://github.com/itsmygithubacct/kitty-brokeout"
-BROKEOUT_REF = "4fc06ba47004a8fc4d68bb5b07a96974511abfc9"
-AMP_REPO = "https://github.com/itsmygithubacct/kilix-amp"
-AMP_REF = "0595836ff8496fd6321d8bf88b8e2c69779c7b29"
+CONTENT_CATALOG = kilix_content.default_catalog()
 
-# the Start-menu registry (taskbar/shell build the Games submenu from this)
+
+def _catalog_source(content_id):
+    spec = CONTENT_CATALOG.require(content_id)
+    return spec.repository, spec.ref
+
+
+BASHED_REPO, BASHED_REF = _catalog_source("bashed-earth")
+JPAK_REPO, JPAK_REF = _catalog_source("kilix-jpak")
+JOUSTIX_REPO, JOUSTIX_REF = _catalog_source("joustix")
+CHESS_REPO, CHESS_REF = _catalog_source("chess-bash")
+FISHTANK_REPO, FISHTANK_REF = _catalog_source("kilix-fishtank")
+LANDER_REPO, LANDER_REF = _catalog_source("terminal-lander")
+BROKEOUT_REPO, BROKEOUT_REF = _catalog_source("kitty-brokeout")
+AMP_REPO, AMP_REF = _catalog_source("kilix-amp")
+
+
+def _menu_entry(spec):
+    return {
+        "label": spec.label,
+        "icon": spec.icon,
+        "blurb": (spec.description.rstrip(".")
+                  + ".\nInstall into Kilix's private data directory and launch?"),
+    }
+
+
+# The Start-menu registry is a view of the shared, pinned content catalog.
+# DOSBox remains in Games even though the catalog classifies it as an app.
 GAMES = {
-    "doom": {
-        "label": "Doom", "icon": "doom",
-        "blurb": "Download the official shareware episode (~2.4 MB) —\n"
-                 "plus DOSBox if none is installed — into\n"
-                 "Kilix's private data directory, and play?",
-    },
-    "dosbox": {
-        "label": "DOSBox", "icon": "dosbox",
-        "blurb": "Open an MS-DOS prompt (DOSBox) with C: mounted to\n"
-                 "Kilix's private data directory. Fetches a dosbox-staging\n"
-                 "build there first if none is already installed.",
-    },
-    "bashed-earth": {
-        "label": "Bashed Earth", "icon": "tank",
-        "blurb": "Clone and build Bashed Earth (terminal artillery\n"
-                 "combat, github.com/itsmygithubacct/Bashed-Earth)\n"
-                 "into Kilix's private data directory, and play?",
-    },
-    "terminal-lander": {
-        "label": "Terminal Lander", "icon": "lander",
-        "blurb": "Clone and build Terminal Lander (a kitty-graphics\n"
-                 "lunar lander, github.com/itsmygithubacct/terminal_lander)\n"
-                 "into Kilix's private data directory, and play?",
-    },
-    "kitty-brokeout": {
-        "label": "Kitty Brokeout", "icon": "brokeout",
-        "blurb": "Clone and build Kitty Brokeout (a kitty-graphics\n"
-                 "brick breaker, github.com/itsmygithubacct/kitty-brokeout)\n"
-                 "into Kilix's private data directory, and play?",
-    },
+    spec.content_id: _menu_entry(spec)
+    for spec in CONTENT_CATALOG
+    if spec.kind == "game" or spec.content_id == "dosbox"
 }
 
 
@@ -153,10 +143,14 @@ def dosbox_ready(cp=None):
 def game_ready(game, cp=None):
     """Installed-and-runnable check dispatched by game name (None if not)."""
     cp = cp or load()
-    return {"doom": doom_ready, "dosbox": dosbox_ready,
-            "bashed-earth": bashed_ready, "terminal-lander": lander_ready,
-            "kitty-brokeout": brokeout_ready
-            }.get(game, lambda c=None: None)(cp)
+    if game == "doom":
+        return doom_ready(cp)
+    if game == "dosbox":
+        return dosbox_ready(cp)
+    spec = CONTENT_CATALOG.get(game)
+    if spec and spec.kind == "game" and spec.source_type == "git":
+        return _catalog_ready(game, cp)
+    return None
 
 
 def _sha256(path):
@@ -168,37 +162,9 @@ def _sha256(path):
 
 
 def _fetch(urls, dest, report, sha256=None):
-    """Download the first URL that works, with a coarse progress line."""
-    last = None
-    for url in urls if isinstance(urls, list) else [urls]:
-        try:
-            report(f"downloading {url.rsplit('/', 1)[-1]} …")
-            req = urllib.request.Request(url, headers={"User-Agent": "kilix"})
-            with urllib.request.urlopen(req, timeout=60) as r, \
-                    open(dest, "wb") as f:
-                total = int(r.headers.get("Content-Length") or 0)
-                got = pct = 0
-                while True:
-                    chunk = r.read(1 << 16)
-                    if not chunk:
-                        break
-                    f.write(chunk)
-                    got += len(chunk)
-                    if total and got * 10 // total > pct:
-                        pct = got * 10 // total
-                        report(f"  {pct * 10}% of {total // 1024} KB")
-            if sha256:
-                got_hash = _sha256(dest)
-                if got_hash != sha256:
-                    os.unlink(dest)
-                    raise RuntimeError(
-                        f"sha256 mismatch for {url.rsplit('/', 1)[-1]}: "
-                        f"{got_hash}")
-            return
-        except (OSError, RuntimeError) as e:
-            last = e
-            report(f"  failed: {e}")
-    raise RuntimeError(f"all mirrors failed ({last})")
+    """Compatibility wrapper around the shared checksum-bound downloader."""
+    return kilix_content.download(
+        urls, dest, report=report, expected_sha256=sha256 or "")
 
 
 def _inside(root, path):
@@ -208,31 +174,13 @@ def _inside(root, path):
 
 
 def _safe_extract_tar(tar, dest):
-    """Extract a tarball only if every member stays below dest."""
-    root = os.path.abspath(dest)
-    for m in tar.getmembers():
-        target = os.path.abspath(os.path.join(root, m.name))
-        if not _inside(root, target):
-            raise RuntimeError(f"unsafe path in archive: {m.name}")
-        if m.issym() or m.islnk():
-            raise RuntimeError(f"archive links are not supported: {m.name}")
-        if m.isdev() or m.isfifo():
-            raise RuntimeError(f"unsupported archive member: {m.name}")
-    tar.extractall(root)
+    """Compatibility wrapper around the shared safe tar extractor."""
+    return kilix_content.safe_extract_tar(tar, dest)
 
 
 def _safe_extract_zip(archive, dest):
-    """Extract a ZIP only when every regular member stays below ``dest``."""
-    root = os.path.abspath(dest)
-    for member in archive.infolist():
-        target = os.path.abspath(os.path.join(root, member.filename))
-        if not _inside(root, target):
-            raise RuntimeError(f"unsafe path in archive: {member.filename}")
-        mode = member.external_attr >> 16
-        if stat.S_ISLNK(mode) or stat.S_ISCHR(mode) or stat.S_ISBLK(mode) \
-                or stat.S_ISFIFO(mode) or stat.S_ISSOCK(mode):
-            raise RuntimeError(f"unsupported archive member: {member.filename}")
-    archive.extractall(root)
+    """Compatibility wrapper around the shared safe ZIP extractor."""
+    return kilix_content.safe_extract_zip(archive, dest)
 
 
 def ensure_dosbox(cp, report):
@@ -392,191 +340,128 @@ def _audio_check(report):
 
 def _verify_source_checkout(repo, ref, dest):
     """Require the expected origin, pinned HEAD, and clean tracked source."""
-    import subprocess
-    if not os.path.isdir(os.path.join(dest, ".git")):
-        raise RuntimeError(f"managed source is not a git checkout: {dest}")
-    origin = subprocess.run(
-        ["git", "-C", dest, "config", "--get", "remote.origin.url"],
-        capture_output=True, text=True,
-    )
-    if origin.returncode != 0 or origin.stdout.strip() != repo:
-        raise RuntimeError(
-            f"refusing untrusted checkout origin at {dest}: "
-            f"{origin.stdout.strip() or 'missing'}"
-        )
-    dirty = subprocess.run(
-        ["git", "-C", dest, "status", "--porcelain", "--untracked-files=no"],
-        capture_output=True, text=True,
-    )
-    if dirty.returncode != 0 or dirty.stdout.strip():
-        raise RuntimeError(f"refusing modified source checkout: {dest}")
-    head = subprocess.run(
-        ["git", "-C", dest, "rev-parse", "HEAD"],
-        capture_output=True, text=True,
-    )
-    if head.returncode != 0 or head.stdout.strip() != ref:
-        raise RuntimeError(f"source checkout is not the pinned commit {ref}: {dest}")
+    return kilix_content.verify_git_checkout(repo, ref, dest)
 
 
 def _clone_and_make(repo, ref, dest, binary, dep_hint, report):
-    """Fetch one immutable commit, build it, and return the binary path."""
-    import subprocess
-    parent = os.path.dirname(dest)
-    os.makedirs(parent, exist_ok=True)
-
-    replace_incomplete = False
-    if os.path.isdir(os.path.join(dest, ".git")):
-        origin = subprocess.run(
-            ["git", "-C", dest, "config", "--get", "remote.origin.url"],
-            capture_output=True, text=True,
-        )
-        dirty = subprocess.run(
-            ["git", "-C", dest, "status", "--porcelain",
-             "--untracked-files=no"], capture_output=True, text=True,
-        )
-        head = subprocess.run(
-            ["git", "-C", dest, "rev-parse", "HEAD"],
-            capture_output=True, text=True,
-        )
-        if dirty.returncode != 0 or dirty.stdout.strip():
-            raise RuntimeError(f"refusing modified source checkout: {dest}")
-        if head.returncode == 0:
-            if origin.returncode != 0 or origin.stdout.strip() != repo:
-                raise RuntimeError(
-                    f"refusing untrusted checkout origin at {dest}: "
-                    f"{origin.stdout.strip() or 'missing'}"
-                )
-            if head.stdout.strip() != ref:
-                replace_incomplete = True
-        else:
-            # A prior interrupted init/fetch has no commit and is disposable.
-            replace_incomplete = True
-    elif os.path.exists(dest):
-        raise RuntimeError(f"refusing to replace non-git path: {dest}")
-
-    if not os.path.isdir(os.path.join(dest, ".git")) or replace_incomplete:
-        report(f"fetching pinned source {ref[:12]} from {repo} …")
-        tmp = tempfile.mkdtemp(prefix=os.path.basename(dest) + ".partial-",
-                               dir=parent)
-        try:
-            commands = [
-                ["git", "init", "--quiet", tmp],
-                ["git", "-C", tmp, "remote", "add", "origin", repo],
-                ["git", "-C", tmp, "fetch", "--depth", "1", "origin", ref],
-                ["git", "-C", tmp, "checkout", "--detach", "FETCH_HEAD"],
-            ]
-            for command in commands:
-                r = subprocess.run(command, capture_output=True, text=True)
-                if r.returncode != 0:
-                    raise RuntimeError(
-                        f"source setup failed ({' '.join(command[:3])}):\n"
-                        f"{(r.stderr or r.stdout).strip()[-500:]}"
-                    )
-            got = subprocess.run(
-                ["git", "-C", tmp, "rev-parse", "HEAD"],
-                capture_output=True, text=True,
-            )
-            if got.returncode != 0 or got.stdout.strip() != ref:
-                raise RuntimeError("fetched source did not resolve to the pinned commit")
-
-            old = None
-            if os.path.exists(dest):
-                old = tempfile.mkdtemp(
-                    prefix=os.path.basename(dest) + ".old-", dir=parent)
-                os.rmdir(old)
-                os.rename(dest, old)
-            try:
-                os.rename(tmp, dest)
-                tmp = None
-            except Exception:
-                if old and not os.path.exists(dest):
-                    os.rename(old, dest)
-                raise
-            if old:
-                shutil.rmtree(old)
-        finally:
-            if tmp and os.path.exists(tmp):
-                shutil.rmtree(tmp)
-
-    _verify_source_checkout(repo, ref, dest)
-    exe = os.path.join(dest, binary)
-    if not os.access(exe, os.X_OK):
-        report("building (make) …")
-        r = subprocess.run(["make", "-C", dest], capture_output=True,
-                           text=True)
-        if r.returncode != 0:
-            raise RuntimeError(f"build failed ({dep_hint}):\n"
-                               + (r.stderr or r.stdout).strip()[-600:])
-    if not os.access(exe, os.X_OK):
-        raise RuntimeError(f"make succeeded but no {binary} binary appeared")
-    return exe
+    """Compatibility entry point backed by the shared atomic installer."""
+    # Historical callers may point this helper at a prebuilt fixture.  Real
+    # catalog entries always declare their build command explicitly.
+    build = [] if os.path.isdir(repo) and os.access(
+        os.path.join(repo, binary), os.X_OK) else ["make"]
+    spec = kilix_content.ContentSpec.from_mapping({
+        "id": os.path.basename(dest),
+        "label": os.path.basename(dest),
+        "source": {"type": "git", "repository": repo, "ref": ref},
+        "binary": binary,
+        "build": build,
+        "dependency_hint": dep_hint,
+    })
+    return kilix_content.Installer(os.path.dirname(dest)).ensure(spec, report)
 
 
 def _repo_ready(cp, section, binary, managed_dir, repo, ref):
     if not cp.has_section(section):
         return None
     d = os.path.expanduser(cp.get(section, "dir", fallback=""))
-    exe = os.path.join(d, binary) if d else ""
-    if not (exe and os.access(exe, os.X_OK)):
+    if not d:
         return None
-    # Explicit alternate directories remain trusted user-managed executables.
-    # Only Kilix's own cache is required to retain its origin/ref invariant.
-    if os.path.realpath(d) == os.path.realpath(managed_dir):
-        try:
-            _verify_source_checkout(repo, ref, d)
-        except (OSError, RuntimeError):
-            return None
-    return exe
+    spec = kilix_content.ContentSpec.from_mapping({
+        "id": os.path.basename(managed_dir),
+        "label": section,
+        "source": {"type": "git", "repository": repo, "ref": ref},
+        "binary": binary,
+    })
+    return kilix_content.Installer(os.path.dirname(managed_dir)).ready(
+        spec, directory=d)
+
+
+def _content_root(spec):
+    return APPS_DIR if spec.kind == "app" else GAMES_DIR
+
+
+def _catalog_ready(content_id, cp=None):
+    cp = cp or load()
+    spec = CONTENT_CATALOG.require(content_id)
+    if spec.source_type != "git" or not cp.has_section(content_id):
+        return None
+    directory = os.path.expanduser(cp.get(content_id, "dir", fallback=""))
+    if not directory:
+        return None
+    return kilix_content.Installer(_content_root(spec)).ready(
+        spec, directory=directory)
+
+
+def _catalog_ensure(content_id, cp, report):
+    spec = CONTENT_CATALOG.require(content_id)
+    if spec.source_type != "git":
+        raise RuntimeError(f"{content_id} does not use the shared Git installer")
+    return (_catalog_ready(content_id, cp)
+            or kilix_content.Installer(_content_root(spec)).ensure(spec, report))
 
 
 def bashed_ready(cp=None):
-    return _repo_ready(
-        cp or load(), "bashed-earth", "bashed-earth",
-        os.path.join(GAMES_DIR, "bashed-earth"), BASHED_REPO, BASHED_REF)
+    return _catalog_ready("bashed-earth", cp)
 
 
 def ensure_bashed(cp, report):
-    return bashed_ready(cp) or _clone_and_make(
-        BASHED_REPO, BASHED_REF, os.path.join(GAMES_DIR, "bashed-earth"), "bashed-earth",
-        "needs gcc/clang, zlib, make", report)
+    return _catalog_ensure("bashed-earth", cp, report)
+
+
+def jpak_ready(cp=None):
+    return _catalog_ready("kilix-jpak", cp)
+
+
+def ensure_jpak(cp, report):
+    return _catalog_ensure("kilix-jpak", cp, report)
+
+
+def joustix_ready(cp=None):
+    return _catalog_ready("joustix", cp)
+
+
+def ensure_joustix(cp, report):
+    return _catalog_ensure("joustix", cp, report)
+
+
+def chess_ready(cp=None):
+    return _catalog_ready("chess-bash", cp)
+
+
+def ensure_chess(cp, report):
+    return _catalog_ensure("chess-bash", cp, report)
+
+
+def fishtank_ready(cp=None):
+    return _catalog_ready("kilix-fishtank", cp)
+
+
+def ensure_fishtank(cp, report):
+    return _catalog_ensure("kilix-fishtank", cp, report)
 
 
 def lander_ready(cp=None):
-    return _repo_ready(
-        cp or load(), "terminal-lander", "terminal-lander",
-        os.path.join(GAMES_DIR, "terminal-lander"), LANDER_REPO, LANDER_REF)
+    return _catalog_ready("terminal-lander", cp)
 
 
 def ensure_lander(cp, report):
-    return lander_ready(cp) or _clone_and_make(
-        LANDER_REPO, LANDER_REF, os.path.join(GAMES_DIR, "terminal-lander"),
-        "terminal-lander", "needs a C compiler + zlib, make", report)
+    return _catalog_ensure("terminal-lander", cp, report)
 
 
 def brokeout_ready(cp=None):
-    return _repo_ready(
-        cp or load(), "kitty-brokeout", "kitty-brokeout",
-        os.path.join(GAMES_DIR, "kitty-brokeout"), BROKEOUT_REPO, BROKEOUT_REF)
+    return _catalog_ready("kitty-brokeout", cp)
 
 
 def ensure_brokeout(cp, report):
-    return brokeout_ready(cp) or _clone_and_make(
-        BROKEOUT_REPO, BROKEOUT_REF, os.path.join(GAMES_DIR, "kitty-brokeout"),
-        "kitty-brokeout", "needs a C compiler + zlib, make", report)
+    return _catalog_ensure("kitty-brokeout", cp, report)
 
 
 def amp_ready(cp=None):
-    return _repo_ready(
-        cp or load(), "kilix-amp", "kilix-amp",
-        os.path.join(APPS_DIR, "kilix-amp"), AMP_REPO, AMP_REF)
+    return _catalog_ready("kilix-amp", cp)
 
 
 def ensure_amp(cp, report):
-    return amp_ready(cp) or _clone_and_make(
-        AMP_REPO, AMP_REF, os.path.join(APPS_DIR, "kilix-amp"), "kilix-amp",
-        "needs libsdl2-dev, libsdl2-image-dev, libsndfile1-dev, "
-        "zlib1g-dev, libfluidsynth-dev, fluidsynth, fluid-soundfont-gm",
-        report)
+    return _catalog_ensure("kilix-amp", cp, report)
 
 
 def ensure(game, report=print):
@@ -597,21 +482,10 @@ def ensure(game, report=print):
         _audio_check(report)
         cp.set("dosbox", "exe", dosbox)
         payload = (dosbox, conf)
-    elif game == "bashed-earth":
-        exe = ensure_bashed(cp, report)
-        cp.set("bashed-earth", "dir", os.path.dirname(exe))
-        payload = exe
-    elif game == "terminal-lander":
-        exe = ensure_lander(cp, report)
-        cp.set("terminal-lander", "dir", os.path.dirname(exe))
-        payload = exe
-    elif game == "kitty-brokeout":
-        exe = ensure_brokeout(cp, report)
-        cp.set("kitty-brokeout", "dir", os.path.dirname(exe))
-        payload = exe
-    elif game == "kilix-amp":
-        exe = ensure_amp(cp, report)
-        cp.set("kilix-amp", "dir", os.path.dirname(exe))
+    elif ((spec := CONTENT_CATALOG.get(game)) is not None
+          and spec.source_type == "git"):
+        exe = _catalog_ensure(game, cp, report)
+        cp.set(game, "dir", os.path.dirname(exe))
         payload = exe
     else:
         raise SystemExit(f"kilix games: unknown game {game!r}")
