@@ -2,9 +2,9 @@
 """kilix desktop — a Windows 95-style desktop environment in a kilix pane.
 
 The whole desktop is rendered as pixels (PIL framebuffer, blitted through
-the kitty graphics protocol via private Kilix session files
-uses, or inline t=d in streamed sessions) with pixel-precise SGR mouse
-input. Start bar, overlapping windows, desktop launchers, a file manager,
+the kitty graphics protocol via a bounded POSIX shared-memory ring, or inline
+in streamed sessions) with pixel-precise SGR mouse input. Start bar,
+overlapping windows, desktop launchers, a file manager,
 Notepad, an image viewer and a Settings app that edits the kilix config
 live. Programs launch into new kilix tabs over kitty remote control.
 
@@ -16,10 +16,8 @@ import argparse
 import base64
 import os
 import select
-import shutil
 import signal
 import sys
-import tempfile
 import time
 
 _here = os.path.dirname(os.path.abspath(__file__))
@@ -152,8 +150,7 @@ class Desk:
         self.wid = wid
         self.img_id = 1 + ((int(wid) if wid.isdigit() else os.getpid())
                            % 4000)
-        self.seq = 0
-        self._frame_dir = None
+        self.presenter = None           # lazy: screenshot tests have no term
         # WM/loop polish state
         self.switcher = None          # Alt+Tab overlay: {"wins", "sel"} or None
         self._tooltip = None          # current tooltip text or None
@@ -376,82 +373,24 @@ class Desk:
         if not self.term:
             return
         rgb = (img if img is not None else self.fb).tobytes()
-        in_tmux = bool(os.environ.get("TMUX"))
-        # Damage path: when the screen already shows the desktop fb at the
-        # current size, diff against the previous fb frame and edit only the
-        # changed row band of the displayed image (a=f) instead of resending
-        # the whole framebuffer — a clock tick or one window's frame no longer
-        # costs a full w*h*3 retransmit. System-screen blits (img=), size
-        # changes, and force_full (the run loop's keepalive re-blits, which
-        # exist to recover placements kitty dropped while settling — a band
-        # edit cannot recover a missing placement) fall through to a full
-        # placement, which re-arms the band path by recording what's on
-        # screen. _last_blit is stamped only when bytes are transmitted, so
-        # the keepalive cadence tracks real retransmissions.
-        band = None
-        if (not force_full and img is None
-                and hasattr(kilix_graphics, "diff_band")
-                and getattr(self, "_prev_rgb", None) is not None
-                and len(self._prev_rgb) == len(rgb)
-                and getattr(self, "_blit_base", None)
-                == ("fb", self.w, self.h)):
-            band = kilix_graphics.diff_band(self._prev_rgb, rgb,
-                                            self.w, self.h)
-            if band is None:
-                self._prev_rgb = rgb
-                return                     # frame unchanged: nothing to send
-            if band[1] > int(self.h * 0.65):
-                band = None                # mostly changed: full frame wins
-        if img is None:
-            self._prev_rgb = rgb
-        self._last_blit = time.time()
-        if band is not None:
-            y0, bh = band
-            data = rgb[y0 * self.w * 3:(y0 + bh) * self.w * 3]
-            if self.stream:
-                kilix_graphics.blit_frame_edit(self.term, data, self.w, bh,
-                                               0, y0, self.img_id,
-                                               in_tmux=in_tmux)
-                return
-            # unique per-blit names: a lagging kitty must ENOENT on a stale
-            # escape, never mmap a slot reused with a different band geometry
-            # (kitty deletes each file after reading; the dir is cleaned up).
-            self._band_n = getattr(self, "_band_n", 0) + 1
-            path = os.path.join(os.path.dirname(self._frame_path()),
-                                f"band-{self._band_n}.rgb")
-            kilix_graphics.write_frame(path, data)
-            self.term.write(kilix_graphics.build_frame_edit_file(
-                path, self.w, bh, 0, y0, self.img_id))
-            return
-        self._blit_base = ("fb" if img is None else "img", self.w, self.h)
-        if self.stream:
-            kilix_graphics.blit_direct(
-                self.term, rgb, self.w, self.h, self.term.cols,
-                self.term.rows, self.img_id, in_tmux=in_tmux)
-            return
-        self.seq += 1
-        path = self._frame_path()
-        kilix_graphics.write_frame(path, rgb)
-        payload = base64.b64encode(path.encode()).decode()
-        self.term.write(
-            f"\x1b[H\x1b_Ga=T,i={self.img_id},p=1,z=-1,t=t,f=24,N=1,"
-            f"s={self.w},v={self.h},c={self.term.cols},r={self.term.rows},"
-            f"q=2,C=1;{payload}\x1b\\")
-
-    def _frame_path(self):
-        if self._frame_dir is None:
-            root = storage.session_dir("desktop-frames")
-            os.makedirs(root, mode=0o700, exist_ok=True)
-            self._frame_dir = tempfile.mkdtemp(
-                prefix=f"tty-graphics-protocol-kilix95-{self.wid}-",
-                dir=root)
-            os.chmod(self._frame_dir, 0o700)
-        return os.path.join(self._frame_dir, f"{self.seq}.rgb")
+        if self.presenter is None:
+            self.presenter = kilix_graphics.FramePresenter(
+                self.term, self.img_id, stream=self.stream,
+                in_tmux=bool(os.environ.get("TMUX")),
+                stream_warmup_seconds=0)
+        result = self.presenter.present(
+            rgb, self.w, self.h, self.term.cols, self.term.rows,
+            content_key="fb" if img is None else "system",
+            force_full=force_full)
+        # Keepalive cadence measures actual transmissions, not render calls.
+        if result.emitted:
+            self._last_blit = time.time()
+        return result
 
     def cleanup_shm(self):
-        if self._frame_dir:
-            shutil.rmtree(self._frame_dir, ignore_errors=True)
-            self._frame_dir = None
+        if self.presenter is not None:
+            self.presenter.close()
+            self.presenter = None
 
     # ── input normalization ─────────────────────────────────────────────────
     def _norm_key(self, raw):
@@ -638,6 +577,8 @@ class Desk:
         self.w = int(self.term.cols * self.term.cell_w)
         self.h = int(self.term.rows * self.term.cell_h)
         self.fb = Image.new("RGB", (self.w, self.h), T.DESKTOP)
+        if self.presenter is not None:
+            self.presenter.invalidate()
         self.menus.close_all()        # popups clamp to the old size — drop them
         self.shell.on_resize()
         for win in self.wm.windows:
@@ -757,6 +698,10 @@ class Desk:
                 self.taskbar.tick(now)
                 for hook in list(self.tick_hooks):
                     hook(now)
+                if self.presenter is not None:
+                    flushed = self.presenter.flush()
+                    if flushed.emitted:
+                        self._last_blit = time.time()
                 if now - last_blink >= 0.53:
                     last_blink = now
                     self.wm.blink()

@@ -102,9 +102,10 @@ git clone --recursive https://github.com/itsmygithubacct/kilix.git ~/gpu_termina
 ~/gpu_terminal/kilix/kilix
 ```
 
-(`--recursive` pulls `./src`, the kitty-fork submodule. Cloned without it?
-Run `git submodule update --init` — until then kilix just uses the prebuilt
-fallback.)
+(`--recursive` pulls the Kitty fork and the pinned
+`kitty-frame-presenter` submodule. Cloned without it? Run
+`git submodule update --init --recursive`; the base terminal can use its
+prebuilt fallback, but pixel applications need the presenter.)
 
 On the **first run**, kilix tries to build the fork. If build dependencies are
 missing it falls back to `bootstrap.sh`. For supply-chain safety, downloading a
@@ -301,21 +302,29 @@ splits exactly like terminal programs. `--size WxH` pins the app resolution
 into the pane as before. `KILIX_RUN_MAX` (default `3840x2160`) caps how large
 the pane-tracked display can grow.
 
-**Efficient (tiled updates).** Consecutive frames are diffed and only the
-changed row band is retransmitted, composed onto the displayed image in place
-via the kitty animation protocol (`a=f` frame edits) — locally through private
-files in `~/.local/gpu_terminal/kilix/session`, inline (`t=d`) when streamed.
-Full frames are sent only at start,
-after resizes, and when most of the frame changed, so a blinking cursor or a
-small animation no longer costs a full-frame retransmit; the desktop
-(`kilix desktop`) blits the same way.
+**Efficient (event-driven, tiled updates).** XDamage wakes Kilix only when the
+private X display changes, and MIT-SHM reads the damaged region without a
+fixed-rate full-screen capture. Consecutive snapshots are reduced to exact
+rectangles and composed onto one stable image with Kitty `a=f` frame edits.
+Local pixels use a bounded three-slot POSIX shared-memory ring (`t=s`);
+streamed sessions use compressed inline data (`t=d`). The Kilix Kitty fork
+uploads frame edits with `glTexSubImage2D`, so a cursor, caret, or exposed
+scroll strip no longer reallocates the full GPU texture. It can also shift an
+overlapping region of the current frame for scrolling and upload only the
+residual pixels. Full placements are reserved for startup, resize, and
+recovery keepalives. `kilix browse` and `kilix desktop` use the same standalone
+[`kitty-frame-presenter`](https://github.com/itsmygithubacct/kitty-frame-presenter)
+module. Run `scripts/render_benchmark.py` for deterministic scroll, cursor,
+video, idle-wakeup, frame-pacing, output-integrity, and bandwidth metrics.
 
 | Key | Action |
 |---|---|
 | `F10` | toggle app-window auto-fit when enabled (for Steam/VM fullscreen tests) |
 | `Ctrl+Q` | quit (everything else is forwarded to the app) |
 
-Requires `ffmpeg`, `python3-xlib`, and `Xvfb` — either on `PATH` or unpacked
+Requires `python3-pil`, `python3-xlib`, and `Xvfb` with XDamage/MIT-SHM;
+`ffmpeg` is retained as the capture fallback and is also used by broadcast
+encoders. Dependencies can be on `PATH` or unpacked
 without root into `~/.local/gpu_terminal/kilix/data/xvfb`:
 `apt-get download xvfb && dpkg -x xvfb_*.deb ~/.local/gpu_terminal/kilix/data/xvfb`.
 Python prototype (`config/apprun.py`). Known limits: no sound routing; apps
@@ -502,9 +511,10 @@ for a native VNC viewer, a browser URL (bundled **noVNC**, no install), the
 minted: a **control** one and a **view-only** one (the server enforces the
 difference).
 
-With a local pane, every encoder is fed from the pane's own capture (one
-x11grab total), the capture rate drops to 2 fps when the screen goes idle,
-and static screens cost almost nothing on the wire. `KILIX_HW=1` prefers
+With a local pane, every encoder is fed from the pane's event-driven capture;
+an idle XDamage source does no polling work and static screens cost almost
+nothing on the wire. The ffmpeg fallback uses one x11grab total and drops to
+2 fps when idle. `KILIX_HW=1` prefers
 VAAPI hardware encoding when a render node exists; `--debug` overlays
 capture/blit fps + wire bandwidth and logs `metrics.jsonl`, and
 `scripts/stream-stats.sh <url>` measures what a viewer actually receives.
@@ -645,6 +655,11 @@ carries quality-of-life fixes on top — e.g. `glfw/linux_notify.c` raises the D
 notification-server probe timeout to silence a spurious "Notify NoReply" warning at
 startup. Branch history: clickable chrome, double-fire fix, DBus-warning fix.
 
+`./third_party/kitty-frame-presenter` pins the independently tested Python
+presentation library used by the browser, app panes, and desktop provider.
+Keep capture, terminal input, and application policy in Kilix; reusable damage,
+transport, composition, and pacing changes belong in that module first.
+
 **Build / rebuild:** `kilix --build` (or `./build.sh`). Needs Go ≥ 1.26,
 Python ≥ 3.12, plus the
 system build deps from [Requirements](#requirements). The binary lands at
@@ -673,6 +688,7 @@ launcher so that an isolated interpreter remains usable at runtime.
 ├── config/            # kitty.conf + kilix icons (kitty.app*.png, kilix-512.png)
 ├── desktop/           # the "kilix 95" desktop environment (kilix desktop)
 ├── src/               # tracked kitty fork; remains clean after builds
+├── third_party/       # pinned shared presenter submodule
 ├── README.md
 ├── LICENSE            # GPLv3 (kitty is GPLv3)
 └── .gitignore

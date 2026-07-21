@@ -7,8 +7,9 @@ into a pane, so GUI apps tile exactly like terminal programs.
 
   - display : a per-instance Xvfb (found on PATH, or the user-space copy
     under ~/.local/gpu_terminal/kilix/data/xvfb/usr/bin/Xvfb)
-  - pixels  : ffmpeg x11grab -> raw RGB pipe -> kitty graphics protocol,
-    letterboxed into the pane by the GPU via the c=/r= cell-scaling
+  - pixels  : XDamage + MIT-SHM rectangles -> kitty graphics protocol,
+    letterboxed into the pane by the GPU via c=/r= cell-scaling (ffmpeg
+    x11grab remains the compatibility fallback)
   - input   : kitty keyboard protocol (with press/release reporting, so
     games can hold keys) + SGR-pixel mouse, injected with XTest — into
     the private display only, never the real one
@@ -20,8 +21,8 @@ Broadcast tiers (combinable): --hls (fMP4 HLS, scales out, ~1.5-2.5 s),
 --mse (MPEG-TS over WebSocket -> mpegts.js, ~0.3-1 s), --webrtc (MediaMTX
 WHEP, sub-500 ms), --audio (AAC from a PipeWire null sink), --no-pane
 (headless: network tiers only). With a local pane, all encoders are fed
-from its single capture (E4 fan-out) and the capture rate downshifts on
-an idle screen (QW5).
+from its single capture (E4 fan-out). XDamage capture sleeps at zero work on
+an idle screen; fallback polling downshifts until input wakes it.
 
 Tab-fill + scalable: with no --size, the private X screen tracks the
 pane — it starts at the pane's pixel size and a pane resize RESIZES the
@@ -29,13 +30,12 @@ display (RandR RRSetScreenSize on the Xvfb, debounced), refits the app
 window, and restarts the capture, so the app always fills the tab 1:1.
 --size pins the app resolution (games) and pane resizes then rescale the
 picture on the GPU as before. Efficient/tiled: consecutive frames are
-diffed into a changed row band and only that rectangle is retransmitted,
+diffed into an exact changed rectangle and only that rectangle is retransmitted,
 composed onto the displayed image via the kitty animation protocol
-(a=f frame edits) — locally through private Kilix session files and inline (t=d) when
-streamed. Once a same-sized base image exists, even full-height damage uses an
-in-place edit: retransmitting the placement during browser scrolling can expose
-the terminal background for a frame. Full placements establish the base at
-startup/resize and periodically refresh streamed sessions for late attachers.
+(a=f frame edits) — locally through a bounded POSIX shared-memory ring and
+inline (t=d) when streamed. Scrolls can shift the existing root texture before
+uploading exposed damage. Full placements establish the base at startup/resize
+and periodically refresh streamed sessions for late attachers.
 
 Known limits (prototype): apps that grab the pointer (e.g. DOSBox
 autolock) see relative motion, so the app cursor and the pane cursor can
@@ -55,6 +55,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import browse  # reuse Term (raw mode, kitty kbd/mouse parsing), not Chrome
 import gfx      # direct (t=d) graphics transmission for streamed sessions
+import xcapture # XDamage + MIT-SHM event-driven capture
 import xinject  # XTest keyboard/mouse injection (shared with kilix share)
 import stream   # Xvnc/Xvfb + VNC/HLS/bridge supervisor for serve modes
 
@@ -366,16 +367,16 @@ class AppPane:
             self.app_w, self.app_h = (min(self.app_w, self.max_w),
                                       min(self.app_h, self.max_h))
         self.wid = os.environ.get("KITTY_WINDOW_ID", str(os.getpid()))
-        self.frame_dir = gfx.session_dir(
-            "graphics", f"run-{self.wid}-{os.getpid()}")
-        self.seq = 0
-        # In a streamed/served session (KILIX_STREAM=1) inline the pixels (t=d)
-        # so a remote kitty can render them; otherwise use the fast local t=t
-        # private session path. img_id is stable per producer so two apps reaching one
-        # client terminal never collide on the graphics id.
+        # In a streamed/served session (KILIX_STREAM=1) pixels are inlined;
+        # otherwise FramePresenter uses its bounded POSIX shared-memory ring.
+        # img_id is stable per producer so multiple apps cannot collide.
         self.stream = os.environ.get("KILIX_STREAM") == "1"
         self.img_id = 1 + ((int(self.wid) if self.wid.isdigit()
                             else os.getpid()) % 4000)
+        self.presenter = (gfx.FramePresenter(
+            self.term, self.img_id, stream=self.stream,
+            in_tmux=bool(os.environ.get("TMUX")), max_fps=fps)
+            if self.term else None)
         self.frames = 0
         # --debug / KILIX_DEBUG: capture-vs-blit fps + wire kbps, to a metrics
         # file and the status bar, for measuring streaming efficiency.
@@ -384,14 +385,14 @@ class AppPane:
                      "cfps": 0.0, "fps": 0.0, "kbps": 0.0}
         self.resized = False
         self._resize_deadline = None
-        self._base_wh = None             # dims of the displayed base image
-        self._place_t = 0.0              # last FULL placement (a=T) write
-        self._band_seq = 0               # unique names for band shm files
         self.status = "starting…"
         self.prev_status = None
         self.last_frame = None
         self.ffbuf = bytearray()
-        self.xvfb = self.app = self.ff = None
+        self.xvfb = self.app = self.ff = self.capture = None
+        self.capture_backend = "pending"
+        self._damage_unavailable = False
+        self._cursor_capture_requested = False
 
         self.xd = None
         self._cap_fps = fps              # current pane-capture rate (QW5)
@@ -405,14 +406,6 @@ class AppPane:
         self._fit_suspended = False
         if self.term:
             self.compute_layout()
-
-    def _frame_path(self, name):
-        frame_dir = getattr(self, "frame_dir", None)
-        if frame_dir is None:
-            frame_dir = gfx.session_dir(
-                "graphics", f"run-{self.wid}-{os.getpid()}")
-            self.frame_dir = frame_dir
-        return os.path.join(frame_dir, name)
 
     # ---- geometry ----------------------------------------------------------
     def compute_layout(self):
@@ -577,10 +570,28 @@ class AppPane:
         self.status = f"{os.path.basename(self.cmd[0])} on {self.disp}"
 
     def _spawn_capture(self, fps):
-        """(Re)start the pane's rawvideo capture at `fps`. QW5 downshifts to
-        IDLE_FPS after IDLE_AFTER seconds without a changed frame — a mostly
-        static screen was measured wasting ~2200 dup frames per session — and
-        shifts back up on the first change (detected within 1/IDLE_FPS s)."""
+        """Start event-driven capture, with fixed-rate ffmpeg as fallback."""
+        self._stop_capture()
+        if (os.environ.get("KILIX_XDAMAGE_CAPTURE", "1") != "0"
+                and not getattr(self, "_damage_unavailable", False)):
+            candidate = None
+            try:
+                candidate = xcapture.XDamageCapture(
+                    self.disp, self.app_w, self.app_h, draw_cursor=True)
+                initial = candidate.snapshot()
+            except Exception as error:
+                if candidate is not None:
+                    candidate.close()
+                self._damage_unavailable = True
+                log("event-driven capture unavailable; ffmpeg fallback:",
+                    type(error).__name__, error)
+            else:
+                self.capture = candidate
+                self.capture_backend = "xdamage+mit-shm"
+                self._cap_fps = fps
+                log("capture event-driven (XDamage + MIT-SHM)")
+                self._accept_frame(initial)
+                return
         if self.ff is not None:
             _stop_proc(self.ff, timeout=2)
             self.ff = None
@@ -593,7 +604,21 @@ class AppPane:
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         os.set_blocking(self.ff.stdout.fileno(), False)
         self._cap_fps = fps
+        self.capture_backend = f"ffmpeg@{fps}"
         log(f"capture at {fps}fps")
+
+    def _stop_capture(self):
+        if getattr(self, "capture", None) is not None:
+            capture, self.capture = self.capture, None
+            try:
+                capture.close()
+            except Exception as error:
+                log("capture cleanup:", type(error).__name__, error)
+        if getattr(self, "ff", None) is not None:
+            _stop_proc(self.ff, timeout=2)
+            self.ff = None
+        if getattr(self, "ffbuf", None):
+            del self.ffbuf[:]
 
     def announce(self):
         """Print connect instructions to the LOCAL terminal (before the app
@@ -736,6 +761,31 @@ class AppPane:
         self.clamp_app_windows()
 
     # ---- pixel layer -------------------------------------------------------
+    def _accept_frame(self, frame):
+        if frame is None or frame == self.last_frame:
+            return False
+        self.last_frame = frame
+        now = time.time()
+        self._last_change = now
+        self.feed.offer(frame, now)      # encoders always receive full frames
+        if self.ff is not None and self._cap_fps != self.fps:
+            self._spawn_capture(self.fps)
+        self.blit(frame)
+        return True
+
+    def pump_damage(self):
+        try:
+            update = self.capture.pump()
+        except Exception as error:
+            log("event-driven capture failed; switching to ffmpeg:",
+                type(error).__name__, error)
+            self._damage_unavailable = True
+            self._spawn_capture(self.fps)
+            return
+        if update is not None:
+            self._dbg["cap"] += 1
+            self._accept_frame(update[0])
+
     def pump_frames(self):
         fd = self.ff.stdout.fileno()
         while True:
@@ -752,105 +802,55 @@ class AppPane:
             frame = bytes(self.ffbuf[:fsize])
             del self.ffbuf[:fsize]
             self._dbg["cap"] += 1            # frames captured (before change-detect)
-        if frame is not None:
-            prev = self.last_frame
-            band = None
-            if prev is not None and len(prev) == len(frame):
-                # one diff serves both the change gate and the damage band
-                band = gfx.diff_band(prev, frame, self.app_w, self.app_h)
-                if band is None:
-                    return                   # identical frame: nothing to do
-            self.last_frame = frame
-            now = time.time()
-            self._last_change = now
-            self.feed.offer(frame, now)      # E4: encoders always get FULL frames
-            if self._cap_fps != self.fps:    # QW5: activity — back to full rate
-                self._spawn_capture(self.fps)
-            self.blit(frame, band=band)
+        self._accept_frame(frame)
 
     def tick_capture(self, now):
         """Idle housekeeping each loop pass: QW5 capture downshift and the E4
         keepalive that keeps VFR encoder sinks flowing on a static screen."""
+        if self._cursor_capture_requested and self.capture is not None:
+            self._cursor_capture_requested = False
+            self._dbg["cap"] += 1
+            try:
+                frame = self.capture.snapshot()
+            except Exception as error:
+                log("cursor capture failed; switching to ffmpeg:",
+                    type(error).__name__, error)
+                self._damage_unavailable = True
+                self._spawn_capture(self.fps)
+            else:
+                self._accept_frame(frame)
         if (self.ff is not None and self._cap_fps > IDLE_FPS
                 and now - self._last_change > IDLE_AFTER):
             self._spawn_capture(IDLE_FPS)
         self.feed.keepalive(self.last_frame, now)
         self.feed.pump()
+        if self.presenter is not None:
+            self._record_present(self.presenter.flush())
 
-    def blit(self, rgb, band=None):
-        """Send one frame to the pane. With a damage `band` (y0, band_h) from
-        diff_band and an in-place base image of the current size, only the
-        changed row band is transmitted and composed onto the displayed image
-        (kitty a=f frame edit); otherwise the full frame is (re)placed (a=T).
-        Large same-sized bands deliberately remain frame edits. A full a=T
-        replacement can briefly remove the old placement before the new image
-        is ready, which shows up as black flashes during browser scrolling."""
-        w, h = self.app_w, self.app_h
-        now = time.time()
-        in_tmux = bool(os.environ.get("TMUX"))
-        # Band edits require a same-sized displayed base. Local sessions keep
-        # that base for their entire lifetime: replacing it on large damage or
-        # an elapsed timer makes scrolling flash the terminal background. Only
-        # streamed sessions retain the periodic/all-full warmup refresh needed
-        # to give late tmux attachers a base image to edit; kitty drops a=f
-        # edits for images a client never received.
-        if band is not None and (
-                getattr(self, "_base_wh", None) != (w, h)
-                or (self.stream and (
-                    now - self._place_t > 5
-                    or now - getattr(self, "_loop_start", 0) < 4))):
-            band = None
-        wire = 0
-        if band is not None:
-            y0, bh = band
-            data = rgb[y0 * w * 3:(y0 + bh) * w * 3]
-            if self.stream:
-                wire = gfx.blit_frame_edit(self.term, data, w, bh, 0, y0,
-                                           self.img_id, in_tmux=in_tmux)
-            else:
-                # unique per-blit names: a lagging kitty must ENOENT on a
-                # stale escape, never mmap a slot reused with a different
-                # band geometry (kitty deletes each file after reading).
-                self._band_seq += 1
-                name = (f"tty-graphics-protocol-kilix-run-"
-                        f"{self.wid}-b{self._band_seq}.rgb")
-                path = self._frame_path(name)
-                gfx.write_frame(path, data)
-                self.term.write(
-                    gfx.build_frame_edit_file(path, w, bh, 0, y0, 1))
-                wire = len(data)             # shm band volume (not on wire)
-        elif self.stream:
-            # streamed session: inline the pixels (t=d) — the local file path of
-            # the local branch below is meaningless to a kitty on another box.
-            wire = gfx.blit_direct(self.term, rgb, w, h,
-                                   self.img_cols, self.img_rows, self.img_id,
-                                   self.off_row + 1, self.off_col + 1,
-                                   in_tmux=in_tmux)
-            self._base_wh = (w, h)
-            self._place_t = now
-        else:
-            import base64
-            # t=t files are one-shot capabilities.  Never recycle a pathname:
-            # kitty may consume an older escape after later frames were sent.
-            self.seq += 1
-            name = f"tty-graphics-protocol-kilix-run-{self.wid}-{self.seq}.rgb"
-            path = self._frame_path(name)
-            gfx.write_frame(path, rgb)
-            payload = base64.b64encode(path.encode()).decode()
-            self.term.write(
-                f"\x1b[{self.off_row + 1};{self.off_col + 1}H"
-                f"\x1b_Ga=T,i=1,p=1,z=-1,t=t,f=24,N=1,"
-                f"s={w},v={h},"
-                f"c={self.img_cols},r={self.img_rows},q=2,C=1;{payload}\x1b\\")
-            wire = len(rgb)                  # local shm pixel volume (not on wire)
-            self._base_wh = (w, h)
-            self._place_t = now
+    def _record_present(self, result):
+        if not result.emitted:
+            return result
         self._blit_t = time.time()
         self.frames += 1
         self._dbg["blit"] += 1
-        self._dbg["bytes"] += wire
+        self._dbg["bytes"] += (result.wire_bytes if self.stream
+                               else result.pixel_bytes)
         if self.frames == 1 or self.frames % 300 == 0:
             log(f"frames={self.frames}")
+        return result
+
+    def blit(self, rgb, force_full=False, scroll=None):
+        """Offer a complete RGB frame to the shared damage-aware presenter."""
+        if getattr(self, "presenter", None) is None:
+            self.presenter = gfx.FramePresenter(
+                self.term, self.img_id, stream=self.stream,
+                in_tmux=bool(os.environ.get("TMUX")),
+                max_fps=getattr(self, "fps", 0))
+        result = self.presenter.present(
+            rgb, self.app_w, self.app_h, self.img_cols, self.img_rows,
+            origin_row=self.off_row + 1, origin_column=self.off_col + 1,
+            content_key="app", force_full=force_full, scroll=scroll)
+        return self._record_present(result)
 
     def _dbg_tick(self):
         d = self._dbg
@@ -868,6 +868,7 @@ class AppPane:
                                     "cap_fps": round(d["cfps"], 1),
                                     "blit_fps": round(d["fps"], 1),
                                     "pane_kbps": round(d["kbps"]),
+                                    "capture": self.capture_backend,
                                     "w": self.app_w, "h": self.app_h}) + "\n")
         except Exception:
             pass
@@ -878,7 +879,7 @@ class AppPane:
         if self.debug:
             self._dbg_tick()
             dbg = (f" · cap{self._dbg['cfps']:.0f} blit{self._dbg['fps']:.0f}/s "
-                   f"{self._dbg['kbps']:.0f}kb/s")
+                   f"{self._dbg['kbps']:.0f}kb/s {self.capture_backend}")
         serve = f" · VNC :{self.rfb_port}" if self.serve else ""
         fit = ""
         if getattr(self, "_auto_fit", False):
@@ -895,7 +896,14 @@ class AppPane:
             self.prev_status = s
 
     # ---- input (injected via xinject.Injector into the private display) ----
+    def _wake_capture(self):
+        """Restore fallback polling capture before injecting fresh input."""
+        if getattr(self, "ff", None) is not None and \
+                self._cap_fps != self.fps:
+            self._spawn_capture(self.fps)
+
     def on_key(self, ev):
+        self._wake_capture()
         mods = max(0, ev["mods"] - 1)
         etype = ev.get("event", 1)
         if (mods & 4) and ev["key"] == "q" and etype == 1:
@@ -911,10 +919,16 @@ class AppPane:
         self.inj.key(ev["key"], etype)
 
     def on_paste(self, text):
+        self._wake_capture()
         self.inj.paste(text)
 
     def on_mouse(self, ev):
+        self._wake_capture()
         self.inj.mouse(ev, self.box)
+        if self.capture is not None:
+            # X cursors are server-side sprites and do not damage root pixels.
+            # Query/composite the newest cursor once after the input batch.
+            self._cursor_capture_requested = True
 
     # ---- lifecycle ---------------------------------------------------------
     def do_resize(self):
@@ -933,9 +947,7 @@ class AppPane:
             h = max(200, int((t.rows - 1) * t.cell_h)) & ~1
             w, h = min(w, self.max_w), min(h, self.max_h)
             if (w, h) != (self.app_w, self.app_h) and self.xd is not None:
-                if self.ff is not None:          # capture size is baked into
-                    _stop_proc(self.ff, timeout=2)   # ffmpeg's argv — restart
-                    self.ff = None
+                self._stop_capture()             # capture geometry is fixed
                 if randr_prepare(self.xd) and \
                         randr_set_screen_size(self.xd, w, h):
                     self._randr_mode = randr_set_monitor_mode(
@@ -949,6 +961,8 @@ class AppPane:
                     self.resizable = False       # degrade to GPU scaling
                 self._spawn_capture(self.fps)
         self.compute_layout()
+        if self.presenter is not None:
+            self.presenter.invalidate()
         self.prev_status = None
         # placement (i=…,p=1) is replaced on next blit; clear stale cells
         self.term.write("\x1b[2J")
@@ -987,6 +1001,8 @@ class AppPane:
             self._loop_start = time.time()
             while True:
                 rlist = []
+                if self.capture is not None:
+                    rlist.append(self.capture)
                 if self.ff is not None:
                     rlist.append(self.ff.stdout)
                 if self.term:
@@ -995,6 +1011,8 @@ class AppPane:
                 # briefly-full pipe drains as soon as the encoder catches up
                 r, w, _ = select.select(rlist, self.feed.pending_fds(),
                                         [], 0.25)
+                if self.capture is not None and self.capture in r:
+                    self.pump_damage()
                 if self.ff is not None and self.ff.stdout in r:
                     self.pump_frames()
                 if self.term and self.term.fd in r:
@@ -1032,7 +1050,7 @@ class AppPane:
                     idle = now - getattr(self, "_blit_t", 0)
                     warming = now - self._loop_start < 4
                     if idle > (0.4 if warming else 3):
-                        self.blit(self.last_frame)
+                        self.blit(self.last_frame, force_full=True)
                 if self.app.poll() is not None:
                     err = (None if self.app.returncode == 0 else
                            f"app exited with rc={self.app.returncode}")
@@ -1048,13 +1066,13 @@ class AppPane:
         finally:
             if self.term:
                 self.term.restore()
+            if self.presenter is not None:
+                self.presenter.close()
             if getattr(self, "inj", None) is not None:
                 self.inj.release_all()   # no keys/buttons left stuck down
-            for p in (self.app, self.ff, self.xvfb):
+            self._stop_capture()
+            for p in (self.app, self.xvfb):
                 _stop_proc(p)
-            frame_dir = getattr(self, "frame_dir", None)
-            if frame_dir:
-                shutil.rmtree(frame_dir, ignore_errors=True)
             if self.sup is not None:
                 self.sup.cleanup()
         if err:

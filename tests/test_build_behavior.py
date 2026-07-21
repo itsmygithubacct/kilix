@@ -69,9 +69,8 @@ class BuildPreparationTests(unittest.TestCase):
 
         self.env = dict(os.environ)
         for key in tuple(self.env):
-            if (key.startswith("KILIX_KITTY_DEPS_") or
-                    key.startswith("KILIX_NERD_FONT_") or
-                    key in ("KILIX_BUILD_JOBS", "GOMAXPROCS")):
+            if (key.startswith("KILIX_") or key == "GPU_TERMINAL_HOME" or
+                    key == "GOMAXPROCS"):
                 self.env.pop(key)
         self.env.update({
             "HOME": str(self.base / "home"),

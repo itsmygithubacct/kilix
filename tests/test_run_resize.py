@@ -3,9 +3,9 @@
 Runs the real choreography apprun.do_resize performs against a real Xvfb:
 disable the CRTC (randr_prepare), RRSetScreenSize to several pane-like sizes
 (randr_set_screen_size), refit a live client window, and capture exact-size
-frames with ffmpeg x11grab after each resize. Skipped when Xvfb, ffmpeg, or
-python-xlib are unavailable (the unpacked Kilix-private dependency copy
-counts, same as apprun's find_xvfb).
+frames through the primary XDamage/MIT-SHM backend and the ffmpeg fallback.
+Skipped when Xvfb, ffmpeg, or python-xlib are unavailable (the unpacked
+Kilix-private dependency copy counts, same as apprun's find_xvfb).
 
 The display number is chosen by Xvfb itself (-displayfd), so the test never
 collides with kilix's own supervisor range (60-119) or a stale server, and
@@ -95,6 +95,7 @@ class RunResizeE2E(unittest.TestCase):
 
     def test_resize_choreography(self):
         import apprun
+        import xcapture
 
         self.assertTrue(apprun.randr_prepare(self.xd),
                         "CRTC disable failed — Xvfb too old for RandR?")
@@ -116,6 +117,15 @@ class RunResizeE2E(unittest.TestCase):
                 self.assertEqual((g.width, g.height), (w, h))
                 win.configure(x=0, y=0, width=w, height=h)
                 self.xd.sync()
+                try:
+                    capture = xcapture.XDamageCapture(
+                        self.disp, w, h, draw_cursor=False)
+                except xcapture.CaptureUnavailable as error:
+                    self.skipTest(str(error))
+                try:
+                    self.assertEqual(len(capture.snapshot()), w * h * 3)
+                finally:
+                    capture.close()
                 p = subprocess.run(
                     ["ffmpeg", "-loglevel", "error", "-f", "x11grab",
                      "-framerate", "10", "-video_size", f"{w}x{h}",

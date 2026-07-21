@@ -204,48 +204,55 @@ def test_restore_tmux_wraps_delete():
                 os.environ[k] = v
 
 
-# ── W02: local t=t frame files must stay private in project session data ───────
-def test_frame_files_are_private():
+# ── W02: local t=s objects are private and bounded ───────────────────────────
+def test_frame_shm_is_private():
     import base64
     import os
+    import re
     import stat
 
     t = FakeTerm(cols=4, rows=3, cell_w=8, cell_h=8)
     d = desk_main.Desk(term=t)
     try:
         d.blit()
-        assert d._frame_dir and os.path.isdir(d._frame_dir)
-        assert stat.S_IMODE(os.stat(d._frame_dir).st_mode) == 0o700
-        files = os.listdir(d._frame_dir)
-        assert len(files) == 1, files
-        frame = os.path.join(d._frame_dir, files[0])
+        match = re.search(r"t=s[^;]*;([A-Za-z0-9+/=]+)\x1b\\", t.writes[-1])
+        assert match
+        name = base64.b64decode(match.group(1)).decode()
+        frame = "/dev/shm/" + name.lstrip("/")
         assert stat.S_IMODE(os.stat(frame).st_mode) == 0o600
-        payload = t.writes[-1].rsplit(";", 1)[1].removesuffix("\x1b\\")
-        assert base64.b64decode(payload).decode() == frame
+        assert os.path.getsize(frame) == d.w * d.h * 3
         assert "N=1" in t.writes[-1]
+        assert "t=t" not in t.writes[-1]
     finally:
-        frame_dir = d._frame_dir
         d.cleanup_shm()
-    assert not frame_dir or not os.path.exists(frame_dir)
+    assert not os.path.exists(frame)
 
 
-# ── W03: delayed t=t readers can never observe a recycled frame path ─────────
-def test_frame_paths_are_monotonic_past_eight_writes():
+# ── W03: an unconsumed three-slot ring applies newest-frame backpressure ─────
+def test_frame_shm_ring_is_bounded_and_newest_wins():
     import base64
     import os
+    import re
 
     t = FakeTerm(cols=4, rows=3, cell_w=8, cell_h=8)
     d = desk_main.Desk(term=t)
     try:
         for _ in range(10):
             d.blit(force_full=True)
-        paths = [base64.b64decode(
-            write.rsplit(";", 1)[1].removesuffix("\x1b\\")).decode()
-            for write in t.writes]
-        assert len(paths) == 10
-        assert len(set(paths)) == 10, paths
-        assert all("tty-graphics-protocol" in path for path in paths)
-        assert all(os.path.isfile(path) for path in paths)
+        names = [base64.b64decode(match.group(1)).decode()
+                 for write in t.writes
+                 for match in [re.search(
+                     r"t=s[^;]*;([A-Za-z0-9+/=]+)\x1b\\", write)] if match]
+        assert len(names) == 3, names
+        assert len(set(names)) == 3
+        assert d.presenter.stats.frames_dropped == 6
+        # Kitty's unlink is the consumption acknowledgement. Free one slot;
+        # flush must emit the newest queued request under that safely reused
+        # name, never grow the ring.
+        os.unlink("/dev/shm/" + names[0].lstrip("/"))
+        assert d.presenter.flush().emitted
+        match = re.search(r"t=s[^;]*;([A-Za-z0-9+/=]+)\x1b\\", t.writes[-1])
+        assert base64.b64decode(match.group(1)).decode() == names[0]
         assert all("N=1" in write for write in t.writes)
     finally:
         d.cleanup_shm()

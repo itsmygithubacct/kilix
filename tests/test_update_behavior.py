@@ -70,6 +70,9 @@ class UpdateBehaviorTests(unittest.TestCase):
         self.prebuilt.parent.mkdir(parents=True)
         self._write_launcher(self.prebuilt, "prebuilt")
         self.env = dict(os.environ)
+        for name in tuple(self.env):
+            if name.startswith("KILIX_") or name == "GPU_TERMINAL_HOME":
+                self.env.pop(name)
         self.env.update({
             "GIT_ALLOW_PROTOCOL": "file",
             "KILIX_REPO": str(self.remote),

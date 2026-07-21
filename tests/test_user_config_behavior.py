@@ -15,6 +15,14 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def clean_env():
+    env = dict(os.environ)
+    for name in tuple(env):
+        if name.startswith("KILIX_") or name == "GPU_TERMINAL_HOME":
+            env.pop(name)
+    return env
+
+
 class UserConfigBehaviorTests(unittest.TestCase):
     def test_explicit_runtime_environment_wins_over_persisted_setting(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -22,7 +30,7 @@ class UserConfigBehaviorTests(unittest.TestCase):
             config = storage / "config"
             config.mkdir(parents=True)
             (config / "kilix.env").write_text("KILIX_DESKTOP_PROVIDER=none\n")
-            env = dict(os.environ)
+            env = clean_env()
             env.update({
                 "KILIX_STORAGE_HOME": str(storage),
                 "KILIX_DESKTOP_PROVIDER": "command",
@@ -45,10 +53,8 @@ class UserConfigBehaviorTests(unittest.TestCase):
         before = digest(tracked)
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            env = dict(os.environ)
-            env.pop("KILIX_CONFIG_DIRECTORY", None)
+            env = clean_env()
             env.pop("KITTY_CONFIG_DIRECTORY", None)
-            env.pop("KILIX_ENV_CONFIG", None)
             storage = root / "storage"
             env.update({"HOME": str(root / "home"),
                         "KILIX_STORAGE_HOME": str(storage)})
@@ -84,10 +90,8 @@ class UserConfigBehaviorTests(unittest.TestCase):
                          first / "config" / "kitty.conf")
             shutil.copy2(ROOT / "config" / "kilix.env",
                          first / "config" / "kilix.env")
-            env = dict(os.environ)
-            env.pop("KILIX_CONFIG_DIRECTORY", None)
+            env = clean_env()
             env.pop("KITTY_CONFIG_DIRECTORY", None)
-            env.pop("KILIX_ENV_CONFIG", None)
             storage = root / "storage"
             env.update({"HOME": str(root / "home"),
                         "KILIX_STORAGE_HOME": str(storage)})

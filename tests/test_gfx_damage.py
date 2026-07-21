@@ -1,9 +1,8 @@
-"""Damage (tiled/partial) update helpers in config/gfx.py.
+"""Damage and graphics-protocol compatibility helpers in config/gfx.py.
 
-diff_band must find the exact changed row band between frames (it gates every
-partial blit), and the a=f frame-edit builders must emit protocol-correct
-escapes: r=1 root-frame edits, chunked t=d with a=f repeated on every chunk,
-and the t=t file variant used by the fast local path.
+The shared presenter finds exact rectangles, uses bounded POSIX shared memory
+locally, and emits in-place root-frame edits. Legacy row-band and temporary-file
+builders remain covered because they are part of the versioned Kilix SDK.
 """
 import base64
 import re
@@ -74,6 +73,29 @@ class DiffBandTests(unittest.TestCase):
         patched[y0 * stride:(y0 + bh) * stride] = \
             b[y0 * stride:(y0 + bh) * stride]
         self.assertEqual(bytes(patched), b)
+
+
+class ExactRectTests(unittest.TestCase):
+    def test_exact_columns_and_rows(self):
+        width, height = 20, 12
+        before = frame(width, height)
+        after = bytearray(before)
+        for y in range(4, 7):
+            for x in range(8, 13):
+                at = (y * width + x) * 3
+                after[at:at + 3] = b"\x10\x20\x30"
+        rect = gfx.diff_rect(before, after, width, height)
+        self.assertEqual(rect, (8, 4, 5, 3))
+        self.assertEqual(
+            gfx.extract_rect(after, width, height, rect),
+            b"\x10\x20\x30" * 15)
+
+    def test_disjoint_row_regions_remain_bounded(self):
+        width, height = 20, 12
+        before = frame(width, height)
+        after = poke(poke(before, width, 1, x=2), width, 10, x=17)
+        self.assertEqual(gfx.diff_rects(before, after, width, height),
+                         ((2, 1, 1, 1), (17, 10, 1, 1)))
 
 
 class FullFrameEscapeTests(unittest.TestCase):
@@ -161,6 +183,26 @@ class FrameEditEscapeTests(unittest.TestCase):
         payload = esc.split(";", 1)[1].split("\x1b", 1)[0]
         self.assertEqual(base64.b64decode(payload).decode(), path)
 
+    def test_shared_memory_full_and_edit_headers(self):
+        full = gfx.build_full_shm("/kilix-test-full", 80, 40, 10, 5, 7)
+        self.assertIn("a=T", full)
+        self.assertIn("t=s", full)
+        self.assertNotIn("t=t", full)
+        payload = full.rsplit(";", 1)[1].split("\x1b", 1)[0]
+        self.assertEqual(base64.b64decode(payload).decode(),
+                         "/kilix-test-full")
+
+        edit = gfx.build_frame_edit_shm(
+            "/kilix-test-edit", 6, 4, 11, 13, 7)
+        for key in ("a=f", "r=1", "x=11", "y=13", "s=6", "v=4", "t=s"):
+            self.assertIn(key, edit)
+
+    def test_scroll_compose_requires_explicit_fork_hint(self):
+        value = gfx.build_compose(7, (0, 5, 80, 35), (0, 0, 80, 35))
+        self.assertIn("a=c", value)
+        self.assertIn("C=1", value)
+        self.assertIn("N=2", value)
+
     def test_empty_rgb_builds_nothing(self):
         self.assertEqual(gfx.build_frame_edit(b"", 1, 1, 0, 0, 1), "")
 
@@ -168,8 +210,9 @@ class FrameEditEscapeTests(unittest.TestCase):
 class SdkReexportTests(unittest.TestCase):
     def test_sdk_exposes_damage_helpers(self):
         from kilix_sdk import graphics
-        for name in ("diff_band", "build_frame_edit", "blit_frame_edit",
-                     "build_frame_edit_file"):
+        for name in ("FramePresenter", "PosixShmRing", "diff_band",
+                     "diff_rect", "build_frame_edit", "blit_frame_edit",
+                     "build_frame_edit_shm", "build_frame_edit_file"):
             self.assertTrue(callable(getattr(graphics, name)), name)
 
 
