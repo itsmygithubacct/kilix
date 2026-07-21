@@ -246,7 +246,7 @@ _kilix_load_env_file() {
       KILIX95_AUTO_INSTALL|KILIX95_DIR|KILIX95_REPO|KILIX95_BRANCH|KILIX95_REF|KILIX95_TRUST_EXISTING_CHECKOUT|\
       KILIX95_ALLOW_MUTABLE_REF|KILIX95_ALLOW_UNPINNED_INSTALL|\
       KILIX_RECYCLE_DIR|KILIX_SAVER_IDLE|KILIX_HOST_CLIP|KILIX_NO_SOUND|KILIX_XPANE_WM|\
-      KILIX_RUN_AUTO_FIT|KILIX_NO_PANE|KILIX_DEBUG|KILIX_HW|KILIX_BROWSE_LOG|KILIX_RUN_LOG|\
+      KILIX_RUN_AUTO_FIT|KILIX_NO_PANE|KILIX_DEBUG|KILIX_HW|KILIX_BROWSE_BACKEND|KILIX_BROWSE_LOG|KILIX_RUN_LOG|\
       KILIX_XFONTS|KILIX_BRIDGE_TOKEN|KILIX_SHELL_INTEGRATION|\
       KILIX_REF|KILIX_REPO|KILIX_TRUST_EXISTING_CHECKOUT|KILIX_ALLOW_MUTABLE_REF|\
       KILIX_PREBUILT_VERSION|KILIX_PREBUILT_SHA256|KILIX_ALLOW_UNVERIFIED_PREBUILT|\
@@ -1180,6 +1180,7 @@ if [ "${1:-}" = "browse" ]; then
     exec "$KITTEN" @ --password-file "$KILIX_RC_PASSWORD_FILE" \
       launch --type=overlay --cwd=current --self \
       --env KILIX_IN_OVERLAY=1 --env "KILIX_STREAM=${KILIX_STREAM:-}" \
+      --env "KILIX_BROWSE_BACKEND=${KILIX_BROWSE_BACKEND:-presenter}" \
       -- "$_self" browse "$@"
   fi
   # In-place fallback: inside the overlay, or a terminal without remote
@@ -1187,12 +1188,26 @@ if [ "${1:-}" = "browse" ]; then
   # etc.) without running its own terminal cleanup, restore the tty here so
   # the shell stays usable. A clean exit (rc < 128) already cleaned up.
   rc=0
-  if [ -x "$KITTEN" ] && "$KITTEN" --help 2>/dev/null \
-       | sed -n '/^Commands:/,/^$/p' | grep -qFx "   browse"; then
-    "$KITTEN" browse "$@" || rc=$?
-  else
-    python3 "$KILIX_HOME/config/browse.py" "$@" || rc=$?
-  fi
+  _browse_backend=${KILIX_BROWSE_BACKEND:-presenter}
+  case "$_browse_backend" in
+    presenter|python)
+      # Keep one Kitty image stable and update it through the shared
+      # FramePresenter.  The legacy Go kitten retransmits a=T for every CDP
+      # frame, which can expose the terminal background for one refresh while
+      # scrolling under a virtual GPU.
+      python3 "$KILIX_HOME/config/browse.py" "$@" || rc=$? ;;
+    go)
+      if [ -x "$KITTEN" ] && "$KITTEN" --help 2>/dev/null \
+           | sed -n '/^Commands:/,/^$/p' | grep -qFx "   browse"; then
+        "$KITTEN" browse "$@" || rc=$?
+      else
+        echo "kilix browse: KILIX_BROWSE_BACKEND=go requires the built-in browse kitten" >&2
+        rc=1
+      fi ;;
+    *)
+      echo "kilix browse: unknown KILIX_BROWSE_BACKEND=$_browse_backend (use presenter or go)" >&2
+      rc=2 ;;
+  esac
   [ "$rc" -eq 0 ] || _kilix_restore_pane_tty
   exit "$rc"
 fi

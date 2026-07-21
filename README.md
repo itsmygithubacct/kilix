@@ -268,14 +268,17 @@ deleted on exit.
 | `Ctrl+C` | copy the mouse-drag selection (OSC 52 → clipboard) |
 | `Ctrl+Q` | quit |
 
-Requires `google-chrome`/`chromium` on `PATH`. With the **fork build** the
-browser is a built-in Go kitten (no other dependencies); on the prebuilt
-fallback engine a Python prototype is used instead, which also needs
-`python3-pil`. It drives a headless Chrome over the DevTools protocol — no
-window, no compositor, works in any kilix pane. During sustained animation
-(video) it adaptively halves the capture resolution and lets the GPU scale it
-back, keeping CPU in check. Known limits: no audio, no DRM video, and dense
-typography quantizes to the character grid.
+Requires `google-chrome`/`chromium`, Python 3, and Pillow. The default
+`KILIX_BROWSE_BACKEND=presenter` implementation drives headless Chrome over the
+DevTools protocol and updates one stable Kitty image through the shared
+`kitty-frame-presenter` module. This avoids a visible image-plane gap between
+full-frame replacements, uses exact damage and scroll composition, and works
+with either the fork or prebuilt engine. The older built-in Go kitten remains
+available as an explicit `KILIX_BROWSE_BACKEND=go` compatibility option on fork
+builds. During sustained animation (video), the default renderer adaptively
+halves capture resolution and lets the GPU scale it back, keeping CPU in check.
+Known limits: no audio, no DRM video, and dense typography quantizes to the
+character grid.
 
 ## Run a GUI app in a pane (experimental)
 
