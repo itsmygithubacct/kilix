@@ -571,8 +571,12 @@ class StreamSupervisor:
 
     def _spawn_enc(self, name, argv, piped):
         logf = _private_open(os.path.join(self.runtime_dir, f"{name}.log"), "wb")
+        env = dict(os.environ)
+        if self.xauth:
+            env["XAUTHORITY"] = self.xauth
         return self.spawn(name, argv, stdout=logf, stderr=logf,
-                          stdin=subprocess.PIPE if piped else subprocess.DEVNULL)
+                          stdin=subprocess.PIPE if piped else subprocess.DEVNULL,
+                          env=env)
 
     def start_hls(self, n, w, h, outdir, fps=15, debug=False, audio=None,
                   hls_time=0.5, piped=False):

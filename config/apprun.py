@@ -55,12 +55,11 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import browse  # reuse Term (raw mode, kitty kbd/mouse parsing), not Chrome
 import gfx      # direct (t=d) graphics transmission for streamed sessions
-import xcapture # XDamage + MIT-SHM event-driven capture
-import xinject  # XTest keyboard/mouse injection (shared with kilix share)
 import stream   # Xvnc/Xvfb + VNC/HLS/bridge supervisor for serve modes
+from kilix_sdk import xapp as xapp_sdk
 
 try:
-    from Xlib import X, display as xdisplay
+    from Xlib import X
     from Xlib.ext import randr, xtest
 except ImportError:
     sys.exit("kilix run: python3-xlib is required (apt install python3-xlib)")
@@ -329,7 +328,7 @@ class AppPane:
         self.pulse_sink = None
         self.feed = EncoderFeed()
         self.session = os.environ.get("KILIX_SESSION") or f"run-{os.getpid()}"
-        self.sup = stream.StreamSupervisor(self.session)
+        self.xapp = self.sup = None
         self.rfb_port = None
         self.disp_n = None
         self.full_pw = self.view_pw = None
@@ -366,6 +365,9 @@ class AppPane:
             # exactly as given, like before.
             self.app_w, self.app_h = (min(self.app_w, self.max_w),
                                       min(self.app_h, self.max_h))
+        self.xapp = xapp_sdk.XAppSession(
+            self.session, self.app_w, self.app_h, fps)
+        self.sup = self.xapp.supervisor
         self.wid = os.environ.get("KITTY_WINDOW_ID", str(os.getpid()))
         # In a streamed/served session (KILIX_STREAM=1) pixels are inlined;
         # otherwise FramePresenter uses its bounded POSIX shared-memory ring.
@@ -451,15 +453,13 @@ class AppPane:
         # When the display tracks the pane, allocate the framebuffer at the
         # maximum (RRSetScreenSize can only move within the allocation) and
         # shrink the visible screen to the pane before the app starts.
-        n = self.sup.pick_display()
         if self.resizable:
-            self.sup.start_xvfb(n, self.max_w, self.max_h)
+            n = self.xapp.start_xvfb(width=self.max_w, height=self.max_h)
         else:
-            self.sup.start_xvfb(n, self.app_w, self.app_h)
-        self.disp = f":{n}"
+            n = self.xapp.start_xvfb()
+        self.disp = self.xapp.display
         self.disp_n = n
-        self.xvfb = None                 # owned by the supervisor
-        os.environ["XAUTHORITY"] = self.sup.xauth
+        self.xvfb = self.xapp.server
         log("Xvfb on", self.disp)
 
     def _start_xvnc(self):
@@ -474,12 +474,12 @@ class AppPane:
         self.full_pw = self.sup.mint_token()[:8]
         self.view_pw = self.sup.mint_token()[:8]
         pwfile = self.sup.make_vncpw(self.full_pw, self.view_pw)
-        self.sup.start_xvnc(n, self.app_w, self.app_h, self.rfb_port, pwfile,
-                            desktop=f"kilix-run {os.path.basename(self.cmd[0])}")
-        self.disp = f":{n}"
+        self.xapp.start_xvnc(
+            self.rfb_port, pwfile, number=n,
+            desktop=f"kilix-run {os.path.basename(self.cmd[0])}")
+        self.disp = self.xapp.display
         self.disp_n = n
-        self.xvfb = None                 # Xvnc is owned by the supervisor
-        os.environ["XAUTHORITY"] = self.sup.xauth
+        self.xvfb = self.xapp.server
         log("Xvnc on", self.disp, "rfb", self.rfb_port)
 
     def _start_web_tier(self, n):
@@ -543,7 +543,7 @@ class AppPane:
         # Connect to the private display FIRST and shrink its screen to the
         # pane before the app starts, so the app's very first screen-size
         # query already sees the pane-tracked geometry.
-        self.xd = xdisplay.Display(self.disp)
+        self.xd = self.xapp.connect()
         if self.resizable:
             if randr_prepare(self.xd) and randr_set_screen_size(
                     self.xd, self.app_w, self.app_h):
@@ -556,14 +556,12 @@ class AppPane:
                 # size, so only whole-screen size queries see the difference.
                 self.resizable = False
                 log("display resize unavailable; window-fit fallback")
-        env = dict(os.environ, DISPLAY=self.disp)
+        env = {}
         if self.pulse_sink:
             env["PULSE_SINK"] = self.pulse_sink   # route app audio to our sink
-        self.app = subprocess.Popen(self.cmd, env=env,
-                                    stdout=subprocess.DEVNULL,
-                                    stderr=subprocess.DEVNULL)
+        self.app = self.xapp.launch_app(self.cmd, env=env)
         if self.term:
-            self.inj = xinject.Injector(self.xd, self.app_w, self.app_h)
+            self.inj = self.xapp.make_injector()
         self.focus_app_window()
         if self.term:                    # QW3: headless mode has no pane feed
             self._spawn_capture(self.fps)
@@ -572,51 +570,30 @@ class AppPane:
     def _spawn_capture(self, fps):
         """Start event-driven capture, with fixed-rate ffmpeg as fallback."""
         self._stop_capture()
-        if (os.environ.get("KILIX_XDAMAGE_CAPTURE", "1") != "0"
-                and not getattr(self, "_damage_unavailable", False)):
-            candidate = None
-            try:
-                candidate = xcapture.XDamageCapture(
-                    self.disp, self.app_w, self.app_h, draw_cursor=True)
-                initial = candidate.snapshot()
-            except Exception as error:
-                if candidate is not None:
-                    candidate.close()
-                self._damage_unavailable = True
-                log("event-driven capture unavailable; ffmpeg fallback:",
-                    type(error).__name__, error)
-            else:
-                self.capture = candidate
-                self.capture_backend = "xdamage+mit-shm"
-                self._cap_fps = fps
-                log("capture event-driven (XDamage + MIT-SHM)")
-                self._accept_frame(initial)
-                return
-        if self.ff is not None:
-            _stop_proc(self.ff, timeout=2)
-            self.ff = None
+        self.xapp.set_geometry(self.app_w, self.app_h)
         del self.ffbuf[:]                # drop any partial frame
-        self.ff = subprocess.Popen(
-            ["ffmpeg", "-loglevel", "quiet",
-             "-f", "x11grab", "-framerate", str(fps),
-             "-video_size", f"{self.app_w}x{self.app_h}", "-i", self.disp,
-             "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
-            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        os.set_blocking(self.ff.stdout.fileno(), False)
+        started = self.xapp.start_capture(
+            fps=fps, draw_cursor=True,
+            prefer_damage=not getattr(self, "_damage_unavailable", False))
+        self.capture = self.xapp.capture
+        self.ff = self.xapp.capture_process
         self._cap_fps = fps
-        self.capture_backend = f"ffmpeg@{fps}"
-        log(f"capture at {fps}fps")
+        self.capture_backend = started.backend
+        if started.damage_error is not None:
+            self._damage_unavailable = True
+            error = started.damage_error
+            log("event-driven capture unavailable; ffmpeg fallback:",
+                type(error).__name__, error)
+        if self.capture is not None:
+            log("capture event-driven (XDamage + MIT-SHM)")
+            self._accept_frame(started.initial_frame)
+        else:
+            log(f"capture at {fps}fps")
 
     def _stop_capture(self):
-        if getattr(self, "capture", None) is not None:
-            capture, self.capture = self.capture, None
-            try:
-                capture.close()
-            except Exception as error:
-                log("capture cleanup:", type(error).__name__, error)
-        if getattr(self, "ff", None) is not None:
-            _stop_proc(self.ff, timeout=2)
-            self.ff = None
+        if getattr(self, "xapp", None) is not None:
+            self.xapp.stop_capture()
+        self.capture = self.ff = None
         if getattr(self, "ffbuf", None):
             del self.ffbuf[:]
 
@@ -987,8 +964,8 @@ class AppPane:
                 self.start_display()
                 self.announce()
             except Exception as e:
-                if self.sup is not None:
-                    self.sup.cleanup()
+                if self.xapp is not None:
+                    self.xapp.close()
                 print(f"kilix run: {e}", file=sys.stderr)
                 sys.exit(1)
         if self.term:
@@ -1068,13 +1045,9 @@ class AppPane:
                 self.term.restore()
             if self.presenter is not None:
                 self.presenter.close()
-            if getattr(self, "inj", None) is not None:
-                self.inj.release_all()   # no keys/buttons left stuck down
             self._stop_capture()
-            for p in (self.app, self.xvfb):
-                _stop_proc(p)
-            if self.sup is not None:
-                self.sup.cleanup()
+            if self.xapp is not None:
+                self.xapp.close()
         if err:
             print(f"kilix run: {err}", file=sys.stderr)
             sys.exit(1)

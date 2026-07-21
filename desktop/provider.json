@@ -1,8 +1,8 @@
 {
   "name": "kilix-builtin-compat",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "provider_api": 1,
-  "requires_kilix_sdk": "1.0",
+  "requires_kilix_sdk": "1.1",
   "security_features": [
     "default-password-nag",
     "masked-secret-clipboard"

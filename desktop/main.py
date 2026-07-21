@@ -35,7 +35,7 @@ from PIL import Image
 from kilix_sdk import require_compatible as require_kilix_sdk
 from kilix_sdk import graphics as kilix_graphics
 from kilix_sdk import term as kilix_term
-require_kilix_sdk("1.0")
+require_kilix_sdk("1.1")
 import icons
 import shell as shell_mod
 import taskbar as taskbar_mod

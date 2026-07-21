@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "config"))
 
 import kilix_sdk
-from kilix_sdk import graphics, paths, term
+from kilix_sdk import content, graphics, paths, term
 
 
 class KilixSdkBoundaryTests(unittest.TestCase):
@@ -43,10 +43,18 @@ class KilixSdkBoundaryTests(unittest.TestCase):
                 self.assertEqual(Path(paths.kilix95_home()), custom)
 
     def test_sdk_contract_is_versioned(self):
-        self.assertEqual(kilix_sdk.SDK_API_VERSION, (1, 0))
+        self.assertEqual(kilix_sdk.SDK_API_VERSION, (1, 1))
         kilix_sdk.require_compatible("1.0")
         with self.assertRaises(kilix_sdk.IncompatibleSDKError):
             kilix_sdk.require_compatible("2.0")
+
+    def test_content_exposes_pinned_catalog_contract(self):
+        catalog = content.default_catalog()
+        lander = catalog.require("terminal-lander")
+        self.assertEqual(lander.source_type, "git")
+        self.assertEqual(len(lander.ref), 40)
+        self.assertIs(content.InstallError, __import__(
+            "kilix_content", fromlist=["InstallError"]).InstallError)
 
     def test_term_exposes_parser_contract(self):
         self.assertTrue(hasattr(term.Term, "read_input"))

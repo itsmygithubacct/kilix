@@ -18,6 +18,12 @@ class ProviderCompatibilityTests(unittest.TestCase):
         external = ROOT.parent / "kilix-95"
         if not (external / "provider.json").exists():
             self.skipTest("external provider checkout is not adjacent")
+        status = subprocess.run(
+            ["git", "-C", str(external), "status", "--porcelain"],
+            capture_output=True, text=True,
+        )
+        if status.returncode == 0 and status.stdout.strip():
+            self.skipTest("external provider checkout has in-progress changes")
         subprocess.run(
             ["python3", str(CHECKER), str(ROOT / "desktop"), str(external)],
             check=True,
