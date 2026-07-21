@@ -185,6 +185,12 @@ class CDP:
 # ───────────────────────── terminal plumbing ─────────────────────────────────
 
 CSI_RE = re.compile(rb"\x1b\[([\x2d\x30-\x3f]*)([\x20-\x2f]*)([\x40-\x7e])")  # \x2d '-': SGR-pixel coords go negative in pane padding
+# A high-rate mouse burst can occasionally reach the child PTY without the
+# leading ESC (observed as ``[<35;788;373M``), or without the entire CSI
+# introducer.  Such a frame is unambiguously an SGR mouse report while mouse
+# tracking is active; never pass it to the hosted app as pasted text.
+ORPHAN_SGR_MOUSE_RE = re.compile(rb"\[?<(\d+);(-?\d+);(-?\d+)([Mm])")
+ORPHAN_SGR_MOUSE_PREFIX_RE = re.compile(rb"\[?<\d*(?:;-?\d*){0,2}")
 
 
 def _utf8_tail(b):
@@ -285,6 +291,23 @@ class Term:
             pass
         events, buf = [], self.inbuf
         while buf:
+            orphan = ORPHAN_SGR_MOUSE_RE.match(buf)
+            if orphan:
+                button, x, y, final = orphan.groups()
+                buf = buf[orphan.end():]
+                ev = self._parse_csi(
+                    f'<{button.decode()};{x.decode()};{y.decode()}',
+                    final.decode(),
+                )
+                if ev:
+                    events.append(ev)
+                continue
+            if buf == b"[" or (
+                    len(buf) <= 64 and ORPHAN_SGR_MOUSE_PREFIX_RE.fullmatch(buf)):
+                # The orphan itself can be split across read() calls. A plain
+                # key is encoded with CSI-u and paste is bracketed, so holding
+                # these otherwise-raw prefix bytes is safe until disambiguated.
+                break
             if buf.startswith(b"\x1b["):
                 m = CSI_RE.match(buf)
                 if not m:
@@ -331,6 +354,11 @@ class Term:
             else:
                 # raw text (paste without brackets, or IME): one char run
                 nxt = buf.find(b"\x1b")
+                # Preserve legitimate raw text before a damaged mouse frame,
+                # then let the next loop iteration recover the frame itself.
+                orphan = ORPHAN_SGR_MOUSE_RE.search(buf, 1)
+                if orphan and (nxt < 0 or orphan.start() < nxt):
+                    nxt = orphan.start()
                 if nxt < 0:
                     hold = _utf8_tail(buf)  # keep a split multibyte char whole
                     if hold == len(buf):
