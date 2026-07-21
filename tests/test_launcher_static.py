@@ -104,6 +104,9 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("KILIX_CHROME_CLOCK", battery)
         self.assertIn("KILIX_CHROME_CLOCK_FORMAT", battery)
         self.assertIn("clock_segment", battery)
+        self.assertIn("clock_segments", battery)
+        self.assertIn("CALENDAR_WIDGET_ACTION", battery)
+        self.assertIn("DATE_WIDGET_ACTION", battery)
         self.assertIn("ensure_chrome_timers", battery)
         self.assertIn("KILIX_CHROME_BATTERY", battery)
         self.assertIn("KILIX_BATTERY_SUPPLY_DIR", battery)
@@ -117,7 +120,11 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("right_status_start", tabbar)
         self.assertIn("right_status_width", tabbar)
         self.assertIn("action_at", tabbar)
+        self.assertIn("get_options().foreground", tabbar)
+        self.assertIn("run_kitten_with_metadata('kilix_clock'", tabs)
+        self.assertTrue((ROOT / "src" / "kittens" / "kilix_clock" / "main.py").is_file())
         self.assertIn("toggle_battery_percent", tabs)
+        self.assertIn("U+F073", conf)
         self.assertIn("U+F0079", conf)
         self.assertIn("U+F0083", conf)
         self.assertIn("Battery-in-chrome", readme)
@@ -129,6 +136,26 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("self.cell_height = cell_height", titlebar)
         self.assertIn("self._title_bar_screen.cell_width != cell_width", window)
         self.assertIn("self._title_bar_screen.cell_height != cell_height", window)
+
+    def test_software_mouse_cursor_stays_visible_in_inactive_pane(self):
+        shader = (ROOT / "src" / "kitty" / "cell_vertex.glsl").read_text()
+
+        # Kitty makes an inactive pane's text cursor transparent. The software
+        # mouse pointer shares the cursor drawing path, but must not share that
+        # focus-dependent opacity because Kilix hides the native pointer.
+        self.assertIn("float has_cursor, has_block_cursor, has_mouse_cursor;", shader)
+        self.assertIn(
+            "float cell_cursor_opacity = max(cursor_opacity, cell_data.has_mouse_cursor);",
+            shader,
+        )
+        self.assertIn(
+            "cell_data.cursor.bg * cell_cursor_opacity, cell_cursor_opacity",
+            shader,
+        )
+        self.assertIn(
+            "mix(bg, cell_data.cursor.bg, cell_cursor_opacity)",
+            shader,
+        )
 
     def test_fullscreen_is_content_only_and_restores_chrome_on_exit(self):
         state = (ROOT / "src" / "kitty" / "state.c").read_text()
