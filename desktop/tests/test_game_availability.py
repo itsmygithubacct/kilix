@@ -35,6 +35,7 @@ assert not games.game_enabled("doom")
 assert "doom" not in games.available_games()
 assert "dosbox" in games.available_games()
 assert "kilix-lights" in games.available_games()
+assert "super-kilix" in games.available_games()
 
 d = H.make_desk()
 labels = game_labels(d)
@@ -43,12 +44,19 @@ assert "Doom" not in labels
 assert "Solitaire" in labels
 assert "DOSBox" in labels
 assert "Kilix Lights" in labels
+assert "Super Kilix" in labels
 
 shared_settings.update({
     shared_settings.GAME_KEY_BY_ID["kilix-lights"]: False,
 })
 d_without_lights = H.make_desk()
 assert "Kilix Lights" not in game_labels(d_without_lights)
+
+shared_settings.update({
+    shared_settings.GAME_KEY_BY_ID["super-kilix"]: False,
+})
+d_without_super_kilix = H.make_desk()
+assert "Super Kilix" not in game_labels(d_without_super_kilix)
 
 d.shell.open_app("mines")
 assert H.find_window(d, "Mines") is None, \

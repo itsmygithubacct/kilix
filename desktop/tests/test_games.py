@@ -81,6 +81,17 @@ assert "lights" in icons.ICONS
 icons.get("lights", 16)
 icons.get("lights", 32)
 
+# Super Kilix is a pinned native game whose executable lives at the repo root.
+assert "super-kilix" in games.GAMES
+assert games.GAMES["super-kilix"]["label"] == "Super Kilix"
+assert games.GAMES["super-kilix"]["icon"] == "super-kilix"
+assert games.CONTENT_CATALOG.require("super-kilix").binary == "super-kilix"
+write("")
+assert games.game_ready("super-kilix") is None
+assert "super-kilix" in icons.ICONS
+icons.get("super-kilix", 16)
+icons.get("super-kilix", 32)
+
 # Kitty Brokeout is a first-class Games entry, built from source the same way.
 assert "kitty-brokeout" in games.GAMES
 assert games.GAMES["kitty-brokeout"]["icon"] == "brokeout"
