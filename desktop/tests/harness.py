@@ -18,11 +18,17 @@ KILIX_HOME = os.environ.get("KILIX_HOME") or os.path.dirname(_desktop)
 sys.path.insert(0, os.path.join(KILIX_HOME, "config"))
 sys.path.insert(0, _desktop)
 
+_shared_settings_dir = None
+if not os.environ.get("GPU_TERMINAL_SETTINGS_FILE"):
+    _shared_settings_dir = tempfile.mkdtemp(prefix="kilix-shared-settings-")
+    os.environ["GPU_TERMINAL_SETTINGS_FILE"] = os.path.join(
+        _shared_settings_dir, "settings.conf")
+
 from kilix_sdk import term as kilix_term
 import main as desk_main   # import patches host F-key tables, like the live desk
 import widgets as W
 
-_dirs = []                 # temp desktop dirs owned by this process
+_dirs = [_shared_settings_dir] if _shared_settings_dir else []
 atexit.register(lambda: [shutil.rmtree(d, ignore_errors=True) for d in _dirs])
 
 

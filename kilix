@@ -15,7 +15,8 @@
 #   ./kilix fullscreen        # toggle this tab's OS window fullscreen
 #   ./kilix mux [name]        # open a tmux-backed kilix tab for real attach/view
 #   ./kilix screen-size ...   # show/increase/decrease/reset terminal scale
-#   ./kilix settings          # shared clickable-chrome settings TUI
+#   ./kilix settings          # shared chrome/game settings TUI and CLI
+#   ./kilix games ...         # list, enable, or disable Kilix 95 games
 #   ./kilix status            # show version, engine, config, and provider
 #   ./kilix update            # verified-origin, clean, fast-forward/ref update
 #   ./kilix desktop           # launch the configured desktop provider
@@ -272,8 +273,8 @@ _kilix_load_env_file "$KILIX_DEFAULT_CONFIG_DIRECTORY/kilix.env"
   || _kilix_load_env_file "$KILIX_ENV_CONFIG"
 
 # One non-executable KEY=value file at the common GPU Terminal root is the
-# source of truth for status widgets and clickable pane-title controls.  The
-# first creation migrates the two legacy kilix.env chrome toggles.
+# source of truth for status widgets, pane-title controls, and Kilix 95 game
+# availability. The first creation migrates the two legacy kilix.env toggles.
 if ! python3 "$KILIX_HOME/kilix-settings" --ensure; then
   echo "kilix: could not initialize shared settings: $GPU_TERMINAL_SETTINGS_FILE" >&2
   exit 1
@@ -309,6 +310,43 @@ case "${1:-}" in
   settings|--settings)
     shift
     exec python3 "$KILIX_HOME/kilix-settings" "$@" ;;
+  games|--games)
+    shift
+    _games_action="${1:-list}"
+    [ $# -eq 0 ] || shift
+    case "$_games_action" in
+      list)
+        [ $# -eq 0 ] || {
+          echo "usage: $_self games [list|settings|enable GAME...|disable GAME...]" >&2
+          exit 2
+        }
+        exec python3 "$KILIX_HOME/kilix-settings" --print-games ;;
+      settings|configure)
+        [ $# -eq 0 ] || {
+          echo "usage: $_self games settings" >&2
+          exit 2
+        }
+        exec python3 "$KILIX_HOME/kilix-settings" ;;
+      enable|disable)
+        [ $# -gt 0 ] || {
+          echo "usage: $_self games $_games_action GAME..." >&2
+          exit 2
+        }
+        _games_state=on
+        [ "$_games_action" = enable ] || _games_state=off
+        _games_args=()
+        for _game in "$@"; do
+          _games_args+=(--game "$_game=$_games_state")
+        done
+        exec python3 "$KILIX_HOME/kilix-settings" \
+          "${_games_args[@]}" --print-games ;;
+      -h|--help|help)
+        echo "usage: $_self games [list|settings|enable GAME...|disable GAME...]"
+        exit 0 ;;
+      *)
+        echo "usage: $_self games [list|settings|enable GAME...|disable GAME...]" >&2
+        exit 2 ;;
+    esac ;;
   status|--status)
     _status_version="$(cat "$KILIX_HOME/VERSION" 2>/dev/null || echo unknown)"
     _status_head="$(git -C "$KILIX_HOME" rev-parse --short HEAD 2>/dev/null || echo not-a-checkout)"

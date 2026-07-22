@@ -434,17 +434,25 @@ class Taskbar:
                     for e in groups.get(bucket, [])]
 
         def games():
-            builtin = [
-                MI("Minesweeper", icon="mines",
-                   action=lambda: shell.open_app("mines")),
-                MI("Solitaire", icon="cards",
-                   action=lambda: shell.open_app("sol")),
-            ]
-            items = builtin + shell.game_menu_items()
+            from kilix_sdk import settings as shared_settings
+            availability = shared_settings.game_availability()
+            builtin = []
+            if availability["minesweeper"]:
+                builtin.append(MI(
+                    "Minesweeper", icon="mines",
+                    action=lambda: shell.open_app("mines")))
+            if availability["solitaire"]:
+                builtin.append(MI(
+                    "Solitaire", icon="cards",
+                    action=lambda: shell.open_app("sol")))
+            items = builtin + shell.game_menu_items(availability)
             disc = app_items("Games")
             if disc:
-                items.append(sub())
+                if items:
+                    items.append(sub())
                 items.append(MI("System", icon="games", submenu=disc))
+            if not items:
+                items.append(MI("(No games enabled)", enabled=False))
             return items
 
         def accessories():

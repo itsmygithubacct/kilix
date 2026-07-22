@@ -165,6 +165,11 @@ with conf("font_size 12\n") as path:
     win._apply()
     assert "KILIX_CHROME_BUTTON_SPLIT_UP=0" in read(win.shared_path)
 
+    kind, doom = win.fields["KILIX_GAME_DOOM"]
+    doom.checked = False
+    win._apply()
+    assert "KILIX_GAME_DOOM=0" in read(win.shared_path)
+
     for key in settings.shared_settings.MANAGED_KEYS:
         assert key in win.fields, f"Settings UI is missing shared control {key}"
 

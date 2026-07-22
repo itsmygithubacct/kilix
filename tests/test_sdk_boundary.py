@@ -43,7 +43,7 @@ class KilixSdkBoundaryTests(unittest.TestCase):
                 self.assertEqual(Path(paths.kilix95_home()), custom)
 
     def test_sdk_contract_is_versioned(self):
-        self.assertEqual(kilix_sdk.SDK_API_VERSION, (1, 1))
+        self.assertEqual(kilix_sdk.SDK_API_VERSION, (1, 2))
         kilix_sdk.require_compatible("1.0")
         with self.assertRaises(kilix_sdk.IncompatibleSDKError):
             kilix_sdk.require_compatible("2.0")
