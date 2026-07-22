@@ -9,8 +9,8 @@ underneath, and anyone who wants clickable split/maximize/close chrome on kitty.
 It runs its own kitty binary with its own config and icon, so it leaves any
 kitty you already have completely untouched. Tracked defaults stay in
 `config/`; every Kilix-owned writable file lives below
-`~/.local/gpu_terminal/kilix`. Stack-wide clickable-chrome preferences are the
-intentional exception: every GPU Terminal project reads
+`~/.local/gpu_terminal/kilix`. Stack-wide chrome and game-availability
+preferences are the intentional exception: every GPU Terminal project reads
 `~/.local/gpu_terminal/settings.conf`.
 
 The default layout is `config/` for user settings, `state/` for persistent
@@ -24,12 +24,13 @@ complete tree. Freedesktop launchers/icons are the intentional exception:
 
 ## Release 0.1.3
 
-Version 0.1.3 adds the Kilix 1.1 provider SDK. A shared immutable content
+Version 0.1.3 ships the Kilix 1.2 provider SDK. A shared immutable content
 catalog now drives both desktop providers, while `XAppSession` owns private X
 display authentication, application/capture processes, XDamage-to-ffmpeg
 fallback, input injection, and teardown. These boundaries keep provider code
 focused on presentation and make every catalog checkout recursive, pinned,
-verified, and atomically selected.
+verified, and atomically selected. SDK 1.2 also gives the providers and both
+settings interfaces one game-availability contract.
 
 ## Release 0.1.2
 
@@ -73,8 +74,8 @@ host SDK, and provider contract introduced in 0.1.1.
   config live.
 - **Host SDK for desktops** — external desktop providers import stable helpers
   from `config/kilix_sdk` instead of depending on raw `config/browse.py` /
-  `config/gfx.py` internals. SDK 1.1 includes shared content installation and
-  authenticated private-X-application sessions.
+  `config/gfx.py` internals. SDK 1.2 includes shared content installation,
+  authenticated private-X-application sessions, and game availability.
 - **Self-contained** — prefers its bundled fork build, and falls back to a prebuilt kitty if you haven't built it.
 
 ## Requirements
@@ -182,7 +183,9 @@ kilix focus <tab-or-pane-id>      # jump to a live tab or pane
 kilix watch <pane-id>             # best-effort read-only text watch
 kilix screen-size larger          # increase terminal scale (font_size +2pt)
 kilix screen-size smaller         # decrease terminal scale (font_size -2pt)
-kilix settings                    # toggle top-bar widgets and pane buttons
+kilix settings                    # shared chrome/game settings TUI
+kilix games list                  # show games available in Kilix 95
+kilix games disable doom          # hide a game (enable reverses it)
 kilix status                      # version/commit, engine, writable config, provider contract
 ```
 
@@ -441,7 +444,7 @@ right-click menu everywhere. Built in:
   properties, "open terminal here".
 - **kilix Settings** — edits this user's private `kitty.conf`, `kilix.env`, and
   shared `~/.local/gpu_terminal/settings.conf` (GUI tabs for terminal, top-bar
-  widgets, pane buttons, desktop, app, storage and
+  widgets, pane buttons, game availability, desktop, app, storage and
   build/update knobs, plus a raw `kitty.conf` editor). `kitty.conf` changes apply
   **live** via remote control (fallback: SIGUSR1); `kilix.env` changes are used
   by new launches.
@@ -453,6 +456,8 @@ right-click menu everywhere. Built in:
   dosbox-staging build if no dosbox is installed (fullscreen, fire on Space,
   sound on); **Bashed Earth** clones + builds
   [itsmygithubacct/Bashed-Earth](https://github.com/itsmygithubacct/Bashed-Earth).
+  The Games tab, `kilix settings`, and `kilix games enable|disable NAME...`
+  all select which entries appear, using the root-level shared settings file.
 - **Media Player** — Start ▸ Programs ▸ Media Player. The skin sits *directly
   on the desktop* with no kilix window frame (Winamp-on-Win95 style): an SDL2
   app on a private display whose background is chroma-keyed away, so only the
@@ -728,8 +733,9 @@ Use Start ▸ Settings in kilix 95, or edit
 `~/.local/gpu_terminal/kilix/config/kitty.conf`. It includes the tracked
 `config/kitty.conf` defaults; add overrides to the user file.
 
-Use `kilix settings` for clickable chrome. Network, calendar, date/time,
-battery, font-size, four-way split, maximize, and close toggles all live in
+Use `kilix settings` for clickable chrome and Kilix 95 game availability.
+Network, calendar, date/time, battery, font-size, four-way split, maximize,
+close, and game toggles all live in
 `~/.local/gpu_terminal/settings.conf`, which Kilix, Kilix 95, Pleb, and
 Plebian-OS share.
 

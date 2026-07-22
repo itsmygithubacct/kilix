@@ -10,8 +10,8 @@ The compatibility promise follows semantic-version major/minor rules: SDK 1.x
 keeps the 1.0 contract, while a provider may require a newer 1.y minor.
 """
 
-SDK_VERSION = "1.1.1"
-SDK_API_VERSION = (1, 1)
+SDK_VERSION = "1.2.0"
+SDK_API_VERSION = (1, 2)
 __version__ = SDK_VERSION
 
 

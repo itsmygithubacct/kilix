@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Terminal settings UI for Kilix's shared clickable chrome."""
+"""Terminal UI and CLI for shared Kilix controls and game availability."""
 
 from __future__ import annotations
 
@@ -21,14 +21,26 @@ from kilix_sdk import settings as shared  # noqa: E402
 def _control_names() -> dict[str, str]:
     names: dict[str, str] = {}
     for spec in shared.TOGGLE_SPECS:
-        short = spec.key.removeprefix("KILIX_CHROME_").lower()
-        names[short] = spec.key
-        names[short.removeprefix("button_")] = spec.key
+        if spec.key.startswith("KILIX_GAME_"):
+            short = spec.key.removeprefix("KILIX_GAME_").lower()
+            names[short] = spec.key
+            names[f"game_{short}"] = spec.key
+        else:
+            short = spec.key.removeprefix("KILIX_CHROME_").lower()
+            names[short] = spec.key
+            names[short.removeprefix("button_")] = spec.key
         names[spec.key.lower()] = spec.key
+    for game_id, key in shared.GAME_KEY_BY_ID.items():
+        names[game_id] = key
+        names[game_id.replace("-", "_")] = key
     return names
 
 
 CONTROL_NAMES = _control_names()
+GAME_NAMES = {
+    alias: key for alias, key in CONTROL_NAMES.items()
+    if key in shared.GAME_ID_BY_KEY
+}
 
 
 def _parse_assignment(value: str) -> tuple[str, bool]:
@@ -42,6 +54,19 @@ def _parse_assignment(value: str) -> tuple[str, bool]:
             key for key in CONTROL_NAMES if not key.startswith("kilix_")))
         raise argparse.ArgumentTypeError(
             f"unknown control {name!r}; choose one of: {choices}")
+    return key, shared.truthy(raw)
+
+
+def _parse_game_assignment(value: str) -> tuple[str, bool]:
+    try:
+        name, raw = value.split("=", 1)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("expected GAME=on|off") from error
+    key = GAME_NAMES.get(name.strip().lower())
+    if key is None:
+        choices = ", ".join(game_id for game_id, _ in shared.GAME_TOGGLE_IDS)
+        raise argparse.ArgumentTypeError(
+            f"unknown game {name!r}; choose one of: {choices}")
     return key, shared.truthy(raw)
 
 
@@ -62,11 +87,35 @@ def _print_settings(values: dict[str, str]) -> None:
     print(f"{shared.CLOCK_FORMAT_KEY}={values[shared.CLOCK_FORMAT_KEY]}")
 
 
+def _print_games(values: dict[str, str]) -> None:
+    print(f"settings_file={shared.settings_path()}")
+    for game_id, label in shared.GAME_TOGGLE_IDS:
+        key = shared.GAME_KEY_BY_ID[game_id]
+        state = "on" if shared.truthy(values[key]) else "off"
+        print(f"{game_id}={state}\t{label}")
+
+
+def _content_rows(values: dict[str, bool]):
+    rows = []
+    current_section = ""
+    item_index = 0
+    for spec in shared.TOGGLE_SPECS:
+        if spec.section != current_section:
+            current_section = spec.section
+            if rows:
+                rows.append(("blank", "", None))
+            rows.append(("section", current_section, None))
+        marker = "[x]" if values[spec.key] else "[ ]"
+        rows.append(("item", f" {marker} {spec.label}", item_index))
+        item_index += 1
+    return rows
+
+
 def _draw(stdscr, values: dict[str, bool], selected: int,
           message: str = "") -> None:
     stdscr.erase()
     height, width = stdscr.getmaxyx()
-    title = "Kilix Settings — clickable chrome"
+    title = "Kilix Settings"
     path = shared.settings_path()
     try:
         stdscr.addnstr(0, 2, title, max(0, width - 4), curses.A_BOLD)
@@ -74,31 +123,33 @@ def _draw(stdscr, values: dict[str, bool], selected: int,
     except curses.error:
         pass
 
-    row = 3
-    item_index = 0
-    current_section = ""
-    for spec in shared.TOGGLE_SPECS:
-        if spec.section != current_section:
-            current_section = spec.section
-            if item_index:
-                row += 1
-            try:
-                stdscr.addnstr(row, 2, current_section,
-                               max(0, width - 4), curses.A_BOLD)
-            except curses.error:
-                pass
-            row += 1
-        marker = "[x]" if values[spec.key] else "[ ]"
-        line = f" {marker} {spec.label}"
-        attr = curses.A_REVERSE if item_index == selected else curses.A_NORMAL
+    content = _content_rows(values)
+    selected_row = next(
+        (i for i, (_kind, _line, index) in enumerate(content)
+         if index == selected), 0)
+    available = max(1, height - 6)
+    scroll = min(max(0, selected_row - available + 1),
+                 max(0, len(content) - available))
+    for row_offset, (kind, line, item_index) in enumerate(
+            content[scroll:scroll + available]):
+        row = 3 + row_offset
+        attr = curses.A_NORMAL
+        if kind == "section":
+            attr = curses.A_BOLD
+        elif kind == "item" and item_index == selected:
+            attr = curses.A_REVERSE
         try:
             stdscr.addnstr(row, 2, line, max(0, width - 4), attr)
         except curses.error:
             pass
-        row += 1
-        item_index += 1
 
-    help_text = "↑/↓ or j/k move · Space toggle · A all on · N all off · S save · Q quit"
+    more = ""
+    if scroll:
+        more += "↑ "
+    if scroll + available < len(content):
+        more += "↓ "
+    help_text = (more +
+                 "j/k move · Space toggle · A all on · N all off · S save · Q quit")
     if height > 2:
         try:
             stdscr.addnstr(height - 2, 1, message or help_text,
@@ -152,7 +203,7 @@ def _run_tui(stdscr) -> int:
                 else:
                     original = dict(values)
                     _notify_running_kilix()
-                    message = "Saved. Kilix chrome will refresh automatically."
+                    message = "Saved. New game menus and Kilix chrome use these settings."
             else:
                 message = "No changes to save."
         elif key in (ord("q"), ord("Q"), 27):
@@ -168,19 +219,24 @@ def _run_tui(stdscr) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Configure Kilix status widgets and pane-title buttons")
+        description="Configure Kilix chrome and game availability")
     parser.add_argument("--print", action="store_true", dest="show",
                         help="print the effective shared settings")
+    parser.add_argument("--print-games", action="store_true",
+                        help="print Kilix game availability")
     parser.add_argument("--ensure", action="store_true",
                         help="create the shared settings file if absent")
     parser.add_argument("--set", action="append", default=[],
                         type=_parse_assignment, metavar="CONTROL=on|off",
                         help="set a control non-interactively")
+    parser.add_argument("--game", action="append", default=[],
+                        type=_parse_game_assignment, metavar="GAME=on|off",
+                        help="set game availability non-interactively")
     all_group = parser.add_mutually_exclusive_group()
     all_group.add_argument("--enable-all", action="store_true",
-                           help="enable every status widget and pane button")
+                           help="enable every shared control and game")
     all_group.add_argument("--disable-all", action="store_true",
-                           help="disable every status widget and pane button")
+                           help="disable every shared control and game")
     args = parser.parse_args(argv)
 
     try:
@@ -190,18 +246,23 @@ def main(argv: list[str] | None = None) -> int:
             state = bool(args.enable_all)
             changes.update((spec.key, state) for spec in shared.TOGGLE_SPECS)
         changes.update(args.set)
+        changes.update(args.game)
         if changes:
             shared.update(changes)
             _notify_running_kilix()
         if args.show:
             _print_settings(shared.load())
+        if args.print_games:
+            _print_games(shared.load())
     except (OSError, KeyError) as error:
         parser.exit(1, f"kilix-settings: {error}\n")
 
-    if args.ensure or args.show or changes:
+    if args.ensure or args.show or args.print_games or changes:
         return 0
     if not sys.stdin.isatty() or not sys.stdout.isatty():
-        parser.error("the interactive TUI requires a terminal; use --print or --set")
+        parser.error(
+            "the interactive TUI requires a terminal; use --print, "
+            "--print-games, --set, or --game")
     return curses.wrapper(_run_tui)
 
 

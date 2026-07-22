@@ -117,6 +117,10 @@ SETTING_PAGES = [
           ["left", "center", "right"]),
         K("enabled_layouts", "Enabled layouts", default="splits,stack,tall,grid"),
     ]),
+    ("Games", [
+        S(spec.key, spec.label)
+        for spec in shared_settings.GAME_TOGGLES
+    ]),
     ("Desktop", [
         E("KILIX_DESKTOP_PROVIDER", "Provider", "choice", "auto",
           ["auto", "builtin", "external", "command", "none"]),
@@ -392,11 +396,13 @@ class SettingsWin(wm.Window):
                 self.panels[tab_i].append(wd)
                 y += 28
             note_y = y + 4
-            note_text = (
-                "Shared chrome refreshes live; runtime settings affect new launches."
-                if any(s.source in ("env", "shared") for s in spec)
-                else "Applied live to this kilix by reloading kitty.conf."
-            )
+            if SETTING_PAGES[tab_i][0] == "Games":
+                note_text = "The Games menu updates the next time Start opens."
+            elif any(s.source in ("env", "shared") for s in spec):
+                note_text = (
+                    "Shared chrome refreshes live; runtime settings affect new launches.")
+            else:
+                note_text = "Applied live to this kilix by reloading kitty.conf."
             note = self.add(W.Label(18, note_y, note_text, font=T.SMALL,
                                     color=T.SHADOW))
             self.panels[tab_i].append(note)
@@ -553,7 +559,7 @@ class SettingsWin(wm.Window):
         if self.env_buffer != old_env:
             msg += " Runtime settings saved for new launches."
         if shared_changed:
-            msg += " Clickable chrome updated."
+            msg += " Shared chrome/game settings updated."
         self.status.set(msg)
         self.invalidate()
         if close:

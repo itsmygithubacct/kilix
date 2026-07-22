@@ -5,8 +5,23 @@ is a wm.Window subclass in its own module. Settings is a singleton (opening
 it again focuses the existing window); everything else opens fresh.
 """
 
+import wm
+
+
+GAME_APPS = {"mines": "minesweeper", "sol": "solitaire"}
+
 
 def open(desk, name, arg=None):
+    game_id = GAME_APPS.get(name)
+    if game_id is not None:
+        from kilix_sdk import settings as shared_settings
+        if not shared_settings.game_enabled(game_id):
+            wm.msgbox(
+                desk, "Games",
+                "This game is disabled. Re-enable it in "
+                "kilix Settings → Games.",
+                icon="info")
+            return
     if name == "filemgr":
         from . import filemgr
         desk.wm.add(filemgr.FileWindow(desk, arg or "~"))

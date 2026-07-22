@@ -17,6 +17,7 @@ from typing import Mapping
 SETTINGS_BASENAME = "settings.conf"
 SETTINGS_HEADER = "# GPU Terminal shared settings (KEY=value; not shell code)."
 SETTINGS_MARKER = "# -- Kilix clickable chrome --"
+GAMES_MARKER = "# -- Kilix game availability --"
 
 
 @dataclass(frozen=True)
@@ -45,7 +46,41 @@ PANE_BUTTON_TOGGLES = (
     ToggleSpec("KILIX_CHROME_BUTTON_CLOSE", "Close pane", "Pane buttons"),
 )
 
-TOGGLE_SPECS = TOP_BAR_TOGGLES + PANE_BUTTON_TOGGLES
+# Stable IDs cover the two built-in Kilix 95 games and every game-like entry
+# in the pinned host content catalog.  Keeping these in the host SDK gives the
+# CLI, TUI, built-in desktop, and external Kilix 95 provider one vocabulary.
+GAME_TOGGLE_IDS = (
+    ("minesweeper", "Minesweeper"),
+    ("solitaire", "Solitaire"),
+    ("doom", "Doom"),
+    ("dosbox", "DOSBox"),
+    ("bashed-earth", "Bashed Earth"),
+    ("kilix-jpak", "Kilix JPAK"),
+    ("kilix-rancher", "Kilix Rancher"),
+    ("kilix-pong", "Kilix Pong"),
+    ("joustix", "Joustix"),
+    ("chess-bash", "Chess Bash"),
+    ("kilix-fishtank", "Kilix Fishtank"),
+    ("terminal-lander", "Terminal Lander"),
+    ("kitty-brokeout", "Kitty Brokeout"),
+)
+
+
+def _game_setting_key(game_id: str) -> str:
+    return "KILIX_GAME_" + game_id.upper().replace("-", "_")
+
+
+GAME_TOGGLES = tuple(
+    ToggleSpec(_game_setting_key(game_id), label, "Games")
+    for game_id, label in GAME_TOGGLE_IDS
+)
+GAME_KEY_BY_ID = {
+    game_id: spec.key
+    for (game_id, _label), spec in zip(GAME_TOGGLE_IDS, GAME_TOGGLES)
+}
+GAME_ID_BY_KEY = {key: game_id for game_id, key in GAME_KEY_BY_ID.items()}
+
+TOGGLE_SPECS = TOP_BAR_TOGGLES + PANE_BUTTON_TOGGLES + GAME_TOGGLES
 TOGGLE_BY_KEY = {spec.key: spec for spec in TOGGLE_SPECS}
 CLOCK_FORMAT_KEY = "KILIX_CHROME_CLOCK_FORMAT"
 CLOCK_FORMAT_DEFAULT = "%Y-%m-%d %H:%M"
@@ -118,8 +153,26 @@ def load(path: str | None = None) -> dict[str, str]:
 def enabled(key: str, path: str | None = None) -> bool:
     spec = TOGGLE_BY_KEY.get(key)
     if spec is None:
-        raise KeyError(f"unknown Kilix chrome toggle: {key}")
+        raise KeyError(f"unknown shared Kilix toggle: {key}")
     return truthy(load(path).get(key, "1" if spec.default else "0"))
+
+
+def game_enabled(game_id: str, path: str | None = None) -> bool:
+    """Return whether a Kilix game is exposed by desktop providers."""
+    try:
+        key = GAME_KEY_BY_ID[game_id]
+    except KeyError as error:
+        raise KeyError(f"unknown Kilix game: {game_id}") from error
+    return enabled(key, path)
+
+
+def game_availability(path: str | None = None) -> dict[str, bool]:
+    """Return one consistent snapshot of all Kilix game selections."""
+    values = load(path)
+    return {
+        game_id: truthy(values[key])
+        for game_id, key in GAME_KEY_BY_ID.items()
+    }
 
 
 def _initial_text(values: Mapping[str, str]) -> str:
@@ -129,14 +182,24 @@ def _initial_text(values: Mapping[str, str]) -> str:
     lines.append(f"{CLOCK_FORMAT_KEY}={values[CLOCK_FORMAT_KEY]}")
     for spec in PANE_BUTTON_TOGGLES:
         lines.append(f"{spec.key}={values[spec.key]}")
+    lines.extend(("", GAMES_MARKER))
+    for spec in GAME_TOGGLES:
+        lines.append(f"{spec.key}={values[spec.key]}")
     return "\n".join(lines) + "\n"
 
 
 def ensure_file(path: str | None = None) -> str:
-    """Create the shared settings file once, preserving legacy preferences."""
+    """Create the shared file and add newly introduced game defaults."""
     target = path or settings_path()
     if os.path.isfile(target) and not os.path.islink(target):
         os.chmod(target, 0o600, follow_symlinks=False)
+        text, _exists = read_text(target)
+        present = parse_text(text)
+        missing = [spec.key for spec in GAME_TOGGLES
+                   if spec.key not in present]
+        if missing:
+            values = defaults()
+            update({key: values[key] for key in missing}, target)
         return target
     if os.path.lexists(target):
         # A writer will atomically replace links, but startup must not silently
@@ -175,8 +238,9 @@ def _set_value(text: str, key: str, value: str) -> str:
     if matches:
         last = matches[-1]
         return text[:last.start()] + line + text[last.end():]
-    if SETTINGS_MARKER not in text:
-        text = text.rstrip("\n") + f"\n\n{SETTINGS_MARKER}\n"
+    marker = GAMES_MARKER if key in GAME_ID_BY_KEY else SETTINGS_MARKER
+    if marker not in text:
+        text = text.rstrip("\n") + f"\n\n{marker}\n"
     return text.rstrip("\n") + "\n" + line + "\n"
 
 
@@ -223,6 +287,11 @@ def update(changes: Mapping[str, object], path: str | None = None) -> str:
 __all__ = [
     "CLOCK_FORMAT_DEFAULT",
     "CLOCK_FORMAT_KEY",
+    "GAMES_MARKER",
+    "GAME_ID_BY_KEY",
+    "GAME_KEY_BY_ID",
+    "GAME_TOGGLE_IDS",
+    "GAME_TOGGLES",
     "MANAGED_KEYS",
     "PANE_BUTTON_TOGGLES",
     "SETTINGS_BASENAME",
@@ -233,6 +302,8 @@ __all__ = [
     "defaults",
     "enabled",
     "ensure_file",
+    "game_availability",
+    "game_enabled",
     "load",
     "parse_text",
     "read_text",

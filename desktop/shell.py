@@ -721,12 +721,12 @@ class Shell:
         except OSError:
             return False
 
-    def game_menu_items(self):
+    def game_menu_items(self, availability=None):
         """Start ▸ Programs ▸ Games, built from the games.py registry."""
         import games
         return [W.MenuItem(meta["label"], icon=meta["icon"],
                            action=lambda g=name: self.play_game(g))
-                for name, meta in games.GAMES.items()]
+                for name, meta in games.available_games(availability).items()]
 
     def system_menu_items(self):
         """Start ▸ System: update + maintenance launchers, each shown only when
@@ -836,6 +836,13 @@ class Shell:
         otherwise asks once, then a new tab installs the pieces (showing
         progress) and boots the game."""
         import games
+        if not games.game_enabled(game):
+            wm.msgbox(
+                self.desk, "Games",
+                "This game is disabled. Re-enable it in "
+                "kilix Settings → Games.",
+                icon="info")
+            return
         meta = games.GAMES[game]
 
         def go():
