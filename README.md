@@ -24,13 +24,14 @@ complete tree. Freedesktop launchers/icons are the intentional exception:
 
 ## Release 0.1.3
 
-Version 0.1.3 ships the Kilix 1.2 provider SDK. A shared immutable content
+Version 0.1.3 ships the Kilix 1.3 provider SDK. A shared immutable content
 catalog now drives both desktop providers, while `XAppSession` owns private X
 display authentication, application/capture processes, XDamage-to-ffmpeg
 fallback, input injection, and teardown. These boundaries keep provider code
 focused on presentation and make every catalog checkout recursive, pinned,
 verified, and atomically selected. SDK 1.2 also gives the providers and both
-settings interfaces one game-availability contract.
+settings interfaces one game-availability contract. SDK 1.3 adds the shared
+volume-widget setting used by Kilix, Kilix 95, Pleb, and Plebian-OS.
 
 ## Release 0.1.2
 
@@ -217,11 +218,13 @@ also lives on the `▢` button and `Ctrl+Alt+Z`).
 The active pane's header is highlighted (bright blue); inactive panes are grayed —
 matching Tilix's active-pane cue.
 
-The far right of the page strip shows network, calendar, local date/time, and
-(when applicable) battery items. The network/Wi-Fi icon sits immediately left
-of the calendar and opens `nmtui` in an overlay pane. Click the calendar icon
-for a navigable month widget, or click the date/time text for a live local-date,
-clock, and timezone widget.
+The far right of the page strip shows volume, network, calendar, local
+date/time, and (when applicable) battery items. The volume icon opens
+`pulsemixer` in an overlay pane (`alsamixer` is used as a fallback). It sits to
+the left of the network/Wi-Fi icon, which remains immediately left of the
+calendar and opens `nmtui`. Click the calendar icon for a navigable month
+widget, or click the date/time text for a live local-date, clock, and timezone
+widget.
 When Linux reports a laptop battery is **discharging**, a battery status item appears to its right.
 It is green above 50%, yellow at 50% and below, red at 20% and below, and
 shows the percentage to the left of the battery icon. Clicking it toggles the
@@ -735,8 +738,8 @@ Use Start ▸ Settings in kilix 95, or edit
 `config/kitty.conf` defaults; add overrides to the user file.
 
 Use `kilix settings` for clickable chrome and Kilix 95 game availability.
-Network, calendar, date/time, battery, font-size, four-way split, maximize,
-close, and game toggles all live in
+Volume, network, calendar, date/time, battery, font-size, four-way split,
+maximize, close, and game toggles all live in
 `~/.local/gpu_terminal/settings.conf`, which Kilix, Kilix 95, Pleb, and
 Plebian-OS share.
 

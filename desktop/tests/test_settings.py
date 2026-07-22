@@ -146,6 +146,12 @@ with conf("font_size 12\n") as path:
     apps.open(d, "settings", None)
     win = H.find_window(d, "SettingsWin")
 
+    kind, volume = win.fields["KILIX_CHROME_VOLUME"]
+    assert volume.checked, "shared default for KILIX_CHROME_VOLUME should be enabled"
+    volume.checked = False
+    win._apply()
+    assert "KILIX_CHROME_VOLUME=0" in read(win.shared_path)
+
     kind, wd = win.fields["KILIX_CHROME_CLOCK"]
     assert wd.checked, "shared default for KILIX_CHROME_CLOCK should be enabled"
     wd.checked = False
