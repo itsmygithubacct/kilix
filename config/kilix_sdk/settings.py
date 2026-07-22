@@ -29,6 +29,7 @@ class ToggleSpec:
 
 
 TOP_BAR_TOGGLES = (
+    ToggleSpec("KILIX_CHROME_VOLUME", "Volume", "Top bar"),
     ToggleSpec("KILIX_CHROME_NETWORK", "Network / Wi-Fi", "Top bar"),
     ToggleSpec("KILIX_CHROME_CALENDAR", "Calendar", "Top bar"),
     ToggleSpec("KILIX_CHROME_CLOCK", "Date and time", "Top bar"),
@@ -189,13 +190,13 @@ def _initial_text(values: Mapping[str, str]) -> str:
 
 
 def ensure_file(path: str | None = None) -> str:
-    """Create the shared file and add newly introduced game defaults."""
+    """Create the shared file and add defaults introduced by newer hosts."""
     target = path or settings_path()
     if os.path.isfile(target) and not os.path.islink(target):
         os.chmod(target, 0o600, follow_symlinks=False)
         text, _exists = read_text(target)
         present = parse_text(text)
-        missing = [spec.key for spec in GAME_TOGGLES
+        missing = [spec.key for spec in TOGGLE_SPECS
                    if spec.key not in present]
         if missing:
             values = defaults()

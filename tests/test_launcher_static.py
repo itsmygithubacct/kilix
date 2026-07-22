@@ -102,6 +102,7 @@ class KilixLauncherTests(unittest.TestCase):
         readme = (ROOT / "README.md").read_text()
 
         self.assertIn("KILIX_CHROME_CLOCK", battery)
+        self.assertIn("KILIX_CHROME_VOLUME", battery)
         self.assertIn("KILIX_CHROME_NETWORK", battery)
         self.assertIn("KILIX_CHROME_CALENDAR", battery)
         self.assertIn("KILIX_CHROME_CLOCK_FORMAT", battery)
@@ -109,7 +110,9 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("clock_segments", battery)
         self.assertIn("CALENDAR_WIDGET_ACTION", battery)
         self.assertIn("DATE_WIDGET_ACTION", battery)
+        self.assertIn("VOLUME_WIDGET_ACTION", battery)
         self.assertIn("NETWORK_WIDGET_ACTION", battery)
+        self.assertIn("volume_segment", battery)
         self.assertIn("network_segment", battery)
         self.assertIn("ensure_chrome_timers", battery)
         self.assertIn("KILIX_CHROME_BATTERY", battery)
@@ -120,6 +123,7 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("_BATTERY_SHOW_PERCENT = True", battery)
         self.assertIn("f' {info.percent:3d}% {glyph} '", battery)
         self.assertIn("clock_segment", tabbar)
+        self.assertIn("volume_segment", tabbar)
         self.assertIn("network_segment", tabbar)
         self.assertIn("battery_segment", tabbar)
         self.assertIn("right_status_start", tabbar)
@@ -127,11 +131,14 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("action_at", tabbar)
         self.assertIn("get_options().foreground", tabbar)
         self.assertIn("run_kitten_with_metadata('kilix_clock'", tabs)
+        self.assertIn("which('pulsemixer') or which('alsamixer')", tabs)
+        self.assertIn("Volume Control", tabs)
         self.assertIn("which('nmtui')", tabs)
         self.assertIn("Network Connections", tabs)
         self.assertTrue((ROOT / "src" / "kittens" / "kilix_clock" / "main.py").is_file())
         self.assertIn("toggle_battery_percent", tabs)
         self.assertIn("U+F073", conf)
+        self.assertIn("U+F028", conf)
         self.assertIn("U+F1EB", conf)
         self.assertIn("U+F0079", conf)
         self.assertIn("U+F0083", conf)
@@ -256,7 +263,8 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("KILIX_NO_SOUND|KILIX_XPANE_WM", launcher)
         self.assertIn("SETTING_PAGES", settings)
         for key in (
-            "KILIX_CHROME_NETWORK", "KILIX_CHROME_CALENDAR",
+            "KILIX_CHROME_VOLUME", "KILIX_CHROME_NETWORK",
+            "KILIX_CHROME_CALENDAR",
             "KILIX_CHROME_CLOCK", "KILIX_CHROME_BATTERY",
             "KILIX_CHROME_BUTTON_FONT_INCREASE",
             "KILIX_CHROME_BUTTON_SPLIT_LEFT",
