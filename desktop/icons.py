@@ -368,6 +368,21 @@ def _lights(p):
             p.px(x, y, W if on else B)
 
 
+def _super_kilix(p):
+    # Kilix the star-vault cat on a platform ledge: pointed ears, a cyan visor,
+    # a teal knit sweater, standing on a brick block -- the side-scroller.
+    p.rect(0, 13, 15, 15, fill=DY, outline=K)                   # brick platform
+    p.vline(4, 13, 15, K); p.vline(9, 13, 15, K); p.vline(13, 13, 15, K)
+    p.poly([(4, 4), (4, 1), (6, 3), (9, 3), (11, 1), (11, 7), (9, 8), (6, 8), (4, 6)],
+           fill=R, outline=K)                                   # head + ears
+    p.px(4, 2, Y); p.px(11, 2, Y)                               # ear tips
+    p.rect(5, 4, 10, 6, fill=DB, outline=K)                     # visor housing
+    p.rect(6, 5, 9, 5, fill=C); p.px(8, 5, W)                   # cyan visor glint
+    p.rect(5, 8, 10, 12, fill=T, outline=K)                     # teal knit sweater
+    p.hline(6, 9, 10, C); p.px(6, 9, W); p.px(9, 9, W)          # knit stripe
+    p.px(6, 12, C); p.px(9, 12, C)                              # cyan boots
+
+
 def _doom(p):
     # a cacodemon-ish grinning red sphere (all in-house pixel art)
     p.rect(4, 1, 11, 1, fill=DR)
@@ -551,6 +566,7 @@ ICONS = {
     "shutdown": _shutdown, "flame": _flame, "home": _home,
     "games": _games, "doom": _doom, "dosbox": _dosbox, "tank": _tank,
     "lander": _lander, "brokeout": _brokeout, "lights": _lights,
+    "super-kilix": _super_kilix,
     "amp": _amp,
     "question": _question, "info": _info, "warn": _warn, "error": _error,
     "back": _arrow_left, "forward": _arrow_right, "up": _arrow_up,

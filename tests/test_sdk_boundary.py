@@ -59,6 +59,8 @@ class KilixSdkBoundaryTests(unittest.TestCase):
                          "terminal")
         self.assertEqual(catalog.require("kilix-lights").binary,
                          "bin/kilix-lights")
+        self.assertEqual(catalog.require("super-kilix").binary,
+                         "super-kilix")
         self.assertIs(content.InstallError, __import__(
             "kilix_content", fromlist=["InstallError"]).InstallError)
 

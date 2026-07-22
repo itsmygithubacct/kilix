@@ -169,14 +169,17 @@ class SharedSettingsTests(unittest.TestCase):
                 "--set", "bashed-earth=off",
                 "--set", "game_kilix_pong=off",
                 "--set", "kilix-lights=off",
+                "--set", "super-kilix=off",
                 "--print-games",
             ], env=env, text=True, capture_output=True, check=True)
             self.assertIn("bashed-earth=off\tBashed Earth", result.stdout)
             self.assertIn("kilix-pong=off\tKilix Pong", result.stdout)
             self.assertIn("kilix-lights=off\tKilix Lights", result.stdout)
+            self.assertIn("super-kilix=off\tSuper Kilix", result.stdout)
             self.assertFalse(settings.game_enabled("bashed-earth", str(path)))
             self.assertFalse(settings.game_enabled("kilix-pong", str(path)))
             self.assertFalse(settings.game_enabled("kilix-lights", str(path)))
+            self.assertFalse(settings.game_enabled("super-kilix", str(path)))
 
     def test_kilix_games_subcommand_changes_root_config(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -187,16 +190,18 @@ class SharedSettingsTests(unittest.TestCase):
             env["GPU_TERMINAL_HOME"] = tmp
             result = subprocess.run([
                 str(ROOT / "kilix"), "games", "disable", "doom", "kilix-pong",
-                "kilix-lights"
+                "kilix-lights", "super-kilix"
             ], env=env, text=True, capture_output=True, check=True)
             self.assertIn("doom=off\tDoom", result.stdout)
             self.assertIn("kilix-pong=off\tKilix Pong", result.stdout)
             self.assertIn("kilix-lights=off\tKilix Lights", result.stdout)
+            self.assertIn("super-kilix=off\tSuper Kilix", result.stdout)
             path = Path(tmp) / "settings.conf"
             self.assertTrue(path.is_file())
             self.assertFalse(settings.game_enabled("doom", str(path)))
             self.assertFalse(settings.game_enabled("kilix-pong", str(path)))
             self.assertFalse(settings.game_enabled("kilix-lights", str(path)))
+            self.assertFalse(settings.game_enabled("super-kilix", str(path)))
             rejected = subprocess.run([
                 str(ROOT / "kilix"), "games", "disable", "network"
             ], env=env, text=True, capture_output=True)

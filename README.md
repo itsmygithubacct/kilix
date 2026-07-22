@@ -461,8 +461,8 @@ right-click menu everywhere. Built in:
   dosbox-staging build if no dosbox is installed (fullscreen, fire on Space,
   sound on); **Bashed Earth** clones + builds
   [itsmygithubacct/Bashed-Earth](https://github.com/itsmygithubacct/Bashed-Earth).
-  Native catalog games include **Kilix Lights**, which is cloned recursively,
-  built, and launched directly in its Kilix tab.
+  Native catalog games include **Kilix Lights** and **Super Kilix**, which are
+  cloned recursively, built, and launched directly in their Kilix tabs.
   The Games tab, `kilix settings`, and `kilix games enable|disable NAME...`
   all select which entries appear, using the root-level shared settings file.
 - **Media Player** — Start ▸ Programs ▸ Media Player. The skin sits *directly
