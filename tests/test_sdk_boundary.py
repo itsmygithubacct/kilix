@@ -53,6 +53,10 @@ class KilixSdkBoundaryTests(unittest.TestCase):
         lander = catalog.require("terminal-lander")
         self.assertEqual(lander.source_type, "git")
         self.assertEqual(len(lander.ref), 40)
+        self.assertEqual(catalog.require("kilix-rancher").binary,
+                         "kilix-rancher")
+        self.assertEqual(catalog.require("kilix-pong").launch_mode,
+                         "terminal")
         self.assertIs(content.InstallError, __import__(
             "kilix_content", fromlist=["InstallError"]).InstallError)
 
