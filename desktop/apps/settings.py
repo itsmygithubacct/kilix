@@ -2,9 +2,9 @@
 
 Edits the writable per-user Kilix configuration (normally under
 ``~/.local/gpu_terminal/kilix``; ``$KITTY_CONFIG_DIRECTORY`` overrides it). The
-tracked ``config/`` tree contains defaults and is never rewritten. Form tabs
-cover the common knobs;
-the third tab is the raw file in a text editor. Apply writes the file and
+tracked ``config/`` tree contains defaults and is never rewritten. Clickable
+chrome settings live in the stack-wide ``~/.local/gpu_terminal/settings.conf``;
+the raw kitty.conf tab remains available for advanced edits. Apply writes and
 live-reloads the running kilix via `kitten @ action load_config_file`,
 falling back to SIGUSR1 at $KITTY_PID. Only the managed lines are rewritten
 (last occurrence wins, matching kitty's own semantics); everything else in
@@ -22,6 +22,7 @@ import theme as T
 import widgets as W
 import wm
 import storage
+from kilix_sdk import settings as shared_settings
 
 MARKER = "# ── kilix desktop settings ──"
 ENV_MARKER = "# -- kilix settings env --"
@@ -44,6 +45,10 @@ def E(key, label, kind="text", default="", extra=None):
     return SettingSpec("env", key, label, kind, default, extra)
 
 
+def S(key, label, kind="bool", default="1", extra=("1", "0")):
+    return SettingSpec("shared", key, label, kind, default, extra)
+
+
 def L(key, label, default, line):
     return SettingSpec("line", key, label, "bool", default, line)
 
@@ -62,6 +67,8 @@ SETTING_PAGES = [
           ["fade", "separator", "powerline", "slant", "hidden", "custom"]),
         K("tab_powerline_style", "Powerline shape", "choice", "slanted",
           ["slanted", "round", "angled"]),
+        K("draw_minimal_borders", "Minimal borders", "bool", "yes"),
+        K("inactive_text_alpha", "Inactive text alpha", default="0.7"),
     ]),
     ("Terminal", [
         K("scrollback_lines", "Scrollback lines", default="10000"),
@@ -84,20 +91,31 @@ SETTING_PAGES = [
         K("listen_on", "Remote socket", default="unix:@kilix-{kitty_pid}"),
     ]),
     ("Chrome", [
-        E("KILIX_CHROME_CLOCK", "Show clock", "bool", "1", ("1", "0")),
-        E("KILIX_CHROME_CLOCK_FORMAT", "Clock format", default="%Y-%m-%d %H:%M"),
-        E("KILIX_CHROME_BATTERY", "Show battery", "bool", "1", ("1", "0")),
+        S("KILIX_CHROME_NETWORK", "Network / Wi-Fi"),
+        S("KILIX_CHROME_CALENDAR", "Calendar"),
+        S("KILIX_CHROME_CLOCK", "Date and time"),
+        S("KILIX_CHROME_CLOCK_FORMAT", "Clock format", "text",
+          "%Y-%m-%d %H:%M", None),
+        S("KILIX_CHROME_BATTERY", "Battery"),
         E("KILIX_BATTERY_SUPPLY_DIR", "Battery supply dir"),
         K("tab_bar_min_tabs", "Show page strip at", default="1"),
         K("tab_bar_show_new_tab_button", "New-page button", "bool", "yes"),
+    ]),
+    ("Pane", [
+        S("KILIX_CHROME_BUTTON_FONT_INCREASE", "Increase text size"),
+        S("KILIX_CHROME_BUTTON_FONT_DECREASE", "Decrease text size"),
+        S("KILIX_CHROME_BUTTON_SPLIT_LEFT", "Split pane left"),
+        S("KILIX_CHROME_BUTTON_SPLIT_UP", "Split pane up"),
+        S("KILIX_CHROME_BUTTON_SPLIT_DOWN", "Split pane down"),
+        S("KILIX_CHROME_BUTTON_SPLIT_RIGHT", "Split pane right"),
+        S("KILIX_CHROME_BUTTON_MAXIMIZE", "Maximize / restore"),
+        S("KILIX_CHROME_BUTTON_CLOSE", "Close pane"),
         K("window_title_bar", "Pane title bars", "choice", "top",
           ["top", "bottom", "none"]),
         K("window_title_bar_min_windows", "Title bars at panes", default="1"),
         K("window_title_bar_align", "Title alignment", "choice", "left",
           ["left", "center", "right"]),
-        K("draw_minimal_borders", "Minimal borders", "bool", "yes"),
         K("enabled_layouts", "Enabled layouts", default="splits,stack,tall,grid"),
-        K("inactive_text_alpha", "Inactive text alpha", default="0.7"),
     ]),
     ("Desktop", [
         E("KILIX_DESKTOP_PROVIDER", "Provider", "choice", "auto",
@@ -323,6 +341,9 @@ class SettingsWin(wm.Window):
         self.min_w, self.min_h = 520, 420
         self.path = config_path()
         self.env_path = env_config_path()
+        self.shared_path = shared_settings.settings_path()
+        self.shared_values = shared_settings.load(self.shared_path)
+        self.shared_changes = {}
         try:
             with open(self.path, encoding="utf-8", errors="replace") as f:
                 self.kitty_buffer = f.read()
@@ -372,8 +393,8 @@ class SettingsWin(wm.Window):
                 y += 28
             note_y = y + 4
             note_text = (
-                "kitty.conf changes reload live; kilix.env changes affect new launches."
-                if any(s.source == "env" for s in spec)
+                "Shared chrome refreshes live; runtime settings affect new launches."
+                if any(s.source in ("env", "shared") for s in spec)
                 else "Applied live to this kilix by reloading kitty.conf."
             )
             note = self.add(W.Label(18, note_y, note_text, font=T.SMALL,
@@ -436,6 +457,8 @@ class SettingsWin(wm.Window):
 
     # form <-> buffer -----------------------------------------------------
     def _current_value(self, spec):
+        if spec.source == "shared":
+            return self.shared_values.get(spec.key)
         if spec.source == "env":
             return get_env_key(self.env_buffer, spec.key)
         if spec.source == "line":
@@ -484,6 +507,9 @@ class SettingsWin(wm.Window):
                     continue
             if spec.source == "env":
                 self.env_buffer = set_env_key(self.env_buffer, key, v)
+            elif spec.source == "shared":
+                self.shared_values[key] = v
+                self.shared_changes[key] = v
             elif spec.source == "line":
                 self.kitty_buffer = set_line(self.kitty_buffer, spec.extra) if wd.checked else unset_line(self.kitty_buffer, spec.extra)
                 self.buffer = self.kitty_buffer
@@ -499,6 +525,7 @@ class SettingsWin(wm.Window):
             self.buffer = self.kitty_buffer
         else:
             self._form_to_buffer()
+        shared_changed = bool(self.shared_changes)
         try:
             _atomic_write_private(self.path, self.kitty_buffer)
         except OSError as e:
@@ -513,10 +540,20 @@ class SettingsWin(wm.Window):
                 wm.msgbox(self.desk, "kilix Settings",
                           f"Cannot write runtime config:\n{e}", icon="error")
                 return
+        if self.shared_changes:
+            try:
+                shared_settings.update(self.shared_changes, self.shared_path)
+                self.shared_changes.clear()
+            except (OSError, KeyError) as e:
+                wm.msgbox(self.desk, "kilix Settings",
+                          f"Cannot write shared settings:\n{e}", icon="error")
+                return
         self._apply_env_live()
         msg = self._reload_live()
         if self.env_buffer != old_env:
             msg += " Runtime settings saved for new launches."
+        if shared_changed:
+            msg += " Clickable chrome updated."
         self.status.set(msg)
         self.invalidate()
         if close:

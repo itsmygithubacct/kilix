@@ -18,7 +18,8 @@ def digest(path):
 def clean_env():
     env = dict(os.environ)
     for name in tuple(env):
-        if name.startswith("KILIX_") or name == "GPU_TERMINAL_HOME":
+        if name.startswith("KILIX_") or name in (
+                "GPU_TERMINAL_HOME", "GPU_TERMINAL_SETTINGS_FILE"):
             env.pop(name)
     return env
 
@@ -34,6 +35,7 @@ class UserConfigBehaviorTests(unittest.TestCase):
             env.update({
                 "KILIX_STORAGE_HOME": str(storage),
                 "KILIX_DESKTOP_PROVIDER": "command",
+                "GPU_TERMINAL_SETTINGS_FILE": str(Path(tmp) / "settings.conf"),
             })
             result = subprocess.run(
                 [str(ROOT / "kilix"), "status"], env=env,
@@ -86,10 +88,13 @@ class UserConfigBehaviorTests(unittest.TestCase):
             second = root / "second"
             (first / "config").mkdir(parents=True)
             shutil.copy2(ROOT / "kilix", first / "kilix")
+            shutil.copy2(ROOT / "kilix-settings", first / "kilix-settings")
             shutil.copy2(ROOT / "config" / "kitty.conf",
                          first / "config" / "kitty.conf")
             shutil.copy2(ROOT / "config" / "kilix.env",
                          first / "config" / "kilix.env")
+            shutil.copytree(ROOT / "config" / "kilix_sdk",
+                            first / "config" / "kilix_sdk")
             env = clean_env()
             env.pop("KITTY_CONFIG_DIRECTORY", None)
             storage = root / "storage"
