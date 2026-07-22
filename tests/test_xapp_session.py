@@ -181,6 +181,48 @@ class XAppSessionTests(unittest.TestCase):
             xapp.xcapture.XDamageCapture = original_damage
             xapp.xinject.Injector = original_injector
 
+    def test_damage_capture_uses_private_xauthority_without_leak(self):
+        supervisor = FakeSupervisor()
+        seen = {}
+        original_damage = xapp.xcapture.XDamageCapture
+        previous = os.environ.get("XAUTHORITY")
+        os.environ["XAUTHORITY"] = "/tmp/host-auth"
+
+        class FakeDamageCapture:
+            def __init__(self, display, width, height, draw_cursor=True):
+                seen["init"] = (
+                    display, width, height, draw_cursor,
+                    os.environ.get("XAUTHORITY"))
+                self.closed = False
+
+            def snapshot(self):
+                seen["snapshot"] = os.environ.get("XAUTHORITY")
+                return b"initial-frame"
+
+            def close(self):
+                self.closed = True
+
+        try:
+            xapp.xcapture.XDamageCapture = FakeDamageCapture
+            session = xapp.XAppSession(
+                "fixture", 64, 48, supervisor=supervisor)
+            session.start_xvfb()
+            started = session.start_capture(draw_cursor=False)
+
+            self.assertEqual(started.backend, "xdamage+mit-shm")
+            self.assertEqual(started.initial_frame, b"initial-frame")
+            self.assertEqual(
+                seen["init"], (":77", 64, 48, False, supervisor.xauth))
+            self.assertEqual(seen["snapshot"], supervisor.xauth)
+            self.assertEqual(os.environ["XAUTHORITY"], "/tmp/host-auth")
+            session.close()
+        finally:
+            xapp.xcapture.XDamageCapture = original_damage
+            if previous is None:
+                os.environ.pop("XAUTHORITY", None)
+            else:
+                os.environ["XAUTHORITY"] = previous
+
     def test_broadcast_encoder_receives_private_xauthority_without_leak(self):
         with tempfile.TemporaryDirectory() as runtime:
             supervisor = object.__new__(xapp.stream.StreamSupervisor)

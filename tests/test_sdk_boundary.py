@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "config"))
 
 import kilix_sdk
-from kilix_sdk import content, graphics, paths, term
+from kilix_sdk import content, graphics, paths, state, term
 
 
 class KilixSdkBoundaryTests(unittest.TestCase):
@@ -43,7 +43,7 @@ class KilixSdkBoundaryTests(unittest.TestCase):
                 self.assertEqual(Path(paths.kilix95_home()), custom)
 
     def test_sdk_contract_is_versioned(self):
-        self.assertEqual(kilix_sdk.SDK_API_VERSION, (1, 3))
+        self.assertEqual(kilix_sdk.SDK_API_VERSION, (1, 4))
         kilix_sdk.require_compatible("1.0")
         with self.assertRaises(kilix_sdk.IncompatibleSDKError):
             kilix_sdk.require_compatible("2.0")
@@ -80,6 +80,11 @@ class KilixSdkBoundaryTests(unittest.TestCase):
 
     def test_graphics_exposes_exclusive_frame_writer(self):
         self.assertIs(graphics.write_frame, __import__("gfx").write_frame)
+
+    def test_state_exposes_pinned_python_binding(self):
+        self.assertEqual(state.KILIX_STATE_ABI, (0, 4))
+        self.assertEqual(state.binding_version, "0.1.0")
+        self.assertEqual(state.Store.__mro__[1].__module__, "kilix_state.store")
 
 
 if __name__ == "__main__":

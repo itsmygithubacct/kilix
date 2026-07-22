@@ -29,13 +29,20 @@ jobs:
 
       - name: Check shell and Python syntax
         run: |
-          bash -n kilix bootstrap.sh build.sh scripts/install-build-deps.sh
-          shellcheck -S warning -x kilix bootstrap.sh build.sh scripts/install-build-deps.sh
-          python3 -m compileall -q config desktop scripts tests third_party/kitty-frame-presenter/src
+          bash -n kilix bootstrap.sh build.sh scripts/build-state-library.sh scripts/install-build-deps.sh
+          shellcheck -S warning -x kilix bootstrap.sh build.sh scripts/build-state-library.sh scripts/install-build-deps.sh
+          python3 -m compileall -q config desktop scripts tests third_party/kilix-state-py/src third_party/kilix-state-py/tests third_party/kitty-frame-presenter/src
           git diff --check "$(git hash-object -t tree /dev/null)" HEAD -- . ':(exclude)src'
 
       - name: Run host tests
         run: |
+          export KILIX_STORAGE_HOME="$RUNNER_TEMP/kilix-storage"
+          export KILIX_BUILD_DIRECTORY="$KILIX_STORAGE_HOME/build"
+          export KILIX_STATE_LIBRARY="$KILIX_BUILD_DIRECTORY/libraries/kilix-state/libkilix-state.so"
+          ./scripts/build-state-library.sh
+          make --no-print-directory -C third_party/kilix-state BUILD_DIR="$RUNNER_TEMP/kilix-state-test" test
+          PYTHONPATH=third_party/kilix-state-py/src \
+            python3 -m unittest discover -s third_party/kilix-state-py/tests -p 'test_*.py'
           python3 -m unittest discover -s tests -p 'test_*.py'
           python3 -m unittest discover -s third_party/kitty-frame-presenter/tests -p 'test_*.py'
 

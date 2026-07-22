@@ -1304,6 +1304,15 @@ fi
 if [ "${1:-}" = "desktop" ]; then
   shift
   _kilix_desktop_select
+  if [ "$_KILIX_DESKTOP_MODE" = python ] \
+       && [ "$_KILIX_DESKTOP_MAIN" != "$KILIX_HOME/desktop/main.py" ]; then
+    if [ -z "${KILIX_STATE_LIBRARY:-}" ]; then
+      "$KILIX_HOME/scripts/build-state-library.sh" \
+        || _kilix_desktop_die "could not prepare the pinned state library"
+      KILIX_STATE_LIBRARY="$KILIX_BUILD_DIRECTORY/libraries/kilix-state/libkilix-state.so"
+    fi
+    export KILIX_STATE_LIBRARY
+  fi
   if [ -z "${KILIX_IN_OVERLAY:-}" ] && [ -n "${KITTY_WINDOW_ID:-}" ] \
        && [ -n "${KITTY_LISTEN_ON:-}" ] && [ -x "$KITTEN" ]; then
     # Only one kilix 95 desktop at a time: if one is already running in this
@@ -1340,6 +1349,7 @@ print(ids[0] if ids else "")' 2>/dev/null)"
       --env "KILIX_DATA_HOME=$KILIX_DATA_HOME" \
       --env "KILIX_BUILD_DIRECTORY=$KILIX_BUILD_DIRECTORY" \
       --env "KILIX_PREBUILT_HOME=$KILIX_PREBUILT_HOME" \
+      --env "KILIX_STATE_LIBRARY=${KILIX_STATE_LIBRARY:-}" \
       --env "KILIX_DESKTOP_PROVIDER=${KILIX_DESKTOP_PROVIDER:-}" \
       --env "KILIX_DESKTOP_COMMAND=${KILIX_DESKTOP_COMMAND:-}" \
       --env "KILIX_DESKTOP_NAME=${KILIX_DESKTOP_NAME:-}" \
