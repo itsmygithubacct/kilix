@@ -1,3 +1,5 @@
+import importlib.machinery
+import importlib.util
 import os
 from pathlib import Path
 import stat
@@ -12,6 +14,47 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "config"))
 
 from kilix_sdk import content, settings
+
+
+def _load_settings_tui():
+    loader = importlib.machinery.SourceFileLoader(
+        "kilix_settings_tui_test", str(ROOT / "kilix-settings"))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    if spec is None:
+        raise RuntimeError("could not load kilix-settings")
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+class FakeScreen:
+    def __init__(self, keys, height=24, width=100):
+        self.keys = list(keys)
+        self.height = height
+        self.width = width
+        self.current_frame = []
+        self.frames = []
+
+    def keypad(self, _enabled):
+        pass
+
+    def erase(self):
+        self.current_frame = []
+
+    def getmaxyx(self):
+        return self.height, self.width
+
+    def addnstr(self, row, column, value, count, attributes=0):
+        self.current_frame.append(
+            (row, column, value[:count], attributes))
+
+    def refresh(self):
+        self.frames.append(list(self.current_frame))
+
+    def getch(self):
+        if not self.keys:
+            raise AssertionError("TUI requested an unexpected key")
+        return self.keys.pop(0)
 
 
 class SharedSettingsTests(unittest.TestCase):
@@ -149,6 +192,55 @@ class SharedSettingsTests(unittest.TestCase):
             self.assertEqual(rejected.returncode, 2)
             self.assertIn("unknown game", rejected.stderr)
             self.assertTrue(settings.enabled("KILIX_CHROME_NETWORK", str(path)))
+
+    def test_tui_opens_games_and_section_bulk_action_stays_scoped(self):
+        tui = _load_settings_tui()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.conf"
+            with mock.patch.dict(os.environ, {
+                    "GPU_TERMINAL_SETTINGS_FILE": str(path),
+                    "KITTY_PID": ""}, clear=False):
+                screen = FakeScreen([ord("n"), ord("s"), ord("q")])
+                self.assertEqual(tui._run_tui(screen, "games"), 0)
+
+            values = settings.load(str(path))
+            self.assertTrue(all(
+                not settings.truthy(values[key])
+                for key in settings.GAME_KEY_BY_ID.values()))
+            self.assertTrue(all(
+                settings.truthy(values[spec.key])
+                for spec in settings.TOP_BAR_TOGGLES
+                + settings.PANE_BUTTON_TOGGLES))
+            first_frame = "\n".join(
+                item[2] for item in screen.frames[0])
+            self.assertIn("Games: 13/13 enabled", first_frame)
+
+    def test_tui_quit_warning_allows_save_as_the_next_key(self):
+        tui = _load_settings_tui()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.conf"
+            with mock.patch.dict(os.environ, {
+                    "GPU_TERMINAL_SETTINGS_FILE": str(path),
+                    "KITTY_PID": ""}, clear=False):
+                screen = FakeScreen([
+                    ord("l"), ord("l"), ord(" "),
+                    ord("q"), ord("s"), ord("q"),
+                ])
+                self.assertEqual(tui._run_tui(screen), 0)
+
+            self.assertFalse(settings.game_enabled(
+                "minesweeper", str(path)))
+            self.assertTrue(settings.game_enabled("solitaire", str(path)))
+            frames = ["\n".join(item[2] for item in frame)
+                      for frame in screen.frames]
+            self.assertTrue(any(
+                "Unsaved changes: s saves; q again discards." in frame
+                for frame in frames))
+
+    def test_games_settings_launcher_targets_games_section(self):
+        launcher = (ROOT / "kilix").read_text()
+        self.assertIn(
+            '"$KILIX_HOME/kilix-settings" --section games', launcher)
 
 
 if __name__ == "__main__":
