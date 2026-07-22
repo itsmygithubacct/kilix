@@ -356,6 +356,18 @@ def _brokeout(p):
     p.rect(4, 13, 11, 14, fill=S, outline=G)                    # the paddle
 
 
+def _lights(p):
+    # A miniature Lights Out switchboard with the center cross illuminated.
+    p.rect(1, 1, 14, 14, fill=G, outline=K)
+    p.hline(2, 13, 2, W)
+    for row, y in enumerate((4, 8, 12)):
+        for col, x in enumerate((4, 8, 12)):
+            on = row == 1 or col == 1
+            p.rect(x - 1, y - 1, x + 1, y + 1,
+                   fill=Y if on else DB, outline=K)
+            p.px(x, y, W if on else B)
+
+
 def _doom(p):
     # a cacodemon-ish grinning red sphere (all in-house pixel art)
     p.rect(4, 1, 11, 1, fill=DR)
@@ -538,7 +550,7 @@ ICONS = {
     "notepad": _notepad, "browser": _browser, "run": _run,
     "shutdown": _shutdown, "flame": _flame, "home": _home,
     "games": _games, "doom": _doom, "dosbox": _dosbox, "tank": _tank,
-    "lander": _lander, "brokeout": _brokeout,
+    "lander": _lander, "brokeout": _brokeout, "lights": _lights,
     "amp": _amp,
     "question": _question, "info": _info, "warn": _warn, "error": _error,
     "back": _arrow_left, "forward": _arrow_right, "up": _arrow_up,

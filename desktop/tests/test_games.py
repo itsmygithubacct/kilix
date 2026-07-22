@@ -12,6 +12,7 @@ import zipfile
 
 import harness as H       # noqa: F401  (sets up sys.path for `import games`)
 import games
+import icons
 
 tmp = tempfile.mkdtemp(prefix="games-test-")
 games.CONF = os.path.join(tmp, "games.conf")
@@ -68,6 +69,17 @@ assert games.GAMES["terminal-lander"]["icon"] == "lander"
 write("")                                        # empty conf, no [terminal-lander]
 assert games.lander_ready(games.load()) is None
 assert games.game_ready("terminal-lander") is None
+
+# Kilix Lights is a pinned native game whose executable lives under bin/.
+assert "kilix-lights" in games.GAMES
+assert games.GAMES["kilix-lights"]["label"] == "Kilix Lights"
+assert games.GAMES["kilix-lights"]["icon"] == "lights"
+assert games.CONTENT_CATALOG.require("kilix-lights").binary == "bin/kilix-lights"
+write("")
+assert games.game_ready("kilix-lights") is None
+assert "lights" in icons.ICONS
+icons.get("lights", 16)
+icons.get("lights", 32)
 
 # Kitty Brokeout is a first-class Games entry, built from source the same way.
 assert "kitty-brokeout" in games.GAMES
