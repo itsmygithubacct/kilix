@@ -94,6 +94,16 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn('fetch --force origin "$KILIX95_REF"', launcher)
         self.assertIn("'FETCH_HEAD^{commit}'", launcher)
 
+    def test_external_provider_gets_pinned_state_library(self):
+        launcher = (ROOT / "kilix").read_text()
+        helper = (ROOT / "scripts" / "build-state-library.sh").read_text()
+        self.assertIn('"$KILIX_HOME/scripts/build-state-library.sh"', launcher)
+        self.assertIn('export KILIX_STATE_LIBRARY', launcher)
+        self.assertIn('--env "KILIX_STATE_LIBRARY=${KILIX_STATE_LIBRARY:-}"',
+                      launcher)
+        self.assertIn('third_party/kilix-state', helper)
+        self.assertIn('BUILD_DIR="$STATE_BUILD"', helper)
+
     def test_clickable_chrome_status_items_are_wired(self):
         battery = (ROOT / "src" / "kitty" / "kilix_battery.py").read_text()
         tabbar = (ROOT / "src" / "kitty" / "tab_bar.py").read_text()

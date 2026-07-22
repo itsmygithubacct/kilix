@@ -186,10 +186,14 @@ class XAppSession:
         if prefer_damage and os.environ.get("KILIX_XDAMAGE_CAPTURE", "1") != "0":
             candidate = None
             try:
-                candidate = xcapture.XDamageCapture(
-                    self.display, self.width, self.height,
-                    draw_cursor=draw_cursor)
-                initial = candidate.snapshot()
+                # python-xlib resolves XAUTHORITY from the process environment.
+                # Keep both the connection and its first request scoped to the
+                # private display's cookie without leaking it to the host.
+                with _temporary_xauthority(self.xauthority):
+                    candidate = xcapture.XDamageCapture(
+                        self.display, self.width, self.height,
+                        draw_cursor=draw_cursor)
+                    initial = candidate.snapshot()
             except Exception as error:
                 damage_error = error
                 if candidate is not None:

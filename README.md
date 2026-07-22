@@ -122,7 +122,8 @@ git clone --recursive https://github.com/itsmygithubacct/kilix.git ~/gpu_termina
 ```
 
 (`--recursive` pulls the Kitty fork and the pinned
-`kitty-frame-presenter` and `kilix-content` submodules. Cloned without them? Run
+`kitty-frame-presenter`, `kilix-content`, `kilix-state`, and
+`kilix-state-py` submodules. Cloned without them? Run
 `git submodule update --init --recursive`; the base terminal can use its
 prebuilt fallback, but pixel applications need the presenter.)
 
@@ -698,6 +699,11 @@ presentation library used by the browser, app panes, and desktop provider.
 Keep capture, terminal input, and application policy in Kilix; reusable damage,
 transport, composition, and pacing changes belong in that module first.
 
+`./third_party/kilix-state` and `./third_party/kilix-state-py` pin the native
+crash-safe state implementation and its Python binding. External desktop
+providers consume them through `kilix_sdk.state`; Kilix builds the shared
+library into its private build directory before launching the provider.
+
 **Build / rebuild:** `kilix --build` (or `./build.sh`). Needs Go ≥ 1.26,
 Python ≥ 3.12, plus the
 system build deps from [Requirements](#requirements). The binary lands at
@@ -727,7 +733,7 @@ launcher so that an isolated interpreter remains usable at runtime.
 ├── config/            # kitty.conf + kilix icons (kitty.app*.png, kilix-512.png)
 ├── desktop/           # the "kilix 95" desktop environment (kilix desktop)
 ├── src/               # tracked kitty fork; remains clean after builds
-├── third_party/       # pinned shared presenter submodule
+├── third_party/       # pinned presenter, content, and state libraries
 ├── README.md
 ├── LICENSE            # GPLv3 (kitty is GPLv3)
 └── .gitignore
