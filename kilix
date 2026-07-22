@@ -326,7 +326,7 @@ case "${1:-}" in
           echo "usage: $_self games settings" >&2
           exit 2
         }
-        exec python3 "$KILIX_HOME/kilix-settings" ;;
+        exec python3 "$KILIX_HOME/kilix-settings" --section games ;;
       enable|disable)
         [ $# -gt 0 ] || {
           echo "usage: $_self games $_games_action GAME..." >&2

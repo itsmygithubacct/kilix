@@ -185,6 +185,7 @@ kilix screen-size larger          # increase terminal scale (font_size +2pt)
 kilix screen-size smaller         # decrease terminal scale (font_size -2pt)
 kilix settings                    # shared chrome/game settings TUI
 kilix games list                  # show games available in Kilix 95
+kilix games settings              # open the TUI directly on Games
 kilix games disable doom          # hide a game (enable reverses it)
 kilix status                      # version/commit, engine, writable config, provider contract
 ```
@@ -715,7 +716,7 @@ launcher so that an isolated interpreter remains usable at runtime.
 ```
 ~/gpu_terminal/kilix/
 ├── kilix              # launcher (this is what you run)
-├── kilix-settings     # shared top-bar/pane-button settings TUI
+├── kilix-settings     # shared chrome/game settings TUI
 ├── build.sh           # builds the forked kitty in ./src
 ├── bootstrap.sh       # pulls the prebuilt kitty (fallback engine)
 ├── config/            # kitty.conf + kilix icons (kitty.app*.png, kilix-512.png)
@@ -738,6 +739,11 @@ Network, calendar, date/time, battery, font-size, four-way split, maximize,
 close, and game toggles all live in
 `~/.local/gpu_terminal/settings.conf`, which Kilix, Kilix 95, Pleb, and
 Plebian-OS share.
+
+The TUI separates Top bar, Pane buttons, and Games. Switch sections with
+Left/Right, `h`/`l`, Tab/Shift-Tab, or `1`–`3`; use lowercase `a`/`n` for all
+items in the current section and uppercase `A`/`N` for every setting. Run
+`kilix games settings` to open Games directly.
 
 - **Quieter page strip:** `tab_bar_min_tabs 2` (hide it until a 2nd page) and
   `tab_bar_show_new_tab_button no` (hide the `+`).
