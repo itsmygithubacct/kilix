@@ -102,11 +102,15 @@ class KilixLauncherTests(unittest.TestCase):
         readme = (ROOT / "README.md").read_text()
 
         self.assertIn("KILIX_CHROME_CLOCK", battery)
+        self.assertIn("KILIX_CHROME_NETWORK", battery)
+        self.assertIn("KILIX_CHROME_CALENDAR", battery)
         self.assertIn("KILIX_CHROME_CLOCK_FORMAT", battery)
         self.assertIn("clock_segment", battery)
         self.assertIn("clock_segments", battery)
         self.assertIn("CALENDAR_WIDGET_ACTION", battery)
         self.assertIn("DATE_WIDGET_ACTION", battery)
+        self.assertIn("NETWORK_WIDGET_ACTION", battery)
+        self.assertIn("network_segment", battery)
         self.assertIn("ensure_chrome_timers", battery)
         self.assertIn("KILIX_CHROME_BATTERY", battery)
         self.assertIn("KILIX_BATTERY_SUPPLY_DIR", battery)
@@ -116,15 +120,19 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("_BATTERY_SHOW_PERCENT = True", battery)
         self.assertIn("f' {info.percent:3d}% {glyph} '", battery)
         self.assertIn("clock_segment", tabbar)
+        self.assertIn("network_segment", tabbar)
         self.assertIn("battery_segment", tabbar)
         self.assertIn("right_status_start", tabbar)
         self.assertIn("right_status_width", tabbar)
         self.assertIn("action_at", tabbar)
         self.assertIn("get_options().foreground", tabbar)
         self.assertIn("run_kitten_with_metadata('kilix_clock'", tabs)
+        self.assertIn("which('nmtui')", tabs)
+        self.assertIn("Network Connections", tabs)
         self.assertTrue((ROOT / "src" / "kittens" / "kilix_clock" / "main.py").is_file())
         self.assertIn("toggle_battery_percent", tabs)
         self.assertIn("U+F073", conf)
+        self.assertIn("U+F1EB", conf)
         self.assertIn("U+F0079", conf)
         self.assertIn("U+F0083", conf)
         self.assertIn("Battery-in-chrome", readme)
@@ -228,13 +236,17 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn('K("enable_audio_bell", "Audio bell", "bool", "no")', settings)
         self.assertIn('K("window_alert_on_bell", "Urgency on bell", "bool", "no")', settings)
 
-    def test_kilix_env_settings_are_gui_backed(self):
+    def test_runtime_and_shared_settings_are_gui_backed(self):
         launcher = (ROOT / "kilix").read_text()
         settings = (ROOT / "desktop" / "apps" / "settings.py").read_text()
         env_conf = (ROOT / "config" / "kilix.env").read_text()
+        shared = (ROOT / "config" / "kilix_sdk" / "settings.py").read_text()
+        tui = (ROOT / "kilix-settings").read_text()
 
         self.assertIn("KILIX_ENV_CONFIG", launcher)
         self.assertIn("kilix.env", launcher)
+        self.assertIn("GPU_TERMINAL_SETTINGS_FILE", launcher)
+        self.assertIn('python3 "$KILIX_HOME/kilix-settings" --ensure', launcher)
         self.assertIn("KILIX_CHROME_CLOCK|KILIX_CHROME_CLOCK_FORMAT", launcher)
         self.assertIn("KILIX_DESKTOP_PROVIDER|KILIX_DESKTOP_COMMAND", launcher)
         self.assertIn("KILIX_DESKTOP_FLAVOR", launcher)
@@ -244,7 +256,11 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("KILIX_NO_SOUND|KILIX_XPANE_WM", launcher)
         self.assertIn("SETTING_PAGES", settings)
         for key in (
+            "KILIX_CHROME_NETWORK", "KILIX_CHROME_CALENDAR",
             "KILIX_CHROME_CLOCK", "KILIX_CHROME_BATTERY",
+            "KILIX_CHROME_BUTTON_FONT_INCREASE",
+            "KILIX_CHROME_BUTTON_SPLIT_LEFT",
+            "KILIX_CHROME_BUTTON_CLOSE",
             "KILIX_DESKTOP_PROVIDER", "KILIX_DESKTOP_FLAVOR", "KILIX95_AUTO_INSTALL",
             "KILIX_RUN_AUTO_FIT", "KILIX_BROWSE_BACKEND", "KILIX_HW", "KILIX_DESKTOP_DIR",
             "KILIX_NO_SOUND", "KILIX_SHELL_INTEGRATION", "KILIX_REF",
@@ -252,7 +268,11 @@ class KilixLauncherTests(unittest.TestCase):
             self.assertIn(key, settings)
         self.assertIn("get_env_key", settings)
         self.assertIn("set_env_key", settings)
-        self.assertIn("KILIX_CHROME_CLOCK=0", env_conf)
+        self.assertIn("shared_settings", settings)
+        self.assertIn("settings.conf", env_conf)
+        self.assertIn("TOP_BAR_TOGGLES", shared)
+        self.assertIn("PANE_BUTTON_TOGGLES", shared)
+        self.assertIn("curses.wrapper", tui)
         self.assertIn("KILIX_DESKTOP_FLAVOR=xp", env_conf)
         self.assertIn("KILIX_BROWSE_BACKEND=presenter", env_conf)
 

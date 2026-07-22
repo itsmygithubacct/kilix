@@ -48,13 +48,19 @@ class UpdateBehaviorTests(unittest.TestCase):
         git("config", "user.email", "test@example.invalid", cwd=self.seed)
         git("config", "user.name", "Kilix Test", cwd=self.seed)
         shutil.copy2(ROOT / "kilix", self.seed / "kilix")
+        shutil.copy2(ROOT / "kilix-settings", self.seed / "kilix-settings")
+        shutil.copytree(
+            ROOT / "config" / "kilix_sdk",
+            self.seed / "config" / "kilix_sdk",
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+        )
         shutil.copy2(ROOT / "VERSION", self.seed / "VERSION")
         (self.seed / "build.sh").write_text(self._fake_builder())
         (self.seed / "build.sh").chmod(0o755)
         git("-c", "protocol.file.allow=always", "submodule", "add",
             str(self.src_remote), "src", cwd=self.seed)
-        git("add", "kilix", "VERSION", "build.sh", ".gitmodules", "src",
-            cwd=self.seed)
+        git("add", "kilix", "kilix-settings", "config/kilix_sdk", "VERSION",
+            "build.sh", ".gitmodules", "src", cwd=self.seed)
         git("commit", "-m", "initial", cwd=self.seed)
         git("remote", "add", "origin", str(self.remote), cwd=self.seed)
         git("push", "-u", "origin", "main", cwd=self.seed)
@@ -71,7 +77,8 @@ class UpdateBehaviorTests(unittest.TestCase):
         self._write_launcher(self.prebuilt, "prebuilt")
         self.env = dict(os.environ)
         for name in tuple(self.env):
-            if name.startswith("KILIX_") or name == "GPU_TERMINAL_HOME":
+            if name.startswith("KILIX_") or name in (
+                    "GPU_TERMINAL_HOME", "GPU_TERMINAL_SETTINGS_FILE"):
                 self.env.pop(name)
         self.env.update({
             "GIT_ALLOW_PROTOCOL": "file",

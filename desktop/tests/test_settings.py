@@ -22,11 +22,13 @@ os.environ.pop("KITTY_PID", None)
 def conf(text, binary=False):
     """A temp KITTY_CONFIG_DIRECTORY holding a kitty.conf; yields its path."""
     prev = os.environ.get("KITTY_CONFIG_DIRECTORY")
+    prev_shared = os.environ.get("GPU_TERMINAL_SETTINGS_FILE")
     d = tempfile.mkdtemp(prefix="kilix95-conf-")
     path = os.path.join(d, "kitty.conf")
     with open(path, "wb") as f:
         f.write(text if binary else text.encode())
     os.environ["KITTY_CONFIG_DIRECTORY"] = d
+    os.environ["GPU_TERMINAL_SETTINGS_FILE"] = os.path.join(d, "settings.conf")
     try:
         yield path
     finally:
@@ -34,6 +36,10 @@ def conf(text, binary=False):
             os.environ.pop("KITTY_CONFIG_DIRECTORY", None)
         else:
             os.environ["KITTY_CONFIG_DIRECTORY"] = prev
+        if prev_shared is None:
+            os.environ.pop("GPU_TERMINAL_SETTINGS_FILE", None)
+        else:
+            os.environ["GPU_TERMINAL_SETTINGS_FILE"] = prev_shared
 
 
 def read(path):
@@ -133,7 +139,7 @@ with conf(odd) as path:
     assert "copy_on_select" not in after     # still no unrelated defaults
 
 
-# ── Runtime settings are stored in kilix.env, not kitty.conf ────────────────
+# ── Clickable chrome is shared; unrelated runtime settings stay in kilix.env
 with conf("font_size 12\n") as path:
     d = H.make_desk()
     import apps
@@ -141,17 +147,26 @@ with conf("font_size 12\n") as path:
     win = H.find_window(d, "SettingsWin")
 
     kind, wd = win.fields["KILIX_CHROME_CLOCK"]
-    assert wd.checked, "env default for KILIX_CHROME_CLOCK should be enabled"
+    assert wd.checked, "shared default for KILIX_CHROME_CLOCK should be enabled"
     wd.checked = False
     win._apply()
-    env_text = read(env_path_for(path))
-    assert "KILIX_CHROME_CLOCK=0" in env_text
+    shared_text = read(win.shared_path)
+    assert "KILIX_CHROME_CLOCK=0" in shared_text
     assert "KILIX_CHROME_CLOCK" not in read(path)
+    assert not os.path.exists(env_path_for(path))
 
     wd.checked = True
     win._apply()
-    env_text = read(env_path_for(path))
-    assert "KILIX_CHROME_CLOCK=1" in env_text
+    shared_text = read(win.shared_path)
+    assert "KILIX_CHROME_CLOCK=1" in shared_text
+
+    kind, split_up = win.fields["KILIX_CHROME_BUTTON_SPLIT_UP"]
+    split_up.checked = False
+    win._apply()
+    assert "KILIX_CHROME_BUTTON_SPLIT_UP=0" in read(win.shared_path)
+
+    for key in settings.shared_settings.MANAGED_KEYS:
+        assert key in win.fields, f"Settings UI is missing shared control {key}"
 
     kind, flavor = win.fields["KILIX_DESKTOP_FLAVOR"]
     flavor.index = flavor.options.index("xp")

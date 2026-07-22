@@ -1,15 +1,17 @@
 # kilix — kitty that looks & behaves like Tilix, with clickable pane buttons
 
 `kilix` is a self-contained wrapper around a **fork of kitty** that gives
-each pane's title bar clickable **`→ ↓ ▢ ✕` buttons** — split-right,
-split-down, maximize, and close — just like Tilix's pane headers, on top of
-kitty's GPU-rendered speed. For Tilix users who want kitty underneath, and
-anyone who wants clickable split/maximize/close chrome on kitty.
+each pane's title bar clickable **`+ - ← ↑ ↓ → ▢ ✕` buttons** — local text
+size, four-way splits, maximize, and close — just like Tilix's pane headers,
+on top of kitty's GPU-rendered speed. For Tilix users who want kitty
+underneath, and anyone who wants clickable split/maximize/close chrome on kitty.
 
 It runs its own kitty binary with its own config and icon, so it leaves any
 kitty you already have completely untouched. Tracked defaults stay in
 `config/`; every Kilix-owned writable file lives below
-`~/.local/gpu_terminal/kilix`.
+`~/.local/gpu_terminal/kilix`. Stack-wide clickable-chrome preferences are the
+intentional exception: every GPU Terminal project reads
+`~/.local/gpu_terminal/settings.conf`.
 
 The default layout is `config/` for user settings, `state/` for persistent
 state, `cache/` for regenerable data, `session/` for sockets and frame files,
@@ -45,8 +47,10 @@ host SDK, and provider contract introduced in 0.1.1.
 
 ## Features
 
-- **Clickable pane buttons** `+ - → ↓ ▢ ✕` — local font size, split-right /
-  split-down, maximize, and close controls that highlight on hover.
+- **Clickable pane buttons** `+ - ← ↑ ↓ → ▢ ✕` — local font size, four-way
+  split, maximize, and close controls that highlight on hover.
+- **Network/Wi-Fi-in-chrome** — a network item immediately left of the calendar
+  opens NetworkManager's `nmtui` in an overlay pane.
 - **Battery-in-chrome** — on laptops, a green/yellow/red battery item appears at the
   far right of the page strip while the battery is discharging, with the percentage
   shown to the left of the battery icon; click it to hide/show the percentage.
@@ -78,6 +82,9 @@ host SDK, and provider contract introduced in 0.1.1.
 - **Linux only**, x86_64 or arm64 for the prebuilt engine. The clickable-chrome
   fork build currently supports x86_64. (No macOS/Windows.)
 - A running graphical session — **X11 or Wayland** (`$DISPLAY` or `$WAYLAND_DISPLAY`).
+- NetworkManager's **`nmtui`** for the clickable network/Wi-Fi item. Pleb and
+  Plebian-OS install it; standalone Kilix shows an explanatory error if it is
+  unavailable.
   It's a GUI terminal; it won't run headless / over plain SSH.
 - **To run the prebuilt kitty** (no buttons): `git`, `curl`, `tar`.
 - **To build the fork** (the buttons): **Go ≥ 1.26**, **Python ≥ 3.12**, a C compiler, `pkg-config`, and
@@ -175,6 +182,7 @@ kilix focus <tab-or-pane-id>      # jump to a live tab or pane
 kilix watch <pane-id>             # best-effort read-only text watch
 kilix screen-size larger          # increase terminal scale (font_size +2pt)
 kilix screen-size smaller         # decrease terminal scale (font_size -2pt)
+kilix settings                    # toggle top-bar widgets and pane buttons
 kilix status                      # version/commit, engine, writable config, provider contract
 ```
 
@@ -189,8 +197,10 @@ Every pane's title bar shows these font/split/maximize/close buttons on the righ
 |---|---|---|
 | `+` | increase font size for this Kilix window | `change_font_size current +2.0` |
 | `-` | decrease font size for this Kilix window | `change_font_size current -2.0` |
-| `→` | split right — new pane to the right | `Ctrl+Alt+R` |
+| `←` | split left — new pane to the left | split right, then swap |
+| `↑` | split up — new pane above | split down, then swap |
 | `↓` | split down — new pane below | `Ctrl+Alt+D` |
+| `→` | split right — new pane to the right | `Ctrl+Alt+R` |
 | `▢` | maximize / zoom the pane | `Ctrl+Alt+Z` |
 | `✕` | close the pane | `Ctrl+Alt+W` |
 
@@ -203,16 +213,19 @@ also lives on the `▢` button and `Ctrl+Alt+Z`).
 The active pane's header is highlighted (bright blue); inactive panes are grayed —
 matching Tilix's active-pane cue.
 
-The far right of the page strip shows the local date and time in the normal
-terminal foreground color. Click the calendar icon for a navigable month widget,
-or click the date/time text for a live local-date, clock, and timezone widget.
+The far right of the page strip shows network, calendar, local date/time, and
+(when applicable) battery items. The network/Wi-Fi icon sits immediately left
+of the calendar and opens `nmtui` in an overlay pane. Click the calendar icon
+for a navigable month widget, or click the date/time text for a live local-date,
+clock, and timezone widget.
 When Linux reports a laptop battery is **discharging**, a battery status item appears to its right.
 It is green above 50%, yellow at 50% and below, red at 20% and below, and
 shows the percentage to the left of the battery icon. Clicking it toggles the
-percentage on/off. Use Start ▸ Settings ▸ Chrome in kilix 95, or edit
-`~/.local/gpu_terminal/kilix/config/kilix.env`, to hide the clock, change
-`KILIX_CHROME_CLOCK_FORMAT`, or
-hide the battery item.
+percentage on/off. Use `kilix settings` or Start ▸ Settings ▸ Top bar / Pane
+buttons in Kilix 95 to remove and re-add every status item and title-bar button.
+Both interfaces update the single non-executable source of truth at
+`~/.local/gpu_terminal/settings.conf` (override with
+`GPU_TERMINAL_SETTINGS_FILE`); the GUI also edits `KILIX_CHROME_CLOCK_FORMAT`.
 
 **Drag-to-split by quadrant** (Tilix's model): drag a pane by its title bar onto another
 pane and drop on that pane's **top / bottom / left / right** triangle — a live half-pane
@@ -426,8 +439,9 @@ right-click menu everywhere. Built in:
 
 - **File Manager** — browse, open, rename, delete, new folder/file,
   properties, "open terminal here".
-- **kilix Settings** — edits this user's private `kitty.conf` and `kilix.env`
-  (GUI tabs for terminal, chrome, desktop, app, storage and
+- **kilix Settings** — edits this user's private `kitty.conf`, `kilix.env`, and
+  shared `~/.local/gpu_terminal/settings.conf` (GUI tabs for terminal, top-bar
+  widgets, pane buttons, desktop, app, storage and
   build/update knobs, plus a raw `kitty.conf` editor). `kitty.conf` changes apply
   **live** via remote control (fallback: SIGUSR1); `kilix.env` changes are used
   by new launches.
@@ -651,12 +665,12 @@ gtk-update-icon-cache -f ~/.local/share/icons/hicolor 2>/dev/null || true
 (branch `clickable-chrome`). It's a **full fork** — kilix keeps whatever changes make the
 best experience. The clickable-button feature is these Python files:
 
-- `kitty/window_title_bar.py` — draws `+ - → ↓ ▢ ✕` in each pane title bar,
+- `kitty/window_title_bar.py` — draws `+ - ← ↑ ↓ → ▢ ✕` in each pane title bar,
   recording which cells map to which kitty action.
 - `kitty/kilix_battery.py`, `kitty/tab_bar.py`, and `kittens/kilix_clock/` —
-  draw the clickable date/time status and its calendar/date widgets, and read
-  the Linux battery status for the conditional battery item at the far right
-  of the page strip.
+  draw the clickable network/date/time status and its NetworkManager,
+  calendar/date widgets, and read the Linux battery status for the conditional
+  battery item at the far right of the page strip.
 - `kitty/tabs.py` — `handle_window_title_bar_mouse` dispatches a button's action on a
   single left-click (`boss.combine`), double-click toggles maximize, and the quadrant
   drag-to-split hit-test uses the pane's true diagonals (rejecting drops on a maximized
@@ -696,6 +710,7 @@ launcher so that an isolated interpreter remains usable at runtime.
 ```
 ~/gpu_terminal/kilix/
 ├── kilix              # launcher (this is what you run)
+├── kilix-settings     # shared top-bar/pane-button settings TUI
 ├── build.sh           # builds the forked kitty in ./src
 ├── bootstrap.sh       # pulls the prebuilt kitty (fallback engine)
 ├── config/            # kitty.conf + kilix icons (kitty.app*.png, kilix-512.png)
@@ -713,6 +728,11 @@ Use Start ▸ Settings in kilix 95, or edit
 `~/.local/gpu_terminal/kilix/config/kitty.conf`. It includes the tracked
 `config/kitty.conf` defaults; add overrides to the user file.
 
+Use `kilix settings` for clickable chrome. Network, calendar, date/time,
+battery, font-size, four-way split, maximize, and close toggles all live in
+`~/.local/gpu_terminal/settings.conf`, which Kilix, Kilix 95, Pleb, and
+Plebian-OS share.
+
 - **Quieter page strip:** `tab_bar_min_tabs 2` (hide it until a 2nd page) and
   `tab_bar_show_new_tab_button no` (hide the `+`).
 - **Title bars only when split:** `window_title_bar_min_windows 2` (default `1` = always).
@@ -721,8 +741,8 @@ Use Start ▸ Settings in kilix 95, or edit
 - **Rebind the buttons:** edit the action strings in `src/kitty/window_title_bar.py`.
 
 Kilix-only runtime knobs live in the XDG `kilix/kilix.env` and are also exposed in
-Start ▸ Settings. That includes chrome clock/battery toggles, Kilix 95 provider
-and flavor selection, desktop/recycle paths, host clipboard sync, X app
+Start ▸ Settings. That includes Kilix 95 provider and flavor selection,
+desktop/recycle paths, host clipboard sync, X app
 behavior, streaming/debug options and build/update pins.
 
 ## License

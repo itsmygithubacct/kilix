@@ -15,6 +15,7 @@
 #   ./kilix fullscreen        # toggle this tab's OS window fullscreen
 #   ./kilix mux [name]        # open a tmux-backed kilix tab for real attach/view
 #   ./kilix screen-size ...   # show/increase/decrease/reset terminal scale
+#   ./kilix settings          # shared clickable-chrome settings TUI
 #   ./kilix status            # show version, engine, config, and provider
 #   ./kilix update            # verified-origin, clean, fast-forward/ref update
 #   ./kilix desktop           # launch the configured desktop provider
@@ -29,6 +30,7 @@ _self="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}"
 KILIX_HOME="$(cd "$(dirname "$_self")" && pwd)"
 GPU_TERMINAL_SOURCE_HOME="${GPU_TERMINAL_SOURCE_HOME:-$HOME/gpu_terminal}"
 GPU_TERMINAL_HOME="${GPU_TERMINAL_HOME:-$HOME/.local/gpu_terminal}"
+GPU_TERMINAL_SETTINGS_FILE="${GPU_TERMINAL_SETTINGS_FILE:-$GPU_TERMINAL_HOME/settings.conf}"
 KILIX_STORAGE_HOME="${KILIX_STORAGE_HOME:-$GPU_TERMINAL_HOME/kilix}"
 KILIX_CONFIG_HOME="${KILIX_CONFIG_HOME:-$KILIX_STORAGE_HOME/config}"
 KILIX_STATE_DIRECTORY="${KILIX_STATE_DIRECTORY:-$KILIX_STORAGE_HOME/state}"
@@ -43,7 +45,7 @@ KILIX95_STATE_HOME="${KILIX95_STATE_HOME:-$KILIX95_STORAGE_HOME/state}"
 KILIX95_CACHE_HOME="${KILIX95_CACHE_HOME:-$KILIX95_STORAGE_HOME/cache}"
 KILIX95_SESSION_HOME="${KILIX95_SESSION_HOME:-$KILIX95_STORAGE_HOME/session}"
 KILIX95_DATA_HOME="${KILIX95_DATA_HOME:-$KILIX95_STORAGE_HOME/data}"
-export GPU_TERMINAL_SOURCE_HOME GPU_TERMINAL_HOME
+export GPU_TERMINAL_SOURCE_HOME GPU_TERMINAL_HOME GPU_TERMINAL_SETTINGS_FILE
 export KILIX_STORAGE_HOME KILIX_CONFIG_HOME
 export KILIX_STATE_DIRECTORY KILIX_CACHE_HOME KILIX_SESSION_HOME KILIX_DATA_HOME
 export KILIX_BUILD_DIRECTORY KILIX_PREBUILT_HOME
@@ -269,6 +271,14 @@ _kilix_load_env_file "$KILIX_DEFAULT_CONFIG_DIRECTORY/kilix.env"
 [ "$KILIX_ENV_CONFIG" = "$KILIX_DEFAULT_CONFIG_DIRECTORY/kilix.env" ] \
   || _kilix_load_env_file "$KILIX_ENV_CONFIG"
 
+# One non-executable KEY=value file at the common GPU Terminal root is the
+# source of truth for status widgets and clickable pane-title controls.  The
+# first creation migrates the two legacy kilix.env chrome toggles.
+if ! python3 "$KILIX_HOME/kilix-settings" --ensure; then
+  echo "kilix: could not initialize shared settings: $GPU_TERMINAL_SETTINGS_FILE" >&2
+  exit 1
+fi
+
 # Source checkouts are siblings under ~/gpu_terminal by default. Resolve this
 # only after loading user runtime settings so KILIX95_DIR remains configurable,
 # while every writable provider root stays independently anchored above.
@@ -296,6 +306,9 @@ case "${1:-}" in
     # distinct flag for the launcher's own version.)
     cat "$KILIX_HOME/VERSION" 2>/dev/null || echo unknown
     exit 0 ;;
+  settings|--settings)
+    shift
+    exec python3 "$KILIX_HOME/kilix-settings" "$@" ;;
   status|--status)
     _status_version="$(cat "$KILIX_HOME/VERSION" 2>/dev/null || echo unknown)"
     _status_head="$(git -C "$KILIX_HOME" rev-parse --short HEAD 2>/dev/null || echo not-a-checkout)"
@@ -328,6 +341,7 @@ case "${1:-}" in
       "engine: $_status_engine" \
       "config: $KITTY_CONFIG_DIRECTORY/kitty.conf" \
       "runtime config: $KILIX_ENV_CONFIG" \
+      "shared settings: $GPU_TERMINAL_SETTINGS_FILE" \
       "desktop provider: $_status_provider" \
       "desktop path: ${_status_provider_dir:-n/a}"
     if [ -n "$_status_provider_dir" ] && [ -f "$_status_provider_dir/main.py" ]; then
