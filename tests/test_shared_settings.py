@@ -168,12 +168,15 @@ class SharedSettingsTests(unittest.TestCase):
                 str(ROOT / "kilix-settings"),
                 "--set", "bashed-earth=off",
                 "--set", "game_kilix_pong=off",
+                "--set", "kilix-lights=off",
                 "--print-games",
             ], env=env, text=True, capture_output=True, check=True)
             self.assertIn("bashed-earth=off\tBashed Earth", result.stdout)
             self.assertIn("kilix-pong=off\tKilix Pong", result.stdout)
+            self.assertIn("kilix-lights=off\tKilix Lights", result.stdout)
             self.assertFalse(settings.game_enabled("bashed-earth", str(path)))
             self.assertFalse(settings.game_enabled("kilix-pong", str(path)))
+            self.assertFalse(settings.game_enabled("kilix-lights", str(path)))
 
     def test_kilix_games_subcommand_changes_root_config(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -183,14 +186,17 @@ class SharedSettingsTests(unittest.TestCase):
                     env.pop(key)
             env["GPU_TERMINAL_HOME"] = tmp
             result = subprocess.run([
-                str(ROOT / "kilix"), "games", "disable", "doom", "kilix-pong"
+                str(ROOT / "kilix"), "games", "disable", "doom", "kilix-pong",
+                "kilix-lights"
             ], env=env, text=True, capture_output=True, check=True)
             self.assertIn("doom=off\tDoom", result.stdout)
             self.assertIn("kilix-pong=off\tKilix Pong", result.stdout)
+            self.assertIn("kilix-lights=off\tKilix Lights", result.stdout)
             path = Path(tmp) / "settings.conf"
             self.assertTrue(path.is_file())
             self.assertFalse(settings.game_enabled("doom", str(path)))
             self.assertFalse(settings.game_enabled("kilix-pong", str(path)))
+            self.assertFalse(settings.game_enabled("kilix-lights", str(path)))
             rejected = subprocess.run([
                 str(ROOT / "kilix"), "games", "disable", "network"
             ], env=env, text=True, capture_output=True)
@@ -218,7 +224,9 @@ class SharedSettingsTests(unittest.TestCase):
                 + settings.PANE_BUTTON_TOGGLES))
             first_frame = "\n".join(
                 item[2] for item in screen.frames[0])
-            self.assertIn("Games: 13/13 enabled", first_frame)
+            game_count = len(settings.GAME_TOGGLES)
+            self.assertIn(
+                f"Games: {game_count}/{game_count} enabled", first_frame)
 
     def test_tui_exposes_volume_as_a_top_bar_control(self):
         tui = _load_settings_tui()
