@@ -514,6 +514,8 @@ class Taskbar:
                 # button → a zenity file picker) for choosing tracks
                 MI("Media Player", icon="amp",
                    action=lambda: shell.open_app("amp")),
+                MI("Kilix Temps", icon="flame",
+                   action=shell.open_kilix_temps),
             ]
             user = shell.launcher_menu_items()
             if user:

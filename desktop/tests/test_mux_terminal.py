@@ -1,4 +1,6 @@
 import os
+import tempfile
+from pathlib import Path
 from unittest.mock import patch
 
 import harness as H
@@ -37,7 +39,31 @@ def test_remote_launch_uses_private_credential():
         ]
 
 
+def test_kilix_temps_launcher_forces_graphical_tab():
+    d = H.make_desk()
+    seen = {}
+
+    def fake_tab(argv, title, cwd=None):
+        seen.update(argv=argv, title=title, cwd=cwd)
+        return True
+
+    d.shell._tab = fake_tab
+    with tempfile.TemporaryDirectory() as directory:
+        project = Path(directory) / "kilix-temps"
+        executable = project / "build" / "kilix-temps"
+        executable.parent.mkdir(parents=True)
+        executable.write_text("#!/bin/sh\n")
+        executable.chmod(0o755)
+        with patch.dict(os.environ, {
+                "GPU_TERMINAL_SOURCE_HOME": directory}):
+            assert d.shell.open_kilix_temps()
+    assert seen["argv"] == [str(executable), "--graphics"]
+    assert seen["title"] == "Kilix Temps"
+    assert seen["cwd"] == str(project)
+
+
 test_mux_icon_renders()
 test_desktop_mux_terminal_launcher()
 test_remote_launch_uses_private_credential()
+test_kilix_temps_launcher_forces_graphical_tab()
 print("test_mux_terminal OK")

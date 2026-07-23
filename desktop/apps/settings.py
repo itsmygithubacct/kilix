@@ -91,6 +91,7 @@ SETTING_PAGES = [
         K("listen_on", "Remote socket", default="unix:@kilix-{kitty_pid}"),
     ]),
     ("Chrome", [
+        S("KILIX_CHROME_TEMPERATURE", "Thermal status", default="0"),
         S("KILIX_CHROME_VOLUME", "Volume"),
         S("KILIX_CHROME_NETWORK", "Network / Wi-Fi"),
         S("KILIX_CHROME_CALENDAR", "Calendar"),
