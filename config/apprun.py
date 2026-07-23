@@ -380,6 +380,10 @@ class AppPane:
             in_tmux=bool(os.environ.get("TMUX")), max_fps=fps)
             if self.term else None)
         self.frames = 0
+        # Unlike frames, this counts only changed captures after the startup
+        # snapshot. It lets launchers keep an app hidden while its pane still
+        # contains the initial blank window.
+        self.content_frames = 0
         # --debug / KILIX_DEBUG: capture-vs-blit fps + wire kbps, to a metrics
         # file and the status bar, for measuring streaming efficiency.
         self.debug = os.environ.get("KILIX_DEBUG") == "1"
@@ -738,7 +742,7 @@ class AppPane:
         self.clamp_app_windows()
 
     # ---- pixel layer -------------------------------------------------------
-    def _accept_frame(self, frame):
+    def _accept_frame(self, frame, *, content=False):
         if frame is None or frame == self.last_frame:
             return False
         self.last_frame = frame
@@ -748,6 +752,10 @@ class AppPane:
         if self.ff is not None and self._cap_fps != self.fps:
             self._spawn_capture(self.fps)
         self.blit(frame)
+        if content:
+            self.content_frames += 1
+            if self.content_frames == 1:
+                log("content-frames=1")
         return True
 
     def pump_damage(self):
@@ -761,7 +769,7 @@ class AppPane:
             return
         if update is not None:
             self._dbg["cap"] += 1
-            self._accept_frame(update[0])
+            self._accept_frame(update[0], content=True)
 
     def pump_frames(self):
         fd = self.ff.stdout.fileno()
@@ -779,7 +787,10 @@ class AppPane:
             frame = bytes(self.ffbuf[:fsize])
             del self.ffbuf[:fsize]
             self._dbg["cap"] += 1            # frames captured (before change-detect)
-        self._accept_frame(frame)
+        # The first fallback frame establishes the same startup baseline that
+        # XDamage captures synchronously. A later changed frame is content.
+        content = self.last_frame is not None
+        self._accept_frame(frame, content=content)
 
     def tick_capture(self, now):
         """Idle housekeeping each loop pass: QW5 capture downshift and the E4
@@ -977,6 +988,13 @@ class AppPane:
                 self.start()
             self._loop_start = time.time()
             while True:
+                # Cursor-image and other synchronous X replies can move a
+                # DamageNotify into python-xlib's queue while leaving the
+                # kernel socket empty. Consume it before select() so a
+                # browser's first network paint cannot remain stranded.
+                if (self.capture is not None and
+                        self.capture.has_pending_damage()):
+                    self.pump_damage()
                 rlist = []
                 if self.capture is not None:
                     rlist.append(self.capture)

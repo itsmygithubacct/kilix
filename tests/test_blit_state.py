@@ -8,6 +8,7 @@ import time
 import unittest
 from io import BytesIO
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "config"))
@@ -89,6 +90,38 @@ class AppPanePresenterTests(unittest.TestCase):
             self.assertEqual(result.rects, ((17, 11, 1, 1),))
             self.assertIn("a=f", pane.term.escapes())
             self.assertNotIn("a=T", pane.term.escapes())
+        finally:
+            pane.presenter.close()
+
+    def test_readiness_marker_requires_a_changed_content_capture(self):
+        import apprun
+        pane = make_apppane(stream=True)
+        pane.last_frame = None
+        pane.content_frames = 0
+        pane.feed = Mock()
+        pane.ff = None
+        pane._cap_fps = pane.fps
+        try:
+            with patch.object(apprun, "log") as capture_log:
+                self.assertTrue(pane._accept_frame(solid(pane)))
+                self.assertNotIn(
+                    unittest.mock.call("content-frames=1"),
+                    capture_log.call_args_list)
+                self.assertTrue(
+                    pane._accept_frame(solid(pane, 1), content=True))
+                self.assertEqual(
+                    capture_log.call_args_list.count(
+                        unittest.mock.call("content-frames=1")),
+                    1)
+                self.assertFalse(
+                    pane._accept_frame(solid(pane, 1), content=True))
+                self.assertTrue(
+                    pane._accept_frame(solid(pane, 2), content=True))
+                self.assertEqual(
+                    capture_log.call_args_list.count(
+                        unittest.mock.call("content-frames=1")),
+                    1)
+                self.assertEqual(pane.content_frames, 2)
         finally:
             pane.presenter.close()
 
