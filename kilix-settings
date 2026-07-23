@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import signal
 import sys
+from typing import NamedTuple
 
 
 sys.dont_write_bytecode = True
@@ -46,6 +47,19 @@ SECTION_SPECS = tuple(
                     if spec.section == section))
     for section in dict.fromkeys(spec.section for spec in shared.TOGGLE_SPECS)
 )
+
+
+class ToolSpec(NamedTuple):
+    key: str
+    label: str
+
+
+TOOL_SPECS = (
+    ToolSpec("tmux-manager", "Tmux Manager — download and run"),
+    ToolSpec("install-tb", "Install / repair tmux-cli's tb command"),
+)
+UI_SECTIONS = SECTION_SPECS + (("Tools", TOOL_SPECS),)
+TOOLS_SECTION_INDEX = len(SECTION_SPECS)
 SECTION_ALIASES = {
     "top": 0,
     "top-bar": 0,
@@ -56,6 +70,8 @@ SECTION_ALIASES = {
     "pane_buttons": 1,
     "game": 2,
     "games": 2,
+    "tool": TOOLS_SECTION_INDEX,
+    "tools": TOOLS_SECTION_INDEX,
 }
 
 
@@ -90,7 +106,7 @@ def _parse_section(value: str) -> int:
     section = SECTION_ALIASES.get(value.strip().lower())
     if section is None:
         raise argparse.ArgumentTypeError(
-            "unknown section; choose top-bar, pane-buttons, or games")
+            "unknown section; choose top-bar, pane-buttons, games, or tools")
     return section
 
 
@@ -121,7 +137,7 @@ def _print_games(values: dict[str, str]) -> None:
 
 def _draw_tabs(stdscr, width: int, active: int) -> None:
     column = 2
-    for index, (section, _specs) in enumerate(SECTION_SPECS):
+    for index, (section, _specs) in enumerate(UI_SECTIONS):
         label = f" {index + 1} {section} "
         if column >= width - 1:
             break
@@ -148,11 +164,17 @@ def _draw(stdscr, values: dict[str, bool], original: dict[str, bool],
         pass
 
     _draw_tabs(stdscr, width, section_index)
-    section, specs = SECTION_SPECS[section_index]
-    enabled_count = sum(values[spec.key] for spec in specs)
+    section, specs = UI_SECTIONS[section_index]
+    tools = section_index == TOOLS_SECTION_INDEX
     try:
+        summary = (
+            "Tools: Enter downloads/runs the selected pinned tool"
+            if tools else
+            f"{section}: {sum(values[spec.key] for spec in specs)}/"
+            f"{len(specs)} enabled"
+        )
         stdscr.addnstr(
-            4, 2, f"{section}: {enabled_count}/{len(specs)} enabled",
+            4, 2, summary,
             max(0, width - 4), curses.A_BOLD)
     except curses.error:
         pass
@@ -163,7 +185,7 @@ def _draw(stdscr, values: dict[str, bool], original: dict[str, bool],
     for row_offset, spec in enumerate(specs[scroll:scroll + available]):
         item_index = scroll + row_offset
         row = 5 + row_offset
-        marker = "[x]" if values[spec.key] else "[ ]"
+        marker = "[>]" if tools else ("[x]" if values[spec.key] else "[ ]")
         line = f" {marker} {spec.label}"
         attr = curses.A_REVERSE if item_index == selected else curses.A_NORMAL
         try:
@@ -187,8 +209,12 @@ def _draw(stdscr, values: dict[str, bool], original: dict[str, bool],
         except curses.error:
             pass
 
-    help_text = ("←/→ section · ↑/↓ move · Space toggle · "
-                 "a/n section · A/N all · s save · q quit")
+    help_text = (
+        "←/→ section · ↑/↓ move · Enter select · q quit"
+        if tools else
+        "←/→ section · ↑/↓ move · Space toggle · "
+        "a/n section · A/N all · s save · q quit"
+    )
     if height > 2:
         try:
             stdscr.addnstr(height - 2, 1, message or help_text,
@@ -199,7 +225,7 @@ def _draw(stdscr, values: dict[str, bool], original: dict[str, bool],
     stdscr.refresh()
 
 
-def _run_tui(stdscr, initial_section: int | str | None = None) -> int:
+def _run_tui(stdscr, initial_section: int | str | None = None) -> int | str:
     try:
         curses.curs_set(0)
     except curses.error:
@@ -215,12 +241,13 @@ def _run_tui(stdscr, initial_section: int | str | None = None) -> int:
         section_index = _parse_section(initial_section)
     else:
         section_index = initial_section or 0
-    selected = [0] * len(SECTION_SPECS)
+    selected = [0] * len(UI_SECTIONS)
     message = ""
     discard_armed = False
 
     while True:
-        specs = SECTION_SPECS[section_index][1]
+        specs = UI_SECTIONS[section_index][1]
+        tools = section_index == TOOLS_SECTION_INDEX
         item_index = selected[section_index]
         _draw(stdscr, values, original, section_index, item_index, message)
         message = ""
@@ -233,10 +260,10 @@ def _run_tui(stdscr, initial_section: int | str | None = None) -> int:
             selected[section_index] = (item_index + 1) % len(specs)
         elif key in (curses.KEY_LEFT, ord("h"), ord("H"),
                      getattr(curses, "KEY_BTAB", -1)):
-            section_index = (section_index - 1) % len(SECTION_SPECS)
+            section_index = (section_index - 1) % len(UI_SECTIONS)
         elif key in (curses.KEY_RIGHT, ord("l"), ord("L"), ord("\t")):
-            section_index = (section_index + 1) % len(SECTION_SPECS)
-        elif ord("1") <= key <= ord(str(len(SECTION_SPECS))):
+            section_index = (section_index + 1) % len(UI_SECTIONS)
+        elif ord("1") <= key <= ord(str(len(UI_SECTIONS))):
             section_index = key - ord("1")
         elif key == curses.KEY_HOME:
             selected[section_index] = 0
@@ -247,20 +274,38 @@ def _run_tui(stdscr, initial_section: int | str | None = None) -> int:
         elif key == curses.KEY_NPAGE:
             selected[section_index] = min(len(specs) - 1, item_index + 5)
         elif key in (ord(" "), curses.KEY_ENTER, 10, 13):
-            name = specs[item_index].key
-            values[name] = not values[name]
+            if tools:
+                if values != original:
+                    message = "Save or discard changes before launching a tool."
+                else:
+                    return f"tool:{specs[item_index].key}"
+            else:
+                name = specs[item_index].key
+                values[name] = not values[name]
         elif key == ord("a"):
-            for spec in specs:
-                values[spec.key] = True
+            if tools:
+                message = "Tools are actions; press Enter to select one."
+            else:
+                for spec in specs:
+                    values[spec.key] = True
         elif key == ord("n"):
-            for spec in specs:
-                values[spec.key] = False
+            if tools:
+                message = "Tools are actions; press Enter to select one."
+            else:
+                for spec in specs:
+                    values[spec.key] = False
         elif key == ord("A"):
-            for name in values:
-                values[name] = True
+            if tools:
+                message = "Tools are actions; press Enter to select one."
+            else:
+                for name in values:
+                    values[name] = True
         elif key == ord("N"):
-            for name in values:
-                values[name] = False
+            if tools:
+                message = "Tools are actions; press Enter to select one."
+            else:
+                for name in values:
+                    values[name] = False
         elif key in (ord("s"), ord("S")):
             changes = {
                 name: state for name, state in values.items()
@@ -289,6 +334,20 @@ def _run_tui(stdscr, initial_section: int | str | None = None) -> int:
             continue
 
 
+def _tool_argv(action: str) -> list[str]:
+    kilix = str(ROOT / "kilix")
+    if action == "tmux-manager":
+        return [kilix, "tmux"]
+    if action == "install-tb":
+        return [kilix, "tmux", "--install-only", "--with-tb"]
+    raise ValueError(f"unknown tool action: {action}")
+
+
+def _exec_tool(action: str) -> None:
+    argv = _tool_argv(action)
+    os.execv(argv[0], argv)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Configure Kilix chrome and game availability")
@@ -305,7 +364,7 @@ def main(argv: list[str] | None = None) -> int:
                         type=_parse_game_assignment, metavar="GAME=on|off",
                         help="set game availability non-interactively")
     parser.add_argument("--section", type=_parse_section,
-                        metavar="top-bar|pane-buttons|games",
+                        metavar="top-bar|pane-buttons|games|tools",
                         help="open the interactive TUI on this section")
     all_group = parser.add_mutually_exclusive_group()
     all_group.add_argument("--enable-all", action="store_true",
@@ -338,7 +397,11 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(
             "the interactive TUI requires a terminal; use --print, "
             "--print-games, --set, or --game")
-    return curses.wrapper(_run_tui, args.section)
+    result = curses.wrapper(_run_tui, args.section)
+    if isinstance(result, str) and result.startswith("tool:"):
+        _exec_tool(result.removeprefix("tool:"))
+        return 0
+    return result
 
 
 if __name__ == "__main__":

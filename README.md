@@ -189,10 +189,13 @@ kilix watch <pane-id>             # best-effort read-only text watch
 kilix screen-size larger          # increase terminal scale (font_size +2pt)
 kilix screen-size smaller         # decrease terminal scale (font_size -2pt)
 kilix settings                    # shared chrome/game settings TUI
+kilix settings --section tools    # select Tmux Manager or install the tb alias
 kilix games list                  # show games available in Kilix 95
 kilix games settings              # open the TUI directly on Games
 kilix games disable doom          # hide a game (enable reverses it)
 kilix temps --graphics            # install/verify the pinned dashboard, then run it
+kilix tmux                         # install/verify the pinned Tmux Manager, then run it
+kilix tmux --with-tb               # also publish tmux-cli as the `tb` command
 kilix status                      # version/commit, engine, writable config, provider contract
 ```
 
@@ -765,10 +768,12 @@ four-way split, maximize, close, and game toggles all live in
 `~/.local/gpu_terminal/settings.conf`, which Kilix, Kilix 95, Pleb, and
 Plebian-OS share.
 
-The TUI separates Top bar, Pane buttons, and Games. Switch sections with
-Left/Right, `h`/`l`, Tab/Shift-Tab, or `1`–`3`; use lowercase `a`/`n` for all
-items in the current section and uppercase `A`/`N` for every setting. Run
-`kilix games settings` to open Games directly.
+The TUI separates Top bar, Pane buttons, Games, and Tools. Switch sections with
+Left/Right, `h`/`l`, Tab/Shift-Tab, or `1`–`4`; use lowercase `a`/`n` for all
+items in the current settings section and uppercase `A`/`N` for every setting.
+The Tools section can download/run Tmux Manager through Kilix's pinned
+installer or install tmux-cli's `tb` alias. Run `kilix games settings` to open
+Games directly.
 
 For scripts, `kilix settings --set temperature=on` enables the thermometer and
 `kilix settings --set temperature=off` disables it. The interactive TUI exposes

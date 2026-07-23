@@ -490,6 +490,8 @@ class Taskbar:
                 MI("File Manager", icon="folder_open",
                    action=lambda: shell.open_app("filemgr")),
                 MI("Terminal", icon="terminal", action=shell.open_terminal),
+                MI("Tmux Manager", icon="mux",
+                   action=shell.open_tmux_manager),
                 MI("Web Browser", icon="browser",
                    action=lambda: shell.open_browser("firefox", "window"),
                    context=[

@@ -21,6 +21,15 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("KILIX_TEMPS_SOFT_RASTER_REF", installer)
         self.assertIn("graphics_available", installer)
 
+    def test_tmux_command_uses_the_pinned_tui_installer(self):
+        launcher = (ROOT / "kilix").read_text()
+        installer = (ROOT / "scripts" / "install-tmux-tui.sh").read_text()
+        self.assertIn("tmux|tmux-manager|tmux-tui)", launcher)
+        self.assertIn("install-tmux-tui.sh", launcher)
+        self.assertIn("TMUX_TUI_REF", installer)
+        self.assertIn("TMUX_CLI_REF", installer)
+        self.assertIn("--with-tb", installer)
+
     def test_desktop_provider_knobs_are_wired(self):
         text = (ROOT / "kilix").read_text()
         for provider in ["auto)", "builtin)", "external)", "command|custom)", "none|off|disabled)"]:
