@@ -51,6 +51,9 @@ host SDK, and provider contract introduced in 0.1.1.
 
 - **Clickable pane buttons** `+ - ← ↑ ↓ → ▢ ✕` — local font size, four-way
   split, maximize, and close controls that highlight on hover.
+- **Thermometer-in-chrome** — an optional hottest-sensor indicator opens the
+  graphical Kilix Temps dashboard in a new tab. It is green below 80°C, yellow
+  at 80–89°C, and red from 90°C; the shared setting defaults to off.
 - **Network/Wi-Fi-in-chrome** — a network item immediately left of the calendar
   opens NetworkManager's `nmtui` in an overlay pane.
 - **Battery-in-chrome** — on laptops, a green/yellow/red battery item appears at the
@@ -219,8 +222,13 @@ also lives on the `▢` button and `Ctrl+Alt+Z`).
 The active pane's header is highlighted (bright blue); inactive panes are grayed —
 matching Tilix's active-pane cue.
 
-The far right of the page strip shows volume, network, calendar, local
-date/time, and (when applicable) battery items. The volume icon opens
+The far right of the page strip can show thermometer, volume, network,
+calendar, local date/time, and (when applicable) battery items. The thermometer
+is disabled by default; when enabled it shows the hottest readable Linux
+thermal-zone/hwmon temperature in green below 80°C, yellow at 80–89°C, or red
+from 90°C. It sits at the left edge of the status group and opens
+`kilix-temps --graphics` in a new tab. A neutral `--°` remains clickable when
+no sensor can be read. The volume icon opens
 `pulsemixer` in an overlay pane (`alsamixer` is used as a fallback). It sits to
 the left of the network/Wi-Fi icon, which remains immediately left of the
 calendar and opens `nmtui`. Click the calendar icon for a navigable month
@@ -454,6 +462,8 @@ right-click menu everywhere. Built in:
   **live** via remote control (fallback: SIGUSR1); `kilix.env` changes are used
   by new launches.
 - **Notepad** and an **image viewer**.
+- **Kilix Temps** — Start ▸ Programs ▸ Kilix Temps opens a sibling source
+  checkout or installed `kilix-temps` executable in its graphical tab.
 - **Games** — Start ▸ Programs ▸ Games. Each entry plays immediately if
   `~/.local/gpu_terminal/kilix-95/config/games.conf` already points at a working install, otherwise
   one consented click sets it up (paths saved to that file) and launches it in
@@ -680,9 +690,9 @@ best experience. The clickable-button feature is these Python files:
 - `kitty/window_title_bar.py` — draws `+ - ← ↑ ↓ → ▢ ✕` in each pane title bar,
   recording which cells map to which kitty action.
 - `kitty/kilix_battery.py`, `kitty/tab_bar.py`, and `kittens/kilix_clock/` —
-  draw the clickable network/date/time status and its NetworkManager,
-  calendar/date widgets, and read the Linux battery status for the conditional
-  battery item at the far right of the page strip.
+  draw the clickable thermometer/network/date/time status and its Kilix Temps,
+  NetworkManager, calendar/date widgets, and read Linux thermal and battery
+  status for the colored indicators in the page strip.
 - `kitty/tabs.py` — `handle_window_title_bar_mouse` dispatches a button's action on a
   single left-click (`boss.combine`), double-click toggles maximize, and the quadrant
   drag-to-split hit-test uses the pane's true diagonals (rejecting drops on a maximized
@@ -746,8 +756,8 @@ Use Start ▸ Settings in kilix 95, or edit
 `config/kitty.conf` defaults; add overrides to the user file.
 
 Use `kilix settings` for clickable chrome and Kilix 95 game availability.
-Volume, network, calendar, date/time, battery, font-size, four-way split,
-maximize, close, and game toggles all live in
+Thermometer, volume, network, calendar, date/time, battery, font-size,
+four-way split, maximize, close, and game toggles all live in
 `~/.local/gpu_terminal/settings.conf`, which Kilix, Kilix 95, Pleb, and
 Plebian-OS share.
 
@@ -755,6 +765,10 @@ The TUI separates Top bar, Pane buttons, and Games. Switch sections with
 Left/Right, `h`/`l`, Tab/Shift-Tab, or `1`–`3`; use lowercase `a`/`n` for all
 items in the current section and uppercase `A`/`N` for every setting. Run
 `kilix games settings` to open Games directly.
+
+For scripts, `kilix settings --set temperature=on` enables the thermometer and
+`kilix settings --set temperature=off` disables it. The interactive TUI exposes
+the same **Thermal status** control in its Top bar section.
 
 - **Quieter page strip:** `tab_bar_min_tabs 2` (hide it until a 2nd page) and
   `tab_bar_show_new_tab_button no` (hide the `+`).

@@ -116,6 +116,7 @@ def main():
     # built-ins still there; the "System" submenu vanishes with nothing found
     assert _find(_find(prog2, "Games").submenu, "System") is None
     assert _find(prog2, "Media Player") is not None
+    assert _find(prog2, "Kilix Temps") is not None
     print("ok")
 
 

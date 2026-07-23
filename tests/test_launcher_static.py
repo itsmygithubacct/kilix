@@ -113,6 +113,7 @@ class KilixLauncherTests(unittest.TestCase):
 
         self.assertIn("KILIX_CHROME_CLOCK", battery)
         self.assertIn("KILIX_CHROME_VOLUME", battery)
+        self.assertIn("KILIX_CHROME_TEMPERATURE", battery)
         self.assertIn("KILIX_CHROME_NETWORK", battery)
         self.assertIn("KILIX_CHROME_CALENDAR", battery)
         self.assertIn("KILIX_CHROME_CLOCK_FORMAT", battery)
@@ -121,8 +122,10 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("CALENDAR_WIDGET_ACTION", battery)
         self.assertIn("DATE_WIDGET_ACTION", battery)
         self.assertIn("VOLUME_WIDGET_ACTION", battery)
+        self.assertIn("THERMAL_WIDGET_ACTION", battery)
         self.assertIn("NETWORK_WIDGET_ACTION", battery)
         self.assertIn("volume_segment", battery)
+        self.assertIn("thermal_segment", battery)
         self.assertIn("network_segment", battery)
         self.assertIn("ensure_chrome_timers", battery)
         self.assertIn("KILIX_CHROME_BATTERY", battery)
@@ -133,6 +136,12 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("_BATTERY_SHOW_PERCENT = True", battery)
         self.assertIn("f' {info.percent:3d}% {glyph} '", battery)
         self.assertIn("clock_segment", tabbar)
+        self.assertIn("thermal_segment", tabbar)
+        self.assertIn("THERMAL_WIDGET_ACTION", tabs)
+        self.assertIn("kilix_temps_target", tabs)
+        self.assertIn("Kilix Temps", tabs)
+        self.assertIn("U+F2C9", conf)
+        self.assertIn("thermometer", readme.lower())
         self.assertIn("volume_segment", tabbar)
         self.assertIn("network_segment", tabbar)
         self.assertIn("battery_segment", tabbar)
@@ -273,7 +282,7 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("KILIX_NO_SOUND|KILIX_XPANE_WM", launcher)
         self.assertIn("SETTING_PAGES", settings)
         for key in (
-            "KILIX_CHROME_VOLUME", "KILIX_CHROME_NETWORK",
+            "KILIX_CHROME_TEMPERATURE", "KILIX_CHROME_VOLUME", "KILIX_CHROME_NETWORK",
             "KILIX_CHROME_CALENDAR",
             "KILIX_CHROME_CLOCK", "KILIX_CHROME_BATTERY",
             "KILIX_CHROME_BUTTON_FONT_INCREASE",

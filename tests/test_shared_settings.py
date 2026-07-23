@@ -80,6 +80,7 @@ class SharedSettingsTests(unittest.TestCase):
             self.assertEqual(values["KILIX_CHROME_CALENDAR"], "0")
             self.assertEqual(values["KILIX_CHROME_BATTERY"], "0")
             self.assertEqual(values["KILIX_CHROME_VOLUME"], "1")
+            self.assertEqual(values["KILIX_CHROME_TEMPERATURE"], "0")
             self.assertEqual(values[settings.CLOCK_FORMAT_KEY], "TIME")
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
 
@@ -133,6 +134,7 @@ class SharedSettingsTests(unittest.TestCase):
             text = path.read_text()
             self.assertIn(original, text)
             self.assertIn("KILIX_CHROME_VOLUME=1", text)
+            self.assertIn("KILIX_CHROME_TEMPERATURE=0", text)
             self.assertIn(settings.GAMES_MARKER, text)
             for key in settings.GAME_KEY_BY_ID.values():
                 expected = "0" if key == "KILIX_GAME_DOOM" else "1"
@@ -146,15 +148,19 @@ class SharedSettingsTests(unittest.TestCase):
             result = subprocess.run([
                 str(ROOT / "kilix-settings"),
                 "--set", "volume=off",
+                "--set", "temperature=on",
                 "--set", "network=off",
                 "--set", "split_up=off",
                 "--print",
             ], env=env, text=True, capture_output=True, check=True)
             self.assertIn("KILIX_CHROME_VOLUME=off", result.stdout)
+            self.assertIn("KILIX_CHROME_TEMPERATURE=on", result.stdout)
             self.assertIn("KILIX_CHROME_NETWORK=off", result.stdout)
             self.assertIn("KILIX_CHROME_BUTTON_SPLIT_UP=off", result.stdout)
             values = settings.load(str(path))
             self.assertFalse(settings.truthy(values["KILIX_CHROME_VOLUME"]))
+            self.assertTrue(settings.truthy(
+                values["KILIX_CHROME_TEMPERATURE"]))
             self.assertFalse(settings.truthy(values["KILIX_CHROME_NETWORK"]))
             self.assertFalse(settings.truthy(
                 values["KILIX_CHROME_BUTTON_SPLIT_UP"]))
@@ -180,6 +186,22 @@ class SharedSettingsTests(unittest.TestCase):
             self.assertFalse(settings.game_enabled("kilix-pong", str(path)))
             self.assertFalse(settings.game_enabled("kilix-lights", str(path)))
             self.assertFalse(settings.game_enabled("super-kilix", str(path)))
+
+    def test_kilix_cli_enables_thermometer_in_shared_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env = dict(os.environ)
+            for key in list(env):
+                if key.startswith("KILIX") or key.startswith("GPU_TERMINAL"):
+                    env.pop(key)
+            env["GPU_TERMINAL_HOME"] = tmp
+            result = subprocess.run([
+                str(ROOT / "kilix"), "settings",
+                "--set", "temperature=on", "--print",
+            ], env=env, text=True, capture_output=True, check=True)
+            path = Path(tmp) / "settings.conf"
+            self.assertIn("KILIX_CHROME_TEMPERATURE=on", result.stdout)
+            self.assertTrue(settings.enabled(
+                "KILIX_CHROME_TEMPERATURE", str(path)))
 
     def test_kilix_games_subcommand_changes_root_config(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -224,7 +246,7 @@ class SharedSettingsTests(unittest.TestCase):
                 not settings.truthy(values[key])
                 for key in settings.GAME_KEY_BY_ID.values()))
             self.assertTrue(all(
-                settings.truthy(values[spec.key])
+                settings.truthy(values[spec.key]) == spec.default
                 for spec in settings.TOP_BAR_TOGGLES
                 + settings.PANE_BUTTON_TOGGLES))
             first_frame = "\n".join(
@@ -233,22 +255,25 @@ class SharedSettingsTests(unittest.TestCase):
             self.assertIn(
                 f"Games: {game_count}/{game_count} enabled", first_frame)
 
-    def test_tui_exposes_volume_as_a_top_bar_control(self):
+    def test_tui_exposes_thermal_and_volume_top_bar_controls(self):
         tui = _load_settings_tui()
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.conf"
             with mock.patch.dict(os.environ, {
                     "GPU_TERMINAL_SETTINGS_FILE": str(path),
                     "KITTY_PID": ""}, clear=False):
-                screen = FakeScreen([ord(" "), ord("s"), ord("q")])
+                screen = FakeScreen([ord("j"), ord(" "), ord("s"), ord("q")])
                 self.assertEqual(tui._run_tui(screen, "top-bar"), 0)
 
             self.assertFalse(settings.enabled(
                 "KILIX_CHROME_VOLUME", str(path)))
             self.assertTrue(settings.enabled(
                 "KILIX_CHROME_NETWORK", str(path)))
+            self.assertFalse(settings.enabled(
+                "KILIX_CHROME_TEMPERATURE", str(path)))
             first_frame = "\n".join(item[2] for item in screen.frames[0])
-            self.assertIn("Top bar: 5/5 enabled", first_frame)
+            self.assertIn("Top bar: 5/6 enabled", first_frame)
+            self.assertIn("Thermal status", first_frame)
             self.assertIn("Volume", first_frame)
 
     def test_tui_quit_warning_allows_save_as_the_next_key(self):

@@ -148,8 +148,12 @@ with conf("font_size 12\n") as path:
 
     kind, volume = win.fields["KILIX_CHROME_VOLUME"]
     assert volume.checked, "shared default for KILIX_CHROME_VOLUME should be enabled"
+    kind, thermal = win.fields["KILIX_CHROME_TEMPERATURE"]
+    assert not thermal.checked, "thermal widget should be disabled by default"
+    thermal.checked = True
     volume.checked = False
     win._apply()
+    assert "KILIX_CHROME_TEMPERATURE=1" in read(win.shared_path)
     assert "KILIX_CHROME_VOLUME=0" in read(win.shared_path)
 
     kind, wd = win.fields["KILIX_CHROME_CLOCK"]

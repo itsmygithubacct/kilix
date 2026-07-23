@@ -29,6 +29,7 @@ class ToggleSpec:
 
 
 TOP_BAR_TOGGLES = (
+    ToggleSpec("KILIX_CHROME_TEMPERATURE", "Thermal status", "Top bar", default=False),
     ToggleSpec("KILIX_CHROME_VOLUME", "Volume", "Top bar"),
     ToggleSpec("KILIX_CHROME_NETWORK", "Network / Wi-Fi", "Top bar"),
     ToggleSpec("KILIX_CHROME_CALENDAR", "Calendar", "Top bar"),
