@@ -21,6 +21,21 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("KILIX_TEMPS_SOFT_RASTER_REF", installer)
         self.assertIn("graphics_available", installer)
 
+    def test_memory_command_uses_the_pinned_graphical_installer(self):
+        launcher = (ROOT / "kilix").read_text()
+        installer = (
+            ROOT / "scripts" / "install-kilix-memory.sh"
+        ).read_text()
+        self.assertIn("memory|mem|ram)", launcher)
+        self.assertIn("install-kilix-memory.sh", launcher)
+        self.assertIn("--install-only", launcher)
+        self.assertIn('bin/kilix-memory', launcher)
+        self.assertIn("KILIX_MEMORY_REF", installer)
+        self.assertIn("KILIX_MEMORY_PRESENTER_REF", installer)
+        self.assertIn("KILIX_MEMORY_SOFT_RASTER_PY_REF", installer)
+        self.assertIn("KILIX_MEMORY_SOFT_RASTER_REF", installer)
+        self.assertIn("graphics_available", installer)
+
     def test_tmux_command_uses_the_pinned_tui_installer(self):
         launcher = (ROOT / "kilix").read_text()
         installer = (ROOT / "scripts" / "install-tmux-tui.sh").read_text()
@@ -131,6 +146,8 @@ class KilixLauncherTests(unittest.TestCase):
         tabs = (ROOT / "src" / "kitty" / "tabs.py").read_text()
         conf = (ROOT / "config" / "kitty.conf").read_text()
         readme = (ROOT / "README.md").read_text()
+        memory = (ROOT / "src" / "kitty" / "kilix_memory.py").read_text()
+        titlebar = (ROOT / "src" / "kitty" / "window_title_bar.py").read_text()
 
         self.assertIn("KILIX_CHROME_CLOCK", battery)
         self.assertIn("KILIX_CHROME_VOLUME", battery)
@@ -184,6 +201,12 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("U+F0083", conf)
         self.assertIn("Battery-in-chrome", readme)
         self.assertIn("Date/time-in-chrome", readme)
+        self.assertIn("KILIX_CHROME_PANE_MEMORY_MODE", memory)
+        self.assertIn("smaps_rollup", memory)
+        self.assertIn("pane_memory_segment", memory)
+        self.assertIn("MEMORY_WIDGET_ACTION", titlebar)
+        self.assertIn("pane_memory_text", titlebar)
+        self.assertIn("U+F035B", conf)
 
     def test_title_bar_screen_tracks_font_resize(self):
         window = (ROOT / "src" / "kitty" / "window.py").read_text()
@@ -306,6 +329,7 @@ class KilixLauncherTests(unittest.TestCase):
             "KILIX_CHROME_TEMPERATURE", "KILIX_CHROME_VOLUME", "KILIX_CHROME_NETWORK",
             "KILIX_CHROME_CALENDAR",
             "KILIX_CHROME_CLOCK", "KILIX_CHROME_BATTERY",
+            "KILIX_CHROME_BUTTON_SYNCHRONIZE_INPUT",
             "KILIX_CHROME_BUTTON_FONT_INCREASE",
             "KILIX_CHROME_BUTTON_SPLIT_LEFT",
             "KILIX_CHROME_BUTTON_CLOSE",
@@ -314,6 +338,7 @@ class KilixLauncherTests(unittest.TestCase):
             "KILIX_NO_SOUND", "KILIX_SHELL_INTEGRATION", "KILIX_REF",
         ):
             self.assertIn(key, settings)
+        self.assertIn("PANE_MEMORY_MODE_KEY", settings)
         self.assertIn("get_env_key", settings)
         self.assertIn("set_env_key", settings)
         self.assertIn("shared_settings", settings)

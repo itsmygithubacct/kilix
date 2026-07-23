@@ -34,6 +34,15 @@ def _control_names() -> dict[str, str]:
     for game_id, key in shared.GAME_KEY_BY_ID.items():
         names[game_id] = key
         names[game_id.replace("-", "_")] = key
+    for alias in (
+        "memory",
+        "memory_chip",
+        "memory_mode",
+        "pane_memory",
+        "pane_memory_mode",
+    ):
+        names[alias] = shared.PANE_MEMORY_MODE_KEY
+    names[shared.PANE_MEMORY_MODE_KEY.lower()] = shared.PANE_MEMORY_MODE_KEY
     return names
 
 
@@ -42,9 +51,32 @@ GAME_NAMES = {
     alias: key for alias, key in CONTROL_NAMES.items()
     if key in shared.GAME_ID_BY_KEY
 }
+
+
+class ChoiceSpec(NamedTuple):
+    key: str
+    label: str
+    choices: tuple[str, ...]
+    default: str
+
+
+MEMORY_MODE_SPEC = ChoiceSpec(
+    shared.PANE_MEMORY_MODE_KEY,
+    "Pane memory chip (auto ≥1 GiB / always / off)",
+    shared.PANE_MEMORY_MODE_CHOICES,
+    shared.PANE_MEMORY_MODE_DEFAULT,
+)
+
+
 SECTION_SPECS = tuple(
-    (section, tuple(spec for spec in shared.TOGGLE_SPECS
-                    if spec.section == section))
+    (
+        section,
+        ((MEMORY_MODE_SPEC,) if section == "Pane buttons" else ())
+        + tuple(
+            spec for spec in shared.TOGGLE_SPECS
+            if spec.section == section
+        ),
+    )
     for section in dict.fromkeys(spec.section for spec in shared.TOGGLE_SPECS)
 )
 
@@ -55,6 +87,7 @@ class ToolSpec(NamedTuple):
 
 
 TOOL_SPECS = (
+    ToolSpec("memory-monitor", "Kilix Memory — monitor RAM"),
     ToolSpec("tmux-manager", "Tmux Manager — download and run"),
     ToolSpec("install-tb", "Install / repair tmux-cli's tb command"),
 )
@@ -75,17 +108,29 @@ SECTION_ALIASES = {
 }
 
 
-def _parse_assignment(value: str) -> tuple[str, bool]:
+def _parse_assignment(value: str) -> tuple[str, object]:
     try:
         name, raw = value.split("=", 1)
     except ValueError as error:
-        raise argparse.ArgumentTypeError("expected CONTROL=on|off") from error
+        raise argparse.ArgumentTypeError(
+            "expected CONTROL=on|off or pane_memory=auto|always|off"
+        ) from error
     key = CONTROL_NAMES.get(name.strip().lower())
     if key is None:
         choices = ", ".join(sorted(
             key for key in CONTROL_NAMES if not key.startswith("kilix_")))
         raise argparse.ArgumentTypeError(
             f"unknown control {name!r}; choose one of: {choices}")
+    if key == shared.PANE_MEMORY_MODE_KEY:
+        mode = raw.strip().lower()
+        if mode == "on":
+            mode = "always"
+        if mode not in shared.PANE_MEMORY_MODE_CHOICES:
+            choices = "|".join(shared.PANE_MEMORY_MODE_CHOICES)
+            raise argparse.ArgumentTypeError(
+                f"pane memory mode must be {choices}"
+            )
+        return key, mode
     return key, shared.truthy(raw)
 
 
@@ -124,6 +169,12 @@ def _print_settings(values: dict[str, str]) -> None:
     for spec in shared.TOGGLE_SPECS:
         state = "on" if shared.truthy(values[spec.key]) else "off"
         print(f"{spec.key}={state}")
+    mode = values.get(
+        shared.PANE_MEMORY_MODE_KEY, shared.PANE_MEMORY_MODE_DEFAULT
+    ).strip().lower()
+    if mode not in shared.PANE_MEMORY_MODE_CHOICES:
+        mode = shared.PANE_MEMORY_MODE_DEFAULT
+    print(f"{shared.PANE_MEMORY_MODE_KEY}={mode}")
     print(f"{shared.CLOCK_FORMAT_KEY}={values[shared.CLOCK_FORMAT_KEY]}")
 
 
@@ -150,7 +201,7 @@ def _draw_tabs(stdscr, width: int, active: int) -> None:
         column += len(label) + 1
 
 
-def _draw(stdscr, values: dict[str, bool], original: dict[str, bool],
+def _draw(stdscr, values: dict[str, object], original: dict[str, object],
           section_index: int, selected: int, message: str = "") -> None:
     stdscr.erase()
     height, width = stdscr.getmaxyx()
@@ -167,12 +218,16 @@ def _draw(stdscr, values: dict[str, bool], original: dict[str, bool],
     section, specs = UI_SECTIONS[section_index]
     tools = section_index == TOOLS_SECTION_INDEX
     try:
-        summary = (
-            "Tools: Enter downloads/runs the selected pinned tool"
-            if tools else
-            f"{section}: {sum(values[spec.key] for spec in specs)}/"
-            f"{len(specs)} enabled"
-        )
+        if tools:
+            summary = "Tools: Enter runs the selected tool"
+        else:
+            enabled_count = sum(
+                str(values[spec.key]) != "off"
+                if isinstance(spec, ChoiceSpec)
+                else bool(values[spec.key])
+                for spec in specs
+            )
+            summary = f"{section}: {enabled_count}/{len(specs)} enabled"
         stdscr.addnstr(
             4, 2, summary,
             max(0, width - 4), curses.A_BOLD)
@@ -185,7 +240,12 @@ def _draw(stdscr, values: dict[str, bool], original: dict[str, bool],
     for row_offset, spec in enumerate(specs[scroll:scroll + available]):
         item_index = scroll + row_offset
         row = 5 + row_offset
-        marker = "[>]" if tools else ("[x]" if values[spec.key] else "[ ]")
+        if tools:
+            marker = "[>]"
+        elif isinstance(spec, ChoiceSpec):
+            marker = f"[{str(values[spec.key]):^6}]"
+        else:
+            marker = "[x]" if values[spec.key] else "[ ]"
         line = f" {marker} {spec.label}"
         attr = curses.A_REVERSE if item_index == selected else curses.A_NORMAL
         try:
@@ -236,6 +296,7 @@ def _run_tui(stdscr, initial_section: int | str | None = None) -> int | str:
         spec.key: shared.truthy(effective[spec.key])
         for spec in shared.TOGGLE_SPECS
     }
+    values[shared.PANE_MEMORY_MODE_KEY] = shared.pane_memory_mode()
     original = dict(values)
     if isinstance(initial_section, str):
         section_index = _parse_section(initial_section)
@@ -280,32 +341,48 @@ def _run_tui(stdscr, initial_section: int | str | None = None) -> int | str:
                 else:
                     return f"tool:{specs[item_index].key}"
             else:
-                name = specs[item_index].key
-                values[name] = not values[name]
+                spec = specs[item_index]
+                name = spec.key
+                if isinstance(spec, ChoiceSpec):
+                    current = str(values[name])
+                    try:
+                        index = spec.choices.index(current)
+                    except ValueError:
+                        index = -1
+                    values[name] = spec.choices[
+                        (index + 1) % len(spec.choices)]
+                else:
+                    values[name] = not values[name]
         elif key == ord("a"):
             if tools:
                 message = "Tools are actions; press Enter to select one."
             else:
                 for spec in specs:
-                    values[spec.key] = True
+                    values[spec.key] = (
+                        spec.default if isinstance(spec, ChoiceSpec) else True)
         elif key == ord("n"):
             if tools:
                 message = "Tools are actions; press Enter to select one."
             else:
                 for spec in specs:
-                    values[spec.key] = False
+                    values[spec.key] = (
+                        "off" if isinstance(spec, ChoiceSpec) else False)
         elif key == ord("A"):
             if tools:
                 message = "Tools are actions; press Enter to select one."
             else:
                 for name in values:
-                    values[name] = True
+                    values[name] = (
+                        shared.PANE_MEMORY_MODE_DEFAULT
+                        if name == shared.PANE_MEMORY_MODE_KEY else True)
         elif key == ord("N"):
             if tools:
                 message = "Tools are actions; press Enter to select one."
             else:
                 for name in values:
-                    values[name] = False
+                    values[name] = (
+                        "off"
+                        if name == shared.PANE_MEMORY_MODE_KEY else False)
         elif key in (ord("s"), ord("S")):
             changes = {
                 name: state for name, state in values.items()
@@ -336,6 +413,8 @@ def _run_tui(stdscr, initial_section: int | str | None = None) -> int | str:
 
 def _tool_argv(action: str) -> list[str]:
     kilix = str(ROOT / "kilix")
+    if action == "memory-monitor":
+        return [kilix, "memory", "--graphics"]
     if action == "tmux-manager":
         return [kilix, "tmux"]
     if action == "install-tb":
@@ -358,8 +437,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--ensure", action="store_true",
                         help="create the shared settings file if absent")
     parser.add_argument("--set", action="append", default=[],
-                        type=_parse_assignment, metavar="CONTROL=on|off",
-                        help="set a control non-interactively")
+                        type=_parse_assignment,
+                        metavar="CONTROL=VALUE",
+                        help=("set a toggle to on/off or pane_memory to "
+                              "auto/always/off"))
     parser.add_argument("--game", action="append", default=[],
                         type=_parse_game_assignment, metavar="GAME=on|off",
                         help="set game availability non-interactively")
@@ -375,10 +456,12 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         shared.ensure_file()
-        changes: dict[str, bool] = {}
+        changes: dict[str, object] = {}
         if args.enable_all or args.disable_all:
             state = bool(args.enable_all)
             changes.update((spec.key, state) for spec in shared.TOGGLE_SPECS)
+            changes[shared.PANE_MEMORY_MODE_KEY] = (
+                shared.PANE_MEMORY_MODE_DEFAULT if state else "off")
         changes.update(args.set)
         changes.update(args.game)
         if changes:
@@ -388,7 +471,7 @@ def main(argv: list[str] | None = None) -> int:
             _print_settings(shared.load())
         if args.print_games:
             _print_games(shared.load())
-    except (OSError, KeyError) as error:
+    except (OSError, KeyError, ValueError) as error:
         parser.exit(1, f"kilix-settings: {error}\n")
 
     if args.ensure or args.show or args.print_games or changes:

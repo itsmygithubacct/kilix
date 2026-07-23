@@ -152,6 +152,19 @@ def _mux(p):
     p.rect(6, 10, 8, 11, fill=B, outline=K)         # link between panes
 
 
+def _memory(p):
+    """A compact RAM module / memory chip."""
+    p.rect(2, 3, 13, 12, fill=DN, outline=K)
+    p.hline(3, 12, 4, N)
+    p.rect(4, 6, 11, 10, fill=K)
+    p.rect(5, 7, 6, 9, fill=DB)
+    p.rect(8, 7, 9, 9, fill=DB)
+    p.rect(11, 7, 11, 9, fill=DB)
+    for x in (3, 5, 7, 9, 11, 13):
+        p.px(x, 2, Y)
+        p.px(x, 13, Y)
+
+
 def _dosbox(p):
     p.rect(1, 1, 14, 10, fill=S, outline=K)        # beige monitor shell
     p.rect(3, 2, 12, 8, fill=K)                    # black CRT
@@ -561,7 +574,8 @@ ICONS = {
     "folder": _folder, "folder_open": _folder_open,
     "doc": _doc, "doc_text": _doc_text, "doc_image": _doc_image,
     "doc_audio": _doc_audio,
-    "exe": _exe, "terminal": _terminal, "mux": _mux, "settings": _settings,
+    "exe": _exe, "terminal": _terminal, "mux": _mux, "memory": _memory,
+    "settings": _settings,
     "notepad": _notepad, "browser": _browser, "run": _run,
     "shutdown": _shutdown, "flame": _flame, "home": _home,
     "games": _games, "doom": _doom, "dosbox": _dosbox, "tank": _tank,

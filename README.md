@@ -1,10 +1,11 @@
 # kilix — kitty that looks & behaves like Tilix, with clickable pane buttons
 
 `kilix` is a self-contained wrapper around a **fork of kitty** that gives
-each pane's title bar clickable **`+ - ← ↑ ↓ → ▢ ✕` buttons** — local text
-size, four-way splits, maximize, and close — just like Tilix's pane headers,
-on top of kitty's GPU-rendered speed. For Tilix users who want kitty
-underneath, and anyone who wants clickable split/maximize/close chrome on kitty.
+each pane's title bar clickable **keyboard, `+ - ← ↑ ↓ → ▢ ✕` buttons** —
+synchronized input, local text size, four-way splits, maximize, and close —
+just like Tilix's pane headers, on top of kitty's GPU-rendered speed. For Tilix
+users who want kitty underneath, and anyone who wants clickable pane chrome on
+kitty.
 
 It runs its own kitty binary with its own config and icon, so it leaves any
 kitty you already have completely untouched. Tracked defaults stay in
@@ -21,6 +22,15 @@ complete tree. Freedesktop launchers/icons are the intentional exception:
 `--install-desktop` uses the standard XDG application paths.
 
 ![kilix — pages strip with + button, per-pane title bars with clickable split/maximize/close buttons, splits, and icat](config/kilix_demo.png)
+
+## Release 0.1.4
+
+Version 0.1.4 adds Tilix-style synchronized keyboard input, including
+whole-tab double-click selection, and the configurable per-pane memory chip.
+The new pinned Kilix Memory dashboard provides graphical and text views of
+RAM, swap, pressure, paging, and process use. SDK 1.4 adds the shared native
+state binding and keeps the built-in and standalone Kilix 95 providers on the
+same declared contract.
 
 ## Release 0.1.3
 
@@ -49,8 +59,9 @@ host SDK, and provider contract introduced in 0.1.1.
 
 ## Features
 
-- **Clickable pane buttons** `+ - ← ↑ ↓ → ▢ ✕` — local font size, four-way
-  split, maximize, and close controls that highlight on hover.
+- **Clickable pane buttons** keyboard, `+ - ← ↑ ↓ → ▢ ✕` — synchronized
+  keyboard input, local font size, four-way split, maximize, and close controls
+  that highlight on hover.
 - **Thermometer-in-chrome** — an optional hottest-sensor indicator opens the
   graphical Kilix Temps dashboard in a new tab. It is green below 80°C, yellow
   at 80–89°C, and red from 90°C; the shared setting defaults to off.
@@ -189,11 +200,12 @@ kilix watch <pane-id>             # best-effort read-only text watch
 kilix screen-size larger          # increase terminal scale (font_size +2pt)
 kilix screen-size smaller         # decrease terminal scale (font_size -2pt)
 kilix settings                    # shared chrome/game settings TUI
-kilix settings --section tools    # select Tmux Manager or install the tb alias
+kilix settings --section tools    # memory monitor, Tmux Manager, or tb installer
 kilix games list                  # show games available in Kilix 95
 kilix games settings              # open the TUI directly on Games
 kilix games disable doom          # hide a game (enable reverses it)
 kilix temps --graphics            # install/verify the pinned dashboard, then run it
+kilix memory --graphics           # install/verify the pinned monitor, then run it
 kilix tmux                         # install/verify the pinned Tmux Manager, then run it
 kilix tmux --with-tb               # also publish tmux-cli as the `tb` command
 kilix status                      # version/commit, engine, writable config, provider contract
@@ -204,10 +216,13 @@ Put `~/gpu_terminal/kilix` on your `PATH` (or
 
 ## Clickable buttons (the headline feature)
 
-Every pane's title bar shows these font/split/maximize/close buttons on the right (bold):
+Every pane's title bar shows these synchronized-input/font/split/maximize/close
+buttons on the right (bold):
 
 | Button | Click does | Same as |
 |---|---|---|
+| memory chip | open Kilix Memory; width follows pane process-tree use | `kilix memory --graphics` |
+| keyboard | join/leave the pane's synchronized-input group | Tilix input synchronization |
 | `+` | increase font size for this Kilix window | `change_font_size current +2.0` |
 | `-` | decrease font size for this Kilix window | `change_font_size current -2.0` |
 | `←` | split left — new pane to the left | split right, then swap |
@@ -217,14 +232,30 @@ Every pane's title bar shows these font/split/maximize/close buttons on the righ
 | `▢` | maximize / zoom the pane | `Ctrl+Alt+Z` |
 | `✕` | close the pane | `Ctrl+Alt+W` |
 
-The buttons are drawn as text or **Nerd Font icons** — `+`/`-` for local font
-size, bold arrows for splits (pointing where the new pane lands), a maximize
-glyph, and a close ✕ — and they **highlight under the cursor**. Clicking a
-header focuses the pane, and a click on the title itself opens the **pane action
-menu** — rename, copy title, reset, clear, split right/down, close (maximize
-also lives on the `▢` button and `Ctrl+Alt+Z`).
+The buttons are drawn as text or **Nerd Font icons** — a RAM chip and value,
+a keyboard for synchronized input, `+`/`-` for local font size, bold arrows for splits
+(pointing where the new pane lands), a maximize glyph, and a close ✕. They
+**highlight under the cursor**. A single keyboard click toggles that pane; its
+button stays depressed while selected, and typing in any selected pane reaches
+all other selected panes. Double-click the keyboard to select every pane in
+the tab; double-click it again to deselect every pane. App overlays are never
+included. Hiding the keyboard button in Settings also clears active
+synchronized-input groups. Clicking a header focuses the pane, and a click on
+the title itself opens the **pane action menu** — rename, copy title, reset,
+clear, split right/down, close (maximize also lives on the `▢` button and
+`Ctrl+Alt+Z`).
 The active pane's header is highlighted (bright blue); inactive panes are grayed —
 matching Tilix's active-pane cue.
+
+The memory chip is enabled in `auto` mode by default. It appears when the
+pane's shell and descendant processes reach 1 GiB, shows GiB to one decimal
+place (`1.1`), and grows from a square chip toward a RAM-stick shape as the
+number gains digits. Clicking it opens Kilix Memory in a new tab. Set the
+shared `KILIX_CHROME_PANE_MEMORY_MODE` preference to `always` to keep it
+visible and report smaller values in MiB/KiB, or `off` to remove it. The
+sampler uses proportional memory from Linux `smaps_rollup` where readable and
+RSS as a fallback, caches each process-tree sample, and refreshes title bars
+only when the displayed value changes.
 
 The far right of the page strip can show thermometer, volume, network,
 calendar, local date/time, and (when applicable) battery items. The thermometer
@@ -471,6 +502,11 @@ right-click menu everywhere. Built in:
   to `kilix temps`, which fetches exact pinned commits for the dashboard,
   `soft-raster`, `soft-raster-py`, and `kitty-frame-presenter`, builds them as
   the desktop user, verifies the graphical backend, and opens its tab.
+- **Kilix Memory** — Start ▸ Programs ▸ Kilix Memory opens the graphical
+  RAM/swap/pressure dashboard. On a fresh checkout, `kilix memory` fetches the
+  exact pinned commits for the monitor and its graphics closure, builds them
+  as the desktop user, verifies the graphical backend, and opens the tab. The
+  same monitor is available from the Kilix Settings TUI Tools section.
 - **Games** — Start ▸ Programs ▸ Games. Each entry plays immediately if
   `~/.local/gpu_terminal/kilix-95/config/games.conf` already points at a working install, otherwise
   one consented click sets it up (paths saved to that file) and launches it in
@@ -694,17 +730,20 @@ gtk-update-icon-cache -f ~/.local/share/icons/hicolor 2>/dev/null || true
 (branch `clickable-chrome`). It's a **full fork** — kilix keeps whatever changes make the
 best experience. The clickable-button feature is these Python files:
 
-- `kitty/window_title_bar.py` — draws `+ - ← ↑ ↓ → ▢ ✕` in each pane title bar,
-  recording which cells map to which kitty action.
+- `kitty/window_title_bar.py` — draws the keyboard and
+  `+ - ← ↑ ↓ → ▢ ✕` in each pane title bar, recording which cells map to which
+  kitty action and keeping selected keyboard buttons depressed.
 - `kitty/kilix_battery.py`, `kitty/tab_bar.py`, and `kittens/kilix_clock/` —
   draw the clickable thermometer/network/date/time status and its Kilix Temps,
   NetworkManager, calendar/date widgets, and read Linux thermal and battery
   status for the colored indicators in the page strip.
-- `kitty/tabs.py` — `handle_window_title_bar_mouse` dispatches a button's action on a
-  single left-click (`boss.combine`), double-click toggles maximize, and the quadrant
-  drag-to-split hit-test uses the pane's true diagonals (rejecting drops on a maximized
-  pane). kitty ≥ 0.47 already ships the drag-split machinery; the fork only refines the
-  hit-test and adds the maximized-target rejection.
+- `kitty/tabs.py` — keeps synchronized-input membership per tab and dispatches
+  normal button clicks; a keyboard double-click promotes the individual toggle
+  to select-all or deselect-all. Its quadrant drag-to-split hit-test uses the
+  pane's true diagonals (rejecting drops on a maximized pane).
+- `kitty/keys.c` and `kitty/boss.py` — fan unconsumed native key and IME commit
+  events out to the selected peers while preserving each terminal's keyboard
+  modes.
 
 The buttons reuse kitty's existing window-title-bar → Python click routing. The fork also
 carries quality-of-life fixes on top — e.g. `glfw/linux_notify.c` raises the DBus
@@ -763,21 +802,25 @@ Use Start ▸ Settings in kilix 95, or edit
 `config/kitty.conf` defaults; add overrides to the user file.
 
 Use `kilix settings` for clickable chrome and Kilix 95 game availability.
-Thermometer, volume, network, calendar, date/time, battery, font-size,
-four-way split, maximize, close, and game toggles all live in
+Thermometer, volume, network, calendar, date/time, battery, pane-memory mode,
+synchronized input, font-size, four-way split, maximize, close, and game toggles all live in
 `~/.local/gpu_terminal/settings.conf`, which Kilix, Kilix 95, Pleb, and
 Plebian-OS share.
 
 The TUI separates Top bar, Pane buttons, Games, and Tools. Switch sections with
 Left/Right, `h`/`l`, Tab/Shift-Tab, or `1`–`4`; use lowercase `a`/`n` for all
 items in the current settings section and uppercase `A`/`N` for every setting.
-The Tools section can download/run Tmux Manager through Kilix's pinned
-installer or install tmux-cli's `tb` alias. Run `kilix games settings` to open
-Games directly.
+The Tools section can download/open Kilix Memory, download/run Tmux Manager
+through Kilix's pinned installers, or install tmux-cli's `tb` alias. Run
+`kilix games settings` to open Games directly.
 
 For scripts, `kilix settings --set temperature=on` enables the thermometer and
 `kilix settings --set temperature=off` disables it. The interactive TUI exposes
-the same **Thermal status** control in its Top bar section.
+the same **Thermal status** control in its Top bar section. Likewise,
+`kilix settings --set synchronize_input=off` hides the keyboard button (and
+`=on` restores it). Use `kilix settings --set pane_memory=auto` for the
+default 1 GiB threshold, `pane_memory=always` for an always-visible MiB/KiB
+readout, or `pane_memory=off` to hide the chip.
 
 - **Quieter page strip:** `tab_bar_min_tabs 2` (hide it until a 2nd page) and
   `tab_bar_show_new_tab_button no` (hide the `+`).

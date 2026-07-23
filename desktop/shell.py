@@ -613,6 +613,33 @@ class Shell:
         return False
 
     @staticmethod
+    def kilix_memory_target():
+        if executable := shutil.which("kilix-memory"):
+            return [executable, "--graphics"], None
+        source_home = os.environ.get("GPU_TERMINAL_SOURCE_HOME") or \
+            os.path.expanduser("~/gpu_terminal")
+        project = os.path.join(
+            os.path.abspath(os.path.expanduser(source_home)), "kilix-memory")
+        executable = os.path.join(project, "build", "kilix-memory")
+        if os.path.isfile(executable) and os.access(executable, os.X_OK):
+            return [executable, "--graphics"], project
+        kilix = os.path.join(KILIX_HOME, "kilix")
+        if os.path.isfile(kilix) and os.access(kilix, os.X_OK):
+            return [kilix, "memory", "--graphics"], None
+        return None
+
+    def open_kilix_memory(self):
+        target = self.kilix_memory_target()
+        if target is not None:
+            argv, cwd = target
+            return self._tab(argv, "Kilix Memory", cwd)
+        wm.msgbox(
+            self.desk, "Kilix Memory",
+            "Neither an installed Kilix Memory dashboard nor its source "
+            "checkout could be found.", icon="error")
+        return False
+
+    @staticmethod
     def tmux_manager_target():
         """Installed manager first; the Kilix pinned installer is the fallback."""
         if executable := shutil.which("tmux-tui"):

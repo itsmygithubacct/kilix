@@ -104,6 +104,14 @@ SETTING_PAGES = [
         K("tab_bar_show_new_tab_button", "New-page button", "bool", "yes"),
     ]),
     ("Pane", [
+        S(
+            shared_settings.PANE_MEMORY_MODE_KEY,
+            "Pane memory chip",
+            "choice",
+            shared_settings.PANE_MEMORY_MODE_DEFAULT,
+            list(shared_settings.PANE_MEMORY_MODE_CHOICES),
+        ),
+        S("KILIX_CHROME_BUTTON_SYNCHRONIZE_INPUT", "Synchronize keyboard input"),
         S("KILIX_CHROME_BUTTON_FONT_INCREASE", "Increase text size"),
         S("KILIX_CHROME_BUTTON_FONT_DECREASE", "Decrease text size"),
         S("KILIX_CHROME_BUTTON_SPLIT_LEFT", "Split pane left"),
