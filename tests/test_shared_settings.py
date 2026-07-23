@@ -276,6 +276,35 @@ class SharedSettingsTests(unittest.TestCase):
             self.assertIn("Thermal status", first_frame)
             self.assertIn("Volume", first_frame)
 
+    def test_tui_tools_select_pinned_tmux_download_and_tb_install(self):
+        tui = _load_settings_tui()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.conf"
+            with mock.patch.dict(os.environ, {
+                    "GPU_TERMINAL_SETTINGS_FILE": str(path),
+                    "KITTY_PID": ""}, clear=False):
+                manager = FakeScreen([10])
+                self.assertEqual(
+                    tui._run_tui(manager, "tools"),
+                    "tool:tmux-manager",
+                )
+                alias = FakeScreen([ord("j"), 10])
+                self.assertEqual(
+                    tui._run_tui(alias, "tools"),
+                    "tool:install-tb",
+                )
+
+        self.assertEqual(
+            tui._tool_argv("tmux-manager"),
+            [str(ROOT / "kilix"), "tmux"],
+        )
+        self.assertEqual(
+            tui._tool_argv("install-tb"),
+            [str(ROOT / "kilix"), "tmux", "--install-only", "--with-tb"],
+        )
+        frame = "\n".join(item[2] for item in manager.frames[0])
+        self.assertIn("Tmux Manager — download and run", frame)
+
     def test_tui_quit_warning_allows_save_as_the_next_key(self):
         tui = _load_settings_tui()
         with tempfile.TemporaryDirectory() as tmp:

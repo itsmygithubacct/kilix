@@ -82,9 +82,33 @@ def test_kilix_temps_installed_command_precedes_source_launcher():
     assert seen["cwd"] is None
 
 
+def test_tmux_manager_opens_in_a_new_tab():
+    d = H.make_desk()
+    seen = {}
+    d.shell._tab = lambda argv, title, cwd=None: seen.update(
+        argv=argv, title=title, cwd=cwd) or True
+    with patch("shell.shutil.which",
+               side_effect=lambda name: "/usr/local/bin/tmux-tui"
+               if name == "tmux-tui" else None):
+        assert d.shell.open_tmux_manager()
+    assert seen["argv"] == ["/usr/local/bin/tmux-tui"]
+    assert seen["title"] == "Tmux Manager"
+    assert seen["cwd"] == os.path.expanduser("~")
+
+
+def test_start_menu_names_tmux_manager():
+    d = H.make_desk()
+    d.taskbar.open_start_menu()
+    programs = next(
+        item for item in d.menus.stack[0].items if item.label == "Programs")
+    assert any(item.label == "Tmux Manager" for item in programs.submenu)
+
+
 test_mux_icon_renders()
 test_desktop_mux_terminal_launcher()
 test_remote_launch_uses_private_credential()
 test_kilix_temps_launcher_forces_graphical_tab()
 test_kilix_temps_installed_command_precedes_source_launcher()
+test_tmux_manager_opens_in_a_new_tab()
+test_start_menu_names_tmux_manager()
 print("test_mux_terminal OK")

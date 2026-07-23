@@ -612,6 +612,26 @@ class Shell:
             "installer could be found.", icon="error")
         return False
 
+    @staticmethod
+    def tmux_manager_target():
+        """Installed manager first; the Kilix pinned installer is the fallback."""
+        if executable := shutil.which("tmux-tui"):
+            return [executable]
+        kilix = os.path.join(KILIX_HOME, "kilix")
+        if os.path.isfile(kilix) and os.access(kilix, os.X_OK):
+            return [kilix, "tmux"]
+        return None
+
+    def open_tmux_manager(self):
+        target = self.tmux_manager_target()
+        if target is not None:
+            return self._tab(target, "Tmux Manager", os.path.expanduser("~"))
+        wm.msgbox(
+            self.desk, "Tmux Manager",
+            "Neither an installed Tmux Manager nor the pinned Kilix installer "
+            "could be found.", icon="error")
+        return False
+
     def run_maintenance(self, cmd, title):
         """Run an update/maintenance command in a new kilix tab, pausing at the
         end so its output — and any prompt, e.g. `pleb update`'s restart

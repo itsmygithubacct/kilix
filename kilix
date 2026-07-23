@@ -18,6 +18,7 @@
 #   ./kilix settings          # shared chrome/game settings TUI and CLI
 #   ./kilix games ...         # list, enable, or disable Kilix 95 games
 #   ./kilix temps [args]       # run the pinned graphical thermal dashboard
+#   ./kilix tmux [args]        # install/run the pinned Tmux Manager
 #   ./kilix status            # show version, engine, config, and provider
 #   ./kilix update            # verified-origin, clean, fast-forward/ref update
 #   ./kilix desktop           # launch the configured desktop provider
@@ -259,6 +260,7 @@ _kilix_load_env_file() {
       KILIX_TEMPS_PRESENTER_REPO|KILIX_TEMPS_PRESENTER_REF|\
       KILIX_TEMPS_SOFT_RASTER_PY_REPO|KILIX_TEMPS_SOFT_RASTER_PY_REF|\
       KILIX_TEMPS_SOFT_RASTER_REPO|KILIX_TEMPS_SOFT_RASTER_REF|\
+      TMUX_TUI_REPO|TMUX_TUI_REF|TMUX_CLI_REF|TMUX_TUI_PREFIX|\
       KILIX_NERD_FONT_URL|KILIX_NERD_FONT_SHA256|KILIX_NERD_FONT_FILE_SHA256|KILIX_GO_TOOLCHAIN|KILIX_PYTHON)
         # An explicit process environment wins over persisted settings. Storage
         # roots are intentionally absent from this allowlist: they determine
@@ -373,6 +375,30 @@ case "${1:-}" in
       || { echo "kilix temps: installer did not create $_temps_installed" >&2; exit 1; }
     [ "$_temps_install_only" = 0 ] || exit 0
     exec "$_temps_installed" "$@" ;;
+  tmux|tmux-manager|tmux-tui)
+    shift
+    _tmux_install_only=0
+    _tmux_force=0
+    _tmux_tb_mode=
+    while :; do
+      case "${1:-}" in
+        --install-only) _tmux_install_only=1; shift ;;
+        --force-install) _tmux_force=1; shift ;;
+        --with-tb) _tmux_tb_mode=--with-tb; shift ;;
+        --without-tb) _tmux_tb_mode=--without-tb; shift ;;
+        --) shift; break ;;
+        *) break ;;
+      esac
+    done
+    _tmux_installer=("$KILIX_HOME/scripts/install-tmux-tui.sh")
+    [ "$_tmux_force" = 0 ] || _tmux_installer+=(--force)
+    [ -z "$_tmux_tb_mode" ] || _tmux_installer+=("$_tmux_tb_mode")
+    "${_tmux_installer[@]}"
+    _tmux_installed="${TMUX_TUI_PREFIX:-$HOME/.local}/bin/tmux-tui"
+    [ -x "$_tmux_installed" ] \
+      || { echo "kilix tmux: installer did not create $_tmux_installed" >&2; exit 1; }
+    [ "$_tmux_install_only" = 0 ] || exit 0
+    exec "$_tmux_installed" "$@" ;;
   status|--status)
     _status_version="$(cat "$KILIX_HOME/VERSION" 2>/dev/null || echo unknown)"
     _status_head="$(git -C "$KILIX_HOME" rev-parse --short HEAD 2>/dev/null || echo not-a-checkout)"
