@@ -62,6 +62,11 @@ host SDK, and provider contract introduced in 0.1.1.
 - **Clickable pane buttons** keyboard, `+ - ← ↑ ↓ → ▢ ✕` — synchronized
   keyboard input, local font size, four-way split, maximize, and close controls
   that highlight on hover.
+- **Crash-persistent panes** — each normal pane runs behind its own independent
+  `kitty-pty-broker` process. A Kilix crash or ordinary frontend loss detaches
+  the pane without killing its shell; the next Kilix process restores detached
+  panes as recovered tabs. `exit` ends the session naturally, while the pane
+  `✕` warns before deliberately terminating it.
 - **Thermometer-in-chrome** — an optional hottest-sensor indicator opens the
   graphical Kilix Temps dashboard in a new tab. It is green below 80°C, yellow
   at 80–89°C, and red from 90°C; the shared setting defaults to off.
@@ -92,6 +97,26 @@ host SDK, and provider contract introduced in 0.1.1.
   `config/gfx.py` internals. SDK 1.2 includes shared content installation,
   authenticated private-X-application sessions, and game availability.
 - **Self-contained** — prefers its bundled fork build, and falls back to a prebuilt kitty if you haven't built it.
+
+### Persistent pane processes
+
+Kilix builds the sibling
+[`kitty-pty-broker`](https://github.com/itsmygithubacct/kitty-pty-broker)
+checkout on demand and
+places its artifacts below the Kilix build directory. The broker owns the real
+PTY and process group; Kilix attaches through a lightweight client over a
+private Unix socket. Terminal bytes remain untouched, so live Kitty graphics,
+including file and POSIX shared-memory transfers, do not pass through a tmux
+parser.
+
+Closing the whole frontend, closing a page, or a Kilix crash detaches the
+client. Detached sessions are discovered on the next startup and opened in
+`recovered:<id>` tabs. The per-pane `✕` and `Ctrl+Alt+W` are the explicit
+destructive path and always ask before asking the broker to terminate that
+pane. Set `KILIX_PTY_BROKER=0` to disable persistence,
+`KILIX_PTY_BROKER_AUTO_RECOVER=0` to leave detached sessions for manual
+attachment, or `KILIX_PTY_BROKER_JOURNAL_LIMIT` to change the bounded replay
+journal from its 64 MiB default.
 
 ## Requirements
 
@@ -754,6 +779,11 @@ startup. Branch history: clickable chrome, double-fire fix, DBus-warning fix.
 presentation library used by the browser, app panes, and desktop provider.
 Keep capture, terminal input, and application policy in Kilix; reusable damage,
 transport, composition, and pacing changes belong in that module first.
+
+`../kitty-pty-broker` is the independent C/POSIX pane-lifetime library. Kilix
+owns policy—deciding which windows persist, restoring detached sessions, and
+confirming destructive close—while the library owns PTYs, process groups,
+socket authentication, resize forwarding, and byte-transparent replay.
 
 `./third_party/kilix-state` and `./third_party/kilix-state-py` pin the native
 crash-safe state implementation and its Python binding. External desktop
