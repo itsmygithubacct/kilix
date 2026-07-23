@@ -586,29 +586,30 @@ class Shell:
                          f"Mux: {session}", cwd or os.path.expanduser("~"))
 
     @staticmethod
-    def kilix_temps_candidates():
+    def kilix_temps_target():
+        if executable := shutil.which("kilix-temps"):
+            return [executable, "--graphics"], None
         source_home = os.environ.get("GPU_TERMINAL_SOURCE_HOME") or \
             os.path.expanduser("~/gpu_terminal")
         project = os.path.join(
             os.path.abspath(os.path.expanduser(source_home)), "kilix-temps")
-        return project, (
-            os.path.join(project, "build", "kilix-temps"),
-            os.path.join(project, "kilix-temps"),
-        )
+        executable = os.path.join(project, "build", "kilix-temps")
+        if os.path.isfile(executable) and os.access(executable, os.X_OK):
+            return [executable, "--graphics"], project
+        kilix = os.path.join(KILIX_HOME, "kilix")
+        if os.path.isfile(kilix) and os.access(kilix, os.X_OK):
+            return [kilix, "temps", "--graphics"], None
+        return None
 
     def open_kilix_temps(self):
-        project, candidates = self.kilix_temps_candidates()
-        for executable in candidates:
-            if os.path.isfile(executable) and os.access(executable, os.X_OK):
-                return self._tab(
-                    [executable, "--graphics"], "Kilix Temps", project)
-        if executable := shutil.which("kilix-temps"):
-            return self._tab(
-                [executable, "--graphics"], "Kilix Temps", None)
+        target = self.kilix_temps_target()
+        if target is not None:
+            argv, cwd = target
+            return self._tab(argv, "Kilix Temps", cwd)
         wm.msgbox(
             self.desk, "Kilix Temps",
-            "kilix-temps was not found. Install it in PATH or check it out "
-            "under GPU_TERMINAL_SOURCE_HOME.", icon="error")
+            "Neither an installed Kilix Temps dashboard nor the pinned Kilix "
+            "installer could be found.", icon="error")
         return False
 
     def run_maintenance(self, cmd, title):

@@ -9,6 +9,18 @@ class KilixLauncherTests(unittest.TestCase):
     def test_launcher_parses(self):
         subprocess.run(["bash", "-n", "kilix"], cwd=ROOT, check=True)
 
+    def test_temps_command_uses_the_pinned_graphical_installer(self):
+        launcher = (ROOT / "kilix").read_text()
+        installer = (ROOT / "scripts" / "install-kilix-temps.sh").read_text()
+        self.assertIn("temps|temperature|temperatures)", launcher)
+        self.assertIn("install-kilix-temps.sh", launcher)
+        self.assertIn("--install-only", launcher)
+        self.assertIn("KILIX_TEMPS_REF", installer)
+        self.assertIn("KILIX_TEMPS_PRESENTER_REF", installer)
+        self.assertIn("KILIX_TEMPS_SOFT_RASTER_PY_REF", installer)
+        self.assertIn("KILIX_TEMPS_SOFT_RASTER_REF", installer)
+        self.assertIn("graphics_available", installer)
+
     def test_desktop_provider_knobs_are_wired(self):
         text = (ROOT / "kilix").read_text()
         for provider in ["auto)", "builtin)", "external)", "command|custom)", "none|off|disabled)"]:
