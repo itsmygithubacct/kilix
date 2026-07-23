@@ -766,8 +766,10 @@ system build deps from [Requirements](#requirements). The binary lands at
 `~/.local/gpu_terminal/kilix/build/current/src/kitty/launcher/kitty`. The build
 uses an exact committed-source snapshot, refuses a dirty `./src`, and records
 that commit as `source-id`, so generated objects and binaries never land in
-`./src`. Put a machine-specific toolchain environment in
-`~/.local/gpu_terminal/kilix/config/build.env`. Go package
+`./src`. Generation cleanup retains any build containing a live executable, so
+long-running terminals survive rebuilds; a later successful build or update
+reaps the generation after its last process exits. Put a machine-specific
+toolchain environment in `~/.local/gpu_terminal/kilix/config/build.env`. Go package
 compilation defaults to one job so the fork can build on memory-constrained
 systems; set `KILIX_BUILD_JOBS` to a larger positive integer to trade memory for
 build speed. Set `KILIX_PYTHON` in `build.env` when Python 3.12+ is installed

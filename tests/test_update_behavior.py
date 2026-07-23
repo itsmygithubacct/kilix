@@ -3,6 +3,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -497,6 +498,66 @@ if [ "${FAKE_KILIX_BUILD_FAIL:-}" = after_stamp ]; then exit 25; fi
         self.assertEqual(os.readlink(previous), "generations/build.OldCurrent")
         self.assertFalse(retired.exists())
         self.assertEqual(self.calls.read_text().splitlines(), ["called", "called"])
+
+    def test_update_retains_live_old_generation_then_reaps_it(self):
+        self._install_coherent_fork("OldCurrent")
+        _, previous = self._install_generation(
+            "LiveOldPrevious", current=False)
+        retained = previous.resolve()
+        live_executable = retained / "live-kilix"
+        shutil.copy2(shutil.which("sleep"), live_executable)
+        process = subprocess.Popen([str(live_executable), "30"])
+        try:
+            for _ in range(100):
+                try:
+                    running = os.path.realpath(f"/proc/{process.pid}/exe")
+                except OSError:
+                    running = ""
+                if running == str(live_executable.resolve()):
+                    break
+                time.sleep(0.01)
+            else:
+                self.fail("test executable did not start from old generation")
+
+            self._publish_with_src_change("live-generation")
+            result = self._update()
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(retained.is_dir())
+            self.assertIn(
+                "retaining live build generation", result.stderr)
+        finally:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+
+        result = self._update()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(retained.exists())
+
+    def test_update_preserves_recovery_transaction_generation(self):
+        self._install_coherent_fork("Current")
+        recovery = (
+            self.storage / "build" / "generations" / "build.Recovery")
+        recovery.mkdir()
+        (recovery / "marker").write_text("rollback data\n")
+        transaction = self.storage / "build" / ".update-rollback.Test"
+        transaction.mkdir()
+        (transaction / "previous.entry").symlink_to(
+            "generations/build.Recovery")
+
+        result = self._update()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            (recovery / "marker").read_text(), "rollback data\n")
+
+        (transaction / "previous.entry").unlink()
+        transaction.rmdir()
+        result = self._update()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(recovery.exists())
 
 
 if __name__ == "__main__":
