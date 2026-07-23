@@ -466,7 +466,11 @@ generation_target_is_referenced() {
   local target="$1" ref
   for ref in "$KILIX_BUILD_DIRECTORY/current" \
              "$KILIX_BUILD_DIRECTORY/previous" \
-             "$KILIX_BUILD_DIRECTORY/prepared"; do
+             "$KILIX_BUILD_DIRECTORY/prepared" \
+             "$KILIX_BUILD_DIRECTORY"/.current.* \
+             "$KILIX_BUILD_DIRECTORY"/.prepared.* \
+             "$KILIX_BUILD_DIRECTORY"/.previous.* \
+             "$KILIX_BUILD_DIRECTORY"/.update-rollback.*/*.entry; do
     if [ -L "$ref" ] && [ "$(readlink -- "$ref" 2>/dev/null || true)" = "$target" ]; then
       return 0
     fi
@@ -474,22 +478,52 @@ generation_target_is_referenced() {
   return 1
 }
 
+generation_has_live_executable() {
+  local candidate="$1" proc_exe executable inspected=0
+  # /proc is the runtime lease registry for build generations. If it is not
+  # available (for example in a restricted container), retain the generation:
+  # reclaiming disk is less important than invalidating a running terminal.
+  [ -d /proc ] || return 0
+  for proc_exe in /proc/[0-9]*/exe; do
+    [ -L "$proc_exe" ] || continue
+    executable="$(readlink -f -- "$proc_exe" 2>/dev/null || true)"
+    [ -n "$executable" ] || continue
+    inspected=1
+    case "$executable" in
+      "$candidate"|"$candidate"/*) return 0 ;;
+    esac
+  done
+  [ "$inspected" = 1 ] || return 0
+  return 1
+}
+
 retire_build_entry() {
-  local entry="$1" target candidate build_root candidate_root
+  local entry="$1"
   if [ -L "$entry" ]; then
-    target="$(readlink -- "$entry")" || return 1
     rm -f -- "$entry" || return 1
-    generation_target_syntax_is_safe "$target" || return 0
-    generation_target_is_referenced "$target" && return 0
-    candidate="$KILIX_BUILD_DIRECTORY/$target"
-    [ -d "$candidate" ] && [ ! -L "$candidate" ] || return 0
-    build_root="$(cd "$KILIX_BUILD_DIRECTORY" && pwd -P)" || return 1
-    candidate_root="$(cd "$candidate" && pwd -P)" || return 1
-    [ "$candidate_root" = "$build_root/$target" ] || return 0
-    rm -rf -- "$candidate" || return 1
   elif [ -e "$entry" ]; then
     rm -rf -- "$entry" || return 1
   fi
+}
+
+garbage_collect_generations() {
+  local candidate target build_root candidate_root
+  build_root="$(cd "$KILIX_BUILD_DIRECTORY" && pwd -P)" || return 1
+  for candidate in "$KILIX_BUILD_DIRECTORY"/generations/build.*; do
+    if [ ! -d "$candidate" ] || [ -L "$candidate" ]; then
+      continue
+    fi
+    target="generations/${candidate##*/}"
+    generation_target_syntax_is_safe "$target" || continue
+    generation_target_is_referenced "$target" && continue
+    candidate_root="$(cd "$candidate" && pwd -P)" || continue
+    [ "$candidate_root" = "$build_root/$target" ] || continue
+    if generation_has_live_executable "$candidate_root"; then
+      echo "kilix: retaining live build generation: $candidate_root" >&2
+      continue
+    fi
+    rm -rf -- "$candidate" || return 1
+  done
 }
 
 promote_current() {
@@ -596,6 +630,8 @@ prepare_font
 
 if [ "${KILIX_BUILD_PREPARE_ONLY:-0}" = 1 ]; then
   promote_prepared
+  garbage_collect_generations \
+    || echo "kilix: WARNING: dependency preparation committed but old build cleanup was incomplete" >&2
   echo "kilix: dependency preparation complete -> $KILIX_BUILD_DIRECTORY/prepared/src"
   exit 0
 fi
@@ -645,5 +681,7 @@ if [ -n "$head" ]; then
   chmod 0600 "$stamp_tmp"
 fi
 promote_current
+garbage_collect_generations \
+  || echo "kilix: WARNING: build committed but old generation cleanup was incomplete" >&2
 launcher="$KILIX_BUILD_DIRECTORY/current/src/kitty/launcher/kitty"
 echo "kilix: built -> $launcher"

@@ -607,6 +607,39 @@ case "${1:-}" in
       [ "$candidate_root" = "$build_root/generations/build.$suffix" ]
     }
 
+    _kilix_generation_has_live_executable() {
+      local candidate="$1" proc_exe executable inspected=0
+      [ -d /proc ] || return 0
+      for proc_exe in /proc/[0-9]*/exe; do
+        [ -L "$proc_exe" ] || continue
+        executable="$(readlink -f -- "$proc_exe" 2>/dev/null || true)"
+        [ -n "$executable" ] || continue
+        inspected=1
+        case "$executable" in
+          "$candidate"|"$candidate"/*) return 0 ;;
+        esac
+      done
+      [ "$inspected" = 1 ] || return 0
+      return 1
+    }
+
+    _kilix_generation_target_is_referenced() {
+      local target="$1" excluded="${2:-}" ref
+      for ref in "$_fork_current" "$_fork_previous" \
+                 "$KILIX_BUILD_DIRECTORY/prepared" \
+                 "$KILIX_BUILD_DIRECTORY"/.current.* \
+                 "$KILIX_BUILD_DIRECTORY"/.prepared.* \
+                 "$KILIX_BUILD_DIRECTORY"/.previous.* \
+                 "$KILIX_BUILD_DIRECTORY"/.update-rollback.*/*.entry; do
+        [ "$ref" = "$excluded" ] && continue
+        if [ -L "$ref" ] \
+             && [ "$(readlink -- "$ref" 2>/dev/null || true)" = "$target" ]; then
+          return 0
+        fi
+      done
+      return 1
+    }
+
     _kilix_has_fork_footprint() {
       _kilix_entry_exists "$_fork_current" || _kilix_entry_exists "$_fork_stamp"
     }
@@ -678,21 +711,39 @@ case "${1:-}" in
     }
 
     _kilix_gc_generation_for_entry() {
-      local entry="$1" target ref candidate build_root candidate_root
+      local entry="$1" target candidate build_root candidate_root
       [ -L "$entry" ] || return 0
       target="$(readlink -- "$entry")" || return 0
       _kilix_generation_target_syntax_is_safe "$target" || return 0
-      for ref in "$_fork_current" "$_fork_previous" "$KILIX_BUILD_DIRECTORY/prepared"; do
-        if [ -L "$ref" ] && [ "$(readlink -- "$ref" 2>/dev/null || true)" = "$target" ]; then
-          return 0
-        fi
-      done
+      _kilix_generation_target_is_referenced "$target" "$entry" && return 0
       candidate="$KILIX_BUILD_DIRECTORY/$target"
       [ -d "$candidate" ] && [ ! -L "$candidate" ] || return 0
       build_root="$(cd "$KILIX_BUILD_DIRECTORY" && pwd -P)" || return 0
       candidate_root="$(cd "$candidate" && pwd -P)" || return 0
       [ "$candidate_root" = "$build_root/$target" ] || return 0
+      if _kilix_generation_has_live_executable "$candidate_root"; then
+        echo "kilix update: retaining live build generation: $candidate_root" >&2
+        return 0
+      fi
       rm -rf -- "$candidate" || return 1
+    }
+
+    _kilix_gc_unreferenced_generations() {
+      local candidate target build_root candidate_root
+      [ -d "$KILIX_BUILD_DIRECTORY/generations" ] || return 0
+      build_root="$(cd "$KILIX_BUILD_DIRECTORY" && pwd -P)" || return 1
+      for candidate in "$KILIX_BUILD_DIRECTORY"/generations/build.*; do
+        if [ ! -d "$candidate" ] || [ -L "$candidate" ]; then
+          continue
+        fi
+        target="generations/${candidate##*/}"
+        _kilix_generation_target_syntax_is_safe "$target" || continue
+        _kilix_generation_target_is_referenced "$target" && continue
+        candidate_root="$(cd "$candidate" && pwd -P)" || continue
+        [ "$candidate_root" = "$build_root/$target" ] || continue
+        _kilix_generation_has_live_executable "$candidate_root" && continue
+        rm -rf -- "$candidate" || return 1
+      done
     }
 
     _before="$(git -C "$KILIX_HOME" rev-parse HEAD 2>/dev/null || echo unknown)"
@@ -855,6 +906,8 @@ case "${1:-}" in
       set +e
       _kilix_cleanup_engine_transaction \
         || echo "kilix update: WARNING: update committed but old build cleanup was incomplete" >&2
+      _kilix_gc_unreferenced_generations \
+        || echo "kilix update: WARNING: update committed but orphan cleanup was incomplete" >&2
       _update_txn_dir=""
       return 0
     }

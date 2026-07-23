@@ -277,6 +277,85 @@ class BuildPreparationTests(unittest.TestCase):
         self.assertEqual((current / "source-id").read_text().strip(), source_id)
         self.assertFalse((self.checkout / "setup-action").exists())
 
+    def test_live_old_generation_is_retained_until_later_build(self):
+        (self.src / "setup.py").write_text(
+            "from pathlib import Path\n"
+            "p = Path('kitty/launcher/kitty')\n"
+            "p.parent.mkdir(parents=True, exist_ok=True)\n"
+            "p.write_text('#!/bin/sh\\nexit 0\\n')\n"
+            "p.chmod(0o755)\n"
+            "k = p.with_name('kitten')\n"
+            "k.write_text('#!/bin/sh\\nexit 0\\n')\n"
+            "k.chmod(0o755)\n")
+        env = dict(self.env)
+        env["KILIX_BUILD_MODE"] = "system"
+        env.pop("KILIX_BUILD_PREPARE_ONLY")
+        env.pop("KILIX_KITTY_DEPS_URL")
+        env.pop("KILIX_KITTY_DEPS_SHA256")
+
+        build = self.base / "storage" / "build"
+        generations = build / "generations"
+        old_current = generations / "build.OldCurrent"
+        old_previous = generations / "build.LiveOldPrevious"
+        old_current.mkdir(parents=True)
+        old_previous.mkdir()
+        (build / "current").symlink_to("generations/build.OldCurrent")
+        (build / "previous").symlink_to(
+            "generations/build.LiveOldPrevious")
+
+        live_executable = old_previous / "live-kilix"
+        shutil.copy2(shutil.which("sleep"), live_executable)
+        process = subprocess.Popen([str(live_executable), "30"])
+        try:
+            for _ in range(100):
+                try:
+                    running = os.path.realpath(f"/proc/{process.pid}/exe")
+                except OSError:
+                    running = ""
+                if running == str(live_executable.resolve()):
+                    break
+                time.sleep(0.01)
+            else:
+                self.fail("test executable did not start from old generation")
+
+            result = self.run_build(env)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(old_previous.is_dir())
+            self.assertIn(
+                "retaining live build generation", result.stderr)
+        finally:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+
+        result = self.run_build(env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(old_previous.exists())
+
+    def test_recovery_transaction_generation_is_not_collected(self):
+        build = self.base / "storage" / "build"
+        recovery = build / "generations" / "build.Recovery"
+        recovery.mkdir(parents=True)
+        (recovery / "marker").write_text("rollback data\n")
+        transaction = build / ".update-rollback.Test"
+        transaction.mkdir()
+        (transaction / "previous.entry").symlink_to(
+            "generations/build.Recovery")
+
+        result = self.run_build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            (recovery / "marker").read_text(), "rollback data\n")
+
+        (transaction / "previous.entry").unlink()
+        transaction.rmdir()
+        result = self.run_build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(recovery.exists())
+
     def test_invalid_build_parallelism_is_rejected(self):
         env = dict(self.env)
         env["KILIX_BUILD_JOBS"] = "0"
