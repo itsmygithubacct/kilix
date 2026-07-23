@@ -192,6 +192,7 @@ kilix settings                    # shared chrome/game settings TUI
 kilix games list                  # show games available in Kilix 95
 kilix games settings              # open the TUI directly on Games
 kilix games disable doom          # hide a game (enable reverses it)
+kilix temps --graphics            # install/verify the pinned dashboard, then run it
 kilix status                      # version/commit, engine, writable config, provider contract
 ```
 
@@ -225,10 +226,10 @@ matching Tilix's active-pane cue.
 The far right of the page strip can show thermometer, volume, network,
 calendar, local date/time, and (when applicable) battery items. The thermometer
 is disabled by default; when enabled it shows the hottest readable Linux
-thermal-zone/hwmon temperature in green below 80°C, yellow at 80–89°C, or red
-from 90°C. It sits at the left edge of the status group and opens
-`kilix-temps --graphics` in a new tab. A neutral `--°` remains clickable when
-no sensor can be read. The volume icon opens
+thermal-zone/hwmon temperature to one decimal place in green below 80°C, yellow
+at 80–89°C, or red from 90°C. It sits at the left edge of the status group and
+opens `kilix-temps --graphics` in a new tab. A neutral `--°` remains clickable
+when no sensor can be read. The volume icon opens
 `pulsemixer` in an overlay pane (`alsamixer` is used as a fallback). It sits to
 the left of the network/Wi-Fi icon, which remains immediately left of the
 calendar and opens `nmtui`. Click the calendar icon for a navigable month
@@ -462,8 +463,11 @@ right-click menu everywhere. Built in:
   **live** via remote control (fallback: SIGUSR1); `kilix.env` changes are used
   by new launches.
 - **Notepad** and an **image viewer**.
-- **Kilix Temps** — Start ▸ Programs ▸ Kilix Temps opens a sibling source
-  checkout or installed `kilix-temps` executable in its graphical tab.
+- **Kilix Temps** — Start ▸ Programs ▸ Kilix Temps prefers an installed
+  `kilix-temps`, then a complete sibling build. On a fresh checkout it delegates
+  to `kilix temps`, which fetches exact pinned commits for the dashboard,
+  `soft-raster`, `soft-raster-py`, and `kitty-frame-presenter`, builds them as
+  the desktop user, verifies the graphical backend, and opens its tab.
 - **Games** — Start ▸ Programs ▸ Games. Each entry plays immediately if
   `~/.local/gpu_terminal/kilix-95/config/games.conf` already points at a working install, otherwise
   one consented click sets it up (paths saved to that file) and launches it in

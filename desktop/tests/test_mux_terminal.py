@@ -55,15 +55,36 @@ def test_kilix_temps_launcher_forces_graphical_tab():
         executable.write_text("#!/bin/sh\n")
         executable.chmod(0o755)
         with patch.dict(os.environ, {
-                "GPU_TERMINAL_SOURCE_HOME": directory}):
+                "GPU_TERMINAL_SOURCE_HOME": directory}), \
+                patch("shell.shutil.which", return_value=None):
             assert d.shell.open_kilix_temps()
     assert seen["argv"] == [str(executable), "--graphics"]
     assert seen["title"] == "Kilix Temps"
     assert seen["cwd"] == str(project)
 
 
+def test_kilix_temps_installed_command_precedes_source_launcher():
+    d = H.make_desk()
+    seen = {}
+    d.shell._tab = lambda argv, title, cwd=None: seen.update(
+        argv=argv, title=title, cwd=cwd) or True
+    with tempfile.TemporaryDirectory() as directory:
+        raw = Path(directory) / "kilix-temps" / "kilix-temps"
+        raw.parent.mkdir(parents=True)
+        raw.write_text("#!/bin/sh\n")
+        raw.chmod(0o755)
+        with patch.dict(os.environ, {
+                "GPU_TERMINAL_SOURCE_HOME": directory}), \
+                patch("shell.shutil.which",
+                      return_value="/usr/local/bin/kilix-temps"):
+            assert d.shell.open_kilix_temps()
+    assert seen["argv"] == ["/usr/local/bin/kilix-temps", "--graphics"]
+    assert seen["cwd"] is None
+
+
 test_mux_icon_renders()
 test_desktop_mux_terminal_launcher()
 test_remote_launch_uses_private_credential()
 test_kilix_temps_launcher_forces_graphical_tab()
+test_kilix_temps_installed_command_precedes_source_launcher()
 print("test_mux_terminal OK")

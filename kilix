@@ -17,6 +17,7 @@
 #   ./kilix screen-size ...   # show/increase/decrease/reset terminal scale
 #   ./kilix settings          # shared chrome/game settings TUI and CLI
 #   ./kilix games ...         # list, enable, or disable Kilix 95 games
+#   ./kilix temps [args]       # run the pinned graphical thermal dashboard
 #   ./kilix status            # show version, engine, config, and provider
 #   ./kilix update            # verified-origin, clean, fast-forward/ref update
 #   ./kilix desktop           # launch the configured desktop provider
@@ -254,6 +255,10 @@ _kilix_load_env_file() {
       KILIX_REF|KILIX_REPO|KILIX_TRUST_EXISTING_CHECKOUT|KILIX_ALLOW_MUTABLE_REF|\
       KILIX_PREBUILT_VERSION|KILIX_PREBUILT_SHA256|KILIX_ALLOW_UNVERIFIED_PREBUILT|\
       KILIX_BUILD_MODE|KILIX_KITTY_DEPS_URL|KILIX_KITTY_DEPS_SHA256|\
+      KILIX_TEMPS_REPO|KILIX_TEMPS_REF|KILIX_TEMPS_PREFIX|\
+      KILIX_TEMPS_PRESENTER_REPO|KILIX_TEMPS_PRESENTER_REF|\
+      KILIX_TEMPS_SOFT_RASTER_PY_REPO|KILIX_TEMPS_SOFT_RASTER_PY_REF|\
+      KILIX_TEMPS_SOFT_RASTER_REPO|KILIX_TEMPS_SOFT_RASTER_REF|\
       KILIX_NERD_FONT_URL|KILIX_NERD_FONT_SHA256|KILIX_NERD_FONT_FILE_SHA256|KILIX_GO_TOOLCHAIN|KILIX_PYTHON)
         # An explicit process environment wins over persisted settings. Storage
         # roots are intentionally absent from this allowlist: they determine
@@ -347,6 +352,27 @@ case "${1:-}" in
         echo "usage: $_self games [list|settings|enable GAME...|disable GAME...]" >&2
         exit 2 ;;
     esac ;;
+  temps|temperature|temperatures)
+    shift
+    _temps_install_only=0
+    _temps_force=0
+    while :; do
+      case "${1:-}" in
+        --install-only) _temps_install_only=1; shift ;;
+        --force-install) _temps_force=1; shift ;;
+        *) break ;;
+      esac
+    done
+    _temps_installed="${KILIX_TEMPS_PREFIX:-$HOME/.local}/bin/kilix-temps"
+    if [ "$_temps_force" = 1 ]; then
+      "$KILIX_HOME/scripts/install-kilix-temps.sh" --force
+    else
+      "$KILIX_HOME/scripts/install-kilix-temps.sh"
+    fi
+    [ -x "$_temps_installed" ] \
+      || { echo "kilix temps: installer did not create $_temps_installed" >&2; exit 1; }
+    [ "$_temps_install_only" = 0 ] || exit 0
+    exec "$_temps_installed" "$@" ;;
   status|--status)
     _status_version="$(cat "$KILIX_HOME/VERSION" 2>/dev/null || echo unknown)"
     _status_head="$(git -C "$KILIX_HOME" rev-parse --short HEAD 2>/dev/null || echo not-a-checkout)"
