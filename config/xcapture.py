@@ -18,6 +18,7 @@ from PIL import Image
 from Xlib import X
 from Xlib import display as xdisplay
 from Xlib.ext import damage
+from Xlib.protocol import rq
 
 try:
     from Xlib.ext import xfixes
@@ -30,6 +31,53 @@ ALL_PLANES = ctypes.c_ulong(-1).value
 IPC_PRIVATE = 0
 IPC_CREAT = 0o1000
 IPC_RMID = 0
+
+
+_XFIXES_RECTANGLE = rq.Struct(
+    rq.Int16("x"), rq.Int16("y"),
+    rq.Card16("width"), rq.Card16("height"))
+
+
+class _XFixesCreateRegion(rq.Request):
+    """XFixes v2 requests missing from older python-xlib releases."""
+
+    _request = rq.Struct(
+        rq.Card8("opcode"),
+        rq.Opcode(5),
+        rq.RequestLength(),
+        rq.Card32("region"),
+        rq.List("rectangles", _XFIXES_RECTANGLE),
+    )
+
+
+class _XFixesDestroyRegion(rq.Request):
+    _request = rq.Struct(
+        rq.Card8("opcode"),
+        rq.Opcode(10),
+        rq.RequestLength(),
+        rq.Card32("region"),
+    )
+
+
+class _XFixesFetchRegion(rq.ReplyRequest):
+    _request = rq.Struct(
+        rq.Card8("opcode"),
+        rq.Opcode(19),
+        rq.RequestLength(),
+        rq.Card32("region"),
+    )
+    _reply = rq.Struct(
+        rq.ReplyCode(),
+        rq.Pad(1),
+        rq.Card16("sequence_number"),
+        rq.ReplyLength(),
+        rq.Int16("x"),
+        rq.Int16("y"),
+        rq.Card16("width"),
+        rq.Card16("height"),
+        rq.Pad(16),
+        rq.List("rectangles", _XFIXES_RECTANGLE),
+    )
 
 
 class _XImageFunctions(ctypes.Structure):
@@ -179,6 +227,7 @@ class XDamageCapture:
         self.max_buffers = max(1, max_buffers)
         self.events = None
         self.damage_id = None
+        self.damage_region = None
         self.display = None
         self._buffers = OrderedDict()
         self._closed = False
@@ -186,16 +235,26 @@ class XDamageCapture:
             self.events = xdisplay.Display(display_name)
             if not self.events.has_extension("DAMAGE"):
                 raise CaptureUnavailable("XDamage is unavailable")
+            if xfixes is None or not self.events.has_extension("XFIXES"):
+                raise CaptureUnavailable("XFixes regions are unavailable")
             self.events.damage_query_version()
+            version = self.events.xfixes_query_version()
+            if version.major_version < 2:
+                raise CaptureUnavailable("XFixes v2 regions are unavailable")
+            protocol = self.events.display
+            self.damage_region = protocol.allocate_resource_id()
+            _XFixesCreateRegion(
+                display=protocol,
+                opcode=protocol.get_extension_major("XFIXES"),
+                region=self.damage_region,
+                rectangles=[],
+            )
             self.root = self.events.screen().root
             self.damage_id = self.root.damage_create(
-                damage.DamageReportBoundingBox)
+                damage.DamageReportNonEmpty)
             self._cursor_supported = bool(
                 draw_cursor and xfixes is not None and
                 self.events.has_extension("XFIXES"))
-            if self._cursor_supported:
-                self.events.xfixes_query_version()
-            self.events.damage_subtract(self.damage_id)
             self.events.sync()
 
             self.x11 = self._library("X11")
@@ -213,8 +272,13 @@ class XDamageCapture:
             self.drawable = self.x11.XRootWindow(self.display, screen)
             self.frame = bytearray(width * height * 3)
             self.capture_rect((0, 0, width, height))
-            # Clear damage caused before/while the initial snapshot was read.
-            self._drain_damage()
+            # Atomically move damage accumulated before/during the initial
+            # snapshot into an XFixes region, then recapture it. Clearing a
+            # Damage object from only its earlier event rectangles can erase
+            # a repaint that arrived between event delivery and DamageSubtract.
+            initial_damage = self._take_damage()
+            if initial_damage is not None:
+                self.capture_rect(initial_damage)
         except Exception:
             self.close()
             raise
@@ -267,6 +331,17 @@ class XDamageCapture:
     def fileno(self):
         return self.events.fileno()
 
+    def has_pending_damage(self):
+        """Return whether python-xlib already queued an XDamage event.
+
+        A synchronous request on this connection can read a later
+        DamageNotify while waiting for its own reply. python-xlib keeps that
+        event in memory, leaving the X socket empty. Callers must check this
+        before sleeping in select(), because descriptor readiness alone
+        cannot represent the in-process queue.
+        """
+        return bool(self.events.pending_events())
+
     def _bucket(self, rect):
         x, y, width, height = rect
         x, y = max(0, x), max(0, y)
@@ -300,27 +375,60 @@ class XDamageCapture:
             self.frame[target:target + row_bytes] = pixels[source:source + row_bytes]
         return x, y, width, height
 
-    def _drain_damage(self):
+    @staticmethod
+    def _union_rect(union, rect):
+        if rect is None:
+            return union
+        if rect[2] <= 0 or rect[3] <= 0:
+            return union
+        if union is None:
+            return rect
+        x0 = min(union[0], rect[0])
+        y0 = min(union[1], rect[1])
+        x1 = max(union[0] + union[2], rect[0] + rect[2])
+        y1 = max(union[1] + union[3], rect[1] + rect[3])
+        return x0, y0, x1 - x0, y1 - y0
+
+    def _extract_damage(self):
+        """Move one snapshot of accumulated damage into the server region."""
+        self.events.damage_subtract(
+            self.damage_id, parts=self.damage_region)
+        protocol = self.events.display
+        fetched = _XFixesFetchRegion(
+            display=protocol,
+            opcode=protocol.get_extension_major("XFIXES"),
+            region=self.damage_region,
+        )
         union = None
-        while self.events.pending_events():
-            event = self.events.next_event()
-            if getattr(event, "damage", None) != self.damage_id:
-                continue
-            area = event.area
-            rect = (int(area.x), int(area.y), int(area.width), int(area.height))
-            if rect[2] <= 0 or rect[3] <= 0:
-                continue
-            if union is None:
-                union = rect
-            else:
-                x0 = min(union[0], rect[0])
-                y0 = min(union[1], rect[1])
-                x1 = max(union[0] + union[2], rect[0] + rect[2])
-                y1 = max(union[1] + union[3], rect[1] + rect[3])
-                union = (x0, y0, x1 - x0, y1 - y0)
-        self.events.damage_subtract(self.damage_id)
-        self.events.flush()
+        for area in fetched.rectangles:
+            union = self._union_rect(
+                union,
+                (int(area.x), int(area.y),
+                 int(area.width), int(area.height)),
+            )
         return union
+
+    def _take_damage(self):
+        """Atomically extract damage, including events queued by the reply.
+
+        FetchRegion is a synchronous request.  While python-xlib waits for its
+        reply it can receive a later DamageNotify and place that event in its
+        in-process queue.  The X socket is then empty, so a caller waiting only
+        with select() would never wake for that queued event.  Drain and
+        extract again until the reply round trip leaves no queued notification;
+        an event arriving after the final check remains on the socket and
+        wakes the caller normally.
+        """
+        union = None
+        while True:
+            while self.events.pending_events():
+                self.events.next_event()
+            union = self._union_rect(union, self._extract_damage())
+            if not self.events.pending_events():
+                return union
+
+    def _drain_damage(self):
+        return self._take_damage()
 
     def _with_cursor(self):
         if not self._cursor_supported:
@@ -381,8 +489,17 @@ class XDamageCapture:
             try:
                 if self.damage_id is not None:
                     events.damage_destroy(self.damage_id)
+                if self.damage_region is not None:
+                    protocol = events.display
+                    _XFixesDestroyRegion(
+                        display=protocol,
+                        opcode=protocol.get_extension_major("XFIXES"),
+                        region=self.damage_region,
+                    )
                 events.sync()
             except Exception:
                 pass
             events.close()
             self.events = None
+            self.damage_id = None
+            self.damage_region = None
