@@ -82,6 +82,8 @@ class SharedSettingsTests(unittest.TestCase):
             self.assertEqual(values["KILIX_CHROME_VOLUME"], "1")
             self.assertEqual(values["KILIX_CHROME_TEMPERATURE"], "0")
             self.assertEqual(values[settings.CLOCK_FORMAT_KEY], "TIME")
+            self.assertEqual(
+                values[settings.PANE_MEMORY_MODE_KEY], "auto")
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
 
     def test_atomic_update_preserves_unknown_content(self):
@@ -135,6 +137,10 @@ class SharedSettingsTests(unittest.TestCase):
             self.assertIn(original, text)
             self.assertIn("KILIX_CHROME_VOLUME=1", text)
             self.assertIn("KILIX_CHROME_TEMPERATURE=0", text)
+            self.assertIn(
+                "KILIX_CHROME_BUTTON_SYNCHRONIZE_INPUT=1", text)
+            self.assertIn(
+                f"{settings.PANE_MEMORY_MODE_KEY}=auto", text)
             self.assertIn(settings.GAMES_MARKER, text)
             for key in settings.GAME_KEY_BY_ID.values():
                 expected = "0" if key == "KILIX_GAME_DOOM" else "1"
@@ -150,20 +156,50 @@ class SharedSettingsTests(unittest.TestCase):
                 "--set", "volume=off",
                 "--set", "temperature=on",
                 "--set", "network=off",
+                "--set", "synchronize_input=off",
                 "--set", "split_up=off",
+                "--set", "pane_memory=always",
                 "--print",
             ], env=env, text=True, capture_output=True, check=True)
             self.assertIn("KILIX_CHROME_VOLUME=off", result.stdout)
             self.assertIn("KILIX_CHROME_TEMPERATURE=on", result.stdout)
             self.assertIn("KILIX_CHROME_NETWORK=off", result.stdout)
+            self.assertIn(
+                "KILIX_CHROME_BUTTON_SYNCHRONIZE_INPUT=off", result.stdout)
             self.assertIn("KILIX_CHROME_BUTTON_SPLIT_UP=off", result.stdout)
+            self.assertIn(
+                f"{settings.PANE_MEMORY_MODE_KEY}=always", result.stdout)
             values = settings.load(str(path))
             self.assertFalse(settings.truthy(values["KILIX_CHROME_VOLUME"]))
             self.assertTrue(settings.truthy(
                 values["KILIX_CHROME_TEMPERATURE"]))
             self.assertFalse(settings.truthy(values["KILIX_CHROME_NETWORK"]))
             self.assertFalse(settings.truthy(
+                values["KILIX_CHROME_BUTTON_SYNCHRONIZE_INPUT"]))
+            self.assertFalse(settings.truthy(
                 values["KILIX_CHROME_BUTTON_SPLIT_UP"]))
+            self.assertEqual(settings.pane_memory_mode(str(path)), "always")
+
+    def test_memory_mode_validation_and_cli_aliases(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.conf"
+            settings.update(
+                {settings.PANE_MEMORY_MODE_KEY: "off"}, str(path))
+            self.assertEqual(settings.pane_memory_mode(str(path)), "off")
+            with self.assertRaises(ValueError):
+                settings.update(
+                    {settings.PANE_MEMORY_MODE_KEY: "sometimes"}, str(path))
+
+            env = dict(os.environ)
+            env["GPU_TERMINAL_SETTINGS_FILE"] = str(path)
+            result = subprocess.run([
+                str(ROOT / "kilix-settings"),
+                "--set", "memory=on",
+                "--print",
+            ], env=env, text=True, capture_output=True, check=True)
+            self.assertIn(
+                f"{settings.PANE_MEMORY_MODE_KEY}=always", result.stdout)
+            self.assertEqual(settings.pane_memory_mode(str(path)), "always")
 
     def test_game_cli_names_and_listing_use_same_file(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -283,17 +319,26 @@ class SharedSettingsTests(unittest.TestCase):
             with mock.patch.dict(os.environ, {
                     "GPU_TERMINAL_SETTINGS_FILE": str(path),
                     "KITTY_PID": ""}, clear=False):
-                manager = FakeScreen([10])
+                memory = FakeScreen([10])
+                self.assertEqual(
+                    tui._run_tui(memory, "tools"),
+                    "tool:memory-monitor",
+                )
+                manager = FakeScreen([ord("j"), 10])
                 self.assertEqual(
                     tui._run_tui(manager, "tools"),
                     "tool:tmux-manager",
                 )
-                alias = FakeScreen([ord("j"), 10])
+                alias = FakeScreen([ord("j"), ord("j"), 10])
                 self.assertEqual(
                     tui._run_tui(alias, "tools"),
                     "tool:install-tb",
                 )
 
+        self.assertEqual(
+            tui._tool_argv("memory-monitor"),
+            [str(ROOT / "kilix"), "memory", "--graphics"],
+        )
         self.assertEqual(
             tui._tool_argv("tmux-manager"),
             [str(ROOT / "kilix"), "tmux"],
@@ -304,6 +349,21 @@ class SharedSettingsTests(unittest.TestCase):
         )
         frame = "\n".join(item[2] for item in manager.frames[0])
         self.assertIn("Tmux Manager — download and run", frame)
+
+    def test_tui_cycles_pane_memory_mode(self):
+        tui = _load_settings_tui()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.conf"
+            with mock.patch.dict(os.environ, {
+                    "GPU_TERMINAL_SETTINGS_FILE": str(path),
+                    "KITTY_PID": ""}, clear=False):
+                # Pane memory is the first row: auto -> always.
+                screen = FakeScreen([ord(" "), ord("s"), ord("q")])
+                self.assertEqual(tui._run_tui(screen, "pane-buttons"), 0)
+            self.assertEqual(settings.pane_memory_mode(str(path)), "always")
+            first_frame = "\n".join(item[2] for item in screen.frames[0])
+            self.assertIn("Pane memory chip", first_frame)
+            self.assertIn("[ auto ]", first_frame)
 
     def test_tui_quit_warning_allows_save_as_the_next_key(self):
         tui = _load_settings_tui()

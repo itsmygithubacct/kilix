@@ -38,6 +38,7 @@ TOP_BAR_TOGGLES = (
 )
 
 PANE_BUTTON_TOGGLES = (
+    ToggleSpec("KILIX_CHROME_BUTTON_SYNCHRONIZE_INPUT", "Synchronize keyboard input", "Pane buttons"),
     ToggleSpec("KILIX_CHROME_BUTTON_FONT_INCREASE", "Increase text size", "Pane buttons"),
     ToggleSpec("KILIX_CHROME_BUTTON_FONT_DECREASE", "Decrease text size", "Pane buttons"),
     ToggleSpec("KILIX_CHROME_BUTTON_SPLIT_LEFT", "Split pane left", "Pane buttons"),
@@ -88,7 +89,13 @@ TOGGLE_SPECS = TOP_BAR_TOGGLES + PANE_BUTTON_TOGGLES + GAME_TOGGLES
 TOGGLE_BY_KEY = {spec.key: spec for spec in TOGGLE_SPECS}
 CLOCK_FORMAT_KEY = "KILIX_CHROME_CLOCK_FORMAT"
 CLOCK_FORMAT_DEFAULT = "%Y-%m-%d %H:%M"
-MANAGED_KEYS = tuple(spec.key for spec in TOGGLE_SPECS) + (CLOCK_FORMAT_KEY,)
+PANE_MEMORY_MODE_KEY = "KILIX_CHROME_PANE_MEMORY_MODE"
+PANE_MEMORY_MODE_DEFAULT = "auto"
+PANE_MEMORY_MODE_CHOICES = ("auto", "always", "off")
+MANAGED_KEYS = tuple(spec.key for spec in TOGGLE_SPECS) + (
+    CLOCK_FORMAT_KEY,
+    PANE_MEMORY_MODE_KEY,
+)
 
 _ASSIGNMENT = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
 
@@ -133,6 +140,7 @@ def defaults(*, migrate_environment: bool = False) -> dict[str, str]:
         for spec in TOGGLE_SPECS
     }
     values[CLOCK_FORMAT_KEY] = CLOCK_FORMAT_DEFAULT
+    values[PANE_MEMORY_MODE_KEY] = PANE_MEMORY_MODE_DEFAULT
     if migrate_environment:
         # Clock and battery were historically stored in kilix.env.  On the
         # first shared-file creation, preserve those effective preferences.
@@ -186,6 +194,7 @@ def _initial_text(values: Mapping[str, str]) -> str:
     lines.append(f"{CLOCK_FORMAT_KEY}={values[CLOCK_FORMAT_KEY]}")
     for spec in PANE_BUTTON_TOGGLES:
         lines.append(f"{spec.key}={values[spec.key]}")
+    lines.append(f"{PANE_MEMORY_MODE_KEY}={values[PANE_MEMORY_MODE_KEY]}")
     lines.extend(("", GAMES_MARKER))
     for spec in GAME_TOGGLES:
         lines.append(f"{spec.key}={values[spec.key]}")
@@ -199,8 +208,7 @@ def ensure_file(path: str | None = None) -> str:
         os.chmod(target, 0o600, follow_symlinks=False)
         text, _exists = read_text(target)
         present = parse_text(text)
-        missing = [spec.key for spec in TOGGLE_SPECS
-                   if spec.key not in present]
+        missing = [key for key in MANAGED_KEYS if key not in present]
         if missing:
             values = defaults()
             update({key: values[key] for key in missing}, target)
@@ -260,6 +268,12 @@ def update(changes: Mapping[str, object], path: str | None = None) -> str:
     for key, raw_value in changes.items():
         if key in TOGGLE_BY_KEY:
             value = "1" if truthy(raw_value) else "0"
+        elif key == PANE_MEMORY_MODE_KEY:
+            value = str(raw_value).strip().lower()
+            if value not in PANE_MEMORY_MODE_CHOICES:
+                choices = ", ".join(PANE_MEMORY_MODE_CHOICES)
+                raise ValueError(
+                    f"{PANE_MEMORY_MODE_KEY} must be one of: {choices}")
         else:
             value = str(raw_value) or CLOCK_FORMAT_DEFAULT
         text = _set_value(text, key, value)
@@ -288,6 +302,16 @@ def update(changes: Mapping[str, object], path: str | None = None) -> str:
     return target
 
 
+def pane_memory_mode(path: str | None = None) -> str:
+    """Return the normalized per-pane memory-chip visibility policy."""
+    value = load(path).get(
+        PANE_MEMORY_MODE_KEY, PANE_MEMORY_MODE_DEFAULT).strip().lower()
+    return (
+        value if value in PANE_MEMORY_MODE_CHOICES
+        else PANE_MEMORY_MODE_DEFAULT
+    )
+
+
 __all__ = [
     "CLOCK_FORMAT_DEFAULT",
     "CLOCK_FORMAT_KEY",
@@ -298,6 +322,9 @@ __all__ = [
     "GAME_TOGGLES",
     "MANAGED_KEYS",
     "PANE_BUTTON_TOGGLES",
+    "PANE_MEMORY_MODE_CHOICES",
+    "PANE_MEMORY_MODE_DEFAULT",
+    "PANE_MEMORY_MODE_KEY",
     "SETTINGS_BASENAME",
     "TOGGLE_BY_KEY",
     "TOGGLE_SPECS",
@@ -309,6 +336,7 @@ __all__ = [
     "game_availability",
     "game_enabled",
     "load",
+    "pane_memory_mode",
     "parse_text",
     "read_text",
     "settings_path",
