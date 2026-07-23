@@ -14,8 +14,8 @@ TMUX_TUI_PREFIX="${TMUX_TUI_PREFIX:-$HOME/.local}"
 # submodule; keeping both expected commits here makes a changed gitlink fail
 # closed even when a caller overrides the outer repository.
 TMUX_TUI_REPO="${TMUX_TUI_REPO:-https://github.com/itsmygithubacct/tmux-tui.git}"
-TMUX_TUI_REF="${TMUX_TUI_REF:-9c7ff4cd32eb229265e70a8284b675379c7e4b9e}"
-TMUX_CLI_REF="${TMUX_CLI_REF:-484b3b31d0f6eaac2f121c97ed7f366c6d88cdcf}"
+TMUX_TUI_REF="${TMUX_TUI_REF:-a1ab67938b754adbb509a9f48c0e1c795421f4bf}"
+TMUX_CLI_REF="${TMUX_CLI_REF:-51e9801a9c26211494231577eb24c9ed799252db}"
 
 die() { printf 'kilix tmux: %s\n' "$*" >&2; exit 1; }
 log() { printf 'kilix tmux: %s\n' "$*" >&2; }
