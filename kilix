@@ -254,6 +254,7 @@ _kilix_load_env_file() {
       KILIX_RECYCLE_DIR|KILIX_SAVER_IDLE|KILIX_HOST_CLIP|KILIX_NO_SOUND|KILIX_XPANE_WM|\
       KILIX_RUN_AUTO_FIT|KILIX_NO_PANE|KILIX_DEBUG|KILIX_HW|KILIX_BROWSE_BACKEND|KILIX_BROWSE_LOG|KILIX_RUN_LOG|\
       KILIX_XFONTS|KILIX_BRIDGE_TOKEN|KILIX_SHELL_INTEGRATION|\
+      KILIX_PTY_BROKER|KILIX_PTY_BROKER_HOME|KILIX_PTY_BROKER_AUTO_RECOVER|KILIX_PTY_BROKER_JOURNAL_LIMIT|\
       KILIX_REF|KILIX_REPO|KILIX_TRUST_EXISTING_CHECKOUT|KILIX_ALLOW_MUTABLE_REF|\
       KILIX_PREBUILT_VERSION|KILIX_PREBUILT_SHA256|KILIX_ALLOW_UNVERIFIED_PREBUILT|\
       KILIX_BUILD_MODE|KILIX_KITTY_DEPS_URL|KILIX_KITTY_DEPS_SHA256|\
@@ -1674,6 +1675,25 @@ fi
 # working, then applies a kilix-only prompt. Delete config/kilix.bashrc to opt
 # out. KILIX_HOME is exported so the rcfile can find its prompt override.
 export KILIX_HOME
+
+# Normal panes are backed by an independent PTY owner. The kitty fork wraps
+# their final argv with this client after applying shell integration, so the
+# broker sees the exact terminal byte stream and transient overlays remain
+# ordinary in-process children.
+if [ "${KILIX_PTY_BROKER:-1}" != 0 ]; then
+  KITTY_PTY_BROKER_EXECUTABLE="$(
+    "$KILIX_HOME/scripts/build-pty-broker.sh" --print-path
+  )" || exit 1
+  KITTY_PTY_BROKER_RUNTIME="$KILIX_SESSION_HOME/pty-broker"
+  _kilix_ensure_private_directory "$KITTY_PTY_BROKER_RUNTIME" "pty broker runtime" || exit 1
+  export KITTY_PTY_BROKER_EXECUTABLE KITTY_PTY_BROKER_RUNTIME
+  export KITTY_PTY_BROKER_AUTO_RECOVER="${KILIX_PTY_BROKER_AUTO_RECOVER:-1}"
+  export KITTY_PTY_BROKER_JOURNAL_LIMIT="${KILIX_PTY_BROKER_JOURNAL_LIMIT:-67108864}"
+else
+  unset KITTY_PTY_BROKER_EXECUTABLE KITTY_PTY_BROKER_RUNTIME \
+    KITTY_PTY_BROKER_AUTO_RECOVER KITTY_PTY_BROKER_JOURNAL_LIMIT
+fi
+
 KILIX_SHELL=()
 _ushell="${SHELL:-$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7)}"
 if [ "${KILIX_SHELL_INTEGRATION:-1}" != 0 ] \
