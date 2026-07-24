@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "config"))
 
 try:
-    from Xlib import X, display as xdisplay
+    from Xlib import X, display as xdisplay, error as xerror
     import xcapture
     HAVE_DEPS = True
 except ImportError:
@@ -45,7 +45,20 @@ class XDamageCaptureE2E(unittest.TestCase):
         if cls.xvfb.poll() is not None or not number:
             raise RuntimeError("Xvfb exited during startup")
         cls.display_name = f":{int(number)}"
-        cls.xd = xdisplay.Display(cls.display_name)
+        deadline = time.monotonic() + 3.0
+        while True:
+            try:
+                cls.xd = xdisplay.Display(cls.display_name)
+                break
+            except xerror.DisplayConnectionError as error:
+                if cls.xvfb.poll() is not None:
+                    raise RuntimeError("Xvfb exited before accepting connections") \
+                        from error
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(
+                        "Xvfb did not accept connections within 3 seconds") \
+                        from error
+                time.sleep(0.02)
 
     @classmethod
     def _stop_xvfb(cls):

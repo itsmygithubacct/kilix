@@ -4,6 +4,7 @@ import base64
 import os
 import re
 import sys
+import tempfile
 import time
 import unittest
 from io import BytesIO
@@ -93,25 +94,37 @@ class AppPanePresenterTests(unittest.TestCase):
         finally:
             pane.presenter.close()
 
-    def test_readiness_marker_requires_a_changed_content_capture(self):
+    def test_changed_content_beats_static_fallback_and_logs_once(self):
         import apprun
         pane = make_apppane(stream=True)
         pane.last_frame = None
         pane.content_frames = 0
+        pane._content_ready = False
+        pane._content_ready_reason = None
+        pane._initial_frame_ready_at = None
         pane.feed = Mock()
         pane.ff = None
         pane._cap_fps = pane.fps
         try:
-            with patch.object(apprun, "log") as capture_log:
-                self.assertTrue(pane._accept_frame(solid(pane)))
+            with patch.object(apprun, "log_marker") as capture_log, \
+                    patch.object(apprun.time, "time", return_value=100.0):
+                self.assertTrue(
+                    pane._accept_frame(solid(pane), startup=True))
                 self.assertNotIn(
                     unittest.mock.call("content-frames=1"),
                     capture_log.call_args_list)
+                self.assertEqual(
+                    pane._initial_frame_ready_at,
+                    100.0 + apprun.CONTENT_READY_GRACE)
                 self.assertTrue(
                     pane._accept_frame(solid(pane, 1), content=True))
                 self.assertEqual(
                     capture_log.call_args_list.count(
                         unittest.mock.call("content-frames=1")),
+                    1)
+                self.assertEqual(
+                    capture_log.call_args_list.count(
+                        unittest.mock.call("content-ready=changed")),
                     1)
                 self.assertFalse(
                     pane._accept_frame(solid(pane, 1), content=True))
@@ -121,9 +134,85 @@ class AppPanePresenterTests(unittest.TestCase):
                     capture_log.call_args_list.count(
                         unittest.mock.call("content-frames=1")),
                     1)
+                self.assertEqual(
+                    capture_log.call_args_list.count(
+                        unittest.mock.call("content-ready=changed")),
+                    1)
                 self.assertEqual(pane.content_frames, 2)
+                self.assertTrue(pane._content_ready)
+                self.assertEqual(
+                    pane._content_ready_reason,
+                    apprun.CONTENT_READY_CHANGED)
+                self.assertIsNone(pane._initial_frame_ready_at)
         finally:
             pane.presenter.close()
+
+    def test_stable_initial_frame_becomes_ready_after_grace(self):
+        import apprun
+        pane = make_apppane(stream=True)
+        pane.last_frame = None
+        pane.content_frames = 0
+        pane._content_ready = False
+        pane._content_ready_reason = None
+        pane._initial_frame_ready_at = None
+        pane.feed = Mock()
+        pane.ff = None
+        pane._cap_fps = pane.fps
+        try:
+            with patch.object(apprun, "log_marker") as capture_log, \
+                    patch.object(apprun.time, "time", return_value=200.0):
+                self.assertTrue(
+                    pane._accept_frame(solid(pane, 7), startup=True))
+                ready_at = 200.0 + apprun.CONTENT_READY_GRACE
+                self.assertFalse(pane._settle_initial_frame(ready_at - 0.001))
+                pane.frames = 0
+                self.assertFalse(pane._settle_initial_frame(ready_at))
+                self.assertNotIn(
+                    unittest.mock.call(
+                        "content-ready=initial-grace"),
+                    capture_log.call_args_list)
+                pane.frames = 1
+                self.assertTrue(pane._settle_initial_frame(ready_at))
+                self.assertFalse(pane._settle_initial_frame(ready_at + 1))
+                self.assertEqual(
+                    capture_log.call_args_list.count(
+                        unittest.mock.call("content-frames=1")),
+                    0)
+                self.assertEqual(
+                    capture_log.call_args_list.count(
+                        unittest.mock.call(
+                            "content-ready=initial-grace")),
+                    1)
+                self.assertEqual(pane.content_frames, 0)
+                self.assertTrue(pane._content_ready)
+                self.assertEqual(
+                    pane._content_ready_reason,
+                    apprun.CONTENT_READY_INITIAL_GRACE)
+                self.assertIsNone(pane._initial_frame_ready_at)
+                self.assertTrue(
+                    pane._accept_frame(solid(pane, 8), content=True))
+                self.assertEqual(pane.content_frames, 1)
+                self.assertEqual(
+                    capture_log.call_args_list.count(
+                        unittest.mock.call("content-frames=1")),
+                    1)
+                self.assertNotIn(
+                    unittest.mock.call("content-ready=changed"),
+                    capture_log.call_args_list)
+        finally:
+            pane.presenter.close()
+
+    def test_readiness_markers_are_exact_untimestamped_lines(self):
+        import apprun
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "run.log"
+            with patch.object(apprun, "LOG_PATH", str(path)), \
+                    patch.object(apprun.time, "time", return_value=123.456):
+                apprun.log("diagnostic")
+                apprun.log_marker("content-ready=changed")
+            self.assertEqual(
+                path.read_text().splitlines(keepends=True),
+                ["[123.456] diagnostic\n", "content-ready=changed\n"])
 
     def test_full_height_local_change_stays_in_place(self):
         pane = make_apppane(stream=False)

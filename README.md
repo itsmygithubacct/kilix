@@ -636,6 +636,15 @@ VAAPI hardware encoding when a render node exists; `--debug` overlays
 capture/blit fps + wire bandwidth and logs `metrics.jsonl`, and
 `scripts/stream-stats.sh <url>` measures what a viewer actually receives.
 
+Starting with Kilix 0.1.4, when `KILIX_RUN_LOG` names a private log file,
+`kilix run` records capture readiness as an exact line.
+`content-ready=changed` means a changed capture followed the startup snapshot;
+`content-ready=initial-grace` means an initial capture was emitted and no
+changed capture arrived during the three-second grace. The latter is a handoff
+heuristic for fast static applications, not proof that a network page finished
+loading. The legacy `content-frames=1` marker retains its original meaning and
+is emitted only for the first changed capture after the startup snapshot.
+
 ### 3. The whole kilix — every pane, graphics and video included
 
 ```bash

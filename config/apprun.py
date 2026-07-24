@@ -69,6 +69,13 @@ LOG_PATH = os.environ.get("KILIX_RUN_LOG")
 # The private display's framebuffer allocation; RRSetScreenSize can move the
 # visible screen anywhere up to this. 4K default ≈ 24 MB of Xvfb framebuffer.
 DEFAULT_MAX_SCREEN = "3840x2160"
+# A changed capture proves that an app painted after the startup snapshot.
+# Some fast, static apps finish before capture starts, however, so accept a
+# stable initial frame after this grace period instead of leaving launchers
+# waiting until their much longer failure timeout.
+CONTENT_READY_GRACE = 3.0
+CONTENT_READY_CHANGED = "changed"
+CONTENT_READY_INITIAL_GRACE = "initial-grace"
 
 
 def randr_prepare(xd):
@@ -155,6 +162,16 @@ def log(*a):
     if LOG_PATH:
         with stream._private_open(LOG_PATH, "a") as f:
             f.write(f"[{time.time():.3f}] " + " ".join(str(x) for x in a) + "\n")
+
+
+def log_marker(marker):
+    """Append one exact, untimestamped machine-readable protocol line."""
+    marker = str(marker)
+    if "\n" in marker or "\r" in marker:
+        raise ValueError("log marker must be one line")
+    if LOG_PATH:
+        with stream._private_open(LOG_PATH, "a") as f:
+            f.write(marker + "\n")
 
 
 def _close_proc_streams(p):
@@ -380,10 +397,13 @@ class AppPane:
             in_tmux=bool(os.environ.get("TMUX")), max_fps=fps)
             if self.term else None)
         self.frames = 0
-        # Unlike frames, this counts only changed captures after the startup
-        # snapshot. It lets launchers keep an app hidden while its pane still
-        # contains the initial blank window.
+        # Launchers wait for the first post-startup change, or for a stable
+        # initial frame to survive CONTENT_READY_GRACE. The latter covers fast,
+        # static apps that finish painting before capture can observe a change.
         self.content_frames = 0
+        self._content_ready = False
+        self._content_ready_reason = None
+        self._initial_frame_ready_at = None
         # --debug / KILIX_DEBUG: capture-vs-blit fps + wire kbps, to a metrics
         # file and the status bar, for measuring streaming efficiency.
         self.debug = os.environ.get("KILIX_DEBUG") == "1"
@@ -590,7 +610,7 @@ class AppPane:
                 type(error).__name__, error)
         if self.capture is not None:
             log("capture event-driven (XDamage + MIT-SHM)")
-            self._accept_frame(started.initial_frame)
+            self._accept_frame(started.initial_frame, startup=True)
         else:
             log(f"capture at {fps}fps")
 
@@ -742,7 +762,27 @@ class AppPane:
         self.clamp_app_windows()
 
     # ---- pixel layer -------------------------------------------------------
-    def _accept_frame(self, frame, *, content=False):
+    def _mark_content_ready(self, reason):
+        if getattr(self, "_content_ready", False):
+            return False
+        if reason not in (CONTENT_READY_CHANGED,
+                          CONTENT_READY_INITIAL_GRACE):
+            raise ValueError(f"invalid content readiness reason: {reason}")
+        self._content_ready = True
+        self._content_ready_reason = reason
+        self._initial_frame_ready_at = None
+        log_marker(f"content-ready={reason}")
+        return True
+
+    def _settle_initial_frame(self, now):
+        ready_at = getattr(self, "_initial_frame_ready_at", None)
+        if (getattr(self, "_content_ready", False) or ready_at is None
+                or now < ready_at or self.last_frame is None
+                or self.frames < 1):
+            return False
+        return self._mark_content_ready(CONTENT_READY_INITIAL_GRACE)
+
+    def _accept_frame(self, frame, *, content=False, startup=False):
         if frame is None or frame == self.last_frame:
             return False
         self.last_frame = frame
@@ -755,7 +795,12 @@ class AppPane:
         if content:
             self.content_frames += 1
             if self.content_frames == 1:
-                log("content-frames=1")
+                # Compatibility marker: this remains a literal count of
+                # changed captures after the startup snapshot.
+                log_marker("content-frames=1")
+            self._mark_content_ready(CONTENT_READY_CHANGED)
+        elif startup and not getattr(self, "_content_ready", False):
+            self._initial_frame_ready_at = now + CONTENT_READY_GRACE
         return True
 
     def pump_damage(self):
@@ -789,8 +834,8 @@ class AppPane:
             self._dbg["cap"] += 1            # frames captured (before change-detect)
         # The first fallback frame establishes the same startup baseline that
         # XDamage captures synchronously. A later changed frame is content.
-        content = self.last_frame is not None
-        self._accept_frame(frame, content=content)
+        startup = self.last_frame is None
+        self._accept_frame(frame, content=not startup, startup=startup)
 
     def tick_capture(self, now):
         """Idle housekeeping each loop pass: QW5 capture downshift and the E4
@@ -814,6 +859,7 @@ class AppPane:
         self.feed.pump()
         if self.presenter is not None:
             self._record_present(self.presenter.flush())
+        self._settle_initial_frame(now)
 
     def _record_present(self, result):
         if not result.emitted:
