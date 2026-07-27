@@ -546,15 +546,19 @@ class Shell:
                 "bash", "-lc", script]
         return self._popen(argv)
 
-    def _tab(self, argv, title, cwd=None):
+    def _tab(self, argv, title, cwd=None, env=None):
         kitten = self._kitten()
         if not kitten or not os.environ.get("KITTY_LISTEN_ON"):
             wm.msgbox(self.desk, "kilix", "Cannot reach kilix remote control\n"
                       "(KITTY_LISTEN_ON is not set).", icon="error")
             return False
+        env_args = []
+        for key, value in (env or {}).items():
+            env_args.extend(["--env", f"{key}={value}"])
         return self._popen([*self._kitten_remote(kitten, "launch"),
                             "--type=tab", "--self", "--tab-title",
-                            title, "--cwd", cwd or os.path.expanduser("~"), "--"]
+                            title, "--cwd", cwd or os.path.expanduser("~"),
+                            *env_args, "--"]
                            + argv)
 
     def _popen(self, argv, cwd=None):
@@ -637,6 +641,29 @@ class Shell:
             self.desk, "Kilix Memory",
             "Neither an installed Kilix Memory dashboard nor its source "
             "checkout could be found.", icon="error")
+        return False
+
+    @staticmethod
+    def pty_manager_target():
+        """Use Kilix so the manager shares its private, pinned broker runtime."""
+        kilix = os.path.join(KILIX_HOME, "kilix")
+        if os.path.isfile(kilix) and os.access(kilix, os.X_OK):
+            return [kilix, "pty"]
+        return None
+
+    def open_pty_manager(self):
+        target = self.pty_manager_target()
+        if target is not None:
+            return self._tab(
+                target,
+                "PTY Sessions",
+                os.path.expanduser("~"),
+                env={"KITTY_PTY_BROKER_BYPASS": "1"},
+            )
+        wm.msgbox(
+            self.desk, "PTY Sessions",
+            "The Kilix persistent-session manager could not be found.",
+            icon="error")
         return False
 
     @staticmethod

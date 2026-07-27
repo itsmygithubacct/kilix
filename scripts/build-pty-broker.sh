@@ -6,7 +6,15 @@ KILIX_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 GPU_TERMINAL_HOME="${GPU_TERMINAL_HOME:-$HOME/.local/gpu_terminal}"
 KILIX_STORAGE_HOME="${KILIX_STORAGE_HOME:-$GPU_TERMINAL_HOME/kilix}"
 KILIX_BUILD_DIRECTORY="${KILIX_BUILD_DIRECTORY:-$KILIX_STORAGE_HOME/build}"
-BROKER_SOURCE="${KILIX_PTY_BROKER_HOME:-$(dirname "$KILIX_HOME")/kitty-pty-broker}"
+if [ -n "${KILIX_PTY_BROKER_HOME:-}" ]; then
+  BROKER_SOURCE="$KILIX_PTY_BROKER_HOME"
+elif [ -f "$KILIX_HOME/third_party/kitty-pty-broker/Makefile" ]; then
+  BROKER_SOURCE="$KILIX_HOME/third_party/kitty-pty-broker"
+else
+  # Keep sibling checkouts convenient for contributors while installed Kilix
+  # releases use the pinned submodule above.
+  BROKER_SOURCE="$(dirname "$KILIX_HOME")/kitty-pty-broker"
+fi
 BROKER_BUILD="$KILIX_BUILD_DIRECTORY/libraries/kitty-pty-broker"
 BROKER_EXECUTABLE="$BROKER_BUILD/kitty-pty-broker"
 BROKER_LIBRARY="$BROKER_BUILD/libkitty-pty-broker.so"
@@ -57,7 +65,7 @@ _ensure_private_directory() {
 
 if [ ! -f "$_source/Makefile" ] || [ ! -f "$_source/include/kitty_pty_broker.h" ]; then
   echo "kilix pty broker: source not found at $_source" >&2
-  echo "set KILIX_PTY_BROKER_HOME to the kitty-pty-broker checkout" >&2
+  echo "initialize third_party/kitty-pty-broker or set KILIX_PTY_BROKER_HOME" >&2
   exit 1
 fi
 if [ -L "$_source" ] || [ "$(stat -c '%u' -- "$_source")" != "$(id -u)" ]; then

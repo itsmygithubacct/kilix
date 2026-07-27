@@ -360,6 +360,34 @@ case "${1:-}" in
         echo "usage: $_self games [list|settings|enable GAME...|disable GAME...]" >&2
         exit 2 ;;
     esac ;;
+  pty|pty-manager|pty-tui)
+    shift
+    _pty_install_only=0
+    case "${1:-}" in
+      --install-only) _pty_install_only=1; shift ;;
+      -h|--help|help)
+        echo "usage: $_self pty [--install-only]"
+        echo "opens the persistent PTY session manager"
+        exit 0 ;;
+    esac
+    [ $# -eq 0 ] || {
+      echo "usage: $_self pty [--install-only]" >&2
+      exit 2
+    }
+    KITTY_PTY_BROKER_EXECUTABLE="$(
+      "$KILIX_HOME/scripts/build-pty-broker.sh" --print-path
+    )" || exit 1
+    [ -x "$KITTY_PTY_BROKER_EXECUTABLE" ] || {
+      echo "kilix pty: broker build did not produce an executable" >&2
+      exit 1
+    }
+    [ "$_pty_install_only" = 0 ] || exit 0
+    KITTY_PTY_BROKER_RUNTIME="$KILIX_SESSION_HOME/pty-broker"
+    _kilix_ensure_private_directory \
+      "$KITTY_PTY_BROKER_RUNTIME" "pty broker runtime" || exit 1
+    export KITTY_PTY_BROKER_EXECUTABLE KITTY_PTY_BROKER_RUNTIME
+    exec "$KITTY_PTY_BROKER_EXECUTABLE" \
+      --runtime-dir "$KITTY_PTY_BROKER_RUNTIME" tui ;;
   temps|temperature|temperatures)
     shift
     _temps_install_only=0

@@ -100,9 +100,9 @@ host SDK, and provider contract introduced in 0.1.1.
 
 ### Persistent pane processes
 
-Kilix builds the sibling
+Kilix builds its pinned
 [`kitty-pty-broker`](https://github.com/itsmygithubacct/kitty-pty-broker)
-checkout on demand and
+submodule on demand (a sibling checkout remains a development fallback) and
 places its artifacts below the Kilix build directory. The broker owns the real
 PTY and process group; Kilix attaches through a lightweight client over a
 private Unix socket. Terminal bytes remain untouched, so live Kitty graphics,
@@ -117,6 +117,10 @@ pane. Set `KILIX_PTY_BROKER=0` to disable persistence,
 `KILIX_PTY_BROKER_AUTO_RECOVER=0` to leave detached sessions for manual
 attachment, or `KILIX_PTY_BROKER_JOURNAL_LIMIT` to change the bounded replay
 journal from its 64 MiB default.
+
+Run `kilix pty` to open the interactive session manager. It lists detached and
+attached panes, attaches a selected detached pane with Enter, and offers an
+explicitly confirmed termination action.
 
 ## Requirements
 
@@ -229,6 +233,7 @@ kilix settings --section tools    # memory monitor, Tmux Manager, or tb installe
 kilix games list                  # show games available in Kilix 95
 kilix games settings              # open the TUI directly on Games
 kilix games disable doom          # hide a game (enable reverses it)
+kilix pty                          # manage, attach, or terminate persistent panes
 kilix temps --graphics            # install/verify the pinned dashboard, then run it
 kilix memory --graphics           # install/verify the pinned monitor, then run it
 kilix tmux                         # install/verify the pinned Tmux Manager, then run it
@@ -532,6 +537,9 @@ right-click menu everywhere. Built in:
   exact pinned commits for the monitor and its graphics closure, builds them
   as the desktop user, verifies the graphical backend, and opens the tab. The
   same monitor is available from the Kilix Settings TUI Tools section.
+- **PTY Sessions** — Start ▸ Programs ▸ PTY Sessions opens the persistent-pane
+  manager without placing that manager inside another brokered pane. Detached
+  panes can be selected and attached, refreshed, or deliberately terminated.
 - **Games** — Start ▸ Programs ▸ Games. Each entry plays immediately if
   `~/.local/gpu_terminal/kilix-95/config/games.conf` already points at a working install, otherwise
   one consented click sets it up (paths saved to that file) and launches it in
