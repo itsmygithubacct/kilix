@@ -3,6 +3,7 @@
 import os
 import select
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -28,51 +29,108 @@ class XDamageCaptureE2E(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        cls.xd = None
+        cls.xvfb = None
+        failures = []
+        for _attempt in range(3):
+            try:
+                probe = cls._start_xvfb()
+                try:
+                    # Keep the readiness connection open until python-xlib
+                    # completes its handshake. Otherwise an idle Xvfb may
+                    # reset between the probe and the real client.
+                    cls.xd = xdisplay.Display(cls.display_name)
+                finally:
+                    probe.close()
+                cls.addClassCleanup(cls._stop_xvfb)
+                return
+            except (OSError, RuntimeError, ValueError,
+                    xerror.ConnectionClosedError,
+                    xerror.DisplayConnectionError) as error:
+                diagnostics = cls._stop_xvfb()
+                failures.append(
+                    f"{error}"
+                    + (f" (Xvfb: {diagnostics})" if diagnostics else "")
+                )
+                time.sleep(0.05)
+        raise RuntimeError(
+            "Xvfb failed to start after three attempts: "
+            + "; ".join(failures)
+        )
+
+    @classmethod
+    def _start_xvfb(cls):
         rfd, wfd = os.pipe()
-        cls.xvfb = subprocess.Popen(
-            [XVFB, "-displayfd", str(wfd), "-screen", "0",
-             f"{cls.WIDTH}x{cls.HEIGHT}x24", "-nolisten", "tcp"],
-            pass_fds=(wfd,), stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL)
-        cls.addClassCleanup(cls._stop_xvfb)
-        os.close(wfd)
-        ready, _, _ = select.select([rfd], [], [], 15)
-        if not ready:
+        try:
+            cls.xvfb = subprocess.Popen(
+                [XVFB, "-displayfd", str(wfd), "-screen", "0",
+                 f"{cls.WIDTH}x{cls.HEIGHT}x24", "-nolisten", "tcp",
+                 "-noreset"],
+                pass_fds=(wfd,), stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE)
+        except BaseException:
             os.close(rfd)
-            raise RuntimeError("Xvfb did not report a display number")
-        number = os.read(rfd, 32).strip()
-        os.close(rfd)
+            raise
+        finally:
+            os.close(wfd)
+        try:
+            ready, _, _ = select.select([rfd], [], [], 15)
+            if not ready:
+                raise RuntimeError("Xvfb did not report a display number")
+            number = os.read(rfd, 32).strip()
+        finally:
+            os.close(rfd)
         if cls.xvfb.poll() is not None or not number:
             raise RuntimeError("Xvfb exited during startup")
         cls.display_name = f":{int(number)}"
+
+        # Xvfb's displayfd readiness can race with a preceding Xvfb teardown
+        # under a loaded test runner. Probe the exact Unix listener with
+        # short-lived sockets before handing it to python-xlib; failed
+        # Display() constructors otherwise leak their partially opened socket.
+        socket_path = f"/tmp/.X11-unix/X{int(number)}"
         deadline = time.monotonic() + 3.0
         while True:
+            if cls.xvfb.poll() is not None:
+                raise RuntimeError("Xvfb exited before accepting connections")
+            probe = socket.socket(socket.AF_UNIX)
             try:
-                cls.xd = xdisplay.Display(cls.display_name)
-                break
-            except xerror.DisplayConnectionError as error:
-                if cls.xvfb.poll() is not None:
-                    raise RuntimeError("Xvfb exited before accepting connections") \
-                        from error
+                probe.connect(socket_path)
+                return probe
+            except OSError as error:
+                probe.close()
                 if time.monotonic() >= deadline:
                     raise RuntimeError(
-                        "Xvfb did not accept connections within 3 seconds") \
-                        from error
-                time.sleep(0.02)
+                        "Xvfb did not accept connections within 3 seconds"
+                    ) from error
+            time.sleep(0.02)
 
     @classmethod
     def _stop_xvfb(cls):
         xd = getattr(cls, "xd", None)
         if xd is not None:
-            xd.close()
+            try:
+                xd.close()
+            except Exception:
+                pass
+            cls.xd = None
         process = getattr(cls, "xvfb", None)
+        diagnostics = ""
         if process is not None:
-            process.terminate()
+            if process.poll() is None:
+                process.terminate()
             try:
                 process.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
+            if process.stderr is not None:
+                diagnostics = process.stderr.read().decode(
+                    errors="replace"
+                ).strip()
+                process.stderr.close()
+            cls.xvfb = None
+        return diagnostics
 
     def test_damage_wakes_and_updates_exact_snapshot(self):
         try:

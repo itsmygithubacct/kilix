@@ -12,7 +12,9 @@ collides with kilix's own supervisor range (60-119) or a stale server, and
 the spawned Xvfb is guaranteed to be the server the test talks to.
 """
 import os
+import select
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -53,20 +55,27 @@ class RunResizeE2E(unittest.TestCase):
         # -displayfd: Xvfb picks a free display itself and writes the number
         # to the fd — no fixed number, no race with other X servers.
         rfd, wfd = os.pipe()
-        cls.xvfb = subprocess.Popen(
-            [XVFB, "-displayfd", str(wfd), "-screen", "0", "3840x2160x24",
-             "-nolisten", "tcp"],
-            pass_fds=(wfd,),
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            cls.xvfb = subprocess.Popen(
+                [XVFB, "-displayfd", str(wfd), "-screen", "0",
+                 "3840x2160x24", "-nolisten", "tcp", "-noreset"],
+                pass_fds=(wfd,),
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except BaseException:
+            os.close(rfd)
+            raise
+        finally:
+            os.close(wfd)
         cls.addClassCleanup(cls._stop_xvfb)      # runs even if setup fails below
-        os.close(wfd)
         num = b""
-        deadline = time.time() + 15
+        deadline = time.monotonic() + 15
         while not num.endswith(b"\n"):
             if cls.xvfb.poll() is not None:
                 os.close(rfd)
                 raise RuntimeError("Xvfb exited during startup")
-            if time.time() > deadline:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not select.select(
+                    [rfd], [], [], remaining)[0]:
                 os.close(rfd)
                 raise RuntimeError("Xvfb did not report a display number")
             chunk = os.read(rfd, 16)
@@ -74,9 +83,35 @@ class RunResizeE2E(unittest.TestCase):
                 break
             num += chunk
         os.close(rfd)
+        if not num.strip():
+            raise RuntimeError("Xvfb closed displayfd without a display number")
         cls.disp_n = int(num.strip())
         cls.disp = f":{cls.disp_n}"
-        cls.xd = xdisplay.Display(cls.disp)
+
+        # Keep a short-lived readiness client connected until python-xlib has
+        # completed its handshake. This avoids a reset between displayfd
+        # readiness and the first real client on a loaded test host.
+        socket_path = f"/tmp/.X11-unix/X{cls.disp_n}"
+        deadline = time.monotonic() + 3
+        while True:
+            if cls.xvfb.poll() is not None:
+                raise RuntimeError("Xvfb exited before accepting connections")
+            probe = socket.socket(socket.AF_UNIX)
+            try:
+                probe.connect(socket_path)
+            except OSError as error:
+                probe.close()
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(
+                        "Xvfb did not accept connections within 3 seconds"
+                    ) from error
+                time.sleep(0.02)
+                continue
+            try:
+                cls.xd = xdisplay.Display(cls.disp)
+            finally:
+                probe.close()
+            break
 
     @classmethod
     def _stop_xvfb(cls):
