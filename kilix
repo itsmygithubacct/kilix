@@ -392,7 +392,13 @@ case "${1:-}" in
     case "$_tr_action" in
       list|ls)
         [ $# -eq 0 ] || { echo "usage: $_self transcript list" >&2; exit 2; }
-        if [ "$_KILIX_TRANSCRIPT_ENABLED" = 1 ]; then
+        if [ "${KILIX_PTY_BROKER:-1}" = 0 ]; then
+          # The broker owns every pane's PTY, so nothing can be recorded
+          # without it however the shared setting reads.
+          echo "session logging: inactive — pane persistence is off" \
+               "(KILIX_PTY_BROKER=0); the shared setting is" \
+               "$([ "$_KILIX_TRANSCRIPT_ENABLED" = 1 ] && echo on || echo off)"
+        elif [ "$_KILIX_TRANSCRIPT_ENABLED" = 1 ]; then
           echo "session logging: on (graphics=$_KILIX_TRANSCRIPT_GRAPHICS," \
                "limit=$_KILIX_TRANSCRIPT_LIMIT bytes)"
         else
