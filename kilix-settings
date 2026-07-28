@@ -43,6 +43,14 @@ def _control_names() -> dict[str, str]:
     ):
         names[alias] = shared.PANE_MEMORY_MODE_KEY
     names[shared.PANE_MEMORY_MODE_KEY.lower()] = shared.PANE_MEMORY_MODE_KEY
+    for alias in ("transcript", "session_log", "session_logs", "logging"):
+        names[alias] = "KILIX_TRANSCRIPT"
+    for alias in ("transcript_graphics", "log_graphics"):
+        names[alias] = shared.TRANSCRIPT_GRAPHICS_KEY
+    for alias in ("transcript_size", "transcript_limit", "log_size"):
+        names[alias] = shared.TRANSCRIPT_LIMIT_KEY
+    names[shared.TRANSCRIPT_GRAPHICS_KEY.lower()] = shared.TRANSCRIPT_GRAPHICS_KEY
+    names[shared.TRANSCRIPT_LIMIT_KEY.lower()] = shared.TRANSCRIPT_LIMIT_KEY
     return names
 
 
@@ -67,15 +75,54 @@ MEMORY_MODE_SPEC = ChoiceSpec(
     shared.PANE_MEMORY_MODE_DEFAULT,
 )
 
+TRANSCRIPT_GRAPHICS_SPEC = ChoiceSpec(
+    shared.TRANSCRIPT_GRAPHICS_KEY,
+    "Graphics in logs (elide payloads / keep verbatim)",
+    shared.TRANSCRIPT_GRAPHICS_CHOICES,
+    shared.TRANSCRIPT_GRAPHICS_DEFAULT,
+)
+
+TRANSCRIPT_LIMIT_SPEC = ChoiceSpec(
+    shared.TRANSCRIPT_LIMIT_KEY,
+    "Log size per pane",
+    shared.TRANSCRIPT_LIMIT_CHOICES,
+    shared.TRANSCRIPT_LIMIT_DEFAULT,
+)
+
+LEADING_CHOICES = {"Pane buttons": (MEMORY_MODE_SPEC,)}
+# The session-logging sub-options follow the on/off control they qualify.
+TRAILING_CHOICES = {
+    "Session logging": (TRANSCRIPT_GRAPHICS_SPEC, TRANSCRIPT_LIMIT_SPEC),
+}
+CHOICE_SPECS = {
+    spec.key: spec
+    for group in (*LEADING_CHOICES.values(), *TRAILING_CHOICES.values())
+    for spec in group
+}
+
+
+def _bulk_choice_value(spec: "ChoiceSpec", enable: bool) -> str:
+    """Return what a bulk enable/disable should write to a choice control.
+
+    Only a control that models its own ``off`` state can be switched off in
+    bulk.  The rest qualify a separate toggle that already carries the on/off
+    decision, so disabling everything must leave them at their default rather
+    than write a value they do not accept.
+    """
+    if not enable and "off" in spec.choices:
+        return "off"
+    return spec.default
+
 
 SECTION_SPECS = tuple(
     (
         section,
-        ((MEMORY_MODE_SPEC,) if section == "Pane buttons" else ())
+        LEADING_CHOICES.get(section, ())
         + tuple(
             spec for spec in shared.TOGGLE_SPECS
             if spec.section == section
-        ),
+        )
+        + TRAILING_CHOICES.get(section, ()),
     )
     for section in dict.fromkeys(spec.section for spec in shared.TOGGLE_SPECS)
 )
@@ -93,19 +140,34 @@ TOOL_SPECS = (
 )
 UI_SECTIONS = SECTION_SPECS + (("Tools", TOOL_SPECS),)
 TOOLS_SECTION_INDEX = len(SECTION_SPECS)
-SECTION_ALIASES = {
-    "top": 0,
-    "top-bar": 0,
-    "top_bar": 0,
-    "pane": 1,
-    "panes": 1,
-    "pane-buttons": 1,
-    "pane_buttons": 1,
-    "game": 2,
-    "games": 2,
-    "tool": TOOLS_SECTION_INDEX,
-    "tools": TOOLS_SECTION_INDEX,
-}
+
+
+def _section_aliases() -> dict[str, int]:
+    """Map section aliases to indices derived from the real section order.
+
+    Computed rather than written out, so adding a section cannot silently
+    repoint an existing alias at its neighbour.
+    """
+    extra = {
+        "Top bar": ("top",),
+        "Pane buttons": ("pane", "panes"),
+        "Session logging": ("session", "logging", "logs", "transcript",
+                            "transcripts"),
+        "Games": ("game",),
+        "Tools": ("tool",),
+    }
+    aliases: dict[str, int] = {}
+    for index, (section, _specs) in enumerate(UI_SECTIONS):
+        canonical = section.lower()
+        aliases[canonical] = index
+        aliases[canonical.replace(" ", "-")] = index
+        aliases[canonical.replace(" ", "_")] = index
+        for alias in extra.get(section, ()):
+            aliases[alias] = index
+    return aliases
+
+
+SECTION_ALIASES = _section_aliases()
 
 
 def _parse_assignment(value: str) -> tuple[str, object]:
@@ -131,6 +193,24 @@ def _parse_assignment(value: str) -> tuple[str, object]:
                 f"pane memory mode must be {choices}"
             )
         return key, mode
+    if key == shared.TRANSCRIPT_GRAPHICS_KEY:
+        mode = raw.strip().lower()
+        if mode not in shared.TRANSCRIPT_GRAPHICS_CHOICES:
+            choices = "|".join(shared.TRANSCRIPT_GRAPHICS_CHOICES)
+            raise argparse.ArgumentTypeError(
+                f"transcript graphics must be {choices}")
+        return key, mode
+    if key == shared.TRANSCRIPT_LIMIT_KEY:
+        size = raw.strip().upper().removesuffix("IB").removesuffix("B")
+        # A raw byte count is accepted too, so a scripted caller need not know
+        # which spelling the file happens to use.
+        if size.isdigit() and int(size) % (1024 * 1024) == 0:
+            size = f"{int(size) // (1024 * 1024)}M"
+        if size not in shared.TRANSCRIPT_LIMIT_CHOICES:
+            choices = ", ".join(shared.TRANSCRIPT_LIMIT_CHOICES)
+            raise argparse.ArgumentTypeError(
+                f"transcript size must be one of: {choices}")
+        return key, size
     return key, shared.truthy(raw)
 
 
@@ -151,7 +231,11 @@ def _parse_section(value: str) -> int:
     section = SECTION_ALIASES.get(value.strip().lower())
     if section is None:
         raise argparse.ArgumentTypeError(
-            "unknown section; choose top-bar, pane-buttons, games, or tools")
+            "unknown section; choose one of: "
+            + ", ".join(
+                section.lower().replace(" ", "-")
+                for section, _specs in UI_SECTIONS
+            ))
     return section
 
 
@@ -176,6 +260,13 @@ def _print_settings(values: dict[str, str]) -> None:
         mode = shared.PANE_MEMORY_MODE_DEFAULT
     print(f"{shared.PANE_MEMORY_MODE_KEY}={mode}")
     print(f"{shared.CLOCK_FORMAT_KEY}={values[shared.CLOCK_FORMAT_KEY]}")
+    print(f"{shared.TRANSCRIPT_GRAPHICS_KEY}={shared.transcript_graphics()}")
+    size = values.get(
+        shared.TRANSCRIPT_LIMIT_KEY, shared.TRANSCRIPT_LIMIT_DEFAULT
+    ).strip().upper()
+    if size not in shared.TRANSCRIPT_LIMIT_CHOICES:
+        size = shared.TRANSCRIPT_LIMIT_DEFAULT
+    print(f"{shared.TRANSCRIPT_LIMIT_KEY}={size}")
 
 
 def _print_games(values: dict[str, str]) -> None:
@@ -297,6 +388,9 @@ def _run_tui(stdscr, initial_section: int | str | None = None) -> int | str:
         for spec in shared.TOGGLE_SPECS
     }
     values[shared.PANE_MEMORY_MODE_KEY] = shared.pane_memory_mode()
+    values[shared.TRANSCRIPT_GRAPHICS_KEY] = shared.transcript_graphics()
+    values[shared.TRANSCRIPT_LIMIT_KEY] = effective.get(
+        shared.TRANSCRIPT_LIMIT_KEY, shared.TRANSCRIPT_LIMIT_DEFAULT)
     original = dict(values)
     if isinstance(initial_section, str):
         section_index = _parse_section(initial_section)
@@ -366,23 +460,24 @@ def _run_tui(stdscr, initial_section: int | str | None = None) -> int | str:
             else:
                 for spec in specs:
                     values[spec.key] = (
-                        "off" if isinstance(spec, ChoiceSpec) else False)
+                        _bulk_choice_value(spec, False)
+                        if isinstance(spec, ChoiceSpec) else False)
         elif key == ord("A"):
             if tools:
                 message = "Tools are actions; press Enter to select one."
             else:
                 for name in values:
+                    spec = CHOICE_SPECS.get(name)
                     values[name] = (
-                        shared.PANE_MEMORY_MODE_DEFAULT
-                        if name == shared.PANE_MEMORY_MODE_KEY else True)
+                        _bulk_choice_value(spec, True) if spec else True)
         elif key == ord("N"):
             if tools:
                 message = "Tools are actions; press Enter to select one."
             else:
                 for name in values:
+                    spec = CHOICE_SPECS.get(name)
                     values[name] = (
-                        "off"
-                        if name == shared.PANE_MEMORY_MODE_KEY else False)
+                        _bulk_choice_value(spec, False) if spec else False)
         elif key in (ord("s"), ord("S")):
             changes = {
                 name: state for name, state in values.items()
@@ -445,7 +540,9 @@ def main(argv: list[str] | None = None) -> int:
                         type=_parse_game_assignment, metavar="GAME=on|off",
                         help="set game availability non-interactively")
     parser.add_argument("--section", type=_parse_section,
-                        metavar="top-bar|pane-buttons|games|tools",
+                        metavar="|".join(
+                            section.lower().replace(" ", "-")
+                            for section, _specs in UI_SECTIONS),
                         help="open the interactive TUI on this section")
     all_group = parser.add_mutually_exclusive_group()
     all_group.add_argument("--enable-all", action="store_true",
@@ -460,8 +557,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.enable_all or args.disable_all:
             state = bool(args.enable_all)
             changes.update((spec.key, state) for spec in shared.TOGGLE_SPECS)
-            changes[shared.PANE_MEMORY_MODE_KEY] = (
-                shared.PANE_MEMORY_MODE_DEFAULT if state else "off")
+            changes.update(
+                (key, _bulk_choice_value(spec, state))
+                for key, spec in CHOICE_SPECS.items()
+            )
         changes.update(args.set)
         changes.update(args.game)
         if changes:

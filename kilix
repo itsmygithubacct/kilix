@@ -108,6 +108,29 @@ _kilix_ensure_private_directory() {
   }
 }
 
+# Read the three session-logging values in one interpreter start rather than
+# one per value, so an ordinary launch pays for Python only once.
+_KILIX_TRANSCRIPT_ENABLED=0
+_KILIX_TRANSCRIPT_LIMIT=8388608
+_KILIX_TRANSCRIPT_GRAPHICS=elide
+_kilix_read_transcript_config() {
+  local line
+  while IFS= read -r line; do
+    case "$line" in
+      enabled=*)  _KILIX_TRANSCRIPT_ENABLED="${line#enabled=}" ;;
+      limit=*)    _KILIX_TRANSCRIPT_LIMIT="${line#limit=}" ;;
+      graphics=*) _KILIX_TRANSCRIPT_GRAPHICS="${line#graphics=}" ;;
+    esac
+  done < <(python3 -c "
+import sys
+sys.path.insert(0, '$KILIX_HOME/config')
+from kilix_sdk import settings
+print('enabled=%d' % (1 if settings.transcript_enabled() else 0))
+print('limit=%d' % settings.transcript_limit())
+print('graphics=%s' % settings.transcript_graphics())
+" 2>/dev/null)
+}
+
 _kilix_validate_private_storage_layout || exit 1
 _kilix_ensure_private_directory "$KILIX_STORAGE_HOME" storage || exit 1
 _kilix_ensure_private_directory "$KILIX_STATE_DIRECTORY" state || exit 1
@@ -358,6 +381,86 @@ case "${1:-}" in
         exit 0 ;;
       *)
         echo "usage: $_self games [list|settings|enable GAME...|disable GAME...]" >&2
+        exit 2 ;;
+    esac ;;
+  transcript|transcripts|session-log|session-logs)
+    shift
+    _kilix_read_transcript_config
+    _tr_dir="${KILIX_TRANSCRIPT_DIR:-$KILIX_STATE_DIRECTORY/transcripts}"
+    _tr_action="${1:-list}"
+    [ $# -eq 0 ] || shift
+    case "$_tr_action" in
+      list|ls)
+        [ $# -eq 0 ] || { echo "usage: $_self transcript list" >&2; exit 2; }
+        if [ "$_KILIX_TRANSCRIPT_ENABLED" = 1 ]; then
+          echo "session logging: on (graphics=$_KILIX_TRANSCRIPT_GRAPHICS," \
+               "limit=$_KILIX_TRANSCRIPT_LIMIT bytes)"
+        else
+          echo "session logging: off — enable with '$_self settings --set transcript=on'"
+        fi
+        echo "directory: $_tr_dir"
+        [ -d "$_tr_dir" ] || { echo "(no transcripts yet)"; exit 0; }
+        # Newest first: the pane you just lost is the one you want.
+        find "$_tr_dir" -maxdepth 1 -type f -name '*.log' -printf '%T@ %s %p\n' \
+          2>/dev/null | sort -rn | while read -r _tr_time _tr_size _tr_path; do
+            printf '%s  %8s  %s\n' \
+              "$(date -d "@${_tr_time%.*}" '+%Y-%m-%d %H:%M:%S')" \
+              "$(numfmt --to=iec --suffix=B "$_tr_size" 2>/dev/null || echo "$_tr_size")" \
+              "${_tr_path##*/}"
+          done
+        exit 0 ;;
+      path)
+        [ $# -le 1 ] || { echo "usage: $_self transcript path [SESSION]" >&2; exit 2; }
+        if [ $# -eq 1 ]; then echo "$_tr_dir/${1%.log}.log"; else echo "$_tr_dir"; fi
+        exit 0 ;;
+      show|cat)
+        [ $# -eq 1 ] || { echo "usage: $_self transcript show SESSION" >&2; exit 2; }
+        _tr_file="$_tr_dir/${1%.log}.log"
+        [ -f "$_tr_file" ] || {
+          echo "kilix: no such transcript: $_tr_file" >&2; exit 1
+        }
+        exec cat -- "$_tr_file" ;;
+      prune)
+        [ $# -eq 0 ] || { echo "usage: $_self transcript prune" >&2; exit 2; }
+        # Only sessions the broker no longer knows about are removable; a live
+        # pane's log is left alone so nothing is deleted out from under it.
+        _tr_live="$(
+          "$KILIX_HOME/scripts/build-pty-broker.sh" --print-path 2>/dev/null
+        )" && [ -x "$_tr_live" ] || _tr_live=""
+        _tr_ids=""
+        if [ -n "$_tr_live" ]; then
+          _tr_ids="$(
+            "$_tr_live" --runtime-dir "$KILIX_SESSION_HOME/pty-broker" list --json \
+              2>/dev/null | python3 -c 'import json,sys
+try:
+    print("\n".join(str(item.get("id", "")) for item in json.load(sys.stdin)))
+except Exception:
+    pass' 2>/dev/null
+          )"
+        fi
+        _tr_removed=0
+        [ -d "$_tr_dir" ] || { echo "removed 0 transcripts"; exit 0; }
+        for _tr_file in "$_tr_dir"/*.log; do
+          [ -f "$_tr_file" ] || continue
+          _tr_name="${_tr_file##*/}"
+          _tr_name="${_tr_name%.log}"
+          printf '%s\n' "$_tr_ids" | grep -qxF "$_tr_name" && continue
+          rm -f -- "$_tr_file" && _tr_removed=$((_tr_removed + 1))
+        done
+        echo "removed $_tr_removed transcripts (live sessions kept)"
+        exit 0 ;;
+      -h|--help|help)
+        echo "usage: $_self transcript [list|show SESSION|path [SESSION]|prune]"
+        echo "  list   newest-first index of recorded pane logs (default)"
+        echo "  show   write one transcript to stdout"
+        echo "  path   print the transcript directory, or one session's file"
+        echo "  prune  delete logs for sessions the broker no longer tracks"
+        echo
+        echo "Session logging is configured in '$_self settings' under"
+        echo "Session logging, or with '$_self settings --set transcript=off'."
+        exit 0 ;;
+      *)
+        echo "usage: $_self transcript [list|show SESSION|path [SESSION]|prune]" >&2
         exit 2 ;;
     esac ;;
   pty|pty-manager|pty-tui)
@@ -1717,9 +1820,31 @@ if [ "${KILIX_PTY_BROKER:-1}" != 0 ]; then
   export KITTY_PTY_BROKER_EXECUTABLE KITTY_PTY_BROKER_RUNTIME
   export KITTY_PTY_BROKER_AUTO_RECOVER="${KILIX_PTY_BROKER_AUTO_RECOVER:-1}"
   export KITTY_PTY_BROKER_JOURNAL_LIMIT="${KILIX_PTY_BROKER_JOURNAL_LIMIT:-67108864}"
+  # Session logging is on by default and shares the broker that already owns
+  # every pane's PTY, so a detached or crashed pane is still recorded. The
+  # directory is only exported when it exists and is private; the fork treats
+  # an absent directory as "not configured" and writes no transcript.
+  _kilix_read_transcript_config
+  if [ "$_KILIX_TRANSCRIPT_ENABLED" = 1 ]; then
+    KILIX_TRANSCRIPT_DIR="${KILIX_TRANSCRIPT_DIR:-$KILIX_STATE_DIRECTORY/transcripts}"
+    if _kilix_ensure_private_directory "$KILIX_TRANSCRIPT_DIR" "session transcripts"; then
+      export KITTY_PTY_BROKER_TRANSCRIPT_DIR="$KILIX_TRANSCRIPT_DIR"
+      export KITTY_PTY_BROKER_TRANSCRIPT_LIMIT="$_KILIX_TRANSCRIPT_LIMIT"
+      export KITTY_PTY_BROKER_TRANSCRIPT_GRAPHICS="$_KILIX_TRANSCRIPT_GRAPHICS"
+    else
+      echo "kilix: session logging disabled; cannot use $KILIX_TRANSCRIPT_DIR" >&2
+      unset KITTY_PTY_BROKER_TRANSCRIPT_DIR KITTY_PTY_BROKER_TRANSCRIPT_LIMIT \
+        KITTY_PTY_BROKER_TRANSCRIPT_GRAPHICS
+    fi
+  else
+    unset KITTY_PTY_BROKER_TRANSCRIPT_DIR KITTY_PTY_BROKER_TRANSCRIPT_LIMIT \
+      KITTY_PTY_BROKER_TRANSCRIPT_GRAPHICS
+  fi
 else
   unset KITTY_PTY_BROKER_EXECUTABLE KITTY_PTY_BROKER_RUNTIME \
-    KITTY_PTY_BROKER_AUTO_RECOVER KITTY_PTY_BROKER_JOURNAL_LIMIT
+    KITTY_PTY_BROKER_AUTO_RECOVER KITTY_PTY_BROKER_JOURNAL_LIMIT \
+    KITTY_PTY_BROKER_TRANSCRIPT_DIR KITTY_PTY_BROKER_TRANSCRIPT_LIMIT \
+    KITTY_PTY_BROKER_TRANSCRIPT_GRAPHICS
 fi
 
 KILIX_SHELL=()

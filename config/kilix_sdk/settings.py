@@ -17,6 +17,7 @@ from typing import Mapping
 SETTINGS_BASENAME = "settings.conf"
 SETTINGS_HEADER = "# GPU Terminal shared settings (KEY=value; not shell code)."
 SETTINGS_MARKER = "# -- Kilix clickable chrome --"
+SESSION_LOG_MARKER = "# -- Kilix session logging --"
 GAMES_MARKER = "# -- Kilix game availability --"
 
 
@@ -47,6 +48,13 @@ PANE_BUTTON_TOGGLES = (
     ToggleSpec("KILIX_CHROME_BUTTON_SPLIT_RIGHT", "Split pane right", "Pane buttons"),
     ToggleSpec("KILIX_CHROME_BUTTON_MAXIMIZE", "Maximize / restore pane", "Pane buttons"),
     ToggleSpec("KILIX_CHROME_BUTTON_CLOSE", "Close pane", "Pane buttons"),
+)
+
+# Session logging is on by default: the value of a transcript is that it was
+# already running when something went wrong.  Logs are private to the user,
+# bounded, and removable from every settings interface.
+SESSION_LOG_TOGGLES = (
+    ToggleSpec("KILIX_TRANSCRIPT", "Record pane session logs", "Session logging"),
 )
 
 # Stable IDs cover the two built-in Kilix 95 games and every game-like entry
@@ -85,16 +93,37 @@ GAME_KEY_BY_ID = {
 }
 GAME_ID_BY_KEY = {key: game_id for game_id, key in GAME_KEY_BY_ID.items()}
 
-TOGGLE_SPECS = TOP_BAR_TOGGLES + PANE_BUTTON_TOGGLES + GAME_TOGGLES
+TOGGLE_SPECS = (
+    TOP_BAR_TOGGLES + PANE_BUTTON_TOGGLES + SESSION_LOG_TOGGLES + GAME_TOGGLES
+)
 TOGGLE_BY_KEY = {spec.key: spec for spec in TOGGLE_SPECS}
 CLOCK_FORMAT_KEY = "KILIX_CHROME_CLOCK_FORMAT"
 CLOCK_FORMAT_DEFAULT = "%Y-%m-%d %H:%M"
 PANE_MEMORY_MODE_KEY = "KILIX_CHROME_PANE_MEMORY_MODE"
 PANE_MEMORY_MODE_DEFAULT = "auto"
 PANE_MEMORY_MODE_CHOICES = ("auto", "always", "off")
+
+# Kitty ships images as APC sequences whose payload is base64 pixel data, so a
+# pane running the desktop, a browser, or icat can emit megabytes per second.
+# ``elide`` records a byte-count marker instead, keeping the transcript a
+# readable record of text; ``keep`` captures the stream verbatim.
+TRANSCRIPT_GRAPHICS_KEY = "KILIX_TRANSCRIPT_GRAPHICS"
+TRANSCRIPT_GRAPHICS_DEFAULT = "elide"
+TRANSCRIPT_GRAPHICS_CHOICES = ("elide", "keep")
+
+# Presets rather than a free-form number: every settings interface shares one
+# vocabulary, and an unrecognised value would silently read back as the default.
+# Stored as human tokens so a dropdown, a TUI cycle, and the file itself all
+# read the same way; only the broker needs the byte count.
+TRANSCRIPT_LIMIT_KEY = "KILIX_TRANSCRIPT_MAX_SIZE"
+TRANSCRIPT_LIMIT_DEFAULT = "8M"
+TRANSCRIPT_LIMIT_CHOICES = ("2M", "8M", "32M", "128M")
+
 MANAGED_KEYS = tuple(spec.key for spec in TOGGLE_SPECS) + (
     CLOCK_FORMAT_KEY,
     PANE_MEMORY_MODE_KEY,
+    TRANSCRIPT_GRAPHICS_KEY,
+    TRANSCRIPT_LIMIT_KEY,
 )
 
 _ASSIGNMENT = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
@@ -141,6 +170,8 @@ def defaults(*, migrate_environment: bool = False) -> dict[str, str]:
     }
     values[CLOCK_FORMAT_KEY] = CLOCK_FORMAT_DEFAULT
     values[PANE_MEMORY_MODE_KEY] = PANE_MEMORY_MODE_DEFAULT
+    values[TRANSCRIPT_GRAPHICS_KEY] = TRANSCRIPT_GRAPHICS_DEFAULT
+    values[TRANSCRIPT_LIMIT_KEY] = TRANSCRIPT_LIMIT_DEFAULT
     if migrate_environment:
         # Clock and battery were historically stored in kilix.env.  On the
         # first shared-file creation, preserve those effective preferences.
@@ -195,6 +226,11 @@ def _initial_text(values: Mapping[str, str]) -> str:
     for spec in PANE_BUTTON_TOGGLES:
         lines.append(f"{spec.key}={values[spec.key]}")
     lines.append(f"{PANE_MEMORY_MODE_KEY}={values[PANE_MEMORY_MODE_KEY]}")
+    lines.extend(("", SESSION_LOG_MARKER))
+    for spec in SESSION_LOG_TOGGLES:
+        lines.append(f"{spec.key}={values[spec.key]}")
+    lines.append(f"{TRANSCRIPT_GRAPHICS_KEY}={values[TRANSCRIPT_GRAPHICS_KEY]}")
+    lines.append(f"{TRANSCRIPT_LIMIT_KEY}={values[TRANSCRIPT_LIMIT_KEY]}")
     lines.extend(("", GAMES_MARKER))
     for spec in GAME_TOGGLES:
         lines.append(f"{spec.key}={values[spec.key]}")
@@ -274,6 +310,18 @@ def update(changes: Mapping[str, object], path: str | None = None) -> str:
                 choices = ", ".join(PANE_MEMORY_MODE_CHOICES)
                 raise ValueError(
                     f"{PANE_MEMORY_MODE_KEY} must be one of: {choices}")
+        elif key == TRANSCRIPT_GRAPHICS_KEY:
+            value = str(raw_value).strip().lower()
+            if value not in TRANSCRIPT_GRAPHICS_CHOICES:
+                choices = ", ".join(TRANSCRIPT_GRAPHICS_CHOICES)
+                raise ValueError(
+                    f"{TRANSCRIPT_GRAPHICS_KEY} must be one of: {choices}")
+        elif key == TRANSCRIPT_LIMIT_KEY:
+            value = str(raw_value).strip().upper()
+            if value not in TRANSCRIPT_LIMIT_CHOICES:
+                choices = ", ".join(TRANSCRIPT_LIMIT_CHOICES)
+                raise ValueError(
+                    f"{TRANSCRIPT_LIMIT_KEY} must be one of: {choices}")
         else:
             value = str(raw_value) or CLOCK_FORMAT_DEFAULT
         text = _set_value(text, key, value)
@@ -310,6 +358,30 @@ def pane_memory_mode(path: str | None = None) -> str:
         value if value in PANE_MEMORY_MODE_CHOICES
         else PANE_MEMORY_MODE_DEFAULT
     )
+
+
+def transcript_enabled(path: str | None = None) -> bool:
+    """Return whether panes record a durable session log."""
+    return enabled("KILIX_TRANSCRIPT", path)
+
+
+def transcript_graphics(path: str | None = None) -> str:
+    """Return the normalized graphics-payload policy for transcripts."""
+    value = load(path).get(
+        TRANSCRIPT_GRAPHICS_KEY, TRANSCRIPT_GRAPHICS_DEFAULT).strip().lower()
+    return (
+        value if value in TRANSCRIPT_GRAPHICS_CHOICES
+        else TRANSCRIPT_GRAPHICS_DEFAULT
+    )
+
+
+def transcript_limit(path: str | None = None) -> int:
+    """Return the per-pane transcript size budget in bytes."""
+    value = load(path).get(
+        TRANSCRIPT_LIMIT_KEY, TRANSCRIPT_LIMIT_DEFAULT).strip().upper()
+    if value not in TRANSCRIPT_LIMIT_CHOICES:
+        value = TRANSCRIPT_LIMIT_DEFAULT
+    return int(value.removesuffix("M")) * 1024 * 1024
 
 
 __all__ = [

@@ -127,6 +127,23 @@ SETTING_PAGES = [
           ["left", "center", "right"]),
         K("enabled_layouts", "Enabled layouts", default="splits,stack,tall,grid"),
     ]),
+    ("Session logs", [
+        S("KILIX_TRANSCRIPT", "Record pane session logs"),
+        S(
+            shared_settings.TRANSCRIPT_GRAPHICS_KEY,
+            "Graphics in logs",
+            "choice",
+            shared_settings.TRANSCRIPT_GRAPHICS_DEFAULT,
+            list(shared_settings.TRANSCRIPT_GRAPHICS_CHOICES),
+        ),
+        S(
+            shared_settings.TRANSCRIPT_LIMIT_KEY,
+            "Log size per pane",
+            "choice",
+            shared_settings.TRANSCRIPT_LIMIT_DEFAULT,
+            list(shared_settings.TRANSCRIPT_LIMIT_CHOICES),
+        ),
+    ]),
     ("Games", [
         S(spec.key, spec.label)
         for spec in shared_settings.GAME_TOGGLES

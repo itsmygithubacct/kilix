@@ -201,6 +201,105 @@ class SharedSettingsTests(unittest.TestCase):
                 f"{settings.PANE_MEMORY_MODE_KEY}=always", result.stdout)
             self.assertEqual(settings.pane_memory_mode(str(path)), "always")
 
+    def test_session_logging_defaults_to_on_with_bounded_elided_logs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.conf"
+            settings.ensure_file(str(path))
+            self.assertTrue(settings.transcript_enabled(str(path)))
+            self.assertEqual(settings.transcript_graphics(str(path)), "elide")
+            self.assertEqual(settings.transcript_limit(str(path)), 8 * 1024 * 1024)
+            text = path.read_text()
+            self.assertIn(settings.SESSION_LOG_MARKER, text)
+            self.assertIn("KILIX_TRANSCRIPT=1", text)
+
+    def test_session_logging_keys_reach_an_existing_shared_file(self):
+        # Upgrades must pick up the new defaults without losing user content.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.conf"
+            original = "# hand written\nKILIX_CHROME_CLOCK=0\n"
+            path.write_text(original)
+            settings.ensure_file(str(path))
+            text = path.read_text()
+            self.assertIn(original, text)
+            self.assertIn("KILIX_TRANSCRIPT=1", text)
+            self.assertIn(f"{settings.TRANSCRIPT_GRAPHICS_KEY}=elide", text)
+            self.assertIn(f"{settings.TRANSCRIPT_LIMIT_KEY}=8M", text)
+
+    def test_transcript_values_are_validated_not_coerced(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.conf"
+            settings.update(
+                {settings.TRANSCRIPT_GRAPHICS_KEY: "keep"}, str(path))
+            self.assertEqual(settings.transcript_graphics(str(path)), "keep")
+            with self.assertRaises(ValueError):
+                settings.update(
+                    {settings.TRANSCRIPT_GRAPHICS_KEY: "sometimes"}, str(path))
+            with self.assertRaises(ValueError):
+                settings.update(
+                    {settings.TRANSCRIPT_LIMIT_KEY: "7M"}, str(path))
+            # An unrecognised value already in the file reads back as the
+            # default rather than reaching the broker.
+            settings.update({settings.CLOCK_FORMAT_KEY: "%H:%M"}, str(path))
+            path.write_text(
+                path.read_text() + f"\n{settings.TRANSCRIPT_LIMIT_KEY}=99M\n")
+            self.assertEqual(settings.transcript_limit(str(path)), 8 * 1024 * 1024)
+
+    def test_transcript_cli_aliases_and_size_suffixes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.conf"
+            env = dict(os.environ)
+            env["GPU_TERMINAL_SETTINGS_FILE"] = str(path)
+            result = subprocess.run([
+                str(ROOT / "kilix-settings"),
+                "--set", "transcript=off",
+                "--set", "transcript_size=32M",
+                "--set", "log_graphics=keep",
+                "--print",
+            ], env=env, text=True, capture_output=True, check=True)
+            self.assertIn("KILIX_TRANSCRIPT=off", result.stdout)
+            self.assertIn(
+                f"{settings.TRANSCRIPT_LIMIT_KEY}=32M", result.stdout)
+            self.assertIn(
+                f"{settings.TRANSCRIPT_GRAPHICS_KEY}=keep", result.stdout)
+            self.assertFalse(settings.transcript_enabled(str(path)))
+
+            rejected = subprocess.run([
+                str(ROOT / "kilix-settings"), "--set", "transcript_size=7M",
+            ], env=env, text=True, capture_output=True, check=False)
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn("transcript size must be one of", rejected.stderr)
+
+    def test_disable_all_leaves_qualifier_choices_valid(self):
+        # KILIX_TRANSCRIPT is the off switch; its two qualifiers have no "off"
+        # member and must not be written with one.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.conf"
+            env = dict(os.environ)
+            env["GPU_TERMINAL_SETTINGS_FILE"] = str(path)
+            subprocess.run(
+                [str(ROOT / "kilix-settings"), "--disable-all"],
+                env=env, text=True, capture_output=True, check=True)
+            self.assertFalse(settings.transcript_enabled(str(path)))
+            self.assertIn(
+                f"{settings.TRANSCRIPT_GRAPHICS_KEY}=elide", path.read_text())
+            self.assertIn(
+                f"{settings.TRANSCRIPT_LIMIT_KEY}=8M", path.read_text())
+
+    def test_tui_section_aliases_track_real_section_order(self):
+        module = _load_settings_tui()
+        names = [section for section, _specs in module.UI_SECTIONS]
+        self.assertIn("Session logging", names)
+        for alias, expected in (
+            ("top-bar", "Top bar"),
+            ("pane-buttons", "Pane buttons"),
+            ("session-logging", "Session logging"),
+            ("transcript", "Session logging"),
+            ("games", "Games"),
+            ("tools", "Tools"),
+        ):
+            index = module.SECTION_ALIASES[alias]
+            self.assertEqual(names[index], expected)
+
     def test_game_cli_names_and_listing_use_same_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.conf"
@@ -372,8 +471,10 @@ class SharedSettingsTests(unittest.TestCase):
             with mock.patch.dict(os.environ, {
                     "GPU_TERMINAL_SETTINGS_FILE": str(path),
                     "KITTY_PID": ""}, clear=False):
+                # Top bar -> Pane buttons -> Session logging -> Games, then
+                # toggle that section's first entry.
                 screen = FakeScreen([
-                    ord("l"), ord("l"), ord(" "),
+                    ord("l"), ord("l"), ord("l"), ord(" "),
                     ord("q"), ord("s"), ord("q"),
                 ])
                 self.assertEqual(tui._run_tui(screen), 0)

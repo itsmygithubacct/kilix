@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "config"))
 
 import kilix_sdk
-from kilix_sdk import content, graphics, paths, state, term
+from kilix_sdk import content, graphics, paths, settings, state, term
 
 
 class KilixSdkBoundaryTests(unittest.TestCase):
@@ -43,10 +43,27 @@ class KilixSdkBoundaryTests(unittest.TestCase):
                 self.assertEqual(Path(paths.kilix95_home()), custom)
 
     def test_sdk_contract_is_versioned(self):
-        self.assertEqual(kilix_sdk.SDK_API_VERSION, (1, 4))
+        # 1.5 adds the shared session-logging settings both providers read.
+        self.assertEqual(kilix_sdk.SDK_API_VERSION, (1, 5))
         kilix_sdk.require_compatible("1.0")
+        kilix_sdk.require_compatible("1.5")
+        with self.assertRaises(kilix_sdk.IncompatibleSDKError):
+            kilix_sdk.require_compatible("1.6")
         with self.assertRaises(kilix_sdk.IncompatibleSDKError):
             kilix_sdk.require_compatible("2.0")
+
+    def test_session_logging_settings_are_part_of_the_sdk_contract(self):
+        # A provider compiled against 1.5 may rely on these names existing.
+        for name in (
+            "TRANSCRIPT_GRAPHICS_KEY", "TRANSCRIPT_GRAPHICS_CHOICES",
+            "TRANSCRIPT_GRAPHICS_DEFAULT", "TRANSCRIPT_LIMIT_KEY",
+            "TRANSCRIPT_LIMIT_CHOICES", "TRANSCRIPT_LIMIT_DEFAULT",
+            "transcript_enabled", "transcript_graphics", "transcript_limit",
+        ):
+            self.assertTrue(hasattr(settings, name), name)
+        self.assertIn("KILIX_TRANSCRIPT", settings.TOGGLE_BY_KEY)
+        self.assertIn(settings.TRANSCRIPT_GRAPHICS_KEY, settings.MANAGED_KEYS)
+        self.assertIn(settings.TRANSCRIPT_LIMIT_KEY, settings.MANAGED_KEYS)
 
     def test_content_exposes_pinned_catalog_contract(self):
         catalog = content.default_catalog()

@@ -23,7 +23,31 @@ complete tree. Freedesktop launchers/icons are the intentional exception:
 
 ![kilix — pages strip with + button, per-pane title bars with clickable split/maximize/close buttons, splits, and icat](config/kilix_demo.png)
 
-## Release 0.1.4
+## Release 0.1.5
+
+Version 0.1.5 is the coordinated stack release covering everything since 0.1.2,
+and is the first release Kilix shares with
+[Plebian-OS](https://github.com/itsmygithubacct/plebian-os),
+[Pleb](https://github.com/itsmygithubacct/pleb), and
+[Kilix 95](https://github.com/itsmygithubacct/kilix-95) since then. It adds
+crash-persistent panes backed by `kitty-pty-broker`, an explicit capture
+readiness protocol with an XDamage first-paint fix, and live-generation
+preservation so long-running terminals survive a rebuild. It also turns on
+[session logging](#session-logging-on-by-default) by default: the same broker
+that owns each pane's PTY records that pane's output to a bounded, private
+transcript, with kitty graphics payloads elided so a pixel desktop cannot flood
+the log. SDK 1.5 adds the shared session-logging settings contract used by both
+desktop providers. Release tags for this
+repository are created only by the coordinated release procedure — see
+Plebian-OS's [RELEASING.md](https://github.com/itsmygithubacct/plebian-os/blob/main/RELEASING.md).
+
+> The `0.1.3` and `0.1.4` sections below are **component milestones**, not
+> shipped stack releases: they mark the SDK contract levels those changes
+> introduced. No Plebian-OS image was ever built or published for either. The
+> `v0.1.4` tag on this repository predates the current rule and is a Kilix-only
+> tag; it is left in place rather than moved.
+
+## 0.1.4 — SDK 1.4
 
 Version 0.1.4 adds Tilix-style synchronized keyboard input, including
 whole-tab double-click selection, and the configurable per-pane memory chip.
@@ -32,7 +56,7 @@ RAM, swap, pressure, paging, and process use. SDK 1.4 adds the shared native
 state binding and keeps the built-in and standalone Kilix 95 providers on the
 same declared contract.
 
-## Release 0.1.3
+## 0.1.3 — SDK 1.3
 
 Version 0.1.3 ships the Kilix 1.3 provider SDK. A shared immutable content
 catalog now drives both desktop providers, while `XAppSession` owns private X
@@ -108,6 +132,42 @@ PTY and process group; Kilix attaches through a lightweight client over a
 private Unix socket. Terminal bytes remain untouched, so live Kitty graphics,
 including file and POSIX shared-memory transfers, do not pass through a tmux
 parser.
+
+### Session logging (on by default)
+
+Because the broker already owns every pane's PTY, it also records that pane's
+output to a durable log — including for a pane that is detached, recovered, or
+whose frontend crashed. Logs live in `~/.local/gpu_terminal/kilix/state/transcripts/`
+as `<session-id>.log`, mode `0600`, one per pane.
+
+```bash
+kilix transcript                  # newest-first index of recorded panes
+kilix transcript show <session>   # write one transcript to stdout
+kilix transcript path             # print the directory
+kilix transcript prune            # delete logs the broker no longer tracks
+```
+
+Each log is bounded (8 MiB by default); on overflow the newest three quarters
+are kept and the oldest bytes are dropped, so a busy pane cannot fill the disk.
+Kitty **graphics payloads are elided** by default — a pane running Kilix 95,
+`browse`, `run`, or `icat` emits base64 pixel data at megabytes per second, and
+recording it verbatim would evict every readable line within seconds. The log
+keeps a `[kitty-pty-broker: N bytes of graphics elided]` marker instead, which
+makes a default transcript a faithful record of *text*, not a byte-exact
+capture. Choose `keep` when the graphics bytes are themselves the subject.
+
+Only pane **output** is recorded. Input appears solely through terminal echo,
+so a password prompt that disables echo is not captured.
+
+Turn it off, or change its two knobs, from any settings interface — they all
+write the same shared file:
+
+```bash
+kilix settings                            # TUI, "Session logging" section
+kilix settings --set transcript=off
+kilix settings --set transcript_size=32M          # 2M | 8M | 32M | 128M
+kilix settings --set transcript_graphics=keep     # elide | keep
+```
 
 Closing the whole frontend, closing a page, or a Kilix crash detaches the
 client. Detached sessions are discovered on the next startup and opened in
@@ -230,6 +290,8 @@ kilix screen-size larger          # increase terminal scale (font_size +2pt)
 kilix screen-size smaller         # decrease terminal scale (font_size -2pt)
 kilix settings                    # shared chrome/game settings TUI
 kilix settings --section tools    # memory monitor, Tmux Manager, or tb installer
+kilix transcript                  # list recorded pane session logs
+kilix transcript show <session>   # print one pane's transcript
 kilix games list                  # show games available in Kilix 95
 kilix games settings              # open the TUI directly on Games
 kilix games disable doom          # hide a game (enable reverses it)
