@@ -18,6 +18,7 @@ SETTINGS_BASENAME = "settings.conf"
 SETTINGS_HEADER = "# GPU Terminal shared settings (KEY=value; not shell code)."
 SETTINGS_MARKER = "# -- Kilix clickable chrome --"
 SESSION_LOG_MARKER = "# -- Kilix session logging --"
+VOICE_MARKER = "# -- Kilix voice --"
 GAMES_MARKER = "# -- Kilix game availability --"
 
 
@@ -36,6 +37,8 @@ TOP_BAR_TOGGLES = (
     ToggleSpec("KILIX_CHROME_CALENDAR", "Calendar", "Top bar"),
     ToggleSpec("KILIX_CHROME_CLOCK", "Date and time", "Top bar"),
     ToggleSpec("KILIX_CHROME_BATTERY", "Battery", "Top bar"),
+    ToggleSpec("KILIX_CHROME_SPEAK", "Read pane aloud", "Top bar"),
+    ToggleSpec("KILIX_CHROME_DICTATE", "Dictate to pane", "Top bar"),
 )
 
 PANE_BUTTON_TOGGLES = (
@@ -55,6 +58,15 @@ PANE_BUTTON_TOGGLES = (
 # bounded, and removable from every settings interface.
 SESSION_LOG_TOGGLES = (
     ToggleSpec("KILIX_TRANSCRIPT", "Record pane session logs", "Session logging"),
+)
+
+# The two chrome toggles above make the widgets visible; these settings govern
+# what they do once clicked.  Both widgets ship on, which means the buttons are
+# present, not that anything is listening: capture opens on a click and on
+# nothing else.
+VOICE_PUNCTUATION_KEY = "KILIX_VOICE_STT_PUNCTUATION"
+VOICE_TOGGLES = (
+    ToggleSpec(VOICE_PUNCTUATION_KEY, "Spoken punctuation", "Voice"),
 )
 
 # Stable IDs cover the two built-in Kilix 95 games and every game-like entry
@@ -93,8 +105,12 @@ GAME_KEY_BY_ID = {
 }
 GAME_ID_BY_KEY = {key: game_id for game_id, key in GAME_KEY_BY_ID.items()}
 
+# Concatenation order is the section order every interface presents, and
+# ``kilix-settings`` derives its numeric ``--section`` values from it.  Voice
+# goes after session logging so the earlier numbers keep meaning what they did.
 TOGGLE_SPECS = (
-    TOP_BAR_TOGGLES + PANE_BUTTON_TOGGLES + SESSION_LOG_TOGGLES + GAME_TOGGLES
+    TOP_BAR_TOGGLES + PANE_BUTTON_TOGGLES + SESSION_LOG_TOGGLES
+    + VOICE_TOGGLES + GAME_TOGGLES
 )
 TOGGLE_BY_KEY = {spec.key: spec for spec in TOGGLE_SPECS}
 CLOCK_FORMAT_KEY = "KILIX_CHROME_CLOCK_FORMAT"
@@ -119,12 +135,114 @@ TRANSCRIPT_LIMIT_KEY = "KILIX_TRANSCRIPT_MAX_SIZE"
 TRANSCRIPT_LIMIT_DEFAULT = "8M"
 TRANSCRIPT_LIMIT_CHOICES = ("2M", "8M", "32M", "128M")
 
+# Read-aloud and dictation, presets for the same reason the transcript limit is
+# one: the shared file, the CLI, the settings TUI, and Kilix 95 all offer the
+# same vocabulary, and a value none of them recognises would read back as the
+# default without saying so.
+VOICE_TTS_ENGINE_KEY = "KILIX_VOICE_TTS_ENGINE"
+VOICE_TTS_ENGINE_DEFAULT = "espeak"
+VOICE_TTS_ENGINE_CHOICES = ("espeak", "mbrola", "off")
+VOICE_TTS_VOICE_KEY = "KILIX_VOICE_TTS_VOICE"
+VOICE_TTS_VOICE_DEFAULT = "en-us"
+VOICE_TTS_RATE_KEY = "KILIX_VOICE_TTS_RATE"
+VOICE_TTS_RATE_DEFAULT = "170"
+VOICE_TTS_RATE_CHOICES = ("120", "150", "170", "200", "240")
+VOICE_TTS_EXTENT_KEY = "KILIX_VOICE_TTS_EXTENT"
+VOICE_TTS_EXTENT_DEFAULT = "screen"
+VOICE_TTS_EXTENT_CHOICES = ("screen", "scrollback", "selection")
+VOICE_TTS_MAX_CHARS_KEY = "KILIX_VOICE_TTS_MAX_CHARS"
+VOICE_TTS_MAX_CHARS_DEFAULT = "4000"
+VOICE_TTS_MAX_CHARS_CHOICES = ("1000", "4000", "16000", "unlimited")
+VOICE_STT_ENGINE_KEY = "KILIX_VOICE_STT_ENGINE"
+VOICE_STT_ENGINE_DEFAULT = "vosk"
+VOICE_STT_ENGINE_CHOICES = ("vosk", "vibevoice", "off")
+VOICE_STT_MODEL_KEY = "KILIX_VOICE_STT_MODEL"
+VOICE_STT_MODEL_DEFAULT = "small-en-us"
+VOICE_STT_MODEL_CHOICES = (
+    "small-en-us", "lgraph-en-us", "vibevoice-asr-bitnet")
+
+# There is no ``always``, and adding one is not a small change.  Dictation that
+# presses Enter on its own behalf turns a misrecognition into an arbitrary
+# command, so the choice is between never submitting and asking first.
+VOICE_STT_SUBMIT_KEY = "KILIX_VOICE_STT_SUBMIT"
+VOICE_STT_SUBMIT_DEFAULT = "never"
+VOICE_STT_SUBMIT_CHOICES = ("never", "confirm")
+
+VOICE_STT_MAX_SECONDS_KEY = "KILIX_VOICE_STT_MAX_SECONDS"
+VOICE_STT_MAX_SECONDS_DEFAULT = "30"
+VOICE_STT_MAX_SECONDS_CHOICES = ("15", "30", "60", "120")
+VOICE_STT_SILENCE_MS_KEY = "KILIX_VOICE_STT_SILENCE_MS"
+VOICE_STT_SILENCE_MS_DEFAULT = "900"
+VOICE_STT_SILENCE_MS_CHOICES = ("500", "900", "1500")
+VOICE_DEVICE_IN_KEY = "KILIX_VOICE_DEVICE_IN"
+VOICE_DEVICE_IN_DEFAULT = "default"
+VOICE_DEVICE_OUT_KEY = "KILIX_VOICE_DEVICE_OUT"
+VOICE_DEVICE_OUT_DEFAULT = "default"
+
+# Off by default, unlike session logging: a record of what the user said is a
+# different privacy class from a record of what the terminal printed, and the
+# microphone is the one input the user cannot see accumulating.
+VOICE_HISTORY_KEY = "KILIX_VOICE_HISTORY"
+VOICE_HISTORY_DEFAULT = "off"
+VOICE_HISTORY_CHOICES = ("off", "on")
+
+VOICE_CHOICE_SPECS = {
+    VOICE_TTS_ENGINE_KEY: (VOICE_TTS_ENGINE_DEFAULT, VOICE_TTS_ENGINE_CHOICES),
+    VOICE_TTS_RATE_KEY: (VOICE_TTS_RATE_DEFAULT, VOICE_TTS_RATE_CHOICES),
+    VOICE_TTS_EXTENT_KEY: (VOICE_TTS_EXTENT_DEFAULT, VOICE_TTS_EXTENT_CHOICES),
+    VOICE_TTS_MAX_CHARS_KEY: (
+        VOICE_TTS_MAX_CHARS_DEFAULT, VOICE_TTS_MAX_CHARS_CHOICES),
+    VOICE_STT_ENGINE_KEY: (VOICE_STT_ENGINE_DEFAULT, VOICE_STT_ENGINE_CHOICES),
+    VOICE_STT_MODEL_KEY: (VOICE_STT_MODEL_DEFAULT, VOICE_STT_MODEL_CHOICES),
+    VOICE_STT_SUBMIT_KEY: (VOICE_STT_SUBMIT_DEFAULT, VOICE_STT_SUBMIT_CHOICES),
+    VOICE_STT_MAX_SECONDS_KEY: (
+        VOICE_STT_MAX_SECONDS_DEFAULT, VOICE_STT_MAX_SECONDS_CHOICES),
+    VOICE_STT_SILENCE_MS_KEY: (
+        VOICE_STT_SILENCE_MS_DEFAULT, VOICE_STT_SILENCE_MS_CHOICES),
+    VOICE_HISTORY_KEY: (VOICE_HISTORY_DEFAULT, VOICE_HISTORY_CHOICES),
+}
+
+# The two settings a preset list cannot cover: the valid voices are whatever the
+# installed synthesiser was built with, and the valid devices are whatever the
+# audio server reports right now.  Validated by shape instead, so a bad value
+# still falls back rather than reaching a command line.  Voice names are short
+# tokens (``en-us``, ``mb-us1``); PulseAudio device names are much longer and
+# carry dots and colons (``alsa_input.pci-0000_00_1f.3.analog-stereo``).
+VOICE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_+-]{1,32}$")
+VOICE_DEVICE_PATTERN = re.compile(r"^[A-Za-z0-9_.:+-]{1,128}$")
+VOICE_TOKEN_SPECS = {
+    VOICE_TTS_VOICE_KEY: (VOICE_TTS_VOICE_DEFAULT, VOICE_NAME_PATTERN),
+    VOICE_DEVICE_IN_KEY: (VOICE_DEVICE_IN_DEFAULT, VOICE_DEVICE_PATTERN),
+    VOICE_DEVICE_OUT_KEY: (VOICE_DEVICE_OUT_DEFAULT, VOICE_DEVICE_PATTERN),
+}
+
+# Written and presented in this order: what to read, how it sounds, what to
+# hear, then where the audio goes.  The toggle sits with the dictation settings
+# it qualifies rather than being hoisted to the top of the section.
+VOICE_KEYS = (
+    VOICE_TTS_ENGINE_KEY,
+    VOICE_TTS_VOICE_KEY,
+    VOICE_TTS_RATE_KEY,
+    VOICE_TTS_EXTENT_KEY,
+    VOICE_TTS_MAX_CHARS_KEY,
+    VOICE_STT_ENGINE_KEY,
+    VOICE_STT_MODEL_KEY,
+    VOICE_STT_SUBMIT_KEY,
+    VOICE_STT_MAX_SECONDS_KEY,
+    VOICE_STT_SILENCE_MS_KEY,
+    VOICE_PUNCTUATION_KEY,
+    VOICE_DEVICE_IN_KEY,
+    VOICE_DEVICE_OUT_KEY,
+    VOICE_HISTORY_KEY,
+)
+VOICE_VALUE_KEYS = tuple(key for key in VOICE_KEYS if key not in TOGGLE_BY_KEY)
+
 MANAGED_KEYS = tuple(spec.key for spec in TOGGLE_SPECS) + (
     CLOCK_FORMAT_KEY,
     PANE_MEMORY_MODE_KEY,
     TRANSCRIPT_GRAPHICS_KEY,
     TRANSCRIPT_LIMIT_KEY,
-)
+) + VOICE_VALUE_KEYS
 
 _ASSIGNMENT = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
 
@@ -172,6 +290,9 @@ def defaults(*, migrate_environment: bool = False) -> dict[str, str]:
     values[PANE_MEMORY_MODE_KEY] = PANE_MEMORY_MODE_DEFAULT
     values[TRANSCRIPT_GRAPHICS_KEY] = TRANSCRIPT_GRAPHICS_DEFAULT
     values[TRANSCRIPT_LIMIT_KEY] = TRANSCRIPT_LIMIT_DEFAULT
+    for key, (default, _valid) in (*VOICE_CHOICE_SPECS.items(),
+                                   *VOICE_TOKEN_SPECS.items()):
+        values[key] = default
     if migrate_environment:
         # Clock and battery were historically stored in kilix.env.  On the
         # first shared-file creation, preserve those effective preferences.
@@ -231,6 +352,9 @@ def _initial_text(values: Mapping[str, str]) -> str:
         lines.append(f"{spec.key}={values[spec.key]}")
     lines.append(f"{TRANSCRIPT_GRAPHICS_KEY}={values[TRANSCRIPT_GRAPHICS_KEY]}")
     lines.append(f"{TRANSCRIPT_LIMIT_KEY}={values[TRANSCRIPT_LIMIT_KEY]}")
+    lines.extend(("", VOICE_MARKER))
+    for key in VOICE_KEYS:
+        lines.append(f"{key}={values[key]}")
     lines.extend(("", GAMES_MARKER))
     for spec in GAME_TOGGLES:
         lines.append(f"{spec.key}={values[spec.key]}")
@@ -286,7 +410,12 @@ def _set_value(text: str, key: str, value: str) -> str:
     if matches:
         last = matches[-1]
         return text[:last.start()] + line + text[last.end():]
-    marker = GAMES_MARKER if key in GAME_ID_BY_KEY else SETTINGS_MARKER
+    if key in GAME_ID_BY_KEY:
+        marker = GAMES_MARKER
+    elif key in VOICE_KEYS:
+        marker = VOICE_MARKER
+    else:
+        marker = SETTINGS_MARKER
     if marker not in text:
         text = text.rstrip("\n") + f"\n\n{marker}\n"
     return text.rstrip("\n") + "\n" + line + "\n"
@@ -322,6 +451,17 @@ def update(changes: Mapping[str, object], path: str | None = None) -> str:
                 choices = ", ".join(TRANSCRIPT_LIMIT_CHOICES)
                 raise ValueError(
                     f"{TRANSCRIPT_LIMIT_KEY} must be one of: {choices}")
+        elif key in VOICE_CHOICE_SPECS:
+            _default, valid = VOICE_CHOICE_SPECS[key]
+            value = str(raw_value).strip().lower()
+            if value not in valid:
+                raise ValueError(f"{key} must be one of: {', '.join(valid)}")
+        elif key in VOICE_TOKEN_SPECS:
+            _default, pattern = VOICE_TOKEN_SPECS[key]
+            value = str(raw_value).strip()
+            if not pattern.match(value):
+                raise ValueError(
+                    f"{key} must be a plain engine or device name")
         else:
             value = str(raw_value) or CLOCK_FORMAT_DEFAULT
         text = _set_value(text, key, value)
@@ -382,6 +522,99 @@ def transcript_limit(path: str | None = None) -> int:
     if value not in TRANSCRIPT_LIMIT_CHOICES:
         value = TRANSCRIPT_LIMIT_DEFAULT
     return int(value.removesuffix("M")) * 1024 * 1024
+
+
+def _voice_choice(key: str, path: str | None) -> str:
+    default, valid = VOICE_CHOICE_SPECS[key]
+    value = load(path).get(key, default).strip().lower()
+    return value if value in valid else default
+
+
+def _voice_token(key: str, path: str | None) -> str:
+    default, pattern = VOICE_TOKEN_SPECS[key]
+    value = load(path).get(key, default).strip()
+    return value if pattern.match(value) else default
+
+
+def tts_engine(path: str | None = None) -> str:
+    """Return the speech synthesiser read-aloud should use, or ``off``."""
+    return _voice_choice(VOICE_TTS_ENGINE_KEY, path)
+
+
+def tts_voice(path: str | None = None) -> str:
+    """Return the synthesiser voice name, unvalidated against the engine.
+
+    Whether the local ``espeak-ng`` actually has this voice is the engine's
+    question to answer at synthesis time; this only guarantees the value is a
+    plain token, so an unusable voice degrades a read rather than shaping a
+    command line.
+    """
+    return _voice_token(VOICE_TTS_VOICE_KEY, path)
+
+
+def tts_rate(path: str | None = None) -> int:
+    """Return the read-aloud speaking rate in words per minute."""
+    return int(_voice_choice(VOICE_TTS_RATE_KEY, path))
+
+
+def tts_extent(path: str | None = None) -> str:
+    """Return how much of the pane read-aloud covers when nothing is selected."""
+    return _voice_choice(VOICE_TTS_EXTENT_KEY, path)
+
+
+def tts_max_chars(path: str | None = None) -> int | None:
+    """Return the read-aloud length cap in characters, or ``None`` if uncapped."""
+    value = _voice_choice(VOICE_TTS_MAX_CHARS_KEY, path)
+    return None if value == "unlimited" else int(value)
+
+
+def stt_engine(path: str | None = None) -> str:
+    """Return the recogniser dictation should use, or ``off``."""
+    return _voice_choice(VOICE_STT_ENGINE_KEY, path)
+
+
+def stt_model(path: str | None = None) -> str:
+    """Return the catalog id of the acoustic model dictation should load."""
+    return _voice_choice(VOICE_STT_MODEL_KEY, path)
+
+
+def stt_submit(path: str | None = None) -> str:
+    """Return the dictation submit policy: ``never`` or ``confirm``.
+
+    Callers may treat any value other than ``confirm`` as ``never``; there is
+    deliberately no third choice that submits without asking.
+    """
+    return _voice_choice(VOICE_STT_SUBMIT_KEY, path)
+
+
+def stt_max_seconds(path: str | None = None) -> int:
+    """Return the hard ceiling on one dictation, in seconds."""
+    return int(_voice_choice(VOICE_STT_MAX_SECONDS_KEY, path))
+
+
+def stt_silence_ms(path: str | None = None) -> int:
+    """Return the trailing silence that ends an utterance, in milliseconds."""
+    return int(_voice_choice(VOICE_STT_SILENCE_MS_KEY, path))
+
+
+def voice_device_in(path: str | None = None) -> str:
+    """Return the capture device name, or ``default`` for the server's choice."""
+    return _voice_token(VOICE_DEVICE_IN_KEY, path)
+
+
+def voice_device_out(path: str | None = None) -> str:
+    """Return the playback device name, or ``default`` for the server's choice."""
+    return _voice_token(VOICE_DEVICE_OUT_KEY, path)
+
+
+def voice_history(path: str | None = None) -> bool:
+    """Return whether dictation may be written to a local history file.
+
+    Boolean rather than the stored ``off``/``on`` token because the token is
+    the wrong shape for the question every caller asks, and ``"off"`` is
+    truthy.
+    """
+    return _voice_choice(VOICE_HISTORY_KEY, path) == "on"
 
 
 __all__ = [

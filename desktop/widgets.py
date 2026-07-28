@@ -1075,6 +1075,8 @@ class IconGrid(Widget):
 
 class TabBar(Widget):
     H = 21
+    PAD = 18          # roomy default: 9px of air either side of the label
+    MIN_PAD = 6       # below this the labels start to touch their borders
 
     def __init__(self, x, y, w, tabs, cb=None):
         super().__init__(x, y, w, self.H)
@@ -1082,13 +1084,32 @@ class TabBar(Widget):
         self.active = 0
         self.cb = cb
 
+    def _tab_widths(self):
+        """Per-tab widths, compressed so the strip always fits its own width.
+
+        The strip is one unclipped row: a tab drawn past ``self.w`` is not just
+        cosmetically clipped, it becomes unreachable, because Widget.hit() stops
+        at the widget's edge and never routes the click here. Padding is
+        therefore squeezed before that can happen. draw() and _tab_at() both
+        read this one function so a click can never land on a different tab than
+        the one under the pointer.
+        """
+        text = [T.text_w(T.FONT, label) for label in self.tabs]
+        avail = max(0, self.w - 4)
+        pad = self.PAD
+        if sum(text) + pad * len(text) > avail and self.tabs:
+            # Spend whatever room is left on padding, down to the floor.
+            pad = max(self.MIN_PAD, (avail - sum(text)) // len(self.tabs))
+        return [tw + pad for tw in text]
+
     def draw(self, d, img):
         tx = self.x + 2
+        widths = self._tab_widths()
         bottom = self.y + self.H - 1
         d.line([(self.x, bottom - 1), (self.x + self.w - 1, bottom - 1)],
                fill=T.LIGHT)
         for i, label in enumerate(self.tabs):
-            tw = T.text_w(T.FONT, label) + 18
+            tw = widths[i]
             sel = i == self.active
             x0 = tx
             y0 = self.y + (0 if sel else 2)
@@ -1107,14 +1128,16 @@ class TabBar(Widget):
                 d.line([(x0 + 1, bottom - 1), (x1 - 1, bottom - 1)],
                        fill=T.FACE)
                 d.line([(x0 + 1, bottom), (x1 - 1, bottom)], fill=T.FACE)
-            d.text((tx + 9, self.y + (4 if not sel else 3)), label,
+            # Centre the label in whatever width the tab ended up with, so a
+            # compressed strip stays symmetric rather than left-heavy.
+            d.text((tx + (tw - T.text_w(T.FONT, label)) // 2,
+                    self.y + (4 if not sel else 3)), label,
                    font=T.FONT, fill=T.TEXT)
-            tx += tw + (0 if sel else 0)
+            tx += tw
 
     def _tab_at(self, px):
         tx = self.x + 2
-        for i, label in enumerate(self.tabs):
-            tw = T.text_w(T.FONT, label) + 18
+        for i, tw in enumerate(self._tab_widths()):
             if tx <= px < tx + tw:
                 return i
             tx += tw
