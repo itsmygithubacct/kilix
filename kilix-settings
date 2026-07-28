@@ -49,8 +49,14 @@ def _control_names() -> dict[str, str]:
         names[alias] = shared.TRANSCRIPT_GRAPHICS_KEY
     for alias in ("transcript_size", "transcript_limit", "log_size"):
         names[alias] = shared.TRANSCRIPT_LIMIT_KEY
+    for alias in ("transcript_total", "log_total", "transcript_budget"):
+        names[alias] = shared.TRANSCRIPT_TOTAL_KEY
+    for alias in ("transcript_archive", "log_archive", "archive_budget"):
+        names[alias] = shared.TRANSCRIPT_ARCHIVE_KEY
     names[shared.TRANSCRIPT_GRAPHICS_KEY.lower()] = shared.TRANSCRIPT_GRAPHICS_KEY
     names[shared.TRANSCRIPT_LIMIT_KEY.lower()] = shared.TRANSCRIPT_LIMIT_KEY
+    names[shared.TRANSCRIPT_TOTAL_KEY.lower()] = shared.TRANSCRIPT_TOTAL_KEY
+    names[shared.TRANSCRIPT_ARCHIVE_KEY.lower()] = shared.TRANSCRIPT_ARCHIVE_KEY
     return names
 
 
@@ -89,10 +95,27 @@ TRANSCRIPT_LIMIT_SPEC = ChoiceSpec(
     shared.TRANSCRIPT_LIMIT_DEFAULT,
 )
 
+TRANSCRIPT_TOTAL_SPEC = ChoiceSpec(
+    shared.TRANSCRIPT_TOTAL_KEY,
+    "Recent logs (zstd -3)",
+    shared.TRANSCRIPT_TOTAL_CHOICES,
+    shared.TRANSCRIPT_TOTAL_DEFAULT,
+)
+
+TRANSCRIPT_ARCHIVE_SPEC = ChoiceSpec(
+    shared.TRANSCRIPT_ARCHIVE_KEY,
+    "Older logs (zstd -9)",
+    shared.TRANSCRIPT_ARCHIVE_CHOICES,
+    shared.TRANSCRIPT_ARCHIVE_DEFAULT,
+)
+
 LEADING_CHOICES = {"Pane buttons": (MEMORY_MODE_SPEC,)}
 # The session-logging sub-options follow the on/off control they qualify.
 TRAILING_CHOICES = {
-    "Session logging": (TRANSCRIPT_GRAPHICS_SPEC, TRANSCRIPT_LIMIT_SPEC),
+    "Session logging": (
+        TRANSCRIPT_GRAPHICS_SPEC, TRANSCRIPT_LIMIT_SPEC,
+        TRANSCRIPT_TOTAL_SPEC, TRANSCRIPT_ARCHIVE_SPEC,
+    ),
 }
 CHOICE_SPECS = {
     spec.key: spec
@@ -175,7 +198,7 @@ def _parse_assignment(value: str) -> tuple[str, object]:
         name, raw = value.split("=", 1)
     except ValueError as error:
         raise argparse.ArgumentTypeError(
-            "expected CONTROL=on|off or pane_memory=auto|always|off"
+            "expected CONTROL=VALUE"
         ) from error
     key = CONTROL_NAMES.get(name.strip().lower())
     if key is None:
@@ -210,6 +233,23 @@ def _parse_assignment(value: str) -> tuple[str, object]:
             choices = ", ".join(shared.TRANSCRIPT_LIMIT_CHOICES)
             raise argparse.ArgumentTypeError(
                 f"transcript size must be one of: {choices}")
+        return key, size
+    if key in (shared.TRANSCRIPT_TOTAL_KEY, shared.TRANSCRIPT_ARCHIVE_KEY):
+        size = raw.strip().upper().removesuffix("IB").removesuffix("B")
+        # Accept a raw byte count as well, matching the per-pane size control,
+        # so a scripted caller need not know which spelling the file uses.
+        if size.isdigit() and int(size) % (1024 ** 3) == 0:
+            size = f"{int(size) // (1024 ** 3)}G"
+        if key == shared.TRANSCRIPT_ARCHIVE_KEY and size in ("OFF", "0", ""):
+            return key, "off"
+        choices = (
+            shared.TRANSCRIPT_ARCHIVE_CHOICES
+            if key == shared.TRANSCRIPT_ARCHIVE_KEY
+            else shared.TRANSCRIPT_TOTAL_CHOICES
+        )
+        if size not in choices:
+            raise argparse.ArgumentTypeError(
+                f"transcript budget must be one of: {', '.join(choices)}")
         return key, size
     return key, shared.truthy(raw)
 
@@ -267,6 +307,19 @@ def _print_settings(values: dict[str, str]) -> None:
     if size not in shared.TRANSCRIPT_LIMIT_CHOICES:
         size = shared.TRANSCRIPT_LIMIT_DEFAULT
     print(f"{shared.TRANSCRIPT_LIMIT_KEY}={size}")
+    total = values.get(
+        shared.TRANSCRIPT_TOTAL_KEY, shared.TRANSCRIPT_TOTAL_DEFAULT
+    ).strip().upper()
+    if total not in shared.TRANSCRIPT_TOTAL_CHOICES:
+        total = shared.TRANSCRIPT_TOTAL_DEFAULT
+    print(f"{shared.TRANSCRIPT_TOTAL_KEY}={total}")
+    archive = values.get(
+        shared.TRANSCRIPT_ARCHIVE_KEY, shared.TRANSCRIPT_ARCHIVE_DEFAULT
+    ).strip()
+    archive = "off" if archive.lower() == "off" else archive.upper()
+    if archive not in shared.TRANSCRIPT_ARCHIVE_CHOICES:
+        archive = shared.TRANSCRIPT_ARCHIVE_DEFAULT
+    print(f"{shared.TRANSCRIPT_ARCHIVE_KEY}={archive}")
 
 
 def _print_games(values: dict[str, str]) -> None:
@@ -391,6 +444,12 @@ def _run_tui(stdscr, initial_section: int | str | None = None) -> int | str:
     values[shared.TRANSCRIPT_GRAPHICS_KEY] = shared.transcript_graphics()
     values[shared.TRANSCRIPT_LIMIT_KEY] = effective.get(
         shared.TRANSCRIPT_LIMIT_KEY, shared.TRANSCRIPT_LIMIT_DEFAULT)
+    # A settings file written before these keys existed still opens: fall back
+    # to the declared default rather than raising while drawing the section.
+    values[shared.TRANSCRIPT_TOTAL_KEY] = effective.get(
+        shared.TRANSCRIPT_TOTAL_KEY, shared.TRANSCRIPT_TOTAL_DEFAULT)
+    values[shared.TRANSCRIPT_ARCHIVE_KEY] = effective.get(
+        shared.TRANSCRIPT_ARCHIVE_KEY, shared.TRANSCRIPT_ARCHIVE_DEFAULT)
     original = dict(values)
     if isinstance(initial_section, str):
         section_index = _parse_section(initial_section)

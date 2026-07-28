@@ -1,7 +1,9 @@
+import argparse
 import importlib.machinery
 import importlib.util
 import os
 from pathlib import Path
+import shutil
 import stat
 import subprocess
 import sys
@@ -208,6 +210,10 @@ class SharedSettingsTests(unittest.TestCase):
             self.assertTrue(settings.transcript_enabled(str(path)))
             self.assertEqual(settings.transcript_graphics(str(path)), "elide")
             self.assertEqual(settings.transcript_limit(str(path)), 8 * 1024 * 1024)
+            self.assertEqual(
+                settings.transcript_total(str(path)), 20 * 1024 ** 3)
+            self.assertEqual(
+                settings.transcript_archive_total(str(path)), 10 * 1024 ** 3)
             text = path.read_text()
             self.assertIn(settings.SESSION_LOG_MARKER, text)
             self.assertIn("KILIX_TRANSCRIPT=1", text)
@@ -224,6 +230,8 @@ class SharedSettingsTests(unittest.TestCase):
             self.assertIn("KILIX_TRANSCRIPT=1", text)
             self.assertIn(f"{settings.TRANSCRIPT_GRAPHICS_KEY}=elide", text)
             self.assertIn(f"{settings.TRANSCRIPT_LIMIT_KEY}=8M", text)
+            self.assertIn(f"{settings.TRANSCRIPT_TOTAL_KEY}=20G", text)
+            self.assertIn(f"{settings.TRANSCRIPT_ARCHIVE_KEY}=10G", text)
 
     def test_transcript_values_are_validated_not_coerced(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -253,6 +261,8 @@ class SharedSettingsTests(unittest.TestCase):
                 str(ROOT / "kilix-settings"),
                 "--set", "transcript=off",
                 "--set", "transcript_size=32M",
+                "--set", "transcript_total=10G",
+                "--set", "transcript_archive=5G",
                 "--set", "log_graphics=keep",
                 "--print",
             ], env=env, text=True, capture_output=True, check=True)
@@ -261,6 +271,10 @@ class SharedSettingsTests(unittest.TestCase):
                 f"{settings.TRANSCRIPT_LIMIT_KEY}=32M", result.stdout)
             self.assertIn(
                 f"{settings.TRANSCRIPT_GRAPHICS_KEY}=keep", result.stdout)
+            self.assertIn(
+                f"{settings.TRANSCRIPT_TOTAL_KEY}=10G", result.stdout)
+            self.assertIn(
+                f"{settings.TRANSCRIPT_ARCHIVE_KEY}=5G", result.stdout)
             self.assertFalse(settings.transcript_enabled(str(path)))
 
             rejected = subprocess.run([
@@ -270,8 +284,8 @@ class SharedSettingsTests(unittest.TestCase):
             self.assertIn("transcript size must be one of", rejected.stderr)
 
     def test_disable_all_leaves_qualifier_choices_valid(self):
-        # KILIX_TRANSCRIPT is the off switch; its two qualifiers have no "off"
-        # member and must not be written with one.
+        # KILIX_TRANSCRIPT is the main off switch. Qualifiers without an "off"
+        # member retain valid defaults; the optional older tier may become off.
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.conf"
             env = dict(os.environ)
@@ -284,6 +298,10 @@ class SharedSettingsTests(unittest.TestCase):
                 f"{settings.TRANSCRIPT_GRAPHICS_KEY}=elide", path.read_text())
             self.assertIn(
                 f"{settings.TRANSCRIPT_LIMIT_KEY}=8M", path.read_text())
+            self.assertIn(
+                f"{settings.TRANSCRIPT_TOTAL_KEY}=20G", path.read_text())
+            self.assertIn(
+                f"{settings.TRANSCRIPT_ARCHIVE_KEY}=off", path.read_text())
 
     def test_tui_section_aliases_track_real_section_order(self):
         module = _load_settings_tui()
@@ -372,7 +390,7 @@ class SharedSettingsTests(unittest.TestCase):
             path = Path(tmp) / "settings.conf"
             with mock.patch.dict(os.environ, {
                     "GPU_TERMINAL_SETTINGS_FILE": str(path),
-                    "KITTY_PID": ""}, clear=False):
+                    "KITTY_PID": ""}, clear=True):
                 screen = FakeScreen([ord("n"), ord("s"), ord("q")])
                 self.assertEqual(tui._run_tui(screen, "games"), 0)
 
@@ -396,7 +414,7 @@ class SharedSettingsTests(unittest.TestCase):
             path = Path(tmp) / "settings.conf"
             with mock.patch.dict(os.environ, {
                     "GPU_TERMINAL_SETTINGS_FILE": str(path),
-                    "KITTY_PID": ""}, clear=False):
+                    "KITTY_PID": ""}, clear=True):
                 screen = FakeScreen([ord("j"), ord(" "), ord("s"), ord("q")])
                 self.assertEqual(tui._run_tui(screen, "top-bar"), 0)
 
@@ -407,7 +425,7 @@ class SharedSettingsTests(unittest.TestCase):
             self.assertFalse(settings.enabled(
                 "KILIX_CHROME_TEMPERATURE", str(path)))
             first_frame = "\n".join(item[2] for item in screen.frames[0])
-            self.assertIn("Top bar: 5/6 enabled", first_frame)
+            self.assertIn("Top bar: 6/7 enabled", first_frame)
             self.assertIn("Thermal status", first_frame)
             self.assertIn("Volume", first_frame)
 
@@ -492,6 +510,145 @@ class SharedSettingsTests(unittest.TestCase):
         launcher = (ROOT / "kilix").read_text()
         self.assertIn(
             '"$KILIX_HOME/kilix-settings" --section games', launcher)
+
+
+class TranscriptBudgetTests(unittest.TestCase):
+    """The directory-level budgets that bound session logging over time.
+
+    The per-pane cap bounds one file; without these a long-running kiosk grows
+    without limit, because panes come and go and nothing reclaims a dead pane's
+    log.
+    """
+
+    def test_defaults_are_written_and_readable_as_bytes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.conf"
+            settings.ensure_file(str(path))
+            text = path.read_text()
+            self.assertIn(
+                f"{settings.TRANSCRIPT_TOTAL_KEY}="
+                f"{settings.TRANSCRIPT_TOTAL_DEFAULT}", text)
+            self.assertIn(
+                f"{settings.TRANSCRIPT_ARCHIVE_KEY}="
+                f"{settings.TRANSCRIPT_ARCHIVE_DEFAULT}", text)
+            self.assertEqual(
+                settings.transcript_total(str(path)), 20 * 1024 ** 3)
+            self.assertEqual(
+                settings.transcript_archive_total(str(path)), 10 * 1024 ** 3)
+
+    def test_archive_off_reports_zero_so_logs_are_deleted_not_kept(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.conf"
+            settings.update({settings.TRANSCRIPT_ARCHIVE_KEY: "off"}, str(path))
+            self.assertEqual(settings.transcript_archive_total(str(path)), 0)
+
+    def test_unknown_budget_is_rejected_rather_than_silently_defaulted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.conf"
+            with self.assertRaises(ValueError):
+                settings.update({settings.TRANSCRIPT_TOTAL_KEY: "7G"}, str(path))
+            with self.assertRaises(ValueError):
+                settings.update(
+                    {settings.TRANSCRIPT_ARCHIVE_KEY: "nonsense"}, str(path))
+
+    def test_a_corrupt_value_reads_back_as_the_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.conf"
+            path.write_text(f"{settings.TRANSCRIPT_TOTAL_KEY}=banana\n")
+            self.assertEqual(
+                settings.transcript_total(str(path)), 20 * 1024 ** 3)
+
+    def test_cli_accepts_tokens_raw_bytes_and_off(self):
+        tui = _load_settings_tui()
+        self.assertEqual(
+            tui._parse_assignment("transcript_total=10G"),
+            (settings.TRANSCRIPT_TOTAL_KEY, "10G"))
+        # A scripted caller need not know which spelling the file uses.
+        self.assertEqual(
+            tui._parse_assignment(f"transcript_total={20 * 1024 ** 3}"),
+            (settings.TRANSCRIPT_TOTAL_KEY, "20G"))
+        self.assertEqual(
+            tui._parse_assignment("transcript_archive=off"),
+            (settings.TRANSCRIPT_ARCHIVE_KEY, "off"))
+        with self.assertRaises(argparse.ArgumentTypeError):
+            tui._parse_assignment("transcript_total=7G")
+
+    def test_tui_session_logging_section_exposes_both_budgets(self):
+        tui = _load_settings_tui()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.conf"
+            with mock.patch.dict(os.environ, {
+                    "GPU_TERMINAL_SETTINGS_FILE": str(path),
+                    "KITTY_PID": ""}, clear=False):
+                screen = FakeScreen([ord("q")])
+                tui._run_tui(screen, "session-logging")
+            frame = "\n".join(item[2] for item in screen.frames[0])
+            self.assertIn("Recent logs (zstd -3)", frame)
+            self.assertIn("Older logs (zstd -9)", frame)
+
+    def test_launcher_reaps_for_the_frontend_lifetime(self):
+        launcher = (ROOT / "kilix").read_text()
+        self.assertIn("_kilix_transcript_reap_periodically()", launcher)
+        self.assertIn('while kill -0 "$frontend_pid"', launcher)
+        self.assertIn('flock -n 9', launcher)
+
+
+class TranscriptArchiveIntegrationTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("zstd"), "zstd is required")
+    def test_dead_log_moves_through_both_tiers_and_reads_back(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            gpu_home = Path(tmp) / "gpu"
+            transcript_dir = gpu_home / "kilix" / "state" / "transcripts"
+            transcript_dir.mkdir(parents=True, mode=0o700)
+            source = transcript_dir / "dead-session.log"
+            payload = b"first line\nsecond line\n" * 128
+            source.write_bytes(payload)
+            source.chmod(0o600)
+
+            env = {
+                key: value for key, value in os.environ.items()
+                if not key.startswith(("KILIX", "GPU_TERMINAL"))
+            }
+            env["GPU_TERMINAL_HOME"] = str(gpu_home)
+            env["GPU_TERMINAL_SOURCE_HOME"] = str(ROOT.parent)
+            command = [str(ROOT / "kilix"), "transcript"]
+
+            subprocess.run(
+                command + ["prune"], env=env, capture_output=True, check=True)
+            recent = transcript_dir / "recent" / "dead-session.log.zst"
+            self.assertFalse(source.exists())
+            self.assertTrue(recent.is_file())
+            self.assertEqual(
+                subprocess.run(
+                    command + ["show", "dead-session"], env=env,
+                    capture_output=True, check=True,
+                ).stdout,
+                payload,
+            )
+            self.assertEqual(
+                subprocess.run(
+                    command + ["path", "dead-session"], env=env,
+                    text=True, capture_output=True, check=True,
+                ).stdout.strip(),
+                str(recent),
+            )
+
+            subprocess.run(
+                command + ["archive"], env=env, capture_output=True, check=True)
+            older = transcript_dir / "archive" / "dead-session.log.zst"
+            self.assertFalse(recent.exists())
+            self.assertTrue(older.is_file())
+            self.assertEqual(stat.S_IMODE(older.stat().st_mode), 0o600)
+            self.assertEqual(
+                subprocess.run(
+                    command + ["show", "dead-session"], env=env,
+                    capture_output=True, check=True,
+                ).stdout,
+                payload,
+            )
+            listing = subprocess.run(
+                command, env=env, text=True, capture_output=True, check=True)
+            self.assertIn("dead-session.log.zst [older]", listing.stdout)
 
 
 if __name__ == "__main__":

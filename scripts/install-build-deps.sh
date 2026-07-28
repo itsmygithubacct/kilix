@@ -3,8 +3,9 @@
 #
 # The prebuilt engine (bootstrap.sh) needs only git/curl/tar. This script adds
 # what the *clickable-chrome fork build* (kilix --build) and the pixel desktop
-# need: a C toolchain, Go, kitty's X11 dev libraries, Python + Pillow, and
-# kilix-amp's SDL/libsndfile/FluidSynth build/runtime libraries.
+# need: a C toolchain, Go, kitty's X11 dev libraries, Python + Pillow, zstd for
+# bounded session-log storage, and kilix-amp's SDL/libsndfile/FluidSynth
+# build/runtime libraries.
 #
 # Distro backends, auto-detected (system-wide, uses sudo):
 #   Fedora/RHEL  : dnf, via pkgconfig(...) virtual provides
@@ -85,7 +86,7 @@ verify() {
       echo "   pkg-config $m: MISSING"; ok=0
     fi
   done
-  for tool in gcc make pkg-config git curl; do
+  for tool in gcc make pkg-config git curl zstd; do
     if command -v "$tool" >/dev/null 2>&1; then
       echo "   $tool: $(command -v "$tool")"
     else
@@ -158,7 +159,7 @@ ensure_go_toolchain() {
 
 # ---- per-distro installs -----------------------------------------------------
 fedora_install() {
-  local pc pkgs="gcc make pkgconf-pkg-config git curl golang python3 python3-devel python3-pillow simde-devel wayland-devel wayland-protocols-devel SDL2-devel SDL2_image-devel libsndfile-devel zlib-devel fluidsynth fluidsynth-devel fluid-soundfont-gm"
+  local pc pkgs="gcc make pkgconf-pkg-config git curl zstd golang python3 python3-devel python3-pillow simde-devel wayland-devel wayland-protocols-devel SDL2-devel SDL2_image-devel libsndfile-devel zlib-devel fluidsynth fluidsynth-devel fluid-soundfont-gm"
   local -a packages
   for pc in $PC_DEPS; do pkgs="$pkgs pkgconfig($pc)"; done
   echo "==> Fedora/RHEL detected — installing system-wide via dnf"
@@ -167,7 +168,7 @@ fedora_install() {
 }
 
 debian_install() {
-  local pkgs="build-essential pkg-config git curl golang-go python3 python3-dev python3-pil \
+  local pkgs="build-essential pkg-config git curl zstd golang-go python3 python3-dev python3-pil \
     libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxkbcommon-dev \
     libxkbcommon-x11-dev libx11-xcb-dev libdbus-1-dev libgl1-mesa-dev libfontconfig-dev \
     libpng-dev liblcms2-dev libcairo2-dev libharfbuzz-dev libssl-dev libxxhash-dev \
@@ -181,7 +182,7 @@ debian_install() {
 }
 
 arch_install() {
-  local pkgs="base-devel pkgconf git curl go python python-pillow \
+  local pkgs="base-devel pkgconf git curl zstd go python python-pillow \
     libx11 libxrandr libxinerama libxcursor libxi libxkbcommon mesa dbus fontconfig \
     libpng lcms2 cairo harfbuzz openssl xxhash simde wayland wayland-protocols \
     sdl2 sdl2_image libsndfile zlib fluidsynth soundfont-fluid"
@@ -192,7 +193,7 @@ arch_install() {
 }
 
 suse_install() {
-  local pkgs="gcc make pkg-config git curl go python3 python3-devel python3-Pillow \
+  local pkgs="gcc make pkg-config git curl zstd go python3 python3-devel python3-Pillow \
     libX11-devel libXrandr-devel libXinerama-devel libXcursor-devel libXi-devel \
     libxkbcommon-devel libxkbcommon-x11-devel dbus-1-devel Mesa-libGL-devel fontconfig-devel \
     libpng16-devel liblcms2-devel cairo-devel harfbuzz-devel libopenssl-devel libxxhash-devel \
@@ -217,7 +218,7 @@ elif command -v zypper >/dev/null 2>&1; then
   suse_install
 else
   log "unsupported distro — need one of: dnf, apt-get, pacman, zypper."
-  log "install manually: a C compiler, make, pkg-config, Go, git, curl,"
+  log "install manually: a C compiler, make, pkg-config, Go, git, curl, zstd,"
   log "Python 3 + Pillow, and the dev libs for: $PC_DEPS $AMP_PC_DEPS"
   exit 1
 fi

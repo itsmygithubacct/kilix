@@ -37,7 +37,10 @@ preservation so long-running terminals survive a rebuild. It also turns on
 that owns each pane's PTY records that pane's output to a bounded, private
 transcript, with kitty graphics payloads elided so a pixel desktop cannot flood
 the log. SDK 1.5 adds the shared session-logging settings contract used by both
-desktop providers. Release tags for this
+desktop providers, including the two directory budgets that bound the
+transcript tree: dead-pane logs are compressed promptly, older ones are
+recompressed more densely, and history is dropped only when both budgets are
+full. Release tags for this
 repository are created only by the coordinated release procedure — see
 Plebian-OS's [RELEASING.md](https://github.com/itsmygithubacct/plebian-os/blob/main/RELEASING.md).
 
@@ -144,14 +147,31 @@ whose frontend crashed. Logs live in `~/.local/gpu_terminal/kilix/state/transcri
 as `<session-id>.log`, mode `0600`, one per pane.
 
 ```bash
-kilix transcript                  # newest-first index of recorded panes
+kilix transcript                  # newest-first index, live and archived
 kilix transcript show <session>   # write one transcript to stdout
 kilix transcript path             # print the directory
-kilix transcript prune            # delete logs the broker no longer tracks
+kilix transcript prune            # apply the size budgets now
+kilix transcript archive          # move dead logs into the denser older tier
 ```
 
 Each log is bounded (8 MiB by default); on overflow the newest three quarters
 are kept and the oldest bytes are dropped, so a busy pane cannot fill the disk.
+
+That cap bounds one file, so the **directory** has its own two budgets. A log is
+plain only while its pane is live. Within a minute after the pane exits, the log
+is compressed with `zstd -3` into
+`transcripts/recent/<session-id>.log.zst`; the recent tier is 20 GiB by default.
+When that tier fills, the oldest transcripts are recompressed with `zstd -9`
+into `transcripts/archive/<session-id>.log.zst`, up to a second 10 GiB budget.
+Only when both tiers are full are the oldest archives dropped. A live pane's log
+is never touched — the broker holds that descriptor. The budgets are enforced
+periodically while the Kilix frontend runs, and on demand with `prune`. Set the
+older tier to `off` for a hard ceiling at the recent-tier budget.
+
+Reading an archived transcript is the same command: `kilix transcript show`
+decompresses transparently, and `kilix transcript path` resolves to whichever
+tier a session ended up in, so nothing needs to know where a log lives. Archiving
+is lossless — an archived transcript reads back byte-for-byte identical.
 Kitty **graphics payloads are elided** by default — a pane running Kilix 95,
 `browse`, `run`, or `icat` emits base64 pixel data at megabytes per second, and
 recording it verbatim would evict every readable line within seconds. The log
@@ -194,6 +214,8 @@ explicitly confirmed termination action.
   Plebian-OS install it; standalone Kilix shows an explanatory error if it is
   unavailable.
   It's a GUI terminal; it won't run headless / over plain SSH.
+- **`zstd`** for compressing dead-pane transcripts and enforcing their
+  directory budgets. The dependency installer below includes it.
 - **To run the prebuilt kitty** (no buttons): `git`, `curl`, `tar`.
 - **To build the fork** (the buttons): **Go ≥ 1.26**, **Python ≥ 3.12**, a C compiler, `pkg-config`, and
   kitty's build deps — `x11 xrandr xinerama xcursor xi xkbcommon xkbcommon-x11

@@ -36,6 +36,9 @@ TOP_BAR_TOGGLES = (
     ToggleSpec("KILIX_CHROME_CALENDAR", "Calendar", "Top bar"),
     ToggleSpec("KILIX_CHROME_CLOCK", "Date and time", "Top bar"),
     ToggleSpec("KILIX_CHROME_BATTERY", "Battery", "Top bar"),
+    # Only takes effect in a Pleb session, where the tab bar is the desktop's
+    # only taskbar. An ordinary desktop already has a panel of its own.
+    ToggleSpec("KILIX_CHROME_WINDOWS", "Native window taskbar (Pleb)", "Top bar"),
 )
 
 PANE_BUTTON_TOGGLES = (
@@ -119,11 +122,36 @@ TRANSCRIPT_LIMIT_KEY = "KILIX_TRANSCRIPT_MAX_SIZE"
 TRANSCRIPT_LIMIT_DEFAULT = "8M"
 TRANSCRIPT_LIMIT_CHOICES = ("2M", "8M", "32M", "128M")
 
+# The per-pane cap above bounds one file; these bound the directory. Without
+# them a long-running kiosk grows without limit, because panes come and go and
+# nothing reclaims a dead pane's log.
+#
+# Every stored transcript is compressed. A pane's log is written plain while the
+# pane lives — the broker appends to it and drops the oldest bytes on overflow,
+# neither of which works on a compressed stream — and is compressed with
+# zstd -3 after the pane dies. Terminal output stores at roughly a
+# sixtieth of its size at that level, and decompression is about half a second
+# per 400 MB, so reading a recent transcript is effectively free.
+TRANSCRIPT_TOTAL_KEY = "KILIX_TRANSCRIPT_MAX_TOTAL"
+TRANSCRIPT_TOTAL_DEFAULT = "20G"
+TRANSCRIPT_TOTAL_CHOICES = ("1G", "5G", "10G", "20G", "50G", "100G")
+
+# Past that budget the oldest are recompressed at zstd -9, which reaches about
+# 116x for roughly three seconds of CPU per 400 MB. Level costs compression
+# time, not recall: -9 and -19 both decompress in well under a second, the same
+# as -3, so a denser older tier is not a slower one. ``off`` deletes instead of
+# recompressing, for operators who want a hard ceiling and no history.
+TRANSCRIPT_ARCHIVE_KEY = "KILIX_TRANSCRIPT_ARCHIVE_MAX_TOTAL"
+TRANSCRIPT_ARCHIVE_DEFAULT = "10G"
+TRANSCRIPT_ARCHIVE_CHOICES = ("off", "1G", "5G", "10G", "20G", "50G", "100G")
+
 MANAGED_KEYS = tuple(spec.key for spec in TOGGLE_SPECS) + (
     CLOCK_FORMAT_KEY,
     PANE_MEMORY_MODE_KEY,
     TRANSCRIPT_GRAPHICS_KEY,
     TRANSCRIPT_LIMIT_KEY,
+    TRANSCRIPT_TOTAL_KEY,
+    TRANSCRIPT_ARCHIVE_KEY,
 )
 
 _ASSIGNMENT = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
@@ -172,6 +200,8 @@ def defaults(*, migrate_environment: bool = False) -> dict[str, str]:
     values[PANE_MEMORY_MODE_KEY] = PANE_MEMORY_MODE_DEFAULT
     values[TRANSCRIPT_GRAPHICS_KEY] = TRANSCRIPT_GRAPHICS_DEFAULT
     values[TRANSCRIPT_LIMIT_KEY] = TRANSCRIPT_LIMIT_DEFAULT
+    values[TRANSCRIPT_TOTAL_KEY] = TRANSCRIPT_TOTAL_DEFAULT
+    values[TRANSCRIPT_ARCHIVE_KEY] = TRANSCRIPT_ARCHIVE_DEFAULT
     if migrate_environment:
         # Clock and battery were historically stored in kilix.env.  On the
         # first shared-file creation, preserve those effective preferences.
@@ -231,6 +261,8 @@ def _initial_text(values: Mapping[str, str]) -> str:
         lines.append(f"{spec.key}={values[spec.key]}")
     lines.append(f"{TRANSCRIPT_GRAPHICS_KEY}={values[TRANSCRIPT_GRAPHICS_KEY]}")
     lines.append(f"{TRANSCRIPT_LIMIT_KEY}={values[TRANSCRIPT_LIMIT_KEY]}")
+    lines.append(f"{TRANSCRIPT_TOTAL_KEY}={values[TRANSCRIPT_TOTAL_KEY]}")
+    lines.append(f"{TRANSCRIPT_ARCHIVE_KEY}={values[TRANSCRIPT_ARCHIVE_KEY]}")
     lines.extend(("", GAMES_MARKER))
     for spec in GAME_TOGGLES:
         lines.append(f"{spec.key}={values[spec.key]}")
@@ -322,6 +354,19 @@ def update(changes: Mapping[str, object], path: str | None = None) -> str:
                 choices = ", ".join(TRANSCRIPT_LIMIT_CHOICES)
                 raise ValueError(
                     f"{TRANSCRIPT_LIMIT_KEY} must be one of: {choices}")
+        elif key == TRANSCRIPT_TOTAL_KEY:
+            value = str(raw_value).strip().upper()
+            if value not in TRANSCRIPT_TOTAL_CHOICES:
+                choices = ", ".join(TRANSCRIPT_TOTAL_CHOICES)
+                raise ValueError(
+                    f"{TRANSCRIPT_TOTAL_KEY} must be one of: {choices}")
+        elif key == TRANSCRIPT_ARCHIVE_KEY:
+            value = str(raw_value).strip()
+            value = "off" if value.lower() == "off" else value.upper()
+            if value not in TRANSCRIPT_ARCHIVE_CHOICES:
+                choices = ", ".join(TRANSCRIPT_ARCHIVE_CHOICES)
+                raise ValueError(
+                    f"{TRANSCRIPT_ARCHIVE_KEY} must be one of: {choices}")
         else:
             value = str(raw_value) or CLOCK_FORMAT_DEFAULT
         text = _set_value(text, key, value)
@@ -381,7 +426,39 @@ def transcript_limit(path: str | None = None) -> int:
         TRANSCRIPT_LIMIT_KEY, TRANSCRIPT_LIMIT_DEFAULT).strip().upper()
     if value not in TRANSCRIPT_LIMIT_CHOICES:
         value = TRANSCRIPT_LIMIT_DEFAULT
-    return int(value.removesuffix("M")) * 1024 * 1024
+    return _size_bytes(value)
+
+
+def _size_bytes(token: str) -> int:
+    """Convert a settings size token such as ``8M`` or ``20G`` to bytes."""
+    token = token.strip().upper()
+    for suffix, scale in (("G", 1024 ** 3), ("M", 1024 ** 2), ("K", 1024)):
+        if token.endswith(suffix):
+            return int(token.removesuffix(suffix)) * scale
+    return int(token)
+
+
+def transcript_total(path: str | None = None) -> int:
+    """Return the recent zstd -3 transcript-tier budget in bytes."""
+    value = load(path).get(
+        TRANSCRIPT_TOTAL_KEY, TRANSCRIPT_TOTAL_DEFAULT).strip().upper()
+    if value not in TRANSCRIPT_TOTAL_CHOICES:
+        value = TRANSCRIPT_TOTAL_DEFAULT
+    return _size_bytes(value)
+
+
+def transcript_archive_total(path: str | None = None) -> int:
+    """Return the older zstd -9 tier budget; ``0`` disables that tier.
+
+    ``off`` means a transcript leaving the recent tier is deleted instead of
+    recompressed, giving the transcript tree a hard recent-tier ceiling.
+    """
+    value = load(path).get(
+        TRANSCRIPT_ARCHIVE_KEY, TRANSCRIPT_ARCHIVE_DEFAULT).strip()
+    value = "off" if value.lower() == "off" else value.upper()
+    if value not in TRANSCRIPT_ARCHIVE_CHOICES:
+        value = TRANSCRIPT_ARCHIVE_DEFAULT
+    return 0 if value == "off" else _size_bytes(value)
 
 
 __all__ = [
@@ -398,9 +475,23 @@ __all__ = [
     "PANE_MEMORY_MODE_DEFAULT",
     "PANE_MEMORY_MODE_KEY",
     "SETTINGS_BASENAME",
+    "SESSION_LOG_MARKER",
+    "SESSION_LOG_TOGGLES",
     "TOGGLE_BY_KEY",
     "TOGGLE_SPECS",
     "TOP_BAR_TOGGLES",
+    "TRANSCRIPT_ARCHIVE_CHOICES",
+    "TRANSCRIPT_ARCHIVE_DEFAULT",
+    "TRANSCRIPT_ARCHIVE_KEY",
+    "TRANSCRIPT_GRAPHICS_CHOICES",
+    "TRANSCRIPT_GRAPHICS_DEFAULT",
+    "TRANSCRIPT_GRAPHICS_KEY",
+    "TRANSCRIPT_LIMIT_CHOICES",
+    "TRANSCRIPT_LIMIT_DEFAULT",
+    "TRANSCRIPT_LIMIT_KEY",
+    "TRANSCRIPT_TOTAL_CHOICES",
+    "TRANSCRIPT_TOTAL_DEFAULT",
+    "TRANSCRIPT_TOTAL_KEY",
     "ToggleSpec",
     "defaults",
     "enabled",
@@ -412,6 +503,11 @@ __all__ = [
     "parse_text",
     "read_text",
     "settings_path",
+    "transcript_archive_total",
+    "transcript_enabled",
+    "transcript_graphics",
+    "transcript_limit",
+    "transcript_total",
     "truthy",
     "update",
 ]

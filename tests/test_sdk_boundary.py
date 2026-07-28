@@ -58,12 +58,19 @@ class KilixSdkBoundaryTests(unittest.TestCase):
             "TRANSCRIPT_GRAPHICS_KEY", "TRANSCRIPT_GRAPHICS_CHOICES",
             "TRANSCRIPT_GRAPHICS_DEFAULT", "TRANSCRIPT_LIMIT_KEY",
             "TRANSCRIPT_LIMIT_CHOICES", "TRANSCRIPT_LIMIT_DEFAULT",
+            "TRANSCRIPT_TOTAL_KEY", "TRANSCRIPT_TOTAL_CHOICES",
+            "TRANSCRIPT_TOTAL_DEFAULT", "TRANSCRIPT_ARCHIVE_KEY",
+            "TRANSCRIPT_ARCHIVE_CHOICES", "TRANSCRIPT_ARCHIVE_DEFAULT",
             "transcript_enabled", "transcript_graphics", "transcript_limit",
+            "transcript_total", "transcript_archive_total",
         ):
             self.assertTrue(hasattr(settings, name), name)
+            self.assertIn(name, settings.__all__)
         self.assertIn("KILIX_TRANSCRIPT", settings.TOGGLE_BY_KEY)
         self.assertIn(settings.TRANSCRIPT_GRAPHICS_KEY, settings.MANAGED_KEYS)
         self.assertIn(settings.TRANSCRIPT_LIMIT_KEY, settings.MANAGED_KEYS)
+        self.assertIn(settings.TRANSCRIPT_TOTAL_KEY, settings.MANAGED_KEYS)
+        self.assertIn(settings.TRANSCRIPT_ARCHIVE_KEY, settings.MANAGED_KEYS)
 
     def test_content_exposes_pinned_catalog_contract(self):
         catalog = content.default_catalog()

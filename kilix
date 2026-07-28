@@ -109,11 +109,13 @@ _kilix_ensure_private_directory() {
   }
 }
 
-# Read the three session-logging values in one interpreter start rather than
-# one per value, so an ordinary launch pays for Python only once.
+# Read the session-logging values in one interpreter start rather than one per
+# value, so an ordinary launch pays for Python only once.
 _KILIX_TRANSCRIPT_ENABLED=0
 _KILIX_TRANSCRIPT_LIMIT=8388608
 _KILIX_TRANSCRIPT_GRAPHICS=elide
+_KILIX_TRANSCRIPT_TOTAL=21474836480
+_KILIX_TRANSCRIPT_ARCHIVE=10737418240
 _kilix_read_transcript_config() {
   local line
   while IFS= read -r line; do
@@ -121,6 +123,8 @@ _kilix_read_transcript_config() {
       enabled=*)  _KILIX_TRANSCRIPT_ENABLED="${line#enabled=}" ;;
       limit=*)    _KILIX_TRANSCRIPT_LIMIT="${line#limit=}" ;;
       graphics=*) _KILIX_TRANSCRIPT_GRAPHICS="${line#graphics=}" ;;
+      total=*)    _KILIX_TRANSCRIPT_TOTAL="${line#total=}" ;;
+      archive=*)  _KILIX_TRANSCRIPT_ARCHIVE="${line#archive=}" ;;
     esac
   done < <(python3 -c "
 import sys
@@ -129,7 +133,153 @@ from kilix_sdk import settings
 print('enabled=%d' % (1 if settings.transcript_enabled() else 0))
 print('limit=%d' % settings.transcript_limit())
 print('graphics=%s' % settings.transcript_graphics())
+print('total=%d' % settings.transcript_total())
+print('archive=%d' % settings.transcript_archive_total())
 " 2>/dev/null)
+}
+
+# Session IDs the broker still owns. A live pane's log is never compressed or
+# removed, because the broker holds the descriptor and would keep writing to a
+# file that no longer has a name.
+_kilix_transcript_live_ids() {
+  local broker
+  if [ -n "${KITTY_PTY_BROKER_EXECUTABLE:-}" ] \
+       && [ -x "$KITTY_PTY_BROKER_EXECUTABLE" ]; then
+    broker="$KITTY_PTY_BROKER_EXECUTABLE"
+  else
+    broker="$("$KILIX_HOME/scripts/build-pty-broker.sh" --print-path 2>/dev/null)" \
+      && [ -x "$broker" ] || return 1
+  fi
+  "$broker" --runtime-dir "$KILIX_SESSION_HOME/pty-broker" list --json 2>/dev/null \
+    | python3 -c 'import json,sys
+try:
+    print("\n".join(str(i.get("id", "")) for i in json.load(sys.stdin)))
+except Exception:
+    raise SystemExit(1)' 2>/dev/null
+}
+
+# Enforce the directory budgets. Three tiers: a pane's log is plain only while
+# the pane lives, becomes a zstd -3 file as soon as the pane dies, and is
+# recompressed at zstd -9 once the recent budget fills. Level costs compression
+# time rather than recall -- every level decompresses in well under a second --
+# so the denser older tier is not a slower one to read.
+_kilix_transcript_reap() (
+  local dir="$1" recent_budget="$2" archive_budget="$3" quiet="${4:-0}"
+  [ -d "$dir" ] || return 0
+  local recent="$dir/recent" archive="$dir/archive"
+  local live compressed=0 moved=0 removed=0 errors=0 used file size name tmp
+  command -v flock >/dev/null 2>&1 || {
+    [ "$quiet" = 1 ] || echo "kilix: flock is required to prune transcripts" >&2
+    return 0
+  }
+  exec 9>"$KILIX_STATE_DIRECTORY/transcript-reaper.lock" || return 0
+  chmod 0600 "$KILIX_STATE_DIRECTORY/transcript-reaper.lock" 2>/dev/null || return 0
+  if ! flock -n 9; then
+    [ "$quiet" = 1 ] || echo "kilix: another transcript pass is already running"
+    return 0
+  fi
+  if ! live="$(_kilix_transcript_live_ids)"; then
+    [ "$quiet" = 1 ] \
+      || echo "kilix: could not identify live panes; transcripts were left unchanged" >&2
+    return 0
+  fi
+  command -v zstd >/dev/null 2>&1 || {
+    [ "$quiet" = 1 ] || echo "zstd is not installed; transcripts are not bounded" >&2
+    return 0
+  }
+
+  # 1. Every dead pane's log becomes a compressed one immediately, so nothing
+  #    is ever stored uncompressed for longer than the pane's own lifetime.
+  mkdir -p "$recent" && chmod 700 "$recent" 2>/dev/null
+  for file in "$dir"/*.log; do
+    [ -f "$file" ] || continue
+    name="${file##*/}"; name="${name%.log}"
+    printf '%s\n' "$live" | grep -qxF "$name" && continue
+    # An automatic pass gives a brand-new file time to appear in the broker's
+    # live-session index before deciding it is dead. Explicit prune/archive
+    # commands have already asked the broker synchronously and need no delay.
+    if [ "$quiet" = 1 ] \
+         && find "$file" -mmin -1 -print -quit 2>/dev/null | grep -q .; then
+      continue
+    fi
+    tmp=""
+    if tmp="$(mktemp "$recent/.$name.log.zst.XXXXXX")" \
+         && zstd -3 -q -f -o "$tmp" "$file" 2>/dev/null \
+         && chmod 0600 "$tmp" \
+         && mv -f -- "$tmp" "$recent/$name.log.zst"; then
+      if rm -f -- "$file"; then
+        compressed=$((compressed + 1))
+      else
+        errors=$((errors + 1))
+      fi
+    else
+      [ -z "$tmp" ] || rm -f -- "$tmp"
+      errors=$((errors + 1))
+    fi
+  done
+
+  # 2. Over the recent budget, recompress oldest-first into the denser tier.
+  used=$(find "$recent" -maxdepth 1 -type f -name '*.log.zst' -printf '%s\n' \
+    2>/dev/null | awk '{s+=$1} END {print s+0}')
+  if [ "$used" -gt "$recent_budget" ]; then
+    mkdir -p "$archive" && chmod 700 "$archive" 2>/dev/null
+    while IFS= read -r file; do
+      [ "$used" -gt "$recent_budget" ] || break
+      [ -n "$file" ] || break
+      name="${file##*/}"; name="${name%.log.zst}"
+      size=$(stat -c%s "$file" 2>/dev/null || echo 0)
+      if [ "$archive_budget" -eq 0 ]; then
+        rm -f -- "$file" && removed=$((removed + 1))
+        used=$((used - size))
+      else
+        tmp=""
+        if tmp="$(mktemp "$archive/.$name.log.zst.XXXXXX")" \
+             && zstd -dcq -- "$file" 2>/dev/null \
+                | zstd -9 -q -f -o "$tmp" 2>/dev/null \
+             && chmod 0600 "$tmp" \
+             && touch -r "$file" "$tmp" \
+             && mv -f -- "$tmp" "$archive/$name.log.zst"; then
+          if rm -f -- "$file"; then
+            moved=$((moved + 1))
+            used=$((used - size))
+          else
+            errors=$((errors + 1))
+          fi
+        else
+          [ -z "$tmp" ] || rm -f -- "$tmp"
+          errors=$((errors + 1))
+        fi
+      fi
+    done < <(find "$recent" -maxdepth 1 -type f -name '*.log.zst' -printf '%T@ %p\n' \
+      2>/dev/null | sort -n | cut -d' ' -f2-)
+  fi
+
+  # 3. Over the older budget too, the oldest history is dropped.
+  if [ -d "$archive" ]; then
+    used=$(find "$archive" -maxdepth 1 -type f -name '*.log.zst' -printf '%s\n' \
+      2>/dev/null | awk '{s+=$1} END {print s+0}')
+    while [ "$used" -gt "$archive_budget" ]; do
+      file="$(find "$archive" -maxdepth 1 -type f -name '*.log.zst' -printf '%T@ %p\n' \
+        2>/dev/null | sort -n | head -1 | cut -d' ' -f2-)"
+      [ -n "$file" ] || break
+      size=$(stat -c%s "$file" 2>/dev/null || echo 0)
+      rm -f -- "$file" && removed=$((removed + 1))
+      used=$((used - size))
+    done
+  fi
+
+  [ "$quiet" = 1 ] \
+    || echo "compressed $compressed, recompressed $moved, removed $removed, errors $errors (live panes kept)"
+)
+
+_kilix_transcript_reap_periodically() {
+  local frontend_pid="$1" dir="$2"
+  while kill -0 "$frontend_pid" 2>/dev/null; do
+    _kilix_read_transcript_config
+    _kilix_transcript_reap "$dir" "$_KILIX_TRANSCRIPT_TOTAL" \
+      "$_KILIX_TRANSCRIPT_ARCHIVE" 1
+    sleep 60
+  done
 }
 
 _kilix_validate_private_storage_layout || exit 1
@@ -414,68 +564,92 @@ case "${1:-}" in
           echo "session logging: off — enable with '$_self settings --set transcript=on'"
         fi
         echo "directory: $_tr_dir"
+        _tr_used=$(find "$_tr_dir/recent" -maxdepth 1 -type f -name '*.log.zst' -printf '%s\n' \
+          2>/dev/null | awk '{s+=$1} END {print s+0}')
+        _tr_arc_used=$(find "$_tr_dir/archive" -maxdepth 1 -type f -name '*.log.zst' \
+          -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {print s+0}')
+        printf 'recent (zstd -3): %s of %s   older (zstd -9): %s of %s\n' \
+          "$(numfmt --to=iec --suffix=B "$_tr_used" 2>/dev/null || echo "$_tr_used")" \
+          "$(numfmt --to=iec --suffix=B "$_KILIX_TRANSCRIPT_TOTAL" 2>/dev/null || echo "$_KILIX_TRANSCRIPT_TOTAL")" \
+          "$(numfmt --to=iec --suffix=B "$_tr_arc_used" 2>/dev/null || echo "$_tr_arc_used")" \
+          "$([ "$_KILIX_TRANSCRIPT_ARCHIVE" -eq 0 ] && echo off || numfmt --to=iec --suffix=B "$_KILIX_TRANSCRIPT_ARCHIVE" 2>/dev/null)"
         [ -d "$_tr_dir" ] || { echo "(no transcripts yet)"; exit 0; }
-        # Newest first: the pane you just lost is the one you want.
-        find "$_tr_dir" -maxdepth 1 -type f -name '*.log' -printf '%T@ %s %p\n' \
-          2>/dev/null | sort -rn | while read -r _tr_time _tr_size _tr_path; do
-            printf '%s  %8s  %s\n' \
+        # Newest first: the pane you just lost is the one you want. Archived
+        # entries are listed alongside live ones so history stays discoverable.
+        { find "$_tr_dir" -maxdepth 1 -type f -name '*.log' -printf '%T@ %s %p [live]\n' 2>/dev/null
+          find "$_tr_dir/recent" -maxdepth 1 -type f -name '*.log.zst' \
+            -printf '%T@ %s %p [recent]\n' 2>/dev/null
+          find "$_tr_dir/archive" -maxdepth 1 -type f -name '*.log.zst' \
+            -printf '%T@ %s %p [older]\n' 2>/dev/null
+        } | sort -rn | while read -r _tr_time _tr_size _tr_path _tr_tag; do
+            printf '%s  %8s  %s %s\n' \
               "$(date -d "@${_tr_time%.*}" '+%Y-%m-%d %H:%M:%S')" \
               "$(numfmt --to=iec --suffix=B "$_tr_size" 2>/dev/null || echo "$_tr_size")" \
-              "${_tr_path##*/}"
+              "${_tr_path##*/}" "$_tr_tag"
           done
         exit 0 ;;
       path)
         [ $# -le 1 ] || { echo "usage: $_self transcript path [SESSION]" >&2; exit 2; }
-        if [ $# -eq 1 ]; then echo "$_tr_dir/${1%.log}.log"; else echo "$_tr_dir"; fi
+        if [ $# -eq 1 ]; then
+          _tr_name="${1%.log}"; _tr_name="${_tr_name%.log.zst}"
+          if [ -f "$_tr_dir/$_tr_name.log" ]; then echo "$_tr_dir/$_tr_name.log"
+          elif [ -f "$_tr_dir/recent/$_tr_name.log.zst" ]; then
+            echo "$_tr_dir/recent/$_tr_name.log.zst"
+          elif [ -f "$_tr_dir/archive/$_tr_name.log.zst" ]; then
+            echo "$_tr_dir/archive/$_tr_name.log.zst"
+          else echo "$_tr_dir/$_tr_name.log"; fi
+        else echo "$_tr_dir"; fi
         exit 0 ;;
       show|cat)
         [ $# -eq 1 ] || { echo "usage: $_self transcript show SESSION" >&2; exit 2; }
-        _tr_file="$_tr_dir/${1%.log}.log"
-        [ -f "$_tr_file" ] || {
-          echo "kilix: no such transcript: $_tr_file" >&2; exit 1
-        }
-        exec cat -- "$_tr_file" ;;
+        _tr_name="${1%.log}"; _tr_name="${_tr_name%.log.zst}"
+        _tr_file="$_tr_dir/$_tr_name.log"
+        # Reading an archived transcript is the same command; the caller should
+        # not have to know which tier a session ended up in.
+        if [ -f "$_tr_file" ]; then exec cat -- "$_tr_file"; fi
+        # One decompressor reads both compressed tiers; the level a transcript
+        # was stored at is not something the reader should have to know.
+        _tr_found=""
+        for _tr_candidate in "$_tr_dir/recent/$_tr_name.log.zst" \
+                             "$_tr_dir/archive/$_tr_name.log.zst"; do
+          if [ -f "$_tr_candidate" ]; then _tr_found="$_tr_candidate"; break; fi
+        done
+        if [ -n "$_tr_found" ]; then
+          command -v zstd >/dev/null 2>&1 || {
+            echo "kilix: $_tr_found needs zstd to read" >&2; exit 1
+          }
+          exec zstd -dcq -- "$_tr_found"
+        fi
+        echo "kilix: no such transcript: $_tr_name" >&2; exit 1 ;;
       prune)
         [ $# -eq 0 ] || { echo "usage: $_self transcript prune" >&2; exit 2; }
-        # Only sessions the broker no longer knows about are removable; a live
-        # pane's log is left alone so nothing is deleted out from under it.
-        _tr_live="$(
-          "$KILIX_HOME/scripts/build-pty-broker.sh" --print-path 2>/dev/null
-        )" && [ -x "$_tr_live" ] || _tr_live=""
-        _tr_ids=""
-        if [ -n "$_tr_live" ]; then
-          _tr_ids="$(
-            "$_tr_live" --runtime-dir "$KILIX_SESSION_HOME/pty-broker" list --json \
-              2>/dev/null | python3 -c 'import json,sys
-try:
-    print("\n".join(str(item.get("id", "")) for item in json.load(sys.stdin)))
-except Exception:
-    pass' 2>/dev/null
-          )"
-        fi
-        _tr_removed=0
-        [ -d "$_tr_dir" ] || { echo "removed 0 transcripts"; exit 0; }
-        for _tr_file in "$_tr_dir"/*.log; do
-          [ -f "$_tr_file" ] || continue
-          _tr_name="${_tr_file##*/}"
-          _tr_name="${_tr_name%.log}"
-          printf '%s\n' "$_tr_ids" | grep -qxF "$_tr_name" && continue
-          rm -f -- "$_tr_file" && _tr_removed=$((_tr_removed + 1))
-        done
-        echo "removed $_tr_removed transcripts (live sessions kept)"
+        # Enforce the configured budgets now instead of waiting for the next
+        # launch. A live pane's log is never touched.
+        _kilix_transcript_reap "$_tr_dir" "$_KILIX_TRANSCRIPT_TOTAL" \
+          "$_KILIX_TRANSCRIPT_ARCHIVE"
+        exit 0 ;;
+      archive)
+        # Compress every dead transcript regardless of the live budget, for
+        # reclaiming space on demand rather than waiting to cross it.
+        [ $# -eq 0 ] || { echo "usage: $_self transcript archive" >&2; exit 2; }
+        _kilix_transcript_reap "$_tr_dir" 0 "$_KILIX_TRANSCRIPT_ARCHIVE"
         exit 0 ;;
       -h|--help|help)
-        echo "usage: $_self transcript [list|show SESSION|path [SESSION]|prune]"
-        echo "  list   newest-first index of recorded pane logs (default)"
-        echo "  show   write one transcript to stdout"
-        echo "  path   print the transcript directory, or one session's file"
-        echo "  prune  delete logs for sessions the broker no longer tracks"
+        echo "usage: $_self transcript [list|show SESSION|path [SESSION]|prune|archive]"
+        echo "  list     newest-first index of recorded pane logs, live and archived"
+        echo "  show     write one transcript to stdout, decompressing if archived"
+        echo "  path     print the transcript directory, or one session's file"
+        echo "  prune    apply the configured size budgets now"
+        echo "  archive  recompress everything into the denser older tier"
+        echo
+        echo "A dead pane log is compressed after exit (zstd -3) up to"
+        echo "$_KILIX_TRANSCRIPT_TOTAL bytes, then recompressed at zstd -9 up to $_KILIX_TRANSCRIPT_ARCHIVE bytes."
         echo
         echo "Session logging is configured in '$_self settings' under"
         echo "Session logging, or with '$_self settings --set transcript=off'."
         exit 0 ;;
       *)
-        echo "usage: $_self transcript [list|show SESSION|path [SESSION]|prune]" >&2
+        echo "usage: $_self transcript [list|show SESSION|path [SESSION]|prune|archive]" >&2
         exit 2 ;;
     esac ;;
   pty|pty-manager|pty-tui)
@@ -1891,6 +2065,13 @@ if [ "${KILIX_PTY_BROKER:-1}" != 0 ]; then
       export KITTY_PTY_BROKER_TRANSCRIPT_DIR="$KILIX_TRANSCRIPT_DIR"
       export KITTY_PTY_BROKER_TRANSCRIPT_LIMIT="$_KILIX_TRANSCRIPT_LIMIT"
       export KITTY_PTY_BROKER_TRANSCRIPT_GRAPHICS="$_KILIX_TRANSCRIPT_GRAPHICS"
+      # Keep enforcing the directory budgets for this frontend's lifetime.
+      # A lock makes multiple Kilix windows share the work safely, and running
+      # out of process means a large archive pass never delays the window.
+      _kilix_frontend_pid=$$
+      ( _kilix_transcript_reap_periodically \
+          "$_kilix_frontend_pid" "$KILIX_TRANSCRIPT_DIR" \
+          </dev/null >/dev/null 2>&1 ) &
     else
       echo "kilix: session logging disabled; cannot use $KILIX_TRANSCRIPT_DIR" >&2
       unset KITTY_PTY_BROKER_TRANSCRIPT_DIR KITTY_PTY_BROKER_TRANSCRIPT_LIMIT \
