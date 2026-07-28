@@ -23,6 +23,7 @@
 #   ./kilix status            # show version, engine, config, and provider
 #   ./kilix update            # verified-origin, clean, fast-forward/ref update
 #   ./kilix desktop           # launch the configured desktop provider
+#   ./kilix cap               # launch/install the Kilix Cap mansion desktop
 #   ./kilix --build           # build the forked kitty from ./src
 #   ./kilix --which           # print the kitty binary kilix uses + its version
 #   ./kilix --install-desktop # desktop entry + icon (own taskbar group)
@@ -274,6 +275,8 @@ _kilix_load_env_file() {
       KILIX_DESKTOP_PROVIDER|KILIX_DESKTOP_COMMAND|KILIX_DESKTOP_NAME|KILIX_DESKTOP_FLAVOR|KILIX_DESKTOP_DIR|\
       KILIX95_AUTO_INSTALL|KILIX95_DIR|KILIX95_REPO|KILIX95_BRANCH|KILIX95_REF|KILIX95_TRUST_EXISTING_CHECKOUT|\
       KILIX95_ALLOW_MUTABLE_REF|KILIX95_ALLOW_UNPINNED_INSTALL|\
+      KILIX_CAP_AUTO_INSTALL|KILIX_CAP_DIR|KILIX_CAP_REPO|KILIX_CAP_REF|\
+      KILIX_CAP_TRUST_EXISTING_CHECKOUT|KILIX_CAP_ALLOW_MUTABLE_REF|\
       KILIX_RECYCLE_DIR|KILIX_SAVER_IDLE|KILIX_HOST_CLIP|KILIX_NO_SOUND|KILIX_XPANE_WM|\
       KILIX_RUN_AUTO_FIT|KILIX_NO_PANE|KILIX_DEBUG|KILIX_HW|KILIX_BROWSE_BACKEND|KILIX_BROWSE_LOG|KILIX_RUN_LOG|\
       KILIX_XFONTS|KILIX_BRIDGE_TOKEN|KILIX_SHELL_INTEGRATION|\
@@ -317,10 +320,11 @@ if ! python3 "$KILIX_HOME/kilix-settings" --ensure; then
 fi
 
 # Source checkouts are siblings under ~/.local/gpu_terminal/sources by default. Resolve this
-# only after loading user runtime settings so KILIX95_DIR remains configurable,
+# only after loading user runtime settings so provider paths remain configurable,
 # while every writable provider root stays independently anchored above.
 KILIX95_DIR="${KILIX95_DIR:-$GPU_TERMINAL_SOURCE_HOME/kilix-95}"
-export KILIX95_DIR
+KILIX_CAP_DIR="${KILIX_CAP_DIR:-$GPU_TERMINAL_SOURCE_HOME/kilix-cap}"
+export KILIX95_DIR KILIX_CAP_DIR
 
 # No-sudo streaming deps (Xvfb / Xvnc / vncpasswd / python-xlib unpacked by
 # scripts/install-stream-deps.sh on hosts that lack them): pull in their
@@ -346,6 +350,11 @@ case "${1:-}" in
   settings|--settings)
     shift
     exec python3 "$KILIX_HOME/kilix-settings" "$@" ;;
+  cap|kilix-cap|mansion)
+    shift
+    export KILIX_DESKTOP_PROVIDER=cap
+    export KILIX_DESKTOP_NAME="${KILIX_DESKTOP_NAME:-Kilix Cap}"
+    set -- desktop "$@" ;;
   games|--games)
     shift
     _games_action="${1:-list}"
@@ -586,6 +595,10 @@ except Exception:
       builtin)
         _status_provider_dir="$KILIX_HOME/desktop"
         ;;
+      cap|kilix-cap|mansion)
+        _status_provider="cap (native mansion)"
+        _status_provider_dir="$KILIX_CAP_DIR"
+        ;;
       command|custom|none|off|disabled)
         _status_provider_dir=""
         ;;
@@ -601,6 +614,17 @@ except Exception:
     if [ -n "$_status_provider_dir" ] && [ -f "$_status_provider_dir/main.py" ]; then
       python3 "$KILIX_HOME/scripts/check-desktop-provider.py" \
         "$_status_provider_dir" || exit $?
+    elif [ "$_status_provider" = "cap (native mansion)" ]; then
+      if [ -f "$_status_provider_dir/bin/kilix-cap" ] \
+           && [ ! -L "$_status_provider_dir/bin/kilix-cap" ] \
+           && [ -x "$_status_provider_dir/bin/kilix-cap" ]; then
+        "$_status_provider_dir/bin/kilix-cap" --version
+      elif [ -e "$_status_provider_dir/bin/kilix-cap" ] \
+           || [ -L "$_status_provider_dir/bin/kilix-cap" ]; then
+        echo "kilix cap: refusing unsafe executable at $_status_provider_dir/bin/kilix-cap"
+      else
+        echo "kilix cap: not built yet (download/build occurs on first launch)"
+      fi
     fi
     exit 0 ;;
   update|--update)
@@ -1447,6 +1471,22 @@ _kilix95_ensure_external() {
   _KILIX_DESKTOP_MODE=python
 }
 
+_kilix_cap_ensure() {
+  _cap_installer="$KILIX_HOME/scripts/install-kilix-cap.sh"
+  if [ ! -f "$_cap_installer" ] || [ -L "$_cap_installer" ] \
+       || [ ! -x "$_cap_installer" ]; then
+    _kilix_desktop_die "missing or unsafe Kilix Cap installer: $_cap_installer"
+  fi
+  _cap_binary="$("$_cap_installer" --print-path)" \
+    || _kilix_desktop_die "could not prepare Kilix Cap"
+  if [ ! -f "$_cap_binary" ] || [ -L "$_cap_binary" ] \
+       || [ ! -x "$_cap_binary" ]; then
+    _kilix_desktop_die "Kilix Cap installer returned an unsafe executable: $_cap_binary"
+  fi
+  _KILIX_DESKTOP_MAIN="$_cap_binary"
+  _KILIX_DESKTOP_MODE=executable
+}
+
 _kilix_desktop_select() {
   _KILIX_DESKTOP_MAIN=
   _KILIX_DESKTOP_MODE=
@@ -1467,6 +1507,8 @@ _kilix_desktop_select() {
       _KILIX_DESKTOP_MODE=python ;;
     external)
       _kilix95_ensure_external ;;
+    cap|kilix-cap|mansion)
+      _kilix_cap_ensure ;;
     auto)
       _auto_external="$KILIX95_DIR"
       if [ -f "$_auto_external/main.py" ]; then
@@ -1480,7 +1522,7 @@ _kilix_desktop_select() {
         _kilix95_ensure_external
       fi ;;
     *)
-      _kilix_desktop_die "unknown KILIX_DESKTOP_PROVIDER=$_k95_provider (use auto, builtin, external, command, or none)" ;;
+      _kilix_desktop_die "unknown KILIX_DESKTOP_PROVIDER=$_k95_provider (use auto, builtin, external, cap, command, or none)" ;;
   esac
 }
 
@@ -1566,10 +1608,9 @@ if [ "${1:-}" = "run" ]; then
   exit "$rc"
 fi
 
-# desktop: a Windows 95-style desktop environment rendered as pixels in a
-# kilix tab (start bar, launchers, file manager, Notepad, Settings that edits
-# the kilix config live). Modules live in ./desktop/. Same host-in-own-tab +
-# wrapped-cleanup story as run; quit via Start > Shut Down (or Ctrl+Alt+Q).
+# desktop: launch the selected full-pane environment in its own Kilix tab.
+# Kilix 95 is the default provider; Kilix Cap is the optional native mansion
+# provider. Both use the same host-in-own-tab + wrapped-cleanup story as run.
 if [ "${1:-}" = "desktop" ]; then
   shift
   _kilix_desktop_select
@@ -1584,20 +1625,21 @@ if [ "${1:-}" = "desktop" ]; then
   fi
   if [ -z "${KILIX_IN_OVERLAY:-}" ] && [ -n "${KITTY_WINDOW_ID:-}" ] \
        && [ -n "${KITTY_LISTEN_ON:-}" ] && [ -x "$KITTEN" ]; then
-    # Only one kilix 95 desktop at a time: if one is already running in this
-    # kitty, switch to it instead of opening a second — two desktops fight over
-    # the graphics transport. Find the window whose foreground process is the
-    # desktop (kitty's cmdline: match sees only the launch command, not the
-    # python child, so ask @ ls and check foreground_processes) and focus it.
+    # Only one instance of the selected desktop at a time: if it is already
+    # running in this kitty, switch to it instead of opening a duplicate.
+    # Kitty's match sees the launch command rather than every child, so inspect
+    # foreground_processes from @ ls and compare the provider's exact target.
     _dwid=""
-    if [ "$_KILIX_DESKTOP_MODE" = python ]; then
-      _dwid="$(KILIX_DESKTOP_MAIN="$_KILIX_DESKTOP_MAIN" "$KITTEN" @ --password-file "$KILIX_RC_PASSWORD_FILE" ls 2>/dev/null | python3 -c 'import json,os,sys
+    if [ "$_KILIX_DESKTOP_MODE" = python ] \
+         || [ "$_KILIX_DESKTOP_MODE" = executable ]; then
+      _dwid="$("$KITTEN" @ --password-file "$KILIX_RC_PASSWORD_FILE" ls 2>/dev/null | KILIX_DESKTOP_MAIN="$_KILIX_DESKTOP_MAIN" KILIX_DESKTOP_MODE="$_KILIX_DESKTOP_MODE" python3 -c 'import json,os,sys
 try: d=json.load(sys.stdin)
 except Exception: sys.exit(0)
 targets={os.environ.get("KILIX_DESKTOP_MAIN","")}
 targets={t for t in targets if t}
+mode=os.environ.get("KILIX_DESKTOP_MODE","")
 def is_desktop_arg(a):
-    return a in targets or a.endswith("/desktop/main.py") or a.endswith("/kilix-95/main.py")
+    return a in targets or (mode == "python" and (a.endswith("/desktop/main.py") or a.endswith("/kilix-95/main.py")))
 ids=[w["id"] for o in d for t in o.get("tabs",[]) for w in t.get("windows",[]) if any(is_desktop_arg(a) for p in w.get("foreground_processes",[]) for a in p.get("cmdline",[]))]
 print(ids[0] if ids else "")' 2>/dev/null)"
     fi
@@ -1634,6 +1676,12 @@ print(ids[0] if ids else "")' 2>/dev/null)"
       --env "KILIX95_CACHE_HOME=$KILIX95_CACHE_HOME" \
       --env "KILIX95_SESSION_HOME=$KILIX95_SESSION_HOME" \
       --env "KILIX95_DATA_HOME=$KILIX95_DATA_HOME" \
+      --env "KILIX_CAP_AUTO_INSTALL=${KILIX_CAP_AUTO_INSTALL:-}" \
+      --env "KILIX_CAP_DIR=$KILIX_CAP_DIR" \
+      --env "KILIX_CAP_REPO=${KILIX_CAP_REPO:-}" \
+      --env "KILIX_CAP_REF=${KILIX_CAP_REF:-}" \
+      --env "KILIX_CAP_TRUST_EXISTING_CHECKOUT=${KILIX_CAP_TRUST_EXISTING_CHECKOUT:-}" \
+      --env "KILIX_CAP_ALLOW_MUTABLE_REF=${KILIX_CAP_ALLOW_MUTABLE_REF:-}" \
       -- "$_self" desktop "$@"
   fi
   rc=0
@@ -1654,6 +1702,12 @@ print(ids[0] if ids else "")' 2>/dev/null)"
       KILIX_HOME="$KILIX_HOME" KILIX95_HOME="$(dirname "$_KILIX_DESKTOP_MAIN")" \
         KILIX_KITTEN="$KITTEN" PYTHONPYCACHEPREFIX="$_desktop_pycache" \
         python3 "$_KILIX_DESKTOP_MAIN" "$@" || rc=$? ;;
+    executable)
+      _cap_home="$KILIX_HOME"
+      _cap_launch_path="$_cap_home:${PATH:-/usr/local/bin:/usr/bin:/bin}"
+      PATH="$_cap_launch_path" KILIX_HOME="$_cap_home" KILIX_KITTEN="$KITTEN" \
+        KILIX95_PROJECT_HOME="${KILIX95_PROJECT_HOME:-$KILIX95_DIR}" \
+        "$_KILIX_DESKTOP_MAIN" "$@" || rc=$? ;;
     *)
       _kilix_desktop_die "internal error: no desktop mode selected" ;;
   esac

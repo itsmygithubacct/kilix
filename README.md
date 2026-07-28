@@ -116,6 +116,9 @@ host SDK, and provider contract introduced in 0.1.1.
 - **kilix 95** — a Windows 95-style desktop environment in a tab (`kilix desktop`):
   start bar, launchers, file manager, and a Settings app that edits the kilix
   config live.
+- **Kilix Cap** — an optional full-color mansion desktop (`kilix cap`) with
+  physical app launchers, live system rooms, housekeeping, and the Kilix 95
+  game catalog.
 - **Host SDK for desktops** — external desktop providers import stable helpers
   from `config/kilix_sdk` instead of depending on raw `config/browse.py` /
   `config/gfx.py` internals. SDK 1.2 includes shared content installation,
@@ -300,6 +303,7 @@ kilix temps --graphics            # install/verify the pinned dashboard, then ru
 kilix memory --graphics           # install/verify the pinned monitor, then run it
 kilix tmux                         # install/verify the pinned Tmux Manager, then run it
 kilix tmux --with-tb               # also publish tmux-cli as the `tb` command
+kilix cap                          # install/build the optional mansion desktop, then open it
 kilix status                      # version/commit, engine, writable config, provider contract
 ```
 
@@ -531,17 +535,20 @@ full-screen. Drop another `<name>.c` into that directory and
 `kilix screensaver <name>` picks it up. Needs a C compiler (the same one the
 fork build uses).
 
-## Desktop — a Windows 95-style desktop in a tab (experimental)
+## Desktops in a tab — Kilix 95 and Kilix Cap (experimental)
 
 ```bash
-kilix desktop                # opens "kilix 95" in a new kilix tab
+kilix desktop                # open the configured provider (Kilix 95 by default)
+kilix cap                    # open the optional Kilix Cap mansion
+KILIX_DESKTOP_PROVIDER=cap kilix desktop
 ```
 
-`kilix desktop` is a versioned provider facade. The separate `kilix-95`
+`kilix desktop` is a provider facade. The separate `kilix-95`
 repository is the authoritative desktop. `auto` prefers an installed external
 checkout; the bundled `desktop/` tree is an explicitly reported compatibility
 fallback. Both must pass the same provider API, Kilix SDK, and security-feature
-contract before execution (`kilix status` shows the selected provider).
+contract before execution. `cap` selects the native Kilix Cap provider instead;
+`kilix status` shows the effective provider and path.
 
 ```bash
 KILIX_DESKTOP_PROVIDER=external \
@@ -555,7 +562,7 @@ By default the checkout is discovered as the sibling
 wallpaper selection) stays under `~/.local/gpu_terminal/kilix-95`. The bundled
 fallback keeps independent state under `~/.local/gpu_terminal/kilix`.
 
-Relevant knobs: `KILIX_DESKTOP_PROVIDER=auto|builtin|external|command|none`,
+Relevant knobs: `KILIX_DESKTOP_PROVIDER=auto|builtin|external|cap|command|none`,
 `KILIX_DESKTOP_COMMAND`, `KILIX_DESKTOP_NAME`, `KILIX_DESKTOP_FLAVOR=95|xp`,
 `KILIX95_DIR`, `KILIX95_REPO`, `KILIX95_BRANCH`, `KILIX95_REF`, and
 `KILIX95_AUTO_INSTALL=1` to allow a missing external checkout to be cloned.
@@ -570,6 +577,26 @@ already holds this lock must pass its open, locked descriptor to Kilix as
 Kilix validates that it names the canonical lock before treating it as
 reentrant. The resolved path is exported to children as
 `KILIX_TRANSACTION_LOCK_PATH`.
+
+### Kilix Cap
+
+`kilix cap` is shorthand for selecting `KILIX_DESKTOP_PROVIDER=cap`. On its
+first launch, Kilix clones an immutable Kilix-pinned commit from
+`https://github.com/itsmygithubacct/kilix-cap.git` into the sibling
+`~/.local/gpu_terminal/sources/kilix-cap` checkout, builds it locally with `make`, and opens
+the native executable in a new tab. Later launches reuse the checkout and
+incremental build. Kilix Cap itself downloads nothing at runtime.
+
+An existing sibling Git checkout is preserved: Kilix validates its `origin`,
+builds its current worktree, and never resets it unless an explicit
+`KILIX_CAP_REF` asks for a clean exact checkout. Override `KILIX_CAP_DIR`,
+`KILIX_CAP_REPO`, or `KILIX_CAP_REF` for reviewed source; mutable refs require
+`KILIX_CAP_ALLOW_MUTABLE_REF=1`. Set `KILIX_CAP_AUTO_INSTALL=0` to forbid the
+first-use clone or `KILIX_CAP_TRUST_EXISTING_CHECKOUT=1` only for a trusted
+packaged/nonstandard checkout. Building requires a C11 compiler, `make`,
+pthreads, and zlib development headers.
+
+### Kilix 95
 
 ![kilix 95 — the desktop with the media player, file manager and Notepad open](config/kilix95_with_amp.png)
 
@@ -723,7 +750,7 @@ kilix share --size 1600x900 --lan
 kilix share --audio --debug       # desktop audio in the stream + encode metrics
 ```
 
-(*Renamed from `kilix desktop` when the [desktop environment](#desktop--a-windows-95-style-desktop-in-a-tab-experimental) claimed that name.*)
+(*Renamed from `kilix desktop` when the [desktop providers](#desktops-in-a-tab--kilix-95-and-kilix-cap-experimental) claimed that name.*)
 
 This runs the *entire* kilix (all panes, splits, `browse`/`run` video, images) on
 a headless display and streams the composited picture as **H.264/HLS** to any
@@ -898,7 +925,7 @@ launcher so that an isolated interpreter remains usable at runtime.
 ├── build.sh           # builds the forked kitty in ./src
 ├── bootstrap.sh       # pulls the prebuilt kitty (fallback engine)
 ├── config/            # kitty.conf + kilix icons (kitty.app*.png, kilix-512.png)
-├── desktop/           # the "kilix 95" desktop environment (kilix desktop)
+├── desktop/           # bundled Kilix 95 compatibility provider
 ├── src/               # tracked kitty fork; remains clean after builds
 ├── third_party/       # pinned presenter, content, and state libraries
 ├── README.md
