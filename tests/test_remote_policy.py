@@ -2,6 +2,7 @@ import importlib.util
 import re
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -11,6 +12,13 @@ SPEC = importlib.util.spec_from_file_location(
 assert SPEC is not None and SPEC.loader is not None
 POLICY = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(POLICY)
+
+RC_SPEC = importlib.util.spec_from_file_location(
+    "kilix_remote", ROOT / "config" / "remote.py"
+)
+assert RC_SPEC is not None and RC_SPEC.loader is not None
+REMOTE = importlib.util.module_from_spec(RC_SPEC)
+RC_SPEC.loader.exec_module(REMOTE)
 
 
 def allowed(command, *, from_socket=False, window=object(), **payload):
@@ -93,6 +101,68 @@ class RemoteControlPolicyTests(unittest.TestCase):
             "signal-child", "load-config", "set-user-vars", "env",
         }
         self.assertEqual(forbidden.intersection(self.password_allowlist()), set())
+
+
+class PaneAndPageCreationTests(unittest.TestCase):
+    """`kilix new-pane` / `new-tab`: the arguments actually sent to the terminal."""
+
+    def run_command(self, argv):
+        done = mock.Mock(returncode=0, stdout="99\n", stderr="")
+        with mock.patch.object(REMOTE, "run_kitten", return_value=done) as spy:
+            code = REMOTE.main(argv)
+        return code, (spy.call_args[0][0] if spy.call_args else None), spy
+
+    def test_each_direction_maps_to_the_location_that_produces_it(self):
+        # Verified against a live session: with Kilix's `splits` layout these
+        # are the locations that put the new pane on that side.
+        for direction, location in (("right", "vsplit"), ("down", "hsplit"),
+                                    ("left", "before")):
+            with self.subTest(direction=direction):
+                code, args, _ = self.run_command(["new-pane", direction])
+                self.assertEqual(code, 0)
+                self.assertEqual(args[0], "launch")
+                self.assertIn(f"--location={location}", args)
+                self.assertIn("--type=window", args)
+
+    def test_up_is_refused_rather_than_silently_given_as_down(self):
+        # kitty's launch has no location for the near side of the vertical
+        # axis.  Guessing would put the pane on the wrong side of the screen.
+        with mock.patch.object(REMOTE, "run_kitten") as spy:
+            code = REMOTE.main(["new-pane", "up"])
+        self.assertEqual(code, 2)
+        spy.assert_not_called()
+
+    def test_the_split_is_anchored_to_the_calling_pane(self):
+        # Without --self the split hangs off whichever pane has focus, so this
+        # would open somewhere else entirely when run from a background pane.
+        _, args, _ = self.run_command(["new-pane", "right"])
+        self.assertIn("--self", args)
+
+    def test_a_command_is_passed_through_after_a_separator(self):
+        _, args, _ = self.run_command(["new-pane", "right", "--", "htop", "-d", "5"])
+        self.assertEqual(args[-4:], ["--", "htop", "-d", "5"])
+
+    def test_new_tab_opens_a_tab_and_can_name_it(self):
+        _, args, _ = self.run_command(["new-tab", "--title", "notes"])
+        self.assertIn("--type=tab", args)
+        self.assertIn("--tab-title", args)
+        self.assertIn("notes", args)
+
+    def test_creation_stays_inside_the_password_allowlist(self):
+        # Everything these commands send must be a `launch`, which is the only
+        # creating verb the scoped credential authorises.
+        allowlist = set(RemoteControlPolicyTests.password_allowlist())
+        for argv in (["new-pane", "left"], ["new-pane", "down"], ["new-tab"]):
+            _, args, spy = self.run_command(argv)
+            self.assertEqual(spy.call_count, 1, argv)
+            self.assertIn(args[0], allowlist, argv)
+
+    def test_creation_is_authenticated(self):
+        with mock.patch.object(
+                REMOTE, "run_kitten",
+                return_value=mock.Mock(returncode=0, stdout="", stderr="")) as spy:
+            REMOTE.main(["new-tab"])
+        self.assertTrue(spy.call_args.kwargs.get("authenticated"))
 
 
 if __name__ == "__main__":

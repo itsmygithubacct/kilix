@@ -313,6 +313,88 @@ def cmd_watch(argv: list[str]) -> int:
         return 130
 
 
+# Where a new pane can be put, and the one place it cannot.
+#
+# kitty's splits layout treats the split axis and which side the new window
+# lands on as two independent choices, but `launch --location` only names three
+# of the four combinations: `vsplit` is always the far side of the horizontal
+# axis, `hsplit` always the far side of the vertical, and `before` flips to the
+# near side of whichever axis the *layout* defaults to. Kilix enables `splits`
+# first and sets no `split_axis`, so that default is horizontal and `before`
+# lands on the left. There is no spelling for the near side of the vertical
+# axis, so "up" has to be refused rather than quietly given as "down".
+PANE_LOCATIONS = {"right": "vsplit", "down": "hsplit", "left": "before"}
+
+
+def _launch(kind: str, argv: list[str], extra: list[str]) -> int:
+    """Run one authenticated `launch` and report the id it hands back."""
+    proc = run_kitten(["launch", *extra], authenticated=True)
+    if proc.returncode != 0:
+        return fail(kind, proc.stderr.strip() or f"kitten exited {proc.returncode}")
+    new_id = proc.stdout.strip()
+    print(f"kilix {kind}: opened {new_id}" if new_id else f"kilix {kind}: opened")
+    return 0
+
+
+def cmd_new_pane(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="kilix new-pane",
+        description="Open a pane beside this one",
+        epilog="Direction is relative to the pane the command runs in, not to "
+               "whichever pane currently has focus.",
+    )
+    parser.add_argument(
+        "direction", nargs="?", default="right",
+        choices=["left", "right", "up", "down"])
+    parser.add_argument(
+        "--cwd", default="current",
+        help="directory for the new pane (default: follow this one)")
+    parser.add_argument(
+        "command", nargs=argparse.REMAINDER,
+        help="program to run in it (default: the shell)")
+    ns = parser.parse_args(argv)
+
+    location = PANE_LOCATIONS.get(ns.direction)
+    if location is None:
+        return fail(
+            "new-pane",
+            "the terminal cannot place a pane above this one: kitty's launch "
+            "has no location for it. Use 'kilix new-pane down' and then "
+            "Ctrl+Alt+Up to move it", 2)
+
+    # --self anchors the split to the pane this command was typed in. Without
+    # it the split hangs off whichever pane has focus, so running this from a
+    # background pane would put the new one somewhere else entirely.
+    extra = ["--type=window", f"--location={location}", "--cwd", ns.cwd, "--self"]
+    command = ns.command[1:] if ns.command[:1] == ["--"] else ns.command
+    if command:
+        extra.append("--")
+        extra.extend(command)
+    return _launch("new-pane", argv, extra)
+
+
+def cmd_new_tab(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="kilix new-tab", description="Open a new page (tab)")
+    parser.add_argument(
+        "--cwd", default="current",
+        help="directory for the new page (default: follow this pane)")
+    parser.add_argument("--title", default="", help="name the page")
+    parser.add_argument(
+        "command", nargs=argparse.REMAINDER,
+        help="program to run in it (default: the shell)")
+    ns = parser.parse_args(argv)
+
+    extra = ["--type=tab", "--cwd", ns.cwd, "--self"]
+    if ns.title:
+        extra.extend(["--tab-title", ns.title])
+    command = ns.command[1:] if ns.command[:1] == ["--"] else ns.command
+    if command:
+        extra.append("--")
+        extra.extend(command)
+    return _launch("new-tab", argv, extra)
+
+
 def cmd_fullscreen(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="kilix fullscreen",
@@ -342,6 +424,10 @@ def main(argv: list[str]) -> int:
         return cmd_watch(rest)
     if command == "fullscreen":
         return cmd_fullscreen(rest)
+    if command in ("new-pane", "split"):
+        return cmd_new_pane(rest)
+    if command in ("new-tab", "new-page"):
+        return cmd_new_tab(rest)
     return fail(command, "unknown remote-control command", 2)
 
 

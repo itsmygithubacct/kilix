@@ -450,7 +450,24 @@ kilix focus 45            # focus tab or pane 45
 kilix focus pane:74       # disambiguate when needed
 kilix watch 74            # poll pane 74 as read-only text
 kilix watch --once 74     # one snapshot
+kilix new-pane            # open a pane to the right of this one
+kilix new-pane left       # ...or to its left; also `right`, `down`
+kilix new-pane down -- htop        # run something in it
+kilix new-tab --title notes        # open a new page
+kilix switch              # the page/pane switcher (same as F12)
 ```
+
+`kilix new-pane` places the pane relative to **the pane the command runs in**,
+not to whichever pane currently has focus, so it does the same thing from a
+background pane as from the foreground one.
+
+Three of the four directions are exact. There is no `up`: kitty's splits layout
+treats the split axis and which side the new pane lands on as independent
+choices, but `launch --location` only names three of the four combinations —
+`vsplit` and `hsplit` are always the far side of their axis, and `before` is the
+near side of whichever axis the *layout* defaults to, which here is horizontal
+and so means left. Rather than guess, `kilix new-pane up` says so and points at
+`kilix new-pane down` followed by `Ctrl+Alt+Up`.
 
 These commands use kitty remote control against the current live GUI instance.
 `kilix focus` can jump to a tab or pane; `kilix watch` is intentionally

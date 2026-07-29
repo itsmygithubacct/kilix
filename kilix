@@ -14,6 +14,8 @@
 #   ./kilix watch <pane-id>   # best-effort read-only text watch of a live pane
 #   ./kilix fullscreen        # toggle this tab's OS window fullscreen
 #   ./kilix switch [--scope S] # go to a page or pane (F12; scope all|page|other)
+#   ./kilix new-pane [DIR]    # open a pane left/right/down of this one
+#   ./kilix new-tab [--title T] # open a new page
 #   ./kilix mux [name]        # open a tmux-backed kilix tab for real attach/view
 #   ./kilix screen-size ...   # show/increase/decrease/reset terminal scale
 #   ./kilix settings          # shared chrome/game settings TUI and CLI
@@ -2354,7 +2356,7 @@ _kilix_screen_size_cmd() {
 }
 
 case "${1:-}" in
-  ls|focus|watch|fullscreen)
+  ls|focus|watch|fullscreen|new-pane|split|new-tab|new-page)
     _remote_cmd="$1"; shift
     _kilix_remote_control "$_remote_cmd" "$@" ;;
   switch|switcher)
