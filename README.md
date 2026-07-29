@@ -326,6 +326,9 @@ kilix memory --graphics           # install/verify the pinned monitor, then run 
 kilix tmux                         # install/verify the pinned Tmux Manager, then run it
 kilix tmux --with-tb               # also publish tmux-cli as the `tb` command
 kilix cap                          # install/build the optional mansion desktop, then open it
+kilix bonsai                       # the BitNet model store: browse, download, verify
+kilix bonsai list                  # one line per model, with size and state
+kilix bonsai pull vibevoice-asr-bitnet   # download one — this one is the dictation model
 kilix status                      # version/commit, engine, writable config, provider contract
 ```
 

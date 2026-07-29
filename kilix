@@ -24,6 +24,7 @@
 #   ./kilix dictate           # recognize one spoken utterance
 #   ./kilix tts | stt [args]  # run the read-aloud / dictation TUIs
 #   ./kilix voice status      # voice status, install, doctor, stop
+#   ./kilix bonsai [args]     # BitNet model store: browse, download, verify
 #   ./kilix status            # show version, engine, config, and provider
 #   ./kilix update            # verified-origin, clean, fast-forward/ref update
 #   ./kilix desktop           # launch the configured desktop provider
@@ -593,6 +594,39 @@ _kilix_voice_tool() {
   resolved="$_KILIX_VOICE_PREFIX/bin/$name"
   [ -x "$resolved" ] || {
     echo "kilix voice: installer did not create $resolved" >&2
+    return 1
+  }
+  printf '%s\n' "$resolved"
+}
+
+# Kilix Bonsai resolves in the same order the pixel desktop resolves its
+# dashboards: an installed command wins, then a developer's source checkout,
+# then the pinned installer. The middle branch is what makes `kilix bonsai`
+# usable before the repository is published — it can only match on a machine
+# that has a source tree, never on an installed system, so it cannot shadow a
+# pinned install. It prints a command line rather than a path because the
+# checkout is run through python3 without being installed.
+_KILIX_BONSAI_PREFIX="${KILIX_BONSAI_PREFIX:-$HOME/.local}"
+_kilix_bonsai_tool() {
+  local force="$1" resolved checkout
+  resolved="$(command -v kilix-bonsai 2>/dev/null || true)"
+  if [ "$force" = 0 ] && [ -n "$resolved" ] && [ -x "$resolved" ]; then
+    printf '%s\n' "$resolved"
+    return 0
+  fi
+  checkout="$GPU_TERMINAL_SOURCE_HOME/kilix-bonsai"
+  if [ "$force" = 0 ] && [ -f "$checkout/tools/kilix-bonsai/main.py" ]; then
+    printf '%s\n' "python3 $checkout/tools/kilix-bonsai/main.py"
+    return 0
+  fi
+  # Installer diagnostics are stderr-only: this function's stdout is the
+  # command line its caller execs.
+  local installer=("$KILIX_HOME/scripts/install-kilix-bonsai.sh")
+  [ "$force" = 0 ] || installer+=(--force)
+  "${installer[@]}" >&2 || return 1
+  resolved="$_KILIX_BONSAI_PREFIX/bin/kilix-bonsai"
+  [ -x "$resolved" ] || {
+    echo "kilix bonsai: installer did not create $resolved" >&2
     return 1
   }
   printf '%s\n' "$resolved"
@@ -1364,6 +1398,40 @@ case "${1:-}" in
     _stt_installed="$(_kilix_voice_tool kilix-stt "$_stt_force")" || exit 1
     [ "$_stt_install_only" = 0 ] || exit 0
     exec "$_stt_installed" "$@" ;;
+  bonsai|models|bitnet)
+    shift
+    _bonsai_install_only=0
+    _bonsai_force=0
+    while :; do
+      case "${1:-}" in
+        --install-only) _bonsai_install_only=1; shift ;;
+        --force-install) _bonsai_force=1; shift ;;
+        -h|--help|help)
+          echo "usage: $_self bonsai [--install-only|--force-install] [ARGS...]"
+          echo "opens the BitNet model store; with no ARGS, the TUI"
+          echo
+          echo "  $_self bonsai list                 one line per model"
+          echo "  $_self bonsai status [MODEL]       what is on disk"
+          echo "  $_self bonsai doctor               downloader, space, permissions"
+          echo "  $_self bonsai deps MODEL [--apt]   dependencies"
+          echo "  $_self bonsai pull MODEL [--variant V] [--from DIR]"
+          echo "  $_self bonsai verify MODEL         hash against published digests"
+          echo "  $_self bonsai path MODEL           print where the weights live"
+          echo
+          echo "The dictation model is one of these: downloading"
+          echo "vibevoice-asr-bitnet here is what makes it available to"
+          echo "'$_self stt', and both read the one copy."
+          exit 0 ;;
+        --) shift; break ;;
+        *) break ;;
+      esac
+    done
+    _bonsai_resolved="$(_kilix_bonsai_tool "$_bonsai_force")" || exit 1
+    [ "$_bonsai_install_only" = 0 ] || exit 0
+    # Word-split deliberately: the source-checkout branch resolves to
+    # "python3 /path/to/main.py", the installed branch to a single command.
+    # shellcheck disable=SC2086
+    exec $_bonsai_resolved "$@" ;;
   voice)
     shift
     _voice_action="${1:-status}"
