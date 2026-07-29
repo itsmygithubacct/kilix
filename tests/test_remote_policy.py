@@ -1,4 +1,5 @@
 import importlib.util
+import re
 import unittest
 from pathlib import Path
 
@@ -54,6 +55,20 @@ class RemoteControlPolicyTests(unittest.TestCase):
         self.assertFalse(allowed("focus-window", match="id:12"))
         self.assertFalse(allowed("send-text", match="all", text="oops"))
         self.assertFalse(allowed("close-window", match="all"))
+
+    def test_password_allowlist_cannot_synthesize_keystrokes(self):
+        # Read-aloud and dictation deliberately added nothing here.  Dictated
+        # text reaches a pane in-process, through the socket the fork opened
+        # for the window recorded at click time; an authenticated socket that
+        # could type into any pane is a far larger surface than one that can
+        # only read, and voice never needed it.
+        launcher = (ROOT / "kilix").read_text()
+        written = re.search(
+            r'remote_control_password "%s"(.*?)\\n', launcher)
+        assert written is not None
+        self.assertEqual(
+            written.group(1).split(),
+            ["launch", "ls", "focus-window", "focus-tab", "get-text"])
 
 
 if __name__ == "__main__":

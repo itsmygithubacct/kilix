@@ -303,6 +303,174 @@ class SharedSettingsTests(unittest.TestCase):
             self.assertIn(
                 f"{settings.TRANSCRIPT_ARCHIVE_KEY}=off", path.read_text())
 
+    def test_voice_defaults_reach_a_fresh_and_an_existing_shared_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fresh = Path(tmp) / "settings.conf"
+            settings.ensure_file(str(fresh))
+            text = fresh.read_text()
+            self.assertIn(settings.VOICE_MARKER, text)
+            for key in settings.VOICE_KEYS:
+                self.assertIn(f"{key}=", text)
+            # Both widgets ship visible; nothing about that opens a microphone.
+            self.assertTrue(settings.enabled("KILIX_CHROME_SPEAK", str(fresh)))
+            self.assertTrue(settings.enabled("KILIX_CHROME_DICTATE", str(fresh)))
+            self.assertEqual(settings.tts_engine(str(fresh)), "espeak")
+            self.assertEqual(settings.tts_voice(str(fresh)), "en-us")
+            self.assertEqual(settings.tts_rate(str(fresh)), 170)
+            self.assertEqual(settings.tts_extent(str(fresh)), "screen")
+            self.assertEqual(settings.tts_max_chars(str(fresh)), 4000)
+            self.assertEqual(settings.stt_engine(str(fresh)), "vosk")
+            self.assertEqual(settings.stt_model(str(fresh)), "small-en-us")
+            self.assertEqual(settings.stt_submit(str(fresh)), "never")
+            self.assertEqual(settings.stt_max_seconds(str(fresh)), 30)
+            self.assertEqual(settings.stt_silence_ms(str(fresh)), 900)
+            self.assertTrue(settings.enabled(
+                settings.VOICE_PUNCTUATION_KEY, str(fresh)))
+            self.assertEqual(settings.voice_device_in(str(fresh)), "default")
+            self.assertEqual(settings.voice_device_out(str(fresh)), "default")
+            self.assertFalse(settings.voice_history(str(fresh)))
+
+            # The upgrade path: an existing file gains the section without
+            # losing what the user already wrote.
+            existing = Path(tmp) / "existing.conf"
+            original = "# hand written\nKILIX_CHROME_CLOCK=0\n"
+            existing.write_text(original)
+            settings.ensure_file(str(existing))
+            upgraded = existing.read_text()
+            self.assertIn(original, upgraded)
+            self.assertIn(settings.VOICE_MARKER, upgraded)
+            self.assertIn(f"{settings.VOICE_STT_SUBMIT_KEY}=never", upgraded)
+            self.assertIn(f"{settings.VOICE_HISTORY_KEY}=off", upgraded)
+
+    def test_voice_keys_round_trip_through_update(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.conf"
+            path.write_text("# custom\nOTHER_PROJECT_SETTING=keep\n")
+            settings.update({
+                "KILIX_CHROME_SPEAK": False,
+                "KILIX_CHROME_DICTATE": False,
+                settings.VOICE_TTS_ENGINE_KEY: "mbrola",
+                settings.VOICE_TTS_VOICE_KEY: "mb-us1",
+                settings.VOICE_TTS_RATE_KEY: "240",
+                settings.VOICE_TTS_EXTENT_KEY: "selection",
+                settings.VOICE_TTS_MAX_CHARS_KEY: "unlimited",
+                settings.VOICE_STT_ENGINE_KEY: "vibevoice",
+                settings.VOICE_STT_MODEL_KEY: "vibevoice-asr-bitnet",
+                settings.VOICE_STT_SUBMIT_KEY: "confirm",
+                settings.VOICE_STT_MAX_SECONDS_KEY: "120",
+                settings.VOICE_STT_SILENCE_MS_KEY: "500",
+                settings.VOICE_PUNCTUATION_KEY: False,
+                settings.VOICE_DEVICE_IN_KEY: "alsa_input.pci-0000_00_1f.3",
+                settings.VOICE_DEVICE_OUT_KEY: "alsa_output.pci-0000_00_1f.3",
+                settings.VOICE_HISTORY_KEY: "on",
+            }, str(path))
+            text = path.read_text()
+            self.assertIn("OTHER_PROJECT_SETTING=keep", text)
+            self.assertIn(settings.VOICE_MARKER, text)
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+            self.assertFalse(settings.enabled("KILIX_CHROME_SPEAK", str(path)))
+            self.assertFalse(settings.enabled("KILIX_CHROME_DICTATE", str(path)))
+            self.assertEqual(settings.tts_engine(str(path)), "mbrola")
+            self.assertEqual(settings.tts_voice(str(path)), "mb-us1")
+            self.assertEqual(settings.tts_rate(str(path)), 240)
+            self.assertEqual(settings.tts_extent(str(path)), "selection")
+            self.assertIsNone(settings.tts_max_chars(str(path)))
+            self.assertEqual(settings.stt_engine(str(path)), "vibevoice")
+            self.assertEqual(
+                settings.stt_model(str(path)), "vibevoice-asr-bitnet")
+            self.assertEqual(settings.stt_submit(str(path)), "confirm")
+            self.assertEqual(settings.stt_max_seconds(str(path)), 120)
+            self.assertEqual(settings.stt_silence_ms(str(path)), 500)
+            self.assertFalse(settings.enabled(
+                settings.VOICE_PUNCTUATION_KEY, str(path)))
+            self.assertEqual(
+                settings.voice_device_in(str(path)),
+                "alsa_input.pci-0000_00_1f.3")
+            self.assertEqual(
+                settings.voice_device_out(str(path)),
+                "alsa_output.pci-0000_00_1f.3")
+            self.assertTrue(settings.voice_history(str(path)))
+
+    def test_voice_values_are_validated_not_coerced(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.conf"
+            for key, rejected in (
+                (settings.VOICE_TTS_ENGINE_KEY, "piper"),
+                (settings.VOICE_TTS_RATE_KEY, "185"),
+                (settings.VOICE_TTS_EXTENT_KEY, "everything"),
+                (settings.VOICE_TTS_MAX_CHARS_KEY, "2500"),
+                (settings.VOICE_STT_ENGINE_KEY, "whisper"),
+                (settings.VOICE_STT_MODEL_KEY, "en-us-0.22"),
+                (settings.VOICE_STT_MAX_SECONDS_KEY, "600"),
+                (settings.VOICE_STT_SILENCE_MS_KEY, "50"),
+                (settings.VOICE_HISTORY_KEY, "sometimes"),
+                # Not a token: these two reach a synthesiser argument list and
+                # an audio server, so anything shaped like a shell word is out.
+                (settings.VOICE_TTS_VOICE_KEY, "en-us; rm -rf ~"),
+                (settings.VOICE_DEVICE_IN_KEY, "$(pactl list)"),
+            ):
+                with self.assertRaises(ValueError):
+                    settings.update({key: rejected}, str(path))
+
+            # There is no submit policy that presses Enter unasked, and one
+            # hand-edited into the file must not become one.
+            settings.update(
+                {settings.VOICE_STT_SUBMIT_KEY: "confirm"}, str(path))
+            with self.assertRaises(ValueError):
+                settings.update(
+                    {settings.VOICE_STT_SUBMIT_KEY: "always"}, str(path))
+            path.write_text(
+                path.read_text()
+                + f"\n{settings.VOICE_STT_SUBMIT_KEY}=always\n"
+                + f"{settings.VOICE_TTS_RATE_KEY}=999\n"
+                + f"{settings.VOICE_TTS_VOICE_KEY}=en us\n")
+            self.assertEqual(settings.stt_submit(str(path)), "never")
+            self.assertEqual(settings.tts_rate(str(path)), 170)
+            self.assertEqual(settings.tts_voice(str(path)), "en-us")
+
+    def test_voice_cli_aliases_reach_the_shared_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.conf"
+            env = dict(os.environ)
+            env["GPU_TERMINAL_SETTINGS_FILE"] = str(path)
+            result = subprocess.run([
+                str(ROOT / "kilix-settings"),
+                "--set", "speak=off",
+                "--set", "mic=off",
+                "--set", "wpm=200",
+                "--set", "read_extent=scrollback",
+                "--set", "voice=mb-us1",
+                "--set", "stt_submit=confirm",
+                "--set", "voice_model=lgraph-en-us",
+                "--set", "punctuation=off",
+                "--print",
+            ], env=env, text=True, capture_output=True, check=True)
+            self.assertIn("KILIX_CHROME_SPEAK=off", result.stdout)
+            self.assertIn("KILIX_CHROME_DICTATE=off", result.stdout)
+            self.assertIn(
+                f"{settings.VOICE_TTS_RATE_KEY}=200", result.stdout)
+            self.assertIn(
+                f"{settings.VOICE_TTS_EXTENT_KEY}=scrollback", result.stdout)
+            self.assertIn(
+                f"{settings.VOICE_TTS_VOICE_KEY}=mb-us1", result.stdout)
+            self.assertIn(
+                f"{settings.VOICE_STT_SUBMIT_KEY}=confirm", result.stdout)
+            self.assertIn(
+                f"{settings.VOICE_STT_MODEL_KEY}=lgraph-en-us", result.stdout)
+            self.assertIn(
+                f"{settings.VOICE_PUNCTUATION_KEY}=off", result.stdout)
+            self.assertFalse(settings.enabled("KILIX_CHROME_SPEAK", str(path)))
+            self.assertFalse(settings.enabled("KILIX_CHROME_DICTATE", str(path)))
+            self.assertEqual(settings.tts_rate(str(path)), 200)
+            self.assertEqual(settings.stt_submit(str(path)), "confirm")
+
+            rejected = subprocess.run([
+                str(ROOT / "kilix-settings"), "--set", "stt_submit=always",
+            ], env=env, text=True, capture_output=True, check=False)
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn("stt_submit must be one of", rejected.stderr)
+            self.assertEqual(settings.stt_submit(str(path)), "confirm")
+
     def test_tui_section_aliases_track_real_section_order(self):
         module = _load_settings_tui()
         names = [section for section, _specs in module.UI_SECTIONS]
@@ -312,11 +480,20 @@ class SharedSettingsTests(unittest.TestCase):
             ("pane-buttons", "Pane buttons"),
             ("session-logging", "Session logging"),
             ("transcript", "Session logging"),
+            ("voice", "Voice"),
+            ("speech", "Voice"),
+            ("tts", "Voice"),
+            ("stt", "Voice"),
             ("games", "Games"),
             ("tools", "Tools"),
         ):
             index = module.SECTION_ALIASES[alias]
             self.assertEqual(names[index], expected)
+        # Voice was inserted here rather than appended so that only Games and
+        # Tools shift: every earlier numeric --section keeps its meaning.
+        self.assertEqual(
+            names.index("Voice"), names.index("Session logging") + 1)
+        self.assertEqual(names.index("Games"), names.index("Voice") + 1)
 
     def test_game_cli_names_and_listing_use_same_file(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -425,9 +602,11 @@ class SharedSettingsTests(unittest.TestCase):
             self.assertFalse(settings.enabled(
                 "KILIX_CHROME_TEMPERATURE", str(path)))
             first_frame = "\n".join(item[2] for item in screen.frames[0])
-            self.assertIn("Top bar: 6/7 enabled", first_frame)
+            self.assertIn("Top bar: 8/9 enabled", first_frame)
             self.assertIn("Thermal status", first_frame)
             self.assertIn("Volume", first_frame)
+            self.assertIn("Read pane aloud", first_frame)
+            self.assertIn("Dictate to pane", first_frame)
 
     def test_tui_tools_select_pinned_tmux_download_and_tb_install(self):
         tui = _load_settings_tui()
@@ -489,10 +668,10 @@ class SharedSettingsTests(unittest.TestCase):
             with mock.patch.dict(os.environ, {
                     "GPU_TERMINAL_SETTINGS_FILE": str(path),
                     "KITTY_PID": ""}, clear=False):
-                # Top bar -> Pane buttons -> Session logging -> Games, then
-                # toggle that section's first entry.
+                # Top bar -> Pane buttons -> Session logging -> Voice ->
+                # Games, then toggle that section's first entry.
                 screen = FakeScreen([
-                    ord("l"), ord("l"), ord("l"), ord(" "),
+                    ord("l"), ord("l"), ord("l"), ord("l"), ord(" "),
                     ord("q"), ord("s"), ord("q"),
                 ])
                 self.assertEqual(tui._run_tui(screen), 0)

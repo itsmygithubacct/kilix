@@ -144,6 +144,35 @@ SETTING_PAGES = [
             list(shared_settings.TRANSCRIPT_LIMIT_CHOICES),
         ),
     ]),
+    # Kilix 95 carries the same page. The built-in provider is a compatibility
+    # fallback, but it declares the same SDK level, so a setting it cannot reach
+    # here would be a setting the user is told exists and cannot change.
+    ("Voice", [
+        S("KILIX_CHROME_SPEAK", "Read pane aloud"),
+        S("KILIX_CHROME_DICTATE", "Dictate to pane"),
+        S(shared_settings.VOICE_TTS_ENGINE_KEY, "Speech engine", "choice",
+          shared_settings.VOICE_TTS_ENGINE_DEFAULT,
+          list(shared_settings.VOICE_TTS_ENGINE_CHOICES)),
+        S(shared_settings.VOICE_TTS_RATE_KEY, "Speaking rate (wpm)", "choice",
+          shared_settings.VOICE_TTS_RATE_DEFAULT,
+          list(shared_settings.VOICE_TTS_RATE_CHOICES)),
+        S(shared_settings.VOICE_TTS_EXTENT_KEY, "Read extent", "choice",
+          shared_settings.VOICE_TTS_EXTENT_DEFAULT,
+          list(shared_settings.VOICE_TTS_EXTENT_CHOICES)),
+        S(shared_settings.VOICE_STT_ENGINE_KEY, "Dictation engine", "choice",
+          shared_settings.VOICE_STT_ENGINE_DEFAULT,
+          list(shared_settings.VOICE_STT_ENGINE_CHOICES)),
+        S(shared_settings.VOICE_STT_MODEL_KEY, "Dictation model", "choice",
+          shared_settings.VOICE_STT_MODEL_DEFAULT,
+          list(shared_settings.VOICE_STT_MODEL_CHOICES)),
+        S(shared_settings.VOICE_STT_SUBMIT_KEY, "On finishing dictation",
+          "choice", shared_settings.VOICE_STT_SUBMIT_DEFAULT,
+          list(shared_settings.VOICE_STT_SUBMIT_CHOICES)),
+        S(shared_settings.VOICE_STT_MAX_SECONDS_KEY, "Listen limit (s)",
+          "choice", shared_settings.VOICE_STT_MAX_SECONDS_DEFAULT,
+          list(shared_settings.VOICE_STT_MAX_SECONDS_CHOICES)),
+        S(shared_settings.VOICE_PUNCTUATION_KEY, "Spoken punctuation"),
+    ]),
     ("Games", [
         S(spec.key, spec.label)
         for spec in shared_settings.GAME_TOGGLES

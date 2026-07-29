@@ -20,6 +20,10 @@
 #   ./kilix temps [args]       # run the pinned graphical thermal dashboard
 #   ./kilix memory [args]      # run the graphical RAM/pressure dashboard
 #   ./kilix tmux [args]        # install/run the pinned Tmux Manager
+#   ./kilix speak [TEXT...]    # read a pane, or the given text, aloud
+#   ./kilix dictate           # recognize one spoken utterance
+#   ./kilix tts | stt [args]  # run the read-aloud / dictation TUIs
+#   ./kilix voice status      # voice status, install, doctor, stop
 #   ./kilix status            # show version, engine, config, and provider
 #   ./kilix update            # verified-origin, clean, fast-forward/ref update
 #   ./kilix desktop           # launch the configured desktop provider
@@ -443,6 +447,9 @@ _kilix_load_env_file() {
       KILIX_MEMORY_SOFT_RASTER_PY_REPO|KILIX_MEMORY_SOFT_RASTER_PY_REF|\
       KILIX_MEMORY_SOFT_RASTER_REPO|KILIX_MEMORY_SOFT_RASTER_REF|\
       TMUX_TUI_REPO|TMUX_TUI_REF|TMUX_CLI_REF|TMUX_TUI_PREFIX|\
+      KILIX_VOICE_REPO|KILIX_VOICE_REF|KILIX_VOICE_PREFIX|\
+      KILIX_VOICE_LIB_URL|KILIX_VOICE_LIB_VERSION|KILIX_VOICE_LIB_SHA256|\
+      KILIX_VOICE_MODEL_URL|KILIX_VOICE_MODEL_SHA256|\
       KILIX_NERD_FONT_URL|KILIX_NERD_FONT_SHA256|KILIX_NERD_FONT_FILE_SHA256|KILIX_GO_TOOLCHAIN|KILIX_PYTHON)
         # An explicit process environment wins over persisted settings. Storage
         # roots are intentionally absent from this allowlist: they determine
@@ -485,6 +492,453 @@ if [ -f "$_kx_env" ]; then
   # shellcheck disable=SC1090
   . "$_kx_env"
 fi
+
+# Read-aloud and dictation. The tab-bar widgets do both in-process, because only
+# the fork holds a pane handle it can read from and write to. This CLI is a
+# separate process: it reads a pane through the allowlisted `get-text` remote
+# control command, and it never writes to one. `send-text` is deliberately not
+# in the allowlist, so a transcript reaches a pane only through the socket the
+# fork opened for that pane after the user clicked its microphone.
+_KILIX_VOICE_SESSION="$KILIX_SESSION_HOME/voice"
+_KILIX_VOICE_DATA="$KILIX_DATA_HOME/voice"
+_KILIX_VOICE_CONTROL="$_KILIX_VOICE_SESSION/control.sock"
+_KILIX_VOICE_PREFIX="${KILIX_VOICE_PREFIX:-$HOME/.local}"
+
+# One interpreter start for the whole voice vocabulary, for the same reason the
+# transcript values are read together: status, doctor and any speak that has to
+# decide how much of a pane to read all want most of it at once. The defaults
+# below match the SDK, so a missing or unreadable settings file degrades to the
+# shipped behaviour instead of an empty report.
+_KILIX_VOICE_SPEAK=1
+_KILIX_VOICE_DICTATE=1
+_KILIX_VOICE_TTS_ENGINE=espeak
+_KILIX_VOICE_TTS_VOICE=en-us
+_KILIX_VOICE_TTS_RATE=170
+_KILIX_VOICE_TTS_EXTENT=screen
+_KILIX_VOICE_TTS_MAX_CHARS=4000
+_KILIX_VOICE_STT_ENGINE=vosk
+_KILIX_VOICE_STT_MODEL=small-en-us
+_KILIX_VOICE_STT_SUBMIT=never
+_KILIX_VOICE_STT_MAX_SECONDS=30
+_KILIX_VOICE_STT_SILENCE_MS=900
+_KILIX_VOICE_STT_PUNCTUATION=1
+_KILIX_VOICE_DEVICE_IN=default
+_KILIX_VOICE_DEVICE_OUT=default
+_KILIX_VOICE_HISTORY=0
+_kilix_read_voice_config() {
+  local line
+  while IFS= read -r line; do
+    case "$line" in
+      speak=*)         _KILIX_VOICE_SPEAK="${line#speak=}" ;;
+      dictate=*)       _KILIX_VOICE_DICTATE="${line#dictate=}" ;;
+      tts_engine=*)    _KILIX_VOICE_TTS_ENGINE="${line#tts_engine=}" ;;
+      tts_voice=*)     _KILIX_VOICE_TTS_VOICE="${line#tts_voice=}" ;;
+      tts_rate=*)      _KILIX_VOICE_TTS_RATE="${line#tts_rate=}" ;;
+      tts_extent=*)    _KILIX_VOICE_TTS_EXTENT="${line#tts_extent=}" ;;
+      tts_max_chars=*) _KILIX_VOICE_TTS_MAX_CHARS="${line#tts_max_chars=}" ;;
+      stt_engine=*)    _KILIX_VOICE_STT_ENGINE="${line#stt_engine=}" ;;
+      stt_model=*)     _KILIX_VOICE_STT_MODEL="${line#stt_model=}" ;;
+      stt_submit=*)    _KILIX_VOICE_STT_SUBMIT="${line#stt_submit=}" ;;
+      stt_max_seconds=*) _KILIX_VOICE_STT_MAX_SECONDS="${line#stt_max_seconds=}" ;;
+      stt_silence_ms=*)  _KILIX_VOICE_STT_SILENCE_MS="${line#stt_silence_ms=}" ;;
+      punctuation=*)   _KILIX_VOICE_STT_PUNCTUATION="${line#punctuation=}" ;;
+      device_in=*)     _KILIX_VOICE_DEVICE_IN="${line#device_in=}" ;;
+      device_out=*)    _KILIX_VOICE_DEVICE_OUT="${line#device_out=}" ;;
+      history=*)       _KILIX_VOICE_HISTORY="${line#history=}" ;;
+    esac
+  done < <(python3 -c "
+import sys
+sys.path.insert(0, '$KILIX_HOME/config')
+from kilix_sdk import settings
+print('speak=%d' % (1 if settings.enabled('KILIX_CHROME_SPEAK') else 0))
+print('dictate=%d' % (1 if settings.enabled('KILIX_CHROME_DICTATE') else 0))
+print('tts_engine=%s' % settings.tts_engine())
+print('tts_voice=%s' % settings.tts_voice())
+print('tts_rate=%d' % settings.tts_rate())
+print('tts_extent=%s' % settings.tts_extent())
+print('tts_max_chars=%s' % (settings.tts_max_chars() or 'unlimited'))
+print('stt_engine=%s' % settings.stt_engine())
+print('stt_model=%s' % settings.stt_model())
+print('stt_submit=%s' % settings.stt_submit())
+print('stt_max_seconds=%d' % settings.stt_max_seconds())
+print('stt_silence_ms=%d' % settings.stt_silence_ms())
+print('punctuation=%d' % (1 if settings.enabled('KILIX_VOICE_STT_PUNCTUATION') else 0))
+print('device_in=%s' % settings.voice_device_in())
+print('device_out=%s' % settings.voice_device_out())
+print('history=%d' % (1 if settings.voice_history() else 0))
+" 2>/dev/null)
+}
+
+_kilix_voice_onoff() {
+  if [ "$1" = 1 ]; then echo on; else echo off; fi
+}
+
+# Installed-command-first, pinned-installer-fallback — the resolution order the
+# tab-bar widgets use, so a click and the CLI can never end up running different
+# builds. Preferring an installed command also keeps kilix-voice usable while
+# KILIX_VOICE_REF is still unpinned and the installer refuses to run.
+_kilix_voice_tool() {
+  local name="$1" force="$2" resolved installer
+  shift 2
+  resolved="$(command -v "$name" 2>/dev/null || true)"
+  if [ "$force" = 0 ] && [ -n "$resolved" ] && [ -x "$resolved" ]; then
+    printf '%s\n' "$resolved"
+    return 0
+  fi
+  installer=("$KILIX_HOME/scripts/install-kilix-voice.sh" "$@")
+  [ "$force" = 0 ] || installer+=(--force)
+  # Installer diagnostics are stderr-only here: this function's stdout is the
+  # resolved path its caller execs.
+  "${installer[@]}" >&2 || return 1
+  resolved="$_KILIX_VOICE_PREFIX/bin/$name"
+  [ -x "$resolved" ] || {
+    echo "kilix voice: installer did not create $resolved" >&2
+    return 1
+  }
+  printf '%s\n' "$resolved"
+}
+
+# Never resolved through the installer, unlike the two TUIs: asking to read a
+# pane aloud must not be able to start a git clone and a 41 MB model download.
+# An absent daemon is a missing optional dependency, so it degrades voice with
+# an actionable message rather than turning a speak into an install.
+_kilix_voice_daemon() {
+  local resolved
+  resolved="$(command -v kilix-voiced 2>/dev/null || true)"
+  [ -n "$resolved" ] || resolved="$_KILIX_VOICE_PREFIX/bin/kilix-voiced"
+  [ -x "$resolved" ] || return 0
+  printf '%s\n' "$resolved"
+}
+
+# Every request this CLI makes of kilix-voiced: connect, send one JSON line,
+# read one reply. It lives here rather than in config/remote.py because that
+# file speaks kitty remote control, which this deliberately does not use.
+# Emitted rather than fed to `python3 -` because `speak` reads the text to say
+# on stdin, and a script on stdin would eat it.
+_kilix_voice_client() {
+  cat <<'PY'
+import json
+import os
+import re
+import socket
+import subprocess
+import sys
+import time
+
+SESSION = os.environ.get("KILIX_VOICE_SESSION", "")
+CONTROL = os.path.join(SESSION, "control.sock")
+DAEMON = os.environ.get("KILIX_VOICE_DAEMON", "")
+SPAWN = os.environ.get("KILIX_VOICE_SPAWN") == "1"
+# The daemon answers as soon as it has accepted a request; audio happens after
+# that, so a slower reply than this is a wedged daemon, not a long sentence.
+REPLY_TIMEOUT = 5.0
+SPAWN_TIMEOUT = 8.0
+# A recognizer should never emit these, but stdout here is usually a live pane,
+# so a transcript is injected text like any other. Newlines survive because the
+# shell this prints into is not reading a command line; everything that could
+# move the cursor or introduce an escape sequence does not, including the 8-bit
+# CSI and OSC introducers in the C1 range.
+CONTROL_CHARACTERS = re.compile(r"[\x00-\x09\x0b-\x1f\x7f-\x9f]")
+
+
+def die(message, code=1):
+    print("kilix voice: %s" % message, file=sys.stderr)
+    raise SystemExit(code)
+
+
+def clean(text):
+    return CONTROL_CHARACTERS.sub("", text)
+
+
+def spawn_daemon():
+    if not DAEMON:
+        die("kilix-voiced is not installed; run 'kilix voice install'")
+    try:
+        subprocess.Popen(
+            [DAEMON],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError as error:
+        die("could not start %s: %s" % (DAEMON, error))
+
+
+def connect():
+    """Connect to the arbiter, starting it once when nothing is listening."""
+    spawned = not SPAWN
+    deadline = time.monotonic() + SPAWN_TIMEOUT
+    while True:
+        client = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+        client.settimeout(REPLY_TIMEOUT)
+        try:
+            client.connect(CONTROL)
+            return client
+        except OSError:
+            client.close()
+        if not spawned:
+            spawn_daemon()
+            spawned = True
+        elif not SPAWN or time.monotonic() >= deadline:
+            die("the voice daemon is not running (%s)" % CONTROL)
+        time.sleep(0.2)
+
+
+def request(client, message):
+    client.sendall((json.dumps(message) + "\n").encode("utf-8"))
+    try:
+        raw = client.recv(65536)
+    except OSError:
+        die("the voice daemon did not answer a %s request" % message["op"])
+    if not raw:
+        die("the voice daemon closed the connection")
+    try:
+        reply = json.loads(raw.decode("utf-8", "replace"))
+    except ValueError:
+        die("the voice daemon sent an unreadable reply")
+    # A status reply is a payload rather than an acknowledgement, so only an
+    # explicit refusal is an error.
+    if reply.get("ok") is False:
+        die(str(reply.get("error") or "request refused"))
+    return reply
+
+
+def cmd_speak():
+    text = sys.stdin.read()
+    request(connect(), {"op": "speak", "text": text})
+
+
+def cmd_stop():
+    client = connect()
+    request(client, {"op": "stop-speech"})
+    # There is no request that ends the daemon: it owns the audio session and
+    # exits on its own idle timeout. Stopping silences it, it does not kill it.
+    if request(client, {"op": "status"}).get("listening"):
+        request(client, {"op": "stop-dictation"})
+
+
+def cmd_status():
+    reply = request(connect(), {"op": "status"})
+    for key in ("speaking", "listening", "engines", "model", "device", "version"):
+        value = reply.get(key)
+        if isinstance(value, (dict, list)):
+            value = json.dumps(value, separators=(",", ":"))
+        print("%s=%s" % (key, "" if value is None else value))
+
+
+def cmd_dictate_pane(pane, seconds):
+    # The socket belongs to the fork, which created it for this pane when the
+    # user clicked its microphone and is the only thing that writes to the PTY.
+    sock = os.path.join(SESSION, "dictate-%s.sock" % pane)
+    reply = request(connect(), {
+        "op": "dictate", "sock": sock, "max_seconds": seconds})
+    print("kilix dictate: listening for pane %s (id %s)"
+          % (pane, reply.get("id", "?")), file=sys.stderr)
+
+
+def cmd_dictate(seconds):
+    path = os.path.join(SESSION, "cli-%d.sock" % os.getpid())
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+    interactive = sys.stderr.isatty()
+    try:
+        if os.path.lexists(path):
+            os.unlink(path)
+        server.bind(path)
+        os.chmod(path, 0o600)
+        client = connect()
+        reply = request(client, {
+            "op": "dictate", "sock": path, "max_seconds": seconds})
+        server.settimeout(1.0)
+        deadline = time.monotonic() + seconds + 15.0
+        final = None
+        try:
+            while final is None and time.monotonic() < deadline:
+                try:
+                    datagram = server.recv(65536)
+                except OSError:
+                    continue
+                try:
+                    event = json.loads(datagram.decode("utf-8", "replace"))
+                except ValueError:
+                    continue
+                if "error" in event:
+                    die(str(event["error"]))
+                if "final" in event:
+                    final = str(event["final"])
+                elif "partial" in event and interactive:
+                    sys.stderr.write("\r\033[2K%s" % clean(str(event["partial"]))[:200])
+                    sys.stderr.flush()
+        except KeyboardInterrupt:
+            final = str(request(
+                client,
+                {"op": "stop-dictation", "id": reply.get("id")},
+            ).get("text", ""))
+        if interactive:
+            sys.stderr.write("\r\033[2K")
+            sys.stderr.flush()
+        if final is None:
+            die("heard nothing before the dictation timed out")
+        final = clean(final).strip()
+        if not final:
+            die("heard nothing")
+        print(final)
+    finally:
+        server.close()
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+operation = sys.argv[1]
+if operation == "speak":
+    cmd_speak()
+elif operation == "stop":
+    cmd_stop()
+elif operation == "status":
+    cmd_status()
+elif operation == "dictate-pane":
+    cmd_dictate_pane(sys.argv[2], int(sys.argv[3]))
+elif operation == "dictate":
+    cmd_dictate(int(sys.argv[2]))
+else:
+    die("unknown voice request: %s" % operation, 2)
+PY
+}
+
+_kilix_voice_request() {
+  KILIX_VOICE_SESSION="$_KILIX_VOICE_SESSION" \
+  KILIX_VOICE_DAEMON="$(_kilix_voice_daemon)" \
+  KILIX_VOICE_SPAWN="${_KILIX_VOICE_SPAWN:-0}" \
+  python3 -c "$(_kilix_voice_client)" "$@"
+}
+
+# Never spawns: reporting that the daemon is stopped must not start it.
+_kilix_voice_daemon_state() {
+  if _kilix_voice_request status >/dev/null 2>&1; then
+    echo running
+  elif [ -S "$_KILIX_VOICE_CONTROL" ]; then
+    echo unresponsive
+  else
+    echo "not running"
+  fi
+}
+
+_kilix_voice_summary() {
+  _kilix_read_voice_config
+  printf 'speak %s, dictate %s (%s / %s); daemon %s\n' \
+    "$(_kilix_voice_onoff "$_KILIX_VOICE_SPEAK")" \
+    "$(_kilix_voice_onoff "$_KILIX_VOICE_DICTATE")" \
+    "$_KILIX_VOICE_TTS_ENGINE" "$_KILIX_VOICE_STT_ENGINE" \
+    "$(_kilix_voice_daemon_state)"
+}
+
+_kilix_voice_found() {
+  local candidate resolved
+  for candidate in "$@"; do
+    resolved="$(command -v "$candidate" 2>/dev/null || true)"
+    if [ -n "$resolved" ]; then
+      printf '%s\n' "$resolved"
+      return 0
+    fi
+  done
+  printf 'not found\n'
+}
+
+_kilix_voice_doctor() {
+  local info server default_source default_sink library model cap tool
+  _kilix_read_voice_config
+  cap="$_KILIX_VOICE_TTS_MAX_CHARS"
+  [ "$cap" = unlimited ] || cap="$cap characters"
+  library="$_KILIX_VOICE_DATA/lib/current/libvosk.so"
+  model="$_KILIX_VOICE_DATA/models/$_KILIX_VOICE_STT_MODEL"
+  # pactl is the probe rather than opening a device: doctor must never be the
+  # thing that turns the microphone on.
+  info="$(command -v pactl >/dev/null 2>&1 && pactl info 2>/dev/null || true)"
+  server="$(printf '%s\n' "$info" | awk -F': ' '
+    $1 == "Server Name" { name = $2 } $1 == "Server Version" { version = $2 }
+    END { if (name != "") print name (version == "" ? "" : " " version) }')"
+  default_source="$(printf '%s\n' "$info" \
+    | awk -F': ' '$1 == "Default Source" { print $2 }')"
+  default_sink="$(printf '%s\n' "$info" \
+    | awk -F': ' '$1 == "Default Sink" { print $2 }')"
+  printf '%s\n' \
+    "widgets: speak $(_kilix_voice_onoff "$_KILIX_VOICE_SPEAK"), dictate $(_kilix_voice_onoff "$_KILIX_VOICE_DICTATE")" \
+    "read-aloud: $_KILIX_VOICE_TTS_ENGINE, voice $_KILIX_VOICE_TTS_VOICE, $_KILIX_VOICE_TTS_RATE wpm, extent $_KILIX_VOICE_TTS_EXTENT, cap $cap" \
+    "dictation: $_KILIX_VOICE_STT_ENGINE, model $_KILIX_VOICE_STT_MODEL, stops after ${_KILIX_VOICE_STT_MAX_SECONDS}s or ${_KILIX_VOICE_STT_SILENCE_MS}ms of silence" \
+    "submit policy: $_KILIX_VOICE_STT_SUBMIT (dictation never presses Enter on its own)" \
+    "spoken punctuation: $(_kilix_voice_onoff "$_KILIX_VOICE_STT_PUNCTUATION")" \
+    "dictation history: $(_kilix_voice_onoff "$_KILIX_VOICE_HISTORY")" \
+    "synthesizer: $(_kilix_voice_found espeak-ng espeak)" \
+    "mbrola voices: $(_kilix_voice_found mbrola) (optional quality tier)" \
+    "capture: $(_kilix_voice_found parec arecord)" \
+    "playback: $(_kilix_voice_found pacat aplay paplay)" \
+    "audio server: ${server:-unreachable}" \
+    "input device: $_KILIX_VOICE_DEVICE_IN${default_source:+ ($default_source)}" \
+    "output device: $_KILIX_VOICE_DEVICE_OUT${default_sink:+ ($default_sink)}"
+  if [ -f "$library" ]; then
+    printf 'speech library: %s\n' "$library"
+  else
+    printf 'speech library: not installed (%s)\n' "$library"
+  fi
+  if [ -d "$model" ]; then
+    printf 'speech model: %s\n' "$model"
+  else
+    printf 'speech model: not installed (%s)\n' "$model"
+  fi
+  printf 'daemon: %s (%s)\n' "$(_kilix_voice_daemon_state)" "$_KILIX_VOICE_CONTROL"
+  for tool in kilix-voiced kilix-tts kilix-stt; do
+    printf '%s: %s\n' "$tool" "$(_kilix_voice_found "$tool")"
+  done
+  printf 'model pins: %s\n' \
+    "$("$KILIX_HOME/scripts/install-kilix-voice.sh" --print-refs 2>/dev/null \
+       | tr '\n' ' ' || echo unavailable)"
+}
+
+# Read a live pane through the allowlisted `get-text`, exactly as `kilix watch`
+# does. A missing engine is not worth a build here: with no kilix running there
+# is no pane to read, so speaking must never trigger one.
+_kilix_voice_pane_text() {
+  local pane="$1" extent="$2" kitten target text password=()
+  kitten="${KILIX_KITTEN:-}"
+  if [ -z "$kitten" ]; then
+    if [ -x "$FORK" ]; then kitten="$(dirname "$FORK")/kitten"
+    elif [ -x "$PREBUILT" ]; then kitten="$(dirname "$PREBUILT")/kitten"
+    fi
+  fi
+  [ -n "$kitten" ] && [ -x "$kitten" ] || {
+    echo "kilix speak: kitten not found next to the kilix engine; pass the text to speak instead" >&2
+    return 1
+  }
+  [ -n "${KITTY_LISTEN_ON:-}" ] || {
+    echo "kilix speak: no live kilix remote-control socket (run this inside kilix, or pass the text to speak)" >&2
+    return 1
+  }
+  target="$pane"
+  [ -n "$target" ] || target="${KITTY_WINDOW_ID:-}"
+  [ -n "$target" ] || {
+    echo "kilix speak: no pane to read (pass --pane ID, or run this inside a kilix pane)" >&2
+    return 1
+  }
+  case "$extent" in
+    scrollback) extent=all ;;
+    selection) extent=selection ;;
+    *) extent=screen ;;
+  esac
+  [ -z "${KILIX_RC_PASSWORD_FILE:-}" ] \
+    || password=(--password-file "$KILIX_RC_PASSWORD_FILE")
+  text="$("$kitten" @ "${password[@]}" \
+    get-text --match "id:$target" --extent "$extent")" || {
+    echo "kilix speak: could not read pane $target" >&2
+    return 1
+  }
+  if [ -z "${text//[[:space:]]/}" ] && [ "$extent" = selection ]; then
+    echo "kilix speak: nothing is selected in pane $target" >&2
+    return 1
+  fi
+  printf '%s' "$text"
+}
 
 case "${1:-}" in
   # build.sh is invoked from the checkout root everywhere: it is cwd-independent
@@ -746,6 +1200,210 @@ case "${1:-}" in
       || { echo "kilix tmux: installer did not create $_tmux_installed" >&2; exit 1; }
     [ "$_tmux_install_only" = 0 ] || exit 0
     exec "$_tmux_installed" "$@" ;;
+  speak|read-aloud)
+    shift
+    _speak_pane=""
+    _speak_extent=""
+    _speak_usage="usage: $_self speak [--pane ID] [--extent screen|scrollback|selection] [TEXT...]"
+    while :; do
+      case "${1:-}" in
+        --pane)
+          [ $# -ge 2 ] || { echo "$_speak_usage" >&2; exit 2; }
+          _speak_pane="$2"; shift 2 ;;
+        --extent)
+          [ $# -ge 2 ] || { echo "$_speak_usage" >&2; exit 2; }
+          _speak_extent="$2"; shift 2 ;;
+        # No bare `help` alias here, unlike the other subcommands: TEXT is free
+        # prose, and `kilix speak help` should say the word.
+        -h|--help)
+          echo "$_speak_usage"
+          echo "reads the active pane aloud; with TEXT, reads that instead"
+          echo "  --pane    read a pane by ID from '$_self ls --panes'"
+          echo "  --extent  how much of the pane to read (default: the"
+          echo "            KILIX_VOICE_TTS_EXTENT setting)"
+          echo "  -         read the text to speak from standard input"
+          echo
+          echo "Returns as soon as kilix-voiced accepts the text; speech"
+          echo "continues in the background and '$_self voice stop' ends it."
+          exit 0 ;;
+        --) shift; break ;;
+        -) break ;;
+        --*) echo "$_speak_usage" >&2; exit 2 ;;
+        *) break ;;
+      esac
+    done
+    case "$_speak_pane" in
+      '') ;;
+      *[!0-9]*) echo "kilix speak: --pane takes a numeric pane ID" >&2; exit 2 ;;
+    esac
+    case "$_speak_extent" in
+      ''|screen|scrollback|selection) ;;
+      *) echo "kilix speak: --extent must be screen, scrollback, or selection" >&2
+         exit 2 ;;
+    esac
+    if [ $# -gt 0 ]; then
+      # Explicit text never touches a pane, so it needs no live instance.
+      if [ "$1" = - ] && [ $# -eq 1 ]; then _speak_text="$(cat)"
+      else _speak_text="$*"
+      fi
+    else
+      [ -n "$_speak_extent" ] || {
+        _kilix_read_voice_config
+        _speak_extent="$_KILIX_VOICE_TTS_EXTENT"
+      }
+      _speak_text="$(_kilix_voice_pane_text "$_speak_pane" "$_speak_extent")" || exit 1
+    fi
+    [ -n "${_speak_text//[[:space:]]/}" ] || {
+      echo "kilix speak: nothing to read aloud" >&2
+      exit 1
+    }
+    _kilix_ensure_private_directory "$_KILIX_VOICE_SESSION" voice || exit 1
+    _KILIX_VOICE_SPAWN=1
+    printf '%s' "$_speak_text" | _kilix_voice_request speak || exit $?
+    exit 0 ;;
+  dictate|dictation)
+    shift
+    _dictate_pane=""
+    _dictate_seconds=""
+    _dictate_usage="usage: $_self dictate [--pane ID] [--seconds N]"
+    while :; do
+      case "${1:-}" in
+        --pane)
+          [ $# -ge 2 ] || { echo "$_dictate_usage" >&2; exit 2; }
+          _dictate_pane="$2"; shift 2 ;;
+        --seconds)
+          [ $# -ge 2 ] || { echo "$_dictate_usage" >&2; exit 2; }
+          _dictate_seconds="$2"; shift 2 ;;
+        -h|--help|help)
+          echo "$_dictate_usage"
+          echo "records one utterance and writes what it heard to standard output"
+          echo "  --pane     deliver it to a pane that is already listening,"
+          echo "             instead of printing it"
+          echo "  --seconds  hard stop (default: the KILIX_VOICE_STT_MAX_SECONDS"
+          echo "             setting); silence ends the utterance sooner"
+          echo
+          echo "The microphone opens when this command runs and closes when it"
+          echo "returns. Dictation never submits: nothing here presses Enter."
+          exit 0 ;;
+        --) shift; break ;;
+        *) break ;;
+      esac
+    done
+    [ $# -eq 0 ] || { echo "$_dictate_usage" >&2; exit 2; }
+    case "$_dictate_pane" in
+      '') ;;
+      *[!0-9]*) echo "kilix dictate: --pane takes a numeric pane ID" >&2; exit 2 ;;
+    esac
+    if [ -z "$_dictate_seconds" ]; then
+      _kilix_read_voice_config
+      _dictate_seconds="$_KILIX_VOICE_STT_MAX_SECONDS"
+    else
+      case "$_dictate_seconds" in
+        *[!0-9]*|0)
+          echo "kilix dictate: --seconds takes a positive whole number" >&2
+          exit 2 ;;
+      esac
+    fi
+    _kilix_ensure_private_directory "$_KILIX_VOICE_SESSION" voice || exit 1
+    _KILIX_VOICE_SPAWN=1
+    if [ -n "$_dictate_pane" ]; then
+      # Only the fork can type into a pane, and it only listens for a pane whose
+      # microphone the user clicked. Refusing here rather than inventing another
+      # delivery path is what keeps `send-text` out of the rc allowlist.
+      _dictate_sock="$_KILIX_VOICE_SESSION/dictate-$_dictate_pane.sock"
+      [ -S "$_dictate_sock" ] && [ ! -L "$_dictate_sock" ] \
+        && [ "$(stat -c '%u:%a' -- "$_dictate_sock" 2>/dev/null)" = "$(id -u):600" ] || {
+          echo "kilix dictate: pane $_dictate_pane is not accepting dictation" >&2
+          echo "kilix dictate: click the microphone in that pane, or run '$_self dictate' to print the text" >&2
+          exit 1
+        }
+      _kilix_voice_request dictate-pane "$_dictate_pane" "$_dictate_seconds" || exit $?
+    else
+      _kilix_voice_request dictate "$_dictate_seconds" || exit $?
+    fi
+    exit 0 ;;
+  tts|kilix-tts)
+    shift
+    _tts_install_only=0
+    _tts_force=0
+    while :; do
+      case "${1:-}" in
+        --install-only) _tts_install_only=1; shift ;;
+        --force-install) _tts_force=1; shift ;;
+        -h|--help|help)
+          echo "usage: $_self tts [--install-only|--force-install] [ARGS...]"
+          echo "opens the read-aloud settings TUI"
+          exit 0 ;;
+        --) shift; break ;;
+        *) break ;;
+      esac
+    done
+    # Read-aloud needs neither the recognition library nor an acoustic model, so
+    # opening this TUI must not demand pins that only dictation uses.
+    _tts_installed="$(
+      _kilix_voice_tool kilix-tts "$_tts_force" --without-dictation
+    )" || exit 1
+    [ "$_tts_install_only" = 0 ] || exit 0
+    exec "$_tts_installed" "$@" ;;
+  stt|kilix-stt)
+    shift
+    _stt_install_only=0
+    _stt_force=0
+    while :; do
+      case "${1:-}" in
+        --install-only) _stt_install_only=1; shift ;;
+        --force-install) _stt_force=1; shift ;;
+        -h|--help|help)
+          echo "usage: $_self stt [--install-only|--force-install] [ARGS...]"
+          echo "opens the dictation settings TUI"
+          exit 0 ;;
+        --) shift; break ;;
+        *) break ;;
+      esac
+    done
+    _stt_installed="$(_kilix_voice_tool kilix-stt "$_stt_force")" || exit 1
+    [ "$_stt_install_only" = 0 ] || exit 0
+    exec "$_stt_installed" "$@" ;;
+  voice)
+    shift
+    _voice_action="${1:-status}"
+    [ $# -eq 0 ] || shift
+    case "$_voice_action" in
+      status)
+        [ $# -eq 0 ] || { echo "usage: $_self voice status" >&2; exit 2; }
+        printf '%s\n' \
+          "voice: $(_kilix_voice_summary)" \
+          "session: $_KILIX_VOICE_SESSION" \
+          "data: $_KILIX_VOICE_DATA"
+        exit 0 ;;
+      install)
+        exec "$KILIX_HOME/scripts/install-kilix-voice.sh" "$@" ;;
+      doctor)
+        [ $# -eq 0 ] || { echo "usage: $_self voice doctor" >&2; exit 2; }
+        _kilix_voice_doctor
+        exit 0 ;;
+      stop)
+        [ $# -eq 0 ] || { echo "usage: $_self voice stop" >&2; exit 2; }
+        [ -S "$_KILIX_VOICE_CONTROL" ] || {
+          echo "kilix voice: the voice daemon is not running"
+          exit 0
+        }
+        _kilix_voice_request stop || exit $?
+        exit 0 ;;
+      -h|--help|help)
+        echo "usage: $_self voice [status|install|doctor|stop]"
+        echo "  status   widget, engine, and daemon state (default)"
+        echo "  install  install the pinned kilix-voice closure"
+        echo "  doctor   probe every engine, device, and pin voice depends on"
+        echo "  stop     silence speech and close the microphone"
+        echo
+        echo "Read-aloud and dictation are configured in '$_self settings'"
+        echo "under Voice, or with '$_self settings --set wpm=200'."
+        exit 0 ;;
+      *)
+        echo "usage: $_self voice [status|install|doctor|stop]" >&2
+        exit 2 ;;
+    esac ;;
   status|--status)
     _status_version="$(cat "$KILIX_HOME/VERSION" 2>/dev/null || echo unknown)"
     _status_head="$(git -C "$KILIX_HOME" rev-parse --short HEAD 2>/dev/null || echo not-a-checkout)"
@@ -783,6 +1441,7 @@ case "${1:-}" in
       "config: $KITTY_CONFIG_DIRECTORY/kitty.conf" \
       "runtime config: $KILIX_ENV_CONFIG" \
       "shared settings: $GPU_TERMINAL_SETTINGS_FILE" \
+      "voice: $(_kilix_voice_summary)" \
       "desktop provider: $_status_provider" \
       "desktop path: ${_status_provider_dir:-n/a}"
     if [ -n "$_status_provider_dir" ] && [ -f "$_status_provider_dir/main.py" ]; then

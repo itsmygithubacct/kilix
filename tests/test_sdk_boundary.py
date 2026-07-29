@@ -43,14 +43,38 @@ class KilixSdkBoundaryTests(unittest.TestCase):
                 self.assertEqual(Path(paths.kilix95_home()), custom)
 
     def test_sdk_contract_is_versioned(self):
-        # 1.5 adds the shared session-logging settings both providers read.
-        self.assertEqual(kilix_sdk.SDK_API_VERSION, (1, 5))
+        # 1.5 added the shared session-logging settings both providers read;
+        # 1.6 adds the shared voice settings behind the two chrome widgets.
+        self.assertEqual(kilix_sdk.SDK_API_VERSION, (1, 6))
+        self.assertEqual(kilix_sdk.SDK_VERSION, "1.6.0")
         kilix_sdk.require_compatible("1.0")
         kilix_sdk.require_compatible("1.5")
+        kilix_sdk.require_compatible("1.6")
         with self.assertRaises(kilix_sdk.IncompatibleSDKError):
-            kilix_sdk.require_compatible("1.6")
+            kilix_sdk.require_compatible("1.7")
         with self.assertRaises(kilix_sdk.IncompatibleSDKError):
             kilix_sdk.require_compatible("2.0")
+
+    def test_voice_settings_are_part_of_the_sdk_contract(self):
+        # A provider compiled against 1.6 may rely on these names existing.
+        for name in (
+            "VOICE_MARKER", "VOICE_KEYS", "VOICE_VALUE_KEYS",
+            "VOICE_CHOICE_SPECS", "VOICE_TOKEN_SPECS", "VOICE_TOGGLES",
+            "tts_engine", "tts_voice", "tts_rate", "tts_extent",
+            "tts_max_chars", "stt_engine", "stt_model", "stt_submit",
+            "stt_max_seconds", "stt_silence_ms", "voice_device_in",
+            "voice_device_out", "voice_history",
+        ):
+            self.assertTrue(hasattr(settings, name), name)
+        for key in ("KILIX_CHROME_SPEAK", "KILIX_CHROME_DICTATE",
+                    settings.VOICE_PUNCTUATION_KEY):
+            self.assertIn(key, settings.TOGGLE_BY_KEY)
+        for key in settings.VOICE_VALUE_KEYS:
+            self.assertIn(key, settings.MANAGED_KEYS)
+        # The one value that must never gain a third choice.
+        self.assertEqual(
+            settings.VOICE_CHOICE_SPECS[settings.VOICE_STT_SUBMIT_KEY],
+            ("never", ("never", "confirm")))
 
     def test_session_logging_settings_are_part_of_the_sdk_contract(self):
         # A provider compiled against 1.5 may rely on these names existing.

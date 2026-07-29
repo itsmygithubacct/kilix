@@ -57,6 +57,33 @@ def _control_names() -> dict[str, str]:
     names[shared.TRANSCRIPT_LIMIT_KEY.lower()] = shared.TRANSCRIPT_LIMIT_KEY
     names[shared.TRANSCRIPT_TOTAL_KEY.lower()] = shared.TRANSCRIPT_TOTAL_KEY
     names[shared.TRANSCRIPT_ARCHIVE_KEY.lower()] = shared.TRANSCRIPT_ARCHIVE_KEY
+    # Voice is reached from two directions, so it answers to both: the widgets
+    # by what they do (``--set dictate=off`` removes a button), the engines by
+    # the abbreviations their own tools carry (``--set wpm=200``).
+    for aliases, key in (
+        (("speak", "tts", "read_aloud"), "KILIX_CHROME_SPEAK"),
+        (("dictate", "stt", "mic", "microphone"), "KILIX_CHROME_DICTATE"),
+        (("tts_engine", "voice_engine"), shared.VOICE_TTS_ENGINE_KEY),
+        (("tts_voice", "voice"), shared.VOICE_TTS_VOICE_KEY),
+        (("tts_rate", "speech_rate", "wpm"), shared.VOICE_TTS_RATE_KEY),
+        (("tts_extent", "read_extent"), shared.VOICE_TTS_EXTENT_KEY),
+        (("tts_max_chars", "read_max_chars"), shared.VOICE_TTS_MAX_CHARS_KEY),
+        (("stt_engine",), shared.VOICE_STT_ENGINE_KEY),
+        (("stt_model", "voice_model"), shared.VOICE_STT_MODEL_KEY),
+        (("stt_submit", "dictation_submit"), shared.VOICE_STT_SUBMIT_KEY),
+        (("stt_seconds", "dictation_seconds"),
+         shared.VOICE_STT_MAX_SECONDS_KEY),
+        (("stt_silence", "dictation_silence"),
+         shared.VOICE_STT_SILENCE_MS_KEY),
+        (("punctuation", "spoken_punctuation"), shared.VOICE_PUNCTUATION_KEY),
+        (("device_in", "mic_device"), shared.VOICE_DEVICE_IN_KEY),
+        (("device_out", "speaker_device"), shared.VOICE_DEVICE_OUT_KEY),
+        (("voice_history", "dictation_history"), shared.VOICE_HISTORY_KEY),
+    ):
+        for alias in aliases:
+            names[alias] = key
+    for key in shared.VOICE_KEYS:
+        names[key.lower()] = key
     return names
 
 
@@ -109,18 +136,79 @@ TRANSCRIPT_ARCHIVE_SPEC = ChoiceSpec(
     shared.TRANSCRIPT_ARCHIVE_DEFAULT,
 )
 
-LEADING_CHOICES = {"Pane buttons": (MEMORY_MODE_SPEC,)}
-# The session-logging sub-options follow the on/off control they qualify.
+# Only the words belong here; the keys, presets and defaults come from the SDK,
+# so the file, this TUI, the CLI and Kilix 95 cannot drift into two
+# vocabularies.
+VOICE_LABELS = {
+    shared.VOICE_TTS_ENGINE_KEY: "Speech engine",
+    shared.VOICE_TTS_RATE_KEY: "Speaking rate (words per minute)",
+    shared.VOICE_TTS_EXTENT_KEY:
+        "Read aloud (screen / scrollback / selection)",
+    shared.VOICE_TTS_MAX_CHARS_KEY: "Read-aloud length cap (characters)",
+    shared.VOICE_STT_ENGINE_KEY: "Dictation engine",
+    shared.VOICE_STT_MODEL_KEY: "Dictation model",
+    shared.VOICE_STT_SUBMIT_KEY: "Dictation submit (never / confirm first)",
+    shared.VOICE_STT_MAX_SECONDS_KEY: "Dictation time limit (seconds)",
+    shared.VOICE_STT_SILENCE_MS_KEY: "Silence that ends dictation (ms)",
+    shared.VOICE_HISTORY_KEY: "Keep a dictation history file",
+}
+
+
+def _voice_specs() -> tuple[tuple[ChoiceSpec, ...], tuple[ChoiceSpec, ...]]:
+    """Split the voice presets around the toggle they are presented with.
+
+    Order follows the SDK's ``VOICE_KEYS`` so every surface reads the same way.
+    The synthesizer voice and the two device names are deliberately absent: a
+    cycle needs a fixed list, and theirs is whatever the installed engine and
+    the running audio server report, so kilix-tts and kilix-stt pick those from
+    the live lists instead.
+    """
+    before: list[ChoiceSpec] = []
+    after: list[ChoiceSpec] = []
+    target = before
+    for key in shared.VOICE_KEYS:
+        if key == shared.VOICE_PUNCTUATION_KEY:
+            target = after
+            continue
+        preset = shared.VOICE_CHOICE_SPECS.get(key)
+        if preset is not None:
+            default, choices = preset
+            target.append(ChoiceSpec(key, VOICE_LABELS[key], choices, default))
+    return tuple(before), tuple(after)
+
+
+VOICE_LEADING_SPECS, VOICE_TRAILING_SPECS = _voice_specs()
+
+LEADING_CHOICES = {
+    "Pane buttons": (MEMORY_MODE_SPEC,),
+    "Voice": VOICE_LEADING_SPECS,
+}
+# Sub-options sit next to the toggle they qualify rather than being grouped by
+# type: the session-logging controls follow their on/off control, and the voice
+# presets bracket the punctuation toggle the way the shared file writes them.
 TRAILING_CHOICES = {
     "Session logging": (
         TRANSCRIPT_GRAPHICS_SPEC, TRANSCRIPT_LIMIT_SPEC,
         TRANSCRIPT_TOTAL_SPEC, TRANSCRIPT_ARCHIVE_SPEC,
     ),
+    "Voice": VOICE_TRAILING_SPECS,
 }
 CHOICE_SPECS = {
     spec.key: spec
     for group in (*LEADING_CHOICES.values(), *TRAILING_CHOICES.values())
     for spec in group
+}
+
+# A microphone that appears in a terminal after an update has to explain
+# itself, and no per-setting label can: what matters is what the widgets do
+# not do.  Said here, in the release notes, and in kilix.env.
+SECTION_NOTES = {
+    "Voice": (
+        "Click to talk: the mic opens on a click; dictation "
+        "never presses Enter.",
+        "Synthesizer voices and audio devices are picked in "
+        "kilix-tts / kilix-stt.",
+    ),
 }
 
 
@@ -160,6 +248,8 @@ TOOL_SPECS = (
     ToolSpec("memory-monitor", "Kilix Memory — monitor RAM"),
     ToolSpec("tmux-manager", "Tmux Manager — download and run"),
     ToolSpec("install-tb", "Install / repair tmux-cli's tb command"),
+    ToolSpec("kilix-tts", "kilix-tts — read-aloud voice and rate"),
+    ToolSpec("kilix-stt", "kilix-stt — dictation and microphone"),
 )
 UI_SECTIONS = SECTION_SPECS + (("Tools", TOOL_SPECS),)
 TOOLS_SECTION_INDEX = len(SECTION_SPECS)
@@ -176,6 +266,7 @@ def _section_aliases() -> dict[str, int]:
         "Pane buttons": ("pane", "panes"),
         "Session logging": ("session", "logging", "logs", "transcript",
                             "transcripts"),
+        "Voice": ("speech", "tts", "stt"),
         "Games": ("game",),
         "Tools": ("tool",),
     }
@@ -200,7 +291,8 @@ def _parse_assignment(value: str) -> tuple[str, object]:
         raise argparse.ArgumentTypeError(
             "expected CONTROL=VALUE"
         ) from error
-    key = CONTROL_NAMES.get(name.strip().lower())
+    alias = name.strip().lower()
+    key = CONTROL_NAMES.get(alias)
     if key is None:
         choices = ", ".join(sorted(
             key for key in CONTROL_NAMES if not key.startswith("kilix_")))
@@ -251,6 +343,22 @@ def _parse_assignment(value: str) -> tuple[str, object]:
             raise argparse.ArgumentTypeError(
                 f"transcript budget must be one of: {', '.join(choices)}")
         return key, size
+    # Voice errors quote the name the caller typed: one key answers to several
+    # aliases, and being told about "wpm" is more use than about the key.
+    if key in shared.VOICE_CHOICE_SPECS:
+        _default, valid = shared.VOICE_CHOICE_SPECS[key]
+        preset = raw.strip().lower()
+        if preset not in valid:
+            raise argparse.ArgumentTypeError(
+                f"{alias} must be one of: {', '.join(valid)}")
+        return key, preset
+    if key in shared.VOICE_TOKEN_SPECS:
+        _default, pattern = shared.VOICE_TOKEN_SPECS[key]
+        token = raw.strip()
+        if not pattern.match(token):
+            raise argparse.ArgumentTypeError(
+                f"{alias} must be a plain voice or device name")
+        return key, token
     return key, shared.truthy(raw)
 
 
@@ -320,6 +428,18 @@ def _print_settings(values: dict[str, str]) -> None:
     if archive not in shared.TRANSCRIPT_ARCHIVE_CHOICES:
         archive = shared.TRANSCRIPT_ARCHIVE_DEFAULT
     print(f"{shared.TRANSCRIPT_ARCHIVE_KEY}={archive}")
+    # Printed as the widgets will read them, so a value none of them recognizes
+    # shows up here as the default it silently becomes rather than as itself.
+    for key in shared.VOICE_VALUE_KEYS:
+        stored = str(values.get(key, "")).strip()
+        preset = shared.VOICE_CHOICE_SPECS.get(key)
+        if preset is not None:
+            default, valid = preset
+            value = stored.lower() if stored.lower() in valid else default
+        else:
+            default, pattern = shared.VOICE_TOKEN_SPECS[key]
+            value = stored if pattern.match(stored) else default
+        print(f"{key}={value}")
 
 
 def _print_games(values: dict[str, str]) -> None:
@@ -378,12 +498,25 @@ def _draw(stdscr, values: dict[str, object], original: dict[str, object],
     except curses.error:
         pass
 
-    available = max(1, height - 8)
+    notes = SECTION_NOTES.get(section, ())
+    # A terminal too short to show both keeps the controls: the note is also in
+    # kilix.env and the release notes, the controls are only here.
+    if height < 9 + len(notes):
+        notes = ()
+    for row_offset, note in enumerate(notes):
+        try:
+            stdscr.addnstr(5 + row_offset, 2, note, max(0, width - 4),
+                           curses.A_DIM)
+        except curses.error:
+            pass
+
+    first_row = 5 + len(notes)
+    available = max(1, height - 3 - first_row)
     scroll = min(max(0, selected - available + 1),
                  max(0, len(specs) - available))
     for row_offset, spec in enumerate(specs[scroll:scroll + available]):
         item_index = scroll + row_offset
-        row = 5 + row_offset
+        row = first_row + row_offset
         if tools:
             marker = "[>]"
         elif isinstance(spec, ChoiceSpec):
@@ -450,6 +583,9 @@ def _run_tui(stdscr, initial_section: int | str | None = None) -> int | str:
         shared.TRANSCRIPT_TOTAL_KEY, shared.TRANSCRIPT_TOTAL_DEFAULT)
     values[shared.TRANSCRIPT_ARCHIVE_KEY] = effective.get(
         shared.TRANSCRIPT_ARCHIVE_KEY, shared.TRANSCRIPT_ARCHIVE_DEFAULT)
+    for spec in VOICE_LEADING_SPECS + VOICE_TRAILING_SPECS:
+        stored = str(effective.get(spec.key, spec.default)).strip().lower()
+        values[spec.key] = stored if stored in spec.choices else spec.default
     original = dict(values)
     if isinstance(initial_section, str):
         section_index = _parse_section(initial_section)
@@ -573,6 +709,10 @@ def _tool_argv(action: str) -> list[str]:
         return [kilix, "tmux"]
     if action == "install-tb":
         return [kilix, "tmux", "--install-only", "--with-tb"]
+    if action == "kilix-tts":
+        return [kilix, "tts"]
+    if action == "kilix-stt":
+        return [kilix, "stt"]
     raise ValueError(f"unknown tool action: {action}")
 
 
