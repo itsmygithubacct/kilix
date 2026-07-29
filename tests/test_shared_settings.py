@@ -125,6 +125,22 @@ class SharedSettingsTests(unittest.TestCase):
             self.assertIn("KILIX_GAME_DOOM=0", text)
             self.assertFalse(settings.game_enabled("doom", str(path)))
 
+    def test_coding_yolo_is_bounded_and_gets_its_own_section(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.conf"
+            path.write_text("# existing chrome preferences\nKILIX_CHROME_CLOCK=0\n")
+
+            self.assertFalse(settings.coding_yolo(str(path)))
+            settings.update({settings.CODING_YOLO_KEY: "ON"}, str(path))
+
+            text = path.read_text()
+            self.assertIn(settings.CODING_MARKER, text)
+            self.assertIn(f"{settings.CODING_YOLO_KEY}=on", text)
+            self.assertTrue(settings.coding_yolo(str(path)))
+            with self.assertRaises(ValueError):
+                settings.update(
+                    {settings.CODING_YOLO_KEY: "sometimes"}, str(path))
+
     def test_ensure_adds_new_toggle_defaults_to_an_existing_shared_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.conf"

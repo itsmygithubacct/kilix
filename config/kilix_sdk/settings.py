@@ -471,6 +471,8 @@ def _set_value(text: str, key: str, value: str) -> str:
         marker = GAMES_MARKER
     elif key in VOICE_KEYS:
         marker = VOICE_MARKER
+    elif key in CODING_KEYS:
+        marker = CODING_MARKER
     else:
         marker = SETTINGS_MARKER
     if marker not in text:
@@ -523,6 +525,11 @@ def update(changes: Mapping[str, object], path: str | None = None) -> str:
                     f"{TRANSCRIPT_ARCHIVE_KEY} must be one of: {choices}")
         elif key in VOICE_CHOICE_SPECS:
             _default, valid = VOICE_CHOICE_SPECS[key]
+            value = str(raw_value).strip().lower()
+            if value not in valid:
+                raise ValueError(f"{key} must be one of: {', '.join(valid)}")
+        elif key in CODING_CHOICE_SPECS:
+            _default, valid = CODING_CHOICE_SPECS[key]
             value = str(raw_value).strip().lower()
             if value not in valid:
                 raise ValueError(f"{key} must be one of: {', '.join(valid)}")

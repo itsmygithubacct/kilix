@@ -76,6 +76,19 @@ class KilixSdkBoundaryTests(unittest.TestCase):
             settings.VOICE_CHOICE_SPECS[settings.VOICE_STT_SUBMIT_KEY],
             ("never", ("never", "confirm")))
 
+    def test_coding_agent_setting_is_part_of_the_sdk_contract(self):
+        for name in (
+            "CODING_MARKER", "CODING_KEYS", "CODING_CHOICE_SPECS",
+            "CODING_YOLO_KEY", "CODING_YOLO_DEFAULT", "CODING_YOLO_CHOICES",
+            "coding_yolo",
+        ):
+            self.assertTrue(hasattr(settings, name), name)
+            self.assertIn(name, settings.__all__)
+        self.assertIn(settings.CODING_YOLO_KEY, settings.MANAGED_KEYS)
+        self.assertEqual(
+            settings.CODING_CHOICE_SPECS[settings.CODING_YOLO_KEY],
+            ("off", ("off", "on")))
+
     def test_session_logging_settings_are_part_of_the_sdk_contract(self):
         # A provider compiled against 1.5 may rely on these names existing.
         for name in (
