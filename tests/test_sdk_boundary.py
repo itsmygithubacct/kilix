@@ -44,14 +44,16 @@ class KilixSdkBoundaryTests(unittest.TestCase):
 
     def test_sdk_contract_is_versioned(self):
         # 1.5 added the shared session-logging settings both providers read;
-        # 1.6 adds the shared voice settings behind the two chrome widgets.
-        self.assertEqual(kilix_sdk.SDK_API_VERSION, (1, 6))
-        self.assertEqual(kilix_sdk.SDK_VERSION, "1.6.0")
+        # 1.6 adds the shared voice settings behind the two chrome widgets;
+        # 1.7 adds the shared coding-agent policy the Settings app reads.
+        self.assertEqual(kilix_sdk.SDK_API_VERSION, (1, 7))
+        self.assertEqual(kilix_sdk.SDK_VERSION, "1.7.0")
         kilix_sdk.require_compatible("1.0")
         kilix_sdk.require_compatible("1.5")
         kilix_sdk.require_compatible("1.6")
+        kilix_sdk.require_compatible("1.7")
         with self.assertRaises(kilix_sdk.IncompatibleSDKError):
-            kilix_sdk.require_compatible("1.7")
+            kilix_sdk.require_compatible("1.8")
         with self.assertRaises(kilix_sdk.IncompatibleSDKError):
             kilix_sdk.require_compatible("2.0")
 

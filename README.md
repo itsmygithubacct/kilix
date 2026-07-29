@@ -25,7 +25,7 @@ complete tree. Freedesktop launchers/icons are the intentional exception:
 
 ## Release 0.1.6
 
-Version 0.1.5 is the coordinated stack release covering everything since 0.1.2,
+Version 0.1.6 is the coordinated stack release covering everything since 0.1.2,
 and is the first release Kilix shares with
 [Plebian-OS](https://github.com/itsmygithubacct/plebian-os),
 [Pleb](https://github.com/itsmygithubacct/pleb), and
@@ -40,15 +40,27 @@ the log. SDK 1.5 adds the shared session-logging settings contract used by both
 desktop providers, including the two directory budgets that bound the
 transcript tree: dead-pane logs are compressed promptly, older ones are
 recompressed more densely, and history is dropped only when both budgets are
-full. Release tags for this
-repository are created only by the coordinated release procedure — see
-Plebian-OS's [RELEASING.md](https://github.com/itsmygithubacct/plebian-os/blob/main/RELEASING.md).
+full.
+
+It also adds **read-aloud and dictation**: two top-bar widgets over a local
+speech stack, with capture click-to-talk and never listening on its own. SDK 1.6
+is the shared voice settings contract behind them — engines, voice, rate,
+extent, devices, and a dictation history that is off by default, because a
+record of what the user said is a different privacy class from a record of what
+the terminal printed. Rounding out the release: **Tmux Manager** and the `tb`
+command from the pinned `tmux-tui`/`tmux-cli` closure, the **pane memory chip**
+and its monitor launcher, and SDK 1.7's shared coding-agent policy — the setting
+that decides whether a resumed coding agent starts with its own approval prompts
+disabled. Release tags for this repository are created only by the coordinated
+release procedure — see Plebian-OS's
+[RELEASING.md](https://github.com/itsmygithubacct/plebian-os/blob/main/RELEASING.md).
 
 > The `0.1.3` and `0.1.4` sections below are **component milestones**, not
 > shipped stack releases: they mark the SDK contract levels those changes
 > introduced. No Plebian-OS image was ever built or published for either. The
 > `v0.1.4` tag on this repository predates the current rule and is a Kilix-only
-> tag; it is left in place rather than moved.
+> tag; it is left in place rather than moved. `0.1.5` was prepared as a
+> coordinated release and never cut; its work ships here as 0.1.6.
 
 ## 0.1.4 — SDK 1.4
 
