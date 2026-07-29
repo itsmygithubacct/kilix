@@ -643,27 +643,26 @@ _kilix_voice_tool() {
   printf '%s\n' "$resolved"
 }
 
-# Kilix Bonsai resolves in the same order the pixel desktop resolves its
-# dashboards: an installed command wins, then a developer's source checkout,
-# then the pinned installer. The middle branch is what makes `kilix bonsai`
-# usable before the repository is published — it can only match on a machine
-# that has a source tree, never on an installed system, so it cannot shadow a
-# pinned install. The resolved command stays an array so a source root with
-# whitespace or glob characters remains one literal argument.
+# Kilix Bonsai resolves the way the two voice TUIs resolve: an installed
+# command wins, and otherwise the pinned installer runs and its result is used.
+#
+# There is deliberately no source-checkout branch. One existed while the
+# repository was unpublished, and had to go once it wasn't: a working tree is
+# by definition not the pinned closure, so preferring it would mean `kilix
+# bonsai` ran different code on a machine that happens to have a source
+# directory than on every installed system — for the one tool here whose whole
+# job is fetching verified multi-gigabyte artifacts. A developer who wants the
+# working tree runs it directly, or installs it with its own install.sh.
+#
+# The resolved command stays an array so a prefix with whitespace or glob
+# characters remains one literal argument.
 _KILIX_BONSAI_PREFIX="${KILIX_BONSAI_PREFIX:-$HOME/.local}"
 declare -a _KILIX_BONSAI_COMMAND=()
 _kilix_bonsai_resolve() {
-  local force="$1" resolved checkout
+  local force="$1" resolved
   resolved="$(command -v kilix-bonsai 2>/dev/null || true)"
   if [ "$force" = 0 ] && [ -n "$resolved" ] && [ -x "$resolved" ]; then
     _KILIX_BONSAI_COMMAND=("$resolved")
-    return 0
-  fi
-  checkout="$GPU_TERMINAL_SOURCE_HOME/kilix-bonsai"
-  if [ "$force" = 0 ] && [ -f "$checkout/tools/kilix-bonsai/main.py" ]; then
-    _KILIX_BONSAI_COMMAND=(
-      python3 "$checkout/tools/kilix-bonsai/main.py"
-    )
     return 0
   fi
   local installer=("$KILIX_HOME/scripts/install-kilix-bonsai.sh")

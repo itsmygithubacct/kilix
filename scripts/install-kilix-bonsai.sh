@@ -20,14 +20,13 @@ KILIX_BONSAI_SOURCES="${KILIX_BONSAI_SOURCES:-$KILIX_STORAGE_HOME/sources}"
 # Kilix commit, so every network-fetched input is transitive and immutable
 # without adding another independently coordinated release ref.
 #
-# The repository is not published yet, so the commit is the literal placeholder
-# `unset`. A branch name would be the tempting default and is the wrong one: it
-# installs whatever HEAD happened to be at install time, and does so silently.
-# Refusing is the louder and cheaper failure. Until it is published, `kilix
-# bonsai` resolves a developer's source checkout directly — see the resolver in
-# `kilix`, which tries an installed command first and this installer last.
+# A full commit SHA, never a branch name: a branch installs whatever HEAD
+# happened to be at install time and does so silently, so the checks below
+# refuse anything that is not forty hex characters. `unset` is still accepted
+# as an explicit override for testing the refusal path; it is not the default
+# any more, because the repository is published.
 KILIX_BONSAI_REPO="${KILIX_BONSAI_REPO:-https://github.com/itsmygithubacct/kilix-bonsai.git}"
-KILIX_BONSAI_REF="${KILIX_BONSAI_REF:-unset}"
+KILIX_BONSAI_REF="${KILIX_BONSAI_REF:-285ec4659328a9a6c890eca391388b59d172be8a}"
 
 die() { printf 'kilix bonsai: %s\n' "$*" >&2; exit 1; }
 log() { printf 'kilix bonsai: %s\n' "$*" >&2; }

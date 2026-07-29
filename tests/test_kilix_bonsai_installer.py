@@ -44,6 +44,16 @@ class InstallerTests(unittest.TestCase):
             self.assertIn("kilix-bonsai=", result.stdout)
             self.assertFalse(os.path.exists(os.path.join(home, "storage")))
 
+    def test_the_default_ref_is_a_pinned_commit(self):
+        # The closure is only immutable if the shipped default is a full SHA;
+        # `unset` remains reachable as an explicit override, but shipping it
+        # would mean every machine falls back to refusing to install.
+        body = INSTALLER.read_text()
+        match = re.search(r'KILIX_BONSAI_REF="\$\{KILIX_BONSAI_REF:-(.+?)\}"',
+                          body)
+        self.assertIsNotNone(match, "no KILIX_BONSAI_REF default found")
+        self.assertRegex(match.group(1), r"^[0-9a-f]{40}$")
+
     def test_an_unset_ref_refuses_rather_than_tracking_a_branch(self):
         with tempfile.TemporaryDirectory() as home:
             result = run([str(INSTALLER)],
@@ -90,20 +100,28 @@ class DispatchTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout.strip(), "installed marker")
 
-    def test_a_source_checkout_is_used_when_nothing_is_installed(self):
+    def test_a_source_checkout_never_shadows_the_pinned_closure(self):
+        # A working tree is not the pinned closure. This is the one tool here
+        # whose job is fetching verified multi-gigabyte artifacts, so a machine
+        # that happens to have a source directory must not quietly run
+        # different code from every installed system.
         with tempfile.TemporaryDirectory() as home:
             source_home = Path(home) / "source home [literal]"
             entry = source_home / "kilix-bonsai" / "tools" / "kilix-bonsai"
             entry.mkdir(parents=True)
             (entry / "main.py").write_text(
                 "import sys\nprint('checkout', *sys.argv[1:])\n")
+            # KILIX_BONSAI_REF=unset stops the installer before it clones, so
+            # this asserts the branch taken without reaching the network.
             result = run([str(LAUNCHER), "bonsai", "marker"],
                          GPU_TERMINAL_SOURCE_HOME=str(source_home),
-                         PATH="/usr/bin:/bin")
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(result.stdout.strip(), "checkout marker")
+                         GPU_TERMINAL_HOME=os.path.join(home, "state"),
+                         KILIX_BONSAI_REF="unset", PATH="/usr/bin:/bin")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertNotIn("checkout marker", result.stdout)
+            self.assertIn("no published commit", result.stderr)
 
-    def test_with_neither_it_reaches_the_installer_and_stops_there(self):
+    def test_without_an_installed_command_it_reaches_the_installer(self):
         with tempfile.TemporaryDirectory() as home:
             # GPU_TERMINAL_HOME rather than KILIX_STORAGE_HOME: the launcher
             # derives every writable root from it and refuses a set that is not
