@@ -330,6 +330,44 @@ PANE_LOCATIONS = {
     "up": "hsplit-before",
 }
 
+# The near-side placements only exist in the fork, and an engine older than
+# this checkout does not merely reject them -- it ignores the location it does
+# not recognise and puts the pane wherever its default would go, which is the
+# opposite side of the screen from the one that was asked for. A running kilix
+# keeps its own build generation alive across a rebuild on purpose, so this is
+# the ordinary state between rebuilding and restarting rather than an exotic
+# one, and it is worth one readlink to avoid acting silently wrong.
+FORK_ONLY_LOCATIONS = {"vsplit-before", "hsplit-before"}
+
+
+def engine_predates(location: str) -> bool:
+    """True when the live engine is older than the build that knows `location`."""
+    if location not in FORK_ONLY_LOCATIONS:
+        return False
+    pid = os.environ.get("KITTY_PID", "")
+    build_directory = os.environ.get("KILIX_BUILD_DIRECTORY", "")
+    if not pid or not build_directory:
+        return False        # cannot tell; do not block on a guess
+    try:
+        running = os.path.realpath(f"/proc/{int(pid)}/exe")
+    except (ValueError, OSError):
+        return False
+    current = os.path.realpath(
+        os.path.join(build_directory, "current", "src", "kitty", "launcher", "kitty"))
+    if not running or not os.path.exists(current):
+        return False
+    if running == current:
+        return False
+    # Different generations: only a problem if the running one is too old to
+    # have the location at all.
+    source = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.dirname(running)))), "src", "kitty", "layout", "splits.py")
+    try:
+        with open(source, encoding="utf-8") as handle:
+            return location not in handle.read()
+    except OSError:
+        return False
+
 
 def _launch(kind: str, argv: list[str], extra: list[str]) -> int:
     """Run one authenticated `launch` and report the id it hands back."""
@@ -360,6 +398,13 @@ def cmd_new_pane(argv: list[str]) -> int:
     ns = parser.parse_args(argv)
 
     location = PANE_LOCATIONS[ns.direction]
+    if engine_predates(location):
+        return fail(
+            "new-pane",
+            f"this terminal is running an engine that predates '{ns.direction}' "
+            "panes and would put the pane on the wrong side. Restart kilix to "
+            "pick up the current build, or use 'kilix new-pane "
+            f"{'right' if ns.direction == 'left' else 'down'}' for now", 2)
 
     # --self anchors the split to the pane this command was typed in. Without
     # it the split hangs off whichever pane has focus, so running this from a
