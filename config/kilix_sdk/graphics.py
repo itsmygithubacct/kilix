@@ -5,6 +5,8 @@ import gfx as _gfx
 CHUNK = _gfx.CHUNK
 FRAME_BYTES = _gfx.FRAME_BYTES
 FramePresenter = _gfx.FramePresenter
+FrameSocketTap = _gfx.FrameSocketTap
+TappedFrame = _gfx.TappedFrame
 PresentResult = _gfx.PresentResult
 PresenterStats = _gfx.PresenterStats
 PosixShmRing = _gfx.PosixShmRing
@@ -33,8 +35,9 @@ def wrap_tmux_passthrough(apc: str) -> str:
 
 
 __all__ = [
-    "CHUNK", "FRAME_BYTES", "FramePresenter", "PresentResult",
-    "PresenterStats", "PosixShmRing", "ShmBusy", "write_frame",
+    "CHUNK", "FRAME_BYTES", "FramePresenter", "FrameSocketTap",
+    "TappedFrame", "PresentResult", "PresenterStats", "PosixShmRing",
+    "ShmBusy", "write_frame",
     "build_direct", "blit_direct", "diff_band", "diff_rect", "diff_rects",
     "extract_rect", "detect_vertical_scroll", "build_compose",
     "build_frame_edit", "blit_frame_edit", "build_frame_edit_file",

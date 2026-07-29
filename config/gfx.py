@@ -6,8 +6,12 @@ older releases.
 """
 
 import base64
+import hashlib
 import os
+import re
+import stat
 import sys
+import time
 from pathlib import Path
 
 
@@ -32,10 +36,13 @@ def _load_shared_package():
 
 
 _shared = _load_shared_package()
+_BROKER_SESSION = re.compile(r"[0-9a-f]{16,64}\Z")
 
 CHUNK = _shared.CHUNK
 FRAME_BYTES = _shared.FRAME_BYTES
-FramePresenter = _shared.FramePresenter
+FrameSocketTap = _shared.FrameSocketTap
+TappedFrame = _shared.TappedFrame
+_SharedFramePresenter = _shared.FramePresenter
 PresentResult = _shared.PresentResult
 PresenterStats = _shared.PresenterStats
 PosixShmRing = _shared.PosixShmRing
@@ -51,6 +58,69 @@ diff_rect = _shared.diff_rect
 diff_rects = _shared.diff_rects
 extract_rect = _shared.extract_rect
 wrap_tmux_passthrough = _shared.wrap_tmux_passthrough
+
+
+def _remote_frame_socket(session: str) -> Path:
+    session_home = Path(os.environ.get(
+        "KILIX_SESSION_HOME",
+        os.path.expanduser("~/.local/gpu_terminal/kilix/session"),
+    ))
+    candidate = session_home / "remote" / f"{session}.tap"
+    if len(os.fsencode(candidate)) >= 107:
+        digest = hashlib.sha256(session.encode("ascii")).hexdigest()[:24]
+        candidate = session_home / "remote" / f"{digest}.tap"
+    return candidate
+
+
+class _KilixFrameTap:
+    """Discover a running local multiplexer without burdening local drawing."""
+
+    def __init__(self, session: str):
+        self.session = session
+        self.path = _remote_frame_socket(session)
+        self.delegate = None
+        self.next_check = float("-inf")
+
+    def __call__(self, frame: TappedFrame) -> None:
+        if self.delegate is not None:
+            self.delegate(frame)
+            return
+        now = time.monotonic()
+        if now < self.next_check:
+            return
+        self.next_check = now + 1.0
+        try:
+            info = self.path.lstat()
+        except OSError:
+            return
+        if not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.geteuid():
+            return
+        self.delegate = FrameSocketTap(str(self.path), self.session)
+        self.delegate(frame)
+
+    def close(self) -> None:
+        if self.delegate is not None:
+            self.delegate.close()
+            self.delegate = None
+
+
+class FramePresenter(_SharedFramePresenter):
+    """Shared presenter with lazy, session-scoped Kilix frame discovery."""
+
+    def __init__(self, *args, **kwargs):
+        self._kilix_frame_tap = None
+        if "tap" not in kwargs:
+            session = os.environ.get("KITTY_PTY_BROKER_SESSION", "")
+            if _BROKER_SESSION.fullmatch(session):
+                self._kilix_frame_tap = _KilixFrameTap(session)
+                kwargs["tap"] = self._kilix_frame_tap
+        super().__init__(*args, **kwargs)
+
+    def close(self, *, discard: bool = False) -> None:
+        super().close(discard=discard)
+        if self._kilix_frame_tap is not None:
+            self._kilix_frame_tap.close()
+            self._kilix_frame_tap = None
 
 
 def session_dir(*parts: str) -> str:
@@ -105,8 +175,9 @@ def build_frame_edit_file(path: str, width: int, height: int, x: int, y: int,
 
 
 __all__ = [
-    "CHUNK", "FRAME_BYTES", "FramePresenter", "PresentResult", "PresenterStats",
-    "PosixShmRing", "ShmBusy", "session_dir", "write_frame",
+    "CHUNK", "FRAME_BYTES", "FramePresenter", "FrameSocketTap", "TappedFrame",
+    "PresentResult", "PresenterStats", "PosixShmRing", "ShmBusy",
+    "session_dir", "write_frame",
     "build_compose", "build_direct", "blit_direct", "build_frame_edit",
     "blit_frame_edit", "build_frame_edit_file", "build_frame_edit_shm",
     "build_full_shm", "detect_vertical_scroll", "diff_band", "diff_rect",

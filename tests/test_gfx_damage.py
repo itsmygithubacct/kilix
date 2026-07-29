@@ -5,11 +5,13 @@ locally, and emits in-place root-frame edits. Legacy row-band and temporary-file
 builders remain covered because they are part of the versioned Kilix SDK.
 """
 import base64
+import os
 import re
 import sys
 import unittest
 import zlib
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "config"))
@@ -210,10 +212,52 @@ class FrameEditEscapeTests(unittest.TestCase):
 class SdkReexportTests(unittest.TestCase):
     def test_sdk_exposes_damage_helpers(self):
         from kilix_sdk import graphics
-        for name in ("FramePresenter", "PosixShmRing", "diff_band",
-                     "diff_rect", "build_frame_edit", "blit_frame_edit",
+        for name in ("FramePresenter", "FrameSocketTap", "TappedFrame",
+                     "PosixShmRing", "diff_band", "diff_rect",
+                     "build_frame_edit", "blit_frame_edit",
                      "build_frame_edit_shm", "build_frame_edit_file"):
             self.assertTrue(callable(getattr(graphics, name)), name)
+
+
+class RemoteTapDiscoveryTests(unittest.TestCase):
+    class Terminal:
+        def write(self, _value):
+            pass
+
+    def test_valid_broker_session_gets_a_lazy_owned_tap(self):
+        session = "0123456789abcdef0123456789abcdef"
+        delegate = mock.Mock()
+        with mock.patch.dict(
+                os.environ, {"KITTY_PTY_BROKER_SESSION": session}), \
+             mock.patch.object(
+                 gfx, "_KilixFrameTap", return_value=delegate) as factory:
+            presenter = gfx.FramePresenter(self.Terminal(), stream=True)
+            factory.assert_called_once_with(session)
+            self.assertIs(presenter.tap, delegate)
+            presenter.close()
+        delegate.close.assert_called_once_with()
+
+    def test_invalid_broker_session_does_not_enable_discovery(self):
+        with mock.patch.dict(
+                os.environ, {"KITTY_PTY_BROKER_SESSION": "../not-a-session"}), \
+             mock.patch.object(gfx, "_KilixFrameTap") as factory:
+            presenter = gfx.FramePresenter(self.Terminal(), stream=True)
+            self.assertIsNone(presenter.tap)
+            presenter.close()
+        factory.assert_not_called()
+
+    def test_explicit_tap_is_preserved_and_not_owned_by_kilix(self):
+        explicit = mock.Mock()
+        session = "0123456789abcdef"
+        with mock.patch.dict(
+                os.environ, {"KITTY_PTY_BROKER_SESSION": session}), \
+             mock.patch.object(gfx, "_KilixFrameTap") as factory:
+            presenter = gfx.FramePresenter(
+                self.Terminal(), stream=True, tap=explicit)
+            self.assertIs(presenter.tap, explicit)
+            presenter.close()
+        factory.assert_not_called()
+        explicit.close.assert_not_called()
 
 
 if __name__ == "__main__":

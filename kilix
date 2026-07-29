@@ -17,6 +17,7 @@
 #   ./kilix new-pane [DIR]    # open a pane left/right/down of this one
 #   ./kilix new-tab [--title T] # open a new page
 #   ./kilix mux [name]        # open a tmux-backed kilix tab for real attach/view
+#   ./kilix remote ...        # expose/attach a live graphical pane
 #   ./kilix screen-size ...   # show/increase/decrease/reset terminal scale
 #   ./kilix settings          # shared chrome/game settings TUI and CLI
 #   ./kilix games ...         # list, enable, or disable Kilix 95 games
@@ -454,11 +455,15 @@ _kilix_init_rc_password() {
   # already the user themselves. And get-text — which reads what is on another
   # pane's screen — has been in this list since `kilix watch`, so the surface
   # was never a read-only one; closing a window destroys less than reading it
-  # discloses. What stays out is anything that can put input into another pane:
-  # no send-text, no send-key, no arbitrary action.
+  # discloses.
+  #
+  # The custom checker adds one narrow input route for `kilix remote`: send-text
+  # must target exactly one broker session through its environment marker and
+  # may carry only a bounded base64 byte chunk. The command name is deliberately
+  # absent from the wildcard list, so the checker is the only route to it.
   tmp="$(mktemp "$KILIX_SESSION_HOME/.rc-config.XXXXXX")" || return 1
-  printf 'remote_control_password "%s" launch ls focus-window focus-tab get-text close-window close-tab set-tab-title\n' \
-    "$password" >"$tmp"
+  printf 'remote_control_password "%s" launch ls focus-window focus-tab get-text close-window close-tab set-tab-title "%s"\n' \
+    "$password" "$KILIX_HOME/config/kilix_mux_rc_auth.py" >"$tmp"
   chmod 0600 "$tmp" || { rm -f -- "$tmp"; return 1; }
   mv -f -- "$tmp" "$config_file"
   KILIX_RC_PASSWORD_FILE="$password_file"
@@ -2229,6 +2234,15 @@ _kilix_remote_control() {
   KILIX_KITTEN="$KITTEN" exec python3 "$KILIX_HOME/config/remote.py" "$@"
 }
 
+_kilix_remote_mux() {
+  [ -x "$KILIX_HOME/scripts/build-multiplexer.sh" ] \
+    || { echo "kilix remote: build helper is unavailable" >&2; exit 1; }
+  KILIX_KITTEN="$KITTEN" \
+    KILIX_SESSION_HOME="$KILIX_SESSION_HOME" \
+    KILIX_RC_PASSWORD_FILE="$KILIX_RC_PASSWORD_FILE" \
+    exec python3 "$KILIX_HOME/config/remote_mux.py" "$@"
+}
+
 _kilix_restore_pane_tty() {
   # pop kbd protocol; disable mouse (btn-event/SGR/pixels) + bracketed paste;
   # re-enable autowrap; delete all images; show cursor; leave alt screen. Each
@@ -2389,6 +2403,9 @@ case "${1:-}" in
   ls|focus|watch|fullscreen|new-pane|split|new-tab|new-page)
     _remote_cmd="$1"; shift
     _kilix_remote_control "$_remote_cmd" "$@" ;;
+  remote)
+    shift
+    _kilix_remote_mux "$@" ;;
   switch|switcher)
     shift
     # Prefer the installed command, exactly as the thermometer and memory chip
