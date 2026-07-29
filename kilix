@@ -163,6 +163,33 @@ except Exception:
     raise SystemExit(1)' 2>/dev/null
 }
 
+# Describe one transcript from the sidecar the fork writes when the pane is
+# spawned. A session ID is random, so without this the index can only offer a
+# hash -- and the pane you are hunting for is the one you can name by the
+# directory it was sitting in. Sidecars stay beside the top-level directory
+# whatever tier their log has reached, so a lookup never has to guess.
+_kilix_transcript_label() {
+  local meta="$1" cwd="" cmd="" line
+  [ -f "$meta" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      cwd=*) cwd="${line#cwd=}" ;;
+      cmd=*) cmd="${line#cmd=}" ;;
+    esac
+  done < "$meta"
+  # The directory is what gets scanned, so spend the width on it and keep
+  # $HOME short.
+  case "$cwd" in
+    "$HOME") cwd="~" ;;
+    "$HOME"/*) cwd="~${cwd#"$HOME"}" ;;
+  esac
+  [ "${#cmd}" -le 48 ] || cmd="${cmd:0:47}…"
+  if [ -n "$cwd" ] && [ -n "$cmd" ]; then printf '  %s — %s' "$cwd" "$cmd"
+  elif [ -n "$cwd" ]; then printf '  %s' "$cwd"
+  elif [ -n "$cmd" ]; then printf '  %s' "$cmd"
+  fi
+}
+
 # Enforce the directory budgets. Three tiers: a pane's log is plain only while
 # the pane lives, becomes a zstd -3 file as soon as the pane dies, and is
 # recompressed at zstd -9 once the recent budget fills. Level costs compression
@@ -272,6 +299,23 @@ _kilix_transcript_reap() (
       used=$((used - size))
     done
   fi
+
+  # 4. A sidecar only means something while its log still exists in some tier,
+  #    so drop the ones whose log has aged out of all three. A pane writes its
+  #    sidecar just before the broker creates the log, so an automatic pass
+  #    spares brand-new ones exactly as step 1 does.
+  for file in "$dir"/*.meta; do
+    [ -f "$file" ] || continue
+    name="${file##*/}"; name="${name%.meta}"
+    [ ! -f "$dir/$name.log" ] || continue
+    [ ! -f "$recent/$name.log.zst" ] || continue
+    [ ! -f "$archive/$name.log.zst" ] || continue
+    if [ "$quiet" = 1 ] \
+         && find "$file" -mmin -1 -print -quit 2>/dev/null | grep -q .; then
+      continue
+    fi
+    rm -f -- "$file" || errors=$((errors + 1))
+  done
 
   [ "$quiet" = 1 ] \
     || echo "compressed $compressed, recompressed $moved, removed $removed, errors $errors (live panes kept)"
@@ -1076,10 +1120,13 @@ case "${1:-}" in
           find "$_tr_dir/archive" -maxdepth 1 -type f -name '*.log.zst' \
             -printf '%T@ %s %p [older]\n' 2>/dev/null || true
         } | sort -rn | while read -r _tr_time _tr_size _tr_path _tr_tag; do
-            printf '%s  %8s  %s %s\n' \
+            _tr_name="${_tr_path##*/}"
+            _tr_id="${_tr_name%.zst}"; _tr_id="${_tr_id%.log}"
+            printf '%s  %8s  %s %s%s\n' \
               "$(date -d "@${_tr_time%.*}" '+%Y-%m-%d %H:%M:%S')" \
               "$(numfmt --to=iec --suffix=B "$_tr_size" 2>/dev/null || echo "$_tr_size")" \
-              "${_tr_path##*/}" "$_tr_tag"
+              "$_tr_name" "$_tr_tag" \
+              "$(_kilix_transcript_label "$_tr_dir/$_tr_id.meta")"
           done
         exit 0 ;;
       path)
