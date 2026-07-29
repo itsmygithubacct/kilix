@@ -2,10 +2,10 @@
 
 Two failure modes worth closing here.
 
-The installer must refuse an unpinned tree. Kilix Bonsai is not published yet,
-so its ref is the literal `unset`; a branch name would install whatever HEAD
-happened to be at install time and would do it silently. Refusing is the louder
-and cheaper failure, and it is the same position `install-kilix-voice.sh` takes.
+The installer must refuse an unpinned tree. Its shipped ref is the published
+commit Kilix selected; a branch name would install whatever HEAD happened to
+be at install time and would do it silently. The explicit `unset` test keeps
+the refusal path covered.
 
 The dispatch must never download weights as a side effect. `kilix bonsai` opens
 a UI; the eleven gigabytes of models behind it are a separate, confirmed
