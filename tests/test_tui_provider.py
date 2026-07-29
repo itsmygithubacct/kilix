@@ -165,6 +165,9 @@ class KilixTuiProviderTests(unittest.TestCase):
             path.chmod(0o755)
         env = dict(self.env)
         env.update({
+            # An installed kilix-tui on the workstation must not shadow the
+            # fixture: the ensure prefers PATH, so the test pins PATH.
+            "PATH": "/usr/local/bin:/usr/bin:/bin",
             "GPU_TERMINAL_HOME": str(self.home / ".local" / "gpu_terminal"),
             "GPU_TERMINAL_SETTINGS_FILE": str(
                 self.home / ".local" / "gpu_terminal" / "settings.conf"
