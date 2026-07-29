@@ -23,7 +23,7 @@ complete tree. Freedesktop launchers/icons are the intentional exception:
 
 ![kilix — pages strip with + button, per-pane title bars with clickable split/maximize/close buttons, splits, and icat](config/kilix_demo.png)
 
-## Release 0.1.5
+## Release 0.1.6
 
 Version 0.1.5 is the coordinated stack release covering everything since 0.1.2,
 and is the first release Kilix shares with
