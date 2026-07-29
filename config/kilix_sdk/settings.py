@@ -20,6 +20,7 @@ SETTINGS_MARKER = "# -- Kilix clickable chrome --"
 SESSION_LOG_MARKER = "# -- Kilix session logging --"
 VOICE_MARKER = "# -- Kilix voice --"
 GAMES_MARKER = "# -- Kilix game availability --"
+CODING_MARKER = "# -- Kilix coding agents --"
 
 
 @dataclass(frozen=True)
@@ -263,6 +264,20 @@ VOICE_KEYS = (
 )
 VOICE_VALUE_KEYS = tuple(key for key in VOICE_KEYS if key not in TOGGLE_BY_KEY)
 
+# Whether a resumed coding agent starts with its own approval prompts turned
+# off — `--dangerously-skip-permissions` for Claude Code, `--yolo` for Codex
+# and Kimi Code. Off by default and deliberately a stack-wide setting rather
+# than a per-tool one: it governs whether an agent asks before it acts, so it
+# belongs where the user can find and audit it alongside everything else, not
+# buried in whichever launcher happened to start the session.
+CODING_YOLO_KEY = "KILIX_CODING_YOLO"
+CODING_YOLO_DEFAULT = "off"
+CODING_YOLO_CHOICES = ("off", "on")
+CODING_CHOICE_SPECS = {
+    CODING_YOLO_KEY: (CODING_YOLO_DEFAULT, CODING_YOLO_CHOICES),
+}
+CODING_KEYS = tuple(CODING_CHOICE_SPECS)
+
 MANAGED_KEYS = tuple(spec.key for spec in TOGGLE_SPECS) + (
     CLOCK_FORMAT_KEY,
     PANE_MEMORY_MODE_KEY,
@@ -270,7 +285,7 @@ MANAGED_KEYS = tuple(spec.key for spec in TOGGLE_SPECS) + (
     TRANSCRIPT_LIMIT_KEY,
     TRANSCRIPT_TOTAL_KEY,
     TRANSCRIPT_ARCHIVE_KEY,
-) + VOICE_VALUE_KEYS
+) + VOICE_VALUE_KEYS + CODING_KEYS
 
 _ASSIGNMENT = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
 
@@ -321,7 +336,8 @@ def defaults(*, migrate_environment: bool = False) -> dict[str, str]:
     values[TRANSCRIPT_TOTAL_KEY] = TRANSCRIPT_TOTAL_DEFAULT
     values[TRANSCRIPT_ARCHIVE_KEY] = TRANSCRIPT_ARCHIVE_DEFAULT
     for key, (default, _valid) in (*VOICE_CHOICE_SPECS.items(),
-                                   *VOICE_TOKEN_SPECS.items()):
+                                   *VOICE_TOKEN_SPECS.items(),
+                                   *CODING_CHOICE_SPECS.items()):
         values[key] = default
     if migrate_environment:
         # Clock and battery were historically stored in kilix.env.  On the
@@ -349,6 +365,12 @@ def enabled(key: str, path: str | None = None) -> bool:
     if spec is None:
         raise KeyError(f"unknown shared Kilix toggle: {key}")
     return truthy(load(path).get(key, "1" if spec.default else "0"))
+
+
+def coding_yolo(path: str | None = None) -> bool:
+    """Return whether resumed coding agents skip their own approval prompts."""
+    value = load(path).get(CODING_YOLO_KEY, CODING_YOLO_DEFAULT)
+    return str(value).strip().casefold() in ("on", "1", "true", "yes")
 
 
 def game_enabled(game_id: str, path: str | None = None) -> bool:
@@ -390,6 +412,9 @@ def _initial_text(values: Mapping[str, str]) -> str:
     lines.extend(("", GAMES_MARKER))
     for spec in GAME_TOGGLES:
         lines.append(f"{spec.key}={values[spec.key]}")
+    lines.extend(("", CODING_MARKER))
+    for key in CODING_KEYS:
+        lines.append(f"{key}={values[key]}")
     return "\n".join(lines) + "\n"
 
 
@@ -697,6 +722,13 @@ def voice_history(path: str | None = None) -> bool:
 __all__ = [
     "CLOCK_FORMAT_DEFAULT",
     "CLOCK_FORMAT_KEY",
+    "CODING_CHOICE_SPECS",
+    "CODING_KEYS",
+    "CODING_MARKER",
+    "CODING_YOLO_CHOICES",
+    "CODING_YOLO_DEFAULT",
+    "CODING_YOLO_KEY",
+    "coding_yolo",
     "GAMES_MARKER",
     "GAME_ID_BY_KEY",
     "GAME_KEY_BY_ID",
