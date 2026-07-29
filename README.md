@@ -683,15 +683,14 @@ right-click menu everywhere. Built in:
   by new launches.
 - **Notepad** and an **image viewer**.
 - **Kilix Temps** — Start ▸ Programs ▸ Kilix Temps prefers an installed
-  `kilix-temps`, then a complete sibling build. On a fresh checkout it delegates
-  to `kilix temps`, which fetches exact pinned commits for the dashboard,
-  `soft-raster`, `soft-raster-py`, and `kitty-frame-presenter`, builds them as
-  the desktop user, verifies the graphical backend, and opens its tab.
+  `kilix-temps`, then the sibling `kilix-tui-utils/tools/temps` source. On a
+  fresh checkout it delegates to `kilix temps`, which installs the single
+  pinned `kilix-tui-utils` checkout and opens its graphical tab.
 - **Kilix Memory** — Start ▸ Programs ▸ Kilix Memory opens the graphical
-  RAM/swap/pressure dashboard. On a fresh checkout, `kilix memory` fetches the
-  exact pinned commits for the monitor and its graphics closure, builds them
-  as the desktop user, verifies the graphical backend, and opens the tab. The
-  same monitor is available from the Kilix Settings TUI Tools section.
+  RAM/swap/pressure dashboard from that same unified checkout. Its optional
+  graphics dependencies are shared with Temps rather than cloned into a second
+  installer-owned source cache. The same monitor is available from the Kilix
+  Settings TUI Tools section.
 - **PTY Sessions** — Start ▸ Programs ▸ PTY Sessions opens the persistent-pane
   manager without placing that manager inside another brokered pane. Detached
   panes can be selected and attached, refreshed, or deliberately terminated.

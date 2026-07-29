@@ -596,10 +596,10 @@ class Shell:
         source_home = os.environ.get("GPU_TERMINAL_SOURCE_HOME") or \
             os.path.expanduser("~/.local/gpu_terminal/sources")
         project = os.path.join(
-            os.path.abspath(os.path.expanduser(source_home)), "kilix-temps")
-        executable = os.path.join(project, "build", "kilix-temps")
-        if os.path.isfile(executable) and os.access(executable, os.X_OK):
-            return [executable, "--graphics"], project
+            os.path.abspath(os.path.expanduser(source_home)), "kilix-tui-utils")
+        entry = os.path.join(project, "tools", "temps", "main.py")
+        if os.path.isfile(entry):
+            return ["python3", entry, "--graphics"], project
         kilix = os.path.join(KILIX_HOME, "kilix")
         if os.path.isfile(kilix) and os.access(kilix, os.X_OK):
             return [kilix, "temps", "--graphics"], None
@@ -623,10 +623,10 @@ class Shell:
         source_home = os.environ.get("GPU_TERMINAL_SOURCE_HOME") or \
             os.path.expanduser("~/.local/gpu_terminal/sources")
         project = os.path.join(
-            os.path.abspath(os.path.expanduser(source_home)), "kilix-memory")
-        executable = os.path.join(project, "build", "kilix-memory")
-        if os.path.isfile(executable) and os.access(executable, os.X_OK):
-            return [executable, "--graphics"], project
+            os.path.abspath(os.path.expanduser(source_home)), "kilix-tui-utils")
+        entry = os.path.join(project, "tools", "memory", "main.py")
+        if os.path.isfile(entry):
+            return ["python3", entry, "--graphics"], project
         kilix = os.path.join(KILIX_HOME, "kilix")
         if os.path.isfile(kilix) and os.access(kilix, os.X_OK):
             return [kilix, "memory", "--graphics"], None
@@ -639,8 +639,8 @@ class Shell:
             return self._tab(argv, "Kilix Memory", cwd)
         wm.msgbox(
             self.desk, "Kilix Memory",
-            "Neither an installed Kilix Memory dashboard nor its source "
-            "checkout could be found.", icon="error")
+            "Neither an installed Kilix Memory dashboard nor the unified "
+            "Kilix utilities checkout could be found.", icon="error")
         return False
 
     @staticmethod

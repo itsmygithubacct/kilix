@@ -1,143 +1,72 @@
+"""The retired Temps installer delegates to the unified utility checkout."""
 import os
 from pathlib import Path
 import subprocess
 import tempfile
-import textwrap
 import unittest
-
 
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = ROOT / "scripts" / "install-kilix-temps.sh"
+REF = "1" * 40
 
 
-class KilixTempsInstallerTests(unittest.TestCase):
-    def make_repo(self, root: Path, name: str, files: dict[str, str]) -> tuple[Path, str]:
-        repo = root / name
-        repo.mkdir()
-        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
-        for relative, content in files.items():
-            path = repo / relative
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content)
-        subprocess.run(["git", "add", "."], cwd=repo, check=True)
-        subprocess.run(
-            [
-                "git",
-                "-c",
-                "user.name=Kilix test",
-                "-c",
-                "user.email=kilix-test@example.invalid",
-                "commit",
-                "-q",
-                "-m",
-                "fixture",
-            ],
-            cwd=repo,
-            check=True,
+class TempsCompatibilityInstallerTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.home = self.root / "home"
+        self.prefix = self.home / ".local"
+        self.source = self.home / "gpu_terminal"
+        self.kilix = self.root / "kilix"
+        scripts = self.kilix / "scripts"
+        scripts.mkdir(parents=True)
+        self.home.mkdir()
+        self.source.mkdir()
+        provider = scripts / "install-kilix-tui-utils.sh"
+        provider.write_text(
+            "#!/bin/sh\n"
+            "set -eu\n"
+            "case \"$1\" in\n"
+            f"  --print-ref) echo {REF} ;;\n"
+            "  --print-path)\n"
+            "    mkdir -p \"$KILIX_TUI_UTILS_PREFIX/bin\"\n"
+            "    for name in kilix-tui kilix-temps kilix-memory; do\n"
+            "      printf '#!/bin/sh\\nexit 0\\n' > "
+            "\"$KILIX_TUI_UTILS_PREFIX/bin/$name\"\n"
+            "      chmod 0755 \"$KILIX_TUI_UTILS_PREFIX/bin/$name\"\n"
+            "    done\n"
+            "    echo \"$KILIX_TUI_UTILS_PREFIX/bin/kilix-tui\" ;;\n"
+            "  *) exit 2 ;;\n"
+            "esac\n"
         )
-        commit = subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], cwd=repo, text=True
-        ).strip()
-        return repo, commit
+        provider.chmod(0o755)
+        self.env = dict(os.environ)
+        self.env.update({
+            "HOME": str(self.home),
+            "KILIX_HOME": str(self.kilix),
+            "KILIX_TUI_UTILS_PREFIX": str(self.prefix),
+            "GPU_TERMINAL_SOURCE_HOME": str(self.source),
+        })
 
-    def fixture_environment(self, root: Path) -> tuple[dict[str, str], Path]:
-        build_script = textwrap.dedent(
-            """\
-            from pathlib import Path
-            import stat
-            import sys
-            import zipfile
+    def tearDown(self):
+        self.temp.cleanup()
 
-            prefix = Path(sys.argv[1])
-            executable = prefix / "bin" / "kilix-temps"
-            library = prefix / "lib" / "kilix-temps" / "libsoft-raster.so"
-            executable.parent.mkdir(parents=True, exist_ok=True)
-            library.parent.mkdir(parents=True, exist_ok=True)
-            with zipfile.ZipFile(executable, "w") as archive:
-                archive.writestr("kilix_temps/__init__.py", "")
-                archive.writestr(
-                    "kilix_temps/graphics.py",
-                    "def graphics_available(): return True, ''\\n",
-                )
-            executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
-            library.write_bytes(b"fixture")
-            """
-        )
-        makefile = "install:\n\tpython3 build_fixture.py $(PREFIX)\n"
-        app, app_ref = self.make_repo(
-            root, "app-origin", {"Makefile": makefile, "build_fixture.py": build_script}
-        )
-        presenter, presenter_ref = self.make_repo(
-            root, "presenter-origin", {"README": "presenter\n"}
-        )
-        binding, binding_ref = self.make_repo(
-            root, "binding-origin", {"README": "binding\n"}
-        )
-        raster, raster_ref = self.make_repo(
-            root, "raster-origin", {"README": "raster\n"}
-        )
-        prefix = root / "prefix"
-        environment = {
-            **os.environ,
-            "GPU_TERMINAL_SOURCE_HOME": str(root / "source"),
-            "GPU_TERMINAL_HOME": str(root / "data"),
-            "KILIX_STORAGE_HOME": str(root / "data" / "kilix"),
-            "KILIX_STATE_DIRECTORY": str(root / "data" / "kilix" / "state"),
-            "KILIX_TEMPS_PREFIX": str(prefix),
-            "KILIX_TEMPS_REPO": str(app),
-            "KILIX_TEMPS_REF": app_ref,
-            "KILIX_TEMPS_PRESENTER_REPO": str(presenter),
-            "KILIX_TEMPS_PRESENTER_REF": presenter_ref,
-            "KILIX_TEMPS_SOFT_RASTER_PY_REPO": str(binding),
-            "KILIX_TEMPS_SOFT_RASTER_PY_REF": binding_ref,
-            "KILIX_TEMPS_SOFT_RASTER_REPO": str(raster),
-            "KILIX_TEMPS_SOFT_RASTER_REF": raster_ref,
-        }
-        return environment, prefix
+    def run_installer(self, *arguments):
+        return subprocess.run(
+            [str(INSTALLER), *arguments], env=self.env,
+            capture_output=True, text=True, check=False)
 
-    def test_fresh_install_clones_exact_closure_and_verifies_graphics(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            environment, prefix = self.fixture_environment(root)
-            first = subprocess.run(
-                [str(INSTALLER)], env=environment, text=True,
-                capture_output=True, check=True,
-            )
-            executable = prefix / "bin" / "kilix-temps"
-            library = prefix / "lib" / "kilix-temps" / "libsoft-raster.so"
-            stamp = root / "data" / "kilix" / "state" / "kilix-temps-install.refs"
-            self.assertTrue(os.access(executable, os.X_OK))
-            self.assertTrue(library.is_file())
-            self.assertEqual(len(stamp.read_text().splitlines()), 4)
-            self.assertIn("installed and verified", first.stderr)
-            managed = root / "source" / ".kilix-temps-sources"
-            refs = stamp.read_text().splitlines()
-            for closure in refs:
-                name, commit = closure.split("=", 1)
-                self.assertTrue((managed / f"{name}-{commit}" / ".git").is_dir())
+    def test_installs_unified_launcher_without_managed_source_cache(self):
+        result = self.run_installer()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(os.access(self.prefix / "bin" / "kilix-temps", os.X_OK))
+        self.assertFalse((self.source / ".kilix-temps-sources").exists())
+        self.assertEqual(self.run_installer("--force").returncode, 0)
 
-            second = subprocess.run(
-                [str(INSTALLER)], env=environment, text=True,
-                capture_output=True, check=True,
-            )
-            self.assertIn("already installed", second.stderr)
-
-    def test_existing_non_checkout_is_never_executed(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            environment, _ = self.fixture_environment(root)
-            project = (
-                root / "source" / ".kilix-temps-sources"
-                / f"kilix-temps-{environment['KILIX_TEMPS_REF']}"
-            )
-            project.mkdir(parents=True)
-            (project / "Makefile").write_text("install:\n\tfalse\n")
-            result = subprocess.run(
-                [str(INSTALLER)], env=environment, text=True,
-                capture_output=True, check=False,
-            )
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn("exists but is not a Git checkout", result.stderr)
+    def test_print_refs_names_only_the_unified_checkout(self):
+        result = self.run_installer("--print-refs")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), f"kilix-tui-utils={REF}")
 
 
 if __name__ == "__main__":

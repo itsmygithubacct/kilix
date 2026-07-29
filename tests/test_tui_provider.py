@@ -65,6 +65,13 @@ class KilixTuiProviderTests(unittest.TestCase):
             "else:\n"
             "    print('kilix-tui fixture:' + ' '.join(sys.argv[1:]))\n"
         )
+        for tool in ("temps", "memory"):
+            target = self.remote / "tools" / tool / "main.py"
+            target.parent.mkdir(parents=True)
+            target.write_text(
+                "import sys\n"
+                f"print('kilix-{tool} fixture:' + ' '.join(sys.argv[1:]))\n"
+            )
         installer = self.remote / "install.sh"
         installer.write_text(
             "#!/usr/bin/env bash\n"
@@ -72,12 +79,22 @@ class KilixTuiProviderTests(unittest.TestCase):
             "HERE=\"$(cd -- \"$(dirname -- \"${BASH_SOURCE[0]}\")\" && pwd)\"\n"
             "BIN=\"${KILIX_TUI_UTILS_PREFIX:-$HOME/.local}/bin\"\n"
             "mkdir -p \"$BIN\"\n"
-            "printf '#!/bin/sh\\nexec python3 \"%s\" \"$@\"\\n' "
-            "\"$HERE/kilix-tui/main.py\" > \"$BIN/kilix-tui\"\n"
-            "chmod 0755 \"$BIN/kilix-tui\"\n"
+            "for spec in 'kilix-tui:kilix-tui' "
+            "'temps:kilix-temps' 'memory:kilix-memory'; do\n"
+            "  dir=\"${spec%%:*}\"; name=\"${spec##*:}\"\n"
+            "  if [ \"$dir\" = kilix-tui ]; then\n"
+            "    target=\"$HERE/kilix-tui/main.py\"\n"
+            "  else\n"
+            "    target=\"$HERE/tools/$dir/main.py\"\n"
+            "  fi\n"
+            "  printf '#!/bin/sh\\nexec python3 \"%s\" \"$@\"\\n' "
+            "\"$target\" > \"$BIN/$name\"\n"
+            "  chmod 0755 \"$BIN/$name\"\n"
+            "done\n"
         )
         installer.chmod(0o755)
-        run(["git", "add", "install.sh", "kilix-tui/main.py"], cwd=self.remote)
+        run(["git", "add", "install.sh", "kilix-tui/main.py", "tools"],
+            cwd=self.remote)
         run([
             "git",
             "-c", "user.name=itsmygithubacct",
@@ -188,6 +205,39 @@ class KilixTuiProviderTests(unittest.TestCase):
                      check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), f"{ROOT}|{ROOT}")
+
+    def test_temps_and_memory_use_the_same_provider_checkout(self):
+        storage = self.home / ".local" / "gpu_terminal" / "kilix"
+        engine_bin = storage / "prebuilt" / "kitty.app" / "bin"
+        engine_bin.mkdir(parents=True)
+        for name in ("kitty", "kitten"):
+            path = engine_bin / name
+            path.write_text("#!/bin/sh\nexit 0\n")
+            path.chmod(0o755)
+        env = dict(self.env)
+        env.update({
+            "PATH": "/usr/local/bin:/usr/bin:/bin",
+            "GPU_TERMINAL_HOME": str(self.home / ".local" / "gpu_terminal"),
+            "KILIX_STORAGE_HOME": str(storage),
+            "KILIX_CONFIG_HOME": str(storage / "config"),
+            "KILIX_STATE_DIRECTORY": str(storage / "state"),
+            "KILIX_CACHE_HOME": str(storage / "cache"),
+            "KILIX_SESSION_HOME": str(storage / "session"),
+            "KILIX_DATA_HOME": str(storage / "data"),
+            "KILIX_BUILD_DIRECTORY": str(storage / "build"),
+            "KILIX_PREBUILT_HOME": str(storage / "prebuilt" / "kitty.app"),
+            "KILIX_CONFIG_DIRECTORY": str(storage / "config"),
+            "KILIX_TUI_UTILS_REF": self.ref,
+        })
+        for command in ("temps", "memory"):
+            result = run(
+                [LAUNCHER, command, "--install-only"], env=env, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(os.access(
+                self.home / ".local" / "bin" / f"kilix-{command}", os.X_OK))
+        self.assertEqual(
+            run(["git", "rev-parse", "HEAD"], cwd=self.checkout).stdout.strip(),
+            self.ref)
 
     def test_desktop_accepts_a_provider_argument(self):
         launcher = LAUNCHER.read_text()

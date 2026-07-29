@@ -502,14 +502,6 @@ _kilix_load_env_file() {
       KILIX_REF|KILIX_REPO|KILIX_TRUST_EXISTING_CHECKOUT|KILIX_ALLOW_MUTABLE_REF|\
       KILIX_PREBUILT_VERSION|KILIX_PREBUILT_SHA256|KILIX_ALLOW_UNVERIFIED_PREBUILT|\
       KILIX_BUILD_MODE|KILIX_KITTY_DEPS_URL|KILIX_KITTY_DEPS_SHA256|\
-      KILIX_TEMPS_REPO|KILIX_TEMPS_REF|KILIX_TEMPS_PREFIX|\
-      KILIX_TEMPS_PRESENTER_REPO|KILIX_TEMPS_PRESENTER_REF|\
-      KILIX_TEMPS_SOFT_RASTER_PY_REPO|KILIX_TEMPS_SOFT_RASTER_PY_REF|\
-      KILIX_TEMPS_SOFT_RASTER_REPO|KILIX_TEMPS_SOFT_RASTER_REF|\
-      KILIX_MEMORY_REPO|KILIX_MEMORY_REF|KILIX_MEMORY_PREFIX|\
-      KILIX_MEMORY_PRESENTER_REPO|KILIX_MEMORY_PRESENTER_REF|\
-      KILIX_MEMORY_SOFT_RASTER_PY_REPO|KILIX_MEMORY_SOFT_RASTER_PY_REF|\
-      KILIX_MEMORY_SOFT_RASTER_REPO|KILIX_MEMORY_SOFT_RASTER_REF|\
       TMUX_TUI_REPO|TMUX_TUI_REF|TMUX_CLI_REF|TMUX_TUI_PREFIX|\
       KILIX_VOICE_REPO|KILIX_VOICE_REF|KILIX_VOICE_PREFIX|\
       KILIX_VOICE_LIB_URL|KILIX_VOICE_LIB_VERSION|KILIX_VOICE_LIB_SHA256|\
@@ -1263,12 +1255,8 @@ case "${1:-}" in
         *) break ;;
       esac
     done
-    _temps_installed="${KILIX_TEMPS_PREFIX:-$HOME/.local}/bin/kilix-temps"
-    if [ "$_temps_force" = 1 ]; then
-      "$KILIX_HOME/scripts/install-kilix-temps.sh" --force
-    else
-      "$KILIX_HOME/scripts/install-kilix-temps.sh"
-    fi
+    _temps_installed="${KILIX_TUI_UTILS_PREFIX:-$HOME/.local}/bin/kilix-temps"
+    "$KILIX_HOME/scripts/install-kilix-tui-utils.sh" --print-path >/dev/null
     [ -x "$_temps_installed" ] \
       || { echo "kilix temps: installer did not create $_temps_installed" >&2; exit 1; }
     [ "$_temps_install_only" = 0 ] || exit 0
@@ -1284,12 +1272,8 @@ case "${1:-}" in
         *) break ;;
       esac
     done
-    _memory_installed="${KILIX_MEMORY_PREFIX:-$HOME/.local}/bin/kilix-memory"
-    if [ "$_memory_force" = 1 ]; then
-      "$KILIX_HOME/scripts/install-kilix-memory.sh" --force
-    else
-      "$KILIX_HOME/scripts/install-kilix-memory.sh"
-    fi
+    _memory_installed="${KILIX_TUI_UTILS_PREFIX:-$HOME/.local}/bin/kilix-memory"
+    "$KILIX_HOME/scripts/install-kilix-tui-utils.sh" --print-path >/dev/null
     [ -x "$_memory_installed" ] \
       || { echo "kilix memory: installer did not create $_memory_installed" >&2; exit 1; }
     [ "$_memory_install_only" = 0 ] || exit 0

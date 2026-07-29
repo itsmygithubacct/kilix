@@ -51,16 +51,15 @@ def test_kilix_temps_launcher_forces_graphical_tab():
 
     d.shell._tab = fake_tab
     with tempfile.TemporaryDirectory() as directory:
-        project = Path(directory) / "kilix-temps"
-        executable = project / "build" / "kilix-temps"
-        executable.parent.mkdir(parents=True)
-        executable.write_text("#!/bin/sh\n")
-        executable.chmod(0o755)
+        project = Path(directory) / "kilix-tui-utils"
+        entry = project / "tools" / "temps" / "main.py"
+        entry.parent.mkdir(parents=True)
+        entry.write_text("print('fixture')\n")
         with patch.dict(os.environ, {
                 "GPU_TERMINAL_SOURCE_HOME": directory}), \
                 patch("shell.shutil.which", return_value=None):
             assert d.shell.open_kilix_temps()
-    assert seen["argv"] == [str(executable), "--graphics"]
+    assert seen["argv"] == ["python3", str(entry), "--graphics"]
     assert seen["title"] == "Kilix Temps"
     assert seen["cwd"] == str(project)
 
@@ -90,17 +89,16 @@ def test_kilix_memory_launcher_forces_graphical_tab():
     d.shell._tab = lambda argv, title, cwd=None: seen.update(
         argv=argv, title=title, cwd=cwd) or True
     with tempfile.TemporaryDirectory() as directory:
-        project = Path(directory) / "kilix-memory"
-        executable = project / "build" / "kilix-memory"
-        executable.parent.mkdir(parents=True)
-        executable.write_text("#!/bin/sh\n")
-        executable.chmod(0o755)
+        project = Path(directory) / "kilix-tui-utils"
+        entry = project / "tools" / "memory" / "main.py"
+        entry.parent.mkdir(parents=True)
+        entry.write_text("print('fixture')\n")
         with patch.dict(os.environ, {
                 "GPU_TERMINAL_SOURCE_HOME": directory}), \
                 patch("shell.shutil.which", return_value=None):
             assert d.shell.open_kilix_memory()
     assert seen == {
-        "argv": [str(executable), "--graphics"],
+        "argv": ["python3", str(entry), "--graphics"],
         "title": "Kilix Memory",
         "cwd": str(project),
     }
