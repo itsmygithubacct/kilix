@@ -1053,10 +1053,14 @@ case "${1:-}" in
           echo "session logging: off — enable with '$_self settings --set transcript=on'"
         fi
         echo "directory: $_tr_dir"
-        _tr_used=$(find "$_tr_dir/recent" -maxdepth 1 -type f -name '*.log.zst' -printf '%s\n' \
-          2>/dev/null | awk '{s+=$1} END {print s+0}')
-        _tr_arc_used=$(find "$_tr_dir/archive" -maxdepth 1 -type f -name '*.log.zst' \
-          -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {print s+0}')
+        # A tier directory only exists once something has been compressed into
+        # it, so on a fresh install these finds legitimately have nothing to
+        # walk. Without the `|| true`, `set -o pipefail` turns that into a
+        # silent exit here and the index below never prints at all.
+        _tr_used=$( { find "$_tr_dir/recent" -maxdepth 1 -type f -name '*.log.zst' \
+          -printf '%s\n' 2>/dev/null || true; } | awk '{s+=$1} END {print s+0}')
+        _tr_arc_used=$( { find "$_tr_dir/archive" -maxdepth 1 -type f -name '*.log.zst' \
+          -printf '%s\n' 2>/dev/null || true; } | awk '{s+=$1} END {print s+0}')
         printf 'recent (zstd -3): %s of %s   older (zstd -9): %s of %s\n' \
           "$(numfmt --to=iec --suffix=B "$_tr_used" 2>/dev/null || echo "$_tr_used")" \
           "$(numfmt --to=iec --suffix=B "$_KILIX_TRANSCRIPT_TOTAL" 2>/dev/null || echo "$_KILIX_TRANSCRIPT_TOTAL")" \
@@ -1065,11 +1069,12 @@ case "${1:-}" in
         [ -d "$_tr_dir" ] || { echo "(no transcripts yet)"; exit 0; }
         # Newest first: the pane you just lost is the one you want. Archived
         # entries are listed alongside live ones so history stays discoverable.
-        { find "$_tr_dir" -maxdepth 1 -type f -name '*.log' -printf '%T@ %s %p [live]\n' 2>/dev/null
+        { find "$_tr_dir" -maxdepth 1 -type f -name '*.log' \
+            -printf '%T@ %s %p [live]\n' 2>/dev/null || true
           find "$_tr_dir/recent" -maxdepth 1 -type f -name '*.log.zst' \
-            -printf '%T@ %s %p [recent]\n' 2>/dev/null
+            -printf '%T@ %s %p [recent]\n' 2>/dev/null || true
           find "$_tr_dir/archive" -maxdepth 1 -type f -name '*.log.zst' \
-            -printf '%T@ %s %p [older]\n' 2>/dev/null
+            -printf '%T@ %s %p [older]\n' 2>/dev/null || true
         } | sort -rn | while read -r _tr_time _tr_size _tr_path _tr_tag; do
             printf '%s  %8s  %s %s\n' \
               "$(date -d "@${_tr_time%.*}" '+%Y-%m-%d %H:%M:%S')" \
