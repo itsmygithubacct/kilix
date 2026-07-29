@@ -56,19 +56,43 @@ class RemoteControlPolicyTests(unittest.TestCase):
         self.assertFalse(allowed("send-text", match="all", text="oops"))
         self.assertFalse(allowed("close-window", match="all"))
 
+    @staticmethod
+    def password_allowlist():
+        launcher = (ROOT / "kilix").read_text()
+        written = re.search(
+            r'remote_control_password "%s"(.*?)\\n', launcher)
+        assert written is not None
+        return written.group(1).split()
+
+    def test_password_allowlist_is_exactly_what_kilix_needs(self):
+        # close-window, close-tab and set-tab-title are here for kilix-switch,
+        # which acts on what it lists.  That is a real widening: anything that
+        # can read the password file can now close a pane.  It is bounded by
+        # the file being 0600, single-link and owned by the user — so the
+        # reader is the user — and by get-text having been in this list since
+        # `kilix watch`, which discloses more than closing destroys.
+        self.assertEqual(
+            self.password_allowlist(),
+            ["launch", "ls", "focus-window", "focus-tab", "get-text",
+             "close-window", "close-tab", "set-tab-title"])
+
     def test_password_allowlist_cannot_synthesize_keystrokes(self):
         # Read-aloud and dictation deliberately added nothing here.  Dictated
         # text reaches a pane in-process, through the socket the fork opened
         # for the window recorded at click time; an authenticated socket that
         # could type into any pane is a far larger surface than one that can
         # only read, and voice never needed it.
-        launcher = (ROOT / "kilix").read_text()
-        written = re.search(
-            r'remote_control_password "%s"(.*?)\\n', launcher)
-        assert written is not None
-        self.assertEqual(
-            written.group(1).split(),
-            ["launch", "ls", "focus-window", "focus-tab", "get-text"])
+        #
+        # This is the invariant the list exists to protect, so it is asserted
+        # directly rather than left to fall out of the literal above: whatever
+        # else gets added, nothing may put input into a pane or run an
+        # arbitrary action.
+        forbidden = {
+            "send-text", "send-key", "action", "kitten", "run",
+            "set-window-title",   # a window title is drawn from the pane itself
+            "signal-child", "load-config", "set-user-vars", "env",
+        }
+        self.assertEqual(forbidden.intersection(self.password_allowlist()), set())
 
 
 if __name__ == "__main__":

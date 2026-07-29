@@ -13,6 +13,7 @@
 #   ./kilix focus <id>        # focus a live tab/pane by ID
 #   ./kilix watch <pane-id>   # best-effort read-only text watch of a live pane
 #   ./kilix fullscreen        # toggle this tab's OS window fullscreen
+#   ./kilix switch [--scope S] # go to a page or pane (F12; scope all|page|other)
 #   ./kilix mux [name]        # open a tmux-backed kilix tab for real attach/view
 #   ./kilix screen-size ...   # show/increase/decrease/reset terminal scale
 #   ./kilix settings          # shared chrome/game settings TUI and CLI
@@ -439,8 +440,22 @@ _kilix_init_rc_password() {
     echo "kilix: remote-control password file is invalid" >&2
     return 1
   fi
+  # The credential is scoped at the terminal, not at the caller: this line is
+  # the whole list of commands the password will ever authorise, so a tool
+  # holding it still cannot do anything absent from here.
+  #
+  # close-window, close-tab and set-tab-title were added for `kilix-switch`,
+  # which can act on what it lists rather than sending you elsewhere to finish.
+  # They are a real widening and worth stating plainly: anything able to read
+  # this file can now close a pane. Two things bound that. The file is 0600,
+  # single-link, owned by the user and checked as such above, so the reader is
+  # already the user themselves. And get-text — which reads what is on another
+  # pane's screen — has been in this list since `kilix watch`, so the surface
+  # was never a read-only one; closing a window destroys less than reading it
+  # discloses. What stays out is anything that can put input into another pane:
+  # no send-text, no send-key, no arbitrary action.
   tmp="$(mktemp "$KILIX_SESSION_HOME/.rc-config.XXXXXX")" || return 1
-  printf 'remote_control_password "%s" launch ls focus-window focus-tab get-text\n' \
+  printf 'remote_control_password "%s" launch ls focus-window focus-tab get-text close-window close-tab set-tab-title\n' \
     "$password" >"$tmp"
   chmod 0600 "$tmp" || { rm -f -- "$tmp"; return 1; }
   mv -f -- "$tmp" "$config_file"
@@ -2342,6 +2357,24 @@ case "${1:-}" in
   ls|focus|watch|fullscreen)
     _remote_cmd="$1"; shift
     _kilix_remote_control "$_remote_cmd" "$@" ;;
+  switch|switcher)
+    shift
+    # Prefer the installed command, exactly as the thermometer and memory chip
+    # resolvers do, so an incomplete development checkout cannot shadow a
+    # working install. F12 launches this into an overlay, so the failure path
+    # has to say something and wait: an overlay that exits instantly leaves the
+    # user with a flicker and no idea why nothing happened.
+    if _switch_bin="$(command -v kilix-switch 2>/dev/null)" && [ -x "$_switch_bin" ]; then
+      exec "$_switch_bin" "$@"
+    fi
+    _switch_src="${GPU_TERMINAL_SOURCE_HOME:-$HOME/.local/gpu_terminal/sources}/kilix-tui-utils/tools/switcher/main.py"
+    if [ -f "$_switch_src" ] && command -v python3 >/dev/null 2>&1; then
+      exec python3 "$_switch_src" "$@"
+    fi
+    echo "kilix switch: kilix-switch is not installed." >&2
+    echo "Install it with kilix-tui-utils/install.sh, then press F12 again." >&2
+    [ -t 0 ] && read -r _ 2>/dev/null
+    exit 127 ;;
   screen-size|font-size)
     _remote_cmd="$1"; shift
     _kilix_screen_size_cmd "$@"

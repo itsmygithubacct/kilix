@@ -55,8 +55,13 @@ disabled. Page switching also returns to `Ctrl+Shift+←`/`→`, kitty's own def
 cluster, with pane resize moving to kitty's interactive resize mode on
 `Ctrl+Shift+R`; and a new [`Ctrl+Shift+B` leader](#tmux-style-leader--ctrlshiftb)
 puts tmux's pane and window keys on Kilix's panes and pages without shadowing the
-real tmux prefix that `kilix serve` depends on. Release tags for this repository
-are created only by the coordinated
+real tmux prefix that `kilix serve` depends on. `F12` now opens
+[a real switcher](#going-to-a-page-or-a-pane--f12) — one tree of pages and panes
+with each pane's process, directory and live screen — in place of the numbered
+title list kitty ships; the scoped remote-control credential gains
+`close-window`, `close-tab` and `set-tab-title` so it can act on what it lists,
+and still admits nothing that can type into a pane. Release tags for this
+repository are created only by the coordinated
 release procedure — see Plebian-OS's
 [RELEASING.md](https://github.com/itsmygithubacct/plebian-os/blob/main/RELEASING.md).
 
@@ -833,11 +838,34 @@ rationale is captured in the nearby source comments and regression tests.
 | Scroll pane by a line | `Ctrl+Shift+↑` / `Ctrl+Shift+↓` |
 | Reorder page right / left | `Ctrl+Shift+PgDn` / `Ctrl+Shift+PgUp` |
 | Jump to page 1–10 | `Ctrl+Alt+1` … `Ctrl+Alt+0` |
-| Page chooser (Tilix sidebar) | `F12` |
+| Page and pane switcher | `F12` |
 | Rename page | `F2` |
 | Content-only fullscreen (hide page strip and pane chrome) | `F11` |
 | Toggle this tab's OS window fullscreen from a shell | `kilix fullscreen` |
 | New OS window (same dir) | `Ctrl+Shift+N` |
+
+### Going to a page or a pane — `F12`
+
+`F12` opens **`kilix-switch`**, from
+[kilix-tui-utils](https://github.com/itsmygithubacct/kilix-tui-utils), over the
+current pane. It replaces the two choosers kitty ships, which were the same
+thing twice — a numbered list of titles, one for pages and one for panes. A
+title is a poor handle on a pane, since several are `bash` and several more are
+whatever directory they started in, so the list told you least exactly when you
+had enough windows to need it.
+
+The switcher shows one tree of pages and their panes with the process and
+directory that actually identify each one, a filter (`/`) across all of it, and
+a live view of what the highlighted pane is currently showing. `Tab` cycles
+between everything, this page, and everywhere else; `Ctrl+Shift+B` `q` opens it
+already scoped to this page. It can also rename and close what it lists, and
+closing always asks first.
+
+It reaches the terminal through the same scoped remote-control credential every
+Kilix pane already holds — the one behind `kilix ls`, `kilix focus` and
+`kilix watch` — so it can do exactly what those commands can and nothing more.
+If the tool is not installed, `F12` says so rather than opening an overlay that
+disappears.
 
 ### tmux-style leader — `Ctrl+Shift+B`
 
@@ -856,7 +884,7 @@ muscle memory while leaving both alone.
 | `C-b ← ↑ ↓ →` | `Ctrl+Shift+B` then `← ↑ ↓ →` | Focus pane in that direction |
 | `C-b o` | `Ctrl+Shift+B` `o` | Next pane |
 | `C-b ;` | `Ctrl+Shift+B` `;` | Last (previously focused) pane |
-| `C-b q` | `Ctrl+Shift+B` `q` | Pick a pane visually |
+| `C-b q` | `Ctrl+Shift+B` `q` | The switcher, scoped to this page |
 | `C-b z` | `Ctrl+Shift+B` `z` | Zoom/maximize pane |
 | `C-b x` | `Ctrl+Shift+B` `x` | Close pane |
 | `C-b { }` | `Ctrl+Shift+B` `{` / `}` | Swap pane back / forward |
