@@ -26,14 +26,31 @@ MAKEFILE = "install:\n\tpython3 build_fixture.py $(PREFIX)\n"
 BUILD_FIXTURE = textwrap.dedent(
     """\
     from pathlib import Path
+    import shlex
     import sys
 
     binaries = Path(sys.argv[1]) / "bin"
     binaries.mkdir(parents=True, exist_ok=True)
+    marker = Path(__file__).with_name("RUNTIME").read_text().strip()
     for tool in ("kilix-tts", "kilix-stt", "kilix-voiced"):
         executable = binaries / tool
-        executable.write_text("#!/bin/sh\\nexit 0\\n")
+        executable.write_text(
+            "#!/bin/sh\\nprintf '%s\\\\n' " + shlex.quote(marker) + "\\n"
+        )
         executable.chmod(0o755)
+    """
+)
+PARTIAL_BUILD_FIXTURE = textwrap.dedent(
+    """\
+    from pathlib import Path
+    import sys
+
+    binaries = Path(sys.argv[1]) / "bin"
+    binaries.mkdir(parents=True, exist_ok=True)
+    executable = binaries / "kilix-tts"
+    executable.write_text("#!/bin/sh\\nprintf '%s\\\\n' partial\\n")
+    executable.chmod(0o755)
+    raise SystemExit(23)
     """
 )
 MODEL_DIRECTORY = "vosk-model-small-en-us-0.15"
@@ -55,7 +72,11 @@ class KilixVoiceInstallerTests(unittest.TestCase):
         self.checkout.mkdir()
         self.repo, self.ref = self.make_repo(
             "voice-origin",
-            {"Makefile": MAKEFILE, "build_fixture.py": BUILD_FIXTURE},
+            {
+                "Makefile": MAKEFILE,
+                "RUNTIME": "first\n",
+                "build_fixture.py": BUILD_FIXTURE,
+            },
         )
 
     def make_repo(self, name: str, files: dict[str, str]) -> tuple[Path, str]:
@@ -81,6 +102,32 @@ class KilixVoiceInstallerTests(unittest.TestCase):
             ["git", "rev-parse", "HEAD"], cwd=repo, text=True
         ).strip()
         return repo, commit
+
+    def advance_repo(self, files: dict[str, str]) -> str:
+        for relative, content in files.items():
+            path = self.repo / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content)
+        subprocess.run(["git", "add", "."], cwd=self.repo, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c", "user.name=Kilix test",
+                "-c", "user.email=kilix-test@example.invalid",
+                "commit", "-q", "-m", "next fixture",
+            ],
+            cwd=self.repo,
+            check=True,
+        )
+        self.ref = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=self.repo, text=True
+        ).strip()
+        return self.ref
+
+    def runtime_output(self, tool: str) -> str:
+        return subprocess.check_output(
+            [self.prefix / "bin" / tool], text=True
+        ).strip()
 
     def environment(self, **overrides: str | None) -> dict[str, str]:
         environment = {
@@ -176,6 +223,92 @@ class KilixVoiceInstallerTests(unittest.TestCase):
         second = self.run_installer("--without-dictation")
         self.assertIn("already installed", second.stderr)
 
+    def test_runtime_upgrade_switches_every_command_with_one_link(self):
+        self.run_installer("--without-dictation")
+        current = self.data / "voice" / "runtime" / "current"
+        first_target = os.readlink(current)
+        for tool in ("kilix-tts", "kilix-stt", "kilix-voiced"):
+            entry = self.prefix / "bin" / tool
+            self.assertTrue(entry.is_symlink())
+            self.assertEqual(os.readlink(entry), str(current / "bin" / tool))
+            self.assertEqual(self.runtime_output(tool), "first")
+
+        self.advance_repo({"RUNTIME": "second\n"})
+        self.run_installer("--without-dictation")
+
+        second_target = os.readlink(current)
+        self.assertNotEqual(second_target, first_target)
+        self.assertTrue((current.parent / first_target).is_dir())
+        for tool in ("kilix-tts", "kilix-stt", "kilix-voiced"):
+            self.assertEqual(self.runtime_output(tool), "second")
+
+    def test_partial_build_cannot_replace_a_working_runtime(self):
+        self.run_installer("--without-dictation")
+        current = self.data / "voice" / "runtime" / "current"
+        first_target = os.readlink(current)
+        generations = current.parent / "generations"
+        first_generations = sorted(entry.name for entry in generations.iterdir())
+
+        self.advance_repo(
+            {
+                "RUNTIME": "partial\n",
+                "build_fixture.py": PARTIAL_BUILD_FIXTURE,
+            }
+        )
+        refused = self.run_installer("--without-dictation", check=False)
+
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertEqual(os.readlink(current), first_target)
+        self.assertEqual(
+            sorted(entry.name for entry in generations.iterdir()),
+            first_generations,
+        )
+        for tool in ("kilix-tts", "kilix-stt", "kilix-voiced"):
+            self.assertEqual(self.runtime_output(tool), "first")
+
+    def test_post_promotion_failure_rolls_back_the_runtime_generation(self):
+        self.run_installer("--without-dictation")
+        current = self.data / "voice" / "runtime" / "current"
+        first_target = os.readlink(current)
+        generations = current.parent / "generations"
+        first_generations = sorted(entry.name for entry in generations.iterdir())
+
+        stamp = self.state / "kilix-voice-install.refs"
+        stamp.unlink()
+        stamp.mkdir()
+        self.advance_repo({"RUNTIME": "second\n"})
+        refused = self.run_installer("--without-dictation", check=False)
+
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertEqual(os.readlink(current), first_target)
+        self.assertEqual(
+            sorted(entry.name for entry in generations.iterdir()),
+            first_generations,
+        )
+        for tool in ("kilix-tts", "kilix-stt", "kilix-voiced"):
+            self.assertEqual(self.runtime_output(tool), "first")
+
+    def test_failed_legacy_migration_restores_regular_entrypoints(self):
+        binaries = self.prefix / "bin"
+        binaries.mkdir(parents=True)
+        for tool in ("kilix-tts", "kilix-stt", "kilix-voiced"):
+            entry = binaries / tool
+            entry.write_text("#!/bin/sh\nprintf '%s\\n' legacy\n")
+            entry.chmod(0o755)
+        self.state.mkdir(parents=True)
+        (self.state / "kilix-voice-install.refs").mkdir()
+
+        refused = self.run_installer("--without-dictation", check=False)
+
+        self.assertNotEqual(refused.returncode, 0)
+        runtime = self.data / "voice" / "runtime"
+        self.assertFalse((runtime / "current").exists())
+        self.assertEqual(list((runtime / "generations").iterdir()), [])
+        for tool in ("kilix-tts", "kilix-stt", "kilix-voiced"):
+            entry = binaries / tool
+            self.assertFalse(entry.is_symlink())
+            self.assertEqual(self.runtime_output(tool), "legacy")
+
     @unittest.skipUnless(
         all(shutil.which(tool) for tool in DOWNLOAD_TOOLS),
         "needs curl, sha256sum and unzip")
@@ -244,6 +377,8 @@ class KilixVoiceInstallerTests(unittest.TestCase):
             self.data / "voice",
             self.data / "voice" / "lib",
             self.data / "voice" / "models",
+            self.data / "voice" / "runtime",
+            self.data / "voice" / "runtime" / "generations",
             self.source / ".kilix-voice-sources",
         ):
             self.assertEqual(

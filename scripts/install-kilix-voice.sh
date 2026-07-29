@@ -114,13 +114,23 @@ esac
 voice_data="$data_dir/voice"
 library_root="$voice_data/lib"
 models_root="$voice_data/models"
-mkdir -p -- "$source_home" "$state_dir" "$library_root" "$models_root"
-chmod 0700 -- "$state_dir" "$voice_data" "$library_root" "$models_root" 2>/dev/null || true
-for protected in "$source_home" "$state_dir" "$voice_data"; do
+runtime_root="$voice_data/runtime"
+runtime_generations="$runtime_root/generations"
+runtime_current="$runtime_root/current"
+prefix_bin="$prefix/bin"
+mkdir -p -- "$source_home" "$state_dir" "$library_root" "$models_root" \
+  "$runtime_generations" "$prefix_bin"
+chmod 0700 -- "$state_dir" "$voice_data" "$library_root" "$models_root" \
+  "$runtime_root" "$runtime_generations" 2>/dev/null || true
+for protected in "$source_home" "$state_dir" "$voice_data" "$library_root" \
+    "$models_root" "$runtime_root" "$runtime_generations"; do
   [ -d "$protected" ] && [ ! -L "$protected" ] \
     && [ "$(stat -c '%u' -- "$protected" 2>/dev/null)" = "$(id -u)" ] \
     || die "source/state/data directories must be real directories owned by the current user: $protected"
 done
+[ -d "$prefix_bin" ] && [ ! -L "$prefix_bin" ] \
+  && [ "$(stat -c '%u' -- "$prefix_bin" 2>/dev/null)" = "$(id -u)" ] \
+  || die "the voice command directory must be a real directory owned by the current user: $prefix_bin"
 if command -v flock >/dev/null 2>&1; then
   exec 9>"$state_dir/kilix-voice-install.lock"
   flock 9
@@ -152,9 +162,13 @@ expected_refs="$(printf '%s\n' \
   "model-$model_id=$model_pin")"
 
 voice_runtime_works() {
-  local tool
+  local tool entry expected
+  [ -L "$runtime_current" ] || return 1
   for tool in kilix-tts kilix-stt kilix-voiced; do
-    [ -x "$prefix/bin/$tool" ] || return 1
+    entry="$prefix_bin/$tool"
+    expected="$runtime_current/bin/$tool"
+    [ -L "$entry" ] && [ "$(readlink -- "$entry")" = "$expected" ] \
+      && [ -x "$entry" ] || return 1
   done
   [ "$without_dictation" = 0 ] || return 0
   [ -f "$library" ] && [ -d "$model" ]
@@ -180,13 +194,16 @@ fi
 
 clone_tmp=""
 download_tmp=""
-cleanup() {
-  [ -z "$clone_tmp" ] || rm -rf -- "$clone_tmp"
-  [ -z "$download_tmp" ] || rm -f -- "$download_tmp"
-}
-trap cleanup EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
+runtime_stage=""
+uncommitted_generation=""
+legacy_generation=""
+entry_backup=""
+stamp_tmp=""
+previous_runtime_target=""
+runtime_changed=0
+transaction_active=0
+transaction_committed=0
+declare -a changed_entrypoints=()
 
 ensure_checkout() {
   local label="$1" directory="$2" repository="$3" ref="$4"
@@ -237,22 +254,179 @@ fetch_verified() {
 
 # Promotion is a symlink swap so an interrupted install leaves the previous
 # generation live, and so a bad upgrade is one relink back rather than a refetch.
-promote() {
+swap_link() {
   local target="$1" link="$2" staged
-  staged="$(mktemp -u "$(dirname "$link")/.promote.XXXXXX")" \
-    || die "could not allocate a promotion link for $link"
-  ln -s -- "$target" "$staged" || die "could not stage $link"
-  mv -fT -- "$staged" "$link" || { rm -f -- "$staged"; die "could not promote $link"; }
+  staged="$(mktemp "$(dirname "$link")/.promote.XXXXXX")" || return 1
+  rm -f -- "$staged" || return 1
+  if ! ln -s -- "$target" "$staged"; then
+    rm -f -- "$staged"
+    return 1
+  fi
+  if ! mv -fT -- "$staged" "$link"; then
+    rm -f -- "$staged"
+    return 1
+  fi
 }
 
-ensure_checkout "Kilix Voice" "$voice_dir" "$KILIX_VOICE_REPO" "$KILIX_VOICE_REF"
+promote() {
+  swap_link "$1" "$2" || die "could not promote $2"
+}
 
-log "installing the pinned voice engine"
-make -B -C "$voice_dir" install PREFIX="$prefix"
-for tool in kilix-tts kilix-stt kilix-voiced; do
-  [ -x "$prefix/bin/$tool" ] \
-    || die "the voice engine did not install $prefix/bin/$tool"
-done
+stage_runtime_generation() {
+  local tool suffix generation
+  runtime_stage="$(mktemp -d "$runtime_generations/.install.XXXXXX")" \
+    || die "could not allocate voice runtime staging"
+  log "installing the pinned voice engine into a private generation"
+  make -B -C "$voice_dir" install PREFIX="$runtime_stage"
+  for tool in kilix-tts kilix-stt kilix-voiced; do
+    if [ ! -f "$runtime_stage/bin/$tool" ] \
+        || [ -L "$runtime_stage/bin/$tool" ] \
+        || [ ! -x "$runtime_stage/bin/$tool" ]; then
+      die "the voice engine did not stage a regular executable: $tool"
+    fi
+  done
+  suffix="${runtime_stage##*.}"
+  generation="$runtime_generations/kilix-voice-${KILIX_VOICE_REF,,}-$suffix"
+  mv -- "$runtime_stage" "$generation" \
+    || die "could not publish the staged voice runtime generation"
+  runtime_stage=""
+  uncommitted_generation="$generation"
+}
+
+capture_previous_runtime() {
+  local target tool
+  if [ -L "$runtime_current" ]; then
+    target="$(readlink -- "$runtime_current")"
+    [[ "$target" =~ ^generations/[A-Za-z0-9._-]+$ ]] \
+      || die "voice runtime current link points outside its generation directory"
+    for tool in kilix-tts kilix-stt kilix-voiced; do
+      if [ ! -f "$runtime_root/$target/bin/$tool" ] \
+          || [ -L "$runtime_root/$target/bin/$tool" ] \
+          || [ ! -x "$runtime_root/$target/bin/$tool" ]; then
+        die "voice runtime current generation is incomplete: $target"
+      fi
+    done
+    previous_runtime_target="$target"
+  elif [ -e "$runtime_current" ]; then
+    die "voice runtime current path exists but is not a symlink: $runtime_current"
+  fi
+}
+
+preserve_legacy_runtime() {
+  local tool entry legacy_stage suffix
+  [ -z "$previous_runtime_target" ] || return 0
+  for tool in kilix-tts kilix-stt kilix-voiced; do
+    entry="$prefix_bin/$tool"
+    [ -f "$entry" ] && [ -x "$entry" ] || return 0
+  done
+
+  legacy_stage="$(mktemp -d "$runtime_generations/.legacy.XXXXXX")" \
+    || die "could not allocate legacy voice runtime staging"
+  mkdir -p -- "$legacy_stage/bin"
+  for tool in kilix-tts kilix-stt kilix-voiced; do
+    install -m 0755 -- "$prefix_bin/$tool" "$legacy_stage/bin/$tool" \
+      || { rm -rf -- "$legacy_stage"
+           die "could not preserve the previous $tool"; }
+  done
+  suffix="${legacy_stage##*.}"
+  legacy_generation="$runtime_generations/legacy-$suffix"
+  mv -- "$legacy_stage" "$legacy_generation" \
+    || die "could not preserve the previous voice runtime generation"
+  promote "generations/${legacy_generation##*/}" "$runtime_current"
+  runtime_changed=1
+}
+
+prepare_runtime_entrypoints() {
+  local tool entry expected staged
+  capture_previous_runtime
+  preserve_legacy_runtime
+  entry_backup="$(mktemp -d "$prefix_bin/.kilix-voice-backup.XXXXXX")" \
+    || die "could not allocate voice command rollback state"
+
+  for tool in kilix-tts kilix-stt kilix-voiced; do
+    entry="$prefix_bin/$tool"
+    expected="$runtime_current/bin/$tool"
+    if [ -L "$entry" ] && [ "$(readlink -- "$entry")" = "$expected" ]; then
+      continue
+    fi
+    if [ -e "$entry" ] || [ -L "$entry" ]; then
+      { [ -f "$entry" ] || [ -L "$entry" ]; } \
+        || die "refusing to replace non-file voice command path: $entry"
+      cp -a -- "$entry" "$entry_backup/$tool" \
+        || die "could not preserve the previous $tool entrypoint"
+    else
+      : >"$entry_backup/.missing-$tool"
+    fi
+    staged="$(mktemp "$prefix_bin/.$tool.XXXXXX")" \
+      || die "could not allocate a staged $tool entrypoint"
+    rm -f -- "$staged"
+    ln -s -- "$expected" "$staged" \
+      || { rm -f -- "$staged"; die "could not stage the $tool entrypoint"; }
+    mv -fT -- "$staged" "$entry" \
+      || { rm -f -- "$staged"; die "could not publish the $tool entrypoint"; }
+    changed_entrypoints+=("$tool")
+  done
+}
+
+rollback_runtime_transaction() {
+  local failed=0 restored=1 index tool entry
+  if [ "$runtime_changed" = 1 ]; then
+    if [ -n "$previous_runtime_target" ]; then
+      swap_link "$previous_runtime_target" "$runtime_current" || {
+        failed=1
+        restored=0
+      }
+    else
+      rm -f -- "$runtime_current" || {
+        failed=1
+        restored=0
+      }
+    fi
+  fi
+
+  for ((index=${#changed_entrypoints[@]} - 1; index >= 0; index--)); do
+    tool="${changed_entrypoints[index]}"
+    entry="$prefix_bin/$tool"
+    if [ -e "$entry_backup/.missing-$tool" ]; then
+      rm -f -- "$entry" || failed=1
+    else
+      mv -fT -- "$entry_backup/$tool" "$entry" || failed=1
+    fi
+  done
+
+  if [ "$restored" = 1 ]; then
+    [ -z "$uncommitted_generation" ] \
+      || rm -rf -- "$uncommitted_generation" || failed=1
+    [ -z "$legacy_generation" ] \
+      || rm -rf -- "$legacy_generation" || failed=1
+  fi
+  return "$failed"
+}
+
+cleanup() {
+  local status=$?
+  trap - EXIT INT TERM
+  set +e
+  if [ "$status" -ne 0 ] && [ "$transaction_active" = 1 ] \
+      && [ "$transaction_committed" = 0 ]; then
+    rollback_runtime_transaction \
+      || log "WARNING: voice runtime rollback was incomplete"
+  elif [ "$status" -ne 0 ] && [ -n "$uncommitted_generation" ]; then
+    rm -rf -- "$uncommitted_generation"
+  fi
+  [ -z "$clone_tmp" ] || rm -rf -- "$clone_tmp"
+  [ -z "$download_tmp" ] || rm -f -- "$download_tmp"
+  [ -z "$runtime_stage" ] || rm -rf -- "$runtime_stage"
+  [ -z "$stamp_tmp" ] || rm -f -- "$stamp_tmp"
+  [ -z "$entry_backup" ] || rm -rf -- "$entry_backup"
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+ensure_checkout "Kilix Voice" "$voice_dir" "$KILIX_VOICE_REPO" "$KILIX_VOICE_REF"
+stage_runtime_generation
 
 if [ "$without_dictation" = 0 ]; then
   library_generation="$library_root/vosk-$KILIX_VOICE_LIB_VERSION"
@@ -291,8 +465,17 @@ stamp_tmp="$(mktemp "$state_dir/.kilix-voice-refs.XXXXXX")" \
   || die "could not create install stamp"
 printf '%s\n' "$expected_refs" >"$stamp_tmp"
 chmod 0600 "$stamp_tmp"
-mv -fT -- "$stamp_tmp" "$stamp"
+
+transaction_active=1
+prepare_runtime_entrypoints
+promote "generations/${uncommitted_generation##*/}" "$runtime_current"
+runtime_changed=1
+voice_runtime_works \
+  || die "the published voice runtime generation did not pass validation"
+mv -fT -- "$stamp_tmp" "$stamp" || die "could not publish the voice install stamp"
+stamp_tmp=""
+transaction_committed=1
 if [ "$without_dictation" = 1 ]; then
   log "installed read-aloud only; dictation stays unavailable until libvosk is pinned"
 fi
-log "installed and verified $prefix/bin/kilix-tts, $prefix/bin/kilix-stt"
+log "installed and verified $prefix_bin/kilix-tts, $prefix_bin/kilix-stt"
