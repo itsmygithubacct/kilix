@@ -493,6 +493,8 @@ _kilix_load_env_file() {
       KILIX95_ALLOW_MUTABLE_REF|KILIX95_ALLOW_UNPINNED_INSTALL|\
       KILIX_CAP_AUTO_INSTALL|KILIX_CAP_DIR|KILIX_CAP_REPO|KILIX_CAP_REF|\
       KILIX_CAP_TRUST_EXISTING_CHECKOUT|KILIX_CAP_ALLOW_MUTABLE_REF|\
+      KILIX_TUI_UTILS_AUTO_INSTALL|KILIX_TUI_UTILS_DIR|KILIX_TUI_UTILS_REPO|KILIX_TUI_UTILS_REF|\
+      KILIX_TUI_UTILS_TRUST_EXISTING_CHECKOUT|KILIX_TUI_UTILS_ALLOW_MUTABLE_REF|KILIX_TUI_UTILS_PREFIX|\
       KILIX_RECYCLE_DIR|KILIX_SAVER_IDLE|KILIX_HOST_CLIP|KILIX_NO_SOUND|KILIX_XPANE_WM|\
       KILIX_RUN_AUTO_FIT|KILIX_NO_PANE|KILIX_DEBUG|KILIX_HW|KILIX_BROWSE_BACKEND|KILIX_BROWSE_LOG|KILIX_RUN_LOG|\
       KILIX_XFONTS|KILIX_BRIDGE_TOKEN|KILIX_SHELL_INTEGRATION|\
@@ -543,7 +545,8 @@ fi
 # while every writable provider root stays independently anchored above.
 KILIX95_DIR="${KILIX95_DIR:-$GPU_TERMINAL_SOURCE_HOME/kilix-95}"
 KILIX_CAP_DIR="${KILIX_CAP_DIR:-$GPU_TERMINAL_SOURCE_HOME/kilix-cap}"
-export KILIX95_DIR KILIX_CAP_DIR
+KILIX_TUI_UTILS_DIR="${KILIX_TUI_UTILS_DIR:-$GPU_TERMINAL_SOURCE_HOME/kilix-tui-utils}"
+export KILIX95_DIR KILIX_CAP_DIR KILIX_TUI_UTILS_DIR
 
 # No-sudo streaming deps (Xvfb / Xvnc / vncpasswd / python-xlib unpacked by
 # scripts/install-stream-deps.sh on hosts that lack them): pull in their
@@ -1053,6 +1056,18 @@ case "${1:-}" in
     shift
     export KILIX_DESKTOP_PROVIDER=cap
     export KILIX_DESKTOP_NAME="${KILIX_DESKTOP_NAME:-Kilix Cap}"
+    set -- desktop "$@" ;;
+  tui|kilix-tui)
+    shift
+    export KILIX_DESKTOP_PROVIDER=tui
+    export KILIX_DESKTOP_NAME="${KILIX_DESKTOP_NAME:-Kilix TUI}"
+    set -- desktop "$@" ;;
+  xp|kilix-xp)
+    # Kilix 95 wearing its XP theme: the same external provider, one flavor.
+    shift
+    export KILIX_DESKTOP_PROVIDER=external
+    export KILIX_DESKTOP_FLAVOR=xp
+    export KILIX_DESKTOP_NAME="${KILIX_DESKTOP_NAME:-Kilix XP}"
     set -- desktop "$@" ;;
   games|--games)
     shift
@@ -1565,6 +1580,13 @@ case "${1:-}" in
         _status_provider="cap (native mansion)"
         _status_provider_dir="$KILIX_CAP_DIR"
         ;;
+      xp|kilix-xp)
+        _status_provider="external (XP flavor)"
+        ;;
+      tui|kilix-tui)
+        _status_provider="tui (text desktop)"
+        _status_provider_dir="$KILIX_TUI_UTILS_DIR"
+        ;;
       command|custom|none|off|disabled)
         _status_provider_dir=""
         ;;
@@ -1591,6 +1613,14 @@ case "${1:-}" in
         echo "kilix cap: refusing unsafe executable at $_status_provider_dir/bin/kilix-cap"
       else
         echo "kilix cap: not built yet (download/build occurs on first launch)"
+      fi
+    elif [ "$_status_provider" = "tui (text desktop)" ]; then
+      if command -v kilix-tui >/dev/null 2>&1; then
+        echo "kilix tui: $(command -v kilix-tui)"
+      elif [ -f "$_status_provider_dir/kilix-tui/main.py" ]; then
+        echo "kilix tui: checkout present, not installed (install occurs on first launch)"
+      else
+        echo "kilix tui: not installed (download occurs on first launch)"
       fi
     fi
     exit 0 ;;
@@ -2456,6 +2486,27 @@ _kilix95_ensure_external() {
   _KILIX_DESKTOP_MODE=python
 }
 
+_kilix_tui_ensure() {
+  # The installed command wins, so the desktop a menu launches and the desktop
+  # a session boots are always the same build; the pinned installer runs only
+  # when nothing is installed yet.
+  _tui_main="$(command -v kilix-tui 2>/dev/null || true)"
+  if [ -z "$_tui_main" ]; then
+    _tui_installer="$KILIX_HOME/scripts/install-kilix-tui-utils.sh"
+    if [ ! -f "$_tui_installer" ] || [ -L "$_tui_installer" ] \
+         || [ ! -x "$_tui_installer" ]; then
+      _kilix_desktop_die "missing or unsafe Kilix TUI installer: $_tui_installer"
+    fi
+    _tui_main="$("$_tui_installer" --print-path)" \
+      || _kilix_desktop_die "could not prepare the Kilix TUI desktop"
+  fi
+  if [ ! -f "$_tui_main" ] || [ -L "$_tui_main" ] || [ ! -x "$_tui_main" ]; then
+    _kilix_desktop_die "Kilix TUI resolved to an unsafe executable: $_tui_main"
+  fi
+  _KILIX_DESKTOP_MAIN="$_tui_main"
+  _KILIX_DESKTOP_MODE=tui
+}
+
 _kilix_cap_ensure() {
   _cap_installer="$KILIX_HOME/scripts/install-kilix-cap.sh"
   if [ ! -f "$_cap_installer" ] || [ -L "$_cap_installer" ] \
@@ -2492,8 +2543,13 @@ _kilix_desktop_select() {
       _KILIX_DESKTOP_MODE=python ;;
     external)
       _kilix95_ensure_external ;;
+    xp|kilix-xp)
+      export KILIX_DESKTOP_FLAVOR=xp
+      _kilix95_ensure_external ;;
     cap|kilix-cap|mansion)
       _kilix_cap_ensure ;;
+    tui|kilix-tui)
+      _kilix_tui_ensure ;;
     auto)
       _auto_external="$KILIX95_DIR"
       if [ -f "$_auto_external/main.py" ]; then
@@ -2507,7 +2563,7 @@ _kilix_desktop_select() {
         _kilix95_ensure_external
       fi ;;
     *)
-      _kilix_desktop_die "unknown KILIX_DESKTOP_PROVIDER=$_k95_provider (use auto, builtin, external, cap, command, or none)" ;;
+      _kilix_desktop_die "unknown KILIX_DESKTOP_PROVIDER=$_k95_provider (use auto, builtin, external, xp, cap, tui, command, or none)" ;;
   esac
 }
 
@@ -2598,6 +2654,37 @@ fi
 # provider. Both use the same host-in-own-tab + wrapped-cleanup story as run.
 if [ "${1:-}" = "desktop" ]; then
   shift
+  # The provider can be named right on the command line — `kilix desktop 95`,
+  # `kilix desktop kilix-cap`, `kilix desktop kilix-tui` — overriding the
+  # environment and settings selection for this launch only. Anything not in
+  # this table passes through to the provider as an ordinary argument.
+  case "${1:-}" in
+    95|kilix-95)
+      # Asking for 95 by name asks for its 95 look; bare `external` below
+      # keeps whatever flavor is configured.
+      export KILIX_DESKTOP_PROVIDER=external
+      export KILIX_DESKTOP_FLAVOR=95
+      shift ;;
+    external)
+      export KILIX_DESKTOP_PROVIDER=external
+      shift ;;
+    xp|kilix-xp)
+      export KILIX_DESKTOP_PROVIDER=external
+      export KILIX_DESKTOP_FLAVOR=xp
+      export KILIX_DESKTOP_NAME="${KILIX_DESKTOP_NAME:-Kilix XP}"
+      shift ;;
+    cap|kilix-cap|mansion)
+      export KILIX_DESKTOP_PROVIDER=cap
+      export KILIX_DESKTOP_NAME="${KILIX_DESKTOP_NAME:-Kilix Cap}"
+      shift ;;
+    tui|kilix-tui)
+      export KILIX_DESKTOP_PROVIDER=tui
+      export KILIX_DESKTOP_NAME="${KILIX_DESKTOP_NAME:-Kilix TUI}"
+      shift ;;
+    builtin|none)
+      export KILIX_DESKTOP_PROVIDER="$1"
+      shift ;;
+  esac
   _kilix_desktop_select
   if [ "$_KILIX_DESKTOP_MODE" = python ] \
        && [ "$_KILIX_DESKTOP_MAIN" != "$KILIX_HOME/desktop/main.py" ]; then
@@ -2616,7 +2703,8 @@ if [ "${1:-}" = "desktop" ]; then
     # foreground_processes from @ ls and compare the provider's exact target.
     _dwid=""
     if [ "$_KILIX_DESKTOP_MODE" = python ] \
-         || [ "$_KILIX_DESKTOP_MODE" = executable ]; then
+         || [ "$_KILIX_DESKTOP_MODE" = executable ] \
+         || [ "$_KILIX_DESKTOP_MODE" = tui ]; then
       _dwid="$("$KITTEN" @ --password-file "$KILIX_RC_PASSWORD_FILE" ls 2>/dev/null | KILIX_DESKTOP_MAIN="$_KILIX_DESKTOP_MAIN" KILIX_DESKTOP_MODE="$_KILIX_DESKTOP_MODE" python3 -c 'import json,os,sys
 try: d=json.load(sys.stdin)
 except Exception: sys.exit(0)
@@ -2624,6 +2712,10 @@ targets={os.environ.get("KILIX_DESKTOP_MAIN","")}
 targets={t for t in targets if t}
 mode=os.environ.get("KILIX_DESKTOP_MODE","")
 def is_desktop_arg(a):
+    if mode == "tui":
+        # The installed command is a sh launcher, so the running cmdline is
+        # python3 over the checkout entry point rather than the target path.
+        return a in targets or a.endswith("/kilix-tui/main.py")
     return a in targets or (mode == "python" and (a.endswith("/desktop/main.py") or a.endswith("/kilix-95/main.py")))
 ids=[w["id"] for o in d for t in o.get("tabs",[]) for w in t.get("windows",[]) if any(is_desktop_arg(a) for p in w.get("foreground_processes",[]) for a in p.get("cmdline",[]))]
 print(ids[0] if ids else "")' 2>/dev/null)"
@@ -2667,6 +2759,12 @@ print(ids[0] if ids else "")' 2>/dev/null)"
       --env "KILIX_CAP_REF=${KILIX_CAP_REF:-}" \
       --env "KILIX_CAP_TRUST_EXISTING_CHECKOUT=${KILIX_CAP_TRUST_EXISTING_CHECKOUT:-}" \
       --env "KILIX_CAP_ALLOW_MUTABLE_REF=${KILIX_CAP_ALLOW_MUTABLE_REF:-}" \
+      --env "KILIX_TUI_UTILS_AUTO_INSTALL=${KILIX_TUI_UTILS_AUTO_INSTALL:-}" \
+      --env "KILIX_TUI_UTILS_DIR=$KILIX_TUI_UTILS_DIR" \
+      --env "KILIX_TUI_UTILS_REPO=${KILIX_TUI_UTILS_REPO:-}" \
+      --env "KILIX_TUI_UTILS_REF=${KILIX_TUI_UTILS_REF:-}" \
+      --env "KILIX_TUI_UTILS_TRUST_EXISTING_CHECKOUT=${KILIX_TUI_UTILS_TRUST_EXISTING_CHECKOUT:-}" \
+      --env "KILIX_TUI_UTILS_ALLOW_MUTABLE_REF=${KILIX_TUI_UTILS_ALLOW_MUTABLE_REF:-}" \
       -- "$_self" desktop "$@"
   fi
   rc=0
@@ -2692,6 +2790,12 @@ print(ids[0] if ids else "")' 2>/dev/null)"
       _cap_launch_path="$_cap_home:${PATH:-/usr/local/bin:/usr/bin:/bin}"
       PATH="$_cap_launch_path" KILIX_HOME="$_cap_home" KILIX_KITTEN="$KITTEN" \
         KILIX95_PROJECT_HOME="${KILIX95_PROJECT_HOME:-$KILIX95_DIR}" \
+        "$_KILIX_DESKTOP_MAIN" "$@" || rc=$? ;;
+    tui)
+      # KILIX_HOME joins PATH so the desktop's launch registry resolves the
+      # `kilix` subcommand fallbacks without guessing at checkout paths.
+      PATH="$KILIX_HOME:${PATH:-/usr/local/bin:/usr/bin:/bin}" \
+        KILIX_HOME="$KILIX_HOME" KILIX_KITTEN="$KITTEN" \
         "$_KILIX_DESKTOP_MAIN" "$@" || rc=$? ;;
     *)
       _kilix_desktop_die "internal error: no desktop mode selected" ;;

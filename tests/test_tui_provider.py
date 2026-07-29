@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-INSTALLER = ROOT / "scripts" / "install-kilix-cap.sh"
+INSTALLER = ROOT / "scripts" / "install-kilix-tui-utils.sh"
 LAUNCHER = ROOT / "kilix"
 DESKTOP_SETTINGS = ROOT / "desktop" / "apps" / "settings.py"
 
@@ -22,7 +22,7 @@ def run(argv, *, cwd=None, env=None, check=True):
     )
 
 
-class KilixCapProviderTests(unittest.TestCase):
+class KilixTuiProviderTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
@@ -30,24 +30,23 @@ class KilixCapProviderTests(unittest.TestCase):
         self.source_home = self.home / "gpu_terminal"
         self.home.mkdir()
         self.source_home.mkdir()
-        self.remote = self.root / "kilix-cap-origin"
-        self.checkout = self.source_home / "kilix-cap"
+        self.remote = self.root / "kilix-tui-utils-origin"
+        self.checkout = self.source_home / "kilix-tui-utils"
         self._make_remote()
         self.ref = run(
             ["git", "rev-parse", "HEAD"], cwd=self.remote
         ).stdout.strip()
         self.env = os.environ.copy()
         for key in tuple(self.env):
-            if key.startswith("KILIX_CAP_"):
+            if key.startswith("KILIX_TUI_UTILS_"):
                 self.env.pop(key)
         self.env.update({
             "HOME": str(self.home),
             "GPU_TERMINAL_SOURCE_HOME": str(self.source_home),
-            "KILIX95_DIR": str(self.source_home / "kilix-95"),
-            "KILIX95_PROJECT_HOME": "",
-            "KILIX_CAP_DIR": str(self.checkout),
-            "KILIX_CAP_REPO": str(self.remote),
-            "KILIX_CAP_AUTO_INSTALL": "1",
+            "KILIX_TUI_UTILS_DIR": str(self.checkout),
+            "KILIX_TUI_UTILS_REPO": str(self.remote),
+            "KILIX_TUI_UTILS_AUTO_INSTALL": "1",
+            "KILIX_TUI_UTILS_PREFIX": str(self.home / ".local"),
         })
 
     def tearDown(self):
@@ -56,24 +55,29 @@ class KilixCapProviderTests(unittest.TestCase):
     def _make_remote(self):
         self.remote.mkdir()
         run(["git", "init", "-b", "main"], cwd=self.remote)
-        runner = self.remote / "runner"
-        runner.write_text(
-            "#!/bin/sh\n"
-            "if [ \"${1:-}\" = environment ]; then\n"
-            "  printf '%s|%s\\n' \"${KILIX95_PROJECT_HOME:-}\" \"${PATH%%:*}\"\n"
-            "  exit 0\n"
-            "fi\n"
-            "printf 'kilix-cap fixture:%s\\n' \"$*\"\n"
+        entry = self.remote / "kilix-tui"
+        entry.mkdir()
+        (entry / "main.py").write_text(
+            "import os, sys\n"
+            "if sys.argv[1:] == ['environment']:\n"
+            "    print(os.environ.get('KILIX_HOME', '') + '|'\n"
+            "          + os.environ.get('PATH', '').split(':')[0])\n"
+            "else:\n"
+            "    print('kilix-tui fixture:' + ' '.join(sys.argv[1:]))\n"
         )
-        runner.chmod(0o755)
-        (self.remote / "Makefile").write_text(
-            "all: bin/kilix-cap\n\n"
-            "bin/kilix-cap: runner\n"
-            "\tmkdir -p bin\n"
-            "\tcp runner $@\n"
-            "\tchmod 0755 $@\n"
+        installer = self.remote / "install.sh"
+        installer.write_text(
+            "#!/usr/bin/env bash\n"
+            "set -euo pipefail\n"
+            "HERE=\"$(cd -- \"$(dirname -- \"${BASH_SOURCE[0]}\")\" && pwd)\"\n"
+            "BIN=\"${KILIX_TUI_UTILS_PREFIX:-$HOME/.local}/bin\"\n"
+            "mkdir -p \"$BIN\"\n"
+            "printf '#!/bin/sh\\nexec python3 \"%s\" \"$@\"\\n' "
+            "\"$HERE/kilix-tui/main.py\" > \"$BIN/kilix-tui\"\n"
+            "chmod 0755 \"$BIN/kilix-tui\"\n"
         )
-        run(["git", "add", "Makefile", "runner"], cwd=self.remote)
+        installer.chmod(0o755)
+        run(["git", "add", "install.sh", "kilix-tui/main.py"], cwd=self.remote)
         run([
             "git",
             "-c", "user.name=itsmygithubacct",
@@ -86,52 +90,46 @@ class KilixCapProviderTests(unittest.TestCase):
         env.update({key: str(value) for key, value in updates.items()})
         return run([INSTALLER, "--print-path"], env=env, check=False)
 
-    def test_first_use_clones_exact_ref_and_builds(self):
-        result = self._install(KILIX_CAP_REF=self.ref)
+    def test_first_use_clones_exact_ref_and_installs(self):
+        result = self._install(KILIX_TUI_UTILS_REF=self.ref)
         self.assertEqual(result.returncode, 0, result.stderr)
-        binary = self.checkout / "bin" / "kilix-cap"
-        self.assertEqual(result.stdout.strip(), str(binary))
-        self.assertTrue(os.access(binary, os.X_OK))
+        launcher = self.home / ".local" / "bin" / "kilix-tui"
+        self.assertEqual(result.stdout.strip(), str(launcher))
+        self.assertTrue(os.access(launcher, os.X_OK))
         self.assertEqual(
             run(["git", "rev-parse", "HEAD"], cwd=self.checkout).stdout.strip(),
             self.ref,
         )
         self.assertEqual(
-            run([binary, "hello"]).stdout.strip(),
-            "kilix-cap fixture:hello",
+            run([launcher, "hello"]).stdout.strip(),
+            "kilix-tui fixture:hello",
         )
 
     def test_existing_development_checkout_is_not_reset(self):
-        first = self._install(KILIX_CAP_REF=self.ref)
+        first = self._install(KILIX_TUI_UTILS_REF=self.ref)
         self.assertEqual(first.returncode, 0, first.stderr)
-        runner = self.checkout / "runner"
-        runner.write_text(
-            "#!/bin/sh\n"
-            "printf 'local development:%s\\n' \"$*\"\n"
-        )
-        runner.chmod(0o755)
+        entry = self.checkout / "kilix-tui" / "main.py"
+        entry.write_text("print('local development')\n")
 
         env = dict(self.env)
-        env.pop("KILIX_CAP_REF", None)
+        env.pop("KILIX_TUI_UTILS_REF", None)
         result = run([INSTALLER, "--print-path"], env=env, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("local development", runner.read_text())
+        launcher = self.home / ".local" / "bin" / "kilix-tui"
         self.assertEqual(
-            run([self.checkout / "bin" / "kilix-cap", "kept"]).stdout.strip(),
-            "local development:kept",
-        )
+            run([launcher]).stdout.strip(), "local development")
 
     def test_first_use_download_can_be_disabled(self):
         result = self._install(
-            KILIX_CAP_REF=self.ref,
-            KILIX_CAP_AUTO_INSTALL="0",
+            KILIX_TUI_UTILS_REF=self.ref,
+            KILIX_TUI_UTILS_AUTO_INSTALL="0",
         )
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("KILIX_CAP_AUTO_INSTALL=1", result.stderr)
+        self.assertIn("KILIX_TUI_UTILS_AUTO_INSTALL=1", result.stderr)
         self.assertFalse(self.checkout.exists())
 
     def test_existing_checkout_origin_is_verified(self):
-        first = self._install(KILIX_CAP_REF=self.ref)
+        first = self._install(KILIX_TUI_UTILS_REF=self.ref)
         self.assertEqual(first.returncode, 0, first.stderr)
         run([
             "git", "remote", "set-url", "origin",
@@ -145,14 +143,19 @@ class KilixCapProviderTests(unittest.TestCase):
         result = run([INSTALLER, "--print-ref"], env=self.env)
         self.assertRegex(result.stdout.strip(), r"^[0-9a-f]{40}$")
 
-    def test_settings_offer_cap_provider(self):
+    def test_settings_offer_tui_provider(self):
         settings = DESKTOP_SETTINGS.read_text()
-        self.assertIn(
-            '["auto", "builtin", "external", "cap", "tui", "command", "none"]',
-            settings,
-        )
+        self.assertIn('"tui"', settings)
 
-    def test_kilix_cap_shortcut_uses_native_provider(self):
+    def test_launcher_names_the_tui_provider(self):
+        launcher = LAUNCHER.read_text()
+        self.assertIn("tui|kilix-tui)", launcher)
+        self.assertIn("_kilix_tui_ensure", launcher)
+        self.assertIn(
+            "use auto, builtin, external, xp, cap, tui, command, or none",
+            launcher)
+
+    def test_kilix_tui_shortcut_uses_text_provider(self):
         storage = self.home / ".local" / "gpu_terminal" / "kilix"
         engine_bin = storage / "prebuilt" / "kitty.app" / "bin"
         engine_bin.mkdir(parents=True)
@@ -175,15 +178,21 @@ class KilixCapProviderTests(unittest.TestCase):
             "KILIX_BUILD_DIRECTORY": str(storage / "build"),
             "KILIX_PREBUILT_HOME": str(storage / "prebuilt" / "kitty.app"),
             "KILIX_CONFIG_DIRECTORY": str(storage / "config"),
-            "KILIX_CAP_REF": self.ref,
+            "KILIX_TUI_UTILS_REF": self.ref,
             "KILIX_IN_OVERLAY": "1",
         })
-        result = run([LAUNCHER, "cap", "environment"], env=env, check=False)
+        result = run([LAUNCHER, "kilix-tui", "environment"], env=env,
+                     check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(
-            result.stdout.strip(),
-            f"{self.source_home / 'kilix-95'}|{ROOT}",
-        )
+        self.assertEqual(result.stdout.strip(), f"{ROOT}|{ROOT}")
+
+    def test_desktop_accepts_a_provider_argument(self):
+        launcher = LAUNCHER.read_text()
+        index = launcher.index('if [ "${1:-}" = "desktop" ]')
+        block = launcher[index:index + 1200]
+        for alias in ("95|kilix-95", "xp|kilix-xp", "cap|kilix-cap|mansion",
+                      "tui|kilix-tui"):
+            self.assertIn(alias, block)
 
 
 if __name__ == "__main__":
