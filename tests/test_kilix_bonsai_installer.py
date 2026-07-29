@@ -92,12 +92,13 @@ class DispatchTests(unittest.TestCase):
 
     def test_a_source_checkout_is_used_when_nothing_is_installed(self):
         with tempfile.TemporaryDirectory() as home:
-            entry = Path(home) / "kilix-bonsai" / "tools" / "kilix-bonsai"
+            source_home = Path(home) / "source home [literal]"
+            entry = source_home / "kilix-bonsai" / "tools" / "kilix-bonsai"
             entry.mkdir(parents=True)
             (entry / "main.py").write_text(
                 "import sys\nprint('checkout', *sys.argv[1:])\n")
             result = run([str(LAUNCHER), "bonsai", "marker"],
-                         GPU_TERMINAL_SOURCE_HOME=home,
+                         GPU_TERMINAL_SOURCE_HOME=str(source_home),
                          PATH="/usr/bin:/bin")
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout.strip(), "checkout marker")

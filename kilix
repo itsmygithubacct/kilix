@@ -604,32 +604,33 @@ _kilix_voice_tool() {
 # then the pinned installer. The middle branch is what makes `kilix bonsai`
 # usable before the repository is published — it can only match on a machine
 # that has a source tree, never on an installed system, so it cannot shadow a
-# pinned install. It prints a command line rather than a path because the
-# checkout is run through python3 without being installed.
+# pinned install. The resolved command stays an array so a source root with
+# whitespace or glob characters remains one literal argument.
 _KILIX_BONSAI_PREFIX="${KILIX_BONSAI_PREFIX:-$HOME/.local}"
-_kilix_bonsai_tool() {
+declare -a _KILIX_BONSAI_COMMAND=()
+_kilix_bonsai_resolve() {
   local force="$1" resolved checkout
   resolved="$(command -v kilix-bonsai 2>/dev/null || true)"
   if [ "$force" = 0 ] && [ -n "$resolved" ] && [ -x "$resolved" ]; then
-    printf '%s\n' "$resolved"
+    _KILIX_BONSAI_COMMAND=("$resolved")
     return 0
   fi
   checkout="$GPU_TERMINAL_SOURCE_HOME/kilix-bonsai"
   if [ "$force" = 0 ] && [ -f "$checkout/tools/kilix-bonsai/main.py" ]; then
-    printf '%s\n' "python3 $checkout/tools/kilix-bonsai/main.py"
+    _KILIX_BONSAI_COMMAND=(
+      python3 "$checkout/tools/kilix-bonsai/main.py"
+    )
     return 0
   fi
-  # Installer diagnostics are stderr-only: this function's stdout is the
-  # command line its caller execs.
   local installer=("$KILIX_HOME/scripts/install-kilix-bonsai.sh")
   [ "$force" = 0 ] || installer+=(--force)
-  "${installer[@]}" >&2 || return 1
+  "${installer[@]}" || return 1
   resolved="$_KILIX_BONSAI_PREFIX/bin/kilix-bonsai"
   [ -x "$resolved" ] || {
     echo "kilix bonsai: installer did not create $resolved" >&2
     return 1
   }
-  printf '%s\n' "$resolved"
+  _KILIX_BONSAI_COMMAND=("$resolved")
 }
 
 # Never resolved through the installer, unlike the two TUIs: asking to read a
@@ -1426,12 +1427,9 @@ case "${1:-}" in
         *) break ;;
       esac
     done
-    _bonsai_resolved="$(_kilix_bonsai_tool "$_bonsai_force")" || exit 1
+    _kilix_bonsai_resolve "$_bonsai_force" || exit 1
     [ "$_bonsai_install_only" = 0 ] || exit 0
-    # Word-split deliberately: the source-checkout branch resolves to
-    # "python3 /path/to/main.py", the installed branch to a single command.
-    # shellcheck disable=SC2086
-    exec $_bonsai_resolved "$@" ;;
+    exec "${_KILIX_BONSAI_COMMAND[@]}" "$@" ;;
   voice)
     shift
     _voice_action="${1:-status}"
