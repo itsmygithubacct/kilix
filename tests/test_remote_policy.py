@@ -114,9 +114,11 @@ class PaneAndPageCreationTests(unittest.TestCase):
 
     def test_each_direction_maps_to_the_location_that_produces_it(self):
         # Verified against a live session: with Kilix's `splits` layout these
-        # are the locations that put the new pane on that side.
-        for direction, location in (("right", "vsplit"), ("down", "hsplit"),
-                                    ("left", "before")):
+        # are the locations that put the new pane on that side.  The -before
+        # pair are the fork's, added because upstream named only the far side
+        # of each axis and the near side needed a keybinding to reach.
+        for direction, location in (("right", "vsplit"), ("left", "vsplit-before"),
+                                    ("down", "hsplit"), ("up", "hsplit-before")):
             with self.subTest(direction=direction):
                 code, args, _ = self.run_command(["new-pane", direction])
                 self.assertEqual(code, 0)
@@ -124,13 +126,26 @@ class PaneAndPageCreationTests(unittest.TestCase):
                 self.assertIn(f"--location={location}", args)
                 self.assertIn("--type=window", args)
 
-    def test_up_is_refused_rather_than_silently_given_as_down(self):
-        # kitty's launch has no location for the near side of the vertical
-        # axis.  Guessing would put the pane on the wrong side of the screen.
-        with mock.patch.object(REMOTE, "run_kitten") as spy:
-            code = REMOTE.main(["new-pane", "up"])
-        self.assertEqual(code, 2)
-        spy.assert_not_called()
+    def test_every_direction_is_reachable(self):
+        # No direction may be silently dropped or aliased onto another: a pane
+        # appearing on the opposite side from the one asked for is worse than
+        # an error.
+        seen = {}
+        for direction in ("left", "right", "up", "down"):
+            _, args, _ = self.run_command(["new-pane", direction])
+            location = [a for a in args if a.startswith("--location=")][0]
+            seen[direction] = location
+        self.assertEqual(len(set(seen.values())), 4, seen)
+
+    def test_the_fork_provides_the_near_side_locations(self):
+        # The CLI is only as good as the fork underneath it, so pin that the
+        # locations it asks for are ones the layout actually understands.
+        splits = (ROOT / "src" / "kitty" / "layout" / "splits.py").read_text()
+        for location in ("vsplit-before", "hsplit-before"):
+            self.assertIn(f"location == '{location}'", splits)
+        launch = (ROOT / "src" / "kitty" / "launch.py").read_text()
+        self.assertIn("vsplit-before", launch)
+        self.assertIn("hsplit-before", launch)
 
     def test_the_split_is_anchored_to_the_calling_pane(self):
         # Without --self the split hangs off whichever pane has focus, so this

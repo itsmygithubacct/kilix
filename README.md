@@ -461,13 +461,15 @@ kilix switch              # the page/pane switcher (same as F12)
 not to whichever pane currently has focus, so it does the same thing from a
 background pane as from the foreground one.
 
-Three of the four directions are exact. There is no `up`: kitty's splits layout
-treats the split axis and which side the new pane lands on as independent
-choices, but `launch --location` only names three of the four combinations —
-`vsplit` and `hsplit` are always the far side of their axis, and `before` is the
-near side of whichever axis the *layout* defaults to, which here is horizontal
-and so means left. Rather than guess, `kilix new-pane up` says so and points at
-`kilix new-pane down` followed by `Ctrl+Alt+Up`.
+All four directions are exact, which needed a change in the fork. The splits
+layout could always put a window on either side of either axis, but upstream
+kitty named only three of the four placements: `vsplit` and `hsplit` are always
+the far side of their axis, and `before` is the near side of whichever axis the
+*layout* defaults to. The near side of a chosen axis was reachable only by
+splitting the other way and then using `move_window` to swap — which works from
+a keybinding and nowhere else, so remote control could not do it at all. The
+fork adds `vsplit-before` and `hsplit-before` for those two placements; the
+pane-title bar's own left and up split buttons use them now instead of the swap.
 
 These commands use kitty remote control against the current live GUI instance.
 `kilix focus` can jump to a tab or pane; `kilix watch` is intentionally

@@ -313,17 +313,22 @@ def cmd_watch(argv: list[str]) -> int:
         return 130
 
 
-# Where a new pane can be put, and the one place it cannot.
+# Where a new pane goes.
 #
-# kitty's splits layout treats the split axis and which side the new window
-# lands on as two independent choices, but `launch --location` only names three
-# of the four combinations: `vsplit` is always the far side of the horizontal
-# axis, `hsplit` always the far side of the vertical, and `before` flips to the
-# near side of whichever axis the *layout* defaults to. Kilix enables `splits`
-# first and sets no `split_axis`, so that default is horizontal and `before`
-# lands on the left. There is no spelling for the near side of the vertical
-# axis, so "up" has to be refused rather than quietly given as "down".
-PANE_LOCATIONS = {"right": "vsplit", "down": "hsplit", "left": "before"}
+# The splits layout always supported all four placements — the axis and the
+# side it lands on are independent — but upstream kitty only named three of
+# them, and the fourth was reachable only by splitting the other way and then
+# using `move_window` to swap, which is a keybinding action and so was not
+# available to remote control at all. The fork adds `vsplit-before` and
+# `hsplit-before` for the two near-side placements, which is what lets every
+# direction be asked for directly and meant the chrome's own left/up buttons
+# could drop their swap workaround too.
+PANE_LOCATIONS = {
+    "right": "vsplit",
+    "left": "vsplit-before",
+    "down": "hsplit",
+    "up": "hsplit-before",
+}
 
 
 def _launch(kind: str, argv: list[str], extra: list[str]) -> int:
@@ -354,13 +359,7 @@ def cmd_new_pane(argv: list[str]) -> int:
         help="program to run in it (default: the shell)")
     ns = parser.parse_args(argv)
 
-    location = PANE_LOCATIONS.get(ns.direction)
-    if location is None:
-        return fail(
-            "new-pane",
-            "the terminal cannot place a pane above this one: kitty's launch "
-            "has no location for it. Use 'kilix new-pane down' and then "
-            "Ctrl+Alt+Up to move it", 2)
+    location = PANE_LOCATIONS[ns.direction]
 
     # --self anchors the split to the pane this command was typed in. Without
     # it the split hangs off whichever pane has focus, so running this from a
