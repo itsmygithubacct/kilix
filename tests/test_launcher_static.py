@@ -67,7 +67,8 @@ class KilixLauncherTests(unittest.TestCase):
     def test_ls_lists_live_tabs_via_kitty_remote_control(self):
         launcher = (ROOT / "kilix").read_text()
         remote = (ROOT / "config" / "remote.py").read_text()
-        self.assertIn("ls|focus|watch|fullscreen)", launcher)
+        self.assertIn("ls|focus|watch|fullscreen|new-pane|split|new-tab|new-page)",
+                      launcher)
         self.assertIn('KILIX_KITTEN="$KITTEN" exec python3 "$KILIX_HOME/config/remote.py"', launcher)
         self.assertIn('run_kitten(["ls"], authenticated=True)', remote)
         self.assertIn('"--panes"', remote)
