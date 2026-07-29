@@ -16,3 +16,9 @@ config/screensavers/.build/
 # kilix 95 desktop: user-supplied fonts (never committed — see
 # desktop/README.md; period fonts stay local for copyright reasons)
 desktop/assets/
+
+# Coding-agent tool settings. These accumulate per-machine permission grants
+# containing absolute home paths, and this repository is published under a
+# pseudonymous identity, so they must never be committed. Kept here rather than
+# only in .git/info/exclude, which protects one working copy and no clone.
+.claude/
