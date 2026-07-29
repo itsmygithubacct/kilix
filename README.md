@@ -51,7 +51,12 @@ the terminal printed. Rounding out the release: **Tmux Manager** and the `tb`
 command from the pinned `tmux-tui`/`tmux-cli` closure, the **pane memory chip**
 and its monitor launcher, and SDK 1.7's shared coding-agent policy — the setting
 that decides whether a resumed coding agent starts with its own approval prompts
-disabled. Release tags for this repository are created only by the coordinated
+disabled. Page switching also returns to `Ctrl+Shift+←`/`→`, kitty's own default
+cluster, with pane resize moving to kitty's interactive resize mode on
+`Ctrl+Shift+R`; and a new [`Ctrl+Shift+B` leader](#tmux-style-leader--ctrlshiftb)
+puts tmux's pane and window keys on Kilix's panes and pages without shadowing the
+real tmux prefix that `kilix serve` depends on. Release tags for this repository
+are created only by the coordinated
 release procedure — see Plebian-OS's
 [RELEASING.md](https://github.com/itsmygithubacct/plebian-os/blob/main/RELEASING.md).
 
@@ -813,7 +818,8 @@ rationale is captured in the nearby source comments and regression tests.
 | Split (auto orientation) | `Ctrl+Shift+Enter` |
 | Close pane | `Ctrl+Alt+W` |
 | Focus pane ↑ ↓ ← → | `Alt+Arrows` |
-| Resize pane | `Ctrl+Shift+Arrows` |
+| Resize pane (interactive: arrows, `Enter` keep / `Esc` cancel) | `Ctrl+Shift+R` |
+| Reset pane size | `Ctrl+Shift+Home` |
 | Increase / decrease terminal scale | `Ctrl+Shift+=` / `Ctrl+Shift+-` |
 | Reset terminal scale | `Ctrl+Shift+Backspace` |
 | Move/swap pane | `Ctrl+Alt+Arrows` |
@@ -823,7 +829,8 @@ rationale is captured in the nearby source comments and regression tests.
 | Next / previous pane in page | `Ctrl+Tab` / `Ctrl+Shift+Tab` |
 | New page (session) | `Ctrl+Shift+T` |
 | Close page | `Ctrl+Shift+Q` |
-| Next / previous page | `Ctrl+PgDn` / `Ctrl+PgUp` |
+| Next / previous page | `Ctrl+Shift+→` / `Ctrl+Shift+←`, or `Ctrl+PgDn` / `Ctrl+PgUp` |
+| Scroll pane by a line | `Ctrl+Shift+↑` / `Ctrl+Shift+↓` |
 | Reorder page right / left | `Ctrl+Shift+PgDn` / `Ctrl+Shift+PgUp` |
 | Jump to page 1–10 | `Ctrl+Alt+1` … `Ctrl+Alt+0` |
 | Page chooser (Tilix sidebar) | `F12` |
@@ -831,6 +838,38 @@ rationale is captured in the nearby source comments and regression tests.
 | Content-only fullscreen (hide page strip and pane chrome) | `F11` |
 | Toggle this tab's OS window fullscreen from a shell | `kilix fullscreen` |
 | New OS window (same dir) | `Ctrl+Shift+N` |
+
+### tmux-style leader — `Ctrl+Shift+B`
+
+If tmux is already in your fingers, press `Ctrl+Shift+B` and then a tmux key.
+Panes are tmux panes, pages are tmux windows. One key per press and the mode
+exits, just like after a tmux prefix; an unrecognized key beeps and exits, and
+`Esc` leaves early.
+
+The leader is **not** tmux's own `Ctrl+B`, on purpose: `kilix serve` / `attach` /
+`view` run a real tmux server whose prefix has to reach it untouched, and
+`Ctrl+B` is readline's backward-char in every shell. `Ctrl+Shift+B` keeps the
+muscle memory while leaving both alone.
+
+| tmux | kilix | Action |
+|---|---|---|
+| `C-b ← ↑ ↓ →` | `Ctrl+Shift+B` then `← ↑ ↓ →` | Focus pane in that direction |
+| `C-b o` | `Ctrl+Shift+B` `o` | Next pane |
+| `C-b ;` | `Ctrl+Shift+B` `;` | Last (previously focused) pane |
+| `C-b q` | `Ctrl+Shift+B` `q` | Pick a pane visually |
+| `C-b z` | `Ctrl+Shift+B` `z` | Zoom/maximize pane |
+| `C-b x` | `Ctrl+Shift+B` `x` | Close pane |
+| `C-b { }` | `Ctrl+Shift+B` `{` / `}` | Swap pane back / forward |
+| `C-b Space` | `Ctrl+Shift+B` `Space` | Next layout |
+| `C-b C-←→` | `Ctrl+Shift+B` `r` | Resize pane interactively |
+| `C-b " %` | `Ctrl+Shift+B` `"` / `%` | Split stacked / side-by-side |
+| `C-b c` | `Ctrl+Shift+B` `c` | New page |
+| `C-b n` / `p` | `Ctrl+Shift+B` `n` / `p` | Next / previous page |
+| `C-b l` | `Ctrl+Shift+B` `l` | Last (previously used) page |
+| `C-b 1`…`9` | `Ctrl+Shift+B` `1`…`9` | Jump to page N |
+| `C-b w` | `Ctrl+Shift+B` `w` | Page chooser |
+| `C-b ,` | `Ctrl+Shift+B` `,` | Rename page |
+| `C-b &` | `Ctrl+Shift+B` `&` | Close page |
 
 ## Taskbar identity & icon
 
