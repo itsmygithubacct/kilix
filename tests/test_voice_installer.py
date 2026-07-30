@@ -178,18 +178,12 @@ class KilixVoiceInstallerTests(unittest.TestCase):
                 archive.read_bytes()).hexdigest(),
         }
 
-    def test_unpublished_ref_fails_closed_but_still_reports_its_pins(self):
-        # kilix-voice has no published commit yet.  The environment override is
-        # removed rather than set, so this also pins the shipped default: it
-        # must stay the literal `unset` and not become a branch name, which
-        # would install whatever HEAD happened to be, silently.
-        refused = self.run_installer(check=False, KILIX_VOICE_REF=None)
-        self.assertNotEqual(refused.returncode, 0)
-        self.assertIn("no published commit to pin yet", refused.stderr)
-
-        # A release closure still has to be able to read the placeholders back.
+    def test_published_default_ref_is_immutable_and_reported(self):
         listed = self.run_installer("--print-refs", KILIX_VOICE_REF=None)
-        self.assertIn("kilix-voice=unset", listed.stdout)
+        self.assertIn(
+            "kilix-voice=125e0b646f29b0880c148b2e1a66aca4bc7b87fb",
+            listed.stdout,
+        )
         self.assertIn("libvosk=unset", listed.stdout)
 
     def test_ref_must_be_an_immutable_commit(self):

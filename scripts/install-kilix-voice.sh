@@ -15,13 +15,11 @@ KILIX_VOICE_PREFIX="${KILIX_VOICE_PREFIX:-$HOME/.local}"
 # Kilix commit, so every network-fetched voice input is transitive and immutable
 # without adding another independently coordinated release ref.
 #
-# The repository is not published yet, so the commit, the prebuilt release tag,
-# and that prebuilt's digest are the literal placeholder `unset`. A branch name
-# would be the tempting default and is the wrong one: it installs whatever HEAD
-# happened to be at install time, and it does so silently. Refusing to install
-# is the louder and cheaper failure.
+# The repository commit is published and pinned below. The optional prebuilt
+# dictation library and its digest remain `unset` until that binary release is
+# published; `--without-dictation` still installs the read-aloud closure.
 KILIX_VOICE_REPO="${KILIX_VOICE_REPO:-https://github.com/itsmygithubacct/kilix-voice.git}"
-KILIX_VOICE_REF="${KILIX_VOICE_REF:-unset}"
+KILIX_VOICE_REF="${KILIX_VOICE_REF:-125e0b646f29b0880c148b2e1a66aca4bc7b87fb}"
 KILIX_VOICE_LIB_VERSION="${KILIX_VOICE_LIB_VERSION:-unset}"
 KILIX_VOICE_LIB_SHA256="${KILIX_VOICE_LIB_SHA256:-unset}"
 KILIX_VOICE_LIB_URL="${KILIX_VOICE_LIB_URL:-${KILIX_VOICE_REPO%.git}/releases/download/$KILIX_VOICE_LIB_VERSION/libvosk.so}"
