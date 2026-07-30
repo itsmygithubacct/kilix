@@ -387,9 +387,9 @@ class Desk:
             self._last_blit = time.time()
         return result
 
-    def cleanup_shm(self):
+    def cleanup_shm(self, *, discard=False):
         if self.presenter is not None:
-            self.presenter.close()
+            self.presenter.close(discard=discard)
             self.presenter = None
 
     # ── input normalization ─────────────────────────────────────────────────

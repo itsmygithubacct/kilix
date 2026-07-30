@@ -224,7 +224,9 @@ def test_frame_shm_is_private():
         assert "N=1" in t.writes[-1]
         assert "t=t" not in t.writes[-1]
     finally:
-        d.cleanup_shm()
+        # FakeTerm never consumes the t=s command, so this is the presenter's
+        # explicit abort path rather than the production close path.
+        d.cleanup_shm(discard=True)
     assert not os.path.exists(frame)
 
 
@@ -255,7 +257,7 @@ def test_frame_shm_ring_is_bounded_and_newest_wins():
         assert base64.b64decode(match.group(1)).decode() == names[0]
         assert all("N=1" in write for write in t.writes)
     finally:
-        d.cleanup_shm()
+        d.cleanup_shm(discard=True)
 
 
 for _name, _fn in sorted(list(globals().items())):
