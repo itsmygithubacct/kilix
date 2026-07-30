@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-INSTALLER = ROOT / "scripts" / "install-kilix-cap.sh"
+INSTALLER = ROOT / "scripts" / "install-kilix-land-desktop.sh"
 LAUNCHER = ROOT / "kilix"
 DESKTOP_SETTINGS = ROOT / "desktop" / "apps" / "settings.py"
 
@@ -22,7 +22,7 @@ def run(argv, *, cwd=None, env=None, check=True):
     )
 
 
-class KilixCapProviderTests(unittest.TestCase):
+class KilixLandProviderTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
@@ -30,9 +30,9 @@ class KilixCapProviderTests(unittest.TestCase):
         self.source_home = self.home / "gpu_terminal"
         self.home.mkdir()
         self.source_home.mkdir()
-        self.remote = self.root / "kilix-cap-origin"
+        self.remote = self.root / "kilix-land-desktop-origin"
         self.checkout = (
-            self.source_home / "kilix-desktops" / "kilix-cap"
+            self.source_home / "kilix-desktops" / "kilix-land-desktop"
         )
         self._make_remote()
         self.ref = run(
@@ -40,7 +40,7 @@ class KilixCapProviderTests(unittest.TestCase):
         ).stdout.strip()
         self.env = os.environ.copy()
         for key in tuple(self.env):
-            if key.startswith("KILIX_CAP_"):
+            if key.startswith("KILIX_LAND_DESKTOP_"):
                 self.env.pop(key)
         self.env.update({
             "HOME": str(self.home),
@@ -49,9 +49,9 @@ class KilixCapProviderTests(unittest.TestCase):
                 self.source_home / "kilix-desktops" / "kilix-95"
             ),
             "KILIX95_PROJECT_HOME": "",
-            "KILIX_CAP_DIR": str(self.checkout),
-            "KILIX_CAP_REPO": str(self.remote),
-            "KILIX_CAP_AUTO_INSTALL": "1",
+            "KILIX_LAND_DESKTOP_DIR": str(self.checkout),
+            "KILIX_LAND_DESKTOP_REPO": str(self.remote),
+            "KILIX_LAND_DESKTOP_AUTO_INSTALL": "1",
         })
 
     def tearDown(self):
@@ -64,16 +64,20 @@ class KilixCapProviderTests(unittest.TestCase):
         runner.write_text(
             "#!/bin/sh\n"
             "if [ \"${1:-}\" = environment ]; then\n"
-            "  printf '%s|%s\\n' \"${KILIX95_PROJECT_HOME:-}\" \"${PATH%%:*}\"\n"
+            "  printf '%s|%s\\n' \"${KILIX_LAND_DESKTOP_ASSETS:-}\" "
+            "\"${PATH%%:*}\"\n"
             "  exit 0\n"
             "fi\n"
-            "printf 'kilix-cap fixture:%s\\n' \"$*\"\n"
+            "if [ \"${1:-}\" = --version ]; then\n"
+            "  printf 'kilix-land-desktop fixture\\n'\n"
+            "  exit 0\n"
+            "fi\n"
+            "printf 'kilix-land-desktop fixture:%s\\n' \"$*\"\n"
         )
         runner.chmod(0o755)
         (self.remote / "Makefile").write_text(
-            "all: bin/kilix-cap\n\n"
-            "bin/kilix-cap: runner\n"
-            "\tmkdir -p bin\n"
+            "all: kilix-land-desktop\n\n"
+            "kilix-land-desktop: runner\n"
             "\tcp runner $@\n"
             "\tchmod 0755 $@\n"
         )
@@ -91,9 +95,9 @@ class KilixCapProviderTests(unittest.TestCase):
         return run([INSTALLER, "--print-path"], env=env, check=False)
 
     def test_first_use_clones_exact_ref_and_builds(self):
-        result = self._install(KILIX_CAP_REF=self.ref)
+        result = self._install(KILIX_LAND_DESKTOP_REF=self.ref)
         self.assertEqual(result.returncode, 0, result.stderr)
-        binary = self.checkout / "bin" / "kilix-cap"
+        binary = self.checkout / "kilix-land-desktop"
         self.assertEqual(result.stdout.strip(), str(binary))
         self.assertTrue(os.access(binary, os.X_OK))
         self.assertEqual(
@@ -102,11 +106,11 @@ class KilixCapProviderTests(unittest.TestCase):
         )
         self.assertEqual(
             run([binary, "hello"]).stdout.strip(),
-            "kilix-cap fixture:hello",
+            "kilix-land-desktop fixture:hello",
         )
 
     def test_existing_development_checkout_is_not_reset(self):
-        first = self._install(KILIX_CAP_REF=self.ref)
+        first = self._install(KILIX_LAND_DESKTOP_REF=self.ref)
         self.assertEqual(first.returncode, 0, first.stderr)
         runner = self.checkout / "runner"
         runner.write_text(
@@ -114,38 +118,43 @@ class KilixCapProviderTests(unittest.TestCase):
             "printf 'local development:%s\\n' \"$*\"\n"
         )
         runner.chmod(0o755)
+        rebuilt = self.checkout / "kilix-land-desktop"
+        newer = rebuilt.stat().st_mtime_ns + 1_000_000_000
+        os.utime(runner, ns=(newer, newer))
 
         env = dict(self.env)
-        env.pop("KILIX_CAP_REF", None)
+        env.pop("KILIX_LAND_DESKTOP_REF", None)
         result = run([INSTALLER, "--print-path"], env=env, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("local development", runner.read_text())
         self.assertEqual(
-            run([self.checkout / "bin" / "kilix-cap", "kept"]).stdout.strip(),
+            run([
+                self.checkout / "kilix-land-desktop", "kept"
+            ]).stdout.strip(),
             "local development:kept",
         )
 
     def test_first_use_download_can_be_disabled(self):
         result = self._install(
-            KILIX_CAP_REF=self.ref,
-            KILIX_CAP_AUTO_INSTALL="0",
+            KILIX_LAND_DESKTOP_REF=self.ref,
+            KILIX_LAND_DESKTOP_AUTO_INSTALL="0",
         )
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("KILIX_CAP_AUTO_INSTALL=1", result.stderr)
+        self.assertIn("KILIX_LAND_DESKTOP_AUTO_INSTALL=1", result.stderr)
         self.assertFalse(self.checkout.exists())
 
     def test_missing_former_default_is_rehomed_to_desktop_umbrella(self):
-        legacy = self.source_home / "kilix-cap"
+        legacy = self.source_home / "kilix-land-desktop"
         result = self._install(
-            KILIX_CAP_DIR=legacy,
-            KILIX_CAP_REF=self.ref,
+            KILIX_LAND_DESKTOP_DIR=legacy,
+            KILIX_LAND_DESKTOP_REF=self.ref,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(legacy.exists())
-        self.assertTrue((self.checkout / "bin" / "kilix-cap").is_file())
+        self.assertTrue((self.checkout / "kilix-land-desktop").is_file())
 
     def test_existing_checkout_origin_is_verified(self):
-        first = self._install(KILIX_CAP_REF=self.ref)
+        first = self._install(KILIX_LAND_DESKTOP_REF=self.ref)
         self.assertEqual(first.returncode, 0, first.stderr)
         run([
             "git", "remote", "set-url", "origin",
@@ -159,14 +168,21 @@ class KilixCapProviderTests(unittest.TestCase):
         result = run([INSTALLER, "--print-ref"], env=self.env)
         self.assertRegex(result.stdout.strip(), r"^[0-9a-f]{40}$")
 
-    def test_settings_offer_cap_provider(self):
+    def test_settings_offer_all_named_native_providers(self):
         settings = DESKTOP_SETTINGS.read_text()
+        for provider in ('"cap"', '"tui"', '"land"'):
+            self.assertIn(provider, settings)
+
+    def test_launcher_names_the_land_provider(self):
+        launcher = LAUNCHER.read_text()
+        self.assertIn("land|kilix-land|kilix-land-desktop)", launcher)
+        self.assertIn("_kilix_land_ensure", launcher)
         self.assertIn(
-            '["auto", "builtin", "external", "cap", "tui", "land", "command",',
-            settings,
+            "use auto, builtin, external, xp, cap, tui, land, command, or none",
+            launcher,
         )
 
-    def test_kilix_cap_shortcut_uses_native_provider(self):
+    def test_kilix_land_shortcut_uses_native_provider_and_asset_root(self):
         storage = self.home / ".local" / "gpu_terminal" / "kilix"
         engine_bin = storage / "prebuilt" / "kitty.app" / "bin"
         engine_bin.mkdir(parents=True)
@@ -189,14 +205,14 @@ class KilixCapProviderTests(unittest.TestCase):
             "KILIX_BUILD_DIRECTORY": str(storage / "build"),
             "KILIX_PREBUILT_HOME": str(storage / "prebuilt" / "kitty.app"),
             "KILIX_CONFIG_DIRECTORY": str(storage / "config"),
-            "KILIX_CAP_REF": self.ref,
+            "KILIX_LAND_DESKTOP_REF": self.ref,
             "KILIX_IN_OVERLAY": "1",
         })
-        result = run([LAUNCHER, "cap", "environment"], env=env, check=False)
+        result = run([LAUNCHER, "land", "environment"], env=env, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(
             result.stdout.strip(),
-            f"{self.source_home / 'kilix-desktops' / 'kilix-95'}|{ROOT}",
+            f"{self.checkout}|{ROOT}",
         )
 
 

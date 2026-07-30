@@ -37,7 +37,7 @@ preservation so long-running terminals survive a rebuild. It also turns on
 that owns each pane's PTY records that pane's output to a bounded, private
 transcript, with kitty graphics payloads elided so a pixel desktop cannot flood
 the log. SDK 1.5 adds the shared session-logging settings contract used by both
-desktop providers, including the two directory budgets that bound the
+SDK-backed Python providers, including the two directory budgets that bound the
 transcript tree: dead-pane logs are compressed promptly, older ones are
 recompressed more densely, and history is dropped only when both budgets are
 full.
@@ -47,13 +47,17 @@ speech stack, with capture click-to-talk and never listening on its own. SDK 1.6
 is the shared voice settings contract behind them — engines, voice, rate,
 extent, devices, and a dictation history that is off by default, because a
 record of what the user said is a different privacy class from a record of what
-the terminal printed. Rounding out the release: **Tmux Manager** and the `tb`
-command from the pinned `tmux-tui`/`tmux-cli` closure, the **pane memory chip**
-and its monitor launcher, and SDK 1.7's shared coding-agent policy — the setting
-that decides whether a resumed coding agent starts with its own approval prompts
-disabled. Page switching also returns to `Ctrl+Shift+←`/`→`, kitty's own default
-cluster, with pane resize moving to kitty's interactive resize mode on
-`Ctrl+Shift+R`; and a new [`Ctrl+Shift+B` leader](#tmux-style-leader--ctrlshiftb)
+the terminal printed. The desktop facade gains native optional providers for
+the **Kilix Cap** graphical mansion, the **Kilix TUI** text-native desktop, and
+the **Kilix Land** walkable desktop, each inherited through an immutable
+Kilix-owned first-install pin. Rounding out the release: **Tmux Manager** and
+the `tb` command from the pinned
+`tmux-tui`/`tmux-cli` closure, the **pane memory chip** and its monitor launcher,
+and SDK 1.7's shared coding-agent policy — the setting that decides whether a
+resumed coding agent starts with its own approval prompts disabled. Page
+switching also returns to `Ctrl+Shift+←`/`→`, kitty's own default cluster, with
+pane resize moving to kitty's interactive resize mode on `Ctrl+Shift+R`; and a
+new [`Ctrl+Shift+B` leader](#tmux-style-leader--ctrlshiftb)
 puts tmux's pane and window keys on Kilix's panes and pages without shadowing the
 real tmux prefix that `kilix serve` depends on. `F12` now opens
 [a real switcher](#going-to-a-page-or-a-pane--f12) — one tree of pages and panes
@@ -84,13 +88,14 @@ same declared contract.
 ## 0.1.3 — SDK 1.3
 
 Version 0.1.3 ships the Kilix 1.3 provider SDK. A shared immutable content
-catalog now drives both desktop providers, while `XAppSession` owns private X
-display authentication, application/capture processes, XDamage-to-ffmpeg
-fallback, input injection, and teardown. These boundaries keep provider code
-focused on presentation and make every catalog checkout recursive, pinned,
-verified, and atomically selected. SDK 1.2 also gives the providers and both
-settings interfaces one game-availability contract. SDK 1.3 adds the shared
-volume-widget setting used by Kilix, Kilix 95, Pleb, and Plebian-OS.
+catalog now drives both SDK-backed Python providers, while `XAppSession` owns
+private X display authentication, application/capture processes,
+XDamage-to-ffmpeg fallback, input injection, and teardown. These boundaries
+keep provider code focused on presentation and make every catalog checkout
+recursive, pinned, verified, and atomically selected. SDK 1.2 also gives the
+providers and both settings interfaces one game-availability contract. SDK 1.3
+adds the shared volume-widget setting used by Kilix, Kilix 95, Pleb, and
+Plebian-OS.
 
 ## Release 0.1.2
 
@@ -144,10 +149,17 @@ host SDK, and provider contract introduced in 0.1.1.
 - **Kilix Cap** — an optional full-color mansion desktop (`kilix cap`) with
   physical app launchers, live system rooms, housekeeping, and the Kilix 95
   game catalog.
-- **Host SDK for desktops** — external desktop providers import stable helpers
-  from `config/kilix_sdk` instead of depending on raw `config/browse.py` /
-  `config/gfx.py` internals. SDK 1.2 includes shared content installation,
-  authenticated private-X-application sessions, and game availability.
+- **Kilix TUI** — an optional text-native desktop (`kilix tui`) whose
+  complete control surface works over SSH, tmux, or a bare console and gains a
+  graphical Tango rendering when Kitty graphics are available.
+- **Kilix Land** — an optional walkable graphical desktop (`kilix land`) with
+  an immutable Kilix-owned source pin and first-use native build.
+- **Host SDK for Python desktops** — Kilix 95 and the bundled compatibility
+  provider import stable helpers from `config/kilix_sdk` instead of depending
+  on raw `config/browse.py` / `config/gfx.py` internals. SDK 1.2 includes shared
+  content installation, authenticated private-X-application sessions, and game
+  availability. Native executable, TUI, and command providers use the
+  launcher’s executable/pin boundary instead.
 - **Self-contained** — prefers its bundled fork build, and falls back to a prebuilt kitty if you haven't built it.
 
 ### Persistent pane processes
@@ -348,6 +360,8 @@ kilix memory --graphics           # install/verify the pinned monitor, then run 
 kilix tmux                         # install/verify the pinned Tmux Manager, then run it
 kilix tmux --with-tb               # also publish tmux-cli as the `tb` command
 kilix cap                          # install/build the optional mansion desktop, then open it
+kilix tui                          # install/verify the text-native desktop, then open it
+kilix land                         # install/build the walkable desktop, then open it
 kilix bonsai                       # the BitNet model store: browse, download, verify
 kilix bonsai list                  # one line per model, with size and state
 kilix bonsai pull vibevoice-asr-bitnet   # download one — this one is the dictation model
@@ -601,20 +615,42 @@ full-screen. Drop another `<name>.c` into that directory and
 `kilix screensaver <name>` picks it up. Needs a C compiler (the same one the
 fork build uses).
 
-## Desktops in a tab — Kilix 95 and Kilix Cap (experimental)
+## Desktops in a tab
 
 ```bash
 kilix desktop                # open the configured provider (Kilix 95 by default)
+kilix xp                     # open Kilix 95 with the XP flavor
+kilix desktop xp             # equivalent provider-specific form
 kilix cap                    # open the optional Kilix Cap mansion
+kilix tui                    # open the optional text-native desktop
+kilix land                   # open the optional walkable desktop
 KILIX_DESKTOP_PROVIDER=cap kilix desktop
+KILIX_DESKTOP_PROVIDER=tui kilix desktop
+KILIX_DESKTOP_PROVIDER=land kilix desktop
 ```
 
 `kilix desktop` is a provider facade. The separate `kilix-95`
 repository is the authoritative desktop. `auto` prefers an installed external
 checkout; the bundled `desktop/` tree is an explicitly reported compatibility
 fallback. Both must pass the same provider API, Kilix SDK, and security-feature
-contract before execution. `cap` selects the native Kilix Cap provider instead;
-`kilix status` shows the effective provider and path.
+contract before execution. `cap` selects the native Kilix Cap executable,
+`tui` selects Kilix TUI, and `land` selects Kilix Land. Managed first installs
+use immutable Kilix-owned pins, and the launchers validate executable paths
+rather than a Python provider manifest. The generic `command` provider remains
+available for other full desktops. `kilix status` shows the effective provider
+and path.
+
+These commands open a desktop in a Kilix tab. Making XP the Pleb login desktop
+also requires the session switch and provider in Pleb’s persistent
+`~/.local/gpu_terminal/pleb/config/session.env`:
+
+```sh
+PLEB_DESKTOP=1
+KILIX_DESKTOP_PROVIDER=xp
+```
+
+`KILIX_DESKTOP_FLAVOR=xp` alone only selects Kilix 95’s first-run appearance;
+it does not turn a plain Pleb shell session into a desktop session.
 
 ```bash
 KILIX_DESKTOP_PROVIDER=external \
@@ -628,14 +664,16 @@ By default the checkout is discovered under
 wallpaper selection) stays under `~/.local/gpu_terminal/kilix-95`. The bundled
 fallback keeps independent state under `~/.local/gpu_terminal/kilix`.
 
-Relevant knobs: `KILIX_DESKTOP_PROVIDER=auto|builtin|external|cap|command|none`,
-`KILIX_DESKTOP_COMMAND`, `KILIX_DESKTOP_NAME`, `KILIX_DESKTOP_FLAVOR=95|xp`,
-`KILIX95_DIR`, `KILIX95_REPO`, `KILIX95_BRANCH`, `KILIX95_REF`, and
-`KILIX95_AUTO_INSTALL=1` to allow a missing external checkout to be cloned.
-Automatic installs require `KILIX95_REF` to be a full immutable commit SHA;
-mutable tags/branches require the explicit `KILIX95_ALLOW_MUTABLE_REF=1` trust
-override. `kilix update` similarly honors `KILIX_REF` by fetching it from the
-validated origin and checking out the resolved commit detached.
+Relevant knobs:
+`KILIX_DESKTOP_PROVIDER=auto|builtin|external|xp|cap|tui|land|command|none`,
+`KILIX_DESKTOP_COMMAND`, `KILIX_DESKTOP_NAME`,
+`KILIX_DESKTOP_FLAVOR=95|xp`, `KILIX95_DIR`, `KILIX95_REPO`,
+`KILIX95_BRANCH`, `KILIX95_REF`, and `KILIX95_AUTO_INSTALL=1` to allow a
+missing external checkout to be cloned. Automatic installs require
+`KILIX95_REF` to be a full immutable commit SHA; mutable tags/branches require
+the explicit `KILIX95_ALLOW_MUTABLE_REF=1` trust override. `kilix update`
+similarly honors `KILIX_REF` by fetching it from the validated origin and
+checking out the resolved commit detached.
 Direct updates and fork builds serialize on the private
 `~/.local/gpu_terminal/kilix/state/build-update.lock`. An outer installer that
 already holds this lock must pass its open, locked descriptor to Kilix as
@@ -661,6 +699,37 @@ builds its current worktree, and never resets it unless an explicit
 first-use clone or `KILIX_CAP_TRUST_EXISTING_CHECKOUT=1` only for a trusted
 packaged/nonstandard checkout. Building requires a C11 compiler, `make`,
 pthreads, and zlib development headers.
+
+### Kilix TUI
+
+`kilix tui` and `kilix desktop tui` select
+`KILIX_DESKTOP_PROVIDER=tui`. If no installed `kilix-tui` command exists,
+Kilix clones its immutable pinned `kilix-tui-utils` commit into
+`~/.local/gpu_terminal/sources/kilix-desktops/kilix-tui-utils`, runs that repository’s installer,
+and opens its text-native desktop. The same interface renders as terminal cells
+everywhere and as a graphical Tango desktop when Kitty graphics are available.
+
+Override `KILIX_TUI_UTILS_DIR`, `KILIX_TUI_UTILS_REPO`, or
+`KILIX_TUI_UTILS_REF` for reviewed source. Set
+`KILIX_TUI_UTILS_AUTO_INSTALL=0` to forbid a first-use clone; mutable refs and
+nonstandard existing checkouts require the corresponding explicit trust
+overrides.
+
+### Kilix Land
+
+`kilix land` and `kilix desktop land` select
+`KILIX_DESKTOP_PROVIDER=land`. On first use Kilix clones its immutable pinned
+`kilix-land-desktop` commit into
+`~/.local/gpu_terminal/sources/kilix-desktops/kilix-land-desktop`, initializes the pinned
+submodules, builds it locally with `make`, and opens the native executable.
+Later launches reuse and rebuild the checkout without resetting local
+development changes.
+
+Override `KILIX_LAND_DESKTOP_DIR`, `KILIX_LAND_DESKTOP_REPO`, or
+`KILIX_LAND_DESKTOP_REF` for reviewed source. Set
+`KILIX_LAND_DESKTOP_AUTO_INSTALL=0` to forbid a first-use clone; mutable refs
+and nonstandard existing checkouts require the corresponding explicit trust
+overrides. `KILIX_LAND_DESKTOP_ASSETS` selects the runtime asset root.
 
 ### Kilix 95
 
@@ -856,7 +925,8 @@ kilix share --size 1600x900 --lan
 kilix share --audio --debug       # desktop audio in the stream + encode metrics
 ```
 
-(*Renamed from `kilix desktop` when the [desktop providers](#desktops-in-a-tab--kilix-95-and-kilix-cap-experimental) claimed that name.*)
+(*Renamed from `kilix desktop` when the
+[desktop providers](#desktops-in-a-tab) claimed that name.*)
 
 This runs the *entire* kilix (all panes, splits, `browse`/`run` video, images) on
 a headless display and streams the composited picture as **H.264/HLS** to any

@@ -33,6 +33,8 @@
 #   ./kilix update            # verified-origin, clean, fast-forward/ref update
 #   ./kilix desktop           # launch the configured desktop provider
 #   ./kilix cap               # launch/install the Kilix Cap mansion desktop
+#   ./kilix tui               # launch/install the Kilix TUI desktop
+#   ./kilix land              # launch/install the Kilix Land desktop
 #   ./kilix --build           # build the forked kitty from ./src
 #   ./kilix --which           # print the kitty binary kilix uses + its version
 #   ./kilix --install-desktop # desktop entry + icon (own taskbar group)
@@ -500,6 +502,9 @@ _kilix_load_env_file() {
       KILIX_CAP_TRUST_EXISTING_CHECKOUT|KILIX_CAP_ALLOW_MUTABLE_REF|\
       KILIX_TUI_UTILS_AUTO_INSTALL|KILIX_TUI_UTILS_DIR|KILIX_TUI_UTILS_REPO|KILIX_TUI_UTILS_REF|\
       KILIX_TUI_UTILS_TRUST_EXISTING_CHECKOUT|KILIX_TUI_UTILS_ALLOW_MUTABLE_REF|KILIX_TUI_UTILS_PREFIX|\
+      KILIX_LAND_DESKTOP_AUTO_INSTALL|KILIX_LAND_DESKTOP_DIR|KILIX_LAND_DESKTOP_REPO|KILIX_LAND_DESKTOP_REF|\
+      KILIX_LAND_DESKTOP_TRUST_EXISTING_CHECKOUT|KILIX_LAND_DESKTOP_ALLOW_MUTABLE_REF|\
+      KILIX_LAND_DESKTOP_ASSETS|KILIX_LAND_DESKTOP_CONFIG_HOME|KILIX_LAND_DESKTOP_EXTERNAL_APPS|KILIX_LAND_DESKTOP_AUDIO|\
       KILIX_RECYCLE_DIR|KILIX_SAVER_IDLE|KILIX_HOST_CLIP|KILIX_NO_SOUND|KILIX_XPANE_WM|\
       KILIX_RUN_AUTO_FIT|KILIX_NO_PANE|KILIX_DEBUG|KILIX_HW|KILIX_BROWSE_BACKEND|KILIX_BROWSE_LOG|KILIX_RUN_LOG|\
       KILIX_XFONTS|KILIX_BRIDGE_TOKEN|KILIX_SHELL_INTEGRATION|\
@@ -544,6 +549,7 @@ fi
 KILIX95_DIR="${KILIX95_DIR:-$GPU_TERMINAL_SOURCE_HOME/kilix-desktops/kilix-95}"
 KILIX_CAP_DIR="${KILIX_CAP_DIR:-$GPU_TERMINAL_SOURCE_HOME/kilix-desktops/kilix-cap}"
 KILIX_TUI_UTILS_DIR="${KILIX_TUI_UTILS_DIR:-$GPU_TERMINAL_SOURCE_HOME/kilix-desktops/kilix-tui-utils}"
+KILIX_LAND_DESKTOP_DIR="${KILIX_LAND_DESKTOP_DIR:-$GPU_TERMINAL_SOURCE_HOME/kilix-desktops/kilix-land-desktop}"
 
 # Sessions started before the desktop umbrella was introduced may still carry
 # the former default paths. Re-home only an exact, now-missing legacy default;
@@ -564,8 +570,12 @@ _kilix_rehome_legacy_desktop_dir \
 _kilix_rehome_legacy_desktop_dir \
   KILIX_TUI_UTILS_DIR "$GPU_TERMINAL_SOURCE_HOME/kilix-tui-utils" \
   "$GPU_TERMINAL_SOURCE_HOME/kilix-desktops/kilix-tui-utils"
+_kilix_rehome_legacy_desktop_dir \
+  KILIX_LAND_DESKTOP_DIR "$GPU_TERMINAL_SOURCE_HOME/kilix-land-desktop" \
+  "$GPU_TERMINAL_SOURCE_HOME/kilix-desktops/kilix-land-desktop"
 unset -f _kilix_rehome_legacy_desktop_dir
 export KILIX95_DIR KILIX_CAP_DIR KILIX_TUI_UTILS_DIR
+export KILIX_LAND_DESKTOP_DIR
 
 # No-sudo streaming deps (Xvfb / Xvnc / vncpasswd / python-xlib unpacked by
 # scripts/install-stream-deps.sh on hosts that lack them): pull in their
@@ -1080,6 +1090,11 @@ case "${1:-}" in
     shift
     export KILIX_DESKTOP_PROVIDER=tui
     export KILIX_DESKTOP_NAME="${KILIX_DESKTOP_NAME:-Kilix TUI}"
+    set -- desktop "$@" ;;
+  land|kilix-land|kilix-land-desktop)
+    shift
+    export KILIX_DESKTOP_PROVIDER=land
+    export KILIX_DESKTOP_NAME="${KILIX_DESKTOP_NAME:-Kilix Land}"
     set -- desktop "$@" ;;
   xp|kilix-xp)
     # Kilix 95 wearing its XP theme: the same external provider, one flavor.
@@ -1598,6 +1613,10 @@ case "${1:-}" in
         _status_provider="tui (text desktop)"
         _status_provider_dir="$KILIX_TUI_UTILS_DIR"
         ;;
+      land|kilix-land|kilix-land-desktop)
+        _status_provider="land (walkable desktop)"
+        _status_provider_dir="$KILIX_LAND_DESKTOP_DIR"
+        ;;
       command|custom|none|off|disabled)
         _status_provider_dir=""
         ;;
@@ -1632,6 +1651,17 @@ case "${1:-}" in
         echo "kilix tui: checkout present, not installed (install occurs on first launch)"
       else
         echo "kilix tui: not installed (download occurs on first launch)"
+      fi
+    elif [ "$_status_provider" = "land (walkable desktop)" ]; then
+      if [ -f "$_status_provider_dir/kilix-land-desktop" ] \
+           && [ ! -L "$_status_provider_dir/kilix-land-desktop" ] \
+           && [ -x "$_status_provider_dir/kilix-land-desktop" ]; then
+        "$_status_provider_dir/kilix-land-desktop" --version
+      elif [ -e "$_status_provider_dir/kilix-land-desktop" ] \
+           || [ -L "$_status_provider_dir/kilix-land-desktop" ]; then
+        echo "kilix land: refusing unsafe executable at $_status_provider_dir/kilix-land-desktop"
+      else
+        echo "kilix land: not built yet (download/build occurs on first launch)"
       fi
     fi
     exit 0 ;;
@@ -2546,6 +2576,24 @@ _kilix_cap_ensure() {
   _KILIX_DESKTOP_MODE=executable
 }
 
+_kilix_land_ensure() {
+  _land_installer="$KILIX_HOME/scripts/install-kilix-land-desktop.sh"
+  if [ ! -f "$_land_installer" ] || [ -L "$_land_installer" ] \
+       || [ ! -x "$_land_installer" ]; then
+    _kilix_desktop_die "missing or unsafe Kilix Land installer: $_land_installer"
+  fi
+  _land_binary="$("$_land_installer" --print-path)" \
+    || _kilix_desktop_die "could not prepare Kilix Land"
+  if [ ! -f "$_land_binary" ] || [ -L "$_land_binary" ] \
+       || [ ! -x "$_land_binary" ]; then
+    _kilix_desktop_die "Kilix Land installer returned an unsafe executable: $_land_binary"
+  fi
+  KILIX_LAND_DESKTOP_ASSETS="${KILIX_LAND_DESKTOP_ASSETS:-$(dirname "$_land_binary")}"
+  export KILIX_LAND_DESKTOP_ASSETS
+  _KILIX_DESKTOP_MAIN="$_land_binary"
+  _KILIX_DESKTOP_MODE=executable
+}
+
 _kilix_desktop_select() {
   _KILIX_DESKTOP_MAIN=
   _KILIX_DESKTOP_MODE=
@@ -2573,6 +2621,8 @@ _kilix_desktop_select() {
       _kilix_cap_ensure ;;
     tui|kilix-tui)
       _kilix_tui_ensure ;;
+    land|kilix-land|kilix-land-desktop)
+      _kilix_land_ensure ;;
     auto)
       _auto_external="$KILIX95_DIR"
       if [ -f "$_auto_external/main.py" ]; then
@@ -2586,7 +2636,7 @@ _kilix_desktop_select() {
         _kilix95_ensure_external
       fi ;;
     *)
-      _kilix_desktop_die "unknown KILIX_DESKTOP_PROVIDER=$_k95_provider (use auto, builtin, external, xp, cap, tui, command, or none)" ;;
+      _kilix_desktop_die "unknown KILIX_DESKTOP_PROVIDER=$_k95_provider (use auto, builtin, external, xp, cap, tui, land, command, or none)" ;;
   esac
 }
 
@@ -2673,14 +2723,15 @@ if [ "${1:-}" = "run" ]; then
 fi
 
 # desktop: launch the selected full-pane environment in its own Kilix tab.
-# Kilix 95 is the default provider; Kilix Cap is the optional native mansion
-# provider. Both use the same host-in-own-tab + wrapped-cleanup story as run.
+# Kilix 95 is the default provider; Cap, TUI, and Land are named optional
+# providers. All use the same host-in-own-tab + wrapped-cleanup story as run.
 if [ "${1:-}" = "desktop" ]; then
   shift
   # The provider can be named right on the command line — `kilix desktop 95`,
-  # `kilix desktop kilix-cap`, `kilix desktop kilix-tui` — overriding the
-  # environment and settings selection for this launch only. Anything not in
-  # this table passes through to the provider as an ordinary argument.
+  # `kilix desktop kilix-cap`, `kilix desktop kilix-tui`, or
+  # `kilix desktop kilix-land` — overriding the environment and settings
+  # selection for this launch only. Anything not in this table passes through
+  # to the provider as an ordinary argument.
   case "${1:-}" in
     95|kilix-95)
       # Asking for 95 by name asks for its 95 look; bare `external` below
@@ -2703,6 +2754,10 @@ if [ "${1:-}" = "desktop" ]; then
     tui|kilix-tui)
       export KILIX_DESKTOP_PROVIDER=tui
       export KILIX_DESKTOP_NAME="${KILIX_DESKTOP_NAME:-Kilix TUI}"
+      shift ;;
+    land|kilix-land|kilix-land-desktop)
+      export KILIX_DESKTOP_PROVIDER=land
+      export KILIX_DESKTOP_NAME="${KILIX_DESKTOP_NAME:-Kilix Land}"
       shift ;;
     builtin|none)
       export KILIX_DESKTOP_PROVIDER="$1"
@@ -2788,6 +2843,16 @@ print(ids[0] if ids else "")' 2>/dev/null)"
       --env "KILIX_TUI_UTILS_REF=${KILIX_TUI_UTILS_REF:-}" \
       --env "KILIX_TUI_UTILS_TRUST_EXISTING_CHECKOUT=${KILIX_TUI_UTILS_TRUST_EXISTING_CHECKOUT:-}" \
       --env "KILIX_TUI_UTILS_ALLOW_MUTABLE_REF=${KILIX_TUI_UTILS_ALLOW_MUTABLE_REF:-}" \
+      --env "KILIX_LAND_DESKTOP_AUTO_INSTALL=${KILIX_LAND_DESKTOP_AUTO_INSTALL:-}" \
+      --env "KILIX_LAND_DESKTOP_DIR=$KILIX_LAND_DESKTOP_DIR" \
+      --env "KILIX_LAND_DESKTOP_REPO=${KILIX_LAND_DESKTOP_REPO:-}" \
+      --env "KILIX_LAND_DESKTOP_REF=${KILIX_LAND_DESKTOP_REF:-}" \
+      --env "KILIX_LAND_DESKTOP_TRUST_EXISTING_CHECKOUT=${KILIX_LAND_DESKTOP_TRUST_EXISTING_CHECKOUT:-}" \
+      --env "KILIX_LAND_DESKTOP_ALLOW_MUTABLE_REF=${KILIX_LAND_DESKTOP_ALLOW_MUTABLE_REF:-}" \
+      --env "KILIX_LAND_DESKTOP_ASSETS=${KILIX_LAND_DESKTOP_ASSETS:-}" \
+      --env "KILIX_LAND_DESKTOP_CONFIG_HOME=${KILIX_LAND_DESKTOP_CONFIG_HOME:-}" \
+      --env "KILIX_LAND_DESKTOP_EXTERNAL_APPS=${KILIX_LAND_DESKTOP_EXTERNAL_APPS:-}" \
+      --env "KILIX_LAND_DESKTOP_AUDIO=${KILIX_LAND_DESKTOP_AUDIO:-}" \
       -- "$_self" desktop "$@"
   fi
   rc=0

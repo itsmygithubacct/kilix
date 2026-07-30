@@ -209,7 +209,8 @@ SETTING_PAGES = [
     ]),
     ("Desktop", [
         E("KILIX_DESKTOP_PROVIDER", "Provider", "choice", "auto",
-          ["auto", "builtin", "external", "cap", "tui", "command", "none"]),
+          ["auto", "builtin", "external", "cap", "tui", "land", "command",
+           "none"]),
         E("KILIX_DESKTOP_FLAVOR", "Flavor", "choice", "95",
           ["95", "xp"]),
         E("KILIX_DESKTOP_COMMAND", "Custom command"),
