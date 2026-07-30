@@ -1,4 +1,5 @@
 import importlib.util
+import base64
 import re
 import unittest
 from pathlib import Path
@@ -13,6 +14,13 @@ assert SPEC is not None and SPEC.loader is not None
 POLICY = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(POLICY)
 
+MUX_SPEC = importlib.util.spec_from_file_location(
+    "kilix_mux_rc_auth", ROOT / "config" / "kilix_mux_rc_auth.py"
+)
+assert MUX_SPEC is not None and MUX_SPEC.loader is not None
+MUX_POLICY = importlib.util.module_from_spec(MUX_SPEC)
+MUX_SPEC.loader.exec_module(MUX_POLICY)
+
 RC_SPEC = importlib.util.spec_from_file_location(
     "kilix_remote", ROOT / "config" / "remote.py"
 )
@@ -24,6 +32,12 @@ RC_SPEC.loader.exec_module(REMOTE)
 def allowed(command, *, from_socket=False, window=object(), **payload):
     return POLICY.is_cmd_allowed(
         {"cmd": command, "payload": payload}, window, from_socket, {}
+    )
+
+
+def mux_allowed(command="send-text", **payload):
+    return MUX_POLICY.is_cmd_allowed(
+        {"cmd": command, "payload": payload}, object(), True, {}
     )
 
 
@@ -70,7 +84,9 @@ class RemoteControlPolicyTests(unittest.TestCase):
         written = re.search(
             r'remote_control_password "%s"(.*?)\\n', launcher)
         assert written is not None
-        return written.group(1).split()
+        commands, separator, checker = written.group(1).partition(' "%s"')
+        assert separator and checker == ""
+        return commands.split()
 
     def test_password_allowlist_is_exactly_what_kilix_needs(self):
         # close-window, close-tab and set-tab-title are here for kilix-switch,
@@ -83,6 +99,11 @@ class RemoteControlPolicyTests(unittest.TestCase):
             self.password_allowlist(),
             ["launch", "ls", "focus-window", "focus-tab", "get-text",
              "close-window", "close-tab", "set-tab-title"])
+
+    def test_password_uses_the_pane_scoped_multiplexer_checker(self):
+        launcher = (ROOT / "kilix").read_text()
+        self.assertIn(
+            '"$KILIX_HOME/config/kilix_mux_rc_auth.py"', launcher)
 
     def test_password_allowlist_cannot_synthesize_keystrokes(self):
         # Read-aloud and dictation deliberately added nothing here.  Dictated
@@ -101,6 +122,33 @@ class RemoteControlPolicyTests(unittest.TestCase):
             "signal-child", "load-config", "set-user-vars", "env",
         }
         self.assertEqual(forbidden.intersection(self.password_allowlist()), set())
+
+    def test_multiplexer_input_is_bounded_and_pane_scoped(self):
+        pane = "0123456789abcdef0123456789abcdef"
+        data = "base64:" + base64.b64encode(b"hello\n").decode()
+        self.assertTrue(mux_allowed(
+            match=f"env:KITTY_PTY_BROKER_SESSION={pane}",
+            match_tab="", all=False, exclude_active=False,
+            session_id="", bracketed_paste="disable", data=data,
+        ))
+        self.assertFalse(mux_allowed(
+            match="all", data=data, match_tab="", all=True,
+        ))
+        self.assertFalse(mux_allowed(
+            match="env:KITTY_PTY_BROKER_SESSION=not-a-session",
+            data=data,
+        ))
+        self.assertFalse(mux_allowed(
+            match=f"env:KITTY_PTY_BROKER_SESSION={pane}",
+            data="kitty-key:AAAA",
+        ))
+        self.assertFalse(mux_allowed(
+            match=f"env:KITTY_PTY_BROKER_SESSION={pane}",
+            data="base64:" + "A" * 1404,
+        ))
+
+    def test_multiplexer_checker_has_no_opinion_on_other_commands(self):
+        self.assertIsNone(mux_allowed("get-text", match="all"))
 
 
 class PaneAndPageCreationTests(unittest.TestCase):

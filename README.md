@@ -728,7 +728,7 @@ not).
 ## Stream sessions to other devices (experimental)
 
 kilix can share a session over the network so you can pick it up — or just watch
-it — from another laptop, a phone, or a browser. There are three tiers, from
+it — from another laptop, a phone, or a browser. There are four tiers, from
 crisp-text-cheap to full-pixel-faithful. **All of them bind to loopback by
 default** (reach them over SSH); LAN exposure is opt-in and gated by TLS + a
 token. Everything here is *opt-in* — plain kilix is unchanged.
@@ -763,7 +763,47 @@ ssh -t you@host ~/.local/gpu_terminal/sources/kilix/kilix view  work      # watc
 Needs `tmux`. Animated `browse`/`run` panes work but are throttled over tmux —
 for those, use the pixel tiers below.
 
-### 2. A GUI app — view + control from a browser or VNC client
+### 2. A live Kilix pane — semantic text, graphics and audio
+
+`kilix remote` exposes a pane that is already running in the current Kilix
+frontend. The pane stays locally attached and the broker continues to own its
+PTY:
+
+```bash
+kilix ls --panes
+kilix remote serve PANE_ID --socket 127.0.0.1:47800
+
+# Use the token printed by the server.
+kilix remote attach --socket 127.0.0.1:47800 --token TOKEN
+kilix remote view   --socket 127.0.0.1:47800 --token TOKEN
+```
+
+Run the server in a different pane from `PANE_ID`. PTY output comes from a
+protocol-v2 broker **observer**, which is structurally read-only and does not
+take the local frontend's control slot. Control input uses a separate,
+authenticated Kitty command restricted to the exact broker-session marker and
+bounded chunks. Omitting it with `serve --no-input` produces a view-only
+session, and `remote view` is independently enforced by the multiplexer server.
+
+Applications using Kilix's shared `FramePresenter` discover a private
+session-specific frame tap only while a remote server is waiting. The tap has a
+one-frame newest-wins queue and all socket I/O happens off the local rendering
+thread; with no server, the local path does one cheap socket check per second.
+Text and inline images remain semantic, while host-local shared-memory/file
+graphics are represented by the tapped RGB motion plane. Audio can be added
+with `serve --audio-source COMMAND`; the command writes raw signed-16-bit PCM,
+and an attaching Kilix plays it through `pacat`, `aplay`, or an explicit
+`--audio-output`.
+
+A non-loopback `--socket ADDRESS:PORT --lan` is direct TLS: the server prints
+both a token and a certificate fingerprint, and the client requires both. An
+SSH tunnel to loopback remains the smaller exposure surface.
+
+Kilix pins and builds the multiplexer, broker-v2 observer, and presenter tap
+from their submodules. `KILIX_MULTIPLEXER_HOME` selects a sibling development
+checkout without changing the release pin.
+
+### 3. A GUI app — view + control from a browser or VNC client
 
 `kilix run` can expose the app it's already running on its private display:
 
@@ -807,7 +847,7 @@ heuristic for fast static applications, not proof that a network page finished
 loading. The legacy `content-frames=1` marker retains its original meaning and
 is emitted only for the first changed capture after the startup snapshot.
 
-### 3. The whole kilix — every pane, graphics and video included
+### 4. The whole kilix — every pane, graphics and video included
 
 ```bash
 kilix share                       # whole kilix on a headless screen -> your browser
