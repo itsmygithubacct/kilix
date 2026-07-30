@@ -769,7 +769,7 @@ right-click menu everywhere. Built in:
   a tab: **Doom** downloads the official shareware episode plus a
   dosbox-staging build if no dosbox is installed (fullscreen, fire on Space,
   sound on); **Bashed Earth** clones + builds
-  [itsmygithubacct/Bashed-Earth](https://github.com/itsmygithubacct/Bashed-Earth).
+  [itsmygithubacct/bashed-earth](https://github.com/itsmygithubacct/bashed-earth).
   Native catalog games include **Kilix Lights** and **Super Kilix**, which are
   cloned recursively, built, and launched directly in their Kilix tabs.
   The Games tab, `kilix settings`, and `kilix games enable|disable NAME...`
