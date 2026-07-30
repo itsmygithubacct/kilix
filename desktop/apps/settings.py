@@ -230,6 +230,9 @@ SETTING_PAGES = [
         E("KILIX95_REF", "External ref"),
     ]),
     ("Apps", [
+        S(shared_settings.CODING_YOLO_KEY, "Skip coding-agent approvals",
+          "choice", shared_settings.CODING_YOLO_DEFAULT,
+          list(shared_settings.CODING_YOLO_CHOICES)),
         E("KILIX_BROWSE_BACKEND", "Browser renderer", "choice", "presenter",
           ["presenter", "go"]),
         E("KILIX_RUN_AUTO_FIT", "Auto-fit X apps", "bool", "1", ("1", "0")),

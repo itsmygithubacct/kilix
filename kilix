@@ -2795,8 +2795,9 @@ print(ids[0] if ids else "")' 2>/dev/null)"
     tui)
       # KILIX_HOME joins PATH so the desktop's launch registry resolves the
       # `kilix` subcommand fallbacks without guessing at checkout paths.
-      PATH="$KILIX_HOME:${PATH:-/usr/local/bin:/usr/bin:/bin}" \
-        KILIX_HOME="$KILIX_HOME" KILIX_KITTEN="$KITTEN" \
+      _cap_home="$KILIX_HOME"
+      PATH="$_cap_home:${PATH:-/usr/local/bin:/usr/bin:/bin}" \
+        KILIX_HOME="$_cap_home" KILIX_KITTEN="$KITTEN" \
         "$_KILIX_DESKTOP_MAIN" "$@" || rc=$? ;;
     *)
       _kilix_desktop_die "internal error: no desktop mode selected" ;;
