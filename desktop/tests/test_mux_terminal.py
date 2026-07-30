@@ -51,7 +51,7 @@ def test_kilix_temps_launcher_forces_graphical_tab():
 
     d.shell._tab = fake_tab
     with tempfile.TemporaryDirectory() as directory:
-        project = Path(directory) / "kilix-tui-utils"
+        project = Path(directory) / "kilix-desktops" / "kilix-tui-utils"
         entry = project / "tools" / "temps" / "main.py"
         entry.parent.mkdir(parents=True)
         entry.write_text("print('fixture')\n")
@@ -89,7 +89,7 @@ def test_kilix_memory_launcher_forces_graphical_tab():
     d.shell._tab = lambda argv, title, cwd=None: seen.update(
         argv=argv, title=title, cwd=cwd) or True
     with tempfile.TemporaryDirectory() as directory:
-        project = Path(directory) / "kilix-tui-utils"
+        project = Path(directory) / "kilix-desktops" / "kilix-tui-utils"
         entry = project / "tools" / "memory" / "main.py"
         entry.parent.mkdir(parents=True)
         entry.write_text("print('fixture')\n")

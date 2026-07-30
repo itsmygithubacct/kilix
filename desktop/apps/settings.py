@@ -223,7 +223,7 @@ SETTING_PAGES = [
         E("KILIX95_ALLOW_UNPINNED_INSTALL", "Allow unpinned install", "bool",
           "0", ("1", "0")),
         E("KILIX95_DIR", "External checkout",
-          default="~/.local/gpu_terminal/sources/kilix-95"),
+          default="~/.local/gpu_terminal/sources/kilix-desktops/kilix-95"),
         E("KILIX95_REPO", "External repo",
           default="https://github.com/itsmygithubacct/kilix-95.git"),
         E("KILIX95_BRANCH", "External branch"),

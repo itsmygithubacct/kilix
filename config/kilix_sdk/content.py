@@ -10,7 +10,7 @@ def _load_shared_package():
     root = Path(__file__).resolve().parents[2]
     candidates = (
         root / "third_party" / "kilix-content" / "src",
-        root.parent / "kilix-content" / "src",
+        root.parent / "kilix-modules" / "kilix-content" / "src",
     )
     for candidate in candidates:
         if candidate.is_dir():

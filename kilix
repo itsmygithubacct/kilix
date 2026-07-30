@@ -537,12 +537,34 @@ if ! python3 "$KILIX_HOME/kilix-settings" --ensure; then
   exit 1
 fi
 
-# Source checkouts are siblings under ~/.local/gpu_terminal/sources by default. Resolve this
-# only after loading user runtime settings so provider paths remain configurable,
-# while every writable provider root stays independently anchored above.
-KILIX95_DIR="${KILIX95_DIR:-$GPU_TERMINAL_SOURCE_HOME/kilix-95}"
-KILIX_CAP_DIR="${KILIX_CAP_DIR:-$GPU_TERMINAL_SOURCE_HOME/kilix-cap}"
-KILIX_TUI_UTILS_DIR="${KILIX_TUI_UTILS_DIR:-$GPU_TERMINAL_SOURCE_HOME/kilix-tui-utils}"
+# Desktop source checkouts share one workspace umbrella under ~/.local/gpu_terminal/sources.
+# Resolve this only after loading user runtime settings so provider paths remain
+# configurable, while every writable provider root stays independently anchored
+# above.
+KILIX95_DIR="${KILIX95_DIR:-$GPU_TERMINAL_SOURCE_HOME/kilix-desktops/kilix-95}"
+KILIX_CAP_DIR="${KILIX_CAP_DIR:-$GPU_TERMINAL_SOURCE_HOME/kilix-desktops/kilix-cap}"
+KILIX_TUI_UTILS_DIR="${KILIX_TUI_UTILS_DIR:-$GPU_TERMINAL_SOURCE_HOME/kilix-desktops/kilix-tui-utils}"
+
+# Sessions started before the desktop umbrella was introduced may still carry
+# the former default paths. Re-home only an exact, now-missing legacy default;
+# an existing checkout or any custom path remains authoritative.
+_kilix_rehome_legacy_desktop_dir() {
+  local variable="$1" legacy="$2" canonical="$3" value
+  value="${!variable:-}"
+  if [ "$value" = "$legacy" ] && [ ! -e "$legacy" ] && [ ! -L "$legacy" ]; then
+    printf -v "$variable" '%s' "$canonical"
+  fi
+}
+_kilix_rehome_legacy_desktop_dir \
+  KILIX95_DIR "$GPU_TERMINAL_SOURCE_HOME/kilix-95" \
+  "$GPU_TERMINAL_SOURCE_HOME/kilix-desktops/kilix-95"
+_kilix_rehome_legacy_desktop_dir \
+  KILIX_CAP_DIR "$GPU_TERMINAL_SOURCE_HOME/kilix-cap" \
+  "$GPU_TERMINAL_SOURCE_HOME/kilix-desktops/kilix-cap"
+_kilix_rehome_legacy_desktop_dir \
+  KILIX_TUI_UTILS_DIR "$GPU_TERMINAL_SOURCE_HOME/kilix-tui-utils" \
+  "$GPU_TERMINAL_SOURCE_HOME/kilix-desktops/kilix-tui-utils"
+unset -f _kilix_rehome_legacy_desktop_dir
 export KILIX95_DIR KILIX_CAP_DIR KILIX_TUI_UTILS_DIR
 
 # No-sudo streaming deps (Xvfb / Xvnc / vncpasswd / python-xlib unpacked by
@@ -2400,7 +2422,7 @@ case "${1:-}" in
     if _switch_bin="$(command -v kilix-switch 2>/dev/null)" && [ -x "$_switch_bin" ]; then
       exec "$_switch_bin" "$@"
     fi
-    _switch_src="${GPU_TERMINAL_SOURCE_HOME:-$HOME/.local/gpu_terminal/sources}/kilix-tui-utils/tools/switcher/main.py"
+    _switch_src="${GPU_TERMINAL_SOURCE_HOME:-$HOME/.local/gpu_terminal/sources}/kilix-desktops/kilix-tui-utils/tools/switcher/main.py"
     if [ -f "$_switch_src" ] && command -v python3 >/dev/null 2>&1; then
       exec python3 "$_switch_src" "$@"
     fi

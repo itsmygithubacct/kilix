@@ -5,7 +5,11 @@ umask 077
 
 KILIX_HOME="${KILIX_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 GPU_TERMINAL_SOURCE_HOME="${GPU_TERMINAL_SOURCE_HOME:-$HOME/.local/gpu_terminal/sources}"
-KILIX_CAP_DIR="${KILIX_CAP_DIR:-$GPU_TERMINAL_SOURCE_HOME/kilix-cap}"
+KILIX_CAP_DIR="${KILIX_CAP_DIR:-$GPU_TERMINAL_SOURCE_HOME/kilix-desktops/kilix-cap}"
+if [ "$KILIX_CAP_DIR" = "$GPU_TERMINAL_SOURCE_HOME/kilix-cap" ] \
+   && [ ! -e "$KILIX_CAP_DIR" ] && [ ! -L "$KILIX_CAP_DIR" ]; then
+  KILIX_CAP_DIR="$GPU_TERMINAL_SOURCE_HOME/kilix-desktops/kilix-cap"
+fi
 KILIX_CAP_REPO="${KILIX_CAP_REPO:-https://github.com/itsmygithubacct/kilix-cap.git}"
 KILIX_CAP_AUTO_INSTALL="${KILIX_CAP_AUTO_INSTALL:-1}"
 KILIX_CAP_TRUST_EXISTING_CHECKOUT="${KILIX_CAP_TRUST_EXISTING_CHECKOUT:-0}"

@@ -619,12 +619,12 @@ contract before execution. `cap` selects the native Kilix Cap provider instead;
 ```bash
 KILIX_DESKTOP_PROVIDER=external \
 KILIX95_AUTO_INSTALL=1 \
-KILIX95_DIR=~/.local/gpu_terminal/sources/kilix-95 \
+KILIX95_DIR=~/.local/gpu_terminal/sources/kilix-desktops/kilix-95 \
 kilix desktop
 ```
 
-By default the checkout is discovered as the sibling
-`~/.local/gpu_terminal/sources/kilix-95`, while its writable XP desktop state (including its
+By default the checkout is discovered under
+`~/.local/gpu_terminal/sources/kilix-desktops/kilix-95`, while its writable XP desktop state (including its
 wallpaper selection) stays under `~/.local/gpu_terminal/kilix-95`. The bundled
 fallback keeps independent state under `~/.local/gpu_terminal/kilix`.
 
@@ -648,8 +648,8 @@ reentrant. The resolved path is exported to children as
 
 `kilix cap` is shorthand for selecting `KILIX_DESKTOP_PROVIDER=cap`. On its
 first launch, Kilix clones an immutable Kilix-pinned commit from
-`https://github.com/itsmygithubacct/kilix-cap.git` into the sibling
-`~/.local/gpu_terminal/sources/kilix-cap` checkout, builds it locally with `make`, and opens
+`https://github.com/itsmygithubacct/kilix-cap.git` into
+`~/.local/gpu_terminal/sources/kilix-desktops/kilix-cap`, builds it locally with `make`, and opens
 the native executable in a new tab. Later launches reuse the checkout and
 incremental build. Kilix Cap itself downloads nothing at runtime.
 
@@ -800,8 +800,9 @@ both a token and a certificate fingerprint, and the client requires both. An
 SSH tunnel to loopback remains the smaller exposure surface.
 
 Kilix pins and builds the multiplexer, broker-v2 observer, and presenter tap
-from their submodules. `KILIX_MULTIPLEXER_HOME` selects a sibling development
-checkout without changing the release pin.
+from their submodules. `KILIX_MULTIPLEXER_HOME` selects a development checkout
+such as `~/.local/gpu_terminal/sources/kilix-apps/kilix-multiplexer` without changing the
+release pin.
 
 ### 3. A GUI app — view + control from a browser or VNC client
 
@@ -1048,10 +1049,11 @@ presentation library used by the browser, app panes, and desktop provider.
 Keep capture, terminal input, and application policy in Kilix; reusable damage,
 transport, composition, and pacing changes belong in that module first.
 
-`../kitty-pty-broker` is the independent C/POSIX pane-lifetime library. Kilix
-owns policy—deciding which windows persist, restoring detached sessions, and
-confirming destructive close—while the library owns PTYs, process groups,
-socket authentication, resize forwarding, and byte-transparent replay.
+`../kilix-modules/kitty-pty-broker` is the independent C/POSIX pane-lifetime
+library. Kilix owns policy—deciding which windows persist, restoring detached
+sessions, and confirming destructive close—while the library owns PTYs,
+process groups, socket authentication, resize forwarding, and byte-transparent
+replay.
 
 `./third_party/kilix-state` and `./third_party/kilix-state-py` pin the native
 crash-safe state implementation and its Python binding. External desktop

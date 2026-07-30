@@ -37,7 +37,8 @@ class KilixSdkBoundaryTests(unittest.TestCase):
                 os.environ.pop("KILIX95_DIR", None)
                 self.assertEqual(Path(paths.source_home()), home / "gpu_terminal")
                 self.assertEqual(
-                    Path(paths.kilix95_home()), home / "gpu_terminal" / "kilix-95")
+                    Path(paths.kilix95_home()),
+                    home / "gpu_terminal" / "kilix-desktops" / "kilix-95")
             custom = Path(tmp) / "sources" / "desktop"
             with mock.patch.dict(os.environ, {"KILIX95_DIR": str(custom)}):
                 self.assertEqual(Path(paths.kilix95_home()), custom)

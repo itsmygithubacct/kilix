@@ -100,13 +100,14 @@ class KilixLauncherTests(unittest.TestCase):
             'GPU_TERMINAL_SOURCE_HOME="${GPU_TERMINAL_SOURCE_HOME:-$HOME/.local/gpu_terminal/sources}"',
             launcher)
         self.assertIn(
-            'KILIX95_DIR="${KILIX95_DIR:-$GPU_TERMINAL_SOURCE_HOME/kilix-95}"',
+            'KILIX95_DIR="${KILIX95_DIR:-$GPU_TERMINAL_SOURCE_HOME/kilix-desktops/kilix-95}"',
             launcher)
         self.assertIn(
             'KILIX95_STORAGE_HOME="${KILIX95_STORAGE_HOME:-$GPU_TERMINAL_HOME/kilix-95}"',
             launcher)
         self.assertIn('--env "KILIX95_DATA_HOME=$KILIX95_DATA_HOME"', launcher)
-        self.assertIn('default="~/.local/gpu_terminal/sources/kilix-95"', settings)
+        self.assertIn(
+            'default="~/.local/gpu_terminal/sources/kilix-desktops/kilix-95"', settings)
 
     def test_runtime_roots_are_not_loaded_from_persisted_config(self):
         launcher = (ROOT / "kilix").read_text()

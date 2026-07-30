@@ -31,7 +31,9 @@ class KilixTuiProviderTests(unittest.TestCase):
         self.home.mkdir()
         self.source_home.mkdir()
         self.remote = self.root / "kilix-tui-utils-origin"
-        self.checkout = self.source_home / "kilix-tui-utils"
+        self.checkout = (
+            self.source_home / "kilix-desktops" / "kilix-tui-utils"
+        )
         self._make_remote()
         self.ref = run(
             ["git", "rev-parse", "HEAD"], cwd=self.remote
@@ -144,6 +146,16 @@ class KilixTuiProviderTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("KILIX_TUI_UTILS_AUTO_INSTALL=1", result.stderr)
         self.assertFalse(self.checkout.exists())
+
+    def test_missing_former_default_is_rehomed_to_desktop_umbrella(self):
+        legacy = self.source_home / "kilix-tui-utils"
+        result = self._install(
+            KILIX_TUI_UTILS_DIR=legacy,
+            KILIX_TUI_UTILS_REF=self.ref,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(legacy.exists())
+        self.assertTrue((self.checkout / "kilix-tui" / "main.py").is_file())
 
     def test_existing_checkout_origin_is_verified(self):
         first = self._install(KILIX_TUI_UTILS_REF=self.ref)

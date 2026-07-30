@@ -19,7 +19,7 @@ def _load_shared_package():
     root = Path(__file__).resolve().parents[1]
     candidates = (
         root / "third_party" / "kitty-frame-presenter" / "src",
-        root.parent / "kitty-frame-presenter" / "src",
+        root.parent / "kilix-modules" / "kitty-frame-presenter" / "src",
     )
     for candidate in candidates:
         if candidate.is_dir():

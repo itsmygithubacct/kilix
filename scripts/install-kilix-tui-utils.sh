@@ -6,7 +6,11 @@ umask 077
 
 KILIX_HOME="${KILIX_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 GPU_TERMINAL_SOURCE_HOME="${GPU_TERMINAL_SOURCE_HOME:-$HOME/.local/gpu_terminal/sources}"
-KILIX_TUI_UTILS_DIR="${KILIX_TUI_UTILS_DIR:-$GPU_TERMINAL_SOURCE_HOME/kilix-tui-utils}"
+KILIX_TUI_UTILS_DIR="${KILIX_TUI_UTILS_DIR:-$GPU_TERMINAL_SOURCE_HOME/kilix-desktops/kilix-tui-utils}"
+if [ "$KILIX_TUI_UTILS_DIR" = "$GPU_TERMINAL_SOURCE_HOME/kilix-tui-utils" ] \
+   && [ ! -e "$KILIX_TUI_UTILS_DIR" ] && [ ! -L "$KILIX_TUI_UTILS_DIR" ]; then
+  KILIX_TUI_UTILS_DIR="$GPU_TERMINAL_SOURCE_HOME/kilix-desktops/kilix-tui-utils"
+fi
 KILIX_TUI_UTILS_REPO="${KILIX_TUI_UTILS_REPO:-https://github.com/itsmygithubacct/kilix-tui-utils.git}"
 KILIX_TUI_UTILS_AUTO_INSTALL="${KILIX_TUI_UTILS_AUTO_INSTALL:-1}"
 KILIX_TUI_UTILS_TRUST_EXISTING_CHECKOUT="${KILIX_TUI_UTILS_TRUST_EXISTING_CHECKOUT:-0}"

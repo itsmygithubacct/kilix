@@ -15,9 +15,9 @@ class ProviderCompatibilityTests(unittest.TestCase):
             ["python3", str(CHECKER), str(ROOT / "desktop")], check=True)
 
     def test_authoritative_external_provider_matches_when_available(self):
-        external = ROOT.parent / "kilix-95"
+        external = ROOT.parent / "kilix-desktops" / "kilix-95"
         if not (external / "provider.json").exists():
-            self.skipTest("external provider checkout is not adjacent")
+            self.skipTest("external provider checkout is unavailable")
         status = subprocess.run(
             ["git", "-C", str(external), "status", "--porcelain"],
             capture_output=True, text=True,

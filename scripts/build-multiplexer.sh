@@ -11,9 +11,9 @@ if [ -n "${KILIX_MULTIPLEXER_HOME:-}" ]; then
 elif [ -f "$KILIX_HOME/third_party/kilix-multiplexer/Makefile" ]; then
   MULTIPLEXER_SOURCE="$KILIX_HOME/third_party/kilix-multiplexer"
 else
-  # Sibling checkouts are convenient for contributors; installed releases use
-  # the pinned submodule when it is present.
-  MULTIPLEXER_SOURCE="$(dirname "$KILIX_HOME")/kilix-multiplexer"
+  # The workspace app checkout is convenient for contributors; installed
+  # releases use the pinned submodule when it is present.
+  MULTIPLEXER_SOURCE="$(dirname "$KILIX_HOME")/kilix-apps/kilix-multiplexer"
 fi
 MULTIPLEXER_BUILD="$KILIX_BUILD_DIRECTORY/libraries/kilix-multiplexer"
 SERVE="$MULTIPLEXER_BUILD/kmx-serve"

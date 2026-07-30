@@ -596,7 +596,8 @@ class Shell:
         source_home = os.environ.get("GPU_TERMINAL_SOURCE_HOME") or \
             os.path.expanduser("~/.local/gpu_terminal/sources")
         project = os.path.join(
-            os.path.abspath(os.path.expanduser(source_home)), "kilix-tui-utils")
+            os.path.abspath(os.path.expanduser(source_home)), "kilix-desktops",
+            "kilix-tui-utils")
         entry = os.path.join(project, "tools", "temps", "main.py")
         if os.path.isfile(entry):
             return ["python3", entry, "--graphics"], project
@@ -623,7 +624,8 @@ class Shell:
         source_home = os.environ.get("GPU_TERMINAL_SOURCE_HOME") or \
             os.path.expanduser("~/.local/gpu_terminal/sources")
         project = os.path.join(
-            os.path.abspath(os.path.expanduser(source_home)), "kilix-tui-utils")
+            os.path.abspath(os.path.expanduser(source_home)), "kilix-desktops",
+            "kilix-tui-utils")
         entry = os.path.join(project, "tools", "memory", "main.py")
         if os.path.isfile(entry):
             return ["python3", entry, "--graphics"], project

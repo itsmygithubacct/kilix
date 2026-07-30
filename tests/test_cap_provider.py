@@ -31,7 +31,9 @@ class KilixCapProviderTests(unittest.TestCase):
         self.home.mkdir()
         self.source_home.mkdir()
         self.remote = self.root / "kilix-cap-origin"
-        self.checkout = self.source_home / "kilix-cap"
+        self.checkout = (
+            self.source_home / "kilix-desktops" / "kilix-cap"
+        )
         self._make_remote()
         self.ref = run(
             ["git", "rev-parse", "HEAD"], cwd=self.remote
@@ -43,7 +45,9 @@ class KilixCapProviderTests(unittest.TestCase):
         self.env.update({
             "HOME": str(self.home),
             "GPU_TERMINAL_SOURCE_HOME": str(self.source_home),
-            "KILIX95_DIR": str(self.source_home / "kilix-95"),
+            "KILIX95_DIR": str(
+                self.source_home / "kilix-desktops" / "kilix-95"
+            ),
             "KILIX95_PROJECT_HOME": "",
             "KILIX_CAP_DIR": str(self.checkout),
             "KILIX_CAP_REPO": str(self.remote),
@@ -130,6 +134,16 @@ class KilixCapProviderTests(unittest.TestCase):
         self.assertIn("KILIX_CAP_AUTO_INSTALL=1", result.stderr)
         self.assertFalse(self.checkout.exists())
 
+    def test_missing_former_default_is_rehomed_to_desktop_umbrella(self):
+        legacy = self.source_home / "kilix-cap"
+        result = self._install(
+            KILIX_CAP_DIR=legacy,
+            KILIX_CAP_REF=self.ref,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(legacy.exists())
+        self.assertTrue((self.checkout / "bin" / "kilix-cap").is_file())
+
     def test_existing_checkout_origin_is_verified(self):
         first = self._install(KILIX_CAP_REF=self.ref)
         self.assertEqual(first.returncode, 0, first.stderr)
@@ -182,7 +196,7 @@ class KilixCapProviderTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(
             result.stdout.strip(),
-            f"{self.source_home / 'kilix-95'}|{ROOT}",
+            f"{self.source_home / 'kilix-desktops' / 'kilix-95'}|{ROOT}",
         )
 
 

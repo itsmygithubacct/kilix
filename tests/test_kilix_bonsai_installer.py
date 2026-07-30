@@ -107,7 +107,13 @@ class DispatchTests(unittest.TestCase):
         # different code from every installed system.
         with tempfile.TemporaryDirectory() as home:
             source_home = Path(home) / "source home [literal]"
-            entry = source_home / "kilix-bonsai" / "tools" / "kilix-bonsai"
+            entry = (
+                source_home
+                / "kilix-apps"
+                / "kilix-bonsai"
+                / "tools"
+                / "kilix-bonsai"
+            )
             entry.mkdir(parents=True)
             (entry / "main.py").write_text(
                 "import sys\nprint('checkout', *sys.argv[1:])\n")

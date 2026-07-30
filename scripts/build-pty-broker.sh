@@ -11,9 +11,9 @@ if [ -n "${KILIX_PTY_BROKER_HOME:-}" ]; then
 elif [ -f "$KILIX_HOME/third_party/kitty-pty-broker/Makefile" ]; then
   BROKER_SOURCE="$KILIX_HOME/third_party/kitty-pty-broker"
 else
-  # Keep sibling checkouts convenient for contributors while installed Kilix
-  # releases use the pinned submodule above.
-  BROKER_SOURCE="$(dirname "$KILIX_HOME")/kitty-pty-broker"
+  # Keep the module workspace convenient for contributors while installed
+  # Kilix releases use the pinned submodule above.
+  BROKER_SOURCE="$(dirname "$KILIX_HOME")/kilix-modules/kitty-pty-broker"
 fi
 BROKER_BUILD="$KILIX_BUILD_DIRECTORY/libraries/kitty-pty-broker"
 BROKER_EXECUTABLE="$BROKER_BUILD/kitty-pty-broker"

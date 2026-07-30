@@ -22,7 +22,7 @@ def source_home() -> str:
 def kilix95_home() -> str:
     """Return the external Kilix-95 provider checkout path."""
     value = os.environ.get("KILIX95_DIR") or os.path.join(
-        source_home(), "kilix-95")
+        source_home(), "kilix-desktops", "kilix-95")
     return os.path.abspath(os.path.expanduser(value))
 
 
