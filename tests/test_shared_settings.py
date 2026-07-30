@@ -618,6 +618,11 @@ class SharedSettingsTests(unittest.TestCase):
             self.assertFalse(settings.enabled(
                 "KILIX_CHROME_TEMPERATURE", str(path)))
             first_frame = "\n".join(item[2] for item in screen.frames[0])
+            self.assertIn("KILIX TUI", first_frame)
+            self.assertIn("Kilix · Settings", first_frame)
+            self.assertIn("▶1 Top bar", first_frame)
+            self.assertIn("─" * 20, first_frame)
+            self.assertNotIn(" // ", first_frame)
             self.assertIn("Top bar: 8/9 enabled", first_frame)
             self.assertIn("Thermal status", first_frame)
             self.assertIn("Volume", first_frame)

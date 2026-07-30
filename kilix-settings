@@ -16,7 +16,7 @@ sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "config"))
 
-from kilix_sdk import settings as shared  # noqa: E402
+from kilix_sdk import settings as shared, tui_shell  # noqa: E402
 
 
 def _control_names() -> dict[str, str]:
@@ -450,113 +450,86 @@ def _print_games(values: dict[str, str]) -> None:
         print(f"{game_id}={state}\t{label}")
 
 
-def _draw_tabs(stdscr, width: int, active: int) -> None:
-    column = 2
-    for index, (section, _specs) in enumerate(UI_SECTIONS):
-        label = f" {index + 1} {section} "
-        if column >= width - 1:
-            break
-        attr = (curses.A_REVERSE | curses.A_BOLD
-                if index == active else curses.A_DIM)
-        try:
-            stdscr.addnstr(3, column, label, max(0, width - column - 1), attr)
-        except curses.error:
-            pass
-        column += len(label) + 1
-
-
 def _draw(stdscr, values: dict[str, object], original: dict[str, object],
           section_index: int, selected: int, message: str = "") -> None:
     stdscr.erase()
     height, width = stdscr.getmaxyx()
     dirty = sum(values[key] != original[key] for key in values)
-    title = "Kilix Settings" + (f" — {dirty} unsaved" if dirty else "")
-    path = shared.settings_path()
-    try:
-        stdscr.addnstr(0, 2, title, max(0, width - 4), curses.A_BOLD)
-        stdscr.addnstr(1, 2, path, max(0, width - 4), curses.A_DIM)
-    except curses.error:
-        pass
-
-    _draw_tabs(stdscr, width, section_index)
     section, specs = UI_SECTIONS[section_index]
     tools = section_index == TOOLS_SECTION_INDEX
-    try:
-        if tools:
-            summary = "Tools: Enter runs the selected tool"
-        else:
-            enabled_count = sum(
-                str(values[spec.key]) != "off"
-                if isinstance(spec, ChoiceSpec)
-                else bool(values[spec.key])
-                for spec in specs
-            )
-            summary = f"{section}: {enabled_count}/{len(specs)} enabled"
-        stdscr.addnstr(
-            4, 2, summary,
-            max(0, width - 4), curses.A_BOLD)
-    except curses.error:
-        pass
+    if tools:
+        summary = "Tools: Enter runs the selected tool"
+    else:
+        enabled_count = sum(
+            str(values[spec.key]) != "off"
+            if isinstance(spec, ChoiceSpec)
+            else bool(values[spec.key])
+            for spec in specs
+        )
+        summary = f"{section}: {enabled_count}/{len(specs)} enabled"
+    if message:
+        summary = message
+    if dirty:
+        summary += f" · {dirty} unsaved change{'s' if dirty != 1 else ''}"
 
     notes = SECTION_NOTES.get(section, ())
     # A terminal too short to show both keeps the controls: the note is also in
     # kilix.env and the release notes, the controls are only here.
     if height < 9 + len(notes):
         notes = ()
-    for row_offset, note in enumerate(notes):
-        try:
-            stdscr.addnstr(5 + row_offset, 2, note, max(0, width - 4),
-                           curses.A_DIM)
-        except curses.error:
-            pass
-
-    first_row = 5 + len(notes)
-    available = max(1, height - 3 - first_row)
-    scroll = min(max(0, selected - available + 1),
-                 max(0, len(specs) - available))
-    for row_offset, spec in enumerate(specs[scroll:scroll + available]):
-        item_index = scroll + row_offset
-        row = first_row + row_offset
-        if tools:
-            marker = "[>]"
-        elif isinstance(spec, ChoiceSpec):
-            marker = f"[{str(values[spec.key]):^6}]"
-        else:
-            marker = "[x]" if values[spec.key] else "[ ]"
-        line = f" {marker} {spec.label}"
-        attr = curses.A_REVERSE if item_index == selected else curses.A_NORMAL
-        try:
-            stdscr.addnstr(row, 2, line, max(0, width - 4), attr)
-        except curses.error:
-            pass
-
+    first_row = 4 + len(notes)
+    available = max(0, height - 1 - first_row)
+    scroll = (
+        min(max(0, selected - available + 1),
+            max(0, len(specs) - available))
+        if available else 0
+    )
     more = []
     if scroll:
         more.append("↑ more")
     if scroll + available < len(specs):
         more.append("↓ more")
-    if height >= 10:
-        status = " · ".join(more) or "All changes saved"
-        if dirty:
-            status = (" · ".join(more) + (" · " if more else "")
-                      + f"{dirty} unsaved change{'s' if dirty != 1 else ''}")
-        try:
-            stdscr.addnstr(height - 3, 2, status, max(0, width - 4),
-                           curses.A_BOLD if dirty else curses.A_DIM)
-        except curses.error:
-            pass
-
     help_text = (
         "←/→ section · ↑/↓ move · Enter select · q quit"
         if tools else
         "←/→ section · ↑/↓ move · Space toggle · "
         "a/n section · A/N all · s save · q quit"
     )
-    if height > 2:
+    footer = " · ".join((*more, help_text))
+    body = tui_shell.draw(
+        stdscr,
+        title="Kilix · Settings",
+        sections=[name for name, _specs in UI_SECTIONS],
+        active=section_index,
+        summary=summary,
+        footer=footer,
+        summary_role="accent" if message or dirty else "muted",
+    )
+
+    for row_offset, note in enumerate(notes):
+        tui_shell.put(
+            stdscr, body.top + row_offset, body.left, note, "muted")
+
+    for row_offset, spec in enumerate(specs[scroll:scroll + available]):
+        item_index = scroll + row_offset
+        row = first_row + row_offset
+        if tools:
+            value_marker = "[>]"
+        elif isinstance(spec, ChoiceSpec):
+            value_marker = f"[{str(values[spec.key]):^6}]"
+        else:
+            value_marker = "[x]" if values[spec.key] else "[ ]"
+        selection = "▶" if item_index == selected else " "
+        line = f"{selection} {value_marker} {spec.label}"
         try:
-            stdscr.addnstr(height - 2, 1, message or help_text,
-                           max(0, width - 2),
-                           curses.A_BOLD if message else curses.A_DIM)
+            stdscr.addnstr(
+                row,
+                body.left,
+                line.ljust(body.width),
+                body.width,
+                tui_shell.attr("selected")
+                if item_index == selected else curses.A_NORMAL,
+            )
         except curses.error:
             pass
     stdscr.refresh()
