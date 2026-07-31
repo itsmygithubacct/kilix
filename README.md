@@ -284,8 +284,8 @@ git clone --recursive https://github.com/itsmygithubacct/kilix.git ~/.local/gpu_
 ```
 
 (`--recursive` pulls the Kitty fork and the pinned
-`kitty-frame-presenter`, `kilix-content`, `kilix-state`, and
-`kilix-state-py` submodules. Cloned without them? Run
+`kitty-frame-presenter`, `kilix-content`, and `kilix-state` submodules.
+Cloned without them? Run
 `git submodule update --init --recursive`; the base terminal can use its
 prebuilt fallback, but pixel applications need the presenter.)
 
@@ -1125,10 +1125,10 @@ sessions, and confirming destructive close—while the library owns PTYs,
 process groups, socket authentication, resize forwarding, and byte-transparent
 replay.
 
-`./third_party/kilix-state` and `./third_party/kilix-state-py` pin the native
-crash-safe state implementation and its Python binding. External desktop
-providers consume them through `kilix_sdk.state`; Kilix builds the shared
-library into its private build directory before launching the provider.
+`./third_party/kilix-state` pins both the native crash-safe state
+implementation and its Python binding. External desktop providers consume the
+binding through `kilix_sdk.state`; Kilix builds the shared library into its
+private build directory before launching the provider.
 
 **Build / rebuild:** `kilix --build` (or `./build.sh`). Needs Go ≥ 1.26,
 Python ≥ 3.12, plus the

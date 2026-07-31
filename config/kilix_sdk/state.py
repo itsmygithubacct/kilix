@@ -1,4 +1,4 @@
-"""Pinned ``kilix-state-py`` bindings exposed through the Kilix host SDK.
+"""Pinned ``kilix-state`` Python bindings exposed through the Kilix host SDK.
 
 The host owns both the Python binding version and the native-library build.
 External providers therefore import this module instead of discovering an
@@ -19,8 +19,8 @@ from . import paths
 def _load_shared_package():
     root = Path(__file__).resolve().parents[2]
     candidates = (
-        root / "third_party" / "kilix-state-py" / "src",
-        root.parent / "kilix-modules" / "kilix-state-py" / "src",
+        root / "third_party" / "kilix-state" / "python" / "src",
+        root.parent / "kilix-modules" / "kilix-state" / "python" / "src",
     )
     for candidate in candidates:
         if candidate.is_dir():
@@ -32,7 +32,8 @@ def _load_shared_package():
         return package
     except ImportError as error:
         raise ImportError(
-            "kilix-state-py is unavailable; initialize Kilix submodules with: "
+            "kilix-state Python bindings are unavailable; initialize Kilix "
+            "submodules with: "
             "git submodule update --init --recursive"
         ) from error
 
@@ -97,7 +98,7 @@ def default_library() -> KilixStateLibrary:
 
 
 class Store(_shared.Store):
-    """A ``kilix-state-py`` store bound to Kilix's pinned native build."""
+    """A ``kilix-state`` store bound to Kilix's pinned native build."""
 
     __slots__ = ()
 
