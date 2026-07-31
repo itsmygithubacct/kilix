@@ -69,6 +69,11 @@ repository are created only by the coordinated
 release procedure — see Plebian-OS's
 [RELEASING.md](https://github.com/itsmygithubacct/plebian-os/blob/main/RELEASING.md).
 
+Web URLs now go through one explicit dispatcher: Kilix prefers an installed
+Chrome, Chromium, or Firefox browser and uses the experimental in-pane renderer
+only when none is available. Kilix 95 consumes the same dispatcher, so desktop
+links and `kilix open-url` follow one visible policy.
+
 > The `0.1.3` and `0.1.4` sections below are **component milestones**, not
 > shipped stack releases: they mark the SDK contract levels those changes
 > introduced. No Plebian-OS image was ever built or published for either. The
