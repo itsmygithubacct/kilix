@@ -271,7 +271,8 @@ explicitly confirmed termination action.
   on `PATH`.
 - The same dependency installer also includes kilix-amp's SDL/libsndfile/
   FluidSynth packages, so the desktop Media Player can build and play MIDI.
-- **For the pixel desktop and web-in-a-pane** (`kilix desktop` / `kilix browse`):
+- **For the pixel desktop and the no-real-browser in-pane fallback**
+  (`kilix desktop` / `kilix open-url`):
   **Python 3 + Pillow** (also installed by `scripts/install-build-deps.sh`).
 - kitty **≥ 0.47** (the fork is 0.47.x) — required for the per-pane title bars.
 
@@ -492,20 +493,26 @@ simple full-screen programs but is not real multiplexing. It does not carry
 graphics, mouse state, or a second interactive PTY. For true attach/view, start
 the session under tmux with `kilix serve` or `kilix mux <name>`.
 
-## Browse the web in a pane (experimental)
+## Open web URLs
 
 ```bash
-kilix browse wikipedia.org        # any URL or hostname (Ctrl+L bar also searches)
-kilix browse --incognito site.com # throwaway profile: nothing survives the session
+kilix open-url wikipedia.org        # canonical URL-opening command
+kilix browse --incognito site.com   # compatible spelling; same policy
 ```
 
-`kilix browse` renders **real Chrome inside the pane**: page pixels (images,
+Both commands launch the first installed browser in this fixed order:
+`google-chrome`, `chromium-browser`, then `firefox-esr`. `--incognito` is
+translated to Firefox's `--private-window` spelling when necessary.
+
+Only when none of those real browsers is available does Kilix use its
+experimental in-pane fallback. That fallback renders headless Chrome inside
+the pane: page pixels (images,
 video, layout) stream in at full resolution via the kitty graphics protocol,
 while **page text is drawn as live terminal glyphs** — crisp, and selectable
 like any terminal text (shift+drag). Mouse clicks, wheel scrolling, and typing
 are forwarded to the page, a software pointer tracks the mouse (headless
 Chrome draws none; `--no-cursor` opts out), and hovering triggers real hover
-effects. Normal sessions keep history/cookies in
+effects. Fallback sessions keep history/cookies in
 `~/.local/gpu_terminal/kilix/state/browse-profile`; `--incognito` uses a throwaway profile
 deleted on exit.
 
@@ -518,7 +525,7 @@ deleted on exit.
 | `Ctrl+C` | copy the mouse-drag selection (OSC 52 → clipboard) |
 | `Ctrl+Q` | quit |
 
-Requires `google-chrome`/`chromium`, Python 3, and Pillow. The default
+The fallback requires `google-chrome`/`chromium`, Python 3, and Pillow. The default
 `KILIX_BROWSE_BACKEND=presenter` implementation drives headless Chrome over the
 DevTools protocol and updates one stable Kitty image through the shared
 `kitty-frame-presenter` module. This avoids a visible image-plane gap between
@@ -540,11 +547,11 @@ kilix run --size 640x400 dosbox           # …or fix it (e.g. a DOS game's nati
 `kilix run` puts a real X11 app **inside the pane**: the app gets its own
 private off-screen X server (Xvfb), its frames are streamed into the pane via
 the kitty graphics protocol, and the pane's keyboard and mouse are forwarded
-back with XTest — key *releases* included, so games can hold keys. It's
-`kilix browse` generalized from Chrome to anything with an X window; think of
-it as a tiling WM turned inside-out — the app's pixels come to the pane
-instead of the WM arranging app windows. Proven by playing X-COM: UFO Defense
-under DOSBox entirely through a pane.
+back with XTest — key *releases* included, so games can hold keys. It
+generalizes the in-pane browser fallback from Chrome to anything with an X
+window; think of it as a tiling WM turned inside-out — the app's pixels come to
+the pane instead of the WM arranging app windows. Proven by playing X-COM: UFO
+Defense under DOSBox entirely through a pane.
 
 **Tab-fill & scalable.** With no `--size`, the app's screen *tracks the pane*:
 it starts at the pane's exact pixel size and a pane resize **resizes the
@@ -565,7 +572,7 @@ uploads frame edits with `glTexSubImage2D`, so a cursor, caret, or exposed
 scroll strip no longer reallocates the full GPU texture. It can also shift an
 overlapping region of the current frame for scrolling and upload only the
 residual pixels. Full placements are reserved for startup, resize, and
-recovery keepalives. `kilix browse` and `kilix desktop` use the same standalone
+recovery keepalives. The in-pane browser fallback and `kilix desktop` use the same standalone
 [`kitty-frame-presenter`](https://github.com/itsmygithubacct/kitty-frame-presenter)
 module. Run `scripts/render_benchmark.py` for deterministic scroll, cursor,
 video, idle-wakeup, frame-pacing, output-integrity, and bandwidth metrics.
@@ -785,8 +792,8 @@ right-click menu everywhere. Built in:
   freedesktop-style `.desktop` files into the desktop folder
   (`~/.local/gpu_terminal/kilix-95/data/desktop`, override with `$KILIX_DESKTOP_DIR`); plain
   files and folders dropped there show up as icons too. Launchers open in a
-  new kilix tab / OS window, through `kilix run` for X11 apps, or in
-  `kilix browse` for URLs.
+  new kilix tab / OS window, through `kilix run` for X11 apps, or through
+  `kilix open-url` for URLs.
 
 Quit via Start ▸ Shut Down… (or `Ctrl+Alt+Q`); the terminal underneath is
 untouched. All artwork is drawn in code — no Microsoft assets are bundled.

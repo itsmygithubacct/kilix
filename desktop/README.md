@@ -7,7 +7,8 @@ Start ▸ Shut Down…, or `Ctrl+Alt+Q`.
 ## How it works
 
 The whole desktop is a PIL RGB framebuffer blitted through the kitty
-graphics protocol — the same shared `FramePresenter` used by `kilix browse`:
+graphics protocol — the same shared `FramePresenter` used by the in-pane
+`kilix open-url` fallback:
 bounded POSIX shared memory (`t=s`) locally, compressed inline data (`t=d`)
 when `KILIX_STREAM=1` (inside `kilix serve` sessions). Input is the kitty
 keyboard protocol plus
@@ -46,7 +47,7 @@ and directories in it appear as desktop icons; `*.desktop` files (created by
 
 ```ini
 [Desktop Entry]
-Type=Application          ; or Link (+ URL=…) for kilix browse
+Type=Application          ; or Link (+ URL=…) for kilix open-url
 Name=htop
 Exec=htop
 Path=~/                   ; optional working dir

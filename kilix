@@ -29,6 +29,8 @@
 #   ./kilix tts | stt [args]  # run the read-aloud / dictation TUIs
 #   ./kilix voice status      # voice status, install, doctor, stop
 #   ./kilix bonsai [args]     # BitNet model store: browse, download, verify
+#   ./kilix open-url [URL]    # real browser first; in-pane fallback
+#   ./kilix browse [URL]      # compatibility alias for open-url
 #   ./kilix status            # show version, engine, config, and provider
 #   ./kilix update            # verified-origin, clean, fast-forward/ref update
 #   ./kilix desktop           # launch the configured desktop provider
@@ -408,7 +410,8 @@ _kilix_init_user_config() {
 
   # Refresh managed symlinks on every launch so moving/reinstalling the checkout
   # does not strand the XDG configuration at an obsolete absolute path.
-  for _asset in kitty.app.png kitty.app-128.png kilix-512.png kilix_rc_auth.py; do
+  for _asset in kitty.app.png kitty.app-128.png kilix-512.png \
+                kilix_rc_auth.py open-actions.conf; do
     _kilix_refresh_managed_link "$KILIX_USER_CONFIG_DIRECTORY/$_asset" \
       "$KILIX_DEFAULT_CONFIG_DIRECTORY/$_asset" 2>/dev/null || true
   done
@@ -2640,14 +2643,20 @@ _kilix_desktop_select() {
   esac
 }
 
-# browse: Chrome (and video) rendered in a pane. Host it in its own overlay
-# WINDOW so it gets a title bar with a clickable close button — closing the
-# overlay exits the app and reveals the shell underneath, which is never
-# taken over. Needs to be inside a kitty window with remote control
-# (KITTY_LISTEN_ON, set by the allow_remote_control + listen_on config).
-# KILIX_IN_OVERLAY guards against the re-launched instance overlaying again.
-if [ "${1:-}" = "browse" ]; then
+# URL opening prefers a real desktop browser. `browse` remains a compatibility
+# alias, but the in-pane renderer below is reached only when none of the
+# explicitly supported browsers is installed.
+if [ "${1:-}" = "open-url" ] || [ "${1:-}" = "browse" ]; then
   shift
+  # shellcheck source=config/browser.sh
+  . "$KILIX_HOME/config/browser.sh"
+  if _real_browser="$(_kilix_find_real_browser)"; then
+    _kilix_exec_real_browser "$_real_browser" "$@"
+  fi
+
+  # Final fallback: Chrome (and video) rendered in a pane. Host it in its own
+  # overlay window so it gets a title bar with a clickable close button.
+  # KILIX_IN_OVERLAY guards against the re-launched instance overlaying again.
   if [ -z "${KILIX_IN_OVERLAY:-}" ] && [ -n "${KITTY_WINDOW_ID:-}" ] \
        && [ -n "${KITTY_LISTEN_ON:-}" ] && [ -x "$KITTEN" ]; then
     # Spawn the app as an overlay over the current window; the launcher then
@@ -2658,7 +2667,7 @@ if [ "${1:-}" = "browse" ]; then
       launch --type=overlay --cwd=current --self \
       --env KILIX_IN_OVERLAY=1 --env "KILIX_STREAM=${KILIX_STREAM:-}" \
       --env "KILIX_BROWSE_BACKEND=${KILIX_BROWSE_BACKEND:-presenter}" \
-      -- "$_self" browse "$@"
+      -- "$_self" open-url "$@"
   fi
   # In-place fallback: inside the overlay, or a terminal without remote
   # control. Run WRAPPED, not exec'd: if the app dies by signal (SIGKILL,

@@ -29,11 +29,13 @@ jobs:
 
       - name: Check shell and Python syntax
         run: |
-          bash -n kilix bootstrap.sh build.sh scripts/build-state-library.sh \
+          bash -n kilix bootstrap.sh build.sh config/browser.sh \
+            scripts/build-state-library.sh \
             scripts/install-build-deps.sh scripts/install-kilix-cap.sh \
             scripts/install-kilix-bonsai.sh scripts/install-kilix-voice.sh \
             scripts/build-multiplexer.sh
           shellcheck -S warning -x kilix bootstrap.sh build.sh \
+            config/browser.sh \
             scripts/build-state-library.sh scripts/install-build-deps.sh \
             scripts/install-kilix-cap.sh scripts/install-kilix-bonsai.sh \
             scripts/install-kilix-voice.sh scripts/build-multiplexer.sh

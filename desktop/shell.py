@@ -6,7 +6,7 @@ something" verb. The desktop folder is a real directory
 plain files and directories dropped there appear as icons, and "Create
 Launcher…" writes freedesktop-style .desktop files there. Programs launch
 into new kilix tabs/windows over kitty remote control; X11 apps go through
-`kilix run`; URLs through `kilix browse`.
+`kilix run`; URLs through Kilix's ordered real-browser dispatcher.
 """
 import configparser
 import json
@@ -705,8 +705,8 @@ class Shell:
             wm.inputbox(self.desk, "Web Browser", "Address:", "https://",
                         cb=lambda u: u and self.open_url(u), icon="browser")
             return
-        self._tab([os.path.join(KILIX_HOME, "kilix"), "browse", url],
-                  "browse", None)
+        self._tab([os.path.join(KILIX_HOME, "kilix"), "open-url", url],
+                  "browser", None)
 
     FIREFOX_CANDS = ("firefox-esr", "firefox")
     CHROME_CANDS = ("google-chrome", "google-chrome-stable", "chromium",
@@ -725,9 +725,9 @@ class Shell:
         """Launch a web browser from the desktop.
 
         Firefox opens in a Win95 desktop window by default — its GUI runs under
-        software rendering (e.g. in a VM). Chromium opens in a tab by default,
-        drawn by the headless `kilix browse` engine, because its GUI crashes
-        under software rendering. mode overrides: "window", "tab", "fullscreen".
+        software rendering (e.g. in a VM). Chromium's tab action uses the
+        ordered real-browser dispatcher. mode overrides: "window", "tab",
+        "fullscreen".
         """
         url = url or self.BROWSER_HOME
         if which == "chromium":
@@ -736,8 +736,8 @@ class Shell:
                           icon="error")
                 return
             mode = mode or "tab"
-            if mode == "tab":               # headless chromium, drawn in the tab
-                self._tab([os.path.join(KILIX_HOME, "kilix"), "browse", url],
+            if mode == "tab":               # ordered real-browser handoff
+                self._tab([os.path.join(KILIX_HOME, "kilix"), "open-url", url],
                           "Chromium", None)
             else:                           # GUI chromium (works where GL does)
                 self._browser_window(

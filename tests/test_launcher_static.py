@@ -346,8 +346,26 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("KILIX_DESKTOP_FLAVOR=xp", env_conf)
         self.assertIn("KILIX_BROWSE_BACKEND=presenter", env_conf)
 
-    def test_browser_defaults_to_shared_frame_presenter(self):
+    def test_browser_prefers_real_browser_before_in_pane_fallback(self):
         launcher = (ROOT / "kilix").read_text()
+        policy = (ROOT / "config" / "browser.sh").read_text()
+        open_actions = (ROOT / "config" / "open-actions.conf").read_text()
+        self.assertIn(
+            'if [ "${1:-}" = "open-url" ] || [ "${1:-}" = "browse" ]',
+            launcher)
+        self.assertLess(
+            launcher.index("_kilix_find_real_browser"),
+            launcher.index('if [ -z "${KILIX_IN_OVERLAY:-}" ]'))
+        self.assertLess(policy.index("google-chrome"),
+                        policy.index("chromium-browser"))
+        self.assertLess(policy.index("chromium-browser"),
+                        policy.index("firefox-esr"))
+        self.assertIn('_kilix_exec_real_browser "$_real_browser" "$@"',
+                      launcher)
+        self.assertIn('-- "$_self" open-url "$@"', launcher)
+        self.assertIn("open-actions.conf", launcher)
+        self.assertIn("protocol http,https", open_actions)
+        self.assertIn("${KILIX_HOME}/kilix open-url $URL", open_actions)
         self.assertIn('_browse_backend=${KILIX_BROWSE_BACKEND:-presenter}', launcher)
         self.assertIn('presenter|python)', launcher)
         self.assertIn('python3 "$KILIX_HOME/config/browse.py"', launcher)

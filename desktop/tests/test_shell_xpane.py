@@ -1,5 +1,7 @@
 """Shell.open_in_xpane: an app opens as a desktop window via XPane, and an
 XPane/Xvfb failure shows an error dialog instead of crashing the desktop."""
+import os
+
 import harness as H
 import wm
 from apps import xpane
@@ -61,6 +63,21 @@ def failure_shows_msgbox():
     assert not any(type(w).__name__ == "XPane" for w in d.wm.windows)
 
 
+def url_launchers_use_the_real_browser_dispatch():
+    d = H.make_desk()
+    seen = {}
+    d.shell._tab = lambda argv, title, cwd=None, **kw: seen.update(
+        argv=argv, title=title, cwd=cwd, kw=kw) or True
+
+    d.shell.open_url("https://example.invalid/launcher")
+
+    assert os.path.basename(seen["argv"][0]) == "kilix", seen
+    assert seen["argv"][1:] == [
+        "open-url", "https://example.invalid/launcher"], seen
+    assert "browse" not in seen["argv"], seen
+
+
 opens_window()
 failure_shows_msgbox()
+url_launchers_use_the_real_browser_dispatch()
 print("ok")
