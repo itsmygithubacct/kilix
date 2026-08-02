@@ -23,9 +23,9 @@ complete tree. Freedesktop launchers/icons are the intentional exception:
 
 ![kilix — pages strip with + button, per-pane title bars with clickable split/maximize/close buttons, splits, and icat](config/kilix_demo.png)
 
-## Release 0.1.6
+## Release 0.1.7
 
-Version 0.1.6 is the coordinated stack release covering everything since 0.1.2,
+Version 0.1.7 is the coordinated stack release covering everything since 0.1.2,
 and is the first release Kilix shares with
 [Plebian-OS](https://github.com/itsmygithubacct/plebian-os),
 [Pleb](https://github.com/itsmygithubacct/pleb), and
@@ -79,7 +79,8 @@ links and `kilix open-url` follow one visible policy.
 > introduced. No Plebian-OS image was ever built or published for either. The
 > `v0.1.4` tag on this repository predates the current rule and is a Kilix-only
 > tag; it is left in place rather than moved. `0.1.5` was prepared as a
-> coordinated release and never cut; its work ships here as 0.1.6.
+> coordinated release and never cut. `0.1.6` was an unpublished failed
+> candidate; all of that work is folded into 0.1.7.
 
 ## 0.1.4 — SDK 1.4
 
@@ -199,13 +200,15 @@ are kept and the oldest bytes are dropped, so a busy pane cannot fill the disk.
 That cap bounds one file, so the **directory** has its own two budgets. A log is
 plain only while its pane is live. Within a minute after the pane exits, the log
 is compressed with `zstd -3` into
-`transcripts/recent/<session-id>.log.zst`; the recent tier is 20 GiB by default.
+`transcripts/recent/<session-id>.log.zst`; the recent tier is 5 GiB by default.
 When that tier fills, the oldest transcripts are recompressed with `zstd -9`
-into `transcripts/archive/<session-id>.log.zst`, up to a second 10 GiB budget.
+into `transcripts/archive/<session-id>.log.zst`, up to a second 1 GiB budget.
 Only when both tiers are full are the oldest archives dropped. A live pane's log
 is never touched — the broker holds that descriptor. The budgets are enforced
 periodically while the Kilix frontend runs, and on demand with `prune`. Set the
-older tier to `off` for a hard ceiling at the recent-tier budget.
+older tier to `off` for a hard ceiling at the recent-tier budget. The 6 GiB
+combined default fits the release image's 20 GiB minimum disk while leaving the
+larger presets available to operators with room for more history.
 
 Reading an archived transcript is the same command: `kilix transcript show`
 decompresses transparently, and `kilix transcript path` resolves to whichever

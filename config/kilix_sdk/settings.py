@@ -148,9 +148,11 @@ TRANSCRIPT_LIMIT_CHOICES = ("2M", "8M", "32M", "128M")
 # neither of which works on a compressed stream — and is compressed with
 # zstd -3 after the pane dies. Terminal output stores at roughly a
 # sixtieth of its size at that level, and decompression is about half a second
-# per 400 MB, so reading a recent transcript is effectively free.
+# per 400 MB, so reading a recent transcript is effectively free. The 5 GiB
+# default plus the 1 GiB archive below stays proportionate to Plebian-OS's
+# supported 20 GiB minimum disk instead of letting logs claim more than it.
 TRANSCRIPT_TOTAL_KEY = "KILIX_TRANSCRIPT_MAX_TOTAL"
-TRANSCRIPT_TOTAL_DEFAULT = "20G"
+TRANSCRIPT_TOTAL_DEFAULT = "5G"
 TRANSCRIPT_TOTAL_CHOICES = ("1G", "5G", "10G", "20G", "50G", "100G")
 
 # Past that budget the oldest are recompressed at zstd -9, which reaches about
@@ -159,7 +161,7 @@ TRANSCRIPT_TOTAL_CHOICES = ("1G", "5G", "10G", "20G", "50G", "100G")
 # as -3, so a denser older tier is not a slower one. ``off`` deletes instead of
 # recompressing, for operators who want a hard ceiling and no history.
 TRANSCRIPT_ARCHIVE_KEY = "KILIX_TRANSCRIPT_ARCHIVE_MAX_TOTAL"
-TRANSCRIPT_ARCHIVE_DEFAULT = "10G"
+TRANSCRIPT_ARCHIVE_DEFAULT = "1G"
 TRANSCRIPT_ARCHIVE_CHOICES = ("off", "1G", "5G", "10G", "20G", "50G", "100G")
 
 # Read-aloud and dictation, presets for the same reason the transcript limit is

@@ -227,9 +227,9 @@ class SharedSettingsTests(unittest.TestCase):
             self.assertEqual(settings.transcript_graphics(str(path)), "elide")
             self.assertEqual(settings.transcript_limit(str(path)), 8 * 1024 * 1024)
             self.assertEqual(
-                settings.transcript_total(str(path)), 20 * 1024 ** 3)
+                settings.transcript_total(str(path)), 5 * 1024 ** 3)
             self.assertEqual(
-                settings.transcript_archive_total(str(path)), 10 * 1024 ** 3)
+                settings.transcript_archive_total(str(path)), 1 * 1024 ** 3)
             text = path.read_text()
             self.assertIn(settings.SESSION_LOG_MARKER, text)
             self.assertIn("KILIX_TRANSCRIPT=1", text)
@@ -246,8 +246,8 @@ class SharedSettingsTests(unittest.TestCase):
             self.assertIn("KILIX_TRANSCRIPT=1", text)
             self.assertIn(f"{settings.TRANSCRIPT_GRAPHICS_KEY}=elide", text)
             self.assertIn(f"{settings.TRANSCRIPT_LIMIT_KEY}=8M", text)
-            self.assertIn(f"{settings.TRANSCRIPT_TOTAL_KEY}=20G", text)
-            self.assertIn(f"{settings.TRANSCRIPT_ARCHIVE_KEY}=10G", text)
+            self.assertIn(f"{settings.TRANSCRIPT_TOTAL_KEY}=5G", text)
+            self.assertIn(f"{settings.TRANSCRIPT_ARCHIVE_KEY}=1G", text)
 
     def test_transcript_values_are_validated_not_coerced(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -315,7 +315,7 @@ class SharedSettingsTests(unittest.TestCase):
             self.assertIn(
                 f"{settings.TRANSCRIPT_LIMIT_KEY}=8M", path.read_text())
             self.assertIn(
-                f"{settings.TRANSCRIPT_TOTAL_KEY}=20G", path.read_text())
+                f"{settings.TRANSCRIPT_TOTAL_KEY}=5G", path.read_text())
             self.assertIn(
                 f"{settings.TRANSCRIPT_ARCHIVE_KEY}=off", path.read_text())
 
@@ -732,9 +732,9 @@ class TranscriptBudgetTests(unittest.TestCase):
                 f"{settings.TRANSCRIPT_ARCHIVE_KEY}="
                 f"{settings.TRANSCRIPT_ARCHIVE_DEFAULT}", text)
             self.assertEqual(
-                settings.transcript_total(str(path)), 20 * 1024 ** 3)
+                settings.transcript_total(str(path)), 5 * 1024 ** 3)
             self.assertEqual(
-                settings.transcript_archive_total(str(path)), 10 * 1024 ** 3)
+                settings.transcript_archive_total(str(path)), 1 * 1024 ** 3)
 
     def test_archive_off_reports_zero_so_logs_are_deleted_not_kept(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -756,7 +756,7 @@ class TranscriptBudgetTests(unittest.TestCase):
             path = Path(tmp) / "settings.conf"
             path.write_text(f"{settings.TRANSCRIPT_TOTAL_KEY}=banana\n")
             self.assertEqual(
-                settings.transcript_total(str(path)), 20 * 1024 ** 3)
+                settings.transcript_total(str(path)), 5 * 1024 ** 3)
 
     def test_cli_accepts_tokens_raw_bytes_and_off(self):
         tui = _load_settings_tui()

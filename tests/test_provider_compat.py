@@ -13,6 +13,12 @@ class ProviderCompatibilityTests(unittest.TestCase):
     def test_builtin_contract_and_security_baseline(self):
         subprocess.run(
             ["python3", str(CHECKER), str(ROOT / "desktop")], check=True)
+        manifest = json.loads((ROOT / "desktop" / "provider.json").read_text())
+        main_text = (ROOT / "desktop" / "main.py").read_text()
+        self.assertIn(
+            f'require_kilix_sdk("{manifest["requires_kilix_sdk"]}")',
+            main_text,
+        )
 
     def test_authoritative_external_provider_matches_when_available(self):
         external = ROOT.parent / "kilix-desktops" / "kilix-95"
