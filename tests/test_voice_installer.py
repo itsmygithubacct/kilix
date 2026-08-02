@@ -20,8 +20,8 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = ROOT / "scripts" / "install-kilix-voice.sh"
 
-# Stands in for kilix-voice's own `make install`: three executables under
-# PREFIX/bin is the whole contract the installer verifies.
+# Stands in for kilix-voice's own `make install`. Each executable accepts the
+# import-safe `--version` probe that is part of the installed-runtime contract.
 MAKEFILE = "install:\n\tpython3 build_fixture.py $(PREFIX)\n"
 BUILD_FIXTURE = textwrap.dedent(
     """\
@@ -53,8 +53,50 @@ PARTIAL_BUILD_FIXTURE = textwrap.dedent(
     raise SystemExit(23)
     """
 )
+BROKEN_RUNTIME_FIXTURE = textwrap.dedent(
+    """\
+    from pathlib import Path
+    import sys
+
+    binaries = Path(sys.argv[1]) / "bin"
+    binaries.mkdir(parents=True, exist_ok=True)
+    marker = Path(__file__).with_name("RUNTIME").read_text().strip()
+    for tool in ("kilix-tts", "kilix-stt", "kilix-voiced"):
+        executable = binaries / tool
+        if tool == "kilix-stt":
+            executable.write_text(
+                '#!/bin/sh\\n'
+                '[ "${1:-}" != --version ] || exit 23\\n'
+                "printf '%s\\\\n' broken\\n"
+            )
+        else:
+            executable.write_text(
+                "#!/bin/sh\\nprintf '%s\\\\n' " + marker + "\\n"
+            )
+        executable.chmod(0o755)
+    """
+)
 MODEL_DIRECTORY = "vosk-model-small-en-us-0.15"
-DOWNLOAD_TOOLS = ("curl", "sha256sum", "unzip")
+DOWNLOAD_TOOLS = ("curl", "sha256sum", "unzip", "cc")
+PUBLISHED_VOICE_REF = "f05b64a7b2bc25fa9a7e2c3ae1e0b848f04a23f6"
+PUBLISHED_VOSK_VERSION = "0.3.45"
+PUBLISHED_VOSK_SHA256 = (
+    "25e025093c4399d7278f543568ed8cc5460ac3a4bf48c23673ace1e25d26619f"
+)
+PUBLISHED_MODEL_SHA256 = (
+    "30f26242c4eb449f948e42cb302dd7a686cb29a3423a8367f99ff41780942498"
+)
+
+
+def library_generation_name(pins: dict[str, str]) -> str:
+    return (
+        f"vosk-{pins['KILIX_VOICE_LIB_VERSION']}-"
+        f"{pins['KILIX_VOICE_LIB_SHA256'].lower()}"
+    )
+
+
+def model_generation_name(pins: dict[str, str]) -> str:
+    return f"{MODEL_DIRECTORY}-{pins['KILIX_VOICE_MODEL_SHA256'].lower()}"
 
 
 class KilixVoiceInstallerTests(unittest.TestCase):
@@ -62,6 +104,8 @@ class KilixVoiceInstallerTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
+        self.apache_license = self.root / "Apache-2.0"
+        self.apache_license.write_text("Apache License\nVersion 2.0\n")
         self.prefix = self.root / "prefix"
         self.source = self.root / "source"
         self.state = self.root / "data" / "kilix" / "state"
@@ -141,6 +185,7 @@ class KilixVoiceInstallerTests(unittest.TestCase):
             "KILIX_VOICE_PREFIX": str(self.prefix),
             "KILIX_VOICE_REPO": str(self.repo),
             "KILIX_VOICE_REF": self.ref,
+            "KILIX_VOICE_APACHE_LICENSE_FILE": str(self.apache_license),
         }
         for key, value in overrides.items():
             if value is None:
@@ -159,20 +204,68 @@ class KilixVoiceInstallerTests(unittest.TestCase):
             check=check,
         )
 
-    def publish_downloads(self) -> dict[str, str]:
+    def publish_downloads(
+        self,
+        directory_name: str = "published",
+        library_marker: str = "fixture",
+        model_payload: bytes = b"fixture model\n",
+    ) -> dict[str, str]:
         """Serve the library and the model from disk, pinned by real digests."""
-        published = self.root / "published"
+        published = self.root / directory_name
         published.mkdir()
+        library_source = published / "libvosk.c"
+        library_source.write_text(textwrap.dedent(
+            """\
+            #include <stdio.h>
+            void vosk_set_log_level(int level) { (void) level; }
+            const char *kilix_fixture_marker(void) { return "__MARKER__"; }
+            void *vosk_model_new(const char *path) {
+                char filename[4096];
+                snprintf(filename, sizeof(filename), "%s/am/final.mdl", path);
+                FILE *model = fopen(filename, "rb");
+                if (model == NULL) return NULL;
+                int first = fgetc(model);
+                fclose(model);
+                return first == '!' ? NULL : (void *) path;
+            }
+            void vosk_model_free(void *model) { (void) model; }
+            void *vosk_recognizer_new(void *model, float rate) {
+                (void) rate; return model;
+            }
+            int vosk_recognizer_accept_waveform(
+                    void *recognizer, const char *data, int length) {
+                (void) recognizer; (void) data; return length >= 0;
+            }
+            const char *vosk_recognizer_partial_result(void *recognizer) {
+                (void) recognizer; return "{}";
+            }
+            const char *vosk_recognizer_final_result(void *recognizer) {
+                (void) recognizer; return "{}";
+            }
+            void vosk_recognizer_free(void *recognizer) { (void) recognizer; }
+            """).replace("__MARKER__", library_marker))
         library = published / "libvosk.so"
-        library.write_bytes(b"fixture libvosk\n")
+        subprocess.run(
+            ["cc", "-shared", "-fPIC", "-o", library, library_source],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.fixture_library = library.read_bytes()
+        wheel = published / "vosk-fixture.whl"
+        with zipfile.ZipFile(wheel, "w") as bundle:
+            bundle.write(library, "vosk/libvosk.so")
         archive = published / f"{MODEL_DIRECTORY}.zip"
         with zipfile.ZipFile(archive, "w") as bundle:
             bundle.writestr(f"{MODEL_DIRECTORY}/README", "fixture model\n")
+            bundle.writestr(
+                f"{MODEL_DIRECTORY}/conf/model.conf", "--sample-frequency=16000\n")
+            bundle.writestr(f"{MODEL_DIRECTORY}/am/final.mdl", model_payload)
         return {
             "KILIX_VOICE_LIB_VERSION": "v0.0.0-fixture",
-            "KILIX_VOICE_LIB_URL": library.as_uri(),
+            "KILIX_VOICE_LIB_URL": wheel.as_uri(),
             "KILIX_VOICE_LIB_SHA256": hashlib.sha256(
-                library.read_bytes()).hexdigest(),
+                wheel.read_bytes()).hexdigest(),
             "KILIX_VOICE_MODEL_URL": archive.as_uri(),
             "KILIX_VOICE_MODEL_SHA256": hashlib.sha256(
                 archive.read_bytes()).hexdigest(),
@@ -180,11 +273,10 @@ class KilixVoiceInstallerTests(unittest.TestCase):
 
     def test_published_default_ref_is_immutable_and_reported(self):
         listed = self.run_installer("--print-refs", KILIX_VOICE_REF=None)
-        self.assertIn(
-            "kilix-voice=125e0b646f29b0880c148b2e1a66aca4bc7b87fb",
-            listed.stdout,
-        )
-        self.assertIn("libvosk=unset", listed.stdout)
+        self.assertIn(f"kilix-voice={PUBLISHED_VOICE_REF}", listed.stdout)
+        self.assertIn(f"libvosk={PUBLISHED_VOSK_VERSION}", listed.stdout)
+        self.assertIn(f"libvosk-sha256={PUBLISHED_VOSK_SHA256}", listed.stdout)
+        self.assertIn(f"model-small-en-us={PUBLISHED_MODEL_SHA256}", listed.stdout)
 
     def test_ref_must_be_an_immutable_commit(self):
         for ref in ("main", "v0.1.6", self.ref[:12], f"{self.ref}0"):
@@ -192,19 +284,14 @@ class KilixVoiceInstallerTests(unittest.TestCase):
             self.assertNotEqual(refused.returncode, 0)
             self.assertIn("full 40-character commit SHA", refused.stderr)
 
-    def test_dictation_needs_a_pinned_library_or_an_explicit_opt_out(self):
-        refused = self.run_installer(check=False)
-        self.assertNotEqual(refused.returncode, 0)
-        self.assertIn("--without-dictation", refused.stderr)
-        self.assertFalse((self.prefix / "bin").exists())
-
+    def test_read_aloud_can_still_explicitly_skip_the_pinned_dictation_assets(self):
         self.run_installer("--without-dictation")
         self.assertTrue(os.access(self.prefix / "bin" / "kilix-tts", os.X_OK))
 
     def test_read_aloud_only_install_is_idempotent(self):
         first = self.run_installer("--without-dictation")
         self.assertIn("installed and verified", first.stderr)
-        self.assertIn("dictation stays unavailable", first.stderr)
+        self.assertIn("installed read-aloud only", first.stderr)
         for tool in ("kilix-tts", "kilix-stt", "kilix-voiced"):
             self.assertTrue(os.access(self.prefix / "bin" / tool, os.X_OK))
 
@@ -260,6 +347,36 @@ class KilixVoiceInstallerTests(unittest.TestCase):
         for tool in ("kilix-tts", "kilix-stt", "kilix-voiced"):
             self.assertEqual(self.runtime_output(tool), "first")
 
+    def test_a_tool_that_fails_its_version_probe_is_not_published(self):
+        self.run_installer("--without-dictation")
+        current = self.data / "voice" / "runtime" / "current"
+        first_target = os.readlink(current)
+        self.advance_repo({"build_fixture.py": BROKEN_RUNTIME_FIXTURE})
+
+        refused = self.run_installer("--without-dictation", check=False)
+
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn(
+            "staged voice tool could not start: kilix-stt --version",
+            refused.stderr,
+        )
+        self.assertEqual(os.readlink(current), first_target)
+        self.assertEqual(self.runtime_output("kilix-tts"), "first")
+
+    def test_idempotence_reexecutes_version_probes_and_repairs_a_broken_tool(self):
+        self.run_installer("--without-dictation")
+        current = self.data / "voice" / "runtime" / "current"
+        first_target = os.readlink(current)
+        broken = (current.parent / first_target / "bin" / "kilix-stt")
+        broken.write_text("#!/bin/sh\nexit 23\n")
+        broken.chmod(0o755)
+
+        repaired = self.run_installer("--without-dictation")
+
+        self.assertNotIn("already installed", repaired.stderr)
+        self.assertNotEqual(os.readlink(current), first_target)
+        self.assertEqual(self.runtime_output("kilix-stt"), "first")
+
     def test_post_promotion_failure_rolls_back_the_runtime_generation(self):
         self.run_installer("--without-dictation")
         current = self.data / "voice" / "runtime" / "current"
@@ -313,8 +430,27 @@ class KilixVoiceInstallerTests(unittest.TestCase):
         library = self.data / "voice" / "lib" / "current" / "libvosk.so"
         model = self.data / "voice" / "models" / "small-en-us"
         self.assertTrue(library.is_file())
-        self.assertEqual(model.resolve().name, MODEL_DIRECTORY)
+        self.assertEqual(library.read_bytes(), self.fixture_library)
+        self.assertEqual(model.resolve().name, model_generation_name(pins))
+        self.assertEqual(
+            os.readlink(self.data / "voice" / "lib" / "current"),
+            library_generation_name(pins),
+        )
         self.assertTrue((model / "README").is_file())
+        for directory, expected_url, expected_digest in (
+            (library.parent, pins["KILIX_VOICE_LIB_URL"],
+             pins["KILIX_VOICE_LIB_SHA256"]),
+            (model, pins["KILIX_VOICE_MODEL_URL"],
+             pins["KILIX_VOICE_MODEL_SHA256"]),
+        ):
+            self.assertEqual(
+                (directory / "LICENSE.Apache-2.0").read_text(),
+                self.apache_license.read_text(),
+            )
+            provenance = (directory / "README.kilix-provenance").read_text()
+            self.assertIn(expected_url, provenance)
+            self.assertIn(expected_digest, provenance)
+            self.assertIn("License: Apache-2.0", provenance)
         # Generated inputs never join the source tree, which is why the Kilix
         # checkout can stay a clean `git status` after an install.
         self.assertEqual(list(self.checkout.iterdir()), [])
@@ -331,6 +467,209 @@ class KilixVoiceInstallerTests(unittest.TestCase):
 
     @unittest.skipUnless(
         all(shutil.which(tool) for tool in DOWNLOAD_TOOLS),
+        "needs download and C fixture tools")
+    def test_same_version_new_library_digest_gets_a_new_immutable_generation(self):
+        pins = self.publish_downloads()
+        self.run_installer(**pins)
+        library_link = self.data / "voice" / "lib" / "current"
+        model_link = self.data / "voice" / "models" / "small-en-us"
+        first_library_target = os.readlink(library_link)
+        first_model_target = os.readlink(model_link)
+
+        changed = self.publish_downloads(
+            "published-library-update", library_marker="second")
+        expected_library = self.fixture_library
+        upgraded = {
+            **pins,
+            "KILIX_VOICE_LIB_URL": changed["KILIX_VOICE_LIB_URL"],
+            "KILIX_VOICE_LIB_SHA256": changed["KILIX_VOICE_LIB_SHA256"],
+        }
+        self.run_installer(**upgraded)
+
+        self.assertEqual(os.readlink(library_link), library_generation_name(upgraded))
+        self.assertNotEqual(os.readlink(library_link), first_library_target)
+        self.assertTrue((library_link.parent / first_library_target).is_dir())
+        self.assertEqual((library_link / "libvosk.so").read_bytes(), expected_library)
+        self.assertEqual(os.readlink(model_link), first_model_target)
+
+    @unittest.skipUnless(
+        all(shutil.which(tool) for tool in DOWNLOAD_TOOLS),
+        "needs download and C fixture tools")
+    def test_new_model_digest_gets_a_new_immutable_generation(self):
+        pins = self.publish_downloads()
+        self.run_installer(**pins)
+        library_link = self.data / "voice" / "lib" / "current"
+        model_link = self.data / "voice" / "models" / "small-en-us"
+        first_library_target = os.readlink(library_link)
+        first_model_target = os.readlink(model_link)
+
+        changed = self.publish_downloads(
+            "published-model-update", model_payload=b"new model payload\n")
+        upgraded = {
+            **pins,
+            "KILIX_VOICE_MODEL_URL": changed["KILIX_VOICE_MODEL_URL"],
+            "KILIX_VOICE_MODEL_SHA256": changed["KILIX_VOICE_MODEL_SHA256"],
+        }
+        self.run_installer(**upgraded)
+
+        self.assertEqual(os.readlink(model_link), model_generation_name(upgraded))
+        self.assertNotEqual(os.readlink(model_link), first_model_target)
+        self.assertTrue((model_link.parent / first_model_target).is_dir())
+        self.assertEqual((model_link / "am" / "final.mdl").read_bytes(),
+                         b"new model payload\n")
+        self.assertEqual(os.readlink(library_link), first_library_target)
+
+    @unittest.skipUnless(
+        all(shutil.which(tool) for tool in DOWNLOAD_TOOLS),
+        "needs download and C fixture tools")
+    def test_failed_publish_rolls_back_runtime_library_and_model_links(self):
+        pins = self.publish_downloads()
+        self.run_installer(**pins)
+        runtime_link = self.data / "voice" / "runtime" / "current"
+        library_link = self.data / "voice" / "lib" / "current"
+        model_link = self.data / "voice" / "models" / "small-en-us"
+        previous = tuple(os.readlink(link) for link in (
+            runtime_link, library_link, model_link))
+
+        changed = self.publish_downloads(
+            "published-transaction-update",
+            library_marker="transaction",
+            model_payload=b"transaction model\n",
+        )
+        self.advance_repo({"RUNTIME": "second\n"})
+        stamp = self.state / "kilix-voice-install.refs"
+        stamp.unlink()
+        stamp.mkdir()
+
+        refused = self.run_installer(check=False, **changed)
+
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertEqual(
+            tuple(os.readlink(link) for link in (
+                runtime_link, library_link, model_link)),
+            previous,
+        )
+        self.assertEqual(self.runtime_output("kilix-tts"), "first")
+
+    @unittest.skipUnless(
+        all(shutil.which(tool) for tool in DOWNLOAD_TOOLS),
+        "needs curl, sha256sum and unzip")
+    def test_wheel_member_must_be_one_regular_x86_64_library(self):
+        pins = self.publish_downloads()
+        wheel = self.root / "published" / "unsafe.whl"
+        member = zipfile.ZipInfo("vosk/libvosk.so")
+        member.create_system = 3
+        member.external_attr = (stat.S_IFLNK | 0o777) << 16
+        with zipfile.ZipFile(wheel, "w") as bundle:
+            bundle.writestr(member, b"x" * 64)
+        pins["KILIX_VOICE_LIB_URL"] = wheel.as_uri()
+        pins["KILIX_VOICE_LIB_SHA256"] = hashlib.sha256(
+            wheel.read_bytes()).hexdigest()
+
+        refused = self.run_installer(check=False, **pins)
+
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("is not a regular file", refused.stderr)
+        self.assertFalse(
+            (self.data / "voice" / "lib" / "current" / "libvosk.so").exists())
+
+    @unittest.skipUnless(
+        all(shutil.which(tool) for tool in DOWNLOAD_TOOLS),
+        "needs download and C fixture tools")
+    def test_reuse_repairs_tampered_links_and_missing_provenance(self):
+        pins = self.publish_downloads()
+        self.run_installer(**pins)
+        library_current = self.data / "voice" / "lib" / "current"
+        library = library_current / "libvosk.so"
+        model = self.data / "voice" / "models" / "small-en-us"
+        model_directory = model.resolve()
+
+        outside = self.root / "outside-libvosk.so"
+        outside.write_bytes(self.fixture_library)
+        library.unlink()
+        library.symlink_to(outside)
+        (library_current / "README.kilix-provenance").unlink()
+        (model_directory / "LICENSE.Apache-2.0").unlink()
+        model.unlink()
+        model.symlink_to("wrong-model")
+
+        repaired = self.run_installer(**pins)
+
+        self.assertNotIn("already installed", repaired.stderr)
+        self.assertFalse(library.is_symlink())
+        self.assertEqual(library.read_bytes(), self.fixture_library)
+        self.assertEqual(outside.read_bytes(), self.fixture_library)
+        self.assertEqual(os.readlink(model), model_generation_name(pins))
+        self.assertTrue((library_current / "README.kilix-provenance").is_file())
+        self.assertTrue((model / "LICENSE.Apache-2.0").is_file())
+
+    @unittest.skipUnless(
+        all(shutil.which(tool) for tool in DOWNLOAD_TOOLS),
+        "needs download and C fixture tools")
+    def test_cached_model_that_cannot_initialize_is_refetched(self):
+        pins = self.publish_downloads()
+        self.run_installer(**pins)
+        model = self.data / "voice" / "models" / "small-en-us"
+        (model / "am" / "final.mdl").write_bytes(b"! corrupt but nonempty\n")
+
+        repaired = self.run_installer(**pins)
+
+        self.assertNotIn("already installed", repaired.stderr)
+        self.assertEqual((model / "am" / "final.mdl").read_bytes(),
+                         b"fixture model\n")
+
+    @unittest.skipUnless(
+        all(shutil.which(tool) for tool in DOWNLOAD_TOOLS),
+        "needs download and C fixture tools")
+    def test_provenance_symlinks_are_replaced_without_touching_their_targets(self):
+        pins = self.publish_downloads()
+        self.run_installer(**pins)
+        library = self.data / "voice" / "lib" / "current"
+        model = self.data / "voice" / "models" / "small-en-us"
+        outside_targets = []
+        for directory, label in ((library, "library"), (model, "model")):
+            for filename, kind in (
+                ("README.kilix-provenance", "notice"),
+                ("LICENSE.Apache-2.0", "license"),
+            ):
+                outside = self.root / f"outside-{label}-{kind}"
+                outside.write_text(f"{label} {kind} sentinel\n")
+                destination = directory / filename
+                destination.unlink()
+                destination.symlink_to(outside)
+                outside_targets.append((outside, f"{label} {kind} sentinel\n"))
+
+        self.run_installer(**pins)
+
+        for outside, sentinel in outside_targets:
+            self.assertEqual(outside.read_text(), sentinel)
+        for directory in (library, model):
+            self.assertFalse((directory / "README.kilix-provenance").is_symlink())
+            self.assertFalse((directory / "LICENSE.Apache-2.0").is_symlink())
+
+    @unittest.skipUnless(
+        all(shutil.which(tool) for tool in DOWNLOAD_TOOLS),
+        "needs download and C fixture tools")
+    def test_a_symlinked_cached_model_directory_is_refused(self):
+        pins = self.publish_downloads()
+        self.run_installer(**pins)
+        models = self.data / "voice" / "models"
+        model_directory = models / model_generation_name(pins)
+        model_link = models / "small-en-us"
+        model_link.unlink()
+        shutil.rmtree(model_directory)
+        outside = self.root / "outside-model"
+        outside.mkdir()
+        model_directory.symlink_to(outside, target_is_directory=True)
+
+        refused = self.run_installer(check=False, **pins)
+
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("refusing unsafe Vosk model directory", refused.stderr)
+        self.assertEqual(list(outside.iterdir()), [])
+
+    @unittest.skipUnless(
+        all(shutil.which(tool) for tool in DOWNLOAD_TOOLS),
         "needs curl, sha256sum and unzip")
     def test_a_download_that_misses_its_digest_is_never_kept(self):
         pins = self.publish_downloads()
@@ -340,7 +679,7 @@ class KilixVoiceInstallerTests(unittest.TestCase):
         self.assertIn("checksum mismatch", refused.stderr)
         models = self.data / "voice" / "models"
         self.assertFalse((models / "small-en-us").exists())
-        self.assertFalse((models / MODEL_DIRECTORY).exists())
+        self.assertFalse((models / model_generation_name(pins)).exists())
         # The partial download is not left behind for a later run to trust.
         self.assertEqual(
             [entry.name for entry in models.iterdir()], [])
@@ -384,10 +723,36 @@ class KilixVoiceInstallerTests(unittest.TestCase):
         shutil.rmtree(managed)
         elsewhere = self.root / "elsewhere"
         elsewhere.mkdir(mode=0o755)
+        elsewhere.chmod(0o755)
         managed.symlink_to(elsewhere)
         refused = self.run_installer("--without-dictation", check=False)
         self.assertNotEqual(refused.returncode, 0)
-        self.assertIn("mode 0700", refused.stderr)
+        self.assertIn("must not be a symlink", refused.stderr)
+        self.assertEqual(stat.S_IMODE(elsewhere.stat().st_mode), 0o755)
+
+    def test_named_lock_symlink_is_never_opened_or_truncated(self):
+        self.state.mkdir(parents=True)
+        outside = self.root / "outside-lock-target"
+        outside.write_text("do not truncate\n")
+        (self.state / "kilix-voice-install.lock").symlink_to(outside)
+
+        self.run_installer("--without-dictation")
+
+        self.assertEqual(outside.read_text(), "do not truncate\n")
+
+    def test_voice_data_child_symlink_is_refused_before_chmod(self):
+        voice_data = self.data / "voice"
+        voice_data.mkdir(parents=True)
+        outside = self.root / "outside-library-directory"
+        outside.mkdir()
+        outside.chmod(0o755)
+        (voice_data / "lib").symlink_to(outside, target_is_directory=True)
+
+        refused = self.run_installer("--without-dictation", check=False)
+
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("must not be a symlink", refused.stderr)
+        self.assertEqual(stat.S_IMODE(outside.stat().st_mode), 0o755)
 
     def test_existing_non_checkout_is_never_executed(self):
         project = self.source / ".kilix-voice-sources" / f"kilix-voice-{self.ref}"

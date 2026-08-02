@@ -8,10 +8,12 @@ no symptom other than a blank box in the tab bar.
 
 import importlib.machinery
 import importlib.util
+import json
 import os
 from pathlib import Path
 import re
 import shutil
+import socket
 import sys
 import tempfile
 import types
@@ -22,6 +24,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 FORK = ROOT / "src" / "kitty"
 FORK_VOICE = FORK / "kilix_voice.py"
+FORK_TABS = FORK / "tabs.py"
 KITTY_CONF = ROOT / "config" / "kitty.conf"
 
 # Verified against the pinned Symbols Nerd Font Mono by glyph name rather than
@@ -124,6 +127,8 @@ class VoiceSegmentTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.files = 0
+        self.voice.voice_state = self.voice.VoiceState()
+        self.voice._VOICE_TIMER_ID = None
 
     def settings(self, **values):
         """Point the fork's reader at a fresh settings file.
@@ -176,6 +181,603 @@ class VoiceSegmentTests(unittest.TestCase):
         self.assertEqual(sanitize("eight \x9bbit"), "eight bit")
         self.assertEqual(sanitize("  keep inner  spaces  "), "keep inner  spaces")
         self.assertEqual(sanitize("café naïve"), "café naïve")
+
+    def test_daemon_resolution_has_working_installed_development_and_cli_paths(self):
+        with mock.patch.object(self.voice, "which", return_value="/opt/bin/kilix-voiced"):
+            self.assertEqual(
+                self.voice.voice_daemon_target(),
+                (["/opt/bin/kilix-voiced"], None),
+            )
+
+        project = Path(self.tmp.name) / "sources" / "kilix-apps" / "kilix-voice"
+        project.mkdir(parents=True)
+        development_daemon = project / "kilix-voiced"
+        development_daemon.write_text("#!/bin/sh\n")
+        development_daemon.chmod(0o755)
+        with mock.patch.object(self.voice, "which", return_value=None), \
+                mock.patch.dict(os.environ, {
+                    "GPU_TERMINAL_SOURCE_HOME": str(Path(self.tmp.name) / "sources"),
+                    "KILIX_HOME": str(Path(self.tmp.name) / "kilix"),
+                }, clear=False):
+            self.assertEqual(
+                self.voice.voice_daemon_target(),
+                ([str(development_daemon)], str(project)),
+            )
+
+        development_daemon.unlink()
+        kilix_home = Path(self.tmp.name) / "kilix"
+        kilix_home.mkdir()
+        kilix = kilix_home / "kilix"
+        kilix.write_text("#!/bin/sh\n")
+        kilix.chmod(0o755)
+        with mock.patch.object(self.voice, "which", return_value=None), \
+                mock.patch.dict(os.environ, {
+                    "GPU_TERMINAL_SOURCE_HOME": str(Path(self.tmp.name) / "sources"),
+                    "KILIX_HOME": str(kilix_home),
+                }, clear=False):
+            self.assertEqual(
+                self.voice.voice_daemon_target(),
+                ([str(kilix), "voice", "daemon"], None),
+            )
+
+    def test_pixel_panes_are_identified_without_hiding_text_panes(self):
+        def pane(image_count, text):
+            screen = types.SimpleNamespace(
+                grman=types.SimpleNamespace(image_count=image_count))
+            return types.SimpleNamespace(screen=screen, as_text=lambda: text)
+
+        self.assertTrue(self.voice.is_pixel_pane(pane(1, "")))
+        self.assertFalse(self.voice.is_pixel_pane(pane(1, "terminal text")))
+        self.assertFalse(self.voice.is_pixel_pane(pane(0, "")))
+
+    def test_dictation_dispatch_refuses_a_pixel_pane_with_visible_guidance(self):
+        source = FORK_TABS.read_text()
+        block = source.split("elif tab_action == DICTATE_ACTION:", 1)[1].split(
+            "elif tab_action == NETWORK_WIDGET_ACTION:", 1)[0]
+        self.assertIn("if is_pixel_pane(target):", block)
+        self.assertIn("'Dictation unavailable'", block)
+        self.assertIn("Voice input works '", block)
+        self.assertIn("'in terminal panes.'", block)
+
+    def test_dictation_delivery_discards_text_if_target_became_a_pixel_pane(self):
+        write_to_child = mock.Mock()
+        window = types.SimpleNamespace(
+            destroyed=False,
+            screen=types.SimpleNamespace(
+                grman=types.SimpleNamespace(image_count=1),
+                in_bracketed_paste_mode=False,
+            ),
+            as_text=lambda: "",
+            write_to_child=write_to_child,
+        )
+        boss = types.SimpleNamespace(window_id_map={73: window})
+        fast_data_types = sys.modules[
+            f"{self.voice.__package__}.fast_data_types"]
+        self.voice.voice_state.target_window_id = 73
+
+        with mock.patch.object(
+                fast_data_types, "get_boss", return_value=boss, create=True), \
+                mock.patch.object(self.voice, "report_async_error") as error:
+            self.voice.deliver_dictation("this must remain invisible")
+
+        write_to_child.assert_not_called()
+        error.assert_called_once_with(
+            "Dictation unavailable",
+            "The pane switched to pixel output while Kilix was listening; the "
+            "transcript was discarded. Voice input works in terminal panes.",
+        )
+
+    def test_dictation_delivery_visibly_discards_text_at_a_new_hidden_prompt(self):
+        write_to_child = mock.Mock()
+        window = types.SimpleNamespace(
+            destroyed=False,
+            screen=types.SimpleNamespace(
+                grman=types.SimpleNamespace(image_count=0),
+                in_bracketed_paste_mode=False,
+            ),
+            as_text=lambda: "password:",
+            write_to_child=write_to_child,
+        )
+        boss = types.SimpleNamespace(window_id_map={74: window})
+        fast_data_types = sys.modules[
+            f"{self.voice.__package__}.fast_data_types"]
+        self.voice.voice_state.target_window_id = 74
+
+        with mock.patch.object(
+                fast_data_types, "get_boss", return_value=boss, create=True), \
+                mock.patch.object(self.voice, "pane_echo_disabled", return_value=True), \
+                mock.patch.object(self.voice, "report_async_error") as error:
+            self.voice.deliver_dictation("do not insert this")
+
+        write_to_child.assert_not_called()
+        error.assert_called_once_with(
+            "Dictation refused",
+            "The pane reached a hidden prompt while Kilix was listening; the "
+            "transcript was discarded.",
+        )
+
+    def test_session_voice_symlink_is_refused_before_connect_or_chmod(self):
+        session = Path(self.tmp.name) / "session"
+        session.mkdir()
+        outside = Path(self.tmp.name) / "outside"
+        outside.mkdir()
+        outside.chmod(0o755)
+        (session / "voice").symlink_to(outside, target_is_directory=True)
+
+        with mock.patch.dict(
+                os.environ, {"KILIX_SESSION_HOME": str(session)}, clear=False), \
+                self.assertRaisesRegex(OSError, "unsafe voice session directory"):
+            self.voice._ensure_session_voice_dir()
+        with mock.patch.dict(
+                os.environ, {"KILIX_SESSION_HOME": str(session)}, clear=False), \
+                mock.patch.object(self.voice.socket, "socket") as socket_constructor:
+            self.assertIsNone(self.voice._connect_control())
+        socket_constructor.assert_not_called()
+        self.assertEqual(outside.stat().st_mode & 0o777, 0o755)
+        self.assertEqual(list(outside.iterdir()), [])
+
+    def test_dictation_request_uses_the_daemon_protocol_without_ignored_fields(self):
+        session = Path(self.tmp.name) / "protocol-session"
+        with mock.patch.dict(
+                os.environ, {"KILIX_SESSION_HOME": str(session)}, clear=False), \
+                mock.patch.object(self.voice, "_availability", return_value={
+                    "speak": False, "dictate": True}), \
+                mock.patch.object(
+                    self.voice, "send_control", return_value={"ok": True}) as control, \
+                mock.patch.object(self.voice, "ensure_voice_timer"), \
+                mock.patch.object(self.voice, "_invalidate"):
+            self.assertIsNone(self.voice.begin_dictation(75))
+            request = control.call_args.args[0]
+            self.assertEqual(set(request), {"op", "sock"})
+            self.assertEqual(request["op"], "dictate")
+            self.voice._finish_dictation()
+
+    def test_lost_dictation_ack_stops_a_possibly_open_microphone(self):
+        session = Path(self.tmp.name) / "lost-ack-session"
+        with mock.patch.dict(
+                os.environ, {"KILIX_SESSION_HOME": str(session)}, clear=False), \
+                mock.patch.object(self.voice, "_availability", return_value={
+                    "speak": False, "dictate": True}), \
+                mock.patch.object(
+                    self.voice, "send_control", side_effect=(None, {"ok": True})) as control, \
+                mock.patch.object(self.voice, "_invalidate"):
+            error = self.voice.begin_dictation(76)
+
+        self.assertIn("could not be reached", error)
+        self.assertEqual(control.call_args_list[0].args[0]["op"], "dictate")
+        self.assertEqual(
+            control.call_args_list[1],
+            mock.call({"op": "stop-dictation"}, spawn=False),
+        )
+        self.assertIsNone(self.voice.voice_state.dictation_socket)
+
+    def test_lost_dictation_and_stop_acks_retain_socket_until_bounded_cleanup(self):
+        session = Path(self.tmp.name) / "lost-both-acks-session"
+        with mock.patch.dict(
+                os.environ, {"KILIX_SESSION_HOME": str(session)}, clear=False), \
+                mock.patch.object(self.voice, "_availability", return_value={
+                    "speak": False, "dictate": True}), \
+                mock.patch.object(self.voice, "send_control", side_effect=(None, None)), \
+                mock.patch.object(self.voice, "ensure_voice_timer"), \
+                mock.patch.object(self.voice, "_invalidate"):
+            error = self.voice.begin_dictation(77)
+
+        self.assertIn("listening indicator will remain active", error)
+        self.assertTrue(self.voice.voice_state.listening)
+        self.assertTrue(self.voice.voice_state.stopping)
+        self.assertIsNotNone(self.voice.voice_state.dictation_socket)
+
+        self.voice.voice_state.stop_deadline = 0.0
+        self.voice.voice_state.stop_limit = 1.0
+        with mock.patch.object(self.voice, "send_control", return_value=None) as stop, \
+                mock.patch.object(self.voice, "_invalidate"), \
+                mock.patch.object(self.voice, "report_async_error") as warning:
+            self.voice.poll_dictation()
+
+        self.assertFalse(self.voice.voice_state.listening)
+        self.assertIsNone(self.voice.voice_state.dictation_socket)
+        stop.assert_called_once_with({"op": "stop-dictation"}, spawn=False)
+        warning.assert_called_once()
+        self.assertIn("configured recording limit", warning.call_args.args[1])
+
+    def test_second_click_waits_for_final_instead_of_injecting_stale_partial(self):
+        class ReturnSocket:
+            def __init__(self):
+                self.closed = False
+
+            def recv(self, _maximum):
+                return json.dumps({"final": "authoritative final"}).encode()
+
+            def close(self):
+                self.closed = True
+
+        returned = ReturnSocket()
+        self.voice.voice_state.listening = True
+        self.voice.voice_state.partial = "stale partial"
+        self.voice.voice_state.dictation_socket = returned
+        with mock.patch.object(
+                self.voice, "send_control", return_value={"ok": True, "stopped": True}) as control, \
+                mock.patch.object(self.voice, "deliver_dictation") as deliver, \
+                mock.patch.object(self.voice, "ensure_voice_timer"), \
+                mock.patch.object(self.voice, "_invalidate"):
+            self.voice.end_dictation(flush=True)
+            self.assertTrue(self.voice.voice_state.listening)
+            self.assertTrue(self.voice.voice_state.stopping)
+            self.assertTrue(self.voice.voice_state.stop_confirmed)
+            self.assertFalse(returned.closed)
+            deliver.assert_not_called()
+            control.assert_called_once_with({"op": "stop-dictation"}, spawn=False)
+
+            self.voice.poll_dictation()
+
+        deliver.assert_called_once_with("authoritative final")
+        self.assertFalse(self.voice.voice_state.listening)
+        self.assertFalse(self.voice.voice_state.stopping)
+        self.assertTrue(returned.closed)
+
+    def test_dictation_async_error_timeout_and_empty_final_are_visible(self):
+        class ReturnSocket:
+            def __init__(self, result):
+                self.result = result
+                self.closed = False
+
+            def recv(self, _maximum):
+                if isinstance(self.result, BaseException):
+                    raise self.result
+                if self.result is None:
+                    raise BlockingIOError
+                return json.dumps(self.result).encode()
+
+            def close(self):
+                self.closed = True
+
+        cases = (
+            (OSError("microphone disappeared"), "Dictation failed",
+             "microphone disappeared", False),
+            ({"error": "model refused audio"}, "Dictation failed",
+             "model refused audio", False),
+            ({"final": ""}, "Dictation finished",
+             "No speech was recognized", False),
+        )
+        for result, title, fragment, stopping in cases:
+            with self.subTest(result=result):
+                returned = ReturnSocket(result)
+                self.voice.voice_state = self.voice.VoiceState(
+                    listening=True,
+                    stopping=stopping,
+                    stop_deadline=0.0,
+                    dictation_socket=returned,
+                )
+                with mock.patch.object(
+                        self.voice, "report_async_error") as error, \
+                        mock.patch.object(self.voice, "send_control") as control, \
+                        mock.patch.object(self.voice, "_invalidate"):
+                    self.voice.poll_dictation()
+                self.assertFalse(self.voice.voice_state.listening)
+                self.assertTrue(returned.closed)
+                error.assert_called_once()
+                self.assertEqual(error.call_args.args[0], title)
+                self.assertIn(fragment, error.call_args.args[1])
+                if isinstance(result, OSError):
+                    control.assert_called_once_with(
+                        {"op": "stop-dictation"}, spawn=False)
+                else:
+                    control.assert_not_called()
+
+    def test_ambiguous_explicit_speech_stop_keeps_truthful_active_state(self):
+        self.voice.voice_state.speaking = True
+        with mock.patch.object(
+                self.voice, "send_control", side_effect=(None, None)) as control, \
+                mock.patch.object(self.voice, "ensure_voice_timer"), \
+                mock.patch.object(self.voice, "report_async_error") as error:
+            self.voice.stop_speech()
+
+        self.assertTrue(self.voice.voice_state.speaking)
+        self.assertEqual(control.call_args_list, [
+            mock.call({"op": "stop-speech"}, spawn=False),
+            mock.call({"op": "stop-speech"}, spawn=False),
+        ])
+        error.assert_called_once()
+        self.assertIn("leave the speaking indicator active", error.call_args.args[1])
+
+        self.voice.voice_state.next_speech_poll = 0.0
+        stopped = {"ok": True, "status": {
+            "pid": 91,
+            "speaking": False,
+            "speech_error": "",
+            "speech_error_serial": 0,
+        }}
+        with mock.patch.object(self.voice, "send_control", return_value=stopped):
+            self.voice.poll_speech_status()
+        self.assertFalse(self.voice.voice_state.speaking)
+
+    def test_ambiguous_dictation_stop_stays_active_until_status_confirms(self):
+        class EmptyReturnSocket:
+            def __init__(self):
+                self.closed = False
+
+            def recv(self, _maximum):
+                raise BlockingIOError
+
+            def close(self):
+                self.closed = True
+
+        returned = EmptyReturnSocket()
+        self.voice.voice_state.listening = True
+        self.voice.voice_state.dictation_socket = returned
+        with mock.patch.object(
+                self.voice, "send_control", side_effect=(None, None)) as control, \
+                mock.patch.object(self.voice, "ensure_voice_timer"), \
+                mock.patch.object(self.voice, "_invalidate"), \
+                mock.patch.object(self.voice, "report_async_error") as uncertain:
+            self.voice.end_dictation(flush=True)
+
+        self.assertTrue(self.voice.voice_state.listening)
+        self.assertTrue(self.voice.voice_state.stopping)
+        self.assertFalse(returned.closed)
+        self.assertEqual(control.call_count, 2)
+        uncertain.assert_called_once()
+        self.assertIn("indicator active", uncertain.call_args.args[1])
+
+        self.voice.voice_state.stop_deadline = 0.0
+        confirmed = {"ok": True, "status": {"listening": False}}
+        with mock.patch.object(self.voice, "send_control", return_value=confirmed), \
+                mock.patch.object(self.voice, "_invalidate"), \
+                mock.patch.object(self.voice, "report_async_error"):
+            self.voice.poll_dictation()
+        self.assertTrue(self.voice.voice_state.listening)
+        self.assertTrue(self.voice.voice_state.stop_confirmed)
+
+        self.voice.voice_state.stop_deadline = 0.0
+        with mock.patch.object(self.voice, "_invalidate"), \
+                mock.patch.object(self.voice, "report_async_error") as missing_final:
+            self.voice.poll_dictation()
+        self.assertFalse(self.voice.voice_state.listening)
+        self.assertTrue(returned.closed)
+        missing_final.assert_called_once()
+        self.assertIn("microphone is closed", missing_final.call_args.args[1])
+
+    def test_acknowledged_dictation_stop_has_bounded_final_grace(self):
+        class EmptyReturnSocket:
+            def __init__(self):
+                self.closed = False
+
+            def recv(self, _maximum):
+                raise BlockingIOError
+
+            def close(self):
+                self.closed = True
+
+        returned = EmptyReturnSocket()
+        self.voice.voice_state.listening = True
+        self.voice.voice_state.dictation_socket = returned
+        with mock.patch.object(
+                self.voice, "send_control", return_value={"ok": True}) as control, \
+                mock.patch.object(self.voice, "ensure_voice_timer"), \
+                mock.patch.object(self.voice, "_invalidate"):
+            self.voice.end_dictation(flush=True)
+
+        self.assertTrue(self.voice.voice_state.stop_confirmed)
+        self.assertTrue(self.voice.voice_state.listening)
+        self.voice.voice_state.stop_deadline = 0.0
+        with mock.patch.object(self.voice, "_invalidate"), \
+                mock.patch.object(self.voice, "report_async_error") as missing_final:
+            self.voice.poll_dictation()
+
+        self.assertFalse(self.voice.voice_state.listening)
+        self.assertTrue(returned.closed)
+        control.assert_called_once_with({"op": "stop-dictation"}, spawn=False)
+        missing_final.assert_called_once()
+        self.assertIn("microphone is closed", missing_final.call_args.args[1])
+
+    def test_read_aloud_dispatch_refuses_a_pixel_pane_with_visible_guidance(self):
+        source = FORK_TABS.read_text()
+        block = source.split("elif tab_action == SPEAK_ACTION:", 1)[1].split(
+            "elif tab_action == DICTATE_ACTION:", 1)[0]
+        self.assertIn("if is_pixel_pane(target):", block)
+        self.assertIn("'Read aloud unavailable'", block)
+        self.assertIn("'nothing to read. Read aloud works on terminal panes.'", block)
+
+    def test_two_sequential_controls_use_two_one_request_connections(self):
+        class OneRequestSocket:
+            def __init__(self, reply):
+                self.reply = json.dumps(reply).encode()
+                self.sent = []
+                self.closed = False
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_exc):
+                self.closed = True
+
+            def settimeout(self, _timeout):
+                pass
+
+            def send(self, payload):
+                self.sent.append(json.loads(payload))
+                return len(payload)
+
+            def recv(self, _maximum):
+                return self.reply
+
+        first = OneRequestSocket({"ok": True, "id": 1})
+        second = OneRequestSocket({"ok": True, "id": 2})
+        with mock.patch.object(
+                self.voice, "control_connection", side_effect=[first, second]):
+            self.assertTrue(self.voice.send_control({"op": "status", "id": 1})["ok"])
+            self.assertTrue(self.voice.send_control({"op": "status", "id": 2})["ok"])
+
+        self.assertEqual(first.sent, [{"op": "status", "id": 1}])
+        self.assertEqual(second.sent, [{"op": "status", "id": 2}])
+        self.assertTrue(first.closed)
+        self.assertTrue(second.closed)
+
+    def test_maximum_non_ascii_speech_fits_one_real_seqpacket(self):
+        try:
+            sender, receiver = socket.socketpair(
+                socket.AF_UNIX, socket.SOCK_SEQPACKET)
+        except OSError as error:
+            self.skipTest(f"SOCK_SEQPACKET socketpair unavailable: {error}")
+        self.addCleanup(receiver.close)
+        receiver.send(json.dumps({"ok": True, "chunks": 1}).encode())
+        text = "😀" * self.voice._MAX_REQUEST_CHARS
+
+        with mock.patch.object(
+                self.voice, "control_connection", return_value=sender):
+            reply = self.voice.send_control({"op": "speak", "text": text})
+
+        self.assertTrue(reply["ok"])
+        payload = receiver.recv(self.voice._CONTROL_MAX_REQUEST_BYTES)
+        self.assertLessEqual(len(payload), self.voice._CONTROL_MAX_REQUEST_BYTES)
+        self.assertEqual(json.loads(payload)["text"], text)
+
+    def test_read_aloud_status_poll_reports_completion_and_async_failure_once(self):
+        replies = [
+            {"ok": True, "chunks": 1},
+            {"ok": True, "status": {
+                "pid": 42,
+                "speaking": False,
+                "speech_error": "",
+                "speech_error_serial": 0,
+            }},
+        ]
+        with mock.patch.object(self.voice, "_availability", return_value={
+                "speak": True, "dictate": False}), \
+                mock.patch.object(
+                    self.voice, "send_control", side_effect=replies) as control, \
+                mock.patch.object(self.voice, "ensure_voice_timer"), \
+                mock.patch.object(self.voice, "_invalidate"):
+            self.assertIsNone(self.voice.speak("hello"))
+            self.assertTrue(self.voice.voice_state.speaking)
+            self.voice.poll_speech_status()
+        self.assertEqual(
+            control.call_args_list[0].args[0], {"op": "speak", "text": "hello"})
+        self.assertEqual(control.call_args_list[1].args[0], {"op": "status"})
+        self.assertFalse(self.voice.voice_state.speaking)
+
+        self.voice.voice_state.speaking = True
+        self.voice.voice_state.next_speech_poll = 0.0
+        failed_status = {"ok": True, "status": {
+            "pid": 42,
+            "speaking": False,
+            "speech_error": "speaker process exited with status 1",
+            "speech_error_serial": 1,
+        }}
+        with mock.patch.object(self.voice, "send_control", return_value=failed_status), \
+                mock.patch.object(self.voice, "report_async_error") as error:
+            self.voice.poll_speech_status()
+        self.assertFalse(self.voice.voice_state.speaking)
+        error.assert_called_once_with(
+            "Read aloud failed", "speaker process exited with status 1")
+
+        # The daemon persists its last failure; its serial makes the dialog
+        # edge-triggered rather than appearing on every timer tick.
+        self.voice.voice_state.speaking = True
+        self.voice.voice_state.next_speech_poll = 0.0
+        with mock.patch.object(self.voice, "send_control", return_value=failed_status), \
+                mock.patch.object(self.voice, "report_async_error") as repeated:
+            self.voice.poll_speech_status()
+        repeated.assert_not_called()
+
+        self.voice.voice_state.speaking = True
+        self.voice.voice_state.next_speech_poll = 0.0
+        with mock.patch.object(
+                self.voice, "send_control", side_effect=(None, {"ok": True})) as control, \
+                mock.patch.object(self.voice, "report_async_error") as unreachable:
+            self.voice.poll_speech_status()
+        unreachable.assert_called_once()
+        self.assertIn("could not be reached", unreachable.call_args.args[1])
+        self.assertEqual(
+            control.call_args_list,
+            [
+                mock.call({"op": "status"}, spawn=False),
+                mock.call({"op": "stop-speech"}, spawn=False),
+            ],
+        )
+
+    def test_lost_speak_ack_silences_a_possibly_accepted_turn(self):
+        with mock.patch.object(self.voice, "_availability", return_value={
+                "speak": True, "dictate": False}), \
+                mock.patch.object(
+                    self.voice, "send_control", side_effect=(None, {"ok": True})) as control, \
+                mock.patch.object(self.voice, "ensure_voice_timer"), \
+                mock.patch.object(self.voice, "_invalidate"):
+            error = self.voice.speak("possibly accepted")
+
+        self.assertIn("playback was stopped for safety", error)
+        self.assertEqual(
+            control.call_args_list,
+            [
+                mock.call({"op": "speak", "text": "possibly accepted"}),
+                mock.call({"op": "stop-speech"}, spawn=False),
+            ],
+        )
+        self.assertFalse(self.voice.voice_state.speaking)
+
+    def test_lost_speak_and_stop_acks_keep_indicator_active(self):
+        with mock.patch.object(self.voice, "_availability", return_value={
+                "speak": True, "dictate": False}), \
+                mock.patch.object(
+                    self.voice, "send_control", side_effect=(None, None)) as control, \
+                mock.patch.object(self.voice, "ensure_voice_timer"), \
+                mock.patch.object(self.voice, "_invalidate"):
+            error = self.voice.speak("possibly still audible")
+
+        self.assertTrue(self.voice.voice_state.speaking)
+        self.assertTrue(self.voice.voice_state.speech_uncertainty_reported)
+        self.assertIn("indicator will remain active", error)
+        self.assertEqual(control.call_args_list, [
+            mock.call({"op": "speak", "text": "possibly still audible"}),
+            mock.call({"op": "stop-speech"}, spawn=False),
+        ])
+
+    def test_status_loss_keeps_speaking_active_until_stop_or_status_confirms(self):
+        self.voice.voice_state.speaking = True
+        self.voice.voice_state.next_speech_poll = 0.0
+        with mock.patch.object(
+                self.voice, "send_control", side_effect=(None, None)) as control, \
+                mock.patch.object(self.voice.time, "monotonic", return_value=100.0), \
+                mock.patch.object(self.voice, "ensure_voice_timer"), \
+                mock.patch.object(self.voice, "report_async_error") as uncertain:
+            self.voice.poll_speech_status()
+
+        self.assertTrue(self.voice.voice_state.speaking)
+        self.assertEqual(control.call_args_list, [
+            mock.call({"op": "status"}, spawn=False),
+            mock.call({"op": "stop-speech"}, spawn=False),
+        ])
+        self.assertEqual(self.voice.voice_state.next_speech_poll, 105.0)
+        uncertain.assert_called_once()
+        self.assertIn("indicator active", uncertain.call_args.args[1])
+
+        self.voice.voice_state.next_speech_poll = 0.0
+        with mock.patch.object(
+                self.voice, "send_control", side_effect=(None, None)), \
+                mock.patch.object(self.voice, "ensure_voice_timer"), \
+                mock.patch.object(self.voice, "report_async_error") as repeated:
+            self.voice.poll_speech_status()
+        self.assertTrue(self.voice.voice_state.speaking)
+        repeated.assert_not_called()
+
+        self.voice.voice_state.next_speech_poll = 0.0
+        confirmed = {"ok": True, "status": {
+            "pid": 92,
+            "speaking": False,
+            "speech_error": "",
+            "speech_error_serial": 0,
+        }}
+        with mock.patch.object(self.voice, "send_control", return_value=confirmed):
+            self.voice.poll_speech_status()
+        self.assertFalse(self.voice.voice_state.speaking)
+        self.assertFalse(self.voice.voice_state.speech_uncertainty_reported)
+
+    def test_speech_status_connections_are_throttled(self):
+        self.voice.voice_state.speaking = True
+        self.voice.voice_state.next_speech_poll = self.voice.time.monotonic() + 1
+        with mock.patch.object(self.voice, "send_control") as control:
+            self.voice.poll_speech_status()
+        control.assert_not_called()
 
 
 if __name__ == "__main__":

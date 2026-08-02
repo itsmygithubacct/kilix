@@ -25,6 +25,8 @@ complete tree. Freedesktop launchers/icons are the intentional exception:
 
 ## Release 0.1.7
 
+Release date: 2026-08-02.
+
 Version 0.1.7 is the coordinated stack release covering everything since 0.1.2,
 and is the first release Kilix shares with
 [Plebian-OS](https://github.com/itsmygithubacct/plebian-os),
@@ -68,6 +70,10 @@ and still admits nothing that can type into a pane. Release tags for this
 repository are created only by the coordinated
 release procedure — see Plebian-OS's
 [RELEASING.md](https://github.com/itsmygithubacct/plebian-os/blob/main/RELEASING.md).
+0.1.7 is the fresh-install upgrade baseline. Older installations are
+reinstalled; later coordinated releases must support a preserving upgrade from
+the immediately previous published release under Plebian-OS's
+[upgrade policy](https://github.com/itsmygithubacct/plebian-os/blob/main/UPGRADING.md).
 
 Web URLs now go through one explicit dispatcher: Kilix prefers an installed
 Chrome, Chromium, or Firefox browser and uses the experimental in-pane renderer
@@ -279,6 +285,10 @@ explicitly confirmed termination action.
   on `PATH`.
 - The same dependency installer also includes kilix-amp's SDL/libsndfile/
   FluidSynth packages, so the desktop Media Player can build and play MIDI.
+- **For read aloud:** `espeak-ng` plus `pacat`, `paplay`, or `aplay`. **For
+  dictation:** x86_64, `parec` or `arecord`, and the pinned local Vosk closure
+  installed by `kilix voice install`. Run `kilix voice doctor` to see the exact
+  missing engine, device, library, or model without opening the microphone.
 - **For the pixel desktop and the no-real-browser in-pane fallback**
   (`kilix desktop` / `kilix open-url`):
   **Python 3 + Pillow** (also installed by `scripts/install-build-deps.sh`).
@@ -374,11 +384,54 @@ kilix land                         # install/build the walkable desktop, then op
 kilix bonsai                       # the BitNet model store: browse, download, verify
 kilix bonsai list                  # one line per model, with size and state
 kilix bonsai pull vibevoice-asr-bitnet   # download one — this one is the dictation model
+kilix voice install               # pinned Kilix Voice + Vosk library/model
+kilix voice doctor                # dependency and audio-device diagnostics
+kilix tts                         # read-aloud settings and test-phrase TUI
+kilix stt                         # dictation settings and microphone-level TUI
+kilix speak "hello"               # read explicit text aloud
+kilix dictate                     # recognize one utterance; never presses Enter
 kilix status                      # version/commit, engine, writable config, provider contract
 ```
 
 Put `~/.local/gpu_terminal/sources/kilix` on your `PATH` (or
 `ln -s ~/.local/gpu_terminal/sources/kilix/kilix ~/.local/bin/kilix`) to just type `kilix`.
+
+## Read aloud and dictation
+
+The speaking-head and microphone controls in Kilix's page strip are the actual
+voice actions. The matching desktop-menu entries open settings and diagnostics:
+they do not themselves read or dictate. Both actions operate on terminal text.
+A pixel application such as the Kilix 95 desktop has neither readable terminal
+cells nor a visible text input target, so Kilix refuses both actions there with
+an explanation; open or switch to a terminal pane first.
+Dictation records the pane selected at the first click and rechecks it before
+inserting anything: if it becomes a pixel application or reaches a hidden
+password prompt while listening, the transcript is visibly discarded. A
+second microphone click requests stop but keeps the private result socket open
+for the recognizer's final answer; stale partial text is never substituted.
+
+`kilix voice install` installs the immutable `kilix-voice` 0.1.2 source at
+commit `f05b64a7b2bc25fa9a7e2c3ae1e0b848f04a23f6`, the official Vosk 0.3.45
+x86_64 wheel, and `vosk-model-small-en-us-0.15`. Downloads are SHA-256 verified.
+The installer extracts only the wheel's fixed `vosk/libvosk.so` member, checks
+its ELF architecture and complete required Vosk API, loads the pinned acoustic
+model through that API, and runs every installed tool's `--version` probe before
+promotion. Library and model generation names include their full archive
+digest. Their active links, the runtime link, command entrypoints, and install
+stamp are promoted as one rollback-safe transaction, so a pin change can never
+relabel an old payload. `--without-dictation` retains a smaller read-aloud-only
+path for non-x86_64 machines.
+
+The native library and acoustic model each carry an adjacent
+`README.kilix-provenance` recording their upstream URL and checksum, plus a
+copy of the Apache-2.0 license. They remain under the private Kilix data tree;
+`kilix voice doctor` prints their active paths. The daemon starts lazily and
+uses one private Unix-socket connection per control request. Read-aloud status
+is polled four times per second so completion clears the widget, while a new
+asynchronous synthesis or playback error is shown once rather than disappearing
+into daemon output. Dictation device/model errors, an empty result, or a missing
+final response are likewise shown in a dialog instead of looking like a dead
+click.
 
 ## Clickable buttons (the headline feature)
 

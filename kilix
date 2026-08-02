@@ -517,7 +517,7 @@ _kilix_load_env_file() {
       KILIX_BUILD_MODE|KILIX_KITTY_DEPS_URL|KILIX_KITTY_DEPS_SHA256|\
       TMUX_TUI_REPO|TMUX_TUI_REF|TMUX_CLI_REF|TMUX_TUI_PREFIX|\
       KILIX_VOICE_REPO|KILIX_VOICE_REF|KILIX_VOICE_PREFIX|\
-      KILIX_VOICE_LIB_URL|KILIX_VOICE_LIB_VERSION|KILIX_VOICE_LIB_SHA256|\
+      KILIX_VOICE_LIB_URL|KILIX_VOICE_LIB_VERSION|KILIX_VOICE_LIB_SHA256|KILIX_VOICE_APACHE_LICENSE_FILE|\
       KILIX_VOICE_MODEL_URL|KILIX_VOICE_MODEL_SHA256|\
       KILIX_NERD_FONT_URL|KILIX_NERD_FONT_SHA256|KILIX_NERD_FONT_FILE_SHA256|KILIX_GO_TOOLCHAIN|KILIX_PYTHON)
         # An explicit process environment wins over persisted settings. Storage
@@ -678,7 +678,8 @@ _kilix_voice_tool() {
   local name="$1" force="$2" resolved installer
   shift 2
   resolved="$(command -v "$name" 2>/dev/null || true)"
-  if [ "$force" = 0 ] && [ -n "$resolved" ] && [ -x "$resolved" ]; then
+  if [ "$force" = 0 ] && [ -n "$resolved" ] && [ -x "$resolved" ] \
+      && "$resolved" --version >/dev/null 2>&1; then
     printf '%s\n' "$resolved"
     return 0
   fi
@@ -763,12 +764,21 @@ SPAWN = os.environ.get("KILIX_VOICE_SPAWN") == "1"
 # that, so a slower reply than this is a wedged daemon, not a long sentence.
 REPLY_TIMEOUT = 5.0
 SPAWN_TIMEOUT = 8.0
+MAX_REQUEST_BYTES = 192 * 1024
 # A recognizer should never emit these, but stdout here is usually a live pane,
 # so a transcript is injected text like any other. Newlines survive because the
 # shell this prints into is not reading a command line; everything that could
 # move the cursor or introduce an escape sequence does not, including the 8-bit
 # CSI and OSC introducers in the C1 range.
 CONTROL_CHARACTERS = re.compile(r"[\x00-\x09\x0b-\x1f\x7f-\x9f]")
+
+
+class AmbiguousRequest(RuntimeError):
+    """The daemon may have accepted a request whose reply was lost."""
+
+
+class RefusedRequest(RuntimeError):
+    """The daemon definitively rejected a request before starting a turn."""
 
 
 def die(message, code=1):
@@ -816,40 +826,139 @@ def connect():
 
 
 def request(client, message):
-    client.sendall((json.dumps(message) + "\n").encode("utf-8"))
+    payload = (json.dumps(
+        message, ensure_ascii=False, separators=(",", ":")) + "\n"
+    ).encode("utf-8")
+    if len(payload) > MAX_REQUEST_BYTES:
+        raise RefusedRequest(
+            "the voice request is too large for one local control packet "
+            "(%d bytes; limit %d). Read a smaller extent or shorter text."
+            % (len(payload), MAX_REQUEST_BYTES))
+    try:
+        client.sendall(payload)
+    except OSError as error:
+        raise AmbiguousRequest(
+            "the voice daemon connection failed during a %s request: %s"
+            % (message["op"], error)) from error
     try:
         raw = client.recv(65536)
-    except OSError:
-        die("the voice daemon did not answer a %s request" % message["op"])
+    except OSError as error:
+        raise AmbiguousRequest(
+            "the voice daemon did not answer a %s request" % message["op"]
+        ) from error
     if not raw:
-        die("the voice daemon closed the connection")
+        raise AmbiguousRequest(
+            "the voice daemon closed the %s connection without a reply"
+            % message["op"])
     try:
         reply = json.loads(raw.decode("utf-8", "replace"))
-    except ValueError:
-        die("the voice daemon sent an unreadable reply")
+    except ValueError as error:
+        raise AmbiguousRequest(
+            "the voice daemon sent an unreadable %s reply" % message["op"]
+        ) from error
+    if not isinstance(reply, dict):
+        raise AmbiguousRequest(
+            "the voice daemon sent an unreadable %s reply" % message["op"])
     # A status reply is a payload rather than an acknowledgement, so only an
     # explicit refusal is an error.
     if reply.get("ok") is False:
-        die(str(reply.get("error") or "request refused"))
+        raise RefusedRequest(str(reply.get("error") or "request refused"))
     return reply
+
+
+def connect_existing():
+    """Connect without spawning; compensation must never start a new daemon."""
+    client = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+    client.settimeout(REPLY_TIMEOUT)
+    try:
+        client.connect(CONTROL)
+    except OSError:
+        client.close()
+        return None
+    return client
+
+
+def exchange_existing(message):
+    client = connect_existing()
+    if client is None:
+        raise AmbiguousRequest("the voice daemon is no longer reachable")
+    try:
+        return request(client, message)
+    finally:
+        client.close()
+
+
+def best_effort_stop(op):
+    try:
+        exchange_existing({"op": op})
+    except (AmbiguousRequest, RefusedRequest):
+        pass
+
+
+def stop_with_retry(op):
+    """Return an error string unless one of two idempotent stops is confirmed."""
+    error = "the voice daemon is no longer reachable"
+    for _attempt in range(2):
+        try:
+            exchange_existing({"op": op})
+        except AmbiguousRequest as failure:
+            error = str(failure)
+            continue
+        except RefusedRequest as failure:
+            return str(failure)
+        return None
+    return error
+
+
+def one_request(message, ambiguous_stop=None):
+    """Use one connection for one request; kilix-voiced closes after reply."""
+    client = None
+    try:
+        client = connect()
+        try:
+            return request(client, message)
+        except AmbiguousRequest as error:
+            if ambiguous_stop is not None:
+                best_effort_stop(ambiguous_stop)
+            die(str(error))
+        except RefusedRequest as error:
+            die(str(error))
+        except BaseException:
+            if ambiguous_stop is not None:
+                best_effort_stop(ambiguous_stop)
+            raise
+    finally:
+        if client is not None:
+            client.close()
+
+
+def daemon_status():
+    reply = one_request({"op": "status"})
+    status = reply.get("status")
+    if not isinstance(status, dict):
+        die("the voice daemon sent an unreadable status")
+    return status
 
 
 def cmd_speak():
     text = sys.stdin.read()
-    request(connect(), {"op": "speak", "text": text})
+    one_request(
+        {"op": "speak", "text": text}, ambiguous_stop="stop-speech")
 
 
 def cmd_stop():
-    client = connect()
-    request(client, {"op": "stop-speech"})
-    # There is no request that ends the daemon: it owns the audio session and
-    # exits on its own idle timeout. Stopping silences it, it does not kill it.
-    if request(client, {"op": "status"}).get("listening"):
-        request(client, {"op": "stop-dictation"})
+    # Attempt both independently: a failed speaker request must never prevent
+    # the microphone stop. Each stop is idempotently retried once on ambiguity.
+    errors = []
+    for op in ("stop-speech", "stop-dictation"):
+        if error := stop_with_retry(op):
+            errors.append("%s: %s" % (op, error))
+    if errors:
+        die("could not confirm all voice stopped (%s)" % "; ".join(errors))
 
 
 def cmd_status():
-    reply = request(connect(), {"op": "status"})
+    reply = daemon_status()
     for key in ("speaking", "listening", "engines", "model", "device", "version"):
         value = reply.get(key)
         if isinstance(value, (dict, list)):
@@ -861,8 +970,10 @@ def cmd_dictate_pane(pane, seconds):
     # The socket belongs to the fork, which created it for this pane when the
     # user clicked its microphone and is the only thing that writes to the PTY.
     sock = os.path.join(SESSION, "dictate-%s.sock" % pane)
-    reply = request(connect(), {
-        "op": "dictate", "sock": sock, "max_seconds": seconds})
+    del seconds  # the daemon reads the shared max-seconds setting
+    reply = one_request(
+        {"op": "dictate", "sock": sock},
+        ambiguous_stop="stop-dictation")
     print("kilix dictate: listening for pane %s (id %s)"
           % (pane, reply.get("id", "?")), file=sys.stderr)
 
@@ -871,39 +982,53 @@ def cmd_dictate(seconds):
     path = os.path.join(SESSION, "cli-%d.sock" % os.getpid())
     server = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
     interactive = sys.stderr.isatty()
+    accepted = False
     try:
         if os.path.lexists(path):
             os.unlink(path)
         server.bind(path)
         os.chmod(path, 0o600)
-        client = connect()
-        reply = request(client, {
-            "op": "dictate", "sock": path, "max_seconds": seconds})
-        server.settimeout(1.0)
-        deadline = time.monotonic() + seconds + 15.0
+        one_request(
+            {"op": "dictate", "sock": path},
+            ambiguous_stop="stop-dictation")
+        accepted = True
+        server.settimeout(0.25)
+        deadline = time.monotonic() + seconds
+        final_deadline = deadline + 5.0
         final = None
-        try:
-            while final is None and time.monotonic() < deadline:
-                try:
-                    datagram = server.recv(65536)
-                except OSError:
-                    continue
-                try:
-                    event = json.loads(datagram.decode("utf-8", "replace"))
-                except ValueError:
-                    continue
-                if "error" in event:
-                    die(str(event["error"]))
-                if "final" in event:
-                    final = str(event["final"])
-                elif "partial" in event and interactive:
-                    sys.stderr.write("\r\033[2K%s" % clean(str(event["partial"]))[:200])
-                    sys.stderr.flush()
-        except KeyboardInterrupt:
-            final = str(request(
-                client,
-                {"op": "stop-dictation", "id": reply.get("id")},
-            ).get("text", ""))
+        stop_requested = False
+        while final is None and time.monotonic() < final_deadline:
+            if not stop_requested and time.monotonic() >= deadline:
+                if error := stop_with_retry("stop-dictation"):
+                    die("could not stop dictation: %s" % error)
+                stop_requested = True
+            try:
+                datagram = server.recv(65536)
+            except socket.timeout:
+                continue
+            except KeyboardInterrupt:
+                if stop_requested:
+                    die("dictation interrupted while waiting for the final result")
+                if error := stop_with_retry("stop-dictation"):
+                    die("could not stop dictation: %s" % error)
+                stop_requested = True
+                final_deadline = min(final_deadline, time.monotonic() + 5.0)
+                continue
+            except OSError:
+                continue
+            try:
+                event = json.loads(datagram.decode("utf-8", "replace"))
+            except ValueError:
+                continue
+            if "error" in event:
+                accepted = False
+                die(str(event["error"]))
+            if "final" in event:
+                final = str(event["final"])
+                accepted = False
+            elif "partial" in event and interactive:
+                sys.stderr.write("\r\033[2K%s" % clean(str(event["partial"]))[:200])
+                sys.stderr.flush()
         if interactive:
             sys.stderr.write("\r\033[2K")
             sys.stderr.flush()
@@ -914,6 +1039,8 @@ def cmd_dictate(seconds):
             die("heard nothing")
         print(final)
     finally:
+        if accepted:
+            best_effort_stop("stop-dictation")
         server.close()
         try:
             os.unlink(path)
@@ -1556,6 +1683,16 @@ case "${1:-}" in
         exit 0 ;;
       install)
         exec "$KILIX_HOME/scripts/install-kilix-voice.sh" "$@" ;;
+      daemon)
+        [ $# -eq 0 ] || { echo "usage: $_self voice daemon" >&2; exit 2; }
+        # The kitty fork uses this only when no installed daemon or development
+        # checkout is available. Read-aloud does not need the large recognition
+        # closure, so this lazy fallback installs the pinned runtime without
+        # unexpectedly downloading a model; an existing full install still wins.
+        _voice_daemon_installed="$(
+          _kilix_voice_tool kilix-voiced 0 --without-dictation
+        )" || exit 1
+        exec "$_voice_daemon_installed" ;;
       doctor)
         [ $# -eq 0 ] || { echo "usage: $_self voice doctor" >&2; exit 2; }
         _kilix_voice_doctor
@@ -1569,17 +1706,18 @@ case "${1:-}" in
         _kilix_voice_request stop || exit $?
         exit 0 ;;
       -h|--help|help)
-        echo "usage: $_self voice [status|install|doctor|stop]"
+        echo "usage: $_self voice [status|install|doctor|stop|daemon]"
         echo "  status   widget, engine, and daemon state (default)"
         echo "  install  install the pinned kilix-voice closure"
         echo "  doctor   probe every engine, device, and pin voice depends on"
         echo "  stop     silence speech and close the microphone"
+        echo "  daemon   run the pinned voice daemon in the foreground"
         echo
         echo "Read-aloud and dictation are configured in '$_self settings'"
         echo "under Voice, or with '$_self settings --set wpm=200'."
         exit 0 ;;
       *)
-        echo "usage: $_self voice [status|install|doctor|stop]" >&2
+        echo "usage: $_self voice [status|install|doctor|stop|daemon]" >&2
         exit 2 ;;
     esac ;;
   status|--status)
