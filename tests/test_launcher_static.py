@@ -397,7 +397,7 @@ class KilixLauncherTests(unittest.TestCase):
         policy = (ROOT / "config" / "kilix_rc_auth.py").read_text()
         remote = (ROOT / "config" / "remote.py").read_text()
         settings = (ROOT / "desktop" / "apps" / "settings.py").read_text()
-        self.assertIn("allow_remote_control           password", conf)
+        self.assertIn("allow_remote_control           socket", conf)
         self.assertIn('remote_control_password        "" kilix_rc_auth.py', conf)
         self.assertIn('payload.get("self") is True', policy)
         self.assertIn('payload.get("action") == "toggle-fullscreen"', policy)
@@ -408,7 +408,7 @@ class KilixLauncherTests(unittest.TestCase):
                       (ROOT / "kilix").read_text())
         self.assertNotIn('command == "launch"', policy)
         self.assertNotIn('command == "get-text"', policy)
-        self.assertIn('["password", "no", "yes"]', settings)
+        self.assertIn('["socket", "password", "no", "yes"]', settings)
 
     def test_external_kilix95_clone_uses_array(self):
         text = (ROOT / "kilix").read_text()
