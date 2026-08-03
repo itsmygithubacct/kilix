@@ -25,6 +25,7 @@ BOOK = [
         ("b", "Using the Start menu — launch programs and games."),
         ("b", "Managing windows — move, size, minimize, close."),
         ("b", "Keyboard shortcuts — do it all from the keys."),
+        ("b", "Copy and paste — the mouse, and full-screen programs."),
     ]),
     ("desktop", "Desktop basics", [
         ("h", "Desktop basics"),
@@ -68,6 +69,25 @@ BOOK = [
         ("b", "Tab and Shift+Tab — move between controls."),
         ("b", "Enter — activate the default button or selected item."),
         ("b", "Escape — cancel a dialog or close a menu."),
+    ]),
+    ("copypaste", "Copy and paste", [
+        ("h", "Copy and paste"),
+        ("p", "In a terminal window, drag with the mouse to select text. The "
+              "selection is copied the moment you let go — there is no "
+              "separate Copy step. Right-click for a menu with Copy, Paste "
+              "and Select all; middle-click to paste."),
+        ("p", "A full-screen program (Claude Code, htop, a pager) takes the "
+              "mouse for itself, so plain gestures reach the program instead. "
+              "Hold Shift to talk to the terminal:"),
+        ("b", "Shift+drag — select text (double or triple click with Shift "
+              "selects a word or a line)."),
+        ("b", "Ctrl+Shift+V, or Shift+middle-click — paste into the program."),
+        ("b", "Ctrl+Shift+Right-click — open the copy/paste menu."),
+        ("p", "If the highlight vanishes right after you select, the text was "
+              "still copied — busy programs repaint the screen, which clears "
+              "the highlight but not the clipboard. Paste it and see. And "
+              "Ctrl+Shift+H opens the scrollback pager, where the mouse is "
+              "never taken and ordinary drag-select always works."),
     ]),
     ("accessories", "The accessories", [
         ("h", "The accessories"),

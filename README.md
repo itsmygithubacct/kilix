@@ -1041,6 +1041,37 @@ rationale is captured in the nearby source comments and regression tests.
 | Toggle this tab's OS window fullscreen from a shell | `kilix fullscreen` |
 | New OS window (same dir) | `Ctrl+Shift+N` |
 
+### Copy and paste — including inside full-screen TUIs
+
+In a plain shell the mouse works the way the context menu teaches: drag to
+select (the selection lands on the clipboard automatically), right-click for
+Copy / Paste / Select all, middle-click to paste.
+
+A full-screen TUI (Claude Code, htop, a pager) grabs the mouse for itself, so
+those plain gestures reach the app instead of Kilix. Everything still works —
+hold **Shift**:
+
+| Want | Plain shell | Inside a full-screen TUI |
+|---|---|---|
+| Select text | drag | `Shift`+drag |
+| Select a word / line | double / triple click | `Shift`+double / `Shift`+triple click |
+| Extend a selection | right-click | `Shift`+right-click |
+| Copy | automatic on select | automatic on select |
+| Paste into the app | middle-click | `Ctrl+Shift+V`, or `Shift`+middle-click |
+| Context menu | right-click | `Ctrl+Shift+Right`-click |
+
+Two things that look like failure but are not:
+
+- **The highlight disappears.** Busy TUIs repaint constantly, and any repaint
+  that touches a selected line clears the highlight. The text was copied the
+  moment you released the button — paste it and it is there.
+- **No text under the drag?** Open the scrollback pager (`Ctrl+Shift+H`)
+  instead: nothing grabs the mouse there, so ordinary drag-select works on
+  everything the pane has printed.
+
+Scripts should not assume `xclip`/`xsel`; use `kitty +kitten clipboard`, which
+talks to the terminal directly.
+
 ### Going to a page or a pane — `F12`
 
 `F12` opens **`kilix-switch`**, from
