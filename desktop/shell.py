@@ -488,19 +488,29 @@ class Shell:
             wm.msgbox(self.desk, name, "Launcher has no Exec line.",
                       icon="error")
             return
-        mode = spec.get("X-Kilix-Open", "tab")
+        mode = spec.get("X-Kilix-Open")
+        if not mode:
+            terminal = str(spec.get("Terminal", "")).strip().lower() == "true"
+            mode = "tab" if terminal else "run"
         cwd = os.path.expanduser(spec.get("Path") or "~")
+        argv = desktop_exec_argv(spec, path)
+        if not argv:
+            wm.msgbox(self.desk, name, "Launcher has an invalid Exec line.",
+                      icon="error")
+            return
+        sanitized_cmd = " ".join(shell_quote(arg) for arg in argv)
         if mode == "run":
-            self._tab([os.path.join(KILIX_HOME, "kilix"), "run"]
-                      + split_cmd(cmd), name, cwd)
+            self.open_x11_tab(argv, name, cwd=cwd)
         elif mode == "window":
-            self._spawn_kitty_launch(["--type=os-window"], cmd, name, cwd)
+            self._spawn_kitty_launch(
+                ["--type=os-window"], sanitized_cmd, name, cwd)
         elif mode == "fullscreen":
             # X11 app filling the whole screen, on a private Xvfb (XPane)
-            self.open_in_xpane(split_cmd(cmd), name, cwd=cwd,
+            self.open_in_xpane(argv, name, cwd=cwd,
                                app_size=self.desk.size())
         else:
-            self._spawn_kitty_launch(["--type=tab"], cmd, name, cwd)
+            self._spawn_kitty_launch(
+                ["--type=tab"], sanitized_cmd, name, cwd)
 
     # ── spawning into kilix ─────────────────────────────────────────────────
     def _kitten(self):
@@ -560,6 +570,15 @@ class Shell:
                             title, "--cwd", cwd or os.path.expanduser("~"),
                             *env_args, "--"]
                            + argv)
+
+    def open_x11_tab(self, argv, title, cwd=None, fill=False):
+        run = [os.path.join(KILIX_HOME, "kilix"), "run"]
+        if fill:
+            run.append("--fill")
+        return self._tab(run + list(argv), title, cwd, env={
+            "KILIX_IN_OVERLAY": "1",
+            "KILIX_STREAM": os.environ.get("KILIX_STREAM", ""),
+        })
 
     def _popen(self, argv, cwd=None):
         try:
@@ -705,12 +724,25 @@ class Shell:
             wm.inputbox(self.desk, "Web Browser", "Address:", "https://",
                         cb=lambda u: u and self.open_url(u), icon="browser")
             return
-        self._tab([os.path.join(KILIX_HOME, "kilix"), "open-url", url],
-                  "browser", None)
+        self.open_default_browser_tab(url, "browser")
+
+    def open_default_browser_tab(self, url, title="Browser"):
+        """Open a URL in a browser contained by a Kilix tab."""
+        if not url:
+            return False
+        browser = self._first_on_path(self.REAL_BROWSER_CANDS)
+        if browser:
+            return self.open_x11_tab(
+                self._browser_argv(browser, url), title or "Browser",
+                fill=True)
+        return self._tab(
+            [os.path.join(KILIX_HOME, "kilix"), "open-url", url],
+            title or "Browser", None, env={"KILIX_IN_OVERLAY": "1"})
 
     FIREFOX_CANDS = ("firefox-esr", "firefox")
     CHROME_CANDS = ("google-chrome", "google-chrome-stable", "chromium",
                     "chromium-browser")
+    REAL_BROWSER_CANDS = CHROME_CANDS + FIREFOX_CANDS
     BROWSER_HOME = "https://duckduckgo.com/"
 
     @staticmethod
@@ -721,27 +753,34 @@ class Shell:
                 return p
         return None
 
+    @staticmethod
+    def _browser_argv(browser, url):
+        name = os.path.basename(browser)
+        if name.startswith("firefox"):
+            return [browser, "--no-remote", url]
+        return [browser, url]
+
     def open_browser(self, which="firefox", mode=None, url=None):
         """Launch a web browser from the desktop.
 
-        Firefox opens in a Win95 desktop window by default — its GUI runs under
-        software rendering (e.g. in a VM). Chromium's tab action uses the
-        ordered real-browser dispatcher. mode overrides: "window", "tab",
+        Firefox and Chromium open in a filled kilix-run tab by default so they
+        stay inside the terminal pane. mode overrides: "window", "tab",
         "fullscreen".
         """
         url = url or self.BROWSER_HOME
         if which == "chromium":
-            if not self._first_on_path(self.CHROME_CANDS):
+            chromium = self._first_on_path(self.CHROME_CANDS)
+            if not chromium:
                 wm.msgbox(self.desk, "Chromium", "Chromium is not installed.",
                           icon="error")
                 return
             mode = mode or "tab"
-            if mode == "tab":               # ordered real-browser handoff
-                self._tab([os.path.join(KILIX_HOME, "kilix"), "open-url", url],
-                          "Chromium", None)
+            if mode == "tab":
+                self.open_x11_tab(
+                    self._browser_argv(chromium, url), "Chromium", fill=True)
             else:                           # GUI chromium (works where GL does)
                 self._browser_window(
-                    [self._first_on_path(self.CHROME_CANDS), "--no-sandbox", url],
+                    self._browser_argv(chromium, url),
                     "Chromium", mode)
             return
         # firefox — the default browser
@@ -750,20 +789,28 @@ class Shell:
             wm.msgbox(self.desk, "Firefox", "Firefox is not installed.",
                       icon="error")
             return
-        mode = mode or "window"
+        mode = mode or "tab"
         argv = [ff, "--no-remote", url]
         if mode == "tab":
-            self._tab([os.path.join(KILIX_HOME, "kilix"), "run"] + argv,
-                      "Firefox", None)
+            self.open_x11_tab(argv, "Firefox", fill=True)
         else:                               # window / fullscreen
             self._browser_window(argv, "Firefox", mode)
 
     def _browser_window(self, argv, title, mode):
         """Open a GUI browser as an XPane desktop window, sized per mode."""
+        import app_profiles
+        try:
+            argv, temporary_profile = app_profiles.prepare_app_command(argv)
+        except (OSError, RuntimeError) as error:
+            wm.msgbox(self.desk, title, f"Could not prepare browser:\n{error}",
+                      icon="error")
+            return False
+        cleanup = lambda: app_profiles.cleanup_app_profile(temporary_profile)
         sw, sh = self.desk.size()
         size = (sw, sh) if mode == "fullscreen" \
             else (int(sw * 0.82), int(sh * 0.82))
-        self.open_in_xpane(argv, title, icon="browser", app_size=size)
+        return self.open_in_xpane(
+            argv, title, icon="browser", app_size=size, cleanup=cleanup)
 
     def open_path(self, path, from_app=None):
         """The desktop's 'what do I do with this file' verb."""
@@ -973,7 +1020,8 @@ class Shell:
         except Exception as e:            # an app must never take the desk down
             wm.msgbox(self.desk, "kilix 95", f"{app}: {e}", icon="error")
 
-    def open_in_xpane(self, argv, title, icon="exe", cwd=None, app_size=None):
+    def open_in_xpane(self, argv, title, icon="exe", cwd=None, app_size=None,
+                      cleanup=None):
         """Open an X11 command (already-split argv) as a window ON the desktop,
         the way apps/amp.py runs kilix-amp. app_size (w, h) sizes the private
         Xvfb / window; None fills the desktop (minus the taskbar). An Xvfb/XPane
@@ -982,11 +1030,16 @@ class Shell:
         try:
             self.desk.wm.add(xpane.XPane(
                 self.desk, list(argv), title, icon=icon, app_size=app_size,
-                cwd=cwd or os.path.expanduser("~"), fill=True))
+                cwd=cwd or os.path.expanduser("~"), fill=True,
+                cleanup=cleanup))
+            return True
         except Exception as e:
+            if cleanup is not None:
+                cleanup()
             wm.msgbox(self.desk, title,
                       f"Could not open '{title}' in a window:\n{e}",
                       icon="error")
+            return False
 
     # ── recents ─────────────────────────────────────────────────────────────
     def add_recent(self, path):
@@ -1230,6 +1283,57 @@ def split_cmd(cmd):
         return shlex.split(cmd) or [cmd]
     except ValueError:
         return [cmd]
+
+
+def desktop_exec_argv(spec, desktop_path=None):
+    """Expand a freedesktop Exec line when no files/URLs are selected."""
+    import shlex
+    try:
+        words = shlex.split(spec.get("Exec", ""))
+    except ValueError:
+        return []
+    out = []
+    unavailable = set("fFuUhdDnNvm")
+    for word in words:
+        if word == "%i":
+            icon = spec.get("Icon")
+            if icon:
+                out.extend(["--icon", icon])
+            continue
+        if word == "%c":
+            if spec.get("Name"):
+                out.append(spec["Name"])
+            continue
+        if word == "%k":
+            if desktop_path:
+                out.append(os.path.abspath(desktop_path))
+            continue
+        expanded = []
+        drop = False
+        index = 0
+        while index < len(word):
+            if word[index] != "%" or index + 1 >= len(word):
+                expanded.append(word[index])
+                index += 1
+                continue
+            code = word[index + 1]
+            if code == "%":
+                expanded.append("%")
+            elif code in unavailable or code == "i":
+                drop = True
+                break
+            elif code == "c":
+                expanded.append(spec.get("Name", ""))
+            elif code == "k":
+                expanded.append(os.path.abspath(desktop_path)
+                                if desktop_path else "")
+            else:
+                expanded.extend(("%", code))
+            index += 2
+        value = "".join(expanded)
+        if not drop and value:
+            out.append(value)
+    return out
 
 
 def shell_quote(s):

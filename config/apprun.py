@@ -46,7 +46,6 @@ picture instead of resizing the app.
 import json
 import os
 import select
-import shutil
 import signal
 import subprocess
 import sys
@@ -56,6 +55,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import browse  # reuse Term (raw mode, kitty kbd/mouse parsing), not Chrome
 import gfx      # direct (t=d) graphics transmission for streamed sessions
 import stream   # Xvnc/Xvfb + VNC/HLS/bridge supervisor for serve modes
+from app_profiles import (APP_PROFILE_STALE_SECONDS, cleanup_app_profile,
+                          cleanup_stale_app_profiles, prepare_app_command)
 from kilix_sdk import xapp as xapp_sdk
 
 try:
@@ -1182,9 +1183,13 @@ def main():
     if auto_fit is None:
         auto_fit = os.path.basename(args[0]).lower() in (
             "virtualbox", "virtualboxvm", "vbox", "steam")
-    AppPane(args, app_w, app_h, fps, serve=serve, lan=lan, hls=hls,
-            audio=audio, mse=mse, webrtc=webrtc, no_pane=no_pane,
-            fill=fill, auto_fit=auto_fit).run()
+    args, temporary_profile = prepare_app_command(args)
+    try:
+        AppPane(args, app_w, app_h, fps, serve=serve, lan=lan, hls=hls,
+                audio=audio, mse=mse, webrtc=webrtc, no_pane=no_pane,
+                fill=fill, auto_fit=auto_fit).run()
+    finally:
+        cleanup_app_profile(temporary_profile)
 
 
 if __name__ == "__main__":

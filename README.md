@@ -614,6 +614,20 @@ window; think of it as a tiling WM turned inside-out — the app's pixels come t
 the pane instead of the WM arranging app windows. Proven by playing X-COM: UFO
 Defense under DOSBox entirely through a pane.
 
+In a Pleb desktop session, ordinary commands for installed graphical
+applications are routed here automatically. Kilix combines common Debian GUI
+command names with visible, non-terminal entries from the XDG `.desktop`
+catalogue; scripts and terminal-only programs are not changed. Set
+`KILIX_RUN_ALIASES=0` for native X11 windows, add commands with
+`KILIX_RUN_ALIAS_APPS="foo bar"`, or exclude one with
+`KILIX_RUN_ALIAS_EXCLUDE_APPS="foo"`.
+
+Contained Chromium- and Firefox-family launches receive a private, disposable
+per-tab profile so an already-running native browser cannot capture the URL and
+escape Kilix. Pass an explicit Chromium `--user-data-dir` or Firefox
+`--profile` when persistent browser state is required; explicit profiles are
+never replaced.
+
 **Tab-fill & scalable.** With no `--size`, the app's screen *tracks the pane*:
 it starts at the pane's exact pixel size and a pane resize **resizes the
 app's display** (RandR on the private Xvfb, debounced), refits the app window,

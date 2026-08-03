@@ -30,15 +30,16 @@ if [[ $- == *i* ]]; then
     fi
 fi
 
-# 4. Pleb sessions (Plebian-OS): the whole desktop is this kilix — there is no
-#    window manager, so a GUI app launched from a prompt would open an
-#    unmanaged X11 window the session cannot manage or show properly. Alias the
-#    common GUI apps to `kilix run <app>`, which gives each one a private X
-#    server streamed into a tab. Detection: the XDG session markers exported by
-#    pleb-session. Force on/off with KILIX_RUN_ALIASES=1/0; add apps with
-#    KILIX_RUN_ALIAS_APPS="foo bar". Only real PATH commands are wrapped (an
-#    alias or function you defined in ~/.bashrc wins), and rcfiles are read by
-#    interactive shells only — scripts exec'ing these binaries are unaffected.
+# 4. Pleb sessions (Plebian-OS): the whole desktop is this Kilix. A native X11
+#    window escapes its page/pane controls even when the session's fallback
+#    Openbox can raise it. Alias the
+#    GUI apps to `kilix run <app>`, which gives each one a private X server
+#    streamed into a tab. Detection: the XDG session markers exported by
+#    pleb-session. Force on/off with KILIX_RUN_ALIASES=1/0; add or remove apps
+#    with KILIX_RUN_ALIAS_APPS="foo bar" and
+#    KILIX_RUN_ALIAS_EXCLUDE_APPS="baz". Only real PATH commands are wrapped
+#    (an alias or function you defined in ~/.bashrc wins), and rcfiles are read
+#    by interactive shells only — scripts exec'ing binaries are unaffected.
 case "${KILIX_RUN_ALIASES:-}" in
     1|yes|true|on)  _kilix_run_aliases=1 ;;
     0|no|false|off) _kilix_run_aliases=0 ;;
@@ -50,20 +51,58 @@ case "${KILIX_RUN_ALIASES:-}" in
 esac
 if [ "$_kilix_run_aliases" = 1 ]; then
     _kilix_source_root="${GPU_TERMINAL_SOURCE_HOME:-$HOME/.local/gpu_terminal/sources}"
-    _kilix_bin="$(command -v kilix)" || _kilix_bin="${KILIX_HOME:-$_kilix_source_root/kilix}/kilix"
-    # The default list is every GUI program a stock Plebian-OS install ships
-    # (see plebian-os provision/install-deps.sh: the browsers, xterm, zenity,
-    # and the x11-utils viewers), plus common alternate names and gimp.
-    for _kilix_app in chromium chromium-browser firefox firefox-esr gimp \
-                      xterm uxterm zenity xmessage xev xfontsel xfd \
-                      editres viewres \
-                      ${KILIX_RUN_ALIAS_APPS:-}; do
+    _kilix_bin="$(type -P kilix 2>/dev/null || true)"
+    [ -n "$_kilix_bin" ] \
+        || _kilix_bin="${KILIX_HOME:-$_kilix_source_root/kilix}/kilix"
+    # Start with widely used Debian GUI command names so manually installed
+    # binaries without a .desktop file are covered. Then add every visible,
+    # non-terminal application in the installed XDG desktop catalogue. The
+    # helper deliberately rejects interpreters, generic dispatchers, hidden
+    # services and desktop infrastructure so `python3`, `sh`, `openbox`, etc.
+    # remain ordinary terminal commands.
+    _kilix_apps=(
+        abiword atril audacious blender brave-browser chromium chromium-browser
+        code codium discord dolphin editres eog epiphany evince feh firefox
+        firefox-esr galculator geany gedit gimp gnome-calculator gnome-terminal
+        google-chrome google-chrome-stable gnumeric inkscape kate konsole krita
+        libreoffice mousepad mpv nautilus obconf okular opera pcmanfm qpdfview
+        rhythmbox signal-desktop slack smplayer soffice spotify steam
+        sublime_text system-config-printer telegram-desktop thunar thunderbird
+        uxterm vivaldi-stable vlc xev xfd xfontsel xmessage xpdf xterm zenity
+        zoom
+    )
+    _kilix_gui_catalog="${BASH_SOURCE[0]%/*}/gui_apps.py"
+    _kilix_python="$(type -P python3 2>/dev/null || true)"
+    if [ -n "$_kilix_python" ] && [ -r "$_kilix_gui_catalog" ]; then
+        while IFS= read -r _kilix_app; do
+            [ -n "$_kilix_app" ] && _kilix_apps+=("$_kilix_app")
+        done < <("$_kilix_python" "$_kilix_gui_catalog" 2>/dev/null)
+    fi
+    read -r -a _kilix_extra_apps <<< "${KILIX_RUN_ALIAS_APPS:-}"
+    _kilix_apps+=("${_kilix_extra_apps[@]}")
+    read -r -a _kilix_excluded_apps <<< "${KILIX_RUN_ALIAS_EXCLUDE_APPS:-}"
+    declare -A _kilix_seen_apps=()
+    for _kilix_app in "${_kilix_apps[@]}"; do
+        [ -n "$_kilix_app" ] || continue
+        [ -z "${_kilix_seen_apps[$_kilix_app]+x}" ] || continue
+        _kilix_seen_apps[$_kilix_app]=1
+        _kilix_excluded=0
+        for _kilix_excluded_app in "${_kilix_excluded_apps[@]}"; do
+            if [ "$_kilix_app" = "$_kilix_excluded_app" ]; then
+                _kilix_excluded=1
+                break
+            fi
+        done
+        [ "$_kilix_excluded" = 0 ] || continue
+        case "$_kilix_app" in kilix|kitty|kitten) continue ;; esac
         if [ "$(type -t "$_kilix_app" 2>/dev/null)" = file ]; then
             # shellcheck disable=SC2139  # expand $_kilix_bin now, by design
             alias "$_kilix_app"="$(printf '%q run %q' "$_kilix_bin" "$_kilix_app")"
         fi
     done
-    unset _kilix_app _kilix_bin
+    unset _kilix_app _kilix_apps _kilix_bin _kilix_excluded \
+        _kilix_excluded_app _kilix_excluded_apps _kilix_extra_apps \
+        _kilix_gui_catalog _kilix_python _kilix_seen_apps
 fi
 unset _kilix_run_aliases
 

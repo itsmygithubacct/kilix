@@ -73,7 +73,9 @@ class XPane(wm.Window):
     _GRIP = 8                              # resize-grip band (px) at the edges
 
     def __init__(self, desk, cmd, title, icon="exe", app_size=None,
-                 fps=15, env=None, cwd=None, fill=False):
+                 fps=15, env=None, cwd=None, fill=False, cleanup=None):
+        self._external_cleanup = cleanup
+        self._external_cleanup_done = False
         sw, sh = desk.size()
         aw, ah = app_size or (sw, sh - T.TASKBAR_H)
         super().__init__(desk, title, aw, ah, x=0, y=0, icon=icon,
@@ -113,6 +115,7 @@ class XPane(wm.Window):
             initial_frame = started.initial_frame
         except Exception:
             self.xapp.close()
+            self._run_external_cleanup()
             raise
         self.add(_XSurface(self, aw, ah))
         self.set_focus(self.widgets[-1])
@@ -435,6 +438,16 @@ class XPane(wm.Window):
             pass
 
     # ── teardown ────────────────────────────────────────────────────────────
+    def _run_external_cleanup(self):
+        if self._external_cleanup_done:
+            return
+        self._external_cleanup_done = True
+        if self._external_cleanup is not None:
+            try:
+                self._external_cleanup()
+            except Exception:
+                pass
+
     def _teardown(self):
         if self._dead:
             return
@@ -450,6 +463,7 @@ class XPane(wm.Window):
         if self._tick in self.desk.tick_hooks:
             self.desk.tick_hooks.remove(self._tick)
         self.xapp.close()
+        self._run_external_cleanup()
         self.capture = self.ff = None
 
     def close(self):

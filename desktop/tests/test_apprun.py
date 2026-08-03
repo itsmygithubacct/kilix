@@ -1,9 +1,83 @@
 """config/apprun.py process cleanup regressions, without starting X/ffmpeg."""
 import os
+from pathlib import Path
 import sys
+import tempfile
+import time
 
 import harness  # noqa: F401  (sets config/ on sys.path)
+import app_profiles
 import apprun
+
+
+with tempfile.TemporaryDirectory() as td:
+    old_session = os.environ.get("KILIX_SESSION_HOME")
+    try:
+        os.environ["KILIX_SESSION_HOME"] = td
+        command, profile = apprun.prepare_app_command(
+            ["chromium", "https://example.invalid"])
+        assert command[0] == "chromium"
+        assert command[1] == f"--user-data-dir={profile}"
+        assert command[-1] == "https://example.invalid"
+        assert os.path.isdir(profile)
+        apprun.cleanup_app_profile(profile)
+        assert not os.path.exists(profile)
+
+        parent = Path(td) / "app-profiles"
+        stale = parent / "chromium-99999999-abandoned"
+        stale.mkdir()
+        old = time.time() - apprun.APP_PROFILE_STALE_SECONDS - 1
+        os.utime(stale, (old, old))
+        start = app_profiles._process_start(os.getpid())
+        live_name = (f"chromium-{os.getpid()}-{start}-live"
+                     if start is not None else f"chromium-{os.getpid()}-live")
+        live = parent / live_name
+        live.mkdir()
+        os.utime(live, (old, old))
+        reused = parent / f"chromium-{os.getpid()}-1-reused"
+        reused.mkdir()
+        os.utime(reused, (old, old))
+        oversized = parent / f"chromium-{'9' * 100}-oversized"
+        oversized.mkdir()
+        os.utime(oversized, (old, old))
+        apprun.cleanup_stale_app_profiles(parent)
+        assert not stale.exists()
+        assert live.exists()
+        assert not reused.exists()
+        assert not oversized.exists()
+
+        explicit = ["chromium", "--user-data-dir=/tmp/explicit"]
+        assert apprun.prepare_app_command(explicit) == (explicit, None)
+        firefox, firefox_profile = apprun.prepare_app_command(
+            ["firefox-esr", "--no-remote", "https://example.invalid"])
+        assert firefox[:3] == ["firefox-esr", "--profile", firefox_profile]
+        assert firefox.count("--no-remote") == 1
+        assert firefox[-1] == "https://example.invalid"
+        apprun.cleanup_app_profile(firefox_profile)
+        explicit_firefox = ["firefox", "--profile", "/tmp/explicit"]
+        assert apprun.prepare_app_command(explicit_firefox) == (
+            explicit_firefox, None)
+        profile_manager = ["firefox", "--ProfileManager"]
+        assert apprun.prepare_app_command(profile_manager) == (
+            profile_manager, None)
+        cli = ["python3", "tool.py"]
+        assert apprun.prepare_app_command(cli) == (cli, None)
+
+        linked_session = Path(td) / "linked-session"
+        linked_session.symlink_to(Path(td) / "real-session",
+                                  target_is_directory=True)
+        (Path(td) / "real-session").mkdir()
+        os.environ["KILIX_SESSION_HOME"] = str(linked_session)
+        try:
+            apprun.prepare_app_command(["chromium"])
+            raise AssertionError("symlinked session directory was accepted")
+        except RuntimeError as error:
+            assert "unsafe GUI session directory" in str(error)
+    finally:
+        if old_session is None:
+            os.environ.pop("KILIX_SESSION_HOME", None)
+        else:
+            os.environ["KILIX_SESSION_HOME"] = old_session
 
 
 class FakeStdout:
