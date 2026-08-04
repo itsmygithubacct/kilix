@@ -20,7 +20,7 @@ KILIX_TUI_UTILS_PREFIX="${KILIX_TUI_UTILS_PREFIX:-$HOME/.local}"
 # This full commit is part of Kilix's transitive source closure. An existing
 # sibling checkout remains a development checkout unless KILIX_TUI_UTILS_REF is
 # explicitly set; a first-use download always resolves this immutable default.
-KILIX_TUI_UTILS_DEFAULT_REF=48bc78026cc93df1d86176545e3805ac4825c902
+KILIX_TUI_UTILS_DEFAULT_REF=984fc11658d385a83f2c5a44fafeb97660129bba
 
 die() { printf 'kilix tui: %s\n' "$*" >&2; exit 1; }
 log() { printf 'kilix tui: %s\n' "$*" >&2; }
