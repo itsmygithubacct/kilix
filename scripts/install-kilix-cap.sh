@@ -18,7 +18,7 @@ KILIX_CAP_ALLOW_MUTABLE_REF="${KILIX_CAP_ALLOW_MUTABLE_REF:-0}"
 # This full commit is part of Kilix's transitive source closure. An existing
 # sibling checkout remains a development checkout unless KILIX_CAP_REF is
 # explicitly set; a first-use download always resolves this immutable default.
-KILIX_CAP_DEFAULT_REF=7eed94b10372c5673ea69200fc0be7868af5603d
+KILIX_CAP_DEFAULT_REF=15a1826ae817d482aa857bffa0da834ae084fbe2
 
 die() { printf 'kilix cap: %s\n' "$*" >&2; exit 1; }
 log() { printf 'kilix cap: %s\n' "$*" >&2; }
