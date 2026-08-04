@@ -24,6 +24,8 @@
 #   ./kilix temps [args]       # run the pinned graphical thermal dashboard
 #   ./kilix memory [args]      # run the graphical RAM/pressure dashboard
 #   ./kilix tmux [args]        # install/run the pinned Tmux Manager
+#   ./kilix amp [args]         # install/run the pinned Media Player
+#   ./kilix amp --headless     # run its control-socket backend, no windows
 #   ./kilix speak [TEXT...]    # read a pane, or the given text, aloud
 #   ./kilix dictate           # recognize one spoken utterance
 #   ./kilix tts | stt [args]  # run the read-aloud / dictation TUIs
@@ -1450,6 +1452,36 @@ case "${1:-}" in
       || { echo "kilix memory: installer did not create $_memory_installed" >&2; exit 1; }
     [ "$_memory_install_only" = 0 ] || exit 0
     exec "$_memory_installed" "$@" ;;
+  amp|media-player)
+    # The Media Player has always built on first use from the desktop; this is
+    # the same install with a name a caller can reach. Kilix Amp is catalog
+    # content, so the pin comes from the content catalog, not from here.
+    shift
+    _amp_install_only=0
+    _amp_headless=0
+    while :; do
+      case "${1:-}" in
+        --install-only) _amp_install_only=1; shift ;;
+        --headless) _amp_headless=1; shift ;;
+        --print-ref)
+          exec python3 "$KILIX_HOME/scripts/install-kilix-amp.py" --print-ref ;;
+        --) shift; break ;;
+        *) break ;;
+      esac
+    done
+    _amp_installed="$(python3 "$KILIX_HOME/scripts/install-kilix-amp.py")" \
+      || { echo "kilix amp: install failed" >&2; exit 1; }
+    [ -n "$_amp_installed" ] && [ -x "$_amp_installed" ] \
+      || { echo "kilix amp: installer did not create $_amp_installed" >&2; exit 1; }
+    [ "$_amp_install_only" = 0 ] || exit 0
+    if [ "$_amp_headless" = 1 ]; then
+      # The backend outlives the caller's terminal, so it gets the session
+      # directory rather than a pane's environment.
+      _kilix_ensure_private_directory \
+        "$KILIX_SESSION_HOME" "session" || exit 1
+      exec "$_amp_installed" --headless "$@"
+    fi
+    exec "$_amp_installed" "$@" ;;
   tmux|tmux-manager|tmux-tui)
     shift
     _tmux_install_only=0

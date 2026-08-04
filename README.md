@@ -873,6 +873,11 @@ right-click menu everywhere. Built in:
   a Winamp 2.x clone, into `~/.local/gpu_terminal/kilix-95/data/apps`. The same
   binary also runs `--headless`, serving a control socket that the TUI Music
   tool drives — one decoder behind both front ends rather than two that drift.
+  `kilix amp` is the same install with a name a caller can reach: it builds the
+  pinned player if needed and runs it, `kilix amp --headless` runs the backend
+  with no windows, and `kilix amp --install-only` just builds it (what `pleb
+  install` uses to get it in place before anyone asks). The commit comes from
+  the pinned content catalog, so moving that pin rebuilds on the next call.
 - **Create Launcher…** (Start menu or right-click the desktop) writes
   freedesktop-style `.desktop` files into the desktop folder
   (`~/.local/gpu_terminal/kilix-95/data/desktop`, override with `$KILIX_DESKTOP_DIR`); plain
