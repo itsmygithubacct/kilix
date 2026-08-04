@@ -131,6 +131,24 @@ links, and stamp before safely collecting unreferenced generations; both
 retains the origin/ref-aware updates, pinned downloadable assets, versioned
 host SDK, and provider contract introduced in 0.1.1.
 
+## Watch the episodes
+
+**Part two — Kilix: pages, panes, and clickable chrome** (1920×1080, 3m32s,
+[full file](https://github.com/itsmygithubacct/kilix/releases/download/media-v1/02-kilix-pages-panes-and-chrome.mp4)):
+
+https://github.com/user-attachments/assets/b4d35ed1-4eb3-4184-92f3-34b50cc385bf
+
+**Part four — How applications stay inside Kilix** (inline player is a 720p preview;
+[full quality](https://github.com/itsmygithubacct/kilix/releases/download/media-v1/04-applications-inside-kilix.mp4)
+is 1920×1080, 3m23s, 33 MB):
+
+https://github.com/user-attachments/assets/4cdd423e-4958-477d-8a85-b78049c46610
+
+Both are parts of *Kilix, Pleb, and Plebian-OS: A Desktop Built Inside a Terminal*, published as a
+[media release](https://github.com/itsmygithubacct/kilix/releases/tag/media-v1) so a clone stays
+small. The [full series](https://github.com/itsmygithubacct/plebian-os#watch-the-series) (31m22s)
+lives on `plebian-os` and plays at [plebian-os.com](https://plebian-os.com/#watch).
+
 ## Features
 
 - **Clickable pane buttons** keyboard, `+ - ← ↑ ↓ → ▢ ✕` — synchronized
