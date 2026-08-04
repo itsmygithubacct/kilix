@@ -862,7 +862,9 @@ right-click menu everywhere. Built in:
   skin composites onto the desktop — drag it by its own titlebar; clicks on the
   gaps fall through to the desktop icons. First run clones + builds
   [itsmygithubacct/kilix-amp](https://github.com/itsmygithubacct/kilix-amp),
-  a Winamp 2.x clone, into `~/.local/gpu_terminal/kilix-95/data/apps`.
+  a Winamp 2.x clone, into `~/.local/gpu_terminal/kilix-95/data/apps`. The same
+  binary also runs `--headless`, serving a control socket that the TUI Music
+  tool drives — one decoder behind both front ends rather than two that drift.
 - **Create Launcher…** (Start menu or right-click the desktop) writes
   freedesktop-style `.desktop` files into the desktop folder
   (`~/.local/gpu_terminal/kilix-95/data/desktop`, override with `$KILIX_DESKTOP_DIR`); plain
