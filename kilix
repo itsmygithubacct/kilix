@@ -33,6 +33,7 @@
 #   ./kilix bonsai [args]     # BitNet model store: browse, download, verify
 #   ./kilix open-url [URL]    # real browser first; in-pane fallback
 #   ./kilix browse [URL]      # compatibility alias for open-url
+#   ./kilix chawan [URL]      # install/run the Chawan text browser
 #   ./kilix status            # show version, engine, config, and provider
 #   ./kilix update            # verified-origin, clean, fast-forward/ref update
 #   ./kilix desktop           # launch the configured desktop provider
@@ -1701,6 +1702,55 @@ case "${1:-}" in
     _kilix_bonsai_resolve "$_bonsai_force" || exit 1
     [ "$_bonsai_install_only" = 0 ] || exit 0
     exec "${_KILIX_BONSAI_COMMAND[@]}" "$@" ;;
+  chawan|cha|text-browser)
+    shift
+    _chawan_install_only=0
+    while :; do
+      case "${1:-}" in
+        --install-only) _chawan_install_only=1; shift ;;
+        -h|--help|help)
+          echo "usage: $_self chawan [--install-only] [URL|FILE...]"
+          echo "opens the Chawan text browser; with no URL, its start page"
+          echo
+          echo "Chawan renders pages as terminal cells and draws images with"
+          echo "the same Kitty graphics protocol kilix itself uses, so it"
+          echo "works over SSH and on machines with no X server or GPU."
+          echo
+          echo "  q  quit      M-c  configuration      ?  keybindings"
+          echo
+          echo "The first run downloads and builds it, which takes a few"
+          echo "minutes; every later run starts immediately."
+          exit 0 ;;
+        --) shift; break ;;
+        *) break ;;
+      esac
+    done
+    _chawan_installer="$KILIX_HOME/scripts/install-kilix-chawan.sh"
+    if [ ! -f "$_chawan_installer" ] || [ -L "$_chawan_installer" ] \
+         || [ ! -x "$_chawan_installer" ]; then
+      echo "kilix chawan: missing or unsafe installer: $_chawan_installer" >&2
+      exit 1
+    fi
+    _chawan_binary="$("$_chawan_installer" --print-path)" \
+      || { echo "kilix chawan: could not prepare the text browser" >&2; exit 1; }
+    if [ ! -f "$_chawan_binary" ] || [ -L "$_chawan_binary" ] \
+         || [ ! -x "$_chawan_binary" ]; then
+      echo "kilix chawan: installer returned an unsafe executable: $_chawan_binary" >&2
+      exit 1
+    fi
+    [ "$_chawan_install_only" = 0 ] || exit 0
+    # Chawan reads its configuration from $CHA_DIR. Seed a writable copy from
+    # the checkout once, so kilix's defaults (images on, true colour) apply
+    # without overwriting anything the user edits afterwards.
+    CHA_DIR="${KILIX_CHAWAN_CONFIG_DIR:-$KILIX_CONFIG_HOME/chawan}"
+    if [ ! -e "$CHA_DIR/config.toml" ] \
+         && [ -f "$KILIX_HOME/config/chawan/config.toml" ]; then
+      mkdir -p "$CHA_DIR" \
+        && cp -- "$KILIX_HOME/config/chawan/config.toml" "$CHA_DIR/config.toml" \
+        || echo "kilix chawan: could not seed $CHA_DIR/config.toml" >&2
+    fi
+    export CHA_DIR
+    exec "$_chawan_binary" "$@" ;;
   voice)
     shift
     _voice_action="${1:-status}"
@@ -2822,6 +2872,13 @@ if [ "${1:-}" = "open-url" ] || [ "${1:-}" = "browse" ]; then
   . "$KILIX_HOME/config/browser.sh"
   if _real_browser="$(_kilix_find_real_browser)"; then
     _kilix_exec_real_browser "$_real_browser" "$@"
+  fi
+
+  # No desktop browser. Prefer Chawan when it has already been built: it is a
+  # real browser in the pane, and it costs a process rather than a Chrome.
+  # An absent Chawan falls through rather than installing itself here.
+  if _chawan_browser="$(_kilix_find_installed_chawan)"; then
+    _kilix_exec_chawan "$_chawan_browser" "$@"
   fi
 
   # Final fallback: Chrome (and video) rendered in a pane. Host it in its own

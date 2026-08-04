@@ -37,6 +37,12 @@ chmod 0700 "$KILIX_STORAGE_HOME" "$KILIX_CONFIG_HOME" 2>/dev/null || true
 # pkg-config modules the fork links against (see build.sh).
 PC_DEPS="x11 xrandr xinerama xcursor xi xkbcommon xkbcommon-x11 x11-xcb dbus-1 gl fontconfig libpng lcms2 cairo-fc harfbuzz libcrypto libxxhash wayland-client wayland-cursor wayland-egl wayland-protocols"
 AMP_PC_DEPS="sdl2 SDL2_image sndfile zlib fluidsynth"
+# Wanted, but never required. These belong to the text browser (`kilix chawan`),
+# which is built on first use rather than with the fork, and which can build
+# libssh2 for itself or drop SFTP entirely when it is absent. Verifying them
+# alongside PC_DEPS would let a missing optional browser feature fail the whole
+# prerequisite gate — and pleb treats that gate as fatal.
+OPTIONAL_PC_DEPS="libssh2 libbrotlidec"
 
 log(){ printf 'kilix: %s\n' "$*" >&2; }
 
@@ -84,6 +90,14 @@ verify() {
       echo "   pkg-config $m: yes"
     else
       echo "   pkg-config $m: MISSING"; ok=0
+    fi
+  done
+  for m in $OPTIONAL_PC_DEPS; do
+    if pkg-config --exists "$m" 2>/dev/null; then
+      echo "   pkg-config $m: yes (optional)"
+    else
+      echo "   pkg-config $m: missing (optional — 'kilix chawan' builds it or"
+      echo "                 goes without; on Debian: apt install libssh2-1-dev libbrotli-dev)"
     fi
   done
   for tool in gcc make pkg-config git curl zstd; do
@@ -159,7 +173,7 @@ ensure_go_toolchain() {
 
 # ---- per-distro installs -----------------------------------------------------
 fedora_install() {
-  local pc pkgs="gcc make pkgconf-pkg-config git curl zstd golang python3 python3-devel python3-pillow simde-devel wayland-devel wayland-protocols-devel SDL2-devel SDL2_image-devel libsndfile-devel zlib-devel fluidsynth fluidsynth-devel fluid-soundfont-gm"
+  local pc pkgs="gcc make pkgconf-pkg-config git curl zstd golang python3 python3-devel python3-pillow simde-devel wayland-devel wayland-protocols-devel SDL2-devel SDL2_image-devel libsndfile-devel zlib-devel fluidsynth fluidsynth-devel fluid-soundfont-gm libssh2-devel brotli-devel"
   local -a packages
   for pc in $PC_DEPS; do pkgs="$pkgs pkgconfig($pc)"; done
   echo "==> Fedora/RHEL detected — installing system-wide via dnf"
@@ -173,7 +187,8 @@ debian_install() {
     libxkbcommon-x11-dev libx11-xcb-dev libdbus-1-dev libgl1-mesa-dev libfontconfig-dev \
     libpng-dev liblcms2-dev libcairo2-dev libharfbuzz-dev libssl-dev libxxhash-dev \
     libsimde-dev libwayland-dev wayland-protocols \
-    libsdl2-dev libsdl2-image-dev libsndfile1-dev zlib1g-dev libfluidsynth-dev fluidsynth fluid-soundfont-gm"
+    libsdl2-dev libsdl2-image-dev libsndfile1-dev zlib1g-dev libfluidsynth-dev fluidsynth fluid-soundfont-gm \
+    libssh2-1-dev libbrotli-dev"
   local -a packages
   echo "==> Debian/Ubuntu detected — installing system-wide via apt-get"
   sudo apt-get update
@@ -185,7 +200,8 @@ arch_install() {
   local pkgs="base-devel pkgconf git curl zstd go python python-pillow \
     libx11 libxrandr libxinerama libxcursor libxi libxkbcommon mesa dbus fontconfig \
     libpng lcms2 cairo harfbuzz openssl xxhash simde wayland wayland-protocols \
-    sdl2 sdl2_image libsndfile zlib fluidsynth soundfont-fluid"
+    sdl2 sdl2_image libsndfile zlib fluidsynth soundfont-fluid \
+    libssh2 brotli"
   local -a packages
   echo "==> Arch detected — installing system-wide via pacman"
   read -r -a packages <<<"$pkgs"
@@ -198,7 +214,8 @@ suse_install() {
     libxkbcommon-devel libxkbcommon-x11-devel dbus-1-devel Mesa-libGL-devel fontconfig-devel \
     libpng16-devel liblcms2-devel cairo-devel harfbuzz-devel libopenssl-devel libxxhash-devel \
     simde-devel wayland-devel wayland-protocols-devel \
-    libSDL2-devel libSDL2_image-devel libsndfile-devel zlib-devel fluidsynth-devel fluidsynth fluid-soundfont-gm"
+    libSDL2-devel libSDL2_image-devel libsndfile-devel zlib-devel fluidsynth-devel fluidsynth fluid-soundfont-gm \
+    libssh2-devel libbrotli-devel"
   local -a packages
   echo "==> openSUSE detected — installing system-wide via zypper"
   read -r -a packages <<<"$pkgs"

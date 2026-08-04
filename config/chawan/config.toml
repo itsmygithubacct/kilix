@@ -1,0 +1,35 @@
+# Kilix's starting configuration for the Chawan text browser.
+#
+# This file is a seed, not a live config: `kilix chawan` copies it to
+# $KILIX_CONFIG_HOME/chawan/config.toml the first time it runs and never
+# touches it again, so anything you change there survives a Kilix update.
+#
+# Every setting Chawan understands is documented in the browser itself —
+# press M-c (or run `cha about:chawan`) — and in doc/config.md in the
+# kilix-chawan checkout.
+
+[buffer]
+# Chawan ships with images off. Kilix turns them on, because Kilix renders
+# with the Kitty graphics protocol and Chawan already speaks it: this is what
+# lets a pane show real pictures with no X server and no GPU. Chawan's
+# image-mode defaults to "auto", which finds that protocol on its own.
+images = true
+
+# JavaScript stays off, matching upstream. It is the single largest source of
+# both breakage and exposure in a browser this small, and Chawan is at its
+# best as a reader. Enable it per-site instead, which keeps the blast radius
+# to sites you chose:
+#
+#     [[siteconf]]
+#     url = "https://example.com/.*"
+#     scripting = true
+scripting = false
+
+[display]
+# "auto" already detects the Kitty protocol; naming it is documentation, not
+# a workaround, and it keeps a misdetected terminal from silently dropping
+# back to text-only rendering.
+image-mode = "auto"
+
+# Kilix panes are true colour.
+color-mode = "true-color"
