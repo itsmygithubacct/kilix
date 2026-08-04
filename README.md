@@ -25,7 +25,15 @@ complete tree. Freedesktop launchers/icons are the intentional exception:
 
 ## Release 0.1.7
 
-Release date: 2026-08-02.
+Prepared 2026-08-02. **Not published yet.** The source closure is final and
+this repository's `VERSION` reads 0.1.7, but no 0.1.7 artifact or release tag
+has been published: publication requires an ISO built from this exact closure
+and accepted under Plebian-OS's
+[RELEASING.md](https://github.com/itsmygithubacct/plebian-os/blob/main/RELEASING.md)
+procedure. Until that lands, **0.1.2 remains the last published coordinated
+release**, and the newest tag on this repository is the Kilix-only `v0.1.4`
+described below. Read the sections that follow as what 0.1.7 contains, not as
+something you can install today.
 
 Version 0.1.7 is the coordinated stack release covering everything since 0.1.2,
 and is the first release Kilix shares with
