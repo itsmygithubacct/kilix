@@ -37,10 +37,50 @@ try:
 except Exception:                               # noqa: BLE001
     _games = None
 
-# The coding agents, in the form the rollout-resume tool records them. Kept
-# here rather than imported because kilix-tui-utils is an optional component:
-# `kilix install` has to list the agents on a machine that never installed it.
-AGENTS = (
+def _providers_from_rollout():
+    """The agent definitions from kilix-rollout, when that checkout is present.
+
+    Those are the authoritative ones: the rollout-resume tool installs, updates
+    and resumes each agent, so it is the thing that has to be right about their
+    commands. Reading them here means one definition when both are installed,
+    and the copy below is a fallback for a machine that never installed the
+    utilities — not a second opinion.
+    """
+    import importlib.util
+    source = os.environ.get("GPU_TERMINAL_SOURCE_HOME") or ""
+    roots = []
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for base in (source, os.path.join(os.path.expanduser("~"), "gpu_terminal"),
+                 os.path.dirname(os.path.dirname(here))):
+        if base:
+            roots.append(os.path.join(base, "kilix-desktops", "kilix-tui-utils",
+                                      "src"))
+    for root in roots:
+        candidate = os.path.join(root, "kilix_rollout", "providers.py")
+        if not os.path.isfile(candidate):
+            continue
+        if root not in sys.path:
+            sys.path.insert(0, root)
+        try:
+            from kilix_rollout import providers
+        except Exception:                        # noqa: BLE001
+            return None
+        return tuple({
+            "id": item.key,
+            "label": item.label,
+            "kind": "agent",
+            "command": item.command,
+            "install": item.install_shell,
+            "update": tuple(item.update_argv),
+            "source": item.install_source,
+        } for item in providers.PROVIDERS)
+    return None
+
+
+# Fallback definitions, used only when the utilities are not installed. They
+# drifted from the authoritative copy once already — Kimi updates with
+# `upgrade`, not `update` — which is why the import above is tried first.
+_FALLBACK_AGENTS = (
     {
         "id": "claude",
         "label": "Claude Code",
@@ -65,10 +105,12 @@ AGENTS = (
         "kind": "agent",
         "command": "kimi",
         "install": "curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash",
-        "update": ("kimi", "update"),
-        "source": "https://code.kimi.com/",
+        "update": ("kimi", "upgrade"),
+        "source": "https://moonshotai.github.io/kimi-code/",
     },
 )
+
+AGENTS = _providers_from_rollout() or _FALLBACK_AGENTS
 
 
 def _catalog_rows() -> list[dict]:

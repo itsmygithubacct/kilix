@@ -79,10 +79,43 @@ class ContractTests(unittest.TestCase):
         self.assertIn("_games.ensure(", source)
         self.assertIn("_games.game_ready(", source)
 
+    def test_the_agent_definitions_come_from_rollout_when_it_is_present(self):
+        """One definition, not two opinions.
+
+        kilix-rollout installs, updates and resumes these agents, so it is the
+        thing that has to be right about their commands. The copy here is a
+        fallback for a machine without the utilities — and it had already
+        drifted (Kimi updates with `upgrade`, not `update`) before this bound
+        the two together.
+        """
+        if installer._providers_from_rollout() is None:
+            self.skipTest("kilix-rollout is not checked out beside us")
+        self.assertIsNot(installer.AGENTS, installer._FALLBACK_AGENTS)
+
+    def test_the_fallback_agrees_with_the_authoritative_definitions(self):
+        authoritative = installer._providers_from_rollout()
+        if authoritative is None:
+            self.skipTest("kilix-rollout is not checked out beside us")
+        by_id = {a["id"]: a for a in authoritative}
+        for fallback in installer._FALLBACK_AGENTS:
+            real = by_id.get(fallback["id"])
+            self.assertIsNotNone(real, fallback["id"])
+            for field in ("command", "install", "update", "source"):
+                self.assertEqual(fallback[field], real[field],
+                                 f"{fallback['id']}.{field} has drifted")
+
     def test_agents_update_through_their_own_updater(self):
+        """The updater is the agent's own command — not a spelling of it.
+
+        This first asserted that every update argv contained the word
+        "update", which Kimi disproves: its updater is `kimi upgrade`. The
+        property that actually matters is that we invoke the agent itself
+        rather than a package manager or a re-run of the install script.
+        """
         for agent in installer.AGENTS:
             self.assertEqual(agent["update"][0], agent["command"])
-            self.assertIn("update", agent["update"])
+            self.assertGreater(len(agent["update"]), 1,
+                               f"{agent['id']} needs an update subcommand")
 
 
 if __name__ == "__main__":
