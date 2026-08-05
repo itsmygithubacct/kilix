@@ -11,6 +11,7 @@ import os
 import subprocess
 import sys
 import unittest
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "config"))
@@ -91,6 +92,29 @@ class ContractTests(unittest.TestCase):
         if installer._providers_from_rollout() is None:
             self.skipTest("kilix-rollout is not checked out beside us")
         self.assertIsNot(installer.AGENTS, installer._FALLBACK_AGENTS)
+
+    def test_a_relocated_utilities_checkout_is_still_found(self):
+        """KILIX_TUI_UTILS_DIR is the installer's own override.
+
+        The utilities are not optional — Kilix installs them itself and
+        `pleb install` runs the same installer — so the authoritative
+        definitions are normally present. Searching only the default clone
+        location meant an operator who relocated the checkout got the local
+        fallback instead, with no sign that it had happened.
+        """
+        import os
+        import shutil
+        import tempfile
+        src = os.path.join(os.path.dirname(ROOT), "kilix-desktops",
+                           "kilix-tui-utils", "src")
+        if not os.path.isdir(os.path.join(src, "kilix_rollout")):
+            self.skipTest("the utilities are not checked out beside us")
+        with tempfile.TemporaryDirectory() as tmp:
+            shutil.copytree(src, os.path.join(tmp, "src"))
+            with mock.patch.dict(os.environ, {"KILIX_TUI_UTILS_DIR": tmp}):
+                found = installer._providers_from_rollout()
+        self.assertIsNotNone(found, "the relocated checkout must be found")
+        self.assertEqual({a["id"] for a in found}, {"claude", "codex", "kimi"})
 
     def test_the_fallback_agrees_with_the_authoritative_definitions(self):
         authoritative = installer._providers_from_rollout()
