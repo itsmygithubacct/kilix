@@ -1366,6 +1366,52 @@ case "${1:-}" in
         echo "$_games_usage" >&2
         exit 2 ;;
     esac ;;
+  default-desktop)
+    # The one place the chosen desktop is written, so every desktop and the
+    # first-boot provisioner set it the same way. Selection used to be a
+    # launch-time environment variable: `kilix cap` ran Cap once and the next
+    # login went back to whatever the image shipped, with no command that meant
+    # "and keep doing that".
+    shift
+    _dd_file="$KILIX_USER_CONFIG_DIRECTORY/kilix.env"
+    case "${1:-show}" in
+      show)
+        _dd_current="$(sed -n 's/^KILIX_DESKTOP_PROVIDER=//p' "$_dd_file" \
+          2>/dev/null | tail -1)"
+        echo "${_dd_current:-auto}"
+        exit 0 ;;
+      list)
+        printf '%s\n' auto builtin external xp cap tui land none
+        exit 0 ;;
+      -h|--help|help)
+        echo "usage: $_self default-desktop [show|list|set NAME]"
+        echo "the desktop every later session starts with"
+        exit 0 ;;
+      set)
+        shift
+        _dd_name="${1:-}"
+        case "$_dd_name" in
+          auto|builtin|external|xp|cap|tui|land|none) ;;
+          *)
+            echo "kilix default-desktop: unknown desktop '${_dd_name:-}'" >&2
+            echo "choose one of: auto builtin external xp cap tui land none" >&2
+            exit 2 ;;
+        esac
+        mkdir -p "$KILIX_USER_CONFIG_DIRECTORY" || exit 1
+        [ -f "$_dd_file" ] || : > "$_dd_file"
+        # Rewrite in place: a second assignment further down the file would
+        # win silently and leave the first one there to be read as truth.
+        _dd_tmp="$_dd_file.tmp.$$"
+        grep -v '^KILIX_DESKTOP_PROVIDER=' "$_dd_file" > "$_dd_tmp" 2>/dev/null \
+          || : > "$_dd_tmp"
+        printf 'KILIX_DESKTOP_PROVIDER=%s\n' "$_dd_name" >> "$_dd_tmp"
+        mv -- "$_dd_tmp" "$_dd_file" || exit 1
+        echo "default desktop: $_dd_name"
+        exit 0 ;;
+      *)
+        echo "usage: $_self default-desktop [show|list|set NAME]" >&2
+        exit 2 ;;
+    esac ;;
   volume|mixer)
     # The chrome's volume widget resolves this, and so does anyone typing it.
     # Kilix ships a mixer in the shared shell wired to the sink Kilix itself
