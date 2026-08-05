@@ -46,6 +46,87 @@ class ListingTests(unittest.TestCase):
             self.assertEqual(row["installed"], bool(shutil.which(agent["command"])))
 
 
+class DriverTests(unittest.TestCase):
+    """The NVIDIA driver is offered where it applies, and nowhere else.
+
+    It is a deliberate opt-in: the image runs nouveau, which drives a display on
+    any supported card. The install belongs to the Plebian-OS helper, which
+    preflights the machine and refuses hardware too old for any driver Debian
+    still ships — so what matters here is that this list defers to it rather
+    than forming a second opinion.
+    """
+
+    def test_the_row_appears_only_where_the_hardware_is(self):
+        with mock.patch.object(installer, "_nvidia_gpu_present", return_value=True):
+            ids = {row["id"] for row in installer.rows()}
+            self.assertIn("nvidia-driver", ids)
+        with mock.patch.object(installer, "_nvidia_gpu_present", return_value=False):
+            ids = {row["id"] for row in installer.rows()}
+            self.assertNotIn("nvidia-driver", ids)
+
+    def test_the_row_is_a_driver_kind_so_every_surface_groups_it(self):
+        with mock.patch.object(installer, "_nvidia_gpu_present", return_value=True):
+            row = next(r for r in installer.rows() if r["id"] == "nvidia-driver")
+        self.assertEqual(row["kind"], "driver")
+        self.assertIn("installed", row)
+        self.assertIsInstance(row["installed"], bool)
+
+    def test_installed_state_follows_the_loaded_module(self):
+        with mock.patch.object(installer, "_nvidia_gpu_present", return_value=True), \
+             mock.patch.object(installer, "_nvidia_driver_loaded", return_value=True):
+            row = next(r for r in installer.rows() if r["id"] == "nvidia-driver")
+            self.assertTrue(row["installed"])
+        with mock.patch.object(installer, "_nvidia_gpu_present", return_value=True), \
+             mock.patch.object(installer, "_nvidia_driver_loaded", return_value=False):
+            row = next(r for r in installer.rows() if r["id"] == "nvidia-driver")
+            self.assertFalse(row["installed"])
+
+    def test_install_defers_to_the_plebian_os_helper(self):
+        calls = []
+        driver = installer.DRIVERS[0]
+        with mock.patch.object(installer, "_nvidia_gpu_present", return_value=True), \
+             mock.patch.object(installer.shutil, "which",
+                               return_value="/usr/local/bin/plebian-os-nvidia-driver"), \
+             mock.patch.object(installer.subprocess, "run",
+                               side_effect=lambda a, **k: calls.append(a) or
+                               mock.Mock(returncode=0)):
+            installer._install_driver(driver, assume_yes=False)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0],
+                         ["sudo", "/usr/local/bin/plebian-os-nvidia-driver", "--install"])
+
+    def test_install_runs_nothing_without_the_hardware(self):
+        calls = []
+        driver = installer.DRIVERS[0]
+        with mock.patch.object(installer, "_nvidia_gpu_present", return_value=False), \
+             mock.patch.object(installer.subprocess, "run",
+                               side_effect=lambda *a, **k: calls.append(a)):
+            code = installer._install_driver(driver, assume_yes=False)
+        self.assertEqual(code, 2)
+        self.assertEqual(calls, [], "nothing may run when the GPU is absent")
+
+    def test_install_runs_nothing_when_the_helper_is_missing(self):
+        calls = []
+        driver = installer.DRIVERS[0]
+        with mock.patch.object(installer, "_nvidia_gpu_present", return_value=True), \
+             mock.patch.object(installer.shutil, "which", return_value=None), \
+             mock.patch.object(installer.subprocess, "run",
+                               side_effect=lambda *a, **k: calls.append(a)):
+            code = installer._install_driver(driver, assume_yes=False)
+        self.assertEqual(code, 2)
+        self.assertEqual(calls, [], "nothing may run without the helper")
+
+    def test_the_driver_install_is_not_reimplemented_here(self):
+        """No apt, no dkms, no nvidia-detect in this module."""
+        source = open(os.path.join(ROOT, "config", "install.py"),
+                      encoding="utf-8").read()
+        body = "\n".join(line for line in source.splitlines()
+                         if not line.strip().startswith("#"))
+        for token in ("apt-get", "apt install", "dkms ", "modprobe"):
+            self.assertNotIn(token, body,
+                             f"{token!r} belongs to the Plebian-OS helper")
+
+
 class SafetyTests(unittest.TestCase):
     def test_an_unknown_id_is_refused_rather_than_guessed(self):
         code = installer.main(["definitely-not-a-thing"])
