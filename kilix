@@ -20,7 +20,8 @@
 #   ./kilix remote ...        # expose/attach a live graphical pane
 #   ./kilix screen-size ...   # show/increase/decrease/reset terminal scale
 #   ./kilix settings          # shared chrome/game settings TUI and CLI
-#   ./kilix games ...         # list, enable, disable, or play stack games
+#   ./kilix games ...         # list, play, enable, or disable stack games
+#   ./kilix power ...         # logout|reboot|poweroff, no confirmation here
 #   ./kilix launcher          # catalog TUI: stack programs, apps, launchers
 #   ./kilix laptop ...        # list/open/status/close laptop session profiles
 #   ./kilix temps [args]       # run the pinned graphical thermal dashboard
@@ -1289,10 +1290,11 @@ case "${1:-}" in
     shift
     _games_action="${1:-list}"
     [ $# -eq 0 ] || shift
+    _games_usage="usage: $_self games [list|settings|play GAME|enable GAME...|disable GAME...]"
     case "$_games_action" in
       list)
         [ $# -eq 0 ] || {
-          echo "usage: $_self games [list|settings|enable GAME...|disable GAME...|play GAME]" >&2
+          echo "$_games_usage" >&2
           exit 2
         }
         exec python3 "$KILIX_HOME/kilix-settings" --print-games ;;
@@ -1333,10 +1335,11 @@ case "${1:-}" in
         # SDK (kilix_content, shared settings) needs the host config root.
         export PYTHONPATH="$KILIX_HOME/config${PYTHONPATH:+:$PYTHONPATH}"
         if [ -n "$_games_play_setup" ]; then
-          exec python3 "$KILIX_HOME/desktop/games.py" \
-            "$_games_play_setup" "$_games_play_id"
+          set -- --setup-only "$_games_play_id"
+        else
+          set -- "$_games_play_id"
         fi
-        exec python3 "$KILIX_HOME/desktop/games.py" "$_games_play_id" ;;
+        exec python3 "$KILIX_HOME/desktop/games.py" "$@" ;;
       settings|configure)
         [ $# -eq 0 ] || {
           echo "usage: $_self games settings" >&2
@@ -1357,10 +1360,10 @@ case "${1:-}" in
         exec python3 "$KILIX_HOME/kilix-settings" \
           "${_games_args[@]}" --print-games ;;
       -h|--help|help)
-        echo "usage: $_self games [list|settings|enable GAME...|disable GAME...|play GAME]"
+        echo "$_games_usage"
         exit 0 ;;
       *)
-        echo "usage: $_self games [list|settings|enable GAME...|disable GAME...|play GAME]" >&2
+        echo "$_games_usage" >&2
         exit 2 ;;
     esac ;;
   transcript|transcripts|session-log|session-logs)
@@ -1908,15 +1911,15 @@ case "${1:-}" in
       exit 2
     }
     case "$_power_action" in
-      logout)
+      logout|log-out)
         command -v loginctl >/dev/null 2>&1 \
           || { echo "kilix power: loginctl not found" >&2; exit 1; }
         exec loginctl terminate-session "${XDG_SESSION_ID:-}" ;;
-      reboot)
+      reboot|restart)
         command -v systemctl >/dev/null 2>&1 \
           || { echo "kilix power: systemctl not found" >&2; exit 1; }
         exec systemctl reboot ;;
-      poweroff)
+      poweroff|shutdown|off)
         command -v systemctl >/dev/null 2>&1 \
           || { echo "kilix power: systemctl not found" >&2; exit 1; }
         exec systemctl poweroff ;;

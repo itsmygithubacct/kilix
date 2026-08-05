@@ -40,6 +40,39 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("TMUX_CLI_REF", installer)
         self.assertIn("--with-tb", installer)
 
+    def test_games_play_is_advertised_and_host_owned(self):
+        """`kilix games play GAME` is a cross-repo contract.
+
+        The TUI desktop and the walkable desktops detect the verb from the
+        usage line `kilix games help` prints, so the word `play` appearing
+        there is load-bearing, not cosmetic. The launch itself must go
+        through the host's own desktop games module with the SDK on the
+        path — one implementation of install-and-boot for every desktop.
+        """
+        launcher = (ROOT / "kilix").read_text()
+        self.assertIn("play GAME", launcher)
+        self.assertIn('desktop/games.py" "$@"', launcher)
+        self.assertIn('PYTHONPATH="$KILIX_HOME/config', launcher)
+
+    def test_power_runs_the_frozen_session_argvs(self):
+        """`kilix power` mirrors kilix-tui-utils' privileged.py verbatim.
+
+        Desktops own their confirmation UX; the host owns the argvs. These
+        three commands are the frozen contract every desktop's power menu
+        runs, so they are pinned as text.
+        """
+        launcher = (ROOT / "kilix").read_text()
+        self.assertIn("power|--power)", launcher)
+        self.assertIn('loginctl terminate-session "${XDG_SESSION_ID:-}"',
+                      launcher)
+        self.assertIn("systemctl reboot", launcher)
+        self.assertIn("systemctl poweroff", launcher)
+
+    def test_launcher_alias_reaches_the_catalog_tui(self):
+        launcher = (ROOT / "kilix").read_text()
+        self.assertIn("launcher|--launcher)", launcher)
+        self.assertIn("kilix-launcher", launcher)
+
     def test_desktop_provider_knobs_are_wired(self):
         text = (ROOT / "kilix").read_text()
         for provider in ["auto)", "builtin)", "external)", "command|custom)", "none|off|disabled)"]:
