@@ -20,7 +20,8 @@
 #   ./kilix remote ...        # expose/attach a live graphical pane
 #   ./kilix screen-size ...   # show/increase/decrease/reset terminal scale
 #   ./kilix settings          # shared chrome/game settings TUI and CLI
-#   ./kilix games ...         # list, enable, or disable Kilix 95 games
+#   ./kilix games ...         # list, enable, disable, or play stack games
+#   ./kilix launcher          # catalog TUI: stack programs, apps, launchers
 #   ./kilix temps [args]       # run the pinned graphical thermal dashboard
 #   ./kilix memory [args]      # run the graphical RAM/pressure dashboard
 #   ./kilix tmux [args]        # install/run the pinned Tmux Manager
@@ -35,7 +36,10 @@
 #   ./kilix browse [URL]      # compatibility alias for open-url
 #   ./kilix chawan [URL]      # install/run the Chawan text browser
 #   ./kilix status            # show version, engine, config, and provider
+#   ./kilix power ACTION      # logout|reboot|poweroff — no prompt, no UI
+#   ./kilix security password-status  # is the login password still the default?
 #   ./kilix update            # verified-origin, clean, fast-forward/ref update
+#   ./kilix update --stack    # most complete updater present, then kilix
 #   ./kilix desktop           # launch the configured desktop provider
 #   ./kilix cap               # launch/install the Kilix Cap mansion desktop
 #   ./kilix tui               # launch/install the Kilix TUI desktop
@@ -1243,6 +1247,31 @@ case "${1:-}" in
     # builds of the same thing.
     shift
     exec python3 "$KILIX_HOME/config/install.py" "$@" ;;
+  launcher|--launcher)
+    # The launcher catalog TUI: stack programs, discovered XDG applications,
+    # the user's desktop-folder launchers, scripts, and a run-a-command row —
+    # one tab any desktop can open instead of growing its own list UI.
+    # Same install-on-first-use as temps/memory: the pinned kilix-tui-utils
+    # closure provides the `kilix-launcher` command.
+    shift
+    _launcher_install_only=0
+    case "${1:-}" in
+      --install-only) _launcher_install_only=1; shift ;;
+      -h|--help|help)
+        echo "usage: $_self launcher [--install-only]"
+        echo "opens the launcher catalog (programs, apps, launchers, scripts)"
+        exit 0 ;;
+    esac
+    [ $# -eq 0 ] || {
+      echo "usage: $_self launcher [--install-only]" >&2
+      exit 2
+    }
+    _launcher_installed="${KILIX_TUI_UTILS_PREFIX:-$HOME/.local}/bin/kilix-launcher"
+    "$KILIX_HOME/scripts/install-kilix-tui-utils.sh" --print-path >/dev/null
+    [ -x "$_launcher_installed" ] \
+      || { echo "kilix launcher: installer did not create $_launcher_installed" >&2; exit 1; }
+    [ "$_launcher_install_only" = 0 ] || exit 0
+    exec "$_launcher_installed" ;;
   games|--games)
     shift
     _games_action="${1:-list}"
@@ -1250,10 +1279,51 @@ case "${1:-}" in
     case "$_games_action" in
       list)
         [ $# -eq 0 ] || {
-          echo "usage: $_self games [list|settings|enable GAME...|disable GAME...]" >&2
+          echo "usage: $_self games [list|settings|enable GAME...|disable GAME...|play GAME]" >&2
           exit 2
         }
         exec python3 "$KILIX_HOME/kilix-settings" --print-games ;;
+      play)
+        # Install-and-boot by catalog id, host-owned. The backend is the
+        # bundled desktop's games module — the same kilix_content.Installer
+        # closure `kilix install` drives — so a desktop launching a game and
+        # this command cannot end up on different builds, and no kilix-95
+        # checkout is involved. Desktops (95's Start menu, cap's Game Room,
+        # land's TV, the TUI's Games place) delegate here instead of carrying
+        # their own install-and-boot logic.
+        _games_play_id=""
+        _games_play_setup=""
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            --setup-only) _games_play_setup="--setup-only"; shift ;;
+            -h|--help|help)
+              echo "usage: $_self games play GAME [--setup-only]"
+              echo "installs the pinned game if needed, then boots it"
+              exit 0 ;;
+            -*)
+              echo "usage: $_self games play GAME [--setup-only]" >&2
+              exit 2 ;;
+            *)
+              [ -z "$_games_play_id" ] || {
+                echo "usage: $_self games play GAME [--setup-only]" >&2
+                exit 2
+              }
+              _games_play_id="$1"; shift ;;
+          esac
+        done
+        [ -n "$_games_play_id" ] || {
+          echo "usage: $_self games play GAME [--setup-only]" >&2
+          echo "run '$_self games list' for the ids" >&2
+          exit 2
+        }
+        # games.py resolves its own imports from its script directory; the
+        # SDK (kilix_content, shared settings) needs the host config root.
+        export PYTHONPATH="$KILIX_HOME/config${PYTHONPATH:+:$PYTHONPATH}"
+        if [ -n "$_games_play_setup" ]; then
+          exec python3 "$KILIX_HOME/desktop/games.py" \
+            "$_games_play_setup" "$_games_play_id"
+        fi
+        exec python3 "$KILIX_HOME/desktop/games.py" "$_games_play_id" ;;
       settings|configure)
         [ $# -eq 0 ] || {
           echo "usage: $_self games settings" >&2
@@ -1274,10 +1344,10 @@ case "${1:-}" in
         exec python3 "$KILIX_HOME/kilix-settings" \
           "${_games_args[@]}" --print-games ;;
       -h|--help|help)
-        echo "usage: $_self games [list|settings|enable GAME...|disable GAME...]"
+        echo "usage: $_self games [list|settings|enable GAME...|disable GAME...|play GAME]"
         exit 0 ;;
       *)
-        echo "usage: $_self games [list|settings|enable GAME...|disable GAME...]" >&2
+        echo "usage: $_self games [list|settings|enable GAME...|disable GAME...|play GAME]" >&2
         exit 2 ;;
     esac ;;
   transcript|transcripts|session-log|session-logs)
@@ -1809,6 +1879,92 @@ case "${1:-}" in
         echo "usage: $_self voice [status|install|doctor|stop|daemon]" >&2
         exit 2 ;;
     esac ;;
+  power|--power)
+    # Host-owned session/power actions, one per argv. The argv list is a
+    # frozen contract mirrored from kilix-tui-utils'
+    # src/kilix_tui/privileged.py power_actions() — the one other place that
+    # names these commands — so every desktop runs the same thing whether it
+    # shells out here (cap, land, 95) or imports the Python list (TUI).
+    # Deliberately no prompt and no output on success: desktops own their
+    # confirm UX, and this verb must be safe to wire straight behind it.
+    shift
+    _power_action="${1:-}"
+    [ $# -eq 0 ] || shift
+    [ $# -eq 0 ] || {
+      echo "usage: $_self power logout|reboot|poweroff" >&2
+      exit 2
+    }
+    case "$_power_action" in
+      logout)
+        command -v loginctl >/dev/null 2>&1 \
+          || { echo "kilix power: loginctl not found" >&2; exit 1; }
+        exec loginctl terminate-session "${XDG_SESSION_ID:-}" ;;
+      reboot)
+        command -v systemctl >/dev/null 2>&1 \
+          || { echo "kilix power: systemctl not found" >&2; exit 1; }
+        exec systemctl reboot ;;
+      poweroff)
+        command -v systemctl >/dev/null 2>&1 \
+          || { echo "kilix power: systemctl not found" >&2; exit 1; }
+        exec systemctl poweroff ;;
+      -h|--help|help)
+        echo "usage: $_self power logout|reboot|poweroff"
+        echo "  logout    loginctl terminate-session \$XDG_SESSION_ID"
+        echo "  reboot    systemctl reboot"
+        echo "  poweroff  systemctl poweroff"
+        echo "No confirmation and no further output: the calling desktop"
+        echo "owns the confirm UX. 'kilix status' reports availability."
+        exit 0 ;;
+      "")
+        echo "usage: $_self power logout|reboot|poweroff" >&2
+        exit 2 ;;
+      *)
+        echo "kilix power: unknown action '$_power_action'" >&2
+        echo "usage: $_self power logout|reboot|poweroff" >&2
+        exit 2 ;;
+    esac ;;
+  security|--security)
+    shift
+    _security_action="${1:-}"
+    [ $# -eq 0 ] || shift
+    case "$_security_action" in
+      password-status)
+        # The ~20-line default-password check from the reference desktop's
+        # security.py, as a host verb so every desktop can nag idiomatically
+        # (tray icon, postcard, sticky note, Home alert) without porting it.
+        # Machine-readable: one line, exit 0 only when the login password is
+        # CONFIRMED to still be the shipped default; any uncertainty (no
+        # helper, no sudo rule, timeout) exits 1 so no desktop nags
+        # spuriously.
+        [ $# -eq 0 ] || {
+          echo "usage: $_self security password-status" >&2
+          exit 2
+        }
+        _security_helper=/usr/local/sbin/plebian-os-passwd
+        if ! command -v sudo >/dev/null 2>&1 \
+             || [ ! -x "$_security_helper" ]; then
+          echo "password: unknown (no plebian-os-passwd helper)"
+          exit 1
+        fi
+        _security_check=(sudo -n "$_security_helper" check)
+        command -v timeout >/dev/null 2>&1 \
+          && _security_check=(timeout 5 "${_security_check[@]}")
+        if "${_security_check[@]}" </dev/null >/dev/null 2>&1; then
+          echo "password: default"
+          exit 0
+        fi
+        echo "password: not-default"
+        exit 1 ;;
+      -h|--help|help)
+        echo "usage: $_self security password-status"
+        echo "  password-status  'password: default' + exit 0 only when the"
+        echo "                   login password is confirmed to still be the"
+        echo "                   shipped default; otherwise exit 1"
+        exit 0 ;;
+      *)
+        echo "usage: $_self security password-status" >&2
+        exit 2 ;;
+    esac ;;
   status|--status)
     _status_version="$(cat "$KILIX_HOME/VERSION" 2>/dev/null || echo unknown)"
     _status_head="$(git -C "$KILIX_HOME" rev-parse --short HEAD 2>/dev/null || echo not-a-checkout)"
@@ -1851,6 +2007,20 @@ case "${1:-}" in
         _status_provider_dir=""
         ;;
     esac
+    # Power capability, so a desktop can decide whether to offer the actions
+    # before wiring `kilix power` behind its confirm UX.
+    if command -v systemctl >/dev/null 2>&1; then
+      _status_power="reboot poweroff"
+      if command -v loginctl >/dev/null 2>&1; then
+        if [ -n "${XDG_SESSION_ID:-}" ]; then
+          _status_power="logout $_status_power"
+        else
+          _status_power="$_status_power (logout needs XDG_SESSION_ID)"
+        fi
+      fi
+    else
+      _status_power="unavailable (no systemctl)"
+    fi
     printf '%s\n' \
       "kilix $_status_version ($_status_head, $_status_dirty)" \
       "engine: $_status_engine" \
@@ -1858,6 +2028,7 @@ case "${1:-}" in
       "runtime config: $KILIX_ENV_CONFIG" \
       "shared settings: $GPU_TERMINAL_SETTINGS_FILE" \
       "voice: $(_kilix_voice_summary)" \
+      "power: $_status_power" \
       "desktop provider: $_status_provider" \
       "desktop path: ${_status_provider_dir:-n/a}"
     if [ -n "$_status_provider_dir" ] && [ -f "$_status_provider_dir/main.py" ]; then
@@ -1898,6 +2069,45 @@ case "${1:-}" in
   update|--update)
     # Update only from the expected origin, only from a clean checkout, and
     # only by an explicit origin fast-forward or detached ref checkout.
+    #
+    # `--stack` is the one blessed update surface for desktops: it runs the
+    # most complete updater actually present — the same presence-gated ladder
+    # the reference desktop's System menu uses — and only updates kilix alone
+    # when nothing above it is installed. Plain `kilix update` behavior is
+    # unchanged.
+    shift
+    case "${1:-}" in
+      --stack)
+        shift
+        [ $# -eq 0 ] || {
+          echo "usage: $_self update [--stack]" >&2
+          exit 2
+        }
+        # The ladder: whole-stack script > pleb session manager > kilix.
+        if [ -x /usr/local/bin/plebian-os-update ]; then
+          echo "kilix update: running plebian-os-update (kilix + pleb)"
+          exec /usr/local/bin/plebian-os-update
+        fi
+        for _stack_pleb in "$GPU_TERMINAL_SOURCE_HOME/pleb/bin/pleb" \
+                           "$HOME/pleb/bin/pleb"; do
+          if [ -x "$_stack_pleb" ]; then
+            echo "kilix update: running pleb update (kilix + session)"
+            exec "$_stack_pleb" update
+          fi
+        done
+        echo "kilix update: no stack updater present — updating kilix alone"
+        ;;
+      -h|--help|help)
+        echo "usage: $_self update [--stack]"
+        echo "  (no flag)  verified-origin fast-forward of this kilix checkout"
+        echo "  --stack    the most complete updater present:"
+        echo "             plebian-os-update, else pleb update, else kilix"
+        exit 0 ;;
+      "") ;;
+      *)
+        echo "usage: $_self update [--stack]" >&2
+        exit 2 ;;
+    esac
     _kilix_acquire_transaction_lock() {
       local lock_root lock_path fd fd_path path_identity fd_identity lock_was_present=0
       if ! command -v flock >/dev/null 2>&1; then

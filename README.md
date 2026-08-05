@@ -32,6 +32,25 @@ list of everything this system can install — the pinned content catalog and th
 coding agents together — with `--update`, `--json`, and entries in both the
 Kilix TUI desktop and the Kilix 95 Start menu that drive that same command.
 
+Adds the host verbs every desktop provider was reimplementing (SDK 1.8):
+
+- `kilix games play GAME [--setup-only]` — install-and-boot by catalog id,
+  backed by the same content module as `kilix install`; desktops delegate here
+  instead of shelling into each other's checkouts.
+- `kilix launcher` — the launcher catalog TUI (stack programs, discovered XDG
+  applications, the user's `.desktop` launchers, stack scripts, a
+  run-a-command row), installed on first use from the pinned kilix-tui-utils.
+- `kilix power logout|reboot|poweroff` — the frozen session/power argv list,
+  no prompt and no UI: desktops own their confirm UX. `kilix status` reports
+  availability.
+- `kilix update --stack` — the one blessed stack-update surface: runs
+  `plebian-os-update`, else `pleb update`, else updates kilix alone.
+- `kilix security password-status` — one line + exit code 0 only when the
+  login password is confirmed to still be the shipped default, so every
+  desktop can nag idiomatically.
+- `kilix_sdk.xdgapps` — the freedesktop `.desktop` scanner Kilix 95's Start
+  menu always had, promoted into the SDK for every consumer (SDK 1.7 → 1.8).
+
 ## Release 0.1.7
 
 Prepared 2026-08-02. **Not published yet.** The source closure is final and

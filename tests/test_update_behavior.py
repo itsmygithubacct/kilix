@@ -79,7 +79,8 @@ class UpdateBehaviorTests(unittest.TestCase):
         self.env = dict(os.environ)
         for name in tuple(self.env):
             if name.startswith("KILIX_") or name in (
-                    "GPU_TERMINAL_HOME", "GPU_TERMINAL_SETTINGS_FILE"):
+                    "GPU_TERMINAL_HOME", "GPU_TERMINAL_SETTINGS_FILE",
+                    "GPU_TERMINAL_SOURCE_HOME"):
                 self.env.pop(name)
         self.env.update({
             "GIT_ALLOW_PROTOCOL": "file",
@@ -159,11 +160,11 @@ if [ "${FAKE_KILIX_BUILD_FAIL:-}" = after_stamp ]; then exit 25; fi
         path.write_text(f"#!/bin/sh\necho {label}-test\nexit {rc}\n")
         path.chmod(0o700)
 
-    def _update(self, **extra):
+    def _update(self, *args, **extra):
         env = dict(self.env)
         env.update(extra)
         return subprocess.run(
-            [str(self.checkout / "kilix"), "update"], env=env,
+            [str(self.checkout / "kilix"), "update", *args], env=env,
             capture_output=True, text=True,
         )
 
@@ -260,6 +261,40 @@ if [ "${FAKE_KILIX_BUILD_FAIL:-}" = after_stamp ]; then exit 25; fi
         result = self._update()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("refusing to overwrite a modified checkout", result.stderr)
+
+    def test_stack_update_delegates_to_a_present_pleb(self):
+        # `--stack` runs the most complete updater actually installed. With
+        # no /usr/local/bin/plebian-os-update on the ladder's first rung, a
+        # pleb under $HOME is the next, and kilix itself must NOT be updated
+        # by this invocation — delegation replaces it entirely.
+        target_before = git("rev-parse", "HEAD", cwd=self.checkout,
+                            capture=True).stdout.strip()
+        self._publish("stack-next")
+        pleb = Path(self.env["HOME"]) / "pleb" / "bin" / "pleb"
+        pleb.parent.mkdir(parents=True)
+        pleb.write_text("#!/bin/sh\necho pleb-updater-ran \"$@\"\nexit 0\n")
+        pleb.chmod(0o755)
+        result = self._update("--stack")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("pleb update", result.stdout)
+        self.assertIn("pleb-updater-ran update", result.stdout)
+        self.assertEqual(git("rev-parse", "HEAD", cwd=self.checkout,
+                             capture=True).stdout.strip(), target_before)
+
+    def test_stack_update_without_a_stack_updater_updates_kilix(self):
+        # The ladder's floor: nothing above kilix is installed, so `--stack`
+        # says so and behaves exactly like a plain `kilix update`.
+        target = self._publish("stack-floor")
+        result = self._update("--stack")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("no stack updater present", result.stdout)
+        self.assertEqual(git("rev-parse", "HEAD", cwd=self.checkout,
+                             capture=True).stdout.strip(), target)
+
+    def test_unknown_update_flag_is_refused(self):
+        result = self._update("--sideways")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("usage:", result.stderr)
 
     def test_unexpected_origin_is_refused(self):
         result = self._update(KILIX_REPO="https://example.invalid/not-origin")

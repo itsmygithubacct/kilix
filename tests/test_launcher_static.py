@@ -59,6 +59,61 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn('merge --ff-only "origin/$_branch"', text)
         self.assertIn("fork rebuild failed", text)
 
+    def test_stack_update_walks_the_presence_gated_ladder(self):
+        # `kilix update --stack` is the one blessed update surface: the
+        # whole-stack script, else pleb, else kilix itself — the same ladder
+        # the reference desktop's System menu gates on presence.
+        text = (ROOT / "kilix").read_text()
+        self.assertIn("--stack)", text)
+        self.assertIn("/usr/local/bin/plebian-os-update", text)
+        self.assertIn('"$GPU_TERMINAL_SOURCE_HOME/pleb/bin/pleb"', text)
+        self.assertIn('"$HOME/pleb/bin/pleb"', text)
+        self.assertIn("no stack updater present", text)
+
+    def test_games_play_drives_the_bundled_installer_backend(self):
+        # Install-and-boot by id must live host-side, backed by the same
+        # content module `kilix install` drives — no kilix-95 checkout, no
+        # second installer.
+        text = (ROOT / "kilix").read_text()
+        self.assertIn("play)", text)
+        self.assertIn('exec python3 "$KILIX_HOME/desktop/games.py"', text)
+        self.assertIn("play GAME", text)
+        self.assertIn("--setup-only", text)
+
+    def test_power_mirrors_the_frozen_privileged_argvs(self):
+        # The argv list is a frozen contract shared with kilix-tui-utils'
+        # src/kilix_tui/privileged.py power_actions(). It must stay exactly
+        # these three commands, and the verb itself must not prompt.
+        text = (ROOT / "kilix").read_text()
+        self.assertIn("power|--power)", text)
+        self.assertIn(
+            'exec loginctl terminate-session "${XDG_SESSION_ID:-}"', text)
+        self.assertIn("exec systemctl reboot", text)
+        self.assertIn("exec systemctl poweroff", text)
+        self.assertIn("privileged.py", text)      # names the mirror
+        self.assertIn('"power: $_status_power"', text)  # status reports it
+        power_case = text.split("power|--power)")[1].split(";;")[0]
+        self.assertNotIn("read ", power_case)     # no prompting, ever
+
+    def test_security_password_status_is_machine_readable(self):
+        text = (ROOT / "kilix").read_text()
+        self.assertIn("security|--security)", text)
+        self.assertIn("password-status)", text)
+        self.assertIn("/usr/local/sbin/plebian-os-passwd", text)
+        for line in ("password: default", "password: not-default",
+                     "password: unknown (no plebian-os-passwd helper)"):
+            self.assertIn(line, text)
+
+    def test_launcher_alias_uses_the_unified_utility_installer(self):
+        # `kilix launcher` opens the catalog TUI with the same
+        # install-on-first-use pattern as temps/memory.
+        text = (ROOT / "kilix").read_text()
+        self.assertIn("launcher|--launcher)", text)
+        launcher_case = text.split("launcher|--launcher)")[1]
+        self.assertIn("install-kilix-tui-utils.sh", launcher_case)
+        self.assertIn("bin/kilix-launcher", launcher_case)
+        self.assertIn("--install-only", launcher_case)
+
     def test_ls_lists_live_tabs_via_kitty_remote_control(self):
         launcher = (ROOT / "kilix").read_text()
         remote = (ROOT / "config" / "remote.py").read_text()
