@@ -55,7 +55,10 @@ Adds the host verbs every desktop provider was reimplementing (SDK 1.8):
   so a session opened from any desktop shows as running — and can be closed —
   from every other.
 - `kilix_sdk.xdgapps` — the freedesktop `.desktop` scanner Kilix 95's Start
-  menu always had, promoted into the SDK for every consumer (SDK 1.7 → 1.8).
+  menu always had, promoted into the SDK for every consumer (SDK 1.7 → 1.8);
+  now also the one authored source of the copy the TUI stack mirrors, gaining
+  the mirror's `entries_in()` folder reader and `grouped(force=)` cache
+  refresh (SDK 1.8 → 1.9).
 
 ## Release 0.1.7
 

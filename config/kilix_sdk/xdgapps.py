@@ -9,12 +9,23 @@ freedesktop category.
 No UI and no launching here — pure stdlib, driven entirely by
 ``$XDG_DATA_HOME`` / ``$XDG_DATA_DIRS`` (spec defaults when unset); nothing
 about the host machine is hardcoded.  ``scan()`` returns parsed entry dicts,
-``grouped()`` buckets them, ``parse_desktop_file()`` reads one file so user
-launchers (a desktop folder of ``.desktop`` files) share the same parser.
-How an entry is *opened* stays with each consumer, because that is where the
-paradigms genuinely differ.
+``grouped()`` buckets them, ``entries_in()`` reads one folder of launchers,
+``parse_desktop_file()`` reads one file so user launchers (a desktop folder
+of ``.desktop`` files) share the same parser.  How an entry is *opened* stays
+with each consumer, because that is where the paradigms genuinely differ.
 
-Added in SDK 1.8.
+The scan is cached on the mtimes of every applications directory and
+``.desktop`` file, so calling ``scan()`` or ``grouped()`` per frame costs a
+handful of ``stat`` calls until something actually changes.
+
+This module is deliberately location-independent — pure stdlib, no
+intra-package imports — because it exists twice by design: authored here in
+``kilix_sdk`` and mirrored byte-for-byte into the shared TUI core
+(kilix-tui-utils ``src/kilix_tui/xdgapps.py``, kept in step by that repo's
+``tools/sync_xdgapps.py`` and pinned by its parity test) so the TUI stack
+stays standalone-installable.
+
+Added in SDK 1.8; ``entries_in()`` and ``grouped(force=)`` added in SDK 1.9.
 """
 import os
 import shutil
@@ -262,6 +273,32 @@ def scan(force=False):
     return entries
 
 
+def entries_in(directory):
+    """Parsed entries from one folder of ``.desktop`` files, name-sorted.
+
+    No recursion and no cache: this is for a user's desktop-launcher folder
+    (the files a Create Launcher wizard writes), which is small and read at
+    the moment it is shown, not for the XDG application dirs.
+    """
+    out = []
+    try:
+        names = sorted(os.listdir(directory))
+    except OSError:
+        return out
+    for fn in names:
+        if not fn.endswith(".desktop"):
+            continue
+        path = os.path.join(directory, fn)
+        parsed = parse_desktop_file(path)
+        if parsed is None:
+            continue
+        entry = build_entry(parsed, path, fn)
+        if entry is not None:
+            out.append(entry)
+    out.sort(key=lambda e: e["name"].lower())
+    return out
+
+
 # ── categorization ───────────────────────────────────────────────────────────
 
 def bucket(entry):
@@ -272,10 +309,10 @@ def bucket(entry):
     return "Other"
 
 
-def grouped():
+def grouped(force=False):
     """{bucket: [entry, …]} for non-empty buckets, in display order."""
     out = {}
-    for e in scan():
+    for e in scan(force):
         out.setdefault(bucket(e), []).append(e)
     return {b: out[b] for b in BUCKET_ORDER if b in out}
 
@@ -285,6 +322,7 @@ __all__ = [
     "app_dirs",
     "bucket",
     "build_entry",
+    "entries_in",
     "grouped",
     "localized",
     "parse_desktop_file",

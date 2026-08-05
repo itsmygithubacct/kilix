@@ -47,24 +47,28 @@ class KilixSdkBoundaryTests(unittest.TestCase):
         # 1.5 added the shared session-logging settings both providers read;
         # 1.6 adds the shared voice settings behind the two chrome widgets;
         # 1.7 adds the shared coding-agent policy the Settings app reads;
-        # 1.8 adds the freedesktop application scanner (xdgapps).
-        self.assertEqual(kilix_sdk.SDK_API_VERSION, (1, 8))
-        self.assertEqual(kilix_sdk.SDK_VERSION, "1.8.0")
+        # 1.8 adds the freedesktop application scanner (xdgapps);
+        # 1.9 adds xdgapps.entries_in and the grouped(force=) cache refresh.
+        self.assertEqual(kilix_sdk.SDK_API_VERSION, (1, 9))
+        self.assertEqual(kilix_sdk.SDK_VERSION, "1.9.0")
         kilix_sdk.require_compatible("1.0")
         kilix_sdk.require_compatible("1.5")
         kilix_sdk.require_compatible("1.6")
         kilix_sdk.require_compatible("1.7")
         kilix_sdk.require_compatible("1.8")
+        kilix_sdk.require_compatible("1.9")
         with self.assertRaises(kilix_sdk.IncompatibleSDKError):
-            kilix_sdk.require_compatible("1.9")
+            kilix_sdk.require_compatible("1.10")
         with self.assertRaises(kilix_sdk.IncompatibleSDKError):
             kilix_sdk.require_compatible("2.0")
 
     def test_xdgapps_scanner_is_part_of_the_sdk_contract(self):
         # 1.8: one freedesktop scanner for every desktop and the launcher
         # catalog. Discovery only — launching stays with each consumer.
+        # 1.9: entries_in reads a folder of user launchers with the same
+        # parser, and grouped(force=) refreshes the scan cache.
         from kilix_sdk import xdgapps
-        for name in ("scan", "grouped", "bucket", "app_dirs",
+        for name in ("scan", "grouped", "bucket", "app_dirs", "entries_in",
                      "parse_desktop_file", "build_entry", "BUCKET_ORDER"):
             self.assertTrue(hasattr(xdgapps, name), name)
             self.assertIn(name, xdgapps.__all__)
@@ -81,8 +85,14 @@ class KilixSdkBoundaryTests(unittest.TestCase):
                 self.assertEqual([e["name"] for e in entries], ["Sample"])
                 self.assertEqual(entries[0]["exec"], "/usr/bin/true")
                 self.assertEqual(xdgapps.bucket(entries[0]), "Accessories")
+                groups = xdgapps.grouped(force=True)
+                self.assertEqual(list(groups), ["Accessories"])
+            folder = xdgapps.entries_in(str(apps))
+            self.assertEqual([e["name"] for e in folder], ["Sample"])
+            self.assertEqual(folder[0]["id"], "sample.desktop")
         parsed = xdgapps.parse_desktop_file(str(apps / "sample.desktop"))
         self.assertIsNone(parsed)          # the temp dir is gone: no crash
+        self.assertEqual(xdgapps.entries_in(str(apps)), [])
 
     def test_voice_settings_are_part_of_the_sdk_contract(self):
         # A provider compiled against 1.6 may rely on these names existing.
