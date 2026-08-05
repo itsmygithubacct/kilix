@@ -23,6 +23,15 @@ complete tree. Freedesktop launchers/icons are the intentional exception:
 
 ![kilix — pages strip with + button, per-pane title bars with clickable split/maximize/close buttons, splits, and icat](config/kilix_demo.png)
 
+## Release 0.1.8
+
+Prepared 2026-08-04. **Not published yet.**
+
+Upgrades from 0.1.7, the previous published release. Adds `kilix install`: one
+list of everything this system can install — the pinned content catalog and the
+coding agents together — with `--update`, `--json`, and entries in both the
+Kilix TUI desktop and the Kilix 95 Start menu that drive that same command.
+
 ## Release 0.1.7
 
 Prepared 2026-08-02. **Not published yet.** The source closure is final and
