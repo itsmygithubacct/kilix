@@ -20,7 +20,9 @@
 #   ./kilix remote ...        # expose/attach a live graphical pane
 #   ./kilix screen-size ...   # show/increase/decrease/reset terminal scale
 #   ./kilix settings          # shared chrome/game settings TUI and CLI
-#   ./kilix games ...         # list, enable, or disable Kilix 95 games
+#   ./kilix games ...         # list, play, enable, or disable stack games
+#   ./kilix power ...         # logout|reboot|poweroff, no confirmation here
+#   ./kilix launcher          # catalog TUI: stack programs, XDG apps, run
 #   ./kilix temps [args]       # run the pinned graphical thermal dashboard
 #   ./kilix memory [args]      # run the graphical RAM/pressure dashboard
 #   ./kilix tmux [args]        # install/run the pinned Tmux Manager
@@ -1247,10 +1249,11 @@ case "${1:-}" in
     shift
     _games_action="${1:-list}"
     [ $# -eq 0 ] || shift
+    _games_usage="usage: $_self games [list|settings|play GAME|enable GAME...|disable GAME...]"
     case "$_games_action" in
       list)
         [ $# -eq 0 ] || {
-          echo "usage: $_self games [list|settings|enable GAME...|disable GAME...]" >&2
+          echo "$_games_usage" >&2
           exit 2
         }
         exec python3 "$KILIX_HOME/kilix-settings" --print-games ;;
@@ -1260,6 +1263,18 @@ case "${1:-}" in
           exit 2
         }
         exec python3 "$KILIX_HOME/kilix-settings" --section games ;;
+      play|run)
+        # Install-and-boot by catalog id, host-owned: every desktop launches
+        # games through this one door instead of resolving a Kilix 95
+        # checkout of its own. The desktop's games module stays the single
+        # implementation of readiness, install, and launch; it expects the
+        # SDK on the path the way its other callers provide it.
+        [ $# -gt 0 ] || {
+          echo "usage: $_self games play GAME" >&2
+          exit 2
+        }
+        exec env PYTHONPATH="$KILIX_HOME/config${PYTHONPATH:+:$PYTHONPATH}" \
+          python3 "$KILIX_HOME/desktop/games.py" "$@" ;;
       enable|disable)
         [ $# -gt 0 ] || {
           echo "usage: $_self games $_games_action GAME..." >&2
@@ -1274,12 +1289,45 @@ case "${1:-}" in
         exec python3 "$KILIX_HOME/kilix-settings" \
           "${_games_args[@]}" --print-games ;;
       -h|--help|help)
-        echo "usage: $_self games [list|settings|enable GAME...|disable GAME...]"
+        echo "$_games_usage"
         exit 0 ;;
       *)
-        echo "usage: $_self games [list|settings|enable GAME...|disable GAME...]" >&2
+        echo "$_games_usage" >&2
         exit 2 ;;
     esac ;;
+  power|--power)
+    # The frozen session/power argvs every desktop shares (the same list
+    # kilix-tui-utils' privileged.py runs). Deliberately no confirmation
+    # here: each desktop owns its own confirm UX, and a typed command is
+    # its own statement of intent.
+    shift
+    case "${1:-}" in
+      logout|log-out)
+        exec loginctl terminate-session "${XDG_SESSION_ID:-}" ;;
+      reboot|restart)
+        exec systemctl reboot ;;
+      poweroff|shutdown|off)
+        exec systemctl poweroff ;;
+      *)
+        echo "usage: $_self power [logout|reboot|poweroff]" >&2
+        exit 2 ;;
+    esac ;;
+  launcher|--launcher)
+    # The shared catalog TUI from kilix-tui-utils: stack programs, discovered
+    # XDG applications, and a run-a-command row — the one list the pixel
+    # desktops open in a tab instead of growing list UIs of their own.
+    shift
+    _launcher_bin="$(command -v kilix-launcher || true)"
+    if [ -z "$_launcher_bin" ]; then
+      "$KILIX_HOME/scripts/install-kilix-tui-utils.sh" >/dev/null 2>&1 || true
+      _launcher_bin="$HOME/.local/bin/kilix-launcher"
+    fi
+    [ -x "$_launcher_bin" ] || {
+      echo "kilix launcher: kilix-launcher is not installed" \
+           "(run scripts/install-kilix-tui-utils.sh)" >&2
+      exit 1
+    }
+    exec "$_launcher_bin" "$@" ;;
   transcript|transcripts|session-log|session-logs)
     shift
     _kilix_read_transcript_config
