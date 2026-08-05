@@ -292,8 +292,16 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("action_at", tabbar)
         self.assertIn("get_options().foreground", tabbar)
         self.assertIn("run_kitten_with_metadata('kilix_clock'", tabs)
-        self.assertIn("which('pulsemixer') or which('alsamixer')", tabs)
+        # The volume widget opens Kilix Volume, the mixer this stack ships in
+        # the shared shell and points at the sink Kilix uses. pulsemixer and
+        # alsamixer remain a last resort inside the resolver, not the first
+        # thing the widget reaches for.
+        self.assertIn("kilix_volume_target()", tabs)
         self.assertIn("Volume Control", tabs)
+        battery = (ROOT / "src" / "kitty" / "kilix_battery.py").read_text()
+        self.assertIn("def kilix_volume_target", battery)
+        self.assertIn("which('kilix-volume')", battery)
+        self.assertIn("which('pulsemixer') or which('alsamixer')", battery)
         self.assertIn("which('nmtui')", tabs)
         self.assertIn("Network Connections", tabs)
         self.assertTrue((ROOT / "src" / "kittens" / "kilix_clock" / "main.py").is_file())
