@@ -48,6 +48,12 @@ Adds the host verbs every desktop provider was reimplementing (SDK 1.8):
 - `kilix security password-status` — one line + exit code 0 only when the
   login password is confirmed to still be the shipped default, so every
   desktop can nag idiomatically.
+- `kilix laptop list|open PROFILE|status|close PROFILE` — the laptop session
+  profiles every desktop's laptop object reads
+  (`~/.local/gpu_terminal/laptop/<id>.profile`), opened and closed host-side
+  with a shared run registry (`run/<id>.pid`, real process-liveness checks),
+  so a session opened from any desktop shows as running — and can be closed —
+  from every other.
 - `kilix_sdk.xdgapps` — the freedesktop `.desktop` scanner Kilix 95's Start
   menu always had, promoted into the SDK for every consumer (SDK 1.7 → 1.8).
 

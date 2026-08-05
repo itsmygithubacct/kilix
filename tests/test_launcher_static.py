@@ -114,6 +114,25 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("bin/kilix-launcher", launcher_case)
         self.assertIn("--install-only", launcher_case)
 
+    def test_laptop_verb_owns_the_run_registry_contract(self):
+        # `kilix laptop list|open PROFILE|status|close PROFILE` is the one
+        # host-side implementation of the shared laptop convention; the
+        # desktops delegate to it behind a probe. The run registry rules —
+        # run/<profile-id>.pid, a real kill(pid, 0) liveness check, stale
+        # files deleted on sight — live in config/laptop.py and must stay
+        # written down there, because two C desktops and the launcher TUI
+        # mirror them.
+        text = (ROOT / "kilix").read_text()
+        self.assertIn("laptop|--laptop)", text)
+        laptop_case = text.split("laptop|--laptop)")[1].split(";;")[0]
+        self.assertIn('exec python3 "$KILIX_HOME/config/laptop.py"',
+                      laptop_case)
+        module = (ROOT / "config" / "laptop.py").read_text()
+        self.assertIn("run/<profile-id>.pid", module)
+        self.assertIn("os.kill(pid, 0)", module)      # never the file alone
+        for token in ("open PROFILE", "close PROFILE", "status", "list"):
+            self.assertIn(token, module)
+
     def test_ls_lists_live_tabs_via_kitty_remote_control(self):
         launcher = (ROOT / "kilix").read_text()
         remote = (ROOT / "config" / "remote.py").read_text()

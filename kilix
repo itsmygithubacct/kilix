@@ -22,6 +22,7 @@
 #   ./kilix settings          # shared chrome/game settings TUI and CLI
 #   ./kilix games ...         # list, enable, disable, or play stack games
 #   ./kilix launcher          # catalog TUI: stack programs, apps, launchers
+#   ./kilix laptop ...        # list/open/status/close laptop session profiles
 #   ./kilix temps [args]       # run the pinned graphical thermal dashboard
 #   ./kilix memory [args]      # run the graphical RAM/pressure dashboard
 #   ./kilix tmux [args]        # install/run the pinned Tmux Manager
@@ -1272,6 +1273,18 @@ case "${1:-}" in
       || { echo "kilix launcher: installer did not create $_launcher_installed" >&2; exit 1; }
     [ "$_launcher_install_only" = 0 ] || exit 0
     exec "$_launcher_installed" ;;
+  laptop|--laptop)
+    # Laptop session profiles as a host verb: list | open PROFILE | status |
+    # close PROFILE. config/laptop.py owns the shared profile convention
+    # (~/.local/gpu_terminal/laptop, KILIX_LAPTOP_PROFILES override) and the
+    # run registry beside it (run/<profile-id>.pid; liveness is a real
+    # kill(pid, 0) check, stale files are deleted on sight). The desktops'
+    # laptop objects delegate here when the verb exists — probed the way
+    # games.py probes `kilix games play`, so an old host still opens
+    # profiles through each desktop's own path.
+    shift
+    export KILIX_HOME
+    exec python3 "$KILIX_HOME/config/laptop.py" "$@" ;;
   games|--games)
     shift
     _games_action="${1:-list}"
