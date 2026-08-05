@@ -1312,6 +1312,23 @@ case "${1:-}" in
         echo "usage: $_self power [logout|reboot|poweroff]" >&2
         exit 2 ;;
     esac ;;
+  volume|mixer)
+    # The chrome's volume widget resolves this, and so does anyone typing it.
+    # Kilix ships a mixer in the shared shell wired to the sink Kilix itself
+    # uses; reaching for pulsemixer instead made the widget depend on a
+    # package the image need not carry.
+    shift
+    _volume_bin="$(command -v kilix-volume || true)"
+    if [ -z "$_volume_bin" ]; then
+      "$KILIX_HOME/scripts/install-kilix-tui-utils.sh" >/dev/null 2>&1 || true
+      _volume_bin="$HOME/.local/bin/kilix-volume"
+    fi
+    [ -x "$_volume_bin" ] || {
+      echo "kilix volume: kilix-volume is not installed" \
+           "(run scripts/install-kilix-tui-utils.sh)" >&2
+      exit 1
+    }
+    exec "$_volume_bin" "$@" ;;
   launcher|--launcher)
     # The shared catalog TUI from kilix-tui-utils: stack programs, discovered
     # XDG applications, and a run-a-command row — the one list the pixel
