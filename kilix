@@ -1236,6 +1236,13 @@ case "${1:-}" in
     export KILIX_DESKTOP_FLAVOR=xp
     export KILIX_DESKTOP_NAME="${KILIX_DESKTOP_NAME:-Kilix XP}"
     set -- desktop "$@" ;;
+  install|--install)
+    # One list of everything installable: the pinned content catalog and the
+    # coding agents. It drives the desktop's own content module, so installing
+    # from here and launching from the Start menu cannot end up on different
+    # builds of the same thing.
+    shift
+    exec python3 "$KILIX_HOME/config/install.py" "$@" ;;
   games|--games)
     shift
     _games_action="${1:-list}"
