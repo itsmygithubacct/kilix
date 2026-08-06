@@ -304,6 +304,49 @@ class KilixVoiceInstallerTests(unittest.TestCase):
         second = self.run_installer("--without-dictation")
         self.assertIn("already installed", second.stderr)
 
+    @unittest.skipUnless(
+        all(shutil.which(tool) for tool in DOWNLOAD_TOOLS),
+        "needs download and C fixture tools")
+    def test_read_aloud_only_run_accepts_a_full_install_as_current(self):
+        # The lazy daemon path always passes --without-dictation. After a full
+        # install of the same pins it must be a no-op — not a runtime
+        # reinstall that rewrites the stamp as "skipped" and un-stamps the
+        # dictation closure (the 0.1.7 review's perpetual-reinstall loop).
+        pins = self.publish_downloads()
+        self.run_installer(**pins)
+        stamp = self.state / "kilix-voice-install.refs"
+        full_stamp = stamp.read_text()
+        self.assertIn("libvosk=", full_stamp)
+        self.assertNotIn("skipped", full_stamp)
+
+        lazy = self.run_installer("--without-dictation", **pins)
+
+        self.assertIn("already installed", lazy.stderr)
+        self.assertNotIn("installed read-aloud only", lazy.stderr)
+        self.assertEqual(stamp.read_text(), full_stamp)
+
+    @unittest.skipUnless(
+        all(shutil.which(tool) for tool in DOWNLOAD_TOOLS),
+        "needs download and C fixture tools")
+    def test_read_aloud_repair_tells_the_truth_about_present_dictation(self):
+        # A read-aloud-only run that does have work to do (here: a deleted
+        # entrypoint) must still not tell a user with a working dictation
+        # closure to rerun the installer, and must not downgrade the full
+        # stamp to "skipped".
+        pins = self.publish_downloads()
+        self.run_installer(**pins)
+        stamp = self.state / "kilix-voice-install.refs"
+        full_stamp = stamp.read_text()
+        (self.prefix / "bin" / "kilix-voiced").unlink()
+
+        repair = self.run_installer("--without-dictation", **pins)
+
+        self.assertIn("dictation stays available", repair.stderr)
+        self.assertNotIn("rerun without --without-dictation", repair.stderr)
+        self.assertIn("kilix-voiced", repair.stderr)
+        self.assertEqual(stamp.read_text(), full_stamp)
+        self.assertTrue(os.access(self.prefix / "bin" / "kilix-voiced", os.X_OK))
+
     def test_runtime_upgrade_switches_every_command_with_one_link(self):
         self.run_installer("--without-dictation")
         current = self.data / "voice" / "runtime" / "current"

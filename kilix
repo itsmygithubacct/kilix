@@ -683,15 +683,21 @@ _kilix_voice_onoff() {
 # tab-bar widgets use, so a click and the CLI can never end up running different
 # builds. Preferring an installed command also keeps kilix-voice usable while
 # KILIX_VOICE_REF is still unpinned and the installer refuses to run.
+#
+# "Installed" means PATH first and then the voice prefix the pinned installer
+# links into: desktop launch contexts often run without ~/.local/bin on PATH,
+# and an installed closure that PATH cannot see must be run, not reinstalled.
 _kilix_voice_tool() {
   local name="$1" force="$2" resolved installer
   shift 2
-  resolved="$(command -v "$name" 2>/dev/null || true)"
-  if [ "$force" = 0 ] && [ -n "$resolved" ] && [ -x "$resolved" ] \
-      && "$resolved" --version >/dev/null 2>&1; then
-    printf '%s\n' "$resolved"
-    return 0
-  fi
+  for resolved in "$(command -v "$name" 2>/dev/null || true)" \
+                  "$_KILIX_VOICE_PREFIX/bin/$name"; do
+    if [ "$force" = 0 ] && [ -n "$resolved" ] && [ -x "$resolved" ] \
+        && "$resolved" --version >/dev/null 2>&1; then
+      printf '%s\n' "$resolved"
+      return 0
+    fi
+  done
   installer=("$KILIX_HOME/scripts/install-kilix-voice.sh" "$@")
   [ "$force" = 0 ] || installer+=(--force)
   # Installer diagnostics are stderr-only here: this function's stdout is the
@@ -1112,6 +1118,24 @@ _kilix_voice_found() {
   printf 'not found\n'
 }
 
+# What doctor prints for the three voice tools: the resolution the launch
+# paths actually use — PATH first, then the prefix the pinned installer links
+# into. A bare PATH probe once reported "kilix-voiced: not found" one line
+# under "daemon: running" whenever ~/.local/bin was off PATH; doctor must
+# describe the tool that would run, and say so when PATH cannot see it.
+_kilix_voice_tool_state() {
+  local name="$1" resolved
+  resolved="$(command -v "$name" 2>/dev/null || true)"
+  if [ -n "$resolved" ]; then
+    printf '%s\n' "$resolved"
+  elif [ -x "$_KILIX_VOICE_PREFIX/bin/$name" ]; then
+    printf '%s (installed; not on PATH)\n' "$_KILIX_VOICE_PREFIX/bin/$name"
+  else
+    printf 'not installed (no %s on PATH or in %s/bin)\n' \
+      "$name" "$_KILIX_VOICE_PREFIX"
+  fi
+}
+
 _kilix_voice_doctor() {
   local info server default_source default_sink library model cap tool
   _kilix_read_voice_config
@@ -1155,7 +1179,7 @@ _kilix_voice_doctor() {
   fi
   printf 'daemon: %s (%s)\n' "$(_kilix_voice_daemon_state)" "$_KILIX_VOICE_CONTROL"
   for tool in kilix-voiced kilix-tts kilix-stt; do
-    printf '%s: %s\n' "$tool" "$(_kilix_voice_found "$tool")"
+    printf '%s: %s\n' "$tool" "$(_kilix_voice_tool_state "$tool")"
   done
   printf 'model pins: %s\n' \
     "$("$KILIX_HOME/scripts/install-kilix-voice.sh" --print-refs 2>/dev/null \

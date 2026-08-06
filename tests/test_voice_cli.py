@@ -76,6 +76,61 @@ class VoiceCliTests(unittest.TestCase):
         self.assertEqual(
             result.stdout.splitlines(), ["voice daemon foreground", "argc=0"])
 
+    def install_prefix_daemon(self):
+        prefix_bin = Path(self.environment["KILIX_VOICE_PREFIX"]) / "bin"
+        prefix_bin.mkdir(parents=True, exist_ok=True)
+        daemon = prefix_bin / "kilix-voiced"
+        daemon.write_text(
+            "#!/bin/sh\n"
+            "if [ \"${1:-}\" = --version ]; then\n"
+            "  printf '%s\\n' 'kilix-voiced prefix fixture'\n"
+            "  exit 0\n"
+            "fi\n"
+            "printf '%s\\n' 'prefix daemon foreground'\n"
+        )
+        daemon.chmod(0o755)
+        return daemon
+
+    def hermetic_path(self):
+        """A PATH that cannot resolve voice tools installed on this machine."""
+        self.environment["PATH"] = f"{self.bin}{os.pathsep}/usr/bin{os.pathsep}/bin"
+
+    def test_voice_daemon_runs_the_installed_prefix_daemon_off_path(self):
+        # Desktop launch contexts often lack ~/.local/bin on PATH. An
+        # installed prefix daemon must be run, not reinstalled: on 0.1.7 this
+        # path re-ran the pinned installer on every daemon start.
+        self.hermetic_path()
+        daemon = self.install_prefix_daemon()
+
+        result = self.run_kilix("voice", "daemon")
+
+        self.assertEqual(result.stdout.splitlines(), ["prefix daemon foreground"])
+        self.assertNotIn("installing", result.stderr)
+        self.assertTrue(daemon.exists())
+
+    def test_voice_doctor_reports_the_prefix_daemon_it_would_run(self):
+        # Doctor once probed bare PATH and printed "kilix-voiced: not found"
+        # directly under "daemon: running". It must report the tool the
+        # launch paths resolve, and say when PATH cannot see it.
+        self.hermetic_path()
+        daemon = self.install_prefix_daemon()
+
+        result = self.run_kilix("voice", "doctor")
+
+        lines = result.stdout.splitlines()
+        voiced = [line for line in lines if line.startswith("kilix-voiced:")]
+        self.assertEqual(len(voiced), 1)
+        self.assertIn(str(daemon), voiced[0])
+        self.assertIn("not on PATH", voiced[0])
+        self.assertNotIn("not found", voiced[0])
+        # A tool absent from PATH and the prefix is named with both places
+        # that were checked, so "not installed" is actionable.
+        stt = [line for line in lines if line.startswith("kilix-stt:")]
+        self.assertEqual(len(stt), 1)
+        self.assertIn("not installed", stt[0])
+        self.assertIn(str(Path(self.environment["KILIX_VOICE_PREFIX"]) / "bin"),
+                      stt[0])
+
     def test_voice_daemon_rejects_arguments_and_is_documented_in_help(self):
         self.install_fake_daemon()
         refused = self.run_kilix("voice", "daemon", "unexpected", check=False)

@@ -182,6 +182,42 @@ expected_refs="$(printf '%s\n' \
   "kilix-voice=$KILIX_VOICE_REF" \
   "libvosk=$library_pin" \
   "model-$model_id=$model_pin")"
+# A read-aloud-only run is a subset of the full closure: when the stamp on
+# disk records a full install of the same pins, that install satisfies this
+# one. Without this, the lazy `kilix voice daemon` path (always
+# --without-dictation) and a full install would each see the other's stamp as
+# stale — reinstalling the runtime on every daemon start and taking turns
+# rewriting the stamp, while telling a user with a working dictation closure
+# to "rerun without --without-dictation".
+full_refs=""
+if [ "$without_dictation" = 1 ] \
+    && [[ "$KILIX_VOICE_LIB_VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] \
+    && [[ "$KILIX_VOICE_LIB_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] \
+    && [[ "$KILIX_VOICE_MODEL_SHA256" =~ ^[0-9a-fA-F]{64}$ ]]; then
+  full_refs="$(printf '%s\n' \
+    "kilix-voice=$KILIX_VOICE_REF" \
+    "libvosk=$KILIX_VOICE_LIB_VERSION+$KILIX_VOICE_LIB_SHA256" \
+    "model-$model_id=$KILIX_VOICE_MODEL_SHA256")"
+fi
+
+stamp_satisfies_this_run() {
+  [ -f "$stamp" ] || return 1
+  printf '%s\n' "$expected_refs" | cmp -s - "$stamp" && return 0
+  [ -n "$full_refs" ] && printf '%s\n' "$full_refs" | cmp -s - "$stamp"
+}
+
+# The dictation closure as the daemon resolves it: the promoted library link
+# and the model catalog entry. Read-aloud-only runs use this for truthful
+# messaging — they must not instruct a user whose dictation already works to
+# reinstall it.
+dictation_assets_present() {
+  local resolved
+  [ -f "$library_root/current/libvosk.so" ] || return 1
+  # The catalog entry is a symlink into the immutable generations; the payload
+  # check wants the generation directory itself.
+  resolved="$(realpath -e -- "$model" 2>/dev/null)" || return 1
+  model_payload_works "$resolved"
+}
 
 print_library_provenance() {
   printf '%s\n' \
@@ -308,9 +344,7 @@ voice_runtime_works() {
   vosk_model_works "$library_generation/libvosk.so" "$model_directory"
 }
 
-if [ "$force" = 0 ] && [ -f "$stamp" ] \
-     && printf '%s\n' "$expected_refs" | cmp -s - "$stamp" \
-     && voice_runtime_works; then
+if [ "$force" = 0 ] && stamp_satisfies_this_run && voice_runtime_works; then
   log "verified voice closure already installed at $prefix/bin"
   exit 0
 fi
@@ -788,7 +822,15 @@ fi
 
 stamp_tmp="$(mktemp "$state_dir/.kilix-voice-refs.XXXXXX")" \
   || die "could not create install stamp"
-printf '%s\n' "$expected_refs" >"$stamp_tmp"
+# A read-aloud-only repair of the runtime must not downgrade the record of a
+# full install: the library and model lines describe state this run did not
+# touch.
+final_refs="$expected_refs"
+if [ -n "$full_refs" ] && [ -f "$stamp" ] \
+    && printf '%s\n' "$full_refs" | cmp -s - "$stamp"; then
+  final_refs="$full_refs"
+fi
+printf '%s\n' "$final_refs" >"$stamp_tmp"
 chmod 0600 "$stamp_tmp"
 
 capture_previous_asset_links
@@ -810,6 +852,10 @@ mv -fT -- "$stamp_tmp" "$stamp" || die "could not publish the voice install stam
 stamp_tmp=""
 transaction_committed=1
 if [ "$without_dictation" = 1 ]; then
-  log "installed read-aloud only; rerun without --without-dictation to add the pinned Vosk library and model"
+  if dictation_assets_present; then
+    log "the Vosk library and the $model_id model are already installed; dictation stays available"
+  else
+    log "installed read-aloud only; rerun without --without-dictation to add the pinned Vosk library and model"
+  fi
 fi
-log "installed and verified $prefix_bin/kilix-tts, $prefix_bin/kilix-stt"
+log "installed and verified $prefix_bin/kilix-tts, $prefix_bin/kilix-stt, $prefix_bin/kilix-voiced"
