@@ -119,9 +119,13 @@ class DispatchTests(unittest.TestCase):
                 "import sys\nprint('checkout', *sys.argv[1:])\n")
             # KILIX_BONSAI_REF=unset stops the installer before it clones, so
             # this asserts the branch taken without reaching the network.
+            # KILIX_BONSAI_PREFIX points into the sandbox because the
+            # resolver checks the install prefix after PATH — the machine
+            # running this suite may really have the tool installed.
             result = run([str(LAUNCHER), "bonsai", "marker"],
                          GPU_TERMINAL_SOURCE_HOME=str(source_home),
                          GPU_TERMINAL_HOME=os.path.join(home, "state"),
+                         KILIX_BONSAI_PREFIX=os.path.join(home, "prefix"),
                          KILIX_BONSAI_REF="unset", PATH="/usr/bin:/bin")
             self.assertNotEqual(result.returncode, 0)
             self.assertNotIn("checkout marker", result.stdout)
@@ -135,9 +139,26 @@ class DispatchTests(unittest.TestCase):
             result = run([str(LAUNCHER), "bonsai"],
                          GPU_TERMINAL_SOURCE_HOME=os.path.join(home, "src"),
                          GPU_TERMINAL_HOME=os.path.join(home, "state"),
+                         KILIX_BONSAI_PREFIX=os.path.join(home, "prefix"),
                          KILIX_BONSAI_REF="unset", PATH="/usr/bin:/bin")
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("no published commit", result.stderr)
+
+    def test_a_prefix_install_off_path_is_run_not_reinstalled(self):
+        # Desktop launch contexts run without ~/.local/bin on PATH; an
+        # installed closure PATH cannot see must be run, not shadowed by a
+        # reinstall — the same order _kilix_voice_tool resolves in.
+        with tempfile.TemporaryDirectory() as home:
+            bindir = Path(home) / "prefix" / "bin"
+            bindir.mkdir(parents=True)
+            binary = bindir / "kilix-bonsai"
+            binary.write_text("#!/bin/sh\nprintf 'prefix %s\\n' \"$*\"\n")
+            binary.chmod(0o755)
+            result = run([str(LAUNCHER), "bonsai", "marker"],
+                         KILIX_BONSAI_PREFIX=os.path.join(home, "prefix"),
+                         PATH="/usr/bin:/bin")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), "prefix marker")
 
     def test_the_launcher_documents_the_subcommand(self):
         header = LAUNCHER.read_text().split("set -euo pipefail")[0]
