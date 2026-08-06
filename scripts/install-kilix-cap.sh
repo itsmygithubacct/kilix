@@ -18,7 +18,7 @@ KILIX_CAP_ALLOW_MUTABLE_REF="${KILIX_CAP_ALLOW_MUTABLE_REF:-0}"
 # This full commit is part of Kilix's transitive source closure. An existing
 # sibling checkout remains a development checkout unless KILIX_CAP_REF is
 # explicitly set; a first-use download always resolves this immutable default.
-KILIX_CAP_DEFAULT_REF=c86fa28df9c8e1d8d1b4cc4f2907eb812ac8d0db
+KILIX_CAP_DEFAULT_REF=f0eb2d33122e29fb97212f57102656a61f99b220
 
 die() { printf 'kilix cap: %s\n' "$*" >&2; exit 1; }
 log() { printf 'kilix cap: %s\n' "$*" >&2; }
@@ -80,6 +80,15 @@ build_checkout() {
   binary="$directory/bin/kilix-cap"
   if [ ! -f "$directory/Makefile" ] || [ -L "$directory/Makefile" ]; then
     die "missing or unsafe Kilix Cap Makefile: $directory/Makefile"
+  fi
+  # Kilix Cap takes its shared stack from a pinned kilix-game-sdk submodule
+  # rather than vendored files. A plain clone leaves that directory empty and
+  # the build then fails on a missing source, so the closure is resolved here
+  # before anything is compiled. A trusted packaged tree is not a Git checkout
+  # and must already carry it.
+  if git -C "$directory" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git -C "$directory" submodule update --init --recursive >&2 \
+      || die "could not prepare the pinned Kilix Cap module closure"
   fi
   log "building $directory"
   make --no-print-directory -C "$directory" >&2 \
