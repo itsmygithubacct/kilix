@@ -83,6 +83,17 @@ GAMES = {
     if spec.kind == "game" or spec.content_id == "dosbox"
 }
 
+# The two desktop-window games in the shared vocabulary (kilix_sdk.settings
+# GAME_TOGGLE_IDS): not catalog content, nothing to install — each is an app
+# inside the bundled desktop. `kilix games play` boots that desktop with the
+# window already open, so every surface that builds its menu from the shared
+# toggle list gets a working launch for ALL the ids it shows. Before this
+# map, these two ids fell into ensure()'s "unknown game" and the tab died.
+DESKTOP_APP_GAMES = {
+    "minesweeper": ("mines", "Minesweeper"),
+    "solitaire": ("sol", "Solitaire"),
+}
+
 
 def game_enabled(game):
     """Whether the shared GPU Terminal settings expose ``game``."""
@@ -159,6 +170,11 @@ def dosbox_ready(cp=None):
 def game_ready(game, cp=None):
     """Installed-and-runnable check dispatched by game name (None if not)."""
     cp = cp or load()
+    if game in DESKTOP_APP_GAMES:
+        # Always ready: the game is a window of the bundled desktop, so its
+        # runtime ships with this checkout and never needs installing.
+        return os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "main.py")
     if game == "doom":
         return doom_ready(cp)
     if game == "dosbox":
@@ -503,8 +519,15 @@ def ensure(game, report=print):
         exe = _catalog_ensure(game, cp, report)
         cp.set(game, "dir", os.path.dirname(exe))
         payload = exe
+    elif game in DESKTOP_APP_GAMES:
+        # Nothing to fetch or build: the game ships inside the desktop.
+        _app, label = DESKTOP_APP_GAMES[game]
+        report(f"{label} is built into the desktop — nothing to install")
+        return None
     else:
-        raise SystemExit(f"kilix games: unknown game {game!r}")
+        # No "kilix games:" prefix — main() adds it when it shows the words.
+        raise SystemExit(
+            f"unknown game {game!r} — run 'kilix games list' for the ids")
     save(cp)
     report(f"ready — config saved to {CONF}")
     return payload
@@ -549,6 +572,19 @@ def _launch_native(exe):
     os.execv(exe, [exe])
 
 
+def _launch_desktop_app(game):
+    """Boot the bundled desktop with this game's window already open.
+
+    Minesweeper and Solitaire are desktop windows, not programs: the desktop
+    is their runtime. The bundled desktop sits at the same pinned version as
+    this backend, so `kilix games play minesweeper` from any other desktop's
+    menu opens the same build the built-in provider would."""
+    app, _label = DESKTOP_APP_GAMES[game]
+    main_py = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           "main.py")
+    os.execv(sys.executable, [sys.executable, main_py, "--app", app])
+
+
 def main():
     try:
         shared_settings.ensure_file()
@@ -559,15 +595,28 @@ def main():
     setup_only = "--setup-only" in args
     args = [a for a in args if a != "--setup-only"]
     game = args[0] if args else "doom"
-    if game in GAMES and not game_enabled(game):
-        label = GAMES[game]["label"]
+    if ((game in GAMES or game in DESKTOP_APP_GAMES)
+            and not game_enabled(game)):
+        label = (GAMES[game]["label"] if game in GAMES
+                 else DESKTOP_APP_GAMES[game][1])
         raise SystemExit(
             f"kilix games: {label} is disabled; "
             f"run 'kilix games enable {game}' to make it available")
+    if game in DESKTOP_APP_GAMES:
+        # A desktop window, not installable content: setup is a no-op and
+        # playing boots the bundled desktop with the window open.
+        _app, label = DESKTOP_APP_GAMES[game]
+        if setup_only:
+            print(f"{label} is built into the desktop — nothing to install")
+            return
+        _launch_desktop_app(game)
+        return
     try:
         payload = ensure(game)
-    except Exception as e:      # BadZipFile/TarError/configparser.Error too
-        # keep the message readable in the tab instead of vanishing with it
+    except (SystemExit, Exception) as e:
+        # BadZipFile/TarError/configparser.Error too — and refusals raised as
+        # SystemExit, which used to fly out of here and take the tab with
+        # them before anyone could read the words.
         print(f"\x1b[1;31mkilix games: {e}\x1b[0m", file=sys.stderr)
         try:
             input("\n[Enter to close]")

@@ -222,6 +222,7 @@ def boom(game, report=print):
     raise zipfile.BadZipFile("mirror returned an HTML error page")
 
 
+_real_ensure = games.ensure
 games.ensure = boom
 builtins.input = lambda *a: (_ for _ in ()).throw(EOFError())
 sys.argv = ["games.py", "doom"]
@@ -232,5 +233,29 @@ except SystemExit as e:
     assert e.code == 1, e.code
 except zipfile.BadZipFile:
     assert False, "BadZipFile leaked past main()'s handler"
+games.ensure = _real_ensure
+
+
+# Entry 13: minesweeper and solitaire are windows of the bundled desktop, not
+# catalog content. They must be always-ready (no "isn't set up yet" prompt),
+# ensure() must treat them as nothing-to-install, and an unknown id must be a
+# caught SystemExit with the id list named — not an uncaught exit that takes
+# the tab.
+for _game in ("minesweeper", "solitaire"):
+    ready = games.game_ready(_game)
+    assert ready and ready.endswith("main.py"), (_game, ready)
+    lines = []
+    assert games.ensure(_game, report=lines.append) is None
+    assert any("built into the desktop" in line for line in lines), lines
+try:
+    games.ensure("definitely-not-a-game", report=lambda _msg: None)
+    assert False, "unknown game must refuse"
+except SystemExit as e:
+    assert "kilix games list" in str(e), e
+
+# main() routes desktop games away from ensure() entirely: --setup-only is a
+# clean no-op exit, so no surface delegating "play <id> --setup-only" can die.
+sys.argv = ["games.py", "--setup-only", "minesweeper"]
+games.main()
 
 print("ok")

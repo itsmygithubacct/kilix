@@ -782,6 +782,10 @@ def main():
     ap.add_argument("--no-cursor", dest="cursor", action="store_false",
                     help="don't draw the desktop's own mouse pointer")
     ap.add_argument("--dir", help="desktop folder override")
+    ap.add_argument("--app", metavar="NAME",
+                    help="boot with this built-in app already open "
+                         "(mines, sol, calc, ... — what `kilix games play` "
+                         "uses for the desktop's own games)")
     ap.add_argument("--screenshot", metavar="PNG",
                     help="render offscreen to PNG and exit (no terminal)")
     ap.add_argument("--scene", default="desktop",
@@ -801,6 +805,11 @@ def main():
         print(f"wrote {a.screenshot} ({w}x{h}, scene={a.scene})")
         return
     desk = Desk(term=DeskTerm(), draw_cursor=a.cursor)
+    if a.app:
+        # Through shell.open_app, the same door the Start menu uses: a bad
+        # name or a disabled game becomes a dialog on the desk, never a
+        # crashed boot.
+        desk.shell.open_app(a.app)
     desk.run()
 
 
