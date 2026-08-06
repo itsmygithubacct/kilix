@@ -20,7 +20,7 @@ KILIX_VOICE_PREFIX="${KILIX_VOICE_PREFIX:-$HOME/.local}"
 # then only its fixed vosk/libvosk.so member is extracted. The release image is
 # x86_64; other architectures can still install the read-aloud-only closure.
 KILIX_VOICE_REPO="${KILIX_VOICE_REPO:-https://github.com/itsmygithubacct/kilix-voice.git}"
-KILIX_VOICE_REF="${KILIX_VOICE_REF:-f05b64a7b2bc25fa9a7e2c3ae1e0b848f04a23f6}"
+KILIX_VOICE_REF="${KILIX_VOICE_REF:-eda9ca90eed677fa4fca383e7b8ad2fc85e54b0e}"
 KILIX_VOICE_LIB_VERSION="${KILIX_VOICE_LIB_VERSION:-0.3.45}"
 KILIX_VOICE_LIB_SHA256="${KILIX_VOICE_LIB_SHA256:-25e025093c4399d7278f543568ed8cc5460ac3a4bf48c23673ace1e25d26619f}"
 KILIX_VOICE_LIB_URL="${KILIX_VOICE_LIB_URL:-https://files.pythonhosted.org/packages/fc/ca/83398cfcd557360a3d7b2d732aee1c5f6999f68618d1645f38d53e14c9ff/vosk-0.3.45-py3-none-manylinux_2_12_x86_64.manylinux2010_x86_64.whl}"
