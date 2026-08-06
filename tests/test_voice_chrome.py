@@ -11,11 +11,13 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import pty
 import re
 import shutil
 import socket
 import sys
 import tempfile
+import termios
 import types
 import unittest
 from unittest import mock
@@ -239,6 +241,106 @@ class VoiceSegmentTests(unittest.TestCase):
         self.assertIn("Voice input works '", block)
         self.assertIn("'in terminal panes.'", block)
 
+    def test_dictation_dispatch_keeps_the_hidden_prompt_guard(self):
+        # The click-time check must stay, and must be the canonical-mode test:
+        # a name drift back to a bare echo check would refuse dictation at
+        # every readline prompt again.
+        source = FORK_TABS.read_text()
+        block = source.split("elif tab_action == DICTATE_ACTION:", 1)[1].split(
+            "elif tab_action == NETWORK_WIDGET_ACTION:", 1)[0]
+        self.assertIn("elif pane_at_hidden_prompt(target):", block)
+        self.assertIn("'Dictation refused'", block)
+
+    def _pane_with_tty(self, *, echo, icanon):
+        """A pane stub over a real pty whose slave has the given line flags."""
+        master, slave = pty.openpty()
+        self.addCleanup(os.close, master)
+        self.addCleanup(os.close, slave)
+        attrs = termios.tcgetattr(slave)
+        for flag, wanted in ((termios.ECHO, echo), (termios.ICANON, icanon)):
+            attrs[3] = attrs[3] | flag if wanted else attrs[3] & ~flag
+        termios.tcsetattr(slave, termios.TCSANOW, attrs)
+        return types.SimpleNamespace(
+            child=types.SimpleNamespace(child_fd=master))
+
+    def test_hidden_prompt_means_canonical_mode_with_echo_off(self):
+        # A password prompt (getpass, `read -s`, sudo, an ssh passphrase)
+        # leaves the tty canonical and turns echo off: the kernel reads a line
+        # it never shows. That is the one refused state.
+        guard = self.voice.pane_at_hidden_prompt
+        self.assertTrue(self._is_hidden(guard, echo=False, icanon=True))
+        # A readline-style shell prompt turns echo off too, but in raw mode,
+        # because the line editor echoes for itself. Refusing that refused
+        # dictation at every ordinary bash prompt (the 0.1.7 review failure).
+        self.assertFalse(self._is_hidden(guard, echo=False, icanon=False))
+        # Cooked, echoing ttys and raw-but-echoing ttys are not hidden.
+        self.assertFalse(self._is_hidden(guard, echo=True, icanon=True))
+        self.assertFalse(self._is_hidden(guard, echo=True, icanon=False))
+
+    def _is_hidden(self, guard, *, echo, icanon):
+        return guard(self._pane_with_tty(echo=echo, icanon=icanon))
+
+    def test_delivery_types_into_a_readline_prompt(self):
+        # End to end through deliver_dictation with the real guard over a real
+        # pty: the state every interactive shell prompt is actually in must
+        # receive the transcript.
+        tty_pane = self._pane_with_tty(echo=False, icanon=False)
+        write_to_child = mock.Mock()
+        window = types.SimpleNamespace(
+            destroyed=False,
+            child=tty_pane.child,
+            screen=types.SimpleNamespace(
+                grman=types.SimpleNamespace(image_count=0),
+                in_bracketed_paste_mode=False,
+            ),
+            as_text=lambda: "$ ",
+            write_to_child=write_to_child,
+        )
+        boss = types.SimpleNamespace(window_id_map={77: window})
+        fast_data_types = sys.modules[
+            f"{self.voice.__package__}.fast_data_types"]
+        self.voice.voice_state.target_window_id = 77
+
+        with mock.patch.object(
+                fast_data_types, "get_boss", return_value=boss, create=True), \
+                mock.patch.object(self.voice, "report_async_error") as error:
+            self.voice.deliver_dictation("echo hello")
+
+        error.assert_not_called()
+        write_to_child.assert_called_once_with("echo hello")
+
+    def test_delivery_still_refuses_a_real_password_prompt(self):
+        # The protective half, with the real guard over a real pty: canonical
+        # mode with echo off is refused and the transcript is discarded.
+        tty_pane = self._pane_with_tty(echo=False, icanon=True)
+        write_to_child = mock.Mock()
+        window = types.SimpleNamespace(
+            destroyed=False,
+            child=tty_pane.child,
+            screen=types.SimpleNamespace(
+                grman=types.SimpleNamespace(image_count=0),
+                in_bracketed_paste_mode=False,
+            ),
+            as_text=lambda: "Password: ",
+            write_to_child=write_to_child,
+        )
+        boss = types.SimpleNamespace(window_id_map={78: window})
+        fast_data_types = sys.modules[
+            f"{self.voice.__package__}.fast_data_types"]
+        self.voice.voice_state.target_window_id = 78
+
+        with mock.patch.object(
+                fast_data_types, "get_boss", return_value=boss, create=True), \
+                mock.patch.object(self.voice, "report_async_error") as error:
+            self.voice.deliver_dictation("hunter2")
+
+        write_to_child.assert_not_called()
+        error.assert_called_once_with(
+            "Dictation refused",
+            "The pane reached a hidden prompt while Kilix was listening; the "
+            "transcript was discarded.",
+        )
+
     def test_dictation_delivery_discards_text_if_target_became_a_pixel_pane(self):
         write_to_child = mock.Mock()
         window = types.SimpleNamespace(
@@ -285,7 +387,7 @@ class VoiceSegmentTests(unittest.TestCase):
 
         with mock.patch.object(
                 fast_data_types, "get_boss", return_value=boss, create=True), \
-                mock.patch.object(self.voice, "pane_echo_disabled", return_value=True), \
+                mock.patch.object(self.voice, "pane_at_hidden_prompt", return_value=True), \
                 mock.patch.object(self.voice, "report_async_error") as error:
             self.voice.deliver_dictation("do not insert this")
 
