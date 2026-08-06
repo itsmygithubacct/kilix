@@ -415,6 +415,84 @@ class BuildPreparationTests(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(info.st_mode), 0o600)
         self.assertEqual(info.st_nlink, 1)
 
+    _WORKING_SETUP = (
+        "from pathlib import Path\n"
+        "p = Path('kitty/launcher/kitty')\n"
+        "p.parent.mkdir(parents=True, exist_ok=True)\n"
+        "p.write_text('#!/bin/sh\\nexit 0\\n')\n"
+        "p.chmod(0o755)\n"
+        "k = p.with_name('kitten')\n"
+        "k.write_text('#!/bin/sh\\nexit 0\\n')\n"
+        "k.chmod(0o755)\n")
+
+    def _system_env(self):
+        env = dict(self.env)
+        env["KILIX_BUILD_MODE"] = "system"
+        env.pop("KILIX_BUILD_PREPARE_ONLY")
+        env.pop("KILIX_KITTY_DEPS_URL")
+        env.pop("KILIX_KITTY_DEPS_SHA256")
+        return env
+
+    def test_promotion_installs_the_engines_compiled_terminfo(self):
+        # TERM=xterm-kitty is what every pane advertises; the entry only ever
+        # existed inside the build tree, so strict ncurses programs reported
+        # an unknown terminal on provisioned machines. A promoted engine must
+        # leave the entry resolvable in ~/.terminfo.
+        (self.src / "setup.py").write_text(self._WORKING_SETUP)
+        for subdir, payload in (("x", b"compiled-x"), ("78", b"compiled-78")):
+            directory = self.src / "terminfo" / subdir
+            directory.mkdir(parents=True)
+            (directory / "xterm-kitty").write_bytes(payload)
+        home = self.base / "home"
+        home.mkdir(exist_ok=True)
+
+        result = self.run_build(self._system_env())
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            (home / ".terminfo" / "x" / "xterm-kitty").read_bytes(),
+            b"compiled-x")
+        self.assertEqual(
+            (home / ".terminfo" / "78" / "xterm-kitty").read_bytes(),
+            b"compiled-78")
+        self.assertIn("installed xterm-kitty terminfo", result.stdout)
+
+    @unittest.skipUnless(shutil.which("tic"), "needs tic (ncurses-bin)")
+    def test_terminfo_source_is_compiled_when_no_precompiled_entry(self):
+        (self.src / "setup.py").write_text(self._WORKING_SETUP)
+        terminfo = self.src / "terminfo"
+        terminfo.mkdir()
+        (terminfo / "kitty.terminfo").write_text(
+            "xterm-kitty|fixture entry,\n\tam,\n")
+        home = self.base / "home"
+        home.mkdir(exist_ok=True)
+
+        result = self.run_build(self._system_env())
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(
+            (home / ".terminfo" / "x" / "xterm-kitty").is_file())
+        self.assertIn("compiled xterm-kitty terminfo", result.stdout)
+
+    def test_uninstallable_terminfo_blocks_promotion(self):
+        # Part of the promotion transaction: an engine whose terminfo cannot
+        # be installed is not promoted, because the resulting session would
+        # break every strict terminfo consumer.
+        (self.src / "setup.py").write_text(self._WORKING_SETUP)
+        directory = self.src / "terminfo" / "x"
+        directory.mkdir(parents=True)
+        (directory / "xterm-kitty").write_bytes(b"compiled-x")
+        home = self.base / "home"
+        home.mkdir(exist_ok=True)
+        (home / ".terminfo").write_text("a file where the database goes\n")
+
+        result = self.run_build(self._system_env())
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("not promoting", result.stderr)
+        self.assertFalse(
+            (self.base / "storage" / "build" / "current").exists())
+
     def test_missing_kitten_is_rejected_before_promotion(self):
         (self.src / "setup.py").write_text(
             "from pathlib import Path\n"

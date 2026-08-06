@@ -613,6 +613,48 @@ promote_current() {
   return 1
 }
 
+install_terminfo() {
+  # Every Kilix pane advertises TERM=xterm-kitty, and nothing else on a
+  # provisioned machine installs that terminfo entry — so every strict
+  # ncurses program reported an unknown terminal until someone exported
+  # TERM=linux by hand (0.1.7 review). The engine tree ships the compiled
+  # entry; promotion is the moment it becomes the user's. Installing into
+  # ~/.terminfo is part of the promotion transaction: when the tree carries
+  # terminfo and it cannot be installed, the engine is not promoted.
+  local source_dir="$BUILD_SRC/terminfo" target="$HOME/.terminfo"
+  local subdir entry installed=0
+  if [ ! -d "$source_dir" ]; then
+    # A minimal or fixture tree; there is nothing to install from.
+    echo "kilix: WARNING: built tree ships no terminfo directory: $source_dir" >&2
+    return 0
+  fi
+  # kitty ships the entry precompiled, under both the first-letter and the
+  # hex-coded directory ncurses variants look in.
+  for subdir in x 78; do
+    entry="$source_dir/$subdir/xterm-kitty"
+    [ -f "$entry" ] && [ ! -L "$entry" ] || continue
+    mkdir -p -- "$target/$subdir" || return 1
+    install -m 0644 -- "$entry" "$target/$subdir/xterm-kitty" || return 1
+    installed=1
+  done
+  if [ "$installed" = 1 ]; then
+    echo "kilix: installed xterm-kitty terminfo -> $target"
+    return 0
+  fi
+  # No compiled entry in the tree: compile the shipped source.
+  if [ ! -f "$source_dir/kitty.terminfo" ]; then
+    echo "kilix: WARNING: built tree ships neither compiled nor source terminfo" >&2
+    return 0
+  fi
+  command -v tic >/dev/null 2>&1 || {
+    echo "kilix: tic is required to compile the engine's terminfo (install ncurses-bin)" >&2
+    return 1
+  }
+  mkdir -p -- "$target" || return 1
+  tic -x -o "$target" "$source_dir/kitty.terminfo" || return 1
+  echo "kilix: compiled xterm-kitty terminfo -> $target"
+}
+
 promote_prepared() {
   local target link_tmp
   retire_build_entry "$KILIX_BUILD_DIRECTORY/prepared" || return 1
@@ -680,6 +722,10 @@ if [ -n "$head" ]; then
   printf '%s\t%s\n' "$KILIX_HOME" "$head" >"$stamp_tmp"
   chmod 0600 "$stamp_tmp"
 fi
+install_terminfo || {
+  echo "kilix: could not install the engine's xterm-kitty terminfo into $HOME/.terminfo; not promoting this build" >&2
+  exit 1
+}
 promote_current
 garbage_collect_generations \
   || echo "kilix: WARNING: build committed but old generation cleanup was incomplete" >&2
