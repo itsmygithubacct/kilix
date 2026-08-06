@@ -728,11 +728,17 @@ _KILIX_BONSAI_PREFIX="${KILIX_BONSAI_PREFIX:-$HOME/.local}"
 declare -a _KILIX_BONSAI_COMMAND=()
 _kilix_bonsai_resolve() {
   local force="$1" resolved
-  resolved="$(command -v kilix-bonsai 2>/dev/null || true)"
-  if [ "$force" = 0 ] && [ -n "$resolved" ] && [ -x "$resolved" ]; then
-    _KILIX_BONSAI_COMMAND=("$resolved")
-    return 0
-  fi
+  # PATH first, then the install prefix — the same order _kilix_voice_tool
+  # uses and for the same reason: desktop launch contexts run without
+  # ~/.local/bin on PATH, and an installed closure PATH cannot see must be
+  # run, not reinstalled.
+  for resolved in "$(command -v kilix-bonsai 2>/dev/null || true)" \
+                  "$_KILIX_BONSAI_PREFIX/bin/kilix-bonsai"; do
+    if [ "$force" = 0 ] && [ -n "$resolved" ] && [ -x "$resolved" ]; then
+      _KILIX_BONSAI_COMMAND=("$resolved")
+      return 0
+    fi
+  done
   local installer=("$KILIX_HOME/scripts/install-kilix-bonsai.sh")
   [ "$force" = 0 ] || installer+=(--force)
   "${installer[@]}" || return 1
@@ -1442,14 +1448,15 @@ case "${1:-}" in
     # uses; reaching for pulsemixer instead made the widget depend on a
     # package the image need not carry.
     shift
-    _volume_bin="$(command -v kilix-volume || true)"
-    if [ -z "$_volume_bin" ]; then
-      "$KILIX_HOME/scripts/install-kilix-tui-utils.sh" >/dev/null 2>&1 || true
-      _volume_bin="$HOME/.local/bin/kilix-volume"
-    fi
+    # Resolved like temps and memory: the installed prefix path, absolutely.
+    # `command -v` came first here once, and quietly picked a different build
+    # whenever PATH carried one — or nothing at all in the desktop contexts
+    # that never see ~/.local/bin.
+    _volume_bin="${KILIX_TUI_UTILS_PREFIX:-$HOME/.local}/bin/kilix-volume"
+    [ -x "$_volume_bin" ] \
+      || "$KILIX_HOME/scripts/install-kilix-tui-utils.sh" --print-path >/dev/null
     [ -x "$_volume_bin" ] || {
-      echo "kilix volume: kilix-volume is not installed" \
-           "(run scripts/install-kilix-tui-utils.sh)" >&2
+      echo "kilix volume: installer did not create $_volume_bin" >&2
       exit 1
     }
     exec "$_volume_bin" "$@" ;;
@@ -1633,6 +1640,31 @@ case "${1:-}" in
       || { echo "kilix memory: installer did not create $_memory_installed" >&2; exit 1; }
     [ "$_memory_install_only" = 0 ] || exit 0
     exec "$_memory_installed" "$@" ;;
+  rollout-resume|rollout)
+    # Agent session recovery, resolved exactly the way temps and memory are:
+    # the pinned kilix-tui-utils closure provides `kilix-rollout-resume`, and
+    # the verb execs the installed prefix path absolutely. Before this arm
+    # existed, `kilix rollout-resume` fell through to the engine, which
+    # spawned a bare `rollout-resume` from kitty's own PATH — a PATH that has
+    # never carried ~/.local/bin — and the tab died childless and wordless.
+    shift
+    _rollout_install_only=0
+    while :; do
+      case "${1:-}" in
+        --install-only) _rollout_install_only=1; shift ;;
+        -h|--help|help)
+          echo "usage: $_self rollout-resume [--install-only] [ARGS...]"
+          echo "opens agent session recovery (Claude Code, Codex, Kimi Code)"
+          exit 0 ;;
+        *) break ;;
+      esac
+    done
+    _rollout_installed="${KILIX_TUI_UTILS_PREFIX:-$HOME/.local}/bin/kilix-rollout-resume"
+    "$KILIX_HOME/scripts/install-kilix-tui-utils.sh" --print-path >/dev/null
+    [ -x "$_rollout_installed" ] \
+      || { echo "kilix rollout-resume: installer did not create $_rollout_installed" >&2; exit 1; }
+    [ "$_rollout_install_only" = 0 ] || exit 0
+    exec "$_rollout_installed" "$@" ;;
   amp|media-player)
     # The Media Player has always built on first use from the desktop; this is
     # the same install with a name a caller can reach. Kilix Amp is catalog
@@ -2151,6 +2183,10 @@ case "${1:-}" in
     elif [ "$_status_provider" = "tui (text desktop)" ]; then
       if command -v kilix-tui >/dev/null 2>&1; then
         echo "kilix tui: $(command -v kilix-tui)"
+      elif [ -x "${KILIX_TUI_UTILS_PREFIX:-$HOME/.local}/bin/kilix-tui" ]; then
+        # Same honesty rule as voice doctor: installed-but-off-PATH is a
+        # different fact from not installed, and must read differently.
+        echo "kilix tui: ${KILIX_TUI_UTILS_PREFIX:-$HOME/.local}/bin/kilix-tui (installed; not on PATH)"
       elif [ -f "$_status_provider_dir/kilix-tui/main.py" ]; then
         echo "kilix tui: checkout present, not installed (install occurs on first launch)"
       else
@@ -2993,6 +3029,12 @@ case "${1:-}" in
     # has to say something and wait: an overlay that exits instantly leaves the
     # user with a flicker and no idea why nothing happened.
     if _switch_bin="$(command -v kilix-switch 2>/dev/null)" && [ -x "$_switch_bin" ]; then
+      exec "$_switch_bin" "$@"
+    fi
+    # PATH in an overlay launched by the engine has never seen ~/.local/bin;
+    # an installed closure PATH cannot see must still be run, not skipped.
+    _switch_bin="${KILIX_TUI_UTILS_PREFIX:-$HOME/.local}/bin/kilix-switch"
+    if [ -x "$_switch_bin" ]; then
       exec "$_switch_bin" "$@"
     fi
     _switch_src="${GPU_TERMINAL_SOURCE_HOME:-$HOME/.local/gpu_terminal/sources}/kilix-desktops/kilix-tui-utils/tools/switcher/main.py"

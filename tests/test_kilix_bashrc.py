@@ -156,6 +156,36 @@ class RunAliasTests(unittest.TestCase):
             self._type("no-such-app", XDG_SESSION_DESKTOP="pleb",
                        KILIX_RUN_ALIAS_APPS="no-such-app"), "")
 
+    def test_local_bin_is_prepended_to_path_when_it_exists(self):
+        """Section 0: the Debian ~/.profile guarantee, for non-login panes.
+
+        Kilix pane shells never run ~/.profile, so without this every stack
+        tool installed into ~/.local/bin is "command not found" in the very
+        terminal that installed it (the rollout family's recurring root
+        cause).
+        """
+        (self.home / ".local" / "bin").mkdir(parents=True)
+        out = self._shell("printf '%s\\n' \"$PATH\"\n").stdout
+        first = out.strip().splitlines()[-1]
+        self.assertTrue(
+            first.startswith(f"{self.home}/.local/bin:"),
+            f"~/.local/bin must be prepended, got: {first}")
+
+    def test_the_path_prepend_is_idempotent(self):
+        (self.home / ".local" / "bin").mkdir(parents=True)
+        local = f"{self.home}/.local/bin"
+        out = self._shell(
+            "printf '%s\\n' \"$PATH\"\n",
+            PATH=f"{local}:{self.bin}:/usr/bin:/bin").stdout
+        path = out.strip().splitlines()[-1]
+        self.assertEqual(path.split(":").count(local), 1,
+                         f"prepend must not duplicate, got: {path}")
+
+    def test_a_home_without_local_bin_is_left_alone(self):
+        out = self._shell("printf '%s\\n' \"$PATH\"\n").stdout
+        path = out.strip().splitlines()[-1]
+        self.assertNotIn(f"{self.home}/.local/bin", path)
+
     def test_user_alias_from_bashrc_is_not_clobbered(self):
         (self.home / ".bashrc").write_text("alias chromium='echo mine'\n")
         out = self._shell("alias chromium\n", XDG_SESSION_DESKTOP="pleb").stdout

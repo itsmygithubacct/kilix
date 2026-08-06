@@ -5,6 +5,20 @@
 # (kept working because a custom rcfile disables kitty's auto-injection), then
 # the kilix-only prompt.
 
+# 0. the user's private bin, exactly as Debian's ~/.profile adds it. Kilix
+#    panes are non-login shells, so ~/.profile never runs for them and every
+#    stack tool installed into ~/.local/bin (kilix-rollout-resume, kilix-tts,
+#    bonsai-cpu, ...) would be "command not found" in the very terminal that
+#    installed it. Guarded so a PATH that already carries it is left alone —
+#    this file is also sourced by nested shells.
+if [ -d "$HOME/.local/bin" ]; then
+    case ":$PATH:" in
+        *":$HOME/.local/bin:"*) ;;
+        *) PATH="$HOME/.local/bin:$PATH" ;;
+    esac
+    export PATH
+fi
+
 # 1. your normal interactive shell setup
 [ -f "$HOME/.bashrc" ] && . "$HOME/.bashrc"
 

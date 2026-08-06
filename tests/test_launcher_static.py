@@ -73,6 +73,51 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("launcher|--launcher)", launcher)
         self.assertIn("kilix-launcher", launcher)
 
+    def test_rollout_resume_is_a_verb_resolved_at_the_installed_prefix(self):
+        """`kilix rollout-resume` must never fall through to the engine.
+
+        An unknown word after `kilix` becomes the child command of a kitty
+        window, spawned from kitty's own PATH — which has never carried
+        ~/.local/bin — so the tab died childless with no words. The verb
+        resolves the pinned closure's installed path absolutely, the way
+        temps and memory do, and a missing tool fails with the path named.
+        """
+        launcher = (ROOT / "kilix").read_text()
+        self.assertIn("rollout-resume|rollout)", launcher)
+        self.assertIn(
+            '_rollout_installed="${KILIX_TUI_UTILS_PREFIX:-$HOME/.local}'
+            '/bin/kilix-rollout-resume"', launcher)
+        self.assertIn(
+            "kilix rollout-resume: installer did not create "
+            "$_rollout_installed", launcher)
+        self.assertIn('exec "$_rollout_installed" "$@"', launcher)
+
+    def test_every_tui_utils_verb_execs_the_prefix_path_absolutely(self):
+        """The temps/memory pattern, pinned for the whole family.
+
+        No verb that hands off to a kilix-tui-utils tool may exec a bare
+        name and trust PATH: desktop launch contexts run without
+        ~/.local/bin, and a bare exec there is a corpse, not a launch.
+        """
+        launcher = (ROOT / "kilix").read_text()
+        for tool in ("kilix-temps", "kilix-memory", "kilix-launcher",
+                     "kilix-volume", "kilix-rollout-resume"):
+            self.assertIn(
+                f'"${{KILIX_TUI_UTILS_PREFIX:-$HOME/.local}}/bin/{tool}"',
+                launcher, tool)
+        # And none of them may resolve through `command -v` alone: the only
+        # remaining `command -v kilix-*` sites must all be followed by a
+        # prefix fallback (voice tools, bonsai, switch) or be reporting-only.
+        self.assertNotIn('command -v kilix-volume', launcher)
+        self.assertNotIn('command -v kilix-rollout-resume', launcher)
+
+    def test_switch_and_bonsai_fall_back_to_the_installed_prefix(self):
+        launcher = (ROOT / "kilix").read_text()
+        self.assertIn(
+            '_switch_bin="${KILIX_TUI_UTILS_PREFIX:-$HOME/.local}'
+            '/bin/kilix-switch"', launcher)
+        self.assertIn('"$_KILIX_BONSAI_PREFIX/bin/kilix-bonsai"', launcher)
+
     def test_desktop_provider_knobs_are_wired(self):
         text = (ROOT / "kilix").read_text()
         for provider in ["auto)", "builtin)", "external)", "command|custom)", "none|off|disabled)"]:
