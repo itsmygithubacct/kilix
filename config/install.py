@@ -127,6 +127,28 @@ _FALLBACK_AGENTS = (
 
 AGENTS = _providers_from_rollout() or _FALLBACK_AGENTS
 
+# Where the vendors' installers land their binaries when PATH cannot say:
+# claude's install.sh links into ~/.local/bin, kimi's into ~/.kimi-code/bin
+# (codex uses /usr/local/bin, which every PATH already carries). The same
+# resolution contract as kilix_rollout.config.resolve_program — the rollout
+# tool is authoritative about the agents, so this list must not drift from
+# its. PATH alone is not enough here: desktop launch contexts routinely run
+# without ~/.local/bin, and an agent that is installed but off-PATH must
+# read as installed, not as absent.
+_AGENT_PREFIX_BINDIRS = ("~/.local/bin", "~/.kimi-code/bin")
+
+
+def _resolve_agent_command(command: str) -> str | None:
+    """The agent's executable: PATH first, then the known landing spots."""
+    found = shutil.which(command)
+    if found:
+        return found
+    for bindir in _AGENT_PREFIX_BINDIRS:
+        candidate = os.path.join(os.path.expanduser(bindir), command)
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
 # Hardware drivers that are a deliberate opt-in rather than part of the image.
 # The install itself belongs to Plebian-OS — its helper preflights the machine,
 # picks the package with nvidia-detect, builds via DKMS and refuses hardware too
@@ -217,7 +239,7 @@ def _catalog_rows() -> list[dict]:
 def _agent_rows() -> list[dict]:
     rows = []
     for agent in AGENTS:
-        found = shutil.which(agent["command"])
+        found = _resolve_agent_command(agent["command"])
         rows.append({
             "id": agent["id"],
             "label": agent["label"],
@@ -299,7 +321,30 @@ def _install_agent(agent: dict, *, assume_yes: bool) -> int:
             print("cancelled.")
             return 1
     shell = os.environ.get("SHELL") or "/bin/sh"
-    return subprocess.run([shell, "-c", agent["install"]], check=False).returncode
+    status = subprocess.run([shell, "-c", agent["install"]],
+                            check=False).returncode
+    if status != 0:
+        return status
+    # The vendor script exiting 0 is its claim; whether the command actually
+    # resolves is the fact. Verify, and when the binary landed at a known
+    # prefix that PATH cannot see, say exactly that — a plain "installed"
+    # followed by `command not found` in the next shell is how this class of
+    # bug stayed invisible.
+    resolved = _resolve_agent_command(agent["command"])
+    if resolved is None:
+        print(f"kilix install: the installer finished, but "
+              f"`{agent['command']}` does not resolve on PATH or in "
+              f"{', '.join(_AGENT_PREFIX_BINDIRS)} — read the installer "
+              "output above for where it put things.", file=sys.stderr)
+        return 1
+    if shutil.which(agent["command"]) is None:
+        print(f"{agent['label']} is installed at {resolved}, but that "
+              "directory is not on this shell's PATH.")
+        print("kilix pane shells put ~/.local/bin on PATH; open a new pane, "
+              "or add the directory to PATH for this shell.")
+        return 0
+    print(f"{agent['label']} is installed: {resolved}")
+    return 0
 
 
 def _install_catalog(identifier: str) -> int:
@@ -334,7 +379,7 @@ def update(identifier: str) -> int:
         # Catalog content is pinned; "updating" it means installing the pin the
         # current Kilix carries, which is what ensure() already does.
         return _install_catalog(identifier)
-    command = shutil.which(agent["command"])
+    command = _resolve_agent_command(agent["command"])
     if not command:
         print(f"{agent['label']} is not installed", file=sys.stderr)
         return 1

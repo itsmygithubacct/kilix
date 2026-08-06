@@ -37,13 +37,118 @@ class ListingTests(unittest.TestCase):
             self.assertIn("installed", row)
             self.assertIsInstance(row["installed"], bool)
 
-    def test_agent_state_follows_the_command_on_path(self):
-        import shutil
+    def test_agent_state_follows_the_resolved_command(self):
         for row in installer.rows():
             if row["kind"] != "agent":
                 continue
             agent = next(a for a in installer.AGENTS if a["id"] == row["id"])
-            self.assertEqual(row["installed"], bool(shutil.which(agent["command"])))
+            self.assertEqual(
+                row["installed"],
+                bool(installer._resolve_agent_command(agent["command"])))
+
+
+class ResolutionTests(unittest.TestCase):
+    """Installed is a fact about the disk, not about this shell's PATH.
+
+    The vendors land their binaries in prefixes a desktop launch context
+    often cannot see — claude's installer links into ~/.local/bin, kimi's
+    into ~/.kimi-code/bin — so resolution checks those spots after PATH,
+    matching kilix_rollout.config.resolve_program. Without this, an agent
+    was reported absent (and reinstallable) on the machine it was already
+    installed on.
+    """
+
+    def _with_home(self, tmp, populate=()):
+        """Patch expanduser to a synthetic HOME holding `populate` binaries."""
+        for relative in populate:
+            path = os.path.join(tmp, relative)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("#!/bin/sh\n")
+            os.chmod(path, 0o755)
+        return mock.patch.object(
+            installer.os.path, "expanduser",
+            side_effect=lambda p: p.replace("~", tmp, 1))
+
+    def test_path_wins_when_the_command_is_on_it(self):
+        with mock.patch.object(installer.shutil, "which",
+                               return_value="/somewhere/claude"):
+            self.assertEqual(installer._resolve_agent_command("claude"),
+                             "/somewhere/claude")
+
+    def test_claude_is_found_at_its_local_bin_landing_spot(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.object(installer.shutil, "which", return_value=None), \
+             self._with_home(tmp, populate=(".local/bin/claude",)):
+            self.assertEqual(installer._resolve_agent_command("claude"),
+                             os.path.join(tmp, ".local/bin/claude"))
+
+    def test_kimi_is_found_at_its_own_prefix(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.object(installer.shutil, "which", return_value=None), \
+             self._with_home(tmp, populate=(".kimi-code/bin/kimi",)):
+            self.assertEqual(installer._resolve_agent_command("kimi"),
+                             os.path.join(tmp, ".kimi-code/bin/kimi"))
+
+    def test_nothing_anywhere_resolves_to_none(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.object(installer.shutil, "which", return_value=None), \
+             self._with_home(tmp):
+            self.assertIsNone(installer._resolve_agent_command("claude"))
+
+    def test_rows_report_a_prefix_installed_agent_as_installed(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.object(installer.shutil, "which", return_value=None), \
+             self._with_home(tmp, populate=(".local/bin/claude",)):
+            row = next(r for r in installer._agent_rows()
+                       if r["id"] == "claude")
+        self.assertTrue(row["installed"])
+        self.assertEqual(row["path"], os.path.join(tmp, ".local/bin/claude"))
+
+    def test_update_runs_the_prefix_resolved_binary_absolutely(self):
+        import tempfile
+        calls = []
+        agent = next(a for a in installer.AGENTS if a["id"] == "claude")
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.object(installer.shutil, "which", return_value=None), \
+             self._with_home(tmp, populate=(".local/bin/claude",)), \
+             mock.patch.object(installer.subprocess, "run",
+                               side_effect=lambda a, **k: calls.append(a) or
+                               mock.Mock(returncode=0)):
+            code = installer.update(agent["id"])
+        self.assertEqual(code, 0)
+        self.assertEqual(calls[0][0], os.path.join(tmp, ".local/bin/claude"))
+
+    def test_a_vendor_install_that_leaves_nothing_is_not_success(self):
+        agent = installer.AGENTS[0]
+        with mock.patch.object(installer.subprocess, "run",
+                               return_value=mock.Mock(returncode=0)), \
+             mock.patch.object(installer, "_resolve_agent_command",
+                               return_value=None):
+            code = installer._install_agent(agent, assume_yes=True)
+        self.assertEqual(code, 1, "success may only be claimed for a "
+                         "command that actually resolves")
+
+    def test_an_off_path_landing_is_reported_by_its_path(self):
+        import contextlib
+        import io
+        agent = installer.AGENTS[0]
+        landing = "/somewhere/.local/bin/" + agent["command"]
+        out = io.StringIO()
+        with mock.patch.object(installer.subprocess, "run",
+                               return_value=mock.Mock(returncode=0)), \
+             mock.patch.object(installer, "_resolve_agent_command",
+                               return_value=landing), \
+             mock.patch.object(installer.shutil, "which", return_value=None), \
+             contextlib.redirect_stdout(out):
+            code = installer._install_agent(agent, assume_yes=True)
+        self.assertEqual(code, 0, "installed-but-off-PATH is still installed")
+        self.assertIn(landing, out.getvalue())
+        self.assertIn("not on this shell's PATH", out.getvalue())
 
 
 class DriverTests(unittest.TestCase):
