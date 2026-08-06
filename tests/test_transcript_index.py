@@ -42,7 +42,7 @@ def run_launcher(*args, storage, transcript_dir=None, extra_env=None):
     """
     env = {
         key: value for key, value in os.environ.items()
-        if not key.startswith(("KILIX", "KITTY"))
+        if not key.startswith(("KILIX", "KITTY")) and key != "COLUMNS"
     }
     env["KILIX_STORAGE_HOME"] = str(storage)
     if transcript_dir is not None:
@@ -142,16 +142,75 @@ class TranscriptIndexTests(unittest.TestCase):
         self.assertIn("nosidecar0000000.log [live]", result.stdout)
 
     def test_list_truncates_an_overlong_command(self):
+        # The clip is width-aware and takes the middle, because a command's
+        # distinguishing part is its last argument -- three panes on the same
+        # project used to render identically under a blind right-hand clip.
         self.write_log("verbose000000000")
-        self.write_sidecar("verbose000000000", "/tmp", "cmd " + "x" * 200)
+        self.write_sidecar("verbose000000000", "/tmp",
+                           "cmd " + "x" * 200 + " out-42.log")
 
-        result = self.list_transcripts()
+        result = self.list_transcripts(extra_env={"COLUMNS": "140"})
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("…", result.stdout)
         self.assertNotIn("x" * 100, result.stdout)
+        self.assertIn("out-42.log", result.stdout)
         for line in result.stdout.splitlines():
-            self.assertLess(len(line), 160, line)
+            self.assertLessEqual(len(line), 140, line)
+
+    def test_list_clips_labels_to_the_window_keeping_both_tails(self):
+        # When directory and command cannot both fit whole, each gives up
+        # its head: the leaf directory and the last argument are what tell
+        # two sessions apart.
+        home = os.path.expanduser("~")
+        self.write_log("clipped000000000")
+        self.write_sidecar(
+            "clipped000000000",
+            os.path.join(home, "checkouts", "very", "deep", "leaf-project"),
+            "python3 generate.py --model /var/models/big/model-00007.gguf")
+
+        result = self.list_transcripts(extra_env={"COLUMNS": "100"})
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("leaf-project", result.stdout)
+        self.assertIn("00007.gguf", result.stdout)
+        self.assertNotIn("checkouts", result.stdout)
+        self.assertIn("pipe the list for whole paths", result.stdout)
+        for line in result.stdout.splitlines():
+            self.assertLessEqual(len(line), 100, line)
+
+    def test_list_keeps_the_directory_tail_in_a_narrow_window(self):
+        # Too narrow for both label parts: the command is dropped and the
+        # directory keeps its tail, so the row still names the pane.
+        self.write_log("narrow0000000000")
+        self.write_sidecar(
+            "narrow0000000000",
+            "/srv/checkouts/aurora/services/ingest/worker-nine",
+            "make -C services/ingest test")
+
+        result = self.list_transcripts(extra_env={"COLUMNS": "80"})
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("worker-nine", result.stdout)
+        self.assertNotIn("ingest test", result.stdout)
+        for line in result.stdout.splitlines():
+            self.assertLessEqual(len(line), 80, line)
+
+    def test_list_prints_whole_paths_off_terminal(self):
+        # A pipe is how the full label is reached, so it must never clip:
+        # `kilix transcript list | grep` has to see every path whole.
+        long_cwd = "/srv/checkouts/aurora/services/ingest/worker-nine"
+        long_cmd = ("python3 tools/session_log/main.py --model "
+                    "/var/models/bonsai/model-00007.gguf")
+        self.write_log("wholepath0000000")
+        self.write_sidecar("wholepath0000000", long_cwd, long_cmd)
+
+        result = self.list_transcripts(extra_env={"COLUMNS": ""})
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"{long_cwd} — {long_cmd}", result.stdout)
+        self.assertNotIn("…", result.stdout)
+        self.assertNotIn("pipe the list for whole paths", result.stdout)
 
     @unittest.skipUnless(HAVE_REAPER, "prune needs zstd and flock")
     def test_prune_drops_only_sidecars_whose_log_is_gone(self):
