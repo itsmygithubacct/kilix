@@ -14,12 +14,14 @@ fi
 KILIX_TUI_UTILS_REPO="${KILIX_TUI_UTILS_REPO:-https://github.com/itsmygithubacct/kilix-tui-utils.git}"
 KILIX_TUI_UTILS_AUTO_INSTALL="${KILIX_TUI_UTILS_AUTO_INSTALL:-1}"
 KILIX_TUI_UTILS_TRUST_EXISTING_CHECKOUT="${KILIX_TUI_UTILS_TRUST_EXISTING_CHECKOUT:-0}"
+KILIX_TUI_UTILS_KEEP_EXISTING_CHECKOUT="${KILIX_TUI_UTILS_KEEP_EXISTING_CHECKOUT:-0}"
 KILIX_TUI_UTILS_ALLOW_MUTABLE_REF="${KILIX_TUI_UTILS_ALLOW_MUTABLE_REF:-0}"
 KILIX_TUI_UTILS_PREFIX="${KILIX_TUI_UTILS_PREFIX:-$HOME/.local}"
 
-# This full commit is part of Kilix's transitive source closure. An existing
-# sibling checkout remains a development checkout unless KILIX_TUI_UTILS_REF is
-# explicitly set; a first-use download always resolves this immutable default.
+# This full commit is part of Kilix's transitive source closure. Every run
+# resolves it — a first-use download and an existing checkout alike — so a moved
+# pin reaches machines that already have the component. Set
+# KILIX_TUI_UTILS_KEEP_EXISTING_CHECKOUT=1 to work from a checkout as it is.
 KILIX_TUI_UTILS_DEFAULT_REF=88216b449838cfd0778b5a87f9535c619e7c1f46
 
 die() { printf 'kilix tui: %s\n' "$*" >&2; exit 1; }
@@ -30,7 +32,13 @@ usage() {
 usage: install-kilix-tui-utils.sh [--print-path|--print-ref]
 
   --print-path  clone/install as needed, then print the desktop entry point
-  --print-ref   print the immutable first-install commit without changing files
+  --print-ref   print the immutable pinned commit without changing files
+
+Environment:
+  KILIX_TUI_UTILS_REF                    install this commit instead of the pin
+  KILIX_TUI_UTILS_KEEP_EXISTING_CHECKOUT=1
+                                         work from an existing checkout as it
+                                         is; the resolved ref is not installed
 EOF
 }
 
@@ -107,6 +115,48 @@ checkout_ref() {
     || die "kilix-tui-utils checkout verification failed"
 }
 
+# An existing checkout is not exempt from the pin.
+#
+# This used to reinstall from whatever the checkout happened to hold whenever no
+# ref was given explicitly, which meant a moved default reached every fresh
+# install and no update: `kilix tui: using existing checkout at 372559f`, then
+# an install from that stale tree. The resolved ref is the same one a first-use
+# download would land on, and it passed the immutable-SHA check above, so the
+# only difference between the two paths now is the cost of getting there.
+advance_existing_checkout() {
+  local directory="$1" head
+  head="$(git -C "$directory" rev-parse HEAD 2>/dev/null || true)"
+  case "$KILIX_TUI_UTILS_KEEP_EXISTING_CHECKOUT" in
+    1|yes|true|on)
+      log "keeping the existing checkout at ${head:0:12} as asked (KILIX_TUI_UTILS_KEEP_EXISTING_CHECKOUT=1)"
+      log "the resolved ref ${install_ref:0:12} was NOT installed"
+      return 0 ;;
+  esac
+  if [ "${head,,}" = "${install_ref,,}" ]; then
+    log "existing checkout is already at the resolved ref ${head:0:12}"
+    return 0
+  fi
+  if [ -n "$(git -C "$directory" status --porcelain --untracked-files=normal 2>/dev/null)" ]; then
+    # A tree someone is working in is kept, loudly. Refusing outright would
+    # turn one uncommitted file into a failed stack update; moving it silently
+    # would throw the work away.
+    log "keeping the existing checkout at ${head:0:12}: it has local modifications"
+    log "the resolved ref ${install_ref:0:12} was NOT installed; commit, stash or remove them"
+    return 0
+  fi
+  checkout_ref "$directory" "$install_ref"
+  # Said after the checkout, because only then are both commits local enough to
+  # compare. A pin that walks a machine backwards is legitimate and must still
+  # be visible in the log.
+  if [ -n "$head" ] \
+       && git -C "$directory" merge-base --is-ancestor \
+            "$install_ref" "$head" >/dev/null 2>&1; then
+    log "existing checkout REWOUND ${head:0:12} -> ${install_ref:0:12} (the pinned ref is older)"
+  else
+    log "existing checkout advanced ${head:0:12} -> ${install_ref:0:12}"
+  fi
+}
+
 if git -C "$tui_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   checkout_root="$(git -C "$tui_dir" rev-parse --show-toplevel 2>/dev/null)" \
     || die "could not resolve the kilix-tui-utils checkout root"
@@ -118,11 +168,7 @@ if git -C "$tui_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
        && [ "$KILIX_TUI_UTILS_TRUST_EXISTING_CHECKOUT" != 1 ]; then
     die "$tui_dir has origin '${origin:-missing}', expected '$KILIX_TUI_UTILS_REPO' (set KILIX_TUI_UTILS_TRUST_EXISTING_CHECKOUT=1 only for a trusted checkout)"
   fi
-  if [ -n "$explicit_ref" ]; then
-    checkout_ref "$tui_dir" "$explicit_ref"
-  else
-    log "using existing checkout at $(git -C "$tui_dir" rev-parse --short HEAD)"
-  fi
+  advance_existing_checkout "$tui_dir"
   install_checkout "$tui_dir"
   printf '%s\n' "$KILIX_TUI_UTILS_PREFIX/bin/kilix-tui"
   exit 0

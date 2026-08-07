@@ -14,12 +14,14 @@ KILIX_CHAWAN_DIR="${KILIX_CHAWAN_DIR:-$GPU_TERMINAL_SOURCE_HOME/kilix-apps/kilix
 KILIX_CHAWAN_REPO="${KILIX_CHAWAN_REPO:-https://github.com/itsmygithubacct/kilix-chawan.git}"
 KILIX_CHAWAN_AUTO_INSTALL="${KILIX_CHAWAN_AUTO_INSTALL:-1}"
 KILIX_CHAWAN_TRUST_EXISTING_CHECKOUT="${KILIX_CHAWAN_TRUST_EXISTING_CHECKOUT:-0}"
+KILIX_CHAWAN_KEEP_EXISTING_CHECKOUT="${KILIX_CHAWAN_KEEP_EXISTING_CHECKOUT:-0}"
 KILIX_CHAWAN_ALLOW_MUTABLE_REF="${KILIX_CHAWAN_ALLOW_MUTABLE_REF:-0}"
 KILIX_CHAWAN_TOOLCHAIN_HOME="${KILIX_CHAWAN_TOOLCHAIN_HOME:-$GPU_TERMINAL_HOME/toolchains}"
 
-# This full commit is part of Kilix's transitive source closure. An existing
-# sibling checkout remains a development checkout unless KILIX_CHAWAN_REF is
-# explicitly set; a first-use download always resolves this immutable default.
+# This full commit is part of Kilix's transitive source closure. Every run
+# resolves it — a first-use download and an existing checkout alike — so a moved
+# pin reaches machines that already have the component. Set
+# KILIX_CHAWAN_KEEP_EXISTING_CHECKOUT=1 to work from a checkout as it is.
 KILIX_CHAWAN_DEFAULT_REF=b2b2932453b1348be1ca841aaefd9258acdda0c1
 
 # Pinned Nim toolchain. Upstream Chawan asks for 2.0.0 or newer and recommends
@@ -52,6 +54,9 @@ usage: install-kilix-chawan.sh [--print-path|--print-installed|--print-ref]
 Environment:
   KILIX_CHAWAN_DIR              checkout location
   KILIX_CHAWAN_REF              build this commit instead of the pinned default
+  KILIX_CHAWAN_KEEP_EXISTING_CHECKOUT=1
+                                work from an existing checkout as it is; the
+                                resolved ref is not installed
   KILIX_CHAWAN_AUTO_INSTALL=0   refuse to download anything
   KILIX_CHAWAN_NIM              use this Nim binary instead of bootstrapping one
   KILIX_CHAWAN_BUILD_LIBSSH2    1 build libssh2 for SFTP, 0 never, ask (default)
@@ -381,6 +386,46 @@ checkout_ref() {
     || die "kilix-chawan checkout verification failed"
 }
 
+# An existing checkout is not exempt from the pin.
+#
+# Reinstalling from whatever a checkout happened to hold whenever no ref was
+# given explicitly meant a moved default reached every fresh install and no
+# update. The resolved ref is the one a first-use download would land on and it
+# passed the immutable-SHA check above, so both paths now agree.
+advance_existing_checkout() {
+  local directory="$1" head
+  head="$(git -C "$directory" rev-parse HEAD 2>/dev/null || true)"
+  case "$KILIX_CHAWAN_KEEP_EXISTING_CHECKOUT" in
+    1|yes|true|on)
+      log "keeping the existing checkout at ${head:0:12} as asked (KILIX_CHAWAN_KEEP_EXISTING_CHECKOUT=1)"
+      log "the resolved ref ${install_ref:0:12} was NOT installed"
+      return 0 ;;
+  esac
+  if [ "${head,,}" = "${install_ref,,}" ]; then
+    log "existing checkout is already at the resolved ref ${head:0:12}"
+    return 0
+  fi
+  if [ -n "$(git -C "$directory" status --porcelain --untracked-files=normal 2>/dev/null)" ]; then
+    # A tree someone is working in is kept, loudly. Refusing outright would
+    # turn one uncommitted file into a failed stack update; moving it silently
+    # would throw the work away.
+    log "keeping the existing checkout at ${head:0:12}: it has local modifications"
+    log "the resolved ref ${install_ref:0:12} was NOT installed; commit, stash or remove them"
+    return 0
+  fi
+  checkout_ref "$directory" "$install_ref"
+  # Said after the checkout, because only then are both commits local enough to
+  # compare. A pin that walks a machine backwards is legitimate and must still
+  # be visible in the log.
+  if [ -n "$head" ] \
+       && git -C "$directory" merge-base --is-ancestor \
+            "$install_ref" "$head" >/dev/null 2>&1; then
+    log "existing checkout REWOUND ${head:0:12} -> ${install_ref:0:12} (the pinned ref is older)"
+  else
+    log "existing checkout advanced ${head:0:12} -> ${install_ref:0:12}"
+  fi
+}
+
 if git -C "$chawan_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   checkout_root="$(git -C "$chawan_dir" rev-parse --show-toplevel 2>/dev/null)" \
     || die "could not resolve the kilix-chawan checkout root"
@@ -392,11 +437,7 @@ if git -C "$chawan_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
        && [ "$KILIX_CHAWAN_TRUST_EXISTING_CHECKOUT" != 1 ]; then
     die "$chawan_dir has origin '${origin:-missing}', expected '$KILIX_CHAWAN_REPO' (set KILIX_CHAWAN_TRUST_EXISTING_CHECKOUT=1 only for a trusted checkout)"
   fi
-  if [ -n "$explicit_ref" ]; then
-    checkout_ref "$chawan_dir" "$explicit_ref"
-  else
-    log "using existing checkout at $(git -C "$chawan_dir" rev-parse --short HEAD)"
-  fi
+  advance_existing_checkout "$chawan_dir"
   build_checkout "$chawan_dir"
   printf '%s\n' "$chawan_dir/target/release/bin/cha"
   exit 0

@@ -836,14 +836,23 @@ first launch, Kilix clones an immutable Kilix-pinned commit from
 the native executable in a new tab. Later launches reuse the checkout and
 incremental build. Kilix Cap itself downloads nothing at runtime.
 
-An existing sibling Git checkout is preserved: Kilix validates its `origin`,
-builds its current worktree, and never resets it unless an explicit
-`KILIX_CAP_REF` asks for a clean exact checkout. Override `KILIX_CAP_DIR`,
-`KILIX_CAP_REPO`, or `KILIX_CAP_REF` for reviewed source; mutable refs require
-`KILIX_CAP_ALLOW_MUTABLE_REF=1`. Set `KILIX_CAP_AUTO_INSTALL=0` to forbid the
-first-use clone or `KILIX_CAP_TRUST_EXISTING_CHECKOUT=1` only for a trusted
-packaged/nonstandard checkout. Building requires a C11 compiler, `make`,
-pthreads, and zlib development headers.
+An existing Git checkout is moved to the resolved ref rather than rebuilt as
+found: Kilix validates its `origin`, then checks out the same commit a first-use
+download would land on, so a moved pin reaches machines that already have the
+component instead of only fresh ones. The move is reported either way, and named
+`REWOUND` when the pin is older than what is installed. A checkout with local
+modifications is kept and says so; `KILIX_CAP_KEEP_EXISTING_CHECKOUT=1` keeps a
+clean one deliberately, naming the ref it did not install. Override
+`KILIX_CAP_DIR`, `KILIX_CAP_REPO`, or `KILIX_CAP_REF` for reviewed source;
+mutable refs require `KILIX_CAP_ALLOW_MUTABLE_REF=1`. Set
+`KILIX_CAP_AUTO_INSTALL=0` to forbid the first-use clone or
+`KILIX_CAP_TRUST_EXISTING_CHECKOUT=1` only for a trusted packaged/nonstandard
+checkout. Building requires a C11 compiler, `make`, pthreads, and zlib
+development headers.
+
+The same rule holds for every component installer of this shape —
+`kilix-tui-utils`, Kilix Land, and `kilix-chawan` — each with its own
+`*_KEEP_EXISTING_CHECKOUT` opt-out.
 
 ### Kilix TUI
 

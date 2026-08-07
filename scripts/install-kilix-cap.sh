@@ -13,11 +13,13 @@ fi
 KILIX_CAP_REPO="${KILIX_CAP_REPO:-https://github.com/itsmygithubacct/kilix-cap.git}"
 KILIX_CAP_AUTO_INSTALL="${KILIX_CAP_AUTO_INSTALL:-1}"
 KILIX_CAP_TRUST_EXISTING_CHECKOUT="${KILIX_CAP_TRUST_EXISTING_CHECKOUT:-0}"
+KILIX_CAP_KEEP_EXISTING_CHECKOUT="${KILIX_CAP_KEEP_EXISTING_CHECKOUT:-0}"
 KILIX_CAP_ALLOW_MUTABLE_REF="${KILIX_CAP_ALLOW_MUTABLE_REF:-0}"
 
-# This full commit is part of Kilix's transitive source closure. An existing
-# sibling checkout remains a development checkout unless KILIX_CAP_REF is
-# explicitly set; a first-use download always resolves this immutable default.
+# This full commit is part of Kilix's transitive source closure. Every run
+# resolves it — a first-use download and an existing checkout alike — so a moved
+# pin reaches machines that already have the component. Set
+# KILIX_CAP_KEEP_EXISTING_CHECKOUT=1 to work from a checkout as it is.
 KILIX_CAP_DEFAULT_REF=19c6f6b6941772d363b43a57b8f82e1c94e865d5
 
 die() { printf 'kilix cap: %s\n' "$*" >&2; exit 1; }
@@ -28,7 +30,13 @@ usage() {
 usage: install-kilix-cap.sh [--print-path|--print-ref]
 
   --print-path  clone/build as needed, then print the executable path
-  --print-ref   print the immutable first-install commit without changing files
+  --print-ref   print the immutable pinned commit without changing files
+
+Environment:
+  KILIX_CAP_REF                    build this commit instead of the pin
+  KILIX_CAP_KEEP_EXISTING_CHECKOUT=1
+                                   work from an existing checkout as it is; the
+                                   resolved ref is not installed
 EOF
 }
 
@@ -114,6 +122,46 @@ checkout_ref() {
     || die "Kilix Cap checkout verification failed"
 }
 
+# An existing checkout is not exempt from the pin.
+#
+# Reinstalling from whatever a checkout happened to hold whenever no ref was
+# given explicitly meant a moved default reached every fresh install and no
+# update. The resolved ref is the one a first-use download would land on and it
+# passed the immutable-SHA check above, so both paths now agree.
+advance_existing_checkout() {
+  local directory="$1" head
+  head="$(git -C "$directory" rev-parse HEAD 2>/dev/null || true)"
+  case "$KILIX_CAP_KEEP_EXISTING_CHECKOUT" in
+    1|yes|true|on)
+      log "keeping the existing checkout at ${head:0:12} as asked (KILIX_CAP_KEEP_EXISTING_CHECKOUT=1)"
+      log "the resolved ref ${install_ref:0:12} was NOT installed"
+      return 0 ;;
+  esac
+  if [ "${head,,}" = "${install_ref,,}" ]; then
+    log "existing checkout is already at the resolved ref ${head:0:12}"
+    return 0
+  fi
+  if [ -n "$(git -C "$directory" status --porcelain --untracked-files=normal 2>/dev/null)" ]; then
+    # A tree someone is working in is kept, loudly. Refusing outright would
+    # turn one uncommitted file into a failed stack update; moving it silently
+    # would throw the work away.
+    log "keeping the existing checkout at ${head:0:12}: it has local modifications"
+    log "the resolved ref ${install_ref:0:12} was NOT installed; commit, stash or remove them"
+    return 0
+  fi
+  checkout_ref "$directory" "$install_ref"
+  # Said after the checkout, because only then are both commits local enough to
+  # compare. A pin that walks a machine backwards is legitimate and must still
+  # be visible in the log.
+  if [ -n "$head" ] \
+       && git -C "$directory" merge-base --is-ancestor \
+            "$install_ref" "$head" >/dev/null 2>&1; then
+    log "existing checkout REWOUND ${head:0:12} -> ${install_ref:0:12} (the pinned ref is older)"
+  else
+    log "existing checkout advanced ${head:0:12} -> ${install_ref:0:12}"
+  fi
+}
+
 if git -C "$cap_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   checkout_root="$(git -C "$cap_dir" rev-parse --show-toplevel 2>/dev/null)" \
     || die "could not resolve the Kilix Cap checkout root"
@@ -125,11 +173,7 @@ if git -C "$cap_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
        && [ "$KILIX_CAP_TRUST_EXISTING_CHECKOUT" != 1 ]; then
     die "$cap_dir has origin '${origin:-missing}', expected '$KILIX_CAP_REPO' (set KILIX_CAP_TRUST_EXISTING_CHECKOUT=1 only for a trusted checkout)"
   fi
-  if [ -n "$explicit_ref" ]; then
-    checkout_ref "$cap_dir" "$explicit_ref"
-  else
-    log "using existing checkout at $(git -C "$cap_dir" rev-parse --short HEAD)"
-  fi
+  advance_existing_checkout "$cap_dir"
   build_checkout "$cap_dir"
   printf '%s\n' "$cap_dir/bin/kilix-cap"
   exit 0
