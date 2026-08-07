@@ -20,7 +20,7 @@ KILIX_LAND_DESKTOP_ALLOW_MUTABLE_REF="${KILIX_LAND_DESKTOP_ALLOW_MUTABLE_REF:-0}
 # sibling checkout remains a development checkout unless
 # KILIX_LAND_DESKTOP_REF is explicitly set; a first-use download always
 # resolves this immutable default.
-KILIX_LAND_DESKTOP_DEFAULT_REF=afbad857b4fcdb800bfbe1e8060c7e23be068006
+KILIX_LAND_DESKTOP_DEFAULT_REF=c3275afdf31bfbc932c9d8511efcea79e473835e
 
 die() { printf 'kilix land: %s\n' "$*" >&2; exit 1; }
 log() { printf 'kilix land: %s\n' "$*" >&2; }
