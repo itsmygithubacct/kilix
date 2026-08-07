@@ -182,7 +182,7 @@ fedora_install() {
 }
 
 debian_install() {
-  local pkgs="build-essential pkg-config git curl zstd golang-go python3 python3-dev python3-pil \
+  local pkgs="build-essential cmake pkg-config git curl zstd golang-go python3 python3-dev python3-pil \
     libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxkbcommon-dev \
     libxkbcommon-x11-dev libx11-xcb-dev libdbus-1-dev libgl1-mesa-dev libfontconfig-dev \
     libpng-dev liblcms2-dev libcairo2-dev libharfbuzz-dev libssl-dev libxxhash-dev \
