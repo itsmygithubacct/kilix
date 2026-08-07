@@ -25,7 +25,7 @@ complete tree. Freedesktop launchers/icons are the intentional exception:
 
 ## Release 0.1.8
 
-Prepared 2026-08-04. **Not published yet.**
+Prepared 2026-08-07. **Not published yet.**
 
 Upgrades from 0.1.7, the previous published release. Adds `kilix install`: one
 list of everything this system can install — the pinned content catalog and the
@@ -59,6 +59,106 @@ Adds the host verbs every desktop provider was reimplementing (SDK 1.8):
   now also the one authored source of the copy the TUI stack mirrors, gaining
   the mirror's `entries_in()` folder reader and `grouped(force=)` cache
   refresh (SDK 1.8 → 1.9).
+
+Two more places a choice or a device is now reachable by name:
+
+- `kilix default-desktop show|list|set NAME` — the desktop a session starts
+  with, kept in one place and written by one writer. The desktops and the
+  first-boot provisioner call it instead of each formatting the same line into
+  the same file; an unknown name is refused with the list rather than written
+  through.
+- `kilix volume` — resolves the mixer this stack ships the way `kilix launcher`
+  resolves its own tool: an installed command first, the pinned installer if
+  the utilities are not there yet, a clear refusal rather than a guess. The
+  chrome's volume widget and the launcher both ask for it by name.
+
+### Fixed by the 0.1.7 review
+
+Everything below came out of running 0.1.7 by hand on two machines rather than
+from a test that was already failing.
+
+- **Dictation refused every ordinary shell prompt.** The hidden-prompt guard
+  treated "echo off" alone as a password prompt, so the microphone was refused
+  in any readline-style shell at click time and again at delivery. A hidden
+  prompt is canonical mode with echo off — the kernel reading a line it never
+  shows — and only that is refused now. Both deliver paths are driven over a
+  real pty in the chrome tests: a readline-state pane receives the transcript,
+  a `getpass`-state pane still visibly discards it.
+- **`TERM=xterm-kitty` resolved nowhere.** Every pane advertises it, but the
+  terminfo entry existed only inside the engine build tree, so strict ncurses
+  programs reported an unknown terminal until someone exported `TERM=linux` by
+  hand. Promotion now installs the tree's compiled entry into `~/.terminfo`
+  (both database layouts, compiling the shipped source with `tic` when no
+  compiled entry exists) inside the same transaction: an engine whose terminfo
+  cannot be installed is not promoted.
+- **The voice tooling contradicted itself.** `kilix voice doctor` probed bare
+  `PATH` and printed "kilix-voiced: not found" one line under "daemon:
+  running"; the lazy daemon path reinstalled the pinned closure on every start
+  from a `PATH`-less context; and a read-aloud-only run treated a full
+  install's stamp as stale, reinstalling forever while telling a user with
+  working dictation to rerun without `--without-dictation`. Doctor now reports
+  the tool the launch paths actually resolve, resolution runs an installed
+  prefix entry instead of reinstalling it, and a full stamp of the same pins
+  satisfies the read-aloud-only check.
+- **`~/.local/bin` was on no execution path in the stack.** Kilix panes run
+  non-login bash, so Debian's `~/.profile` addition never applied and a tool
+  installed at the user prefix was "command not found" in the very terminal
+  that installed it; a launcher verb trusting `PATH` spawned a childless tab
+  that died with no words at all. `kilix.bashrc` now makes that guarantee
+  idempotently for every pane shell, `rollout-resume` became a real verb
+  resolved at the installed prefix, and `volume`, `switch`, `bonsai` and
+  `status` check the prefix before giving up or reinstalling. A missing tool
+  fails with the path named, never a corpse.
+- **The coding agents read as absent where their own installers put them.**
+  Resolution now checks the known landing spots after `PATH` — the same
+  contract the rollout tool follows — and `--update` runs the resolved binary
+  absolutely. A vendor install must leave something that actually resolves
+  before success is claimed.
+- **The agent definitions had already drifted.** `kilix install` carried its
+  own copy of each agent's install command, update argv and documentation URL,
+  and said `kimi update` where Kimi wants `kimi upgrade`. They are taken from
+  the rollout checkout when it is present, and the local fallback is pinned
+  field by field against it. The search honours `KILIX_TUI_UTILS_DIR` — the
+  installer's own override — instead of guessing the default clone location
+  and silently falling back.
+- **Two games in every desktop's menu died wordlessly.** `minesweeper` and
+  `solitaire` are windows of the bundled desktop rather than catalog content,
+  so the games backend fell into the unknown-game `SystemExit`, which flew out
+  of `main()` and took the tab with it. They are known by name now, always
+  ready, and boot the bundled desktop with the window already open.
+- **A moved component pin reached only fresh machines.** The installers
+  downloaded to the resolved ref on first use but reinstalled an existing
+  checkout from whatever it happened to hold, so an update was exactly where a
+  moved pin did not arrive. Both paths resolve the same ref under the existing
+  immutable-SHA validation, the move is reported (`advanced`, or `REWOUND`
+  when the pin is older than what is installed), a checkout with local
+  modifications is kept and says so, and `*_KEEP_EXISTING_CHECKOUT=1` keeps a
+  clean one deliberately.
+- Installs `cmake` with the build toolchain, which the CPU model runtime needs.
+
+### Component pins moved for this release
+
+Kilix owns the immutable revision of every optional component, so these are the
+whole of what a release installs:
+
+- **Kilix Voice** → `eda9ca90eed677fa4fca383e7b8ad2fc85e54b0e`: the microphone
+  test explains a suspended source over its level meter instead of showing a
+  flat bar and saying nothing.
+- **Kilix Bonsai** → `6550fb37b323ffd6d89072ce0b1cd254dc50fbfe`: an accepted
+  CPU build offer actually builds — the store preflights the toolchain, prices
+  the missing packages into the confirm, and reopens chat afterwards, while
+  `bonsai-cpu` refuses a doomed build before fetching anything.
+- **kilix-tui-utils** → `94ebb64f899e8808f3de04e56b3334b7b1f31819`:
+  `plebian-os --version` answered by crashing on a machine with no screen and,
+  once it answered, read only the development workspace — so a provisioned
+  machine's components read as "not present" or as the wrong version entirely.
+  It answers without curses now and names the directory every answer came
+  from. Transcript labels fit the terminal's real width and shrink from the
+  head, so panes that differ only in their last argument stop rendering
+  identically. Launches resolve their program before the terminal spawns it.
+- **Kilix Cap** and **Kilix Land** advance to their published tips for the
+  mansion's laptop, ladders, breaker and authored face, and the walkable
+  house's fixes.
 
 ## Release 0.1.7
 
@@ -474,7 +574,7 @@ second microphone click requests stop but keeps the private result socket open
 for the recognizer's final answer; stale partial text is never substituted.
 
 `kilix voice install` installs the immutable `kilix-voice` 0.1.2 source at
-commit `f05b64a7b2bc25fa9a7e2c3ae1e0b848f04a23f6`, the official Vosk 0.3.45
+commit `eda9ca90eed677fa4fca383e7b8ad2fc85e54b0e`, the official Vosk 0.3.45
 x86_64 wheel, and `vosk-model-small-en-us-0.15`. Downloads are SHA-256 verified.
 The installer extracts only the wheel's fixed `vosk/libvosk.so` member, checks
 its ELF architecture and complete required Vosk API, loads the pinned acoustic
