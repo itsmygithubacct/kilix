@@ -462,6 +462,29 @@ generation_target_syntax_is_safe() {
   case "$suffix" in ''|*[!A-Za-z0-9]*) return 1 ;; esac
 }
 
+# Every reference the collector must honor before reclaiming a generation.
+#
+# Besides the engine's own entries (current/previous/prepared and the
+# .current./.prepared./.previous. temporaries a promotion moves through), an
+# outside updater that runs `kilix --build` inside its own transaction needs
+# somewhere to park the outgoing generation. Its rollback restores that entry,
+# so a collector that reclaims the parked target turns a failed update into a
+# `previous` pointing at a deleted directory — and every later update refuses to
+# start against it. The parking contract is therefore part of this function:
+#
+#   $KILIX_BUILD_DIRECTORY/.update-rollback.<suffix>/<name>.entry
+#
+# a private directory named `.update-rollback.*` holding generation symlinks
+# named `*.entry`. It is deliberately shaped so the engine never has to learn
+# the name of any individual updater. Pleb (lib/update.sh) and Plebian-OS
+# (provision/plebian-os-update.sh) park there, and pin the same literal shape in
+# their own suites; tests/test_build_behavior.py and tests/test_update_behavior.py
+# pin this side of it.
+#
+# `.pleb-update.*/previous` and `.plebian-os-update.*/previous` are the shapes
+# those two updaters used up to 0.1.8, before they moved onto the contract
+# above. Honor them so an installation still carrying a pre-fix updater survives
+# the very update that replaces it; nothing writes them any more.
 generation_target_is_referenced() {
   local target="$1" ref
   for ref in "$KILIX_BUILD_DIRECTORY/current" \
@@ -470,7 +493,9 @@ generation_target_is_referenced() {
              "$KILIX_BUILD_DIRECTORY"/.current.* \
              "$KILIX_BUILD_DIRECTORY"/.prepared.* \
              "$KILIX_BUILD_DIRECTORY"/.previous.* \
-             "$KILIX_BUILD_DIRECTORY"/.update-rollback.*/*.entry; do
+             "$KILIX_BUILD_DIRECTORY"/.update-rollback.*/*.entry \
+             "$KILIX_BUILD_DIRECTORY"/.pleb-update.*/previous \
+             "$KILIX_BUILD_DIRECTORY"/.plebian-os-update.*/previous; do
     if [ -L "$ref" ] && [ "$(readlink -- "$ref" 2>/dev/null || true)" = "$target" ]; then
       return 0
     fi

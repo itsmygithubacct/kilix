@@ -356,6 +356,65 @@ class BuildPreparationTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(recovery.exists())
 
+    def _park_survives_collection(self, directory, entry):
+        """Park one generation in `directory`/`entry` and collect; kept?"""
+        build = self.base / "storage" / "build"
+        generation = build / "generations" / "build.Parked"
+        shutil.rmtree(generation, ignore_errors=True)
+        generation.mkdir(parents=True)
+        (generation / "marker").write_text("parked\n")
+        transaction = build / directory
+        shutil.rmtree(transaction, ignore_errors=True)
+        transaction.mkdir(parents=True)
+        (transaction / entry).symlink_to("generations/build.Parked")
+
+        result = self.run_build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        survived = generation.exists()
+        (transaction / entry).unlink()
+        transaction.rmdir()
+        shutil.rmtree(generation, ignore_errors=True)
+        return survived
+
+    def test_updater_park_shapes_survive_generation_collection(self):
+        # The park shape is a contract between this collector and every updater
+        # that runs `kilix --build` inside its own transaction: what the updater
+        # parks, the collector must not reclaim, or its rollback restores
+        # `previous` onto a deleted generation and the machine stops updating.
+        # PARK_CONTRACT is the shape Pleb and Plebian-OS write today; their own
+        # suites pin the same literal strings, so a unilateral change on either
+        # side fails here or there.
+        PARK_CONTRACT = (".update-rollback.XXXXXX", "previous.entry")
+        directory_prefix, entry_name = PARK_CONTRACT
+        self.assertTrue(directory_prefix.startswith(".update-rollback."))
+        self.assertTrue(entry_name.endswith(".entry"))
+        self.assertTrue(
+            self._park_survives_collection(".update-rollback.aB9zQ0", entry_name),
+            "the documented updater park shape must survive collection")
+
+        # Superseded 0.1.8 shapes, honored so a machine still running a pre-fix
+        # updater survives the update that replaces it.
+        for directory in (".pleb-update.aB9zQ0", ".plebian-os-update.aB9zQ0"):
+            with self.subTest(legacy=directory):
+                self.assertTrue(
+                    self._park_survives_collection(directory, "previous"),
+                    f"legacy park {directory}/previous must survive collection")
+
+    def test_generations_outside_the_park_contract_are_still_collected(self):
+        # The other direction: the collector must keep reclaiming anything that
+        # is not a recognized reference, so the test above cannot pass merely by
+        # the collector having stopped collecting.
+        for directory, entry in (
+            (".update-rollback.aB9zQ0", "previous"),   # missing .entry suffix
+            (".update-rollback.aB9zQ0/nested", "previous.entry"),  # too deep
+            (".pleb-update.aB9zQ0", "previous.entry"),  # legacy dir, new name
+            (".rollback.aB9zQ0", "previous.entry"),    # unrecognized prefix
+        ):
+            with self.subTest(directory=directory, entry=entry):
+                self.assertFalse(
+                    self._park_survives_collection(directory, entry),
+                    f"{directory}/{entry} is not a reference and must be collected")
+
     def test_invalid_build_parallelism_is_rejected(self):
         env = dict(self.env)
         env["KILIX_BUILD_JOBS"] = "0"
