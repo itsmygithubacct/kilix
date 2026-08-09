@@ -3,27 +3,21 @@
 from __future__ import annotations
 
 from pathlib import Path
-import sys
+
+from ._packages import load_pinned_package
 
 
 def _load_shared_package():
     root = Path(__file__).resolve().parents[2]
-    candidates = (
-        root / "third_party" / "kilix-content" / "src",
-        root.parent / "kilix-modules" / "kilix-content" / "src",
+    return load_pinned_package(
+        "kilix_content",
+        (
+            root / "third_party" / "kilix-content" / "src",
+            root.parent / "kilix-modules" / "kilix-content" / "src",
+        ),
+        "kilix-content is unavailable; initialize Kilix submodules with: "
+        "git submodule update --init --recursive",
     )
-    for candidate in candidates:
-        if candidate.is_dir():
-            sys.path.insert(0, str(candidate))
-            import kilix_content as package
-            return package
-    try:
-        import kilix_content as package
-        return package
-    except ImportError as error:
-        raise ImportError(
-            "kilix-content is unavailable; initialize Kilix submodules with: "
-            "git submodule update --init --recursive") from error
 
 
 _shared = _load_shared_package()

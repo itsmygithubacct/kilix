@@ -182,7 +182,7 @@ def spec_defaults_when_unset():
     assert all(d.endswith("applications") for d in dirs)
 
 
-# ── caching: fast on the second call, refreshes on mtime change / force ──────
+# ── caching: hot calls skip the tree; changes or force check it now ──────────
 def caching():
     home, sysd = _fresh()
     _write(home, "a.desktop", _desktop("Aardvark"))
@@ -230,6 +230,66 @@ def cache_sees_inplace_and_subdir_edits():
     assert r3 is not r2
     assert _entry(r3, "Deer") is not None
     assert _entry(r3, "Deer")["id"] == "sub-d.desktop"
+
+
+def hot_cache_skips_recursive_metadata_walk():
+    home, sysd = _fresh()
+    _write(home, "a.desktop", _desktop("A"))
+    _use(home, sysd)
+    expected = xdgapps.scan()
+    shared = xdgapps._shared
+    original = shared._snapshot
+    try:
+        shared._snapshot = lambda _dirs: (_ for _ in ()).throw(
+            AssertionError("hot cache walked the applications tree"))
+        assert xdgapps.scan() is expected
+    finally:
+        shared._snapshot = original
+
+
+def metadata_fallback_still_invalidates_immediately():
+    home, sysd = _fresh()
+    _write(home, "a.desktop", _desktop("A"))
+    shared = xdgapps._shared
+    create_descriptor = shared._Watcher.__dict__["create"]
+    shared._replace_watcher(None)
+    try:
+        shared._Watcher.create = classmethod(lambda _cls: None)
+        _use(home, sysd)
+        previous = xdgapps.scan()
+        _write(home, "b.desktop", _desktop("B"))
+        timestamp = os.stat(_apps(home)).st_mtime + 100
+        os.utime(_apps(home), (timestamp, timestamp))
+        current = xdgapps.scan()
+        assert current is not previous
+        assert _entry(current, "B") is not None
+    finally:
+        shared._Watcher.create = create_descriptor
+        xdgapps.scan(force=True)
+
+
+def cache_sees_same_size_replacement_with_restored_mtime():
+    home, sysd = _fresh()
+    path = _write(home, "same.desktop", _desktop("Cat"))
+    _use(home, sysd)
+    before = os.stat(path)
+    replacement = path + ".replacement"
+    with open(replacement, "w") as stream:
+        stream.write(_desktop("Dog"))
+    os.utime(replacement, ns=(before.st_atime_ns, before.st_mtime_ns))
+    os.replace(replacement, path)
+    assert _entry(xdgapps.scan(), "Dog") is not None
+
+
+def special_and_oversized_files_are_ignored_without_blocking():
+    home, sysd = _fresh()
+    _write(home, "good.desktop", _desktop("Good"))
+    huge = os.path.join(_apps(home), "huge.desktop")
+    with open(huge, "wb") as stream:
+        stream.write(b"x" * (1024 * 1024 + 1))
+    os.mkfifo(os.path.join(_apps(home), "pipe.desktop"))
+    _use(home, sysd)
+    assert [entry["name"] for entry in xdgapps.scan()] == ["Good"]
 
 
 def sorted_case_insensitive():
@@ -299,6 +359,10 @@ missing_dirs_fine()
 spec_defaults_when_unset()
 caching()
 cache_sees_inplace_and_subdir_edits()
+hot_cache_skips_recursive_metadata_walk()
+metadata_fallback_still_invalidates_immediately()
+cache_sees_same_size_replacement_with_restored_mtime()
+special_and_oversized_files_are_ignored_without_blocking()
 sorted_case_insensitive()
 localized_name()
 launch_spec()

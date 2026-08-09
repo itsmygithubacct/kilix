@@ -10,9 +10,14 @@ The compatibility promise follows semantic-version major/minor rules: SDK 1.x
 keeps the 1.0 contract, while a provider may require a newer 1.y minor.
 """
 
-SDK_VERSION = "1.9.0"
+import re
+
+
+SDK_VERSION = "1.9.1"
 SDK_API_VERSION = (1, 9)
 __version__ = SDK_VERSION
+
+_REQUIREMENT = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 
 
 class IncompatibleSDKError(RuntimeError):
@@ -22,10 +27,16 @@ class IncompatibleSDKError(RuntimeError):
 def require_compatible(required: str = "1.0") -> None:
     """Require ``MAJOR.MINOR`` compatibility with this host SDK."""
     try:
-        parts = required.split(".")
-        wanted = int(parts[0]), int(parts[1])
-    except (AttributeError, IndexError, ValueError) as exc:
+        match = _REQUIREMENT.fullmatch(required)
+    except TypeError as exc:
         raise IncompatibleSDKError(f"invalid Kilix SDK requirement: {required!r}") from exc
+    if match is None:
+        raise IncompatibleSDKError(f"invalid Kilix SDK requirement: {required!r}")
+    try:
+        wanted = int(match.group(1)), int(match.group(2))
+    except ValueError as exc:
+        raise IncompatibleSDKError(
+            f"invalid Kilix SDK requirement: {required!r}") from exc
     have = SDK_API_VERSION
     if wanted[0] != have[0] or wanted > have:
         raise IncompatibleSDKError(
@@ -45,6 +56,7 @@ __all__ = [
     "settings",
     "state",
     "term",
+    "tui_shell",
     "xapp",
     "xdgapps",
 ]
