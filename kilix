@@ -46,6 +46,7 @@
 #   ./kilix cap               # launch/install the Kilix Cap mansion desktop
 #   ./kilix tui               # launch/install the Kilix TUI desktop
 #   ./kilix land              # launch/install the Kilix Land desktop
+#   ./kilix icewm             # launch/install the Kilix IceWM desktop
 #   ./kilix --build           # build the forked kitty from ./src
 #   ./kilix --which           # print the kitty binary kilix uses + its version
 #   ./kilix --install-desktop # desktop entry + icon (own taskbar group)
@@ -589,6 +590,7 @@ KILIX95_DIR="${KILIX95_DIR:-$GPU_TERMINAL_SOURCE_HOME/kilix-desktops/kilix-95}"
 KILIX_CAP_DIR="${KILIX_CAP_DIR:-$GPU_TERMINAL_SOURCE_HOME/kilix-desktops/kilix-cap}"
 KILIX_TUI_UTILS_DIR="${KILIX_TUI_UTILS_DIR:-$GPU_TERMINAL_SOURCE_HOME/kilix-desktops/kilix-tui-utils}"
 KILIX_LAND_DESKTOP_DIR="${KILIX_LAND_DESKTOP_DIR:-$GPU_TERMINAL_SOURCE_HOME/kilix-desktops/kilix-land-desktop}"
+KILIX_ICEWM_DIR="${KILIX_ICEWM_DIR:-$GPU_TERMINAL_SOURCE_HOME/kilix-desktops/kilix-icewm}"
 
 # Sessions started before the desktop umbrella was introduced may still carry
 # the former default paths. Re-home only an exact, now-missing legacy default;
@@ -1291,6 +1293,11 @@ case "${1:-}" in
     shift
     export KILIX_DESKTOP_PROVIDER=land
     export KILIX_DESKTOP_NAME="${KILIX_DESKTOP_NAME:-Kilix Land}"
+    set -- desktop "$@" ;;
+  icewm|kilix-icewm)
+    shift
+    export KILIX_DESKTOP_PROVIDER=icewm
+    export KILIX_DESKTOP_NAME="${KILIX_DESKTOP_NAME:-Kilix IceWM}"
     set -- desktop "$@" ;;
   xp|kilix-xp)
     # Kilix 95 wearing its XP theme: the same external provider, one flavor.
@@ -2186,6 +2193,10 @@ case "${1:-}" in
       land|kilix-land|kilix-land-desktop)
         _status_provider="land (walkable desktop)"
         _status_provider_dir="$KILIX_LAND_DESKTOP_DIR"
+        ;;
+      icewm|kilix-icewm)
+        _status_provider="icewm (X window manager in a pane)"
+        _status_provider_dir="$KILIX_ICEWM_DIR"
         ;;
       command|custom|none|off|disabled)
         _status_provider_dir=""
@@ -3228,6 +3239,24 @@ _kilix_land_ensure() {
   _KILIX_DESKTOP_MODE=executable
 }
 
+_kilix_icewm_ensure() {
+  # IceWM is built on first selection, not on clone: the desktop's source
+  # submodule and C++ build cost nothing until someone chooses it.
+  _icewm_installer="$KILIX_HOME/scripts/install-kilix-icewm.sh"
+  if [ ! -f "$_icewm_installer" ] || [ -L "$_icewm_installer" ] \
+       || [ ! -x "$_icewm_installer" ]; then
+    _kilix_desktop_die "missing or unsafe Kilix IceWM installer: $_icewm_installer"
+  fi
+  _icewm_main="$("$_icewm_installer" --print-path)" \
+    || _kilix_desktop_die "could not prepare Kilix IceWM"
+  if [ ! -f "$_icewm_main" ] || [ -L "$_icewm_main" ] \
+       || [ ! -x "$_icewm_main" ]; then
+    _kilix_desktop_die "Kilix IceWM installer returned an unsafe executable: $_icewm_main"
+  fi
+  _KILIX_DESKTOP_MAIN="$_icewm_main"
+  _KILIX_DESKTOP_MODE=executable
+}
+
 _kilix_desktop_select() {
   _KILIX_DESKTOP_MAIN=
   _KILIX_DESKTOP_MODE=
@@ -3257,6 +3286,8 @@ _kilix_desktop_select() {
       _kilix_tui_ensure ;;
     land|kilix-land|kilix-land-desktop)
       _kilix_land_ensure ;;
+    icewm|kilix-icewm)
+      _kilix_icewm_ensure ;;
     auto)
       _auto_external="$KILIX95_DIR"
       if [ -f "$_auto_external/main.py" ]; then
@@ -3270,7 +3301,7 @@ _kilix_desktop_select() {
         _kilix95_ensure_external
       fi ;;
     *)
-      _kilix_desktop_die "unknown KILIX_DESKTOP_PROVIDER=$_k95_provider (use auto, builtin, external, xp, cap, tui, land, command, or none)" ;;
+      _kilix_desktop_die "unknown KILIX_DESKTOP_PROVIDER=$_k95_provider (use auto, builtin, external, xp, cap, tui, land, icewm, command, or none)" ;;
   esac
 }
 
@@ -3406,6 +3437,10 @@ if [ "${1:-}" = "desktop" ]; then
       export KILIX_DESKTOP_PROVIDER=land
       export KILIX_DESKTOP_NAME="${KILIX_DESKTOP_NAME:-Kilix Land}"
       shift ;;
+    icewm|kilix-icewm)
+      export KILIX_DESKTOP_PROVIDER=icewm
+      export KILIX_DESKTOP_NAME="${KILIX_DESKTOP_NAME:-Kilix IceWM}"
+      shift ;;
     builtin|none)
       export KILIX_DESKTOP_PROVIDER="$1"
       shift ;;
@@ -3496,6 +3531,11 @@ print(ids[0] if ids else "")' 2>/dev/null)"
       --env "KILIX_LAND_DESKTOP_REF=${KILIX_LAND_DESKTOP_REF:-}" \
       --env "KILIX_LAND_DESKTOP_TRUST_EXISTING_CHECKOUT=${KILIX_LAND_DESKTOP_TRUST_EXISTING_CHECKOUT:-}" \
       --env "KILIX_LAND_DESKTOP_ALLOW_MUTABLE_REF=${KILIX_LAND_DESKTOP_ALLOW_MUTABLE_REF:-}" \
+      --env "KILIX_ICEWM_AUTO_INSTALL=${KILIX_ICEWM_AUTO_INSTALL:-}" \
+      --env "KILIX_ICEWM_DIR=$KILIX_ICEWM_DIR" \
+      --env "KILIX_ICEWM_REPO=${KILIX_ICEWM_REPO:-}" \
+      --env "KILIX_ICEWM_REF=${KILIX_ICEWM_REF:-}" \
+      --env "KILIX_ICEWM_PREFIX=${KILIX_ICEWM_PREFIX:-}" \
       --env "KILIX_LAND_DESKTOP_ASSETS=${KILIX_LAND_DESKTOP_ASSETS:-}" \
       --env "KILIX_LAND_DESKTOP_CONFIG_HOME=${KILIX_LAND_DESKTOP_CONFIG_HOME:-}" \
       --env "KILIX_LAND_DESKTOP_EXTERNAL_APPS=${KILIX_LAND_DESKTOP_EXTERNAL_APPS:-}" \

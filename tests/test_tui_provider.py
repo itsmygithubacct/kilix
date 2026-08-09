@@ -181,7 +181,7 @@ class KilixTuiProviderTests(unittest.TestCase):
         self.assertIn("tui|kilix-tui)", launcher)
         self.assertIn("_kilix_tui_ensure", launcher)
         self.assertIn(
-            "use auto, builtin, external, xp, cap, tui, land, command, or none",
+            "use auto, builtin, external, xp, cap, tui, land, icewm, command, or none",
             launcher)
 
     def test_kilix_tui_shortcut_uses_text_provider(self):
