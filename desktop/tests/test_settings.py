@@ -198,6 +198,32 @@ with conf("font_size 12\n") as path:
     assert "KILIX_DESKTOP_FLAVOR=xp" in env_text
 
 
+# The built-in WM exposes the same install-and-default action as Kilix 95.
+with conf("font_size 12\n"):
+    d = H.make_desk()
+    import apps
+    apps.open(d, "settings", None)
+    win = H.find_window(d, "SettingsWin")
+    shared = settings.shared_settings
+    model = win.fields[shared.VOICE_STT_MODEL_KEY][1]
+    engine = win.fields[shared.VOICE_STT_ENGINE_KEY][1]
+    model.index = model.options.index("lgraph-en-us")
+    opened = []
+    d.shell._tab = lambda argv, title, cwd=None: opened.append(
+        (argv, title, cwd)) or True
+
+    assert win._install_voice_model()
+
+    assert engine.value == "vosk"
+    # The child command changes both defaults only after installation succeeds.
+    assert shared.stt_model(win.shared_path) == "small-en-us"
+    assert shared.stt_engine(win.shared_path) == "vosk"
+    assert opened[0][0][-4:] == [
+        "--install", "lgraph-en-us", "--default", "lgraph-en-us",
+    ], opened
+    assert "after verification" in win.status.text
+
+
 # ── F52: a non-UTF-8 kitty.conf must not make Settings unopenable ───────────
 with conf(b"# note: caf\xe9 sync\nfont_size 13\n", binary=True) as path:
     d = H.make_desk()

@@ -20,32 +20,43 @@ KILIX_VOICE_PREFIX="${KILIX_VOICE_PREFIX:-$HOME/.local}"
 # then only its fixed vosk/libvosk.so member is extracted. The release image is
 # x86_64; other architectures can still install the read-aloud-only closure.
 KILIX_VOICE_REPO="${KILIX_VOICE_REPO:-https://github.com/itsmygithubacct/kilix-voice.git}"
-KILIX_VOICE_REF="${KILIX_VOICE_REF:-eda9ca90eed677fa4fca383e7b8ad2fc85e54b0e}"
+KILIX_VOICE_REF="${KILIX_VOICE_REF:-3244b3f4a1811ba0bf84cffb90509be85a329536}"
 KILIX_VOICE_LIB_VERSION="${KILIX_VOICE_LIB_VERSION:-0.3.45}"
 KILIX_VOICE_LIB_SHA256="${KILIX_VOICE_LIB_SHA256:-25e025093c4399d7278f543568ed8cc5460ac3a4bf48c23673ace1e25d26619f}"
 KILIX_VOICE_LIB_URL="${KILIX_VOICE_LIB_URL:-https://files.pythonhosted.org/packages/fc/ca/83398cfcd557360a3d7b2d732aee1c5f6999f68618d1645f38d53e14c9ff/vosk-0.3.45-py3-none-manylinux_2_12_x86_64.manylinux2010_x86_64.whl}"
 KILIX_VOICE_LIB_MEMBER=vosk/libvosk.so
 KILIX_VOICE_APACHE_LICENSE_FILE="${KILIX_VOICE_APACHE_LICENSE_FILE:-/usr/share/common-licenses/Apache-2.0}"
-# The acoustic model is upstream's, published with no signature and no checksum
-# file; this digest comes from two independent fetches a week apart that agreed.
-# A mismatch therefore means upstream replaced the artifact in place, which is a
-# finding rather than a reason to install it anyway.
+# The acoustic models are upstream's, published with no signature and no
+# checksum file. The small-model digest comes from two independent fetches a
+# week apart that agreed; the lgraph digest agrees across two independently
+# published archive mirrors whose byte size matches upstream. A mismatch means
+# upstream replaced an artifact in place, which is a finding rather than a
+# reason to install it anyway.
 KILIX_VOICE_MODEL_URL="${KILIX_VOICE_MODEL_URL:-https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip}"
 KILIX_VOICE_MODEL_SHA256="${KILIX_VOICE_MODEL_SHA256:-30f26242c4eb449f948e42cb302dd7a686cb29a3423a8367f99ff41780942498}"
-# The catalog id is the shared vocabulary (KILIX_VOICE_STT_MODEL); the archive
-# name is upstream's. Only the default model is installed here — the larger
-# tiers are one-click downloads inside kilix-stt, which owns the full catalog.
+KILIX_VOICE_SMALL_MODEL_URL="$KILIX_VOICE_MODEL_URL"
+KILIX_VOICE_SMALL_MODEL_SHA256="$KILIX_VOICE_MODEL_SHA256"
+KILIX_VOICE_LGRAPH_MODEL_URL="${KILIX_VOICE_LGRAPH_MODEL_URL:-https://alphacephei.com/vosk/models/vosk-model-en-us-0.22-lgraph.zip}"
+KILIX_VOICE_LGRAPH_MODEL_SHA256="${KILIX_VOICE_LGRAPH_MODEL_SHA256:-d9838b4aaa82a75c4a17f5aca300eaca129aaab2a7cbf951bafbb500eb9c4334}"
+
+# The catalog ids are the shared KILIX_VOICE_STT_MODEL vocabulary; archive names
+# are upstream's. No model is chosen implicitly by a settings screen. This
+# installer's no-argument form retains the historical small-en-us default for
+# provisioning and `kilix voice install` compatibility, while --model is the
+# explicit lazy-install path used by kilix-stt and the desktop surfaces.
 model_id=small-en-us
 model_archive_directory=vosk-model-small-en-us-0.15
+model_title="Vosk small US English acoustic model"
 
 die() { printf 'kilix voice: %s\n' "$*" >&2; exit 1; }
 log() { printf 'kilix voice: %s\n' "$*" >&2; }
 
 usage() {
   cat <<'EOF'
-usage: install-kilix-voice.sh [--force] [--without-dictation] [--print-refs]
+usage: install-kilix-voice.sh [--force] [--model MODEL] [--without-dictation] [--print-refs]
 
   --force              reinstall even when the verified closure is current
+  --model MODEL        install small-en-us or lgraph-en-us (default: small-en-us)
   --without-dictation  install read-aloud only, skipping libvosk and the model
   --print-refs         print the immutable source closure without changing anything
 EOF
@@ -53,23 +64,51 @@ EOF
 
 force=0
 without_dictation=0
+model_was_requested=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --force) force=1; shift ;;
+    --model)
+      [ $# -ge 2 ] || { usage >&2; exit 2; }
+      model_id="$2"
+      model_was_requested=1
+      shift 2 ;;
     --without-dictation) without_dictation=1; shift ;;
-    --print-refs)
-      # Deliberately before validation, so release tooling can inspect the
-      # immutable closure without changing the machine.
-      printf '%s\n' \
-        "kilix-voice=$KILIX_VOICE_REF" \
-        "libvosk=$KILIX_VOICE_LIB_VERSION" \
-        "libvosk-sha256=$KILIX_VOICE_LIB_SHA256" \
-        "model-$model_id=$KILIX_VOICE_MODEL_SHA256"
-      exit 0 ;;
+    --print-refs) print_refs=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) usage >&2; exit 2 ;;
   esac
 done
+
+case "$model_id" in
+  small-en-us)
+    KILIX_VOICE_MODEL_URL="$KILIX_VOICE_SMALL_MODEL_URL"
+    KILIX_VOICE_MODEL_SHA256="$KILIX_VOICE_SMALL_MODEL_SHA256"
+    model_archive_directory=vosk-model-small-en-us-0.15
+    model_title="Vosk small US English acoustic model"
+    ;;
+  lgraph-en-us)
+    KILIX_VOICE_MODEL_URL="$KILIX_VOICE_LGRAPH_MODEL_URL"
+    KILIX_VOICE_MODEL_SHA256="$KILIX_VOICE_LGRAPH_MODEL_SHA256"
+    model_archive_directory=vosk-model-en-us-0.22-lgraph
+    model_title="Vosk US English dynamic-graph acoustic model"
+    ;;
+  *) die "unknown speech model '$model_id'; choose small-en-us or lgraph-en-us" ;;
+esac
+[ "$without_dictation" = 0 ] || [ "$model_was_requested" = 0 ] \
+  || die "--model and --without-dictation cannot be used together"
+
+if [ "${print_refs:-0}" = 1 ]; then
+  # Deliberately before validation, so release tooling can inspect the whole
+  # immutable lazy-install catalog without changing the machine.
+  printf '%s\n' \
+    "kilix-voice=$KILIX_VOICE_REF" \
+    "libvosk=$KILIX_VOICE_LIB_VERSION" \
+    "libvosk-sha256=$KILIX_VOICE_LIB_SHA256" \
+    "model-small-en-us=$KILIX_VOICE_SMALL_MODEL_SHA256" \
+    "model-lgraph-en-us=$KILIX_VOICE_LGRAPH_MODEL_SHA256"
+  exit 0
+fi
 [ "$(id -u)" -ne 0 ] || die "run this installer as the desktop user, not root"
 
 [ "$KILIX_VOICE_REF" != unset ] \
@@ -183,27 +222,41 @@ expected_refs="$(printf '%s\n' \
   "libvosk=$library_pin" \
   "model-$model_id=$model_pin")"
 # A read-aloud-only run is a subset of the full closure: when the stamp on
-# disk records a full install of the same pins, that install satisfies this
-# one. Without this, the lazy `kilix voice daemon` path (always
+# disk records a full install of any catalogued Vosk model with the same pins,
+# that install satisfies this one. Without this, the lazy `kilix voice daemon` path (always
 # --without-dictation) and a full install would each see the other's stamp as
 # stale — reinstalling the runtime on every daemon start and taking turns
 # rewriting the stamp, while telling a user with a working dictation closure
 # to "rerun without --without-dictation".
-full_refs=""
+full_refs_available=0
 if [ "$without_dictation" = 1 ] \
     && [[ "$KILIX_VOICE_LIB_VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] \
     && [[ "$KILIX_VOICE_LIB_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] \
-    && [[ "$KILIX_VOICE_MODEL_SHA256" =~ ^[0-9a-fA-F]{64}$ ]]; then
-  full_refs="$(printf '%s\n' \
-    "kilix-voice=$KILIX_VOICE_REF" \
-    "libvosk=$KILIX_VOICE_LIB_VERSION+$KILIX_VOICE_LIB_SHA256" \
-    "model-$model_id=$KILIX_VOICE_MODEL_SHA256")"
+    && [[ "$KILIX_VOICE_SMALL_MODEL_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] \
+    && [[ "$KILIX_VOICE_LGRAPH_MODEL_SHA256" =~ ^[0-9a-fA-F]{64}$ ]]; then
+  full_refs_available=1
 fi
+
+full_stamp_satisfies_runtime() {
+  local catalog_model catalog_sha candidate
+  [ "$full_refs_available" = 1 ] && [ -f "$stamp" ] || return 1
+  while IFS=' ' read -r catalog_model catalog_sha; do
+    candidate="$(printf '%s\n' \
+      "kilix-voice=$KILIX_VOICE_REF" \
+      "libvosk=$KILIX_VOICE_LIB_VERSION+$KILIX_VOICE_LIB_SHA256" \
+      "model-$catalog_model=$catalog_sha")"
+    printf '%s\n' "$candidate" | cmp -s - "$stamp" && return 0
+  done <<EOF
+small-en-us $KILIX_VOICE_SMALL_MODEL_SHA256
+lgraph-en-us $KILIX_VOICE_LGRAPH_MODEL_SHA256
+EOF
+  return 1
+}
 
 stamp_satisfies_this_run() {
   [ -f "$stamp" ] || return 1
   printf '%s\n' "$expected_refs" | cmp -s - "$stamp" && return 0
-  [ -n "$full_refs" ] && printf '%s\n' "$full_refs" | cmp -s - "$stamp"
+  full_stamp_satisfies_runtime
 }
 
 # The dictation closure as the daemon resolves it: the promoted library link
@@ -211,12 +264,19 @@ stamp_satisfies_this_run() {
 # messaging — they must not instruct a user whose dictation already works to
 # reinstall it.
 dictation_assets_present() {
-  local resolved
+  local catalog_model resolved
   [ -f "$library_root/current/libvosk.so" ] || return 1
-  # The catalog entry is a symlink into the immutable generations; the payload
-  # check wants the generation directory itself.
-  resolved="$(realpath -e -- "$model" 2>/dev/null)" || return 1
-  model_payload_works "$resolved"
+  for catalog_model in small-en-us lgraph-en-us; do
+    # The catalog entry is a symlink into the immutable generations; the
+    # payload check wants the generation directory itself.
+    resolved="$(realpath -e -- "$models_root/$catalog_model" 2>/dev/null)" \
+      || continue
+    if model_payload_works "$resolved"; then
+      installed_dictation_model="$catalog_model"
+      return 0
+    fi
+  done
+  return 1
 }
 
 print_library_provenance() {
@@ -232,7 +292,7 @@ print_library_provenance() {
 
 print_model_provenance() {
   printf '%s\n' \
-    'Vosk small US English acoustic model' \
+    "$model_title" \
     'Upstream catalog: https://alphacephei.com/vosk/models' \
     "Archive: $KILIX_VOICE_MODEL_URL" \
     "Archive SHA-256: $KILIX_VOICE_MODEL_SHA256" \
@@ -809,7 +869,7 @@ if [ "$without_dictation" = 0 ]; then
     rm -rf -- "$model_generation"
     mv -- "$staging/$model_archive_directory" "$model_generation" \
       || { rm -rf -- "$staging" "$archive"; die "could not publish the speech model"; }
-    # The extracted model is the artifact worth keeping; the 41 MB archive is
+    # The extracted model is the artifact worth keeping; the archive is
     # re-fetchable and checksum-pinned, so it is not worth doubling the footprint.
     rm -rf -- "$staging" "$archive"
     write_model_provenance "$model_generation"
@@ -826,9 +886,8 @@ stamp_tmp="$(mktemp "$state_dir/.kilix-voice-refs.XXXXXX")" \
 # full install: the library and model lines describe state this run did not
 # touch.
 final_refs="$expected_refs"
-if [ -n "$full_refs" ] && [ -f "$stamp" ] \
-    && printf '%s\n' "$full_refs" | cmp -s - "$stamp"; then
-  final_refs="$full_refs"
+if full_stamp_satisfies_runtime; then
+  final_refs="$(cat -- "$stamp")"
 fi
 printf '%s\n' "$final_refs" >"$stamp_tmp"
 chmod 0600 "$stamp_tmp"
@@ -852,8 +911,9 @@ mv -fT -- "$stamp_tmp" "$stamp" || die "could not publish the voice install stam
 stamp_tmp=""
 transaction_committed=1
 if [ "$without_dictation" = 1 ]; then
+  installed_dictation_model=""
   if dictation_assets_present; then
-    log "the Vosk library and the $model_id model are already installed; dictation stays available"
+    log "the Vosk library and the $installed_dictation_model model are already installed; dictation stays available"
   else
     log "installed read-aloud only; rerun without --without-dictation to add the pinned Vosk library and model"
   fi

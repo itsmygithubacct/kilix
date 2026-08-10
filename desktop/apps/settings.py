@@ -12,6 +12,7 @@ the file — comments included — is preserved byte for byte.
 """
 import os
 import re
+import shutil
 import signal
 import subprocess
 import tempfile
@@ -471,7 +472,14 @@ class SettingsWin(wm.Window):
                 lw = self.add(W.Label(18, y + 4, label + ":"))
                 self.panels[tab_i].append(lw)
                 if kind == "choice":
-                    wd = self.add(W.Dropdown(250, y, 230, extra))
+                    width = (128 if key == shared_settings.VOICE_STT_MODEL_KEY
+                             else 230)
+                    wd = self.add(W.Dropdown(250, y, width, extra))
+                    if key == shared_settings.VOICE_STT_MODEL_KEY:
+                        self.voice_model_button = self.add(W.Button(
+                            386, y, 94, 23, "Install + use",
+                            cb=self._install_voice_model))
+                        self.panels[tab_i].append(self.voice_model_button)
                 elif kind == "bool":
                     wd = self.add(W.Checkbox(250, y + 3, "enabled"))
                     wd.default_val = item.default
@@ -612,6 +620,38 @@ class SettingsWin(wm.Window):
             else:
                 self.kitty_buffer = set_key(self.kitty_buffer, key, v)
                 self.buffer = self.kitty_buffer
+
+    def _install_voice_model(self):
+        model = self.fields[shared_settings.VOICE_STT_MODEL_KEY][1].value
+        try:
+            engine = shared_settings.stt_engine_for_model(model)
+        except ValueError as error:
+            self.status.set(str(error))
+            self.invalidate()
+            return False
+        engine_widget = self.fields[shared_settings.VOICE_STT_ENGINE_KEY][1]
+        engine_widget.index = engine_widget.options.index(engine)
+
+        kilix = os.path.join(_shell.KILIX_HOME, "kilix")
+        if os.path.isfile(kilix) and os.access(kilix, os.X_OK):
+            target = [kilix, "stt"]
+        elif executable := shutil.which("kilix-stt"):
+            target = [executable]
+        else:
+            wm.msgbox(
+                self.desk, "Speech model installer",
+                "Neither the Kilix launcher nor kilix-stt could be found.",
+                icon="error")
+            return False
+        opened = self.desk.shell._tab(
+            [*target, "--install", model, "--default", model],
+            f"Install speech model · {model}", os.path.expanduser("~"))
+        self.status.set(
+            "Installer opened; it will use the model after verification."
+            if opened
+            else "Could not open the model installer.")
+        self.invalidate()
+        return bool(opened)
 
     # apply ----------------------------------------------------------------
     def _apply(self, close=False):

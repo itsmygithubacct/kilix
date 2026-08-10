@@ -77,14 +77,18 @@ BROKEN_RUNTIME_FIXTURE = textwrap.dedent(
     """
 )
 MODEL_DIRECTORY = "vosk-model-small-en-us-0.15"
+LGRAPH_MODEL_DIRECTORY = "vosk-model-en-us-0.22-lgraph"
 DOWNLOAD_TOOLS = ("curl", "sha256sum", "unzip", "cc")
-PUBLISHED_VOICE_REF = "eda9ca90eed677fa4fca383e7b8ad2fc85e54b0e"
+PUBLISHED_VOICE_REF = "3244b3f4a1811ba0bf84cffb90509be85a329536"
 PUBLISHED_VOSK_VERSION = "0.3.45"
 PUBLISHED_VOSK_SHA256 = (
     "25e025093c4399d7278f543568ed8cc5460ac3a4bf48c23673ace1e25d26619f"
 )
 PUBLISHED_MODEL_SHA256 = (
     "30f26242c4eb449f948e42cb302dd7a686cb29a3423a8367f99ff41780942498"
+)
+PUBLISHED_LGRAPH_MODEL_SHA256 = (
+    "d9838b4aaa82a75c4a17f5aca300eaca129aaab2a7cbf951bafbb500eb9c4334"
 )
 
 
@@ -95,8 +99,10 @@ def library_generation_name(pins: dict[str, str]) -> str:
     )
 
 
-def model_generation_name(pins: dict[str, str]) -> str:
-    return f"{MODEL_DIRECTORY}-{pins['KILIX_VOICE_MODEL_SHA256'].lower()}"
+def model_generation_name(
+    pins: dict[str, str], directory: str = MODEL_DIRECTORY,
+) -> str:
+    return f"{directory}-{pins['KILIX_VOICE_MODEL_SHA256'].lower()}"
 
 
 class KilixVoiceInstallerTests(unittest.TestCase):
@@ -209,6 +215,7 @@ class KilixVoiceInstallerTests(unittest.TestCase):
         directory_name: str = "published",
         library_marker: str = "fixture",
         model_payload: bytes = b"fixture model\n",
+        model_directory: str = MODEL_DIRECTORY,
     ) -> dict[str, str]:
         """Serve the library and the model from disk, pinned by real digests."""
         published = self.root / directory_name
@@ -255,12 +262,15 @@ class KilixVoiceInstallerTests(unittest.TestCase):
         wheel = published / "vosk-fixture.whl"
         with zipfile.ZipFile(wheel, "w") as bundle:
             bundle.write(library, "vosk/libvosk.so")
-        archive = published / f"{MODEL_DIRECTORY}.zip"
+        archive = published / f"{model_directory}.zip"
         with zipfile.ZipFile(archive, "w") as bundle:
-            bundle.writestr(f"{MODEL_DIRECTORY}/README", "fixture model\n")
+            bundle.writestr(f"{model_directory}/README", "fixture model\n")
             bundle.writestr(
-                f"{MODEL_DIRECTORY}/conf/model.conf", "--sample-frequency=16000\n")
-            bundle.writestr(f"{MODEL_DIRECTORY}/am/final.mdl", model_payload)
+                f"{model_directory}/conf/model.conf",
+                "--sample-frequency=16000\n",
+            )
+            bundle.writestr(
+                f"{model_directory}/am/final.mdl", model_payload)
         return {
             "KILIX_VOICE_LIB_VERSION": "v0.0.0-fixture",
             "KILIX_VOICE_LIB_URL": wheel.as_uri(),
@@ -277,6 +287,24 @@ class KilixVoiceInstallerTests(unittest.TestCase):
         self.assertIn(f"libvosk={PUBLISHED_VOSK_VERSION}", listed.stdout)
         self.assertIn(f"libvosk-sha256={PUBLISHED_VOSK_SHA256}", listed.stdout)
         self.assertIn(f"model-small-en-us={PUBLISHED_MODEL_SHA256}", listed.stdout)
+        self.assertIn(
+            f"model-lgraph-en-us={PUBLISHED_LGRAPH_MODEL_SHA256}",
+            listed.stdout,
+        )
+
+    def test_model_option_rejects_unknown_and_read_aloud_combinations(self):
+        unknown = self.run_installer(
+            "--model", "large-en-us", check=False)
+        self.assertNotEqual(unknown.returncode, 0)
+        self.assertIn("unknown speech model 'large-en-us'", unknown.stderr)
+
+        conflicting = self.run_installer(
+            "--model", "small-en-us", "--without-dictation", check=False)
+        self.assertNotEqual(conflicting.returncode, 0)
+        self.assertIn(
+            "--model and --without-dictation cannot be used together",
+            conflicting.stderr,
+        )
 
     def test_ref_must_be_an_immutable_commit(self):
         for ref in ("main", "v0.1.6", self.ref[:12], f"{self.ref}0"):
@@ -346,6 +374,52 @@ class KilixVoiceInstallerTests(unittest.TestCase):
         self.assertIn("kilix-voiced", repair.stderr)
         self.assertEqual(stamp.read_text(), full_stamp)
         self.assertTrue(os.access(self.prefix / "bin" / "kilix-voiced", os.X_OK))
+
+    @unittest.skipUnless(
+        all(shutil.which(tool) for tool in DOWNLOAD_TOOLS),
+        "needs download and C fixture tools")
+    def test_lgraph_lazy_install_and_read_aloud_repair_preserve_its_stamp(self):
+        fixture = self.publish_downloads(
+            "published-lgraph", model_directory=LGRAPH_MODEL_DIRECTORY)
+        pins = {
+            key: value for key, value in fixture.items()
+            if key not in ("KILIX_VOICE_MODEL_URL",
+                           "KILIX_VOICE_MODEL_SHA256")
+        }
+        pins.update({
+            "KILIX_VOICE_LGRAPH_MODEL_URL":
+                fixture["KILIX_VOICE_MODEL_URL"],
+            "KILIX_VOICE_LGRAPH_MODEL_SHA256":
+                fixture["KILIX_VOICE_MODEL_SHA256"],
+        })
+
+        self.run_installer("--model", "lgraph-en-us", **pins)
+
+        model = self.data / "voice" / "models" / "lgraph-en-us"
+        stamp = self.state / "kilix-voice-install.refs"
+        full_stamp = stamp.read_text()
+        self.assertTrue(model.is_dir())
+        self.assertEqual(
+            model.resolve().name,
+            model_generation_name(fixture, LGRAPH_MODEL_DIRECTORY),
+        )
+        self.assertIn(
+            f"model-lgraph-en-us={fixture['KILIX_VOICE_MODEL_SHA256']}",
+            full_stamp,
+        )
+        self.assertFalse(
+            (self.data / "voice" / "models" / "small-en-us").exists())
+
+        # The daemon's runtime-only repair does not know which Vosk tier was
+        # selected on its command line, so it must recognise either full stamp.
+        (self.prefix / "bin" / "kilix-voiced").unlink()
+        repair = self.run_installer("--without-dictation", **pins)
+        self.assertIn(
+            "Vosk library and the lgraph-en-us model are already installed",
+            repair.stderr,
+        )
+        self.assertIn("dictation stays available", repair.stderr)
+        self.assertEqual(stamp.read_text(), full_stamp)
 
     def test_runtime_upgrade_switches_every_command_with_one_link(self):
         self.run_installer("--without-dictation")

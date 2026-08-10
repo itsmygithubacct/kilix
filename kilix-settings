@@ -8,6 +8,7 @@ import curses
 import os
 from pathlib import Path
 import signal
+import subprocess
 import sys
 from typing import NamedTuple
 
@@ -253,6 +254,10 @@ TOOL_SPECS = (
 )
 UI_SECTIONS = SECTION_SPECS + (("Tools", TOOL_SPECS),)
 TOOLS_SECTION_INDEX = len(SECTION_SPECS)
+VOICE_SECTION_INDEX = next(
+    index for index, (name, _specs) in enumerate(UI_SECTIONS)
+    if name == "Voice"
+)
 
 
 def _section_aliases() -> dict[str, int]:
@@ -489,12 +494,16 @@ def _draw(stdscr, values: dict[str, object], original: dict[str, object],
         more.append("↑ more")
     if scroll + available < len(specs):
         more.append("↓ more")
-    help_text = (
-        "←/→ section · ↑/↓ move · Enter select · q quit"
-        if tools else
-        "←/→ section · ↑/↓ move · Space toggle · "
-        "a/n section · A/N all · s save · q quit"
-    )
+    if tools:
+        help_text = "←/→ section · ↑/↓ move · Enter select · q quit"
+    elif section == "Voice":
+        help_text = (
+            "←/→ section · ↑/↓ move · Space change · i install/use model · "
+            "s save · q quit")
+    else:
+        help_text = (
+            "←/→ section · ↑/↓ move · Space toggle · "
+            "a/n section · A/N all · s save · q quit")
     footer = " · ".join((*more, help_text))
     body = tui_shell.draw(
         stdscr,
@@ -613,8 +622,26 @@ def _run_tui(stdscr, initial_section: int | str | None = None) -> int | str:
                         index = -1
                     values[name] = spec.choices[
                         (index + 1) % len(spec.choices)]
+                    if name == shared.VOICE_STT_MODEL_KEY:
+                        values[shared.VOICE_STT_ENGINE_KEY] = (
+                            shared.stt_engine_for_model(str(values[name])))
                 else:
                     values[name] = not values[name]
+        elif key in (ord("i"), ord("I")):
+            if section_index != VOICE_SECTION_INDEX:
+                message = "Model installation is available in the Voice section."
+            else:
+                model = str(values[shared.VOICE_STT_MODEL_KEY])
+                model_keys = {
+                    shared.VOICE_STT_MODEL_KEY,
+                    shared.VOICE_STT_ENGINE_KEY,
+                }
+                if any(values[name] != original[name]
+                       for name in values if name not in model_keys):
+                    message = (
+                        "Save other changes before installing a speech model.")
+                else:
+                    return f"model:{model}"
         elif key == ord("a"):
             if tools:
                 message = "Tools are actions; press Enter to select one."
@@ -694,6 +721,18 @@ def _exec_tool(action: str) -> None:
     os.execv(argv[0], argv)
 
 
+def _model_install_argv(model: str) -> list[str]:
+    return [
+        str(ROOT / "kilix"), "stt",
+        "--install", model, "--default", model,
+    ]
+
+
+def _exec_model_install(model: str) -> None:
+    argv = _model_install_argv(model)
+    os.execv(argv[0], argv)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Configure Kilix chrome and game availability")
@@ -716,6 +755,16 @@ def main(argv: list[str] | None = None) -> int:
                             section.lower().replace(" ", "-")
                             for section, _specs in UI_SECTIONS),
                         help="open the interactive TUI on this section")
+    parser.add_argument("--install-model",
+                        choices=shared.VOICE_STT_MODEL_CHOICES,
+                        metavar="MODEL",
+                        help="install one speech model through the verified "
+                             "lazy installer")
+    parser.add_argument("--default-model",
+                        choices=shared.VOICE_STT_MODEL_CHOICES,
+                        metavar="MODEL",
+                        help="make one speech model and its matching engine "
+                             "the default")
     all_group = parser.add_mutually_exclusive_group()
     all_group.add_argument("--enable-all", action="store_true",
                            help="enable every shared control and game")
@@ -735,6 +784,16 @@ def main(argv: list[str] | None = None) -> int:
             )
         changes.update(args.set)
         changes.update(args.game)
+        if args.install_model:
+            status = subprocess.call(_model_install_argv(args.install_model))
+            if status != 0:
+                return status
+        if args.default_model:
+            changes.update({
+                shared.VOICE_STT_MODEL_KEY: args.default_model,
+                shared.VOICE_STT_ENGINE_KEY:
+                    shared.stt_engine_for_model(args.default_model),
+            })
         if changes:
             shared.update(changes)
             _notify_running_kilix()
@@ -745,15 +804,19 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, KeyError, ValueError) as error:
         parser.exit(1, f"kilix-settings: {error}\n")
 
-    if args.ensure or args.show or args.print_games or changes:
+    if (args.ensure or args.show or args.print_games or args.install_model
+            or changes):
         return 0
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         parser.error(
             "the interactive TUI requires a terminal; use --print, "
-            "--print-games, --set, or --game")
+            "--print-games, --install-model, --default-model, --set, or --game")
     result = curses.wrapper(_run_tui, args.section)
     if isinstance(result, str) and result.startswith("tool:"):
         _exec_tool(result.removeprefix("tool:"))
+        return 0
+    if isinstance(result, str) and result.startswith("model:"):
+        _exec_model_install(result.removeprefix("model:"))
         return 0
     return result
 

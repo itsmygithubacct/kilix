@@ -562,6 +562,7 @@ _kilix_load_env_file() {
       KILIX_VOICE_REPO|KILIX_VOICE_REF|KILIX_VOICE_PREFIX|\
       KILIX_VOICE_LIB_URL|KILIX_VOICE_LIB_VERSION|KILIX_VOICE_LIB_SHA256|KILIX_VOICE_APACHE_LICENSE_FILE|\
       KILIX_VOICE_MODEL_URL|KILIX_VOICE_MODEL_SHA256|\
+      KILIX_VOICE_LGRAPH_MODEL_URL|KILIX_VOICE_LGRAPH_MODEL_SHA256|\
       KILIX_NERD_FONT_URL|KILIX_NERD_FONT_SHA256|KILIX_NERD_FONT_FILE_SHA256|KILIX_GO_TOOLCHAIN|KILIX_PYTHON)
         # An explicit process environment wins over persisted settings. Storage
         # roots are intentionally absent from this allowlist: they determine
@@ -2023,12 +2024,21 @@ case "${1:-}" in
         -h|--help|help)
           echo "usage: $_self stt [--install-only|--force-install] [ARGS...]"
           echo "opens the dictation settings TUI"
+          echo
+          echo "  $_self stt --models                 list every speech model"
+          echo "  $_self stt --install MODEL          install one model lazily"
+          echo "  $_self stt --default MODEL          make one model the default"
+          echo "  $_self stt --install MODEL --default MODEL"
           exit 0 ;;
         --) shift; break ;;
         *) break ;;
       esac
     done
-    _stt_installed="$(_kilix_voice_tool kilix-stt "$_stt_force")" || exit 1
+    # The settings/catalog UI is part of the small runtime closure. Models are
+    # explicit assets: merely opening the UI must not turn into a download.
+    _stt_installed="$(
+      _kilix_voice_tool kilix-stt "$_stt_force" --without-dictation
+    )" || exit 1
     [ "$_stt_install_only" = 0 ] || exit 0
     exec "$_stt_installed" "$@" ;;
   bonsai|models|bitnet)
@@ -2208,7 +2218,7 @@ case "${1:-}" in
       -h|--help|help)
         echo "usage: $_self voice [status|install|doctor|stop|daemon]"
         echo "  status   widget, engine, and daemon state (default)"
-        echo "  install  install the pinned kilix-voice closure"
+        echo "  install  install the pinned closure; --model selects a Vosk model"
         echo "  doctor   probe every engine, device, and pin voice depends on"
         echo "  stop     silence speech and close the microphone"
         echo "  daemon   run the pinned voice daemon in the foreground"

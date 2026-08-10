@@ -482,6 +482,21 @@ class SharedSettingsTests(unittest.TestCase):
                 "alsa_output.pci-0000_00_1f.3")
             self.assertTrue(settings.voice_history(str(path)))
 
+    def test_speech_model_default_always_selects_its_matching_engine(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.conf"
+            for model, engine in (
+                ("small-en-us", "vosk"),
+                ("lgraph-en-us", "vosk"),
+                ("vibevoice-asr-bitnet", "vibevoice"),
+            ):
+                self.assertEqual(settings.stt_engine_for_model(model), engine)
+                settings.set_stt_default(model, str(path))
+                self.assertEqual(settings.stt_model(str(path)), model)
+                self.assertEqual(settings.stt_engine(str(path)), engine)
+            with self.assertRaisesRegex(ValueError, "unknown speech model"):
+                settings.set_stt_default("not-in-the-catalog", str(path))
+
     def test_voice_values_are_validated_not_coerced(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.conf"
@@ -555,6 +570,17 @@ class SharedSettingsTests(unittest.TestCase):
             self.assertEqual(settings.tts_rate(str(path)), 200)
             self.assertEqual(settings.stt_submit(str(path)), "confirm")
 
+            defaulted = subprocess.run([
+                str(ROOT / "kilix-settings"),
+                "--default-model", "vibevoice-asr-bitnet", "--print",
+            ], env=env, text=True, capture_output=True, check=True)
+            self.assertIn(
+                f"{settings.VOICE_STT_MODEL_KEY}=vibevoice-asr-bitnet",
+                defaulted.stdout)
+            self.assertIn(
+                f"{settings.VOICE_STT_ENGINE_KEY}=vibevoice",
+                defaulted.stdout)
+
             rejected = subprocess.run([
                 str(ROOT / "kilix-settings"), "--set", "stt_submit=always",
             ], env=env, text=True, capture_output=True, check=False)
@@ -585,6 +611,22 @@ class SharedSettingsTests(unittest.TestCase):
         self.assertEqual(
             names.index("Voice"), names.index("Session logging") + 1)
         self.assertEqual(names.index("Games"), names.index("Voice") + 1)
+
+    def test_voice_tui_install_key_returns_the_selected_default(self):
+        module = _load_settings_tui()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.conf"
+            with mock.patch.dict(os.environ, {
+                    "GPU_TERMINAL_SETTINGS_FILE": str(path),
+                    "KITTY_PID": ""}, clear=False):
+                screen = FakeScreen([ord("i")])
+                result = module._run_tui(screen, "voice")
+            self.assertEqual(result, "model:small-en-us")
+            self.assertFalse(path.exists())
+            self.assertEqual(module._model_install_argv("small-en-us"), [
+                str(ROOT / "kilix"), "stt",
+                "--install", "small-en-us", "--default", "small-en-us",
+            ])
 
     def test_game_cli_names_and_listing_use_same_file(self):
         with tempfile.TemporaryDirectory() as tmp:

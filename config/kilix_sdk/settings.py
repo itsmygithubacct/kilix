@@ -194,6 +194,11 @@ VOICE_STT_MODEL_KEY = "KILIX_VOICE_STT_MODEL"
 VOICE_STT_MODEL_DEFAULT = "small-en-us"
 VOICE_STT_MODEL_CHOICES = (
     "small-en-us", "lgraph-en-us", "vibevoice-asr-bitnet")
+VOICE_STT_MODEL_ENGINES = {
+    "small-en-us": "vosk",
+    "lgraph-en-us": "vosk",
+    "vibevoice-asr-bitnet": "vibevoice",
+}
 
 # There is no ``always``, and adding one is not a small change.  Dictation that
 # presses Enter on its own behalf turns a misrecognition into an arbitrary
@@ -760,6 +765,24 @@ def stt_model(path: str | None = None) -> str:
     return _voice_choice(VOICE_STT_MODEL_KEY, path)
 
 
+def stt_engine_for_model(model: str) -> str:
+    """Return the engine paired with one catalog model, or reject the id."""
+    try:
+        return VOICE_STT_MODEL_ENGINES[model]
+    except KeyError as error:
+        choices = ", ".join(VOICE_STT_MODEL_CHOICES)
+        raise ValueError(
+            f"unknown speech model {model!r}; choose one of: {choices}") from error
+
+
+def set_stt_default(model: str, path: str | None = None) -> str:
+    """Save a speech model and its matching recognizer as one default."""
+    return update({
+        VOICE_STT_MODEL_KEY: model,
+        VOICE_STT_ENGINE_KEY: stt_engine_for_model(model),
+    }, path)
+
+
 def stt_submit(path: str | None = None) -> str:
     """Return the dictation submit policy: ``never`` or ``confirm``.
 
@@ -838,6 +861,7 @@ __all__ = [
     "TRANSCRIPT_TOTAL_CHOICES",
     "TRANSCRIPT_TOTAL_DEFAULT",
     "TRANSCRIPT_TOTAL_KEY",
+    "VOICE_STT_MODEL_ENGINES",
     "ToggleSpec",
     "defaults",
     "enabled",
@@ -849,6 +873,8 @@ __all__ = [
     "parse_text",
     "read_text",
     "settings_path",
+    "set_stt_default",
+    "stt_engine_for_model",
     "transcript_archive_total",
     "transcript_enabled",
     "transcript_graphics",

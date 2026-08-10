@@ -68,6 +68,46 @@ class VoiceCliTests(unittest.TestCase):
         )
         daemon.chmod(0o755)
 
+    def install_fake_stt(self):
+        tool = self.bin / "kilix-stt"
+        tool.write_text(
+            "#!/bin/sh\n"
+            "if [ \"${1:-}\" = --version ]; then\n"
+            "  printf '%s\\n' 'kilix-stt fixture'\n"
+            "  exit 0\n"
+            "fi\n"
+            "printf 'arg=%s\\n' \"$@\"\n"
+        )
+        tool.chmod(0o755)
+        return tool
+
+    def test_stt_routes_model_catalog_install_and_default_arguments(self):
+        self.install_fake_stt()
+
+        result = self.run_kilix(
+            "stt", "--install", "lgraph-en-us",
+            "--default", "lgraph-en-us",
+        )
+
+        self.assertEqual(result.stdout.splitlines(), [
+            "arg=--install",
+            "arg=lgraph-en-us",
+            "arg=--default",
+            "arg=lgraph-en-us",
+        ])
+
+        help_result = self.run_kilix("stt", "--help")
+        self.assertIn("stt --models", help_result.stdout)
+        self.assertIn("stt --install MODEL", help_result.stdout)
+        self.assertIn("stt --default MODEL", help_result.stdout)
+
+    def test_opening_stt_only_bootstraps_the_download_free_runtime(self):
+        launcher = KILIX.read_text()
+        self.assertIn(
+            '_kilix_voice_tool kilix-stt "$_stt_force" --without-dictation',
+            launcher,
+        )
+
     def test_voice_daemon_executes_a_valid_installed_daemon(self):
         self.install_fake_daemon()
 

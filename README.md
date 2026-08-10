@@ -557,7 +557,9 @@ kilix rtsp view poolcam --tab      # one camera filling a new page
 kilix rtsp mosaic yard             # several in a grid
 kilix mask --image plate.png room.mask.png   # paint a region map over a picture
 kilix mask --render frame.ppm room.mask.png  # compose one frame, no terminal
-kilix voice install               # pinned Kilix Voice + Vosk library/model
+kilix voice install               # pinned Kilix Voice + default Vosk model
+kilix stt --models                # all speech models, sizes, install/runtime state
+kilix stt --install lgraph-en-us --default lgraph-en-us
 kilix voice doctor                # dependency and audio-device diagnostics
 kilix tts                         # read-aloud settings and test-phrase TUI
 kilix stt                         # dictation settings and microphone-level TUI
@@ -583,9 +585,26 @@ password prompt while listening, the transcript is visibly discarded. A
 second microphone click requests stop but keeps the private result socket open
 for the recognizer's final answer; stale partial text is never substituted.
 
+Opening `kilix stt` installs only the small settings/runtime closure when it is
+missing; it does not fetch a recognizer library or model. A click on the
+disabled microphone offers the selected model with its download size and asks
+before opening a visible installer terminal. The Voice pages in `kilix
+settings`, Kilix 95 Settings, and the built-in WM Settings offer the same
+install-and-default action. The equivalent scriptable interface is `kilix stt
+--models`, `kilix stt --install MODEL`, and `kilix stt --default MODEL`; install
+and default may be combined in one invocation.
+
+The catalog contains `small-en-us` (Vosk, 39.3 MiB), `lgraph-en-us` (Vosk,
+124.5 MiB), and `vibevoice-asr-bitnet` (VibeVoice, about 1.6 GiB). VibeVoice's
+weights are shared with Kilix Bonsai, so installing them does not create a
+second copy. They can be selected as a future-compatible default, but this
+version of the live voice runtime cannot dictate with them; the UI and CLI
+report that distinction instead of calling the weights runnable.
+
 `kilix voice install` installs the immutable `kilix-voice` 0.1.2 source at
-commit `eda9ca90eed677fa4fca383e7b8ad2fc85e54b0e`, the official Vosk 0.3.45
-x86_64 wheel, and `vosk-model-small-en-us-0.15`. Downloads are SHA-256 verified.
+commit `3244b3f4a1811ba0bf84cffb90509be85a329536`, the official Vosk 0.3.45
+x86_64 wheel, and either the default `vosk-model-small-en-us-0.15` or the
+`--model lgraph-en-us` dynamic-graph model. Downloads are SHA-256 verified.
 The installer extracts only the wheel's fixed `vosk/libvosk.so` member, checks
 its ELF architecture and complete required Vosk API, loads the pinned acoustic
 model through that API, and runs every installed tool's `--version` probe before

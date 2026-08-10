@@ -163,6 +163,106 @@ class VoiceSegmentTests(unittest.TestCase):
                 chr(MICROPHONE_CODEPOINT), chr(MICROPHONE_OFF_CODEPOINT)))
             self.assertEqual(action, self.voice.DICTATE_ACTION)
 
+    def test_disabled_microphone_offers_verified_lazy_model_install(self):
+        data = Path(self.tmp.name) / "data"
+        with self.settings(
+                KILIX_CHROME_DICTATE="1",
+                KILIX_VOICE_STT_ENGINE="vosk",
+                KILIX_VOICE_STT_MODEL="lgraph-en-us"), \
+                mock.patch.dict(os.environ, {
+                    "KILIX_DATA_HOME": str(data),
+                    "KILIX_HOME": str(ROOT),
+                }, clear=False):
+            offer = self.voice.dictation_install_offer()
+
+        self.assertIsNotNone(offer)
+        self.assertEqual(offer.model, "lgraph-en-us")
+        self.assertEqual(offer.size, 130557655)
+        self.assertEqual(offer.argv, (
+            str(ROOT / "kilix"), "stt", "--install", "lgraph-en-us",
+            "--default", "lgraph-en-us"))
+        self.assertIn("124.5 MiB", offer.message)
+        self.assertIn("Nothing is downloaded unless", offer.message)
+
+    def test_model_install_offer_disappears_when_vosk_assets_are_present(self):
+        data = Path(self.tmp.name) / "data"
+        model = data / "voice" / "models" / "small-en-us"
+        model.mkdir(parents=True)
+        library = data / "voice" / "lib" / "current" / "libvosk.so"
+        library.parent.mkdir(parents=True)
+        library.write_bytes(b"fixture")
+        with self.settings(
+                KILIX_VOICE_STT_ENGINE="vosk",
+                KILIX_VOICE_STT_MODEL="small-en-us"), \
+                mock.patch.dict(os.environ, {
+                    "KILIX_DATA_HOME": str(data),
+                    "KILIX_HOME": str(ROOT),
+                }, clear=False):
+            self.assertIsNotNone(self.voice.dictation_install_offer())
+            for relative in self.voice.STT_MODEL_REQUIRED_FILES["small-en-us"]:
+                target = model / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(b"fixture")
+            self.voice._AVAILABILITY_UNTIL = float("inf")
+            self.assertIsNone(self.voice.dictation_install_offer())
+            self.assertEqual(self.voice._AVAILABILITY_UNTIL, 0.0)
+            self.assertTrue(self.voice._stt_available("vosk", "small-en-us"))
+
+    def test_vibevoice_can_be_installed_but_is_not_claimed_runnable(self):
+        data = Path(self.tmp.name) / "data"
+        with self.settings(
+                KILIX_VOICE_STT_ENGINE="vibevoice",
+                KILIX_VOICE_STT_MODEL="vibevoice-asr-bitnet"), \
+                mock.patch.dict(os.environ, {
+                    "KILIX_DATA_HOME": str(data),
+                    "KILIX_HOME": str(ROOT),
+                }, clear=False):
+            offer = self.voice.dictation_install_offer()
+            self.assertIsNotNone(offer)
+            self.assertIn("vibevoice-asr-bitnet", offer.argv)
+            model = data / "voice" / "models" / "vibevoice-asr-bitnet"
+            for relative in self.voice.STT_MODEL_REQUIRED_FILES[
+                    "vibevoice-asr-bitnet"]:
+                target = model / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(b"fixture")
+            self.assertIsNone(self.voice.dictation_install_offer())
+            self.assertFalse(self.voice._stt_available(
+                "vibevoice", "vibevoice-asr-bitnet"))
+
+    def test_confirmed_lazy_install_opens_a_held_visible_overlay(self):
+        launch = mock.Mock()
+        tab = types.SimpleNamespace(new_window=launch)
+        window = types.SimpleNamespace(
+            id=41, destroyed=False, tabref=lambda: tab)
+        boss = types.SimpleNamespace(
+            window_id_map={41: window}, show_error=mock.Mock())
+        fast_data_types = sys.modules[
+            f"{self.voice.__package__}.fast_data_types"]
+        argv = (str(ROOT / "kilix"), "stt", "--install", "small-en-us")
+
+        with mock.patch.object(
+                fast_data_types, "get_boss", return_value=boss, create=True):
+            self.voice.launch_model_install(
+                True, 41, argv, "small-en-us")
+
+        launch.assert_called_once()
+        options = launch.call_args.kwargs
+        self.assertEqual(options["cmd"], list(argv))
+        self.assertEqual(options["overlay_for"], 41)
+        self.assertTrue(options["hold"])
+
+    def test_dictation_dispatch_confirms_lazy_install_before_listening(self):
+        source = FORK_TABS.read_text()
+        block = source.split("elif tab_action == DICTATE_ACTION:", 1)[1].split(
+            "elif tab_action == NETWORK_WIDGET_ACTION:", 1)[0]
+        offer = block.index("dictation_install_offer()")
+        begin = block.index("begin_dictation(target.id)")
+        self.assertLess(offer, begin)
+        self.assertIn("get_boss().confirm(", block)
+        self.assertIn("launch_model_install", block)
+        self.assertIn("title='Install speech model?'", block)
+
     def test_one_toggle_does_not_hide_the_other_widget(self):
         with self.settings(KILIX_CHROME_SPEAK="0", KILIX_CHROME_DICTATE="1"):
             self.assertIsNone(self.voice.speak_segment())
