@@ -34,6 +34,7 @@
 #   ./kilix tts | stt [args]  # run the read-aloud / dictation TUIs
 #   ./kilix voice status      # voice status, install, doctor, stop
 #   ./kilix bonsai [args]     # BitNet model store: browse, download, verify
+#   ./kilix rtsp [args]       # watch RTSP cameras: view one, or a grid
 #   ./kilix mask [args]       # paint region maps over an image (camera masks,
 #                             #   walkable space); --render/--selftest headless
 #   ./kilix open-url [URL]    # real browser first; in-pane fallback
@@ -790,6 +791,34 @@ _kilix_bonsai_resolve() {
 # source checkout for the reason recorded above bonsai's resolver: a working
 # tree is not the pinned closure, and a mask edited by a different build of
 # the format is exactly the kind of divergence a pin exists to prevent.
+# The camera viewer, resolved the same way and for the same reasons.  It is
+# also in the content catalog, so `kilix install` and every desktop's menu
+# reach the same pinned build this does - a camera watched from the Start
+# menu and one watched from a pane must not be two different programs.
+_KILIX_RTSP_PREFIX="${KILIX_RTSP_PREFIX:-$HOME/.local}"
+declare -a _KILIX_RTSP_COMMAND=()
+_kilix_rtsp_resolve() {
+  local force="$1" resolved
+  for resolved in "$(command -v kilix-rtsp 2>/dev/null || true)" \
+                  "$_KILIX_RTSP_PREFIX/bin/kilix-rtsp"; do
+    if [ "$force" = 0 ] && [ -n "$resolved" ] && [ -x "$resolved" ]; then
+      _KILIX_RTSP_COMMAND=("$resolved")
+      return 0
+    fi
+  done
+  local installer="$KILIX_HOME/scripts/install-kilix-rtsp.sh"
+  if [ ! -f "$installer" ] || [ -L "$installer" ] || [ ! -x "$installer" ]; then
+    echo "kilix rtsp: missing or unsafe installer: $installer" >&2
+    return 1
+  fi
+  resolved="$("$installer" --print-path)" || return 1
+  if [ ! -f "$resolved" ] || [ -L "$resolved" ] || [ ! -x "$resolved" ]; then
+    echo "kilix rtsp: installer returned an unsafe executable: $resolved" >&2
+    return 1
+  fi
+  _KILIX_RTSP_COMMAND=("$resolved")
+}
+
 _KILIX_MASK_PREFIX="${KILIX_MASK_PREFIX:-$HOME/.local}"
 declare -a _KILIX_MASK_COMMAND=()
 _kilix_mask_resolve() {
@@ -2005,6 +2034,35 @@ case "${1:-}" in
     _kilix_bonsai_resolve "$_bonsai_force" || exit 1
     [ "$_bonsai_install_only" = 0 ] || exit 0
     exec "${_KILIX_BONSAI_COMMAND[@]}" "$@" ;;
+  rtsp|cameras|camera)
+    shift
+    _rtsp_install_only=0
+    _rtsp_force=0
+    while :; do
+      case "${1:-}" in
+        --install-only) _rtsp_install_only=1; shift ;;
+        --force-install) _rtsp_force=1; shift ;;
+        -h|--help|help)
+          echo "usage: $_self rtsp [--install-only|--force-install] [ARGS...]"
+          echo "watches RTSP cameras in the terminal"
+          echo
+          echo "  $_self rtsp list                one line per configured camera"
+          echo "  $_self rtsp probe NAME          stream properties"
+          echo "  $_self rtsp view NAME           one camera filling the terminal"
+          echo "  $_self rtsp view NAME --tab     ...in a new page"
+          echo "  $_self rtsp mosaic GROUP        several in a grid"
+          echo
+          echo "Cameras live in a config file outside this repository, at"
+          echo "~/.local/gpu_terminal/kilix-rtsp/config/cameras.conf, which"
+          echo "holds credentials and is refused unless it is mode 0600."
+          exit 0 ;;
+        --) shift; break ;;
+        *) break ;;
+      esac
+    done
+    _kilix_rtsp_resolve "$_rtsp_force" || exit 1
+    [ "$_rtsp_install_only" = 0 ] || exit 0
+    exec "${_KILIX_RTSP_COMMAND[@]}" "$@" ;;
   mask|regions)
     shift
     _mask_install_only=0
