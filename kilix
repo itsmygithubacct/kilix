@@ -34,6 +34,8 @@
 #   ./kilix tts | stt [args]  # run the read-aloud / dictation TUIs
 #   ./kilix voice status      # voice status, install, doctor, stop
 #   ./kilix bonsai [args]     # BitNet model store: browse, download, verify
+#   ./kilix mask [args]       # paint region maps over an image (camera masks,
+#                             #   walkable space); --render/--selftest headless
 #   ./kilix open-url [URL]    # real browser first; in-pane fallback
 #   ./kilix browse [URL]      # compatibility alias for open-url
 #   ./kilix chawan [URL]      # install/run the Chawan text browser
@@ -777,6 +779,39 @@ _kilix_bonsai_resolve() {
     return 1
   }
   _KILIX_BONSAI_COMMAND=("$resolved")
+}
+
+# Same shape as bonsai's, and for the same reason: an installed closure the
+# PATH cannot see must be run rather than reinstalled, so the prefix is tried
+# after PATH and before the installer.
+#
+# The region painter is a build artifact rather than a script, so the pinned
+# installer compiles it on first use. It is deliberately not resolved from a
+# source checkout for the reason recorded above bonsai's resolver: a working
+# tree is not the pinned closure, and a mask edited by a different build of
+# the format is exactly the kind of divergence a pin exists to prevent.
+_KILIX_MASK_PREFIX="${KILIX_MASK_PREFIX:-$HOME/.local}"
+declare -a _KILIX_MASK_COMMAND=()
+_kilix_mask_resolve() {
+  local force="$1" resolved
+  for resolved in "$(command -v kilix-mask 2>/dev/null || true)" \
+                  "$_KILIX_MASK_PREFIX/bin/kilix-mask"; do
+    if [ "$force" = 0 ] && [ -n "$resolved" ] && [ -x "$resolved" ]; then
+      _KILIX_MASK_COMMAND=("$resolved")
+      return 0
+    fi
+  done
+  local installer="$KILIX_HOME/scripts/install-kilix-mask.sh"
+  if [ ! -f "$installer" ] || [ -L "$installer" ] || [ ! -x "$installer" ]; then
+    echo "kilix mask: missing or unsafe installer: $installer" >&2
+    return 1
+  fi
+  resolved="$("$installer" --print-path)" || return 1
+  if [ ! -f "$resolved" ] || [ -L "$resolved" ] || [ ! -x "$resolved" ]; then
+    echo "kilix mask: installer returned an unsafe executable: $resolved" >&2
+    return 1
+  fi
+  _KILIX_MASK_COMMAND=("$resolved")
 }
 
 # Never resolved through the installer, unlike the two TUIs: asking to read a
@@ -1970,6 +2005,35 @@ case "${1:-}" in
     _kilix_bonsai_resolve "$_bonsai_force" || exit 1
     [ "$_bonsai_install_only" = 0 ] || exit 0
     exec "${_KILIX_BONSAI_COMMAND[@]}" "$@" ;;
+  mask|regions)
+    shift
+    _mask_install_only=0
+    _mask_force=0
+    while :; do
+      case "${1:-}" in
+        --install-only) _mask_install_only=1; shift ;;
+        --force-install) _mask_force=1; shift ;;
+        -h|--help|help)
+          echo "usage: $_self mask [--install-only|--force-install] [ARGS...] [MASK.png]"
+          echo "paints a region map over a picture: which parts of a camera"
+          echo "view to ignore, which parts of a room can be walked on"
+          echo
+          echo "  $_self mask --image plate.png room.mask.png"
+          echo "  $_self mask --image snapshot.png --cell 8 camera.mask.png"
+          echo "  $_self mask --render frame.ppm room.mask.png   headless"
+          echo "  $_self mask --selftest                         check the build"
+          echo
+          echo "Drag paints, right-drag erases, the wheel zooms at the"
+          echo "pointer, and ? lists the keys. The mask is a real PNG whose"
+          echo "pixels are region ids, so any image viewer opens it."
+          exit 0 ;;
+        --) shift; break ;;
+        *) break ;;
+      esac
+    done
+    _kilix_mask_resolve "$_mask_force" || exit 1
+    [ "$_mask_install_only" = 0 ] || exit 0
+    exec "${_KILIX_MASK_COMMAND[@]}" "$@" ;;
   chawan|cha|text-browser)
     shift
     _chawan_install_only=0

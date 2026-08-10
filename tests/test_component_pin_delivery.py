@@ -27,6 +27,7 @@ COMPONENTS = (
     ("install-kilix-cap.sh", "KILIX_CAP"),
     ("install-kilix-land-desktop.sh", "KILIX_LAND_DESKTOP"),
     ("install-kilix-chawan.sh", "KILIX_CHAWAN"),
+    ("install-kilix-mask.sh", "KILIX_MASK"),
 )
 
 GIT_IDENTITY = {
@@ -172,6 +173,17 @@ class ExistingCheckoutTests(unittest.TestCase):
         self._case("install-kilix-cap.sh", "KILIX_CAP",
                    {"Makefile": makefile}, "bin/kilix-cap",
                    "/bin/\n", "kilix-cap")
+
+    def test_kilix_mask_advances_an_existing_checkout(self):
+        makefile = (
+            "all:\n"
+            "\tmkdir -p build\n"
+            "\tcp marker build/kilix-mask\n"
+            "\tchmod +x build/kilix-mask\n"
+        )
+        self._case("install-kilix-mask.sh", "KILIX_MASK",
+                   {"Makefile": makefile}, "build/kilix-mask",
+                   "/build/\n", "kilix-mask")
 
     def test_kilix_land_advances_an_existing_checkout(self):
         makefile = (
