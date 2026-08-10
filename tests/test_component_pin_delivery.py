@@ -26,6 +26,7 @@ COMPONENTS = (
     ("install-kilix-tui-utils.sh", "KILIX_TUI_UTILS"),
     ("install-kilix-cap.sh", "KILIX_CAP"),
     ("install-kilix-land-desktop.sh", "KILIX_LAND_DESKTOP"),
+    ("install-kilix-icewm.sh", "KILIX_ICEWM"),
     ("install-kilix-chawan.sh", "KILIX_CHAWAN"),
     ("install-kilix-mask.sh", "KILIX_MASK"),
     ("install-kilix-rtsp.sh", "KILIX_RTSP"),
@@ -69,7 +70,9 @@ class ExistingCheckoutTests(unittest.TestCase):
         origin.mkdir()
         git("init", "-q", "-b", "main", str(origin))
         for name, content in payload.items():
-            (origin / name).write_text(content)
+            path = origin / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content)
         # Real component repositories ignore what they build, which is what
         # keeps a built checkout eligible to be moved.
         (origin / ".gitignore").write_text(ignore)
@@ -206,6 +209,25 @@ class ExistingCheckoutTests(unittest.TestCase):
         self._case("install-kilix-land-desktop.sh", "KILIX_LAND_DESKTOP",
                    {"Makefile": makefile}, "kilix-land-desktop",
                    "/kilix-land-desktop\n", "kilix-land-desktop")
+
+    def test_kilix_icewm_advances_an_existing_checkout(self):
+        builder = (
+            "#!/bin/sh\n"
+            "set -eu\n"
+            'mkdir -p "$(dirname "$0")/../bin"\n'
+            'cp "$(dirname "$0")/../marker" '
+            '"$(dirname "$0")/../bin/kilix-icewm"\n'
+            'chmod +x "$(dirname "$0")/../bin/kilix-icewm"\n'
+            "printf '/fixture/icewm-session\\n'\n"
+        )
+        self._case(
+            "install-kilix-icewm.sh",
+            "KILIX_ICEWM",
+            {"scripts/build-icewm.sh": builder},
+            "bin/kilix-icewm",
+            "/bin/\n",
+            "kilix-icewm",
+        )
 
 
 class InstallerShapeTests(unittest.TestCase):

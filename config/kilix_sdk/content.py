@@ -27,6 +27,7 @@ _shared = _load_shared_package()
 Catalog = _shared.Catalog
 CatalogError = _shared.CatalogError
 ContentSpec = _shared.ContentSpec
+PackageSpec = _shared.PackageSpec
 InstallError = _shared.InstallError
 Installer = _shared.Installer
 default_catalog = _shared.default_catalog
@@ -167,6 +168,8 @@ def menu_records(catalog=None):
             "icon": spec.icon or "",
             "description": spec.description or "",
             "source_type": getattr(spec, "source_type", ""),
+            "package_id": getattr(spec, "package_id", ""),
+            "install_id": getattr(spec, "install_id", spec.content_id),
             "binary": getattr(spec, "binary", ""),
             "launch_mode": getattr(spec, "launch_mode", "terminal"),
             "preferred_size": getattr(spec, "preferred_size", ""),
@@ -179,6 +182,7 @@ __all__ = [
     "Catalog",
     "CatalogError",
     "ContentSpec",
+    "PackageSpec",
     "ApplicationPlan",
     "InstallError",
     "Installer",

@@ -20,13 +20,15 @@ class _Spec:
 
     def __init__(self, content_id, label, kind="app", icon="", description="",
                  source_type="git", binary="tool", launch_mode="terminal",
-                 preferred_size="", capabilities=()):
+                 preferred_size="", capabilities=(), package_id=""):
         self.content_id = content_id
         self.label = label
         self.kind = kind
         self.icon = icon
         self.description = description
         self.source_type = source_type
+        self.package_id = package_id
+        self.install_id = package_id or content_id
         self.binary = binary
         self.launch_mode = launch_mode
         self.preferred_size = preferred_size
@@ -93,6 +95,7 @@ class TestMenuRecords(unittest.TestCase):
         recs = content.menu_records(FakeCatalog([_Spec("a", "A")]))
         self.assertEqual(set(recs[0]), {"id", "label", "kind", "icon",
                                         "description", "source_type", "binary",
+                                        "package_id", "install_id",
                                         "launch_mode", "preferred_size",
                                         "capabilities"})
 
@@ -103,6 +106,12 @@ class TestMenuRecords(unittest.TestCase):
         self.assertEqual(rec["launch_mode"], "terminal")
         self.assertEqual(rec["preferred_size"], "760x520")
         self.assertEqual(rec["capabilities"], ["network"])
+
+    def test_shared_package_identity_is_plain_metadata(self):
+        spec = _Spec("files", "Files", package_id="kilix-tui-utils")
+        rec = content.menu_records(FakeCatalog([spec]))[0]
+        self.assertEqual(rec["package_id"], "kilix-tui-utils")
+        self.assertEqual(rec["install_id"], "kilix-tui-utils")
 
 
 class TestApplicationPlan(unittest.TestCase):

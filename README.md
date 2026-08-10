@@ -329,13 +329,17 @@ lives on `plebian-os` and plays at [plebian-os.com](https://plebian-os.com/#watc
   graphical Tango rendering when Kitty graphics are available.
 - **Kilix Land** — an optional walkable graphical desktop (`kilix land`) with
   an immutable Kilix-owned source pin and first-use native build.
+- **Kilix IceWM** — a pinned IceWM desktop provider (`kilix icewm`) rendered
+  through Kilix's private X application surface, with catalog apps opened as
+  ordinary desktop windows.
 - **Host SDK for Python desktops** — Kilix 95 and the bundled compatibility
   provider import stable helpers from `config/kilix_sdk` instead of depending
   on raw `config/browse.py` / `config/gfx.py` internals. SDK 1.2 includes shared
   content installation, authenticated private-X-application sessions, and game
   availability. SDK 1.10 adds catalog application plans for current-terminal,
-  pane, and desktop-window presentation. Native executable, TUI, and command
-  providers use the launcher’s executable/pin boundary instead.
+  pane, and desktop-window presentation; SDK 1.11 exposes shared package and
+  install identities from content schema 2. Native executable, TUI, and
+  command providers use the launcher’s executable/pin boundary instead.
 - **Self-contained** — prefers its bundled fork build, and falls back to a prebuilt kitty if you haven't built it.
 
 ### Persistent pane processes
@@ -957,7 +961,7 @@ checkout. Building requires a C11 compiler, `make`, pthreads, and zlib
 development headers.
 
 The same rule holds for every component installer of this shape —
-`kilix-tui-utils`, Kilix Land, and `kilix-chawan` — each with its own
+`kilix-tui-utils`, Kilix Land, Kilix IceWM, and `kilix-chawan` — each with its own
 `*_KEEP_EXISTING_CHECKOUT` opt-out.
 
 ### Kilix TUI
@@ -990,6 +994,23 @@ Override `KILIX_LAND_DESKTOP_DIR`, `KILIX_LAND_DESKTOP_REPO`, or
 `KILIX_LAND_DESKTOP_AUTO_INSTALL=0` to forbid a first-use clone; mutable refs
 and nonstandard existing checkouts require the corresponding explicit trust
 overrides. `KILIX_LAND_DESKTOP_ASSETS` selects the runtime asset root.
+
+### Kilix IceWM
+
+`kilix icewm` and `kilix desktop icewm` select
+`KILIX_DESKTOP_PROVIDER=icewm`. On first use Kilix clones its immutable pinned
+`kilix-icewm` provider into
+`~/.local/gpu_terminal/sources/kilix-desktops/kilix-icewm`. The provider then
+builds its own pinned IceWM source only when no usable session binary exists.
+Both layers verify immutable commits: Kilix advances a clean provider checkout
+to its resolved ref, and the provider reconciles its IceWM submodule to the
+recorded gitlink before building it.
+
+Override `KILIX_ICEWM_DIR`, `KILIX_ICEWM_REPO`, or `KILIX_ICEWM_REF` for
+reviewed source. Set `KILIX_ICEWM_AUTO_INSTALL=0` to forbid a first-use clone;
+`KILIX_ICEWM_KEEP_EXISTING_CHECKOUT=1` deliberately keeps a development tree,
+while mutable refs and nonstandard checkouts require their corresponding trust
+overrides.
 
 ### Kilix 95
 
