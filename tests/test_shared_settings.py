@@ -1,4 +1,5 @@
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import importlib.machinery
 import importlib.util
 import os
@@ -8,6 +9,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -102,6 +104,79 @@ class SharedSettingsTests(unittest.TestCase):
             self.assertIn("KILIX_CHROME_NETWORK=0", text)
             self.assertIn("KILIX_CHROME_BUTTON_SPLIT_LEFT=0", text)
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+
+    def test_concurrent_updates_preserve_every_managed_change(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.conf"
+            path.write_text("#" + " padding" * 32768 + "\n")
+            specs = [spec for spec in settings.TOGGLE_SPECS if spec.default][:12]
+            start = threading.Barrier(len(specs))
+
+            def write_one(spec):
+                start.wait()
+                settings.update({spec.key: False}, str(path))
+
+            with ThreadPoolExecutor(max_workers=len(specs)) as pool:
+                list(pool.map(write_one, specs))
+            values = settings.load(str(path))
+            self.assertTrue(all(values[spec.key] == "0" for spec in specs))
+            self.assertEqual(
+                stat.S_IMODE(Path(str(path) + ".lock").stat().st_mode), 0o600)
+
+    def test_unsafe_or_oversized_settings_are_not_adopted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            victim = root / "victim.conf"
+            victim.write_text("OTHER_PROJECT_SETTING=keep\n")
+            linked = root / "linked.conf"
+            linked.symlink_to(victim)
+            for operation in (
+                    lambda: settings.read_text(str(linked)),
+                    lambda: settings.ensure_file(str(linked)),
+                    lambda: settings.update({"KILIX_CHROME_CLOCK": False}, str(linked))):
+                with self.subTest(operation=operation):
+                    with self.assertRaises(OSError):
+                        operation()
+            self.assertEqual(victim.read_text(), "OTHER_PROJECT_SETTING=keep\n")
+
+            oversized = root / "oversized.conf"
+            oversized.write_bytes(b"x" * (settings.SETTINGS_MAX_BYTES + 1))
+            with self.assertRaises(OSError):
+                settings.load(str(oversized))
+            before = oversized.stat().st_size
+            with self.assertRaises(OSError):
+                settings.update({"KILIX_CHROME_CLOCK": False}, str(oversized))
+            self.assertEqual(oversized.stat().st_size, before)
+
+            fifo = root / "settings.fifo"
+            os.mkfifo(fifo)
+            with self.assertRaises(OSError):
+                settings.read_text(str(fifo))
+
+    def test_environment_migration_cannot_add_lines_or_invalid_choices(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.conf"
+            with mock.patch.dict(os.environ, {
+                    settings.CLOCK_FORMAT_KEY: "%H:%M\nUNMANAGED=injected",
+                    settings.VOICE_TTS_ENGINE_KEY: "not-an-engine"}, clear=False):
+                settings.ensure_file(str(path))
+            text = path.read_text()
+            self.assertNotIn("\nUNMANAGED=", text)
+            self.assertIn(f"{settings.CLOCK_FORMAT_KEY}=%H:%M UNMANAGED=injected", text)
+            self.assertIn(
+                f"{settings.VOICE_TTS_ENGINE_KEY}="
+                f"{settings.VOICE_TTS_ENGINE_DEFAULT}", text)
+
+    def test_relative_update_uses_the_same_atomic_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            previous = os.getcwd()
+            try:
+                os.chdir(tmp)
+                result = settings.update({"KILIX_CHROME_CLOCK": False}, "local.conf")
+            finally:
+                os.chdir(previous)
+            self.assertEqual(Path(result), Path(tmp) / "local.conf")
+            self.assertFalse(settings.enabled("KILIX_CHROME_CLOCK", result))
 
     def test_game_schema_covers_builtins_and_catalog(self):
         catalog_games = {

@@ -6,7 +6,9 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import threading
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -69,6 +71,12 @@ class FakeSupervisor:
         self.started = (number, width, height, nocursor)
         return FakeProcess()
 
+    def start_xvnc(self, number, width, height, port, password_file,
+                   desktop="kilix"):
+        self.started_vnc = (
+            number, width, height, port, password_file, desktop)
+        return FakeProcess()
+
     def spawn(self, name, argv, **kwargs):
         if name.startswith("cap"):
             read_fd, write_fd = os.pipe()
@@ -109,6 +117,115 @@ class FakeInjector:
 
 
 class XAppSessionTests(unittest.TestCase):
+    def test_dimensions_display_port_and_capture_inputs_are_validated(self):
+        supervisor = FakeSupervisor()
+        session = xapp.XAppSession(
+            "fixture", 320, 200, supervisor=supervisor)
+        for kwargs in ({"width": 0}, {"height": -1}, {"number": -1},
+                       {"number": 65536}):
+            with self.subTest(xvfb=kwargs):
+                with self.assertRaises(ValueError):
+                    session.start_xvfb(**kwargs)
+        self.assertFalse(hasattr(supervisor, "started"))
+        for port in (0, 65536):
+            with self.subTest(port=port):
+                with self.assertRaises(ValueError):
+                    session.start_xvnc(port, "/tmp/test-password")
+        self.assertFalse(hasattr(supervisor, "started_vnc"))
+
+        session.start_xvfb()
+
+        class Capture:
+            closed = False
+
+            def close(self):
+                self.closed = True
+
+        current = Capture()
+        session.capture = current
+        session.capture_backend = "existing"
+        for kwargs in ({"fps": 0}, {"capture_name": "../outside"},
+                       {"capture_name": ""}):
+            with self.subTest(capture=kwargs):
+                with self.assertRaises(ValueError):
+                    session.start_capture(**kwargs)
+                self.assertIs(session.capture, current)
+                self.assertFalse(current.closed)
+                self.assertEqual(session.capture_backend, "existing")
+        with self.assertRaises(ValueError):
+            session.make_injector(width=0)
+        with self.assertRaises(ValueError):
+            session.set_geometry(0.5, 200)
+        session.close()
+
+    def test_capture_pipe_setup_failure_stops_the_spawned_process(self):
+        supervisor = FakeSupervisor()
+        session = xapp.XAppSession(
+            "fixture", 64, 48, supervisor=supervisor)
+        session.start_xvfb()
+        with mock.patch.object(
+                xapp.os, "set_blocking", side_effect=OSError("fixture")):
+            with self.assertRaises(OSError):
+                session.start_capture(prefer_damage=False)
+        process = supervisor.spawns["cap"][2]
+        self.assertTrue(process.terminated)
+        self.assertIsNone(session.capture_process)
+        self.assertEqual(session.capture_backend, "stopped")
+        session.close()
+
+    def test_xauthority_scopes_are_serialized_between_threads(self):
+        previous = os.environ.get("XAUTHORITY")
+        os.environ["XAUTHORITY"] = "/tmp/original-auth"
+        first_entered = threading.Event()
+        release_first = threading.Event()
+        second_entered = threading.Event()
+        errors = []
+
+        def first():
+            try:
+                with xapp._temporary_xauthority("/tmp/first-auth"):
+                    first_entered.set()
+                    if not release_first.wait(2):
+                        raise AssertionError("first scope was not released")
+                    self.assertEqual(
+                        os.environ.get("XAUTHORITY"), "/tmp/first-auth")
+            except BaseException as error:
+                errors.append(error)
+
+        def second():
+            try:
+                if not first_entered.wait(2):
+                    raise AssertionError("first scope did not start")
+                with xapp._temporary_xauthority("/tmp/second-auth"):
+                    second_entered.set()
+                    self.assertEqual(
+                        os.environ.get("XAUTHORITY"), "/tmp/second-auth")
+            except BaseException as error:
+                errors.append(error)
+
+        one = threading.Thread(target=first)
+        two = threading.Thread(target=second)
+        try:
+            one.start()
+            two.start()
+            self.assertTrue(first_entered.wait(2))
+            self.assertFalse(second_entered.wait(0.1))
+            release_first.set()
+            one.join(2)
+            two.join(2)
+            self.assertFalse(one.is_alive())
+            self.assertFalse(two.is_alive())
+            self.assertEqual(errors, [])
+            self.assertEqual(os.environ.get("XAUTHORITY"), "/tmp/original-auth")
+        finally:
+            release_first.set()
+            one.join(2)
+            two.join(2)
+            if previous is None:
+                os.environ.pop("XAUTHORITY", None)
+            else:
+                os.environ["XAUTHORITY"] = previous
+
     def test_auth_is_scoped_and_private_environment_cannot_be_overridden(self):
         supervisor = FakeSupervisor()
         seen = {}

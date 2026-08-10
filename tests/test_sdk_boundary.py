@@ -1,6 +1,8 @@
 import sys
 import os
+import subprocess
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -50,7 +52,7 @@ class KilixSdkBoundaryTests(unittest.TestCase):
         # 1.8 adds the freedesktop application scanner (xdgapps);
         # 1.9 adds xdgapps.entries_in and the grouped(force=) cache refresh.
         self.assertEqual(kilix_sdk.SDK_API_VERSION, (1, 9))
-        self.assertEqual(kilix_sdk.SDK_VERSION, "1.9.0")
+        self.assertEqual(kilix_sdk.SDK_VERSION, "1.9.1")
         kilix_sdk.require_compatible("1.0")
         kilix_sdk.require_compatible("1.5")
         kilix_sdk.require_compatible("1.6")
@@ -61,6 +63,128 @@ class KilixSdkBoundaryTests(unittest.TestCase):
             kilix_sdk.require_compatible("1.10")
         with self.assertRaises(kilix_sdk.IncompatibleSDKError):
             kilix_sdk.require_compatible("2.0")
+        for malformed in (
+                "1", "1.9.0", "1.-1", "+1.9", "01.9", " 1.9", "1.9 ",
+                "9" * 5000 + ".0", None):
+            with self.subTest(malformed=repr(malformed)):
+                with self.assertRaises(kilix_sdk.IncompatibleSDKError):
+                    kilix_sdk.require_compatible(malformed)
+
+    def test_root_exports_every_sdk_module(self):
+        namespace = {}
+        exec("from kilix_sdk import *", namespace)
+        for name in (
+                "content", "graphics", "paths", "settings", "state", "term",
+                "tui_shell", "xapp", "xdgapps"):
+            self.assertIn(name, namespace)
+
+    def test_shared_packages_are_pinned_without_sys_path_pollution(self):
+        content_source = ROOT / "third_party" / "kilix-content" / "src"
+        state_source = ROOT / "third_party" / "kilix-state" / "python" / "src"
+        self.assertNotIn(str(content_source), sys.path)
+        self.assertNotIn(str(state_source), sys.path)
+        self.assertTrue(
+            Path(sys.modules["kilix_content"].__file__).resolve().is_relative_to(
+                content_source.resolve()))
+        self.assertTrue(
+            Path(sys.modules["kilix_state"].__file__).resolve().is_relative_to(
+                state_source.resolve()))
+
+    def test_preloaded_unrelated_package_cannot_override_host_pin(self):
+        code = """
+import sys
+import types
+fake = types.ModuleType('kilix_content')
+fake.__file__ = '/opt/unrelated/kilix_content/__init__.py'
+sys.modules['kilix_content'] = fake
+try:
+    import kilix_sdk.content
+except ImportError as error:
+    if 'not the host-pinned package' not in str(error):
+        raise
+else:
+    raise SystemExit('unrelated package was accepted')
+"""
+        env = dict(os.environ)
+        env["PYTHONPATH"] = str(ROOT / "config")
+        subprocess.run(
+            [sys.executable, "-c", code], env=env, cwd=ROOT, check=True)
+
+    def test_pinned_package_loader_covers_fallbacks_and_failed_imports(self):
+        from kilix_sdk import _packages
+
+        loaded_names = []
+
+        def clear(name):
+            for module_name in tuple(sys.modules):
+                if module_name == name or module_name.startswith(name + "."):
+                    sys.modules.pop(module_name, None)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "pinned"
+            name = "_kilix_sdk_pinned_fixture"
+            package = source / name
+            package.mkdir(parents=True)
+            (package / "__init__.py").write_text(
+                "from .child import VALUE\n", encoding="utf-8")
+            (package / "child.py").write_text("VALUE = 42\n", encoding="utf-8")
+            loaded_names.append(name)
+            before = list(sys.path)
+            selected = _packages.load_pinned_package(
+                name, (source,), "fixture unavailable")
+            self.assertEqual(selected.VALUE, 42)
+            self.assertEqual(sys.path, before)
+            self.assertIs(
+                _packages.load_pinned_package(
+                    name, (source,), "fixture unavailable"), selected)
+
+            clear(name)
+            fake = types.ModuleType(name)
+            fake.__file__ = "/opt/unrelated/fixture/__init__.py"
+            sys.modules[name] = fake
+            with self.assertRaisesRegex(ImportError, "not the host-pinned"):
+                _packages.load_pinned_package(
+                    name, (source,), "fixture unavailable")
+            clear(name)
+            sys.modules[name] = None
+            with self.assertRaisesRegex(ImportError, "blocked in sys.modules"):
+                _packages.load_pinned_package(
+                    name, (source,), "fixture unavailable")
+            clear(name)
+
+            fallback_root = root / "fallback"
+            fallback_name = "_kilix_sdk_fallback_fixture"
+            fallback = fallback_root / fallback_name
+            fallback.mkdir(parents=True)
+            (fallback / "__init__.py").write_text("VALUE = 7\n", encoding="utf-8")
+            loaded_names.append(fallback_name)
+            with mock.patch.object(sys, "path", [str(fallback_root), *sys.path]):
+                selected = _packages.load_pinned_package(
+                    fallback_name, (root / "absent",), "fixture unavailable")
+            self.assertEqual(selected.VALUE, 7)
+
+            broken_name = "_kilix_sdk_broken_fixture"
+            broken = source / broken_name
+            broken.mkdir()
+            (broken / "__init__.py").write_text(
+                "from . import child\nraise RuntimeError('fixture')\n",
+                encoding="utf-8")
+            (broken / "child.py").write_text("VALUE = 1\n", encoding="utf-8")
+            loaded_names.append(broken_name)
+            with self.assertRaisesRegex(RuntimeError, "fixture"):
+                _packages.load_pinned_package(
+                    broken_name, (source,), "fixture unavailable")
+            self.assertNotIn(broken_name, sys.modules)
+            self.assertNotIn(broken_name + ".child", sys.modules)
+
+            missing_name = "_kilix_sdk_missing_fixture"
+            with self.assertRaisesRegex(ImportError, "fixture unavailable"):
+                _packages.load_pinned_package(
+                    missing_name, (root / "absent",), "fixture unavailable")
+
+        for name in loaded_names:
+            clear(name)
 
     def test_xdgapps_scanner_is_part_of_the_sdk_contract(self):
         # 1.8: one freedesktop scanner for every desktop and the launcher

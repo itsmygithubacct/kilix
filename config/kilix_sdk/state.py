@@ -10,32 +10,23 @@ from __future__ import annotations
 from functools import lru_cache
 import os
 from pathlib import Path
-import sys
 from typing import Any
 
+from ._packages import load_pinned_package
 from . import paths
 
 
 def _load_shared_package():
     root = Path(__file__).resolve().parents[2]
-    candidates = (
-        root / "third_party" / "kilix-state" / "python" / "src",
-        root.parent / "kilix-modules" / "kilix-state" / "python" / "src",
+    return load_pinned_package(
+        "kilix_state",
+        (
+            root / "third_party" / "kilix-state" / "python" / "src",
+            root.parent / "kilix-modules" / "kilix-state" / "python" / "src",
+        ),
+        "kilix-state Python bindings are unavailable; initialize Kilix "
+        "submodules with: git submodule update --init --recursive",
     )
-    for candidate in candidates:
-        if candidate.is_dir():
-            sys.path.insert(0, str(candidate))
-            import kilix_state as package
-            return package
-    try:
-        import kilix_state as package
-        return package
-    except ImportError as error:
-        raise ImportError(
-            "kilix-state Python bindings are unavailable; initialize Kilix "
-            "submodules with: "
-            "git submodule update --init --recursive"
-        ) from error
 
 
 _shared = _load_shared_package()

@@ -7,15 +7,20 @@ without executing user-controlled configuration as code.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
+import errno
+import fcntl
 import os
 import re
+import stat
 import tempfile
 from typing import Mapping
 
 
 SETTINGS_BASENAME = "settings.conf"
 SETTINGS_HEADER = "# GPU Terminal shared settings (KEY=value; not shell code)."
+SETTINGS_MAX_BYTES = 1024 * 1024
 SETTINGS_MARKER = "# -- Kilix clickable chrome --"
 SESSION_LOG_MARKER = "# -- Kilix session logging --"
 VOICE_MARKER = "# -- Kilix voice --"
@@ -292,6 +297,24 @@ MANAGED_KEYS = tuple(spec.key for spec in TOGGLE_SPECS) + (
 _ASSIGNMENT = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
 
 
+def _target_path(path: str | None) -> str:
+    value = settings_path() if not path else os.fspath(path)
+    return os.path.abspath(os.path.expanduser(value))
+
+
+def _open_regular(path: str, flags: int, mode: int = 0o600) -> int:
+    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags, mode)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(errno.EINVAL, "shared settings path is not a regular file", path)
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
 def settings_path() -> str:
     """Return the one shared settings file used by every stack component."""
     override = os.environ.get("GPU_TERMINAL_SETTINGS_FILE")
@@ -313,17 +336,87 @@ def parse_text(text: str) -> dict[str, str]:
 
 
 def read_text(path: str | None = None) -> tuple[str, bool]:
-    target = path or settings_path()
+    """Read one bounded regular settings file; only absence is a fallback."""
+    target = _target_path(path)
     try:
-        with open(target, encoding="utf-8", errors="replace") as stream:
-            return stream.read(), True
-    except OSError:
+        fd = _open_regular(target, os.O_RDONLY)
+    except FileNotFoundError:
         return "", False
+    with os.fdopen(fd, "rb") as stream:
+        data = stream.read(SETTINGS_MAX_BYTES + 1)
+    if len(data) > SETTINGS_MAX_BYTES:
+        raise OSError(
+            errno.EFBIG,
+            f"shared settings file exceeds {SETTINGS_MAX_BYTES} bytes",
+            target,
+        )
+    return data.decode("utf-8", errors="replace"), True
 
 
 def truthy(value: object) -> bool:
     return str(value).strip().lower() not in (
         "", "0", "no", "false", "off", "disabled")
+
+
+def _normalize_change(key: str, raw_value: object) -> str:
+    if key in TOGGLE_BY_KEY:
+        return "1" if truthy(raw_value) else "0"
+    if key == PANE_MEMORY_MODE_KEY:
+        value = str(raw_value).strip().lower()
+        if value not in PANE_MEMORY_MODE_CHOICES:
+            choices = ", ".join(PANE_MEMORY_MODE_CHOICES)
+            raise ValueError(f"{PANE_MEMORY_MODE_KEY} must be one of: {choices}")
+        return value
+    if key == TRANSCRIPT_GRAPHICS_KEY:
+        value = str(raw_value).strip().lower()
+        if value not in TRANSCRIPT_GRAPHICS_CHOICES:
+            choices = ", ".join(TRANSCRIPT_GRAPHICS_CHOICES)
+            raise ValueError(f"{TRANSCRIPT_GRAPHICS_KEY} must be one of: {choices}")
+        return value
+    if key == TRANSCRIPT_LIMIT_KEY:
+        value = str(raw_value).strip().upper()
+        if value not in TRANSCRIPT_LIMIT_CHOICES:
+            choices = ", ".join(TRANSCRIPT_LIMIT_CHOICES)
+            raise ValueError(f"{TRANSCRIPT_LIMIT_KEY} must be one of: {choices}")
+        return value
+    if key == TRANSCRIPT_TOTAL_KEY:
+        value = str(raw_value).strip().upper()
+        if value not in TRANSCRIPT_TOTAL_CHOICES:
+            choices = ", ".join(TRANSCRIPT_TOTAL_CHOICES)
+            raise ValueError(f"{TRANSCRIPT_TOTAL_KEY} must be one of: {choices}")
+        return value
+    if key == TRANSCRIPT_ARCHIVE_KEY:
+        value = str(raw_value).strip()
+        value = "off" if value.lower() == "off" else value.upper()
+        if value not in TRANSCRIPT_ARCHIVE_CHOICES:
+            choices = ", ".join(TRANSCRIPT_ARCHIVE_CHOICES)
+            raise ValueError(f"{TRANSCRIPT_ARCHIVE_KEY} must be one of: {choices}")
+        return value
+    if key in VOICE_CHOICE_SPECS:
+        _default, valid = VOICE_CHOICE_SPECS[key]
+        value = str(raw_value).strip().lower()
+        if value not in valid:
+            raise ValueError(f"{key} must be one of: {', '.join(valid)}")
+        return value
+    if key in CODING_CHOICE_SPECS:
+        _default, valid = CODING_CHOICE_SPECS[key]
+        value = str(raw_value).strip().lower()
+        if value not in valid:
+            raise ValueError(f"{key} must be one of: {', '.join(valid)}")
+        return value
+    if key in VOICE_TOKEN_SPECS:
+        _default, pattern = VOICE_TOKEN_SPECS[key]
+        value = str(raw_value).strip()
+        if not pattern.fullmatch(value):
+            raise ValueError(f"{key} must be a plain engine or device name")
+        return value
+    value = (str(raw_value) or CLOCK_FORMAT_DEFAULT).replace(
+        "\r", " ").replace("\n", " ").strip()
+    if not value:
+        value = CLOCK_FORMAT_DEFAULT
+    if len(value) > 256 or any(ord(char) < 32 and char != "\t" for char in value):
+        raise ValueError(f"{CLOCK_FORMAT_KEY} must be a short, single-line format")
+    return value
 
 
 def defaults(*, migrate_environment: bool = False) -> dict[str, str]:
@@ -346,10 +439,14 @@ def defaults(*, migrate_environment: bool = False) -> dict[str, str]:
         # first shared-file creation, preserve those effective preferences.
         for key in MANAGED_KEYS:
             if key in os.environ:
-                values[key] = os.environ[key]
+                try:
+                    values[key] = _normalize_change(key, os.environ[key])
+                except ValueError:
+                    pass
         if "KILIX_CHROME_CALENDAR" not in os.environ \
                 and "KILIX_CHROME_CLOCK" in os.environ:
-            values["KILIX_CHROME_CALENDAR"] = os.environ["KILIX_CHROME_CLOCK"]
+            values["KILIX_CHROME_CALENDAR"] = _normalize_change(
+                "KILIX_CHROME_CALENDAR", os.environ["KILIX_CHROME_CLOCK"])
     return values
 
 
@@ -420,34 +517,42 @@ def _initial_text(values: Mapping[str, str]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def ensure_file(path: str | None = None) -> str:
-    """Create the shared file and add defaults introduced by newer hosts."""
-    target = path or settings_path()
-    if os.path.isfile(target) and not os.path.islink(target):
-        os.chmod(target, 0o600, follow_symlinks=False)
-        text, _exists = read_text(target)
-        present = parse_text(text)
-        missing = [key for key in MANAGED_KEYS if key not in present]
-        if missing:
-            values = defaults()
-            update({key: values[key] for key in missing}, target)
-        return target
-    if os.path.lexists(target):
-        # A writer will atomically replace links, but startup must not silently
-        # adopt a redirected source of truth.
-        raise OSError(f"refusing unsafe shared settings path: {target}")
+@contextmanager
+def _settings_lock(target: str):
     directory = os.path.dirname(target)
     os.makedirs(directory, mode=0o700, exist_ok=True)
-    data = _initial_text(defaults(migrate_environment=True)).encode("utf-8")
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
+    fd = _open_regular(target + ".lock", os.O_RDWR | os.O_CREAT)
     try:
-        fd = os.open(target, flags, 0o600)
-    except FileExistsError:
-        if os.path.isfile(target) and not os.path.islink(target):
-            return target
-        raise OSError(f"refusing unsafe shared settings path: {target}")
+        os.fchmod(fd, 0o600)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+
+def _fsync_directory(directory: str) -> None:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
+    fd = os.open(directory, flags)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _atomic_write(target: str, text: str) -> None:
+    data = text.encode("utf-8")
+    if len(data) > SETTINGS_MAX_BYTES:
+        raise OSError(
+            errno.EFBIG,
+            f"updated shared settings exceed {SETTINGS_MAX_BYTES} bytes",
+            target,
+        )
+    directory = os.path.dirname(target)
+    fd, temporary = tempfile.mkstemp(
+        prefix=f".{os.path.basename(target)}.", dir=directory)
     try:
         os.fchmod(fd, 0o600)
         with os.fdopen(fd, "wb") as stream:
@@ -455,9 +560,44 @@ def ensure_file(path: str | None = None) -> str:
             stream.write(data)
             stream.flush()
             os.fsync(stream.fileno())
+        os.replace(temporary, target)
+        temporary = ""
+        _fsync_directory(directory)
     finally:
         if fd >= 0:
             os.close(fd)
+        if temporary:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+
+
+def _apply_changes(text: str, changes: Mapping[str, str]) -> str:
+    for key, value in changes.items():
+        text = _set_value(text, key, value)
+    return text
+
+
+def ensure_file(path: str | None = None) -> str:
+    """Create the shared file and add defaults introduced by newer hosts."""
+    target = _target_path(path)
+    with _settings_lock(target):
+        text, exists = read_text(target)
+        if not exists:
+            _atomic_write(target, _initial_text(defaults(migrate_environment=True)))
+            return target
+        fd = _open_regular(target, os.O_RDONLY)
+        try:
+            os.fchmod(fd, 0o600)
+        finally:
+            os.close(fd)
+        present = parse_text(text)
+        missing = [key for key in MANAGED_KEYS if key not in present]
+        if missing:
+            values = defaults()
+            text = _apply_changes(text, {key: values[key] for key in missing})
+            _atomic_write(target, text)
     return target
 
 
@@ -487,85 +627,16 @@ def update(changes: Mapping[str, object], path: str | None = None) -> str:
     unknown = set(changes) - set(MANAGED_KEYS)
     if unknown:
         raise KeyError(f"unknown shared setting(s): {', '.join(sorted(unknown))}")
-    target = path or settings_path()
-    text, exists = read_text(target)
-    if not exists:
-        text = _initial_text(defaults(migrate_environment=True))
-    for key, raw_value in changes.items():
-        if key in TOGGLE_BY_KEY:
-            value = "1" if truthy(raw_value) else "0"
-        elif key == PANE_MEMORY_MODE_KEY:
-            value = str(raw_value).strip().lower()
-            if value not in PANE_MEMORY_MODE_CHOICES:
-                choices = ", ".join(PANE_MEMORY_MODE_CHOICES)
-                raise ValueError(
-                    f"{PANE_MEMORY_MODE_KEY} must be one of: {choices}")
-        elif key == TRANSCRIPT_GRAPHICS_KEY:
-            value = str(raw_value).strip().lower()
-            if value not in TRANSCRIPT_GRAPHICS_CHOICES:
-                choices = ", ".join(TRANSCRIPT_GRAPHICS_CHOICES)
-                raise ValueError(
-                    f"{TRANSCRIPT_GRAPHICS_KEY} must be one of: {choices}")
-        elif key == TRANSCRIPT_LIMIT_KEY:
-            value = str(raw_value).strip().upper()
-            if value not in TRANSCRIPT_LIMIT_CHOICES:
-                choices = ", ".join(TRANSCRIPT_LIMIT_CHOICES)
-                raise ValueError(
-                    f"{TRANSCRIPT_LIMIT_KEY} must be one of: {choices}")
-        elif key == TRANSCRIPT_TOTAL_KEY:
-            value = str(raw_value).strip().upper()
-            if value not in TRANSCRIPT_TOTAL_CHOICES:
-                choices = ", ".join(TRANSCRIPT_TOTAL_CHOICES)
-                raise ValueError(
-                    f"{TRANSCRIPT_TOTAL_KEY} must be one of: {choices}")
-        elif key == TRANSCRIPT_ARCHIVE_KEY:
-            value = str(raw_value).strip()
-            value = "off" if value.lower() == "off" else value.upper()
-            if value not in TRANSCRIPT_ARCHIVE_CHOICES:
-                choices = ", ".join(TRANSCRIPT_ARCHIVE_CHOICES)
-                raise ValueError(
-                    f"{TRANSCRIPT_ARCHIVE_KEY} must be one of: {choices}")
-        elif key in VOICE_CHOICE_SPECS:
-            _default, valid = VOICE_CHOICE_SPECS[key]
-            value = str(raw_value).strip().lower()
-            if value not in valid:
-                raise ValueError(f"{key} must be one of: {', '.join(valid)}")
-        elif key in CODING_CHOICE_SPECS:
-            _default, valid = CODING_CHOICE_SPECS[key]
-            value = str(raw_value).strip().lower()
-            if value not in valid:
-                raise ValueError(f"{key} must be one of: {', '.join(valid)}")
-        elif key in VOICE_TOKEN_SPECS:
-            _default, pattern = VOICE_TOKEN_SPECS[key]
-            value = str(raw_value).strip()
-            if not pattern.match(value):
-                raise ValueError(
-                    f"{key} must be a plain engine or device name")
-        else:
-            value = str(raw_value) or CLOCK_FORMAT_DEFAULT
-        text = _set_value(text, key, value)
-
-    directory = os.path.dirname(target)
-    os.makedirs(directory, mode=0o700, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(
-        prefix=f".{os.path.basename(target)}.", dir=directory)
-    try:
-        os.fchmod(fd, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as stream:
-            fd = -1
-            stream.write(text)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, target)
-        temporary = ""
-    finally:
-        if fd >= 0:
-            os.close(fd)
-        if temporary:
-            try:
-                os.unlink(temporary)
-            except OSError:
-                pass
+    normalized = {
+        key: _normalize_change(key, raw_value)
+        for key, raw_value in changes.items()
+    }
+    target = _target_path(path)
+    with _settings_lock(target):
+        text, exists = read_text(target)
+        if not exists:
+            text = _initial_text(defaults(migrate_environment=True))
+        _atomic_write(target, _apply_changes(text, normalized))
     return target
 
 
@@ -749,6 +820,7 @@ __all__ = [
     "PANE_MEMORY_MODE_DEFAULT",
     "PANE_MEMORY_MODE_KEY",
     "SETTINGS_BASENAME",
+    "SETTINGS_MAX_BYTES",
     "SESSION_LOG_MARKER",
     "SESSION_LOG_TOGGLES",
     "TOGGLE_BY_KEY",
