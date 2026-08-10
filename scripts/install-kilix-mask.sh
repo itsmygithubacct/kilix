@@ -16,7 +16,7 @@ KILIX_MASK_ALLOW_MUTABLE_REF="${KILIX_MASK_ALLOW_MUTABLE_REF:-0}"
 # resolves it — a first-use download and an existing checkout alike — so a moved
 # pin reaches machines that already have the component. Set
 # KILIX_MASK_KEEP_EXISTING_CHECKOUT=1 to work from a checkout as it is.
-KILIX_MASK_DEFAULT_REF=ef7a2e92488f460721dbb454bab2f000e6b8316b
+KILIX_MASK_DEFAULT_REF=476bc1d62ad3cd37629906c97f9c2bb7404dd777
 
 die() { printf 'kilix mask: %s\n' "$*" >&2; exit 1; }
 log() { printf 'kilix mask: %s\n' "$*" >&2; }

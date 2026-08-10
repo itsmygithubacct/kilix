@@ -148,7 +148,7 @@ whole of what a release installs:
   CPU build offer actually builds — the store preflights the toolchain, prices
   the missing packages into the confirm, and reopens chat afterwards, while
   `bonsai-cpu` refuses a doomed build before fetching anything.
-- **kilix-tui-utils** → `94ebb64f899e8808f3de04e56b3334b7b1f31819`:
+- **kilix-tui-utils** → `467e311d115a409b07e02660d7185ed71729852c`:
   `plebian-os --version` answered by crashing on a machine with no screen and,
   once it answered, read only the development workspace — so a provisioned
   machine's components read as "not present" or as the wrong version entirely.

@@ -21,7 +21,7 @@ KILIX_LAND_DESKTOP_ALLOW_MUTABLE_REF="${KILIX_LAND_DESKTOP_ALLOW_MUTABLE_REF:-0}
 # resolves it — a first-use download and an existing checkout alike — so a moved
 # pin reaches machines that already have the component. Set
 # KILIX_LAND_DESKTOP_KEEP_EXISTING_CHECKOUT=1 to work from a checkout as it is.
-KILIX_LAND_DESKTOP_DEFAULT_REF=c3275afdf31bfbc932c9d8511efcea79e473835e
+KILIX_LAND_DESKTOP_DEFAULT_REF=f5eaac08b174c48f79929d832db80a8f430aa0f3
 
 die() { printf 'kilix land: %s\n' "$*" >&2; exit 1; }
 log() { printf 'kilix land: %s\n' "$*" >&2; }
