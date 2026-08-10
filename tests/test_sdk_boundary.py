@@ -51,16 +51,19 @@ class KilixSdkBoundaryTests(unittest.TestCase):
         # 1.7 adds the shared coding-agent policy the Settings app reads;
         # 1.8 adds the freedesktop application scanner (xdgapps);
         # 1.9 adds xdgapps.entries_in and the grouped(force=) cache refresh.
-        self.assertEqual(kilix_sdk.SDK_API_VERSION, (1, 9))
-        self.assertEqual(kilix_sdk.SDK_VERSION, "1.9.1")
+        # 1.10 adds catalog application plans for current, pane, and window
+        # presentation surfaces.
+        self.assertEqual(kilix_sdk.SDK_API_VERSION, (1, 10))
+        self.assertEqual(kilix_sdk.SDK_VERSION, "1.10.0")
         kilix_sdk.require_compatible("1.0")
         kilix_sdk.require_compatible("1.5")
         kilix_sdk.require_compatible("1.6")
         kilix_sdk.require_compatible("1.7")
         kilix_sdk.require_compatible("1.8")
         kilix_sdk.require_compatible("1.9")
+        kilix_sdk.require_compatible("1.10")
         with self.assertRaises(kilix_sdk.IncompatibleSDKError):
-            kilix_sdk.require_compatible("1.10")
+            kilix_sdk.require_compatible("1.11")
         with self.assertRaises(kilix_sdk.IncompatibleSDKError):
             kilix_sdk.require_compatible("2.0")
         for malformed in (

@@ -151,6 +151,51 @@ class ResolutionTests(unittest.TestCase):
         self.assertIn("not on this shell's PATH", out.getvalue())
 
 
+class CatalogApplicationStateTests(unittest.TestCase):
+    def test_application_state_uses_the_shared_desktop_apps_installer(self):
+        spec = mock.Mock(
+            kind="app",
+            source_type="git",
+            content_id="kilix-pdf-conversion",
+        )
+        with mock.patch.object(installer.paths, "data_dir", return_value="/data"), \
+             mock.patch.object(installer.os.path, "isdir", return_value=True), \
+             mock.patch.object(installer.content, "Installer") as factory:
+            factory.return_value.ready.return_value = "/data/pdf/kilix-pdf"
+            self.assertTrue(installer._catalog_installed(spec))
+        factory.assert_called_once_with("/data/desktop-apps")
+        factory.return_value.ready.assert_called_once_with(spec)
+
+    def test_missing_application_root_is_read_only_and_not_installed(self):
+        spec = mock.Mock(
+            kind="app",
+            source_type="git",
+            content_id="kilix-pdf-conversion",
+        )
+        with mock.patch.object(installer.paths, "data_dir", return_value="/data"), \
+             mock.patch.object(installer.os.path, "isdir", return_value=False), \
+             mock.patch.object(installer.content, "Installer") as factory:
+            self.assertFalse(installer._catalog_installed(spec))
+        factory.assert_not_called()
+
+    def test_explicit_app_install_uses_the_shared_application_installer(self):
+        spec = mock.Mock(
+            label="PDF Conversion",
+            kind="app",
+            source_type="git",
+            content_id="kilix-pdf-conversion",
+        )
+        with mock.patch.object(
+                installer.content.default_catalog(), "require",
+                return_value=spec), \
+             mock.patch.object(
+                 installer.content_app, "ensure_application",
+                 return_value="/data/kilix-pdf") as ensure:
+            self.assertEqual(
+                installer._install_catalog("kilix-pdf-conversion"), 0)
+        ensure.assert_called_once_with(spec, install=True)
+
+
 class DriverTests(unittest.TestCase):
     """The NVIDIA driver is offered where it applies, and nowhere else.
 

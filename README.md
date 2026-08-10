@@ -333,8 +333,9 @@ lives on `plebian-os` and plays at [plebian-os.com](https://plebian-os.com/#watc
   provider import stable helpers from `config/kilix_sdk` instead of depending
   on raw `config/browse.py` / `config/gfx.py` internals. SDK 1.2 includes shared
   content installation, authenticated private-X-application sessions, and game
-  availability. Native executable, TUI, and command providers use the
-  launcher’s executable/pin boundary instead.
+  availability. SDK 1.10 adds catalog application plans for current-terminal,
+  pane, and desktop-window presentation. Native executable, TUI, and command
+  providers use the launcher’s executable/pin boundary instead.
 - **Self-contained** — prefers its bundled fork build, and falls back to a prebuilt kitty if you haven't built it.
 
 ### Persistent pane processes
@@ -1050,10 +1051,14 @@ right-click menu everywhere. Built in:
 - **PDF Conversion** — `kilix pdf` installs the catalog-pinned
   [kilix-pdf-conversion](https://github.com/itsmygithubacct/kilix-pdf-conversion)
   provider into Kilix's private app directory, then opens its guided terminal
-  interface. Pass one or more PDFs to convert them directly, use
+  interface. Pass a PDF to convert it directly, use
   `--install-only` while provisioning, or `--print-ref` to inspect the exact
-  immutable source commit. Its release runtime uses Python 3.11's standard
-  `venv` and hash-locked packages; it does not require `uv` on the target OS.
+  immutable source commit. Its managed runtime is synchronized from the frozen
+  `uv.lock` with `uv`. `kilix app run kilix-pdf-conversion` is the shared
+  in-place/pane contract; `kilix app window kilix-pdf-conversion` wraps the
+  terminal UI in an `xterm` PTY for IceWM and Kilix 95/XPane. The TUI, Cap,
+  and Land launch the same ID in a Kilix tab, so every surface uses one pin,
+  installer, executable, and launch-mode declaration.
 - **Create Launcher…** (Start menu or right-click the desktop) writes
   freedesktop-style `.desktop` files into the desktop folder
   (`~/.local/gpu_terminal/kilix-95/data/desktop`, override with `$KILIX_DESKTOP_DIR`); plain

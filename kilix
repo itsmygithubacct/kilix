@@ -23,13 +23,15 @@
 #   ./kilix games ...         # list, play, enable, or disable stack games
 #   ./kilix power ...         # logout|reboot|poweroff, no confirmation here
 #   ./kilix launcher          # catalog TUI: stack programs, apps, launchers
+#   ./kilix app run ID        # install/run one pinned catalog application
+#   ./kilix app window ID     # render a terminal app in a desktop window
 #   ./kilix laptop ...        # list/open/status/close laptop session profiles
 #   ./kilix temps [args]       # run the pinned graphical thermal dashboard
 #   ./kilix memory [args]      # run the graphical RAM/pressure dashboard
 #   ./kilix tmux [args]        # install/run the pinned Tmux Manager
 #   ./kilix amp [args]         # install/run the pinned Media Player
 #   ./kilix amp --headless     # run its control-socket backend, no windows
-#   ./kilix pdf [PDF ...]      # install/run pinned PDF-to-Markdown conversion
+#   ./kilix pdf [PDF]          # install/run pinned PDF-to-Markdown conversion
 #   ./kilix speak [TEXT...]    # read a pane, or the given text, aloud
 #   ./kilix dictate           # recognize one spoken utterance
 #   ./kilix tts | stt [args]  # run the read-aloud / dictation TUIs
@@ -1816,26 +1818,31 @@ case "${1:-}" in
       exec "$_amp_installed" --headless "$@"
     fi
     exec "$_amp_installed" "$@" ;;
+  app|application)
+    shift
+    exec python3 "$KILIX_HOME/config/content_app.py" "$@" ;;
   pdf|pdf-conversion)
-    # Source, commit and build target all come from the shared content catalog.
-    # With no PDF arguments the provider opens its guided terminal interface.
+    # Compatibility name for the shared application launcher. Source, commit,
+    # uv build, executable, and presentation metadata all remain catalog-owned.
     shift
     _pdf_install_only=0
     while :; do
       case "${1:-}" in
         --install-only) _pdf_install_only=1; shift ;;
         --print-ref)
-          exec python3 "$KILIX_HOME/scripts/install-kilix-pdf.py" --print-ref ;;
+          exec python3 "$KILIX_HOME/config/content_app.py" \
+            ref kilix-pdf-conversion ;;
         --) shift; break ;;
         *) break ;;
       esac
     done
-    _pdf_installed="$(python3 "$KILIX_HOME/scripts/install-kilix-pdf.py")" \
-      || { echo "kilix pdf: install failed" >&2; exit 1; }
-    [ -n "$_pdf_installed" ] && [ -x "$_pdf_installed" ] \
-      || { echo "kilix pdf: installer did not create $_pdf_installed" >&2; exit 1; }
-    [ "$_pdf_install_only" = 0 ] || exit 0
-    exec "$_pdf_installed" "$@" ;;
+    if [ "$_pdf_install_only" = 1 ]; then
+      python3 "$KILIX_HOME/config/content_app.py" \
+        install kilix-pdf-conversion >/dev/null
+      exit $?
+    fi
+    exec python3 "$KILIX_HOME/config/content_app.py" \
+      run kilix-pdf-conversion -- "$@" ;;
   tmux|tmux-manager|tmux-tui)
     shift
     _tmux_install_only=0

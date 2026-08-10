@@ -75,7 +75,8 @@ class PdfInstallerTests(unittest.TestCase):
     def test_the_launcher_exposes_it(self):
         launcher = (ROOT / "kilix").read_text(encoding="utf-8")
         self.assertIn("pdf|pdf-conversion)", launcher)
-        self.assertIn("install-kilix-pdf.py", launcher)
+        self.assertIn("app|application)", launcher)
+        self.assertIn("content_app.py", launcher)
 
 
 if __name__ == "__main__":

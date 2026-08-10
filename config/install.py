@@ -26,7 +26,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from kilix_sdk import content  # noqa: E402
+from kilix_sdk import content, paths  # noqa: E402
+import content_app  # noqa: E402
 
 # The desktop's games module already owns catalog installation: which root a
 # kind installs under, the recorded install directory, the readiness check and
@@ -213,6 +214,26 @@ def _driver_rows() -> list[dict]:
     return rows
 
 
+def _catalog_installed(entry) -> bool:
+    """Read installed state from the owner of each catalog content kind."""
+    if entry.source_type == "system":
+        return bool(shutil.which(entry.binary or entry.content_id))
+    if entry.kind == "app" and entry.source_type in {"git", "archive"}:
+        root = os.path.join(paths.data_dir(), "desktop-apps")
+        if not os.path.isdir(root):
+            return False
+        try:
+            return bool(content.Installer(root).ready(entry))
+        except Exception:                          # noqa: BLE001
+            return False
+    if _games is not None:
+        try:
+            return bool(_games.game_ready(entry.content_id))
+        except Exception:                         # noqa: BLE001
+            return False
+    return False
+
+
 def _catalog_rows() -> list[dict]:
     try:
         catalog = content.default_catalog()
@@ -220,18 +241,12 @@ def _catalog_rows() -> list[dict]:
         return [{"error": str(error)}]
     rows = []
     for entry in catalog:
-        installed = False
-        if _games is not None:
-            try:
-                installed = bool(_games.game_ready(entry.content_id))
-            except Exception:                    # noqa: BLE001
-                installed = False
         rows.append({
             "id": entry.content_id,
             "label": entry.label,
             "kind": entry.kind,
             "description": entry.description,
-            "installed": installed,
+            "installed": _catalog_installed(entry),
         })
     return rows
 
@@ -348,10 +363,6 @@ def _install_agent(agent: dict, *, assume_yes: bool) -> int:
 
 
 def _install_catalog(identifier: str) -> int:
-    if _games is None:
-        print("kilix install: the desktop content module is unavailable",
-              file=sys.stderr)
-        return 2
     try:
         spec = content.default_catalog().require(identifier)
     except Exception as error:                   # noqa: BLE001
@@ -359,7 +370,12 @@ def _install_catalog(identifier: str) -> int:
         return 2
     print(f"installing {spec.label} ({spec.kind})")
     try:
-        _games.ensure(identifier)
+        if spec.kind == "app" and spec.source_type in {"git", "archive"}:
+            content_app.ensure_application(spec, install=True)
+        elif _games is not None:
+            _games.ensure(identifier)
+        else:
+            raise RuntimeError("the desktop content module is unavailable")
     except SystemExit as error:
         print(f"kilix install: {error}", file=sys.stderr)
         return 1

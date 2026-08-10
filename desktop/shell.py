@@ -16,6 +16,7 @@ import stat
 import subprocess
 
 from PIL import Image
+from kilix_sdk import content as kilix_content
 
 import icons
 import recycle
@@ -609,10 +610,17 @@ class Shell:
                          f"Mux: {session}", cwd or os.path.expanduser("~"))
 
     def open_kilix_pdf(self):
-        """Install/open the pinned PDF converter in a dedicated Kilix tab."""
+        """Render the catalog PDF app as a managed Kilix 95 window."""
         kilix = os.path.join(KILIX_HOME, "kilix")
-        return self._tab([kilix, "pdf"], "PDF Conversion",
-                         os.path.expanduser("~"))
+        try:
+            plan = kilix_content.application_plan(
+                "kilix-pdf-conversion", "window", launcher=kilix)
+        except (kilix_content.CatalogError, ValueError) as error:
+            wm.msgbox(self.desk, "PDF Conversion", str(error), icon="error")
+            return False
+        return self.open_in_xpane(
+            plan.argv, plan.label, icon=plan.icon,
+            app_size=plan.preferred_size, cwd=os.path.expanduser("~"))
 
     @staticmethod
     def kilix_temps_target():
