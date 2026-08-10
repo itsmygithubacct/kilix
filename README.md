@@ -1047,6 +1047,13 @@ right-click menu everywhere. Built in:
   with no windows, and `kilix amp --install-only` just builds it (what `pleb
   install` uses to get it in place before anyone asks). The commit comes from
   the pinned content catalog, so moving that pin rebuilds on the next call.
+- **PDF Conversion** — `kilix pdf` installs the catalog-pinned
+  [kilix-pdf-conversion](https://github.com/itsmygithubacct/kilix-pdf-conversion)
+  provider into Kilix's private app directory, then opens its guided terminal
+  interface. Pass one or more PDFs to convert them directly, use
+  `--install-only` while provisioning, or `--print-ref` to inspect the exact
+  immutable source commit. Its release runtime uses Python 3.11's standard
+  `venv` and hash-locked packages; it does not require `uv` on the target OS.
 - **Create Launcher…** (Start menu or right-click the desktop) writes
   freedesktop-style `.desktop` files into the desktop folder
   (`~/.local/gpu_terminal/kilix-95/data/desktop`, override with `$KILIX_DESKTOP_DIR`); plain

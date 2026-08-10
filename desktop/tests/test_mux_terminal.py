@@ -41,6 +41,17 @@ def test_remote_launch_uses_private_credential():
         ]
 
 
+def test_pdf_conversion_opens_the_pinned_cli_in_a_new_tab():
+    d = H.make_desk()
+    seen = {}
+    d.shell._tab = lambda argv, title, cwd=None: seen.update(
+        argv=argv, title=title, cwd=cwd) or True
+    assert d.shell.open_kilix_pdf()
+    assert seen["argv"] == [str(Path(H.KILIX_HOME) / "kilix"), "pdf"]
+    assert seen["title"] == "PDF Conversion"
+    assert seen["cwd"] == os.path.expanduser("~")
+
+
 def test_kilix_temps_launcher_forces_graphical_tab():
     d = H.make_desk()
     seen = {}
@@ -149,6 +160,7 @@ def test_start_menu_names_tmux_manager():
 test_mux_icon_renders()
 test_desktop_mux_terminal_launcher()
 test_remote_launch_uses_private_credential()
+test_pdf_conversion_opens_the_pinned_cli_in_a_new_tab()
 test_kilix_temps_launcher_forces_graphical_tab()
 test_kilix_temps_installed_command_precedes_source_launcher()
 test_kilix_memory_launcher_forces_graphical_tab()

@@ -608,6 +608,12 @@ class Shell:
         return self._tab([kilix, "serve", session],
                          f"Mux: {session}", cwd or os.path.expanduser("~"))
 
+    def open_kilix_pdf(self):
+        """Install/open the pinned PDF converter in a dedicated Kilix tab."""
+        kilix = os.path.join(KILIX_HOME, "kilix")
+        return self._tab([kilix, "pdf"], "PDF Conversion",
+                         os.path.expanduser("~"))
+
     @staticmethod
     def kilix_temps_target():
         if executable := shutil.which("kilix-temps"):

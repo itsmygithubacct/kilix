@@ -29,6 +29,7 @@
 #   ./kilix tmux [args]        # install/run the pinned Tmux Manager
 #   ./kilix amp [args]         # install/run the pinned Media Player
 #   ./kilix amp --headless     # run its control-socket backend, no windows
+#   ./kilix pdf [PDF ...]      # install/run pinned PDF-to-Markdown conversion
 #   ./kilix speak [TEXT...]    # read a pane, or the given text, aloud
 #   ./kilix dictate           # recognize one spoken utterance
 #   ./kilix tts | stt [args]  # run the read-aloud / dictation TUIs
@@ -806,12 +807,12 @@ _kilix_rtsp_resolve() {
       return 0
     fi
   done
-  local installer="$KILIX_HOME/scripts/install-kilix-rtsp.sh"
-  if [ ! -f "$installer" ] || [ -L "$installer" ] || [ ! -x "$installer" ]; then
-    echo "kilix rtsp: missing or unsafe installer: $installer" >&2
+  local rtsp_installer="$KILIX_HOME/scripts/install-kilix-rtsp.sh"
+  if [ ! -f "$rtsp_installer" ] || [ -L "$rtsp_installer" ] || [ ! -x "$rtsp_installer" ]; then
+    echo "kilix rtsp: missing or unsafe installer: $rtsp_installer" >&2
     return 1
   fi
-  resolved="$("$installer" --print-path)" || return 1
+  resolved="$("$rtsp_installer" --print-path)" || return 1
   if [ ! -f "$resolved" ] || [ -L "$resolved" ] || [ ! -x "$resolved" ]; then
     echo "kilix rtsp: installer returned an unsafe executable: $resolved" >&2
     return 1
@@ -830,12 +831,12 @@ _kilix_mask_resolve() {
       return 0
     fi
   done
-  local installer="$KILIX_HOME/scripts/install-kilix-mask.sh"
-  if [ ! -f "$installer" ] || [ -L "$installer" ] || [ ! -x "$installer" ]; then
-    echo "kilix mask: missing or unsafe installer: $installer" >&2
+  local mask_installer="$KILIX_HOME/scripts/install-kilix-mask.sh"
+  if [ ! -f "$mask_installer" ] || [ -L "$mask_installer" ] || [ ! -x "$mask_installer" ]; then
+    echo "kilix mask: missing or unsafe installer: $mask_installer" >&2
     return 1
   fi
-  resolved="$("$installer" --print-path)" || return 1
+  resolved="$("$mask_installer" --print-path)" || return 1
   if [ ! -f "$resolved" ] || [ -L "$resolved" ] || [ ! -x "$resolved" ]; then
     echo "kilix mask: installer returned an unsafe executable: $resolved" >&2
     return 1
@@ -1815,6 +1816,26 @@ case "${1:-}" in
       exec "$_amp_installed" --headless "$@"
     fi
     exec "$_amp_installed" "$@" ;;
+  pdf|pdf-conversion)
+    # Source, commit and build target all come from the shared content catalog.
+    # With no PDF arguments the provider opens its guided terminal interface.
+    shift
+    _pdf_install_only=0
+    while :; do
+      case "${1:-}" in
+        --install-only) _pdf_install_only=1; shift ;;
+        --print-ref)
+          exec python3 "$KILIX_HOME/scripts/install-kilix-pdf.py" --print-ref ;;
+        --) shift; break ;;
+        *) break ;;
+      esac
+    done
+    _pdf_installed="$(python3 "$KILIX_HOME/scripts/install-kilix-pdf.py")" \
+      || { echo "kilix pdf: install failed" >&2; exit 1; }
+    [ -n "$_pdf_installed" ] && [ -x "$_pdf_installed" ] \
+      || { echo "kilix pdf: installer did not create $_pdf_installed" >&2; exit 1; }
+    [ "$_pdf_install_only" = 0 ] || exit 0
+    exec "$_pdf_installed" "$@" ;;
   tmux|tmux-manager|tmux-tui)
     shift
     _tmux_install_only=0
@@ -2053,7 +2074,7 @@ case "${1:-}" in
           echo "  $_self rtsp mosaic GROUP        several in a grid"
           echo
           echo "Cameras live in a config file outside this repository, at"
-          echo "~/.local/gpu_terminal/kilix-rtsp/config/cameras.conf, which"
+          echo "$HOME/.local/gpu_terminal/kilix-rtsp/config/cameras.conf, which"
           echo "holds credentials and is refused unless it is mode 0600."
           exit 0 ;;
         --) shift; break ;;

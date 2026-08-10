@@ -603,6 +603,8 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("#include <simde/x86/avx2.h>", text)
         self.assertIn("KILIX_PYTHON", text)
         self.assertIn("need >= 3.12", text)
+        self.assertIn("python3-venv", text)
+        self.assertIn("import ensurepip, sys, venv", text)
         self.assertIn("return 1", text)
 
 

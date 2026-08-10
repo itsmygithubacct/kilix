@@ -9,6 +9,7 @@ took the tab with it. These tests run the real launcher in a sandboxed HOME,
 the way the review box hit it.
 """
 import os
+from pathlib import Path
 import subprocess
 import sys
 import tempfile
@@ -87,14 +88,14 @@ class DesktopGamesPlayTests(unittest.TestCase):
         # The launch argv is the bundled desktop's own main with --app — the
         # same door the Start menu uses — pinned as text because the exec
         # itself needs a kitty terminal no test harness has.
-        games = open(os.path.join(ROOT, "desktop", "games.py"),
-                     encoding="utf-8").read()
+        games = (Path(ROOT) / "desktop" / "games.py").read_text(
+            encoding="utf-8")
         self.assertIn("DESKTOP_APP_GAMES", games)
         self.assertIn('"minesweeper": ("mines", "Minesweeper")', games)
         self.assertIn('"solitaire": ("sol", "Solitaire")', games)
         self.assertIn('"--app", app', games)
-        main = open(os.path.join(ROOT, "desktop", "main.py"),
-                    encoding="utf-8").read()
+        main = (Path(ROOT) / "desktop" / "main.py").read_text(
+            encoding="utf-8")
         self.assertIn('"--app"', main)
         self.assertIn("desk.shell.open_app(a.app)", main)
 

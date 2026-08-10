@@ -518,6 +518,8 @@ class Taskbar:
                 # button → a zenity file picker) for choosing tracks
                 MI("Media Player", icon="amp",
                    action=lambda: shell.open_app("amp")),
+                MI("PDF Conversion", icon="doc_text",
+                   action=shell.open_kilix_pdf),
                 MI("Kilix Temps", icon="flame",
                    action=shell.open_kilix_temps),
                 MI("Kilix Memory", icon="memory",

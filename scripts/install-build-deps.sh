@@ -3,9 +3,9 @@
 #
 # The prebuilt engine (bootstrap.sh) needs only git/curl/tar. This script adds
 # what the *clickable-chrome fork build* (kilix --build) and the pixel desktop
-# need: a C toolchain, Go, kitty's X11 dev libraries, Python + Pillow, zstd for
-# bounded session-log storage, and kilix-amp's SDL/libsndfile/FluidSynth
-# build/runtime libraries.
+# need: a C toolchain, Go, kitty's X11 dev libraries, Python + Pillow, Python's
+# venv/ensurepip support for PDF Conversion, zstd for bounded session-log
+# storage, and kilix-amp's SDL/libsndfile/FluidSynth build/runtime libraries.
 #
 # Distro backends, auto-detected (system-wide, uses sudo):
 #   Fedora/RHEL  : dnf, via pkgconfig(...) virtual provides
@@ -133,6 +133,10 @@ verify() {
   fi
   python3 -c "import PIL; print('   Pillow:', PIL.__version__)" 2>/dev/null \
     || { echo "   Pillow: MISSING (the desktop/browse pixel planes need it)"; ok=0; }
+  python3 -c 'import ensurepip, sys, venv; assert sys.version_info >= (3, 11)' \
+    2>/dev/null \
+    && echo "   PDF runtime Python: yes (>= 3.11 with venv/ensurepip)" \
+    || { echo "   PDF runtime Python: MISSING (need >= 3.11 plus python3-venv)"; ok=0; }
   if [ "$ok" = 1 ]; then
     echo "==> OK — fork build + desktop prerequisites ready."
   else
@@ -182,7 +186,7 @@ fedora_install() {
 }
 
 debian_install() {
-  local pkgs="build-essential cmake pkg-config git curl zstd golang-go python3 python3-dev python3-pil \
+  local pkgs="build-essential cmake pkg-config git curl zstd golang-go python3 python3-dev python3-pil python3-venv \
     libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxkbcommon-dev \
     libxkbcommon-x11-dev libx11-xcb-dev libdbus-1-dev libgl1-mesa-dev libfontconfig-dev \
     libpng-dev liblcms2-dev libcairo2-dev libharfbuzz-dev libssl-dev libxxhash-dev \
@@ -236,7 +240,7 @@ elif command -v zypper >/dev/null 2>&1; then
 else
   log "unsupported distro — need one of: dnf, apt-get, pacman, zypper."
   log "install manually: a C compiler, make, pkg-config, Go, git, curl, zstd,"
-  log "Python 3 + Pillow, and the dev libs for: $PC_DEPS $AMP_PC_DEPS"
+  log "Python 3.11+ with venv + Pillow, and the dev libs for: $PC_DEPS $AMP_PC_DEPS"
   exit 1
 fi
 
