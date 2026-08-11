@@ -17,17 +17,25 @@ from apps import settings
 os.environ.pop("KITTY_LISTEN_ON", None)
 os.environ.pop("KITTY_PID", None)
 
+# Each conf() block starts from a shared file that does not exist yet, and
+# creating one migrates any exported managed key into it. A developer's own
+# kilix.env would otherwise decide what this suite believes the defaults are.
+for _key in settings.shared_settings.MANAGED_KEYS:
+    os.environ.pop(_key, None)
+
 
 @contextlib.contextmanager
 def conf(text, binary=False):
     """A temp KITTY_CONFIG_DIRECTORY holding a kitty.conf; yields its path."""
     prev = os.environ.get("KITTY_CONFIG_DIRECTORY")
+    prev_env_config = os.environ.get("KILIX_ENV_CONFIG")
     prev_shared = os.environ.get("GPU_TERMINAL_SETTINGS_FILE")
     d = tempfile.mkdtemp(prefix="kilix95-conf-")
     path = os.path.join(d, "kitty.conf")
     with open(path, "wb") as f:
         f.write(text if binary else text.encode())
     os.environ["KITTY_CONFIG_DIRECTORY"] = d
+    os.environ["KILIX_ENV_CONFIG"] = os.path.join(d, "kilix.env")
     os.environ["GPU_TERMINAL_SETTINGS_FILE"] = os.path.join(d, "settings.conf")
     try:
         yield path
@@ -36,6 +44,10 @@ def conf(text, binary=False):
             os.environ.pop("KITTY_CONFIG_DIRECTORY", None)
         else:
             os.environ["KITTY_CONFIG_DIRECTORY"] = prev
+        if prev_env_config is None:
+            os.environ.pop("KILIX_ENV_CONFIG", None)
+        else:
+            os.environ["KILIX_ENV_CONFIG"] = prev_env_config
         if prev_shared is None:
             os.environ.pop("GPU_TERMINAL_SETTINGS_FILE", None)
         else:

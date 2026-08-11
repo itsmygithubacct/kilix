@@ -23,6 +23,39 @@ complete tree. Freedesktop launchers/icons are the intentional exception:
 
 ![kilix — pages strip with + button, per-pane title bars with clickable split/maximize/close buttons, splits, and icat](config/kilix_demo.png)
 
+## Release 0.1.9
+
+Unreleased coordinated 0.1.9 work.
+
+Kilix now has one shared application boundary across the CLI, TUI, Kilix 95,
+IceWM, Cap, and Land. The host catalog currently exposes 24 applications.
+`kilix-content` schema 3 declares fixed named actions, accepted input types,
+capabilities, system commands, geometry, and lifecycle policy; SDK 1.12 turns
+each declaration into current-terminal, pane, and desktop-window plans.
+
+One immutable `kilix-tui-utils` checkout provides File Manager, System Center,
+Kilix Settings, Software Center, Session Center, Voice Studio, Camera Manager,
+VirtualBox Manager, Weather, Calculator, Music Control, coding-session
+recovery, Character Map, Notepad, Find Files, and Session Log Viewer. Package
+readiness verifies the shared checkout once and then checks each executable,
+instead of cloning or validating the same source for every menu row. Model
+Store, Region Painter, and Chawan reuse fixed host-command vectors. Existing
+PDF, media, camera, and DOS applications retain their independent launch
+contracts.
+
+The bundled Kilix 95 fallback now builds its Programs submenu from the same
+catalog as the external provider, renders terminal apps as managed XPane
+windows, and refocuses single-instance apps. Terminal-native PDF viewing also
+uses the catalog boundary, while PDF Conversion retains its frozen uv-managed
+runtime.
+
+Optional desktop pins carried by this Kilix release advance to:
+
+- **Kilix TUI utilities** — `98da1e53a0f15c73f70d9e028bf31b1c0b224474`;
+- **Kilix Cap** — `074e9c1559a696c95095215d12c21795452f1933`;
+- **Kilix Land** — `78f601542432e814c0e4af1ae06850737442106c`;
+- **Kilix IceWM** — `61160987a23c647a2d27cd049ad320e0f798cf52`.
+
 ## Release 0.1.8
 
 Prepared 2026-08-07. **Not published yet.**

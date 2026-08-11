@@ -20,7 +20,7 @@ KILIX_CAP_ALLOW_MUTABLE_REF="${KILIX_CAP_ALLOW_MUTABLE_REF:-0}"
 # resolves it — a first-use download and an existing checkout alike — so a moved
 # pin reaches machines that already have the component. Set
 # KILIX_CAP_KEEP_EXISTING_CHECKOUT=1 to work from a checkout as it is.
-KILIX_CAP_DEFAULT_REF=80a31ee317e3e356c042768a79b714b61ea89044
+KILIX_CAP_DEFAULT_REF=074e9c1559a696c95095215d12c21795452f1933
 
 die() { printf 'kilix cap: %s\n' "$*" >&2; exit 1; }
 log() { printf 'kilix cap: %s\n' "$*" >&2; }
