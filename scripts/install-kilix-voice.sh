@@ -15,12 +15,14 @@ KILIX_VOICE_PREFIX="${KILIX_VOICE_PREFIX:-$HOME/.local}"
 # Kilix commit, so every network-fetched voice input is transitive and immutable
 # without adding another independently coordinated release ref.
 #
-# The repository commit is published and pinned below. Dictation uses the
-# official Vosk 0.3.45 x86_64 wheel from PyPI: the wheel itself is verified,
-# then only its fixed vosk/libvosk.so member is extracted. The release image is
-# x86_64; other architectures can still install the read-aloud-only closure.
+# The repository commit is pinned below; the coordinated release gate separately
+# requires that exact object to be reachable from the configured public remote.
+# Dictation uses the official Vosk 0.3.45 x86_64 wheel from PyPI: the wheel
+# itself is verified, then only its fixed vosk/libvosk.so member is extracted.
+# The release image is x86_64; other architectures can still install the
+# read-aloud-only closure.
 KILIX_VOICE_REPO="${KILIX_VOICE_REPO:-https://github.com/itsmygithubacct/kilix-voice.git}"
-KILIX_VOICE_REF="${KILIX_VOICE_REF:-3244b3f4a1811ba0bf84cffb90509be85a329536}"
+KILIX_VOICE_REF="${KILIX_VOICE_REF:-f501409a82bf73b738b14986e12441bce23ec1c6}"
 KILIX_VOICE_LIB_VERSION="${KILIX_VOICE_LIB_VERSION:-0.3.45}"
 KILIX_VOICE_LIB_SHA256="${KILIX_VOICE_LIB_SHA256:-25e025093c4399d7278f543568ed8cc5460ac3a4bf48c23673ace1e25d26619f}"
 KILIX_VOICE_LIB_URL="${KILIX_VOICE_LIB_URL:-https://files.pythonhosted.org/packages/fc/ca/83398cfcd557360a3d7b2d732aee1c5f6999f68618d1645f38d53e14c9ff/vosk-0.3.45-py3-none-manylinux_2_12_x86_64.manylinux2010_x86_64.whl}"

@@ -603,6 +603,7 @@ kilix mask --image plate.png room.mask.png   # paint a region map over a picture
 kilix mask --render frame.ppm room.mask.png  # compose one frame, no terminal
 kilix voice install               # pinned Kilix Voice + default Vosk model
 kilix stt --models                # all speech models, sizes, install/runtime state
+kilix stt --models --json         # versioned machine-readable catalog contract
 kilix stt --install lgraph-en-us --default lgraph-en-us
 kilix voice doctor                # dependency and audio-device diagnostics
 kilix tts                         # read-aloud settings and test-phrase TUI
@@ -638,6 +639,13 @@ install-and-default action. The equivalent scriptable interface is `kilix stt
 --models`, `kilix stt --install MODEL`, and `kilix stt --default MODEL`; install
 and default may be combined in one invocation.
 
+`kilix stt --models --json` is the shared cross-process catalog boundary for
+0.1.9. Its `kilix.speech.models/v1` document reports every choice, exact
+download bytes, installed/default state, runtime support, and the common
+install-and-default argv without downloading anything. Desktop and chrome
+consumers may keep their frozen 0.1.9 fallback tables, but new integrations
+must consume this versioned command contract instead of copying the catalog.
+
 The catalog contains `small-en-us` (Vosk, 39.3 MiB), `lgraph-en-us` (Vosk,
 124.5 MiB), and `vibevoice-asr-bitnet` (VibeVoice, about 1.6 GiB). VibeVoice's
 weights are shared with Kilix Bonsai, so installing them does not create a
@@ -645,8 +653,8 @@ second copy. They can be selected as a future-compatible default, but this
 version of the live voice runtime cannot dictate with them; the UI and CLI
 report that distinction instead of calling the weights runnable.
 
-`kilix voice install` installs the immutable `kilix-voice` 0.1.2 source at
-commit `3244b3f4a1811ba0bf84cffb90509be85a329536`, the official Vosk 0.3.45
+`kilix voice install` installs the immutable `kilix-voice` 0.1.3 source at
+commit `f501409a82bf73b738b14986e12441bce23ec1c6`, the official Vosk 0.3.45
 x86_64 wheel, and either the default `vosk-model-small-en-us-0.15` or the
 `--model lgraph-en-us` dynamic-graph model. Downloads are SHA-256 verified.
 The installer extracts only the wheel's fixed `vosk/libvosk.so` member, checks

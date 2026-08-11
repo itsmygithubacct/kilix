@@ -98,6 +98,7 @@ class VoiceCliTests(unittest.TestCase):
 
         help_result = self.run_kilix("stt", "--help")
         self.assertIn("stt --models", help_result.stdout)
+        self.assertIn("stt --models --json", help_result.stdout)
         self.assertIn("stt --install MODEL", help_result.stdout)
         self.assertIn("stt --default MODEL", help_result.stdout)
 

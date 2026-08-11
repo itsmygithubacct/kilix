@@ -2130,6 +2130,7 @@ case "${1:-}" in
           echo "opens the dictation settings TUI"
           echo
           echo "  $_self stt --models                 list every speech model"
+          echo "  $_self stt --models --json          machine-readable catalog contract"
           echo "  $_self stt --install MODEL          install one model lazily"
           echo "  $_self stt --default MODEL          make one model the default"
           echo "  $_self stt --install MODEL --default MODEL"

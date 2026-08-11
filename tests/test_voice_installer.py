@@ -79,7 +79,7 @@ BROKEN_RUNTIME_FIXTURE = textwrap.dedent(
 MODEL_DIRECTORY = "vosk-model-small-en-us-0.15"
 LGRAPH_MODEL_DIRECTORY = "vosk-model-en-us-0.22-lgraph"
 DOWNLOAD_TOOLS = ("curl", "sha256sum", "unzip", "cc")
-PUBLISHED_VOICE_REF = "3244b3f4a1811ba0bf84cffb90509be85a329536"
+PINNED_VOICE_REF = "f501409a82bf73b738b14986e12441bce23ec1c6"
 PUBLISHED_VOSK_VERSION = "0.3.45"
 PUBLISHED_VOSK_SHA256 = (
     "25e025093c4399d7278f543568ed8cc5460ac3a4bf48c23673ace1e25d26619f"
@@ -281,9 +281,9 @@ class KilixVoiceInstallerTests(unittest.TestCase):
                 archive.read_bytes()).hexdigest(),
         }
 
-    def test_published_default_ref_is_immutable_and_reported(self):
+    def test_default_ref_is_immutable_and_reported(self):
         listed = self.run_installer("--print-refs", KILIX_VOICE_REF=None)
-        self.assertIn(f"kilix-voice={PUBLISHED_VOICE_REF}", listed.stdout)
+        self.assertIn(f"kilix-voice={PINNED_VOICE_REF}", listed.stdout)
         self.assertIn(f"libvosk={PUBLISHED_VOSK_VERSION}", listed.stdout)
         self.assertIn(f"libvosk-sha256={PUBLISHED_VOSK_SHA256}", listed.stdout)
         self.assertIn(f"model-small-en-us={PUBLISHED_MODEL_SHA256}", listed.stdout)
