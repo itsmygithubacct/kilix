@@ -1,7 +1,9 @@
 import json
 import os
+import signal
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -29,7 +31,7 @@ class KilixLauncherTests(unittest.TestCase):
                 capture_output=True,
                 text=True,
             ).stdout.strip(),
-            "af87c13ecbd2b147d2034d41fdd519b8bf9291d1",
+            "6df4525805f875ade88dbf9d0b2da95aa847da1a",
         )
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -45,6 +47,63 @@ class KilixLauncherTests(unittest.TestCase):
             )
             snapshot = json.loads(result.stdout)
             self.assertGreater(snapshot["system"]["logical_cpus"], 0)
+
+    def test_telemetry_start_does_not_trust_an_exited_writers_record(self):
+        helper = ROOT / "scripts" / "kilix-telemetry.sh"
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = Path(tmp) / "runtime"
+            environment = dict(os.environ, KILIX_TELEMETRY_RUNTIME=str(runtime))
+            subprocess.run(
+                [str(helper), "serve", "--once", "--quiet"],
+                cwd=ROOT,
+                env=environment,
+                check=True,
+            )
+            stale = subprocess.run(
+                [str(helper), "status"],
+                cwd=ROOT,
+                env=environment,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(stale.returncode, 1)
+
+            subprocess.run(
+                [str(helper), "start"], cwd=ROOT, env=environment, check=True
+            )
+            daemon_pid = None
+            running = False
+            try:
+                deadline = time.monotonic() + 5.0
+                while time.monotonic() < deadline:
+                    status = subprocess.run(
+                        [str(helper), "status"],
+                        cwd=ROOT,
+                        env=environment,
+                        capture_output=True,
+                        text=True,
+                    )
+                    if status.returncode == 0:
+                        running = True
+                        daemon_pid = int(
+                            (runtime / "telemetry-v1.lock").read_text().strip()
+                        )
+                        break
+                    time.sleep(0.05)
+            finally:
+                if daemon_pid is None:
+                    try:
+                        daemon_pid = int(
+                            (runtime / "telemetry-v1.lock").read_text().strip()
+                        )
+                    except (OSError, ValueError):
+                        pass
+                if daemon_pid is not None:
+                    try:
+                        os.kill(daemon_pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+            self.assertTrue(running)
 
     def test_temps_command_uses_the_unified_utility_installer(self):
         launcher = (ROOT / "kilix").read_text()

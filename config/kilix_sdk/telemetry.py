@@ -24,9 +24,9 @@ def _load_shared_package():
         major, minor = package.TELEMETRY_API_VERSION
     except (AttributeError, TypeError, ValueError) as error:
         raise ImportError("kilix-telemetry has no compatible API version") from error
-    if int(major) != 1 or int(minor) < 1:
+    if int(major) != 1 or int(minor) < 2:
         raise ImportError(
-            "kilix-telemetry API 1.1 or newer is required; "
+            "kilix-telemetry API 1.2 or newer is required; "
             f"found {major}.{minor}"
         )
     return package
@@ -69,6 +69,11 @@ def ensure_running(
     return _shared.ensure_running(paths or resolve_paths(), timeout=timeout)
 
 
+def daemon_running(paths: TelemetryPaths | None = None) -> bool:
+    """Return whether the pinned singleton sampler currently owns its lock."""
+    return _shared.daemon_running(paths or resolve_paths())
+
+
 @lru_cache(maxsize=1)
 def default_client() -> TelemetryClient:
     """Return this process's client for the shared per-user ring."""
@@ -89,6 +94,7 @@ __all__ = [
     "TelemetryClient",
     "TelemetryPaths",
     "ThermalSensor",
+    "daemon_running",
     "default_client",
     "ensure_running",
     "resolve_paths",

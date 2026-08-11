@@ -106,8 +106,9 @@ class KilixSdkBoundaryTests(unittest.TestCase):
                 telemetry_source.resolve()))
 
     def test_shared_telemetry_contract(self):
-        self.assertEqual(telemetry.TELEMETRY_API_VERSION, (1, 1))
-        self.assertEqual(telemetry.telemetry_version, "0.1.1")
+        self.assertEqual(telemetry.TELEMETRY_API_VERSION, (1, 2))
+        self.assertEqual(telemetry.telemetry_version, "0.1.2")
+        self.assertTrue(callable(telemetry.daemon_running))
         self.assertIsInstance(telemetry.default_client(), telemetry.TelemetryClient)
         self.assertIs(telemetry.default_client(), telemetry.default_client())
         self.assertEqual(

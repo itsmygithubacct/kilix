@@ -57,18 +57,20 @@ remains on the right. CPU visibility defaults to `auto` above `1.0`; either
 side can be set independently to `auto`, `always`, or `off`, and the chip
 appears whenever either value is visible.
 
-The uv-managed `kilix-telemetry` 0.1.1 component now supplies CPU, memory,
+The uv-managed `kilix-telemetry` 0.1.2 component now supplies CPU, memory,
 pressure, temperatures, fan speeds, process records, and recent history from
 one private mmap ring. One per-user sampler serves terminal chrome and the
 System Center CPU, Memory, and Temperatures apps shared by the CLI, TUI,
 Kilix 95, IceWM, Cap, and Land. Consumers keep direct local fallbacks, and
 Kitty's rendering thread only reads an already-running ring. SDK 1.14 exposes
 the pinned client as `kilix_sdk.telemetry`; `kilix telemetry status`,
-`snapshot`, `pane PID`, and `history` inspect the same source.
+`snapshot`, `pane PID`, and `history` inspect the same source. Writer status is
+lock-backed, oversized process tables compact without stopping the sampler,
+and pane CPU includes commands that exit between process-table scans.
 
 Optional desktop pins carried by this Kilix release advance to:
 
-- **Kilix TUI utilities** — `c359d66f59f95689a9e7f3cf826b103244e55eb1`;
+- **Kilix TUI utilities** — `dbdf8e5d8f3d4ab64bb555acd7c8f53cd0241c0a`;
 - **Kilix Cap** — `074e9c1559a696c95095215d12c21795452f1933`;
 - **Kilix Land** — `78f601542432e814c0e4af1ae06850737442106c`;
 - **Kilix IceWM** — `61160987a23c647a2d27cd049ad320e0f798cf52`.
