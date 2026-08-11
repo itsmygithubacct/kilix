@@ -1,4 +1,4 @@
-"""PDF Conversion installs only from Kilix's pinned content catalog."""
+"""PDF applications install only from Kilix's pinned content catalog."""
 import json
 import os
 from pathlib import Path
@@ -12,12 +12,12 @@ CATALOG = (ROOT / "third_party" / "kilix-content" / "src" / "kilix_content"
            / "catalog" / "plebian.json")
 
 
-def catalog_entry():
+def catalog_entry(content_id="kilix-pdf-conversion"):
     content = json.loads(CATALOG.read_text(encoding="utf-8"))["content"]
     for entry in content:
-        if entry["id"] == "kilix-pdf-conversion":
+        if entry["id"] == content_id:
             return entry
-    raise AssertionError("the catalog no longer carries kilix-pdf-conversion")
+    raise AssertionError(f"the catalog no longer carries {content_id}")
 
 
 class PdfInstallerTests(unittest.TestCase):
@@ -72,9 +72,33 @@ class PdfInstallerTests(unittest.TestCase):
         self.assertEqual(entry["binary"], "kilix-pdf")
         self.assertEqual(entry["build"], ["make", "runtime"])
 
+    def test_catalog_carries_the_terminal_native_viewer(self):
+        entry = catalog_entry("kilix-pdf")
+        self.assertEqual(entry["binary"], "kilix-pdf-viewer")
+        self.assertEqual(entry["build"], ["make", "all"])
+        self.assertEqual(entry["accepts"], ["application/pdf"])
+        self.assertTrue(entry["actions"]["open"]["accepts_input"])
+        self.assertEqual(len(entry["source"]["ref"]), 40)
+
+    def test_viewer_cli_prints_its_pin_without_installing(self):
+        environment = {
+            key: value for key, value in self.env.items()
+            if not key.startswith("KILIX_")
+        }
+        result = subprocess.run(
+            [str(ROOT / "kilix"), "pdf-view", "--print-ref"],
+            env=environment, capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout.strip(), catalog_entry("kilix-pdf")["source"]["ref"])
+        self.assertFalse(
+            (self.root / "gpu_terminal" / "kilix" / "data"
+             / "desktop-apps").exists())
+
     def test_the_launcher_exposes_it(self):
         launcher = (ROOT / "kilix").read_text(encoding="utf-8")
-        self.assertIn("pdf|pdf-conversion)", launcher)
+        self.assertIn("pdf-view|pdf-viewer)", launcher)
+        self.assertIn("pdf|pdf-conversion|pdf-convert)", launcher)
         self.assertIn("app|application)", launcher)
         self.assertIn("content_app.py", launcher)
 

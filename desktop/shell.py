@@ -609,9 +609,18 @@ class Shell:
         return self._tab([kilix, "serve", session],
                          f"Mux: {session}", cwd or os.path.expanduser("~"))
 
-    def open_kilix_pdf(self):
-        """Render the catalog PDF app as a managed Kilix 95 window."""
-        return self.open_catalog_application("kilix-pdf-conversion")
+    def open_kilix_pdf(self, path=None):
+        """Choose or open a PDF in the catalog viewer."""
+        if path:
+            return self.open_catalog_application(
+                "kilix-pdf", action="open", arguments=(path,))
+
+        import filedialog
+
+        return filedialog.open_file(
+            self.desk, "Open PDF",
+            lambda selected: selected and self.open_kilix_pdf(selected),
+            filters=[("PDF Documents", "*.pdf"), ("All Files", "*.*")])
 
     def open_catalog_application(self, content_id, action=None, arguments=()):
         """Render any shared catalog application as a managed desktop box."""
@@ -876,7 +885,9 @@ class Shell:
             self.open_app("wordpad", path)
             self.add_recent(path)
             return
-        if low.endswith(IMG_EXT):
+        if low.endswith(".pdf"):
+            self.open_kilix_pdf(path)
+        elif low.endswith(IMG_EXT):
             self.open_app("viewer", path)
         elif low.endswith(AUDIO_EXT):
             self.open_app("amp", path)

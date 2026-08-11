@@ -31,6 +31,7 @@
 #   ./kilix tmux [args]        # install/run the pinned Tmux Manager
 #   ./kilix amp [args]         # install/run the pinned Media Player
 #   ./kilix amp --headless     # run its control-socket backend, no windows
+#   ./kilix pdf-view PDF       # install/run the terminal-native PDF viewer
 #   ./kilix pdf [PDF]          # install/run pinned PDF-to-Markdown conversion
 #   ./kilix speak [TEXT...]    # read a pane, or the given text, aloud
 #   ./kilix dictate           # recognize one spoken utterance
@@ -1868,7 +1869,30 @@ case "${1:-}" in
   app|application)
     shift
     exec python3 "$KILIX_HOME/config/content_app.py" "$@" ;;
-  pdf|pdf-conversion)
+  pdf-view|pdf-viewer)
+    # Viewer and converter are separate catalog applications. The viewer
+    # keeps Poppler/Cairo as the complete CPU raster fallback while Kilix
+    # accelerates retained scrolling in the presentation layer.
+    shift
+    _pdf_view_install_only=0
+    while :; do
+      case "${1:-}" in
+        --install-only) _pdf_view_install_only=1; shift ;;
+        --print-ref)
+          exec python3 "$KILIX_HOME/config/content_app.py" \
+            ref kilix-pdf ;;
+        --) shift; break ;;
+        *) break ;;
+      esac
+    done
+    if [ "$_pdf_view_install_only" = 1 ]; then
+      python3 "$KILIX_HOME/config/content_app.py" \
+        install kilix-pdf >/dev/null
+      exit $?
+    fi
+    exec python3 "$KILIX_HOME/config/content_app.py" \
+      run kilix-pdf -- "$@" ;;
+  pdf|pdf-conversion|pdf-convert)
     # Compatibility name for the shared application launcher. Source, commit,
     # uv build, executable, and presentation metadata all remain catalog-owned.
     shift

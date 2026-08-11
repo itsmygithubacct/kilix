@@ -1091,7 +1091,16 @@ right-click menu everywhere. Built in:
   with no windows, and `kilix amp --install-only` just builds it (what `pleb
   install` uses to get it in place before anyone asks). The commit comes from
   the pinned content catalog, so moving that pin rebuilds on the next call.
-- **PDF Conversion** — `kilix pdf` installs the catalog-pinned
+- **PDF Viewer** — `kilix pdf-view DOCUMENT.pdf` installs the catalog-pinned
+  [kilix-pdf](https://github.com/itsmygithubacct/kilix-pdf) viewer and opens the
+  document in the current terminal. Poppler/Cairo provides complete CPU
+  rasterization; Kilix retains and scrolls the presented frame on the GPU when
+  available, and automatically uses CPU/full-frame presentation otherwise.
+  The Kilix 95 file manager associates `.pdf` files with this viewer, while a
+  pathless launcher opens a PDF chooser through Evince. Use `--install-only`
+  for image provisioning or `--print-ref` to inspect the immutable source pin.
+- **PDF Conversion** — `kilix pdf` or `kilix pdf-convert` installs the
+  catalog-pinned
   [kilix-pdf-conversion](https://github.com/itsmygithubacct/kilix-pdf-conversion)
   provider into Kilix's private app directory, then opens its guided terminal
   interface. Pass a PDF to convert it directly, use

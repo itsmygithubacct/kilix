@@ -41,20 +41,40 @@ def test_remote_launch_uses_private_credential():
         ]
 
 
-def test_pdf_conversion_opens_the_catalog_app_in_a_desktop_window():
+def test_pdf_viewer_chooser_opens_the_catalog_app_in_a_desktop_window():
     d = H.make_desk()
     seen = {}
     d.shell.open_in_xpane = lambda argv, title, **kwargs: seen.update(
         argv=list(argv), title=title, kwargs=kwargs) or True
-    assert d.shell.open_kilix_pdf()
+    with tempfile.TemporaryDirectory() as directory:
+        document = str(Path(directory) / "report.pdf")
+        with patch("filedialog.open_file",
+                   side_effect=lambda _desk, _title, cb, **_kwargs:
+                   cb(document) or True):
+            assert d.shell.open_kilix_pdf()
     assert seen["argv"] == [
         str(Path(H.KILIX_HOME) / "kilix"), "app", "window",
-        "kilix-pdf-conversion",
+        "kilix-pdf", "--action", "open", "--", document,
     ]
-    assert seen["title"] == "PDF Conversion"
+    assert seen["title"] == "PDF Viewer"
     assert seen["kwargs"]["icon"] == "doc_text"
-    assert seen["kwargs"]["app_size"] == (760, 520)
+    assert seen["kwargs"]["app_size"] == (960, 700)
     assert seen["kwargs"]["cwd"] == os.path.expanduser("~")
+
+
+def test_pdf_file_association_uses_the_viewer():
+    d = H.make_desk()
+    seen = {}
+    d.shell.open_catalog_application = lambda content_id, **kwargs: seen.update(
+        content_id=content_id, kwargs=kwargs) or True
+    with tempfile.TemporaryDirectory() as directory:
+        document = Path(directory) / "manual.PDF"
+        document.write_bytes(b"%PDF-1.4\n")
+        d.shell.open_path(str(document))
+    assert seen == {
+        "content_id": "kilix-pdf",
+        "kwargs": {"action": "open", "arguments": (str(document),)},
+    }
 
 
 def test_every_catalog_application_reaches_a_managed_desktop_window():
@@ -201,7 +221,8 @@ def test_start_menu_names_tmux_manager():
 test_mux_icon_renders()
 test_desktop_mux_terminal_launcher()
 test_remote_launch_uses_private_credential()
-test_pdf_conversion_opens_the_catalog_app_in_a_desktop_window()
+test_pdf_viewer_chooser_opens_the_catalog_app_in_a_desktop_window()
+test_pdf_file_association_uses_the_viewer()
 test_every_catalog_application_reaches_a_managed_desktop_window()
 test_kilix_temps_launcher_forces_graphical_tab()
 test_kilix_temps_installed_command_precedes_source_launcher()
