@@ -106,7 +106,7 @@ from a test that was already failing.
   that installed it; a launcher verb trusting `PATH` spawned a childless tab
   that died with no words at all. `kilix.bashrc` now makes that guarantee
   idempotently for every pane shell, `rollout-resume` became a real verb
-  resolved at the installed prefix, and `volume`, `switch`, `bonsai`, `mask`, `rtsp` and
+  resolved at the installed prefix, and `volume`, `switch`, `bonsai`, `mask`, `rtsp`, `nvr` and
   `status` check the prefix before giving up or reinstalling. A missing tool
   fails with the path named, never a corpse.
 - **The coding agents read as absent where their own installers put them.**
@@ -555,6 +555,8 @@ kilix bonsai pull vibevoice-asr-bitnet   # download one — this one is the dict
 kilix rtsp list                    # cameras this machine is configured for
 kilix rtsp view poolcam --tab      # one camera filling a new page
 kilix rtsp mosaic yard             # several in a grid
+kilix nvr cameras                  # what each camera is set to do
+kilix nvr review                   # browse recorded events with pictures
 kilix mask --image plate.png room.mask.png   # paint a region map over a picture
 kilix mask --render frame.ppm room.mask.png  # compose one frame, no terminal
 kilix voice install               # pinned Kilix Voice + default Vosk model

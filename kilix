@@ -38,6 +38,7 @@
 #   ./kilix voice status      # voice status, install, doctor, stop
 #   ./kilix bonsai [args]     # BitNet model store: browse, download, verify
 #   ./kilix rtsp [args]       # watch RTSP cameras: view one, or a grid
+#   ./kilix nvr [args]        # record cameras, detect, review what happened
 #   ./kilix mask [args]       # paint region maps over an image (camera masks,
 #                             #   walkable space); --render/--selftest headless
 #   ./kilix open-url [URL]    # real browser first; in-pane fallback
@@ -799,6 +800,34 @@ _kilix_bonsai_resolve() {
 # also in the content catalog, so `kilix install` and every desktop's menu
 # reach the same pinned build this does - a camera watched from the Start
 # menu and one watched from a pane must not be two different programs.
+# The recorder, on the same shape as the viewer.  It is a separate verb
+# rather than a mode of `rtsp` because they are different programs with
+# different lifetimes: one shows you a camera now, the other runs for
+# months and owns a database.
+_KILIX_NVR_PREFIX="${KILIX_NVR_PREFIX:-$HOME/.local}"
+declare -a _KILIX_NVR_COMMAND=()
+_kilix_nvr_resolve() {
+  local force="$1" resolved
+  for resolved in "$(command -v kilix-nvr 2>/dev/null || true)" \
+                  "$_KILIX_NVR_PREFIX/bin/kilix-nvr"; do
+    if [ "$force" = 0 ] && [ -n "$resolved" ] && [ -x "$resolved" ]; then
+      _KILIX_NVR_COMMAND=("$resolved")
+      return 0
+    fi
+  done
+  local installer="$KILIX_HOME/scripts/install-kilix-nvr.sh"
+  if [ ! -f "$installer" ] || [ -L "$installer" ] || [ ! -x "$installer" ]; then
+    echo "kilix nvr: missing or unsafe installer: $installer" >&2
+    return 1
+  fi
+  resolved="$("$installer" --print-path)" || return 1
+  if [ ! -f "$resolved" ] || [ -L "$resolved" ] || [ ! -x "$resolved" ]; then
+    echo "kilix nvr: installer returned an unsafe executable: $resolved" >&2
+    return 1
+  fi
+  _KILIX_NVR_COMMAND=("$resolved")
+}
+
 _KILIX_RTSP_PREFIX="${KILIX_RTSP_PREFIX:-$HOME/.local}"
 declare -a _KILIX_RTSP_COMMAND=()
 _kilix_rtsp_resolve() {
@@ -2072,6 +2101,38 @@ case "${1:-}" in
     _kilix_bonsai_resolve "$_bonsai_force" || exit 1
     [ "$_bonsai_install_only" = 0 ] || exit 0
     exec "${_KILIX_BONSAI_COMMAND[@]}" "$@" ;;
+  nvr|record|recorder)
+    shift
+    _nvr_install_only=0
+    _nvr_force=0
+    while :; do
+      case "${1:-}" in
+        --install-only) _nvr_install_only=1; shift ;;
+        --force-install) _nvr_force=1; shift ;;
+        -h|--help|help)
+          echo "usage: $_self nvr [--install-only|--force-install] [ARGS...]"
+          echo "records cameras, finds what moved, keeps what mattered"
+          echo
+          echo "  $_self nvr add NAME             onboard one; everything off"
+          echo "  $_self nvr set NAME record=continuous motion=on"
+          echo "  $_self nvr cameras              what each one is doing"
+          echo "  $_self nvr watch NAME           run it, and say what it sees"
+          echo "  $_self nvr events               what happened"
+          echo "  $_self nvr review               browse them with pictures"
+          echo "  $_self nvr clip N / play N      cut or locate the footage"
+          echo "  $_self nvr prune --dry-run      apply retention"
+          echo
+          echo "Cameras come from kilix-rtsp's cameras.conf; this stores"
+          echo "only what to do with them.  A new camera does nothing until"
+          echo "told otherwise."
+          exit 0 ;;
+        --) shift; break ;;
+        *) break ;;
+      esac
+    done
+    _kilix_nvr_resolve "$_nvr_force" || exit 1
+    [ "$_nvr_install_only" = 0 ] || exit 0
+    exec "${_KILIX_NVR_COMMAND[@]}" "$@" ;;
   rtsp|cameras|camera)
     shift
     _rtsp_install_only=0
