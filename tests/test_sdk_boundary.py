@@ -53,9 +53,9 @@ class KilixSdkBoundaryTests(unittest.TestCase):
         # 1.9 adds xdgapps.entries_in and the grouped(force=) cache refresh.
         # 1.10 adds catalog application plans for current, pane, and window
         # presentation surfaces.
-        # 1.11 exposes shared package/install identities from catalog schema 2.
-        self.assertEqual(kilix_sdk.SDK_API_VERSION, (1, 11))
-        self.assertEqual(kilix_sdk.SDK_VERSION, "1.11.0")
+        # 1.12 exposes schema-3 actions, inputs, commands, and lifecycle policy.
+        self.assertEqual(kilix_sdk.SDK_API_VERSION, (1, 12))
+        self.assertEqual(kilix_sdk.SDK_VERSION, "1.12.0")
         kilix_sdk.require_compatible("1.0")
         kilix_sdk.require_compatible("1.5")
         kilix_sdk.require_compatible("1.6")
@@ -64,8 +64,9 @@ class KilixSdkBoundaryTests(unittest.TestCase):
         kilix_sdk.require_compatible("1.9")
         kilix_sdk.require_compatible("1.10")
         kilix_sdk.require_compatible("1.11")
+        kilix_sdk.require_compatible("1.12")
         with self.assertRaises(kilix_sdk.IncompatibleSDKError):
-            kilix_sdk.require_compatible("1.12")
+            kilix_sdk.require_compatible("1.13")
         with self.assertRaises(kilix_sdk.IncompatibleSDKError):
             kilix_sdk.require_compatible("2.0")
         for malformed in (

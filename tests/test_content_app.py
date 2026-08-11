@@ -69,6 +69,22 @@ class ContentAppTests(unittest.TestCase):
             ["/apps/kilix-amp", "song.ogg"],
         )
 
+    def test_named_action_expands_to_fixed_argv_and_one_input(self):
+        spec = content_app.application_spec("kilix-file")
+        action, arguments = content_app._application_arguments(
+            spec, ["--action", "open", "--", "notes.txt"])
+        self.assertEqual(action, "open")
+        self.assertEqual(arguments, ["--open", "notes.txt"])
+        with self.assertRaises(ValueError):
+            content_app._application_arguments(
+                spec, ["--action", "open", "one", "two"])
+
+    def test_system_application_uses_the_host_kilix_command(self):
+        spec = content_app.application_spec("kilix-model-store")
+        command = content_app._system_command(spec)
+        self.assertEqual(command[1:], ["bonsai"])
+        self.assertEqual(Path(command[0]), ROOT / "kilix")
+
 
 if __name__ == "__main__":
     unittest.main()

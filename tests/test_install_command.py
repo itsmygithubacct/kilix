@@ -195,6 +195,43 @@ class CatalogApplicationStateTests(unittest.TestCase):
                 installer._install_catalog("kilix-pdf-conversion"), 0)
         ensure.assert_called_once_with(spec, install=True)
 
+    def test_system_app_state_uses_its_declared_command_plan(self):
+        spec = mock.Mock(
+            kind="app",
+            source_type="system",
+            content_id="kilix-model-store",
+        )
+        plan = mock.Mock(argv=("/opt/kilix/kilix", "bonsai"))
+        with mock.patch.object(installer.content, "application_plan",
+                               return_value=plan), \
+             mock.patch.object(installer.content, "default_catalog"), \
+             mock.patch.object(installer.os.path, "isfile", return_value=True), \
+             mock.patch.object(installer.os, "access", return_value=True):
+            self.assertTrue(installer._catalog_installed(spec))
+
+    def test_shared_package_apps_are_verified_in_one_batch(self):
+        first = mock.Mock(
+            kind="app", source_type="git", content_id="files",
+            install_id="kilix-tui-utils",
+        )
+        second = mock.Mock(
+            kind="app", source_type="git", content_id="system",
+            install_id="kilix-tui-utils",
+        )
+        catalog = [first, second]
+        with mock.patch.object(installer.paths, "data_dir", return_value="/data"), \
+             mock.patch.object(installer.os.path, "isdir", return_value=True), \
+             mock.patch.object(installer.content, "Installer") as factory:
+            factory.return_value.ready_provided.return_value = {
+                "files": "/data/apps/files",
+                "system": None,
+            }
+            states = installer._shared_application_states(catalog)
+        factory.assert_called_once_with("/data/desktop-apps")
+        factory.return_value.ready_provided.assert_called_once_with(
+            [first, second])
+        self.assertEqual(states, {"files": True, "system": False})
+
 
 class DriverTests(unittest.TestCase):
     """The NVIDIA driver is offered where it applies, and nowhere else.

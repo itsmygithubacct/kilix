@@ -217,7 +217,21 @@ def _driver_rows() -> list[dict]:
 def _catalog_installed(entry) -> bool:
     """Read installed state from the owner of each catalog content kind."""
     if entry.source_type == "system":
-        return bool(shutil.which(entry.binary or entry.content_id))
+        try:
+            plan = content.application_plan(
+                entry.content_id,
+                catalog=content.default_catalog(),
+                launcher=os.path.join(
+                    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                    "kilix",
+                ),
+            )
+        except Exception:                         # noqa: BLE001
+            return False
+        command = plan.argv[0]
+        if os.path.isabs(command):
+            return os.path.isfile(command) and os.access(command, os.X_OK)
+        return bool(shutil.which(command))
     if entry.kind == "app" and entry.source_type in {"git", "archive"}:
         root = os.path.join(paths.data_dir(), "desktop-apps")
         if not os.path.isdir(root):
@@ -234,19 +248,54 @@ def _catalog_installed(entry) -> bool:
     return False
 
 
+def _shared_application_states(catalog) -> dict[str, bool]:
+    """Batch package-provided app readiness by shared install identity."""
+    groups: dict[str, list] = {}
+    for entry in catalog:
+        if entry.kind == "app" and entry.source_type in {"git", "archive"}:
+            groups.setdefault(entry.install_id, []).append(entry)
+    if not groups:
+        return {}
+    root = os.path.join(paths.data_dir(), "desktop-apps")
+    if not os.path.isdir(root):
+        return {
+            entry.content_id: False
+            for entries in groups.values()
+            for entry in entries
+        }
+    installer = content.Installer(root)
+    states: dict[str, bool] = {}
+    for entries in groups.values():
+        try:
+            readiness = installer.ready_provided(entries)
+        except Exception:                         # noqa: BLE001
+            readiness = {}
+        states.update(
+            (entry.content_id, bool(readiness.get(entry.content_id)))
+            for entry in entries
+        )
+    return states
+
+
 def _catalog_rows() -> list[dict]:
     try:
         catalog = content.default_catalog()
     except Exception as error:                  # noqa: BLE001 - reported, not raised
         return [{"error": str(error)}]
     rows = []
+    shared_states = _shared_application_states(catalog)
     for entry in catalog:
+        installed = (
+            shared_states[entry.content_id]
+            if entry.content_id in shared_states
+            else _catalog_installed(entry)
+        )
         rows.append({
             "id": entry.content_id,
             "label": entry.label,
             "kind": entry.kind,
             "description": entry.description,
-            "installed": _catalog_installed(entry),
+            "installed": installed,
         })
     return rows
 
@@ -372,6 +421,9 @@ def _install_catalog(identifier: str) -> int:
     try:
         if spec.kind == "app" and spec.source_type in {"git", "archive"}:
             content_app.ensure_application(spec, install=True)
+        elif spec.kind == "app" and spec.source_type == "system":
+            if not _catalog_installed(spec):
+                raise RuntimeError("its system command is not installed")
         elif _games is not None:
             _games.ensure(identifier)
         else:

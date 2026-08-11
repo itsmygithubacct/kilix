@@ -28,6 +28,8 @@ Catalog = _shared.Catalog
 CatalogError = _shared.CatalogError
 ContentSpec = _shared.ContentSpec
 PackageSpec = _shared.PackageSpec
+ActionSpec = _shared.ActionSpec
+LifecycleSpec = _shared.LifecycleSpec
 InstallError = _shared.InstallError
 Installer = _shared.Installer
 default_catalog = _shared.default_catalog
@@ -56,6 +58,14 @@ class ApplicationPlan:
     surface: str
     argv: tuple[str, ...]
     preferred_size: tuple[int, int] | None
+    action: str
+    capabilities: tuple[str, ...]
+    accepts: tuple[str, ...]
+    single_instance: bool
+    requires_kilix_session: bool
+    degrades_inplace: bool
+    preserve_on_failure: bool
+    startup_timeout_seconds: int
 
 
 def _preferred_size(value: str) -> tuple[int, int] | None:
@@ -72,6 +82,7 @@ def application_plan(
     *,
     catalog=None,
     launcher: str | None = None,
+    action: str | None = None,
 ) -> ApplicationPlan:
     """Plan one application for an in-place, pane, or desktop-window host.
 
@@ -85,34 +96,67 @@ def application_plan(
         catalog = default_catalog()
     spec = catalog.require(content_id)
     if spec.kind != "app":
-        raise CatalogError(f"{content_id} is {spec.kind!r} content, not an application")
+        raise CatalogError(
+            f"{content_id} is {spec.kind!r} content, not an application"
+        )
     if isinstance(arguments, (str, bytes)):
         raise TypeError("application arguments must be an iterable of arguments")
     forwarded = tuple(str(argument) for argument in arguments)
     host = launcher or str(Path(__file__).resolve().parents[2] / "kilix")
+    selected_action = None
+    action_arguments: tuple[str, ...] = ()
+    if action is not None:
+        selected_action = spec.require_action(action)
+        if len(forwarded) > int(selected_action.accepts_input):
+            expected = (
+                "at most one input" if selected_action.accepts_input else "no input"
+            )
+            raise ValueError(f"{content_id} action {action!r} accepts {expected}")
+        action_arguments = (*selected_action.argv, *forwarded)
+    else:
+        action_arguments = forwarded
 
     if spec.source_type in ("git", "archive"):
-        action = (
+        launch_action = (
             "window"
             if surface == "window" and spec.launch_mode == "terminal"
             else "run"
         )
-        argv = (host, "app", action, spec.content_id)
-        if forwarded:
+        argv = (host, "app", launch_action, spec.content_id)
+        if selected_action is not None:
+            argv += ("--action", selected_action.action_id)
+            if forwarded:
+                argv += ("--", *forwarded)
+        elif forwarded:
             argv += ("--", *forwarded)
     elif spec.source_type == "system":
-        argv = (spec.binary or spec.content_id, *forwarded)
+        if surface == "window" and spec.launch_mode == "terminal":
+            argv = (host, "app", "window", spec.content_id)
+            if selected_action is not None:
+                argv += ("--action", selected_action.action_id)
+                if forwarded:
+                    argv += ("--", *forwarded)
+            elif forwarded:
+                argv += ("--", *forwarded)
+        else:
+            command = tuple(getattr(spec, "command", ()))
+            if not command:
+                command = (spec.binary or spec.content_id,)
+            if command[0] == "kilix":
+                command = (host, *command[1:])
+            argv = (*command, *action_arguments)
     elif spec.source_type == "custom" and spec.content_id in _CUSTOM_APPLICATION_VERBS:
         argv = (
             host,
             *_CUSTOM_APPLICATION_VERBS[spec.content_id],
             spec.content_id,
-            *forwarded,
+            *action_arguments,
         )
     else:
         raise CatalogError(
             f"{content_id} has no shared launch contract for {spec.source_type!r}"
         )
+    lifecycle = getattr(spec, "lifecycle", LifecycleSpec())
     return ApplicationPlan(
         content_id=spec.content_id,
         label=spec.label or spec.content_id,
@@ -120,6 +164,14 @@ def application_plan(
         surface=surface,
         argv=argv,
         preferred_size=_preferred_size(spec.preferred_size),
+        action=selected_action.action_id if selected_action is not None else "",
+        capabilities=tuple(spec.capabilities),
+        accepts=tuple(getattr(spec, "accepts", ())),
+        single_instance=lifecycle.single_instance,
+        requires_kilix_session=lifecycle.requires_kilix_session,
+        degrades_inplace=lifecycle.degrades_inplace,
+        preserve_on_failure=lifecycle.preserve_on_failure,
+        startup_timeout_seconds=lifecycle.startup_timeout_seconds,
     )
 
 
@@ -153,6 +205,20 @@ def grouped(catalog=None):
     return buckets
 
 
+def _lifecycle_record(spec) -> dict[str, object]:
+    lifecycle = getattr(spec, "lifecycle", LifecycleSpec())
+    return {
+        "single_instance": getattr(lifecycle, "single_instance", False),
+        "requires_kilix_session": getattr(
+            lifecycle, "requires_kilix_session", False),
+        "degrades_inplace": getattr(lifecycle, "degrades_inplace", True),
+        "preserve_on_failure": getattr(
+            lifecycle, "preserve_on_failure", True),
+        "startup_timeout_seconds": getattr(
+            lifecycle, "startup_timeout_seconds", 0),
+    }
+
+
 def menu_records(catalog=None):
     """Catalog records as plain dicts, for desktops that render text menus.
 
@@ -171,9 +237,20 @@ def menu_records(catalog=None):
             "package_id": getattr(spec, "package_id", ""),
             "install_id": getattr(spec, "install_id", spec.content_id),
             "binary": getattr(spec, "binary", ""),
+            "command": list(getattr(spec, "command", ())),
             "launch_mode": getattr(spec, "launch_mode", "terminal"),
             "preferred_size": getattr(spec, "preferred_size", ""),
             "capabilities": list(getattr(spec, "capabilities", ())),
+            "actions": {
+                item.action_id: {
+                    "argv": list(item.argv),
+                    "accepts_input": item.accepts_input,
+                    "description": item.description,
+                }
+                for item in getattr(spec, "actions", ())
+            },
+            "accepts": list(getattr(spec, "accepts", ())),
+            "lifecycle": _lifecycle_record(spec),
         }
         for spec in entries(catalog)
     ]
@@ -181,7 +258,9 @@ def menu_records(catalog=None):
 __all__ = [
     "Catalog",
     "CatalogError",
+    "ActionSpec",
     "ContentSpec",
+    "LifecycleSpec",
     "PackageSpec",
     "ApplicationPlan",
     "InstallError",

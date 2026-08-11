@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import os
+from pathlib import Path
 import shutil
 import sys
 
@@ -108,11 +109,61 @@ def window_argv(spec, executable: str, arguments: list[str]) -> list[str]:
     return [executable, *arguments]
 
 
-def _exec(argv: list[str], *, surface: str, content_id: str) -> None:
+def _exec(
+    argv: list[str],
+    *,
+    surface: str,
+    content_id: str,
+    action: str = "",
+) -> None:
     environment = dict(os.environ)
     environment["KILIX_APP_ID"] = content_id
     environment["KILIX_APP_SURFACE"] = surface
+    if action:
+        environment["KILIX_APP_ACTION"] = action
     os.execvpe(argv[0], argv, environment)
+
+
+def _application_arguments(spec, forwarded: list[str]) -> tuple[str, list[str]]:
+    """Resolve a named catalog action to trusted fixed argv plus at most one input."""
+    values = list(forwarded)
+    if values[:1] != ["--action"]:
+        if values[:1] == ["--"]:
+            values.pop(0)
+        return "", values
+    if len(values) < 2:
+        raise ValueError("--action needs an action ID")
+    action_id = values[1]
+    inputs = values[2:]
+    if inputs[:1] == ["--"]:
+        inputs.pop(0)
+    action = spec.require_action(action_id)
+    if len(inputs) > int(action.accepts_input):
+        expected = "at most one input" if action.accepts_input else "no input"
+        raise ValueError(
+            f"{spec.content_id} action {action_id!r} accepts {expected}"
+        )
+    return action_id, [*action.argv, *inputs]
+
+
+def _system_command(spec) -> list[str]:
+    command = list(getattr(spec, "command", ()))
+    if not command:
+        command = [spec.binary or spec.content_id]
+    if command[0] == "kilix":
+        command[0] = str(Path(__file__).resolve().parents[1] / "kilix")
+    return command
+
+
+def _command_ready(command: list[str]) -> str | None:
+    executable = command[0]
+    if os.path.isabs(executable):
+        return (
+            executable
+            if os.path.isfile(executable) and os.access(executable, os.X_OK)
+            else None
+        )
+    return shutil.which(executable)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -147,6 +198,39 @@ def main(argv: list[str] | None = None) -> int:
                 )
             print(spec.ref)
             return 0
+        action_id, application_arguments = _application_arguments(spec, forwarded)
+        if spec.source_type == "system":
+            command = _system_command(spec)
+            ready = _command_ready(command)
+            if args.action == "install":
+                if ready is None:
+                    raise content.InstallError(
+                        f"system command {command[0]!r} is not installed"
+                    )
+                print(ready)
+                return 0
+            command[0] = ready or command[0]
+            command.extend(application_arguments)
+            if args.action == "window":
+                if not os.environ.get("DISPLAY"):
+                    raise RuntimeError("a DISPLAY is required for the window surface")
+                command = window_argv(spec, command[0], command[1:])
+                _exec(command, surface="window", content_id=spec.content_id,
+                      action=action_id)
+                return 0
+            _exec(command, surface="current", content_id=spec.content_id,
+                  action=action_id)
+            return 0
+        if spec.source_type == "custom":
+            plan = content.application_plan(
+                spec.content_id,
+                "window" if args.action == "window" else "current",
+                application_arguments,
+                launcher=str(Path(__file__).resolve().parents[1] / "kilix"),
+            )
+            _exec(list(plan.argv), surface=plan.surface,
+                  content_id=spec.content_id, action=action_id)
+            return 0
         executable = ensure_application(spec)
         if args.action == "install":
             print(executable)
@@ -154,14 +238,23 @@ def main(argv: list[str] | None = None) -> int:
         if args.action == "window":
             if not os.environ.get("DISPLAY"):
                 raise RuntimeError("a DISPLAY is required for the window surface")
-            command = window_argv(spec, executable, forwarded)
-            _exec(command, surface="window", content_id=spec.content_id)
+            command = window_argv(spec, executable, application_arguments)
+            _exec(command, surface="window", content_id=spec.content_id,
+                  action=action_id)
+            return 0
         _exec(
-            [executable, *forwarded],
+            [executable, *application_arguments],
             surface="current",
             content_id=spec.content_id,
+            action=action_id,
         )
-    except (content.CatalogError, content.InstallError, OSError, RuntimeError) as error:
+    except (
+        content.CatalogError,
+        content.InstallError,
+        OSError,
+        RuntimeError,
+        ValueError,
+    ) as error:
         _report(args.content_id, str(error))
         return 1
     return 0

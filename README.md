@@ -337,9 +337,10 @@ lives on `plebian-os` and plays at [plebian-os.com](https://plebian-os.com/#watc
   on raw `config/browse.py` / `config/gfx.py` internals. SDK 1.2 includes shared
   content installation, authenticated private-X-application sessions, and game
   availability. SDK 1.10 adds catalog application plans for current-terminal,
-  pane, and desktop-window presentation; SDK 1.11 exposes shared package and
-  install identities from content schema 2. Native executable, TUI, and
-  command providers use the launcher’s executable/pin boundary instead.
+  pane, and desktop-window presentation; SDK 1.12 exposes shared package and
+  install identities plus named actions, accepted inputs, system commands, and
+  lifecycle policy from content schema 3. Native executable, TUI, and command
+  providers use the launcher’s executable/pin boundary instead.
 - **Self-contained** — prefers its bundled fork build, and falls back to a prebuilt kitty if you haven't built it.
 
 ### Persistent pane processes

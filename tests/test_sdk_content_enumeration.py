@@ -20,7 +20,8 @@ class _Spec:
 
     def __init__(self, content_id, label, kind="app", icon="", description="",
                  source_type="git", binary="tool", launch_mode="terminal",
-                 preferred_size="", capabilities=(), package_id=""):
+                 preferred_size="", capabilities=(), package_id="",
+                 command=(), actions=(), accepts=(), lifecycle=None):
         self.content_id = content_id
         self.label = label
         self.kind = kind
@@ -30,9 +31,20 @@ class _Spec:
         self.package_id = package_id
         self.install_id = package_id or content_id
         self.binary = binary
+        self.command = command
         self.launch_mode = launch_mode
         self.preferred_size = preferred_size
         self.capabilities = capabilities
+        self.actions = actions
+        self.accepts = accepts
+        self.lifecycle = lifecycle or content.LifecycleSpec()
+
+    def require_action(self, action_id):
+        for action in self.actions:
+            if action.action_id == action_id:
+                return action
+        raise content.CatalogError(
+            f"{self.content_id}: unknown application action {action_id!r}")
 
 
 class FakeCatalog:
@@ -95,6 +107,7 @@ class TestMenuRecords(unittest.TestCase):
         recs = content.menu_records(FakeCatalog([_Spec("a", "A")]))
         self.assertEqual(set(recs[0]), {"id", "label", "kind", "icon",
                                         "description", "source_type", "binary",
+                                        "command", "actions", "accepts", "lifecycle",
                                         "package_id", "install_id",
                                         "launch_mode", "preferred_size",
                                         "capabilities"})
@@ -112,6 +125,25 @@ class TestMenuRecords(unittest.TestCase):
         rec = content.menu_records(FakeCatalog([spec]))[0]
         self.assertEqual(rec["package_id"], "kilix-tui-utils")
         self.assertEqual(rec["install_id"], "kilix-tui-utils")
+
+    def test_actions_inputs_and_lifecycle_are_plain_metadata(self):
+        action = content.ActionSpec("open", ("--open",), True, "Open a file")
+        lifecycle = content.LifecycleSpec(
+            single_instance=True,
+            requires_kilix_session=True,
+            startup_timeout_seconds=12,
+        )
+        spec = _Spec(
+            "files", "Files", command=("kilix", "files"),
+            actions=(action,), accepts=("text/plain",), lifecycle=lifecycle,
+        )
+        rec = content.menu_records(FakeCatalog([spec]))[0]
+        self.assertEqual(rec["command"], ["kilix", "files"])
+        self.assertEqual(rec["actions"]["open"]["argv"], ["--open"])
+        self.assertTrue(rec["actions"]["open"]["accepts_input"])
+        self.assertEqual(rec["accepts"], ["text/plain"])
+        self.assertTrue(rec["lifecycle"]["single_instance"])
+        self.assertEqual(rec["lifecycle"]["startup_timeout_seconds"], 12)
 
 
 class TestApplicationPlan(unittest.TestCase):
@@ -155,6 +187,56 @@ class TestApplicationPlan(unittest.TestCase):
         plan = content.application_plan("dosbox", catalog=catalog)
         self.assertEqual(plan.argv, ("dosbox",))
 
+    def test_system_command_uses_the_selected_host_launcher(self):
+        catalog = self._Catalog([
+            _Spec("models", "Models", source_type="system", binary="",
+                  command=("kilix", "bonsai"))])
+        plan = content.application_plan(
+            "models", catalog=catalog, launcher="/host/kilix")
+        self.assertEqual(plan.argv, ("/host/kilix", "bonsai"))
+        window = content.application_plan(
+            "models", "window", catalog=catalog, launcher="/host/kilix")
+        self.assertEqual(
+            window.argv,
+            ("/host/kilix", "app", "window", "models"),
+        )
+
+    def test_named_actions_add_only_fixed_argv_and_one_declared_input(self):
+        open_action = content.ActionSpec("open", ("--open",), True, "")
+        catalog = self._Catalog([
+            _Spec("files", "Files", actions=(open_action,),
+                  accepts=("text/plain",))])
+        plan = content.application_plan(
+            "files", "pane", ["notes.txt"], catalog=catalog,
+            launcher="/kilix", action="open")
+        self.assertEqual(
+            plan.argv,
+            ("/kilix", "app", "run", "files", "--action", "open", "--",
+             "notes.txt"),
+        )
+        self.assertEqual(plan.action, "open")
+        self.assertEqual(plan.accepts, ("text/plain",))
+        with self.assertRaises(ValueError):
+            content.application_plan(
+                "files", arguments=["one", "two"], catalog=catalog,
+                action="open")
+
+    def test_lifecycle_policy_reaches_the_host_plan(self):
+        lifecycle = content.LifecycleSpec(
+            single_instance=True,
+            requires_kilix_session=True,
+            degrades_inplace=False,
+            preserve_on_failure=False,
+            startup_timeout_seconds=20,
+        )
+        catalog = self._Catalog([_Spec("session", "Session", lifecycle=lifecycle)])
+        plan = content.application_plan("session", catalog=catalog)
+        self.assertTrue(plan.single_instance)
+        self.assertTrue(plan.requires_kilix_session)
+        self.assertFalse(plan.degrades_inplace)
+        self.assertFalse(plan.preserve_on_failure)
+        self.assertEqual(plan.startup_timeout_seconds, 20)
+
     def test_host_owned_dosbox_uses_its_existing_shared_launcher(self):
         catalog = self._Catalog([
             _Spec("dosbox", "DOSBox", source_type="custom",
@@ -193,6 +275,42 @@ class TestAgainstTheRealCatalog(unittest.TestCase):
 
     def test_default_catalog_is_used_when_none_is_passed(self):
         self.assertEqual(len(content.entries()), len(self.catalog))
+
+    def test_every_shipped_application_has_surface_and_action_plans(self):
+        applications = [
+            spec for spec in self.catalog if spec.kind == "app"
+        ]
+        self.assertGreater(len(applications), 0)
+        for spec in applications:
+            for surface in ("current", "pane", "window"):
+                with self.subTest(application=spec.content_id, surface=surface):
+                    plan = content.application_plan(
+                        spec.content_id,
+                        surface,
+                        catalog=self.catalog,
+                        launcher="/fixture/kilix",
+                    )
+                    self.assertEqual(plan.content_id, spec.content_id)
+                    self.assertEqual(plan.surface, surface)
+                    self.assertTrue(plan.argv)
+            for action in spec.actions:
+                inputs = ["fixture-input"] if action.accepts_input else []
+                for surface in ("current", "pane", "window"):
+                    with self.subTest(
+                        application=spec.content_id,
+                        action=action.action_id,
+                        surface=surface,
+                    ):
+                        plan = content.application_plan(
+                            spec.content_id,
+                            surface,
+                            inputs,
+                            catalog=self.catalog,
+                            launcher="/fixture/kilix",
+                            action=action.action_id,
+                        )
+                        self.assertEqual(plan.action, action.action_id)
+                        self.assertTrue(plan.argv)
 
 
 if __name__ == "__main__":
