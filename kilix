@@ -789,9 +789,9 @@ _kilix_bonsai_resolve() {
       return 0
     fi
   done
-  local installer=("$KILIX_HOME/scripts/install-kilix-bonsai.sh")
-  [ "$force" = 0 ] || installer+=(--force)
-  "${installer[@]}" || return 1
+  local -a bonsai_installer=("$KILIX_HOME/scripts/install-kilix-bonsai.sh")
+  [ "$force" = 0 ] || bonsai_installer+=(--force)
+  "${bonsai_installer[@]}" || return 1
   resolved="$_KILIX_BONSAI_PREFIX/bin/kilix-bonsai"
   [ -x "$resolved" ] || {
     echo "kilix bonsai: installer did not create $resolved" >&2
@@ -828,12 +828,12 @@ _kilix_nvr_resolve() {
       return 0
     fi
   done
-  local installer="$KILIX_HOME/scripts/install-kilix-nvr.sh"
-  if [ ! -f "$installer" ] || [ -L "$installer" ] || [ ! -x "$installer" ]; then
-    echo "kilix nvr: missing or unsafe installer: $installer" >&2
+  local nvr_installer="$KILIX_HOME/scripts/install-kilix-nvr.sh"
+  if [ ! -f "$nvr_installer" ] || [ -L "$nvr_installer" ] || [ ! -x "$nvr_installer" ]; then
+    echo "kilix nvr: missing or unsafe installer: $nvr_installer" >&2
     return 1
   fi
-  resolved="$("$installer" --print-path)" || return 1
+  resolved="$("$nvr_installer" --print-path)" || return 1
   if [ ! -f "$resolved" ] || [ -L "$resolved" ] || [ ! -x "$resolved" ]; then
     echo "kilix nvr: installer returned an unsafe executable: $resolved" >&2
     return 1
@@ -847,12 +847,12 @@ _kilix_nvr_resolve() {
 # detection, and asking once is enough because the installer records where
 # it put things.
 _kilix_yolo_installer() {
-  local installer="$KILIX_HOME/scripts/install-yolo.sh"
-  if [ ! -f "$installer" ] || [ -L "$installer" ] || [ ! -x "$installer" ]; then
-    echo "kilix yolo: missing or unsafe installer: $installer" >&2
+  local yolo_installer="$KILIX_HOME/scripts/install-yolo.sh"
+  if [ ! -f "$yolo_installer" ] || [ -L "$yolo_installer" ] || [ ! -x "$yolo_installer" ]; then
+    echo "kilix yolo: missing or unsafe installer: $yolo_installer" >&2
     return 1
   fi
-  printf '%s\n' "$installer"
+  printf '%s\n' "$yolo_installer"
 }
 
 # The analyzer: one picture, one recording or one camera, with what a
@@ -871,12 +871,12 @@ _kilix_look_resolve() {
       return 0
     fi
   done
-  local installer="$KILIX_HOME/scripts/install-kilix-object-detect.sh"
-  if [ ! -f "$installer" ] || [ -L "$installer" ] || [ ! -x "$installer" ]; then
-    echo "kilix look: missing or unsafe installer: $installer" >&2
+  local look_installer="$KILIX_HOME/scripts/install-kilix-object-detect.sh"
+  if [ ! -f "$look_installer" ] || [ -L "$look_installer" ] || [ ! -x "$look_installer" ]; then
+    echo "kilix look: missing or unsafe installer: $look_installer" >&2
     return 1
   fi
-  resolved="$("$installer" --print-path)" || return 1
+  resolved="$("$look_installer" --print-path)" || return 1
   if [ ! -f "$resolved" ] || [ -L "$resolved" ] || [ ! -x "$resolved" ]; then
     echo "kilix look: installer returned an unsafe executable: $resolved" >&2
     return 1
