@@ -23,6 +23,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = ROOT / "scripts" / "install-yolo.sh"
+YAMNET = ROOT / "scripts" / "install-yamnet.sh"
 
 
 def _install_rows() -> list[dict]:
@@ -175,6 +176,83 @@ class LauncherWiring(unittest.TestCase):
         self.assertIn("kilix-look-detect", installer)
         self.assertIn("KILIX_OBJECT_DETECTOR=", installer)
         self.assertNotIn("tools/kilix-nvr-detect", installer)
+
+
+class YamnetRuntime(unittest.TestCase):
+    """The sound half, which had no installer at all until it bit.
+
+    The classifier was recorded in kilix.env by hand as an interpreter and a
+    script separated by a space. The launcher's own parser survives that;
+    nothing else does — `set -a; . kilix.env` treats the first word as an
+    assignment and *runs* the second, so a service or a plain shell got no
+    classifier, fell back to a bundled tool that is not installed, and
+    reported a broken pipe seconds later against an empty log. These hold the
+    shape that prevents it.
+    """
+
+    def test_the_list_offers_the_runtime(self):
+        rows = _install_rows()
+        yamnet = next((r for r in rows
+                       if r.get("kind") == "runtime" and r.get("id") == "yamnet"),
+                      None)
+        self.assertIsNotNone(yamnet, "no yamnet runtime row")
+        for field in ("id", "label", "kind", "description", "installed"):
+            self.assertIn(field, yamnet)
+        self.assertIsInstance(yamnet["installed"], bool)
+
+    def test_it_is_executable(self):
+        self.assertTrue(YAMNET.is_file())
+        self.assertTrue(os.access(YAMNET, os.X_OK))
+
+    def test_check_reports_a_machine_it_has_never_run_on(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            environment = dict(os.environ,
+                               KILIX_YAMNET_DIR=os.path.join(scratch, "yamnet"))
+            result = subprocess.run([str(YAMNET), "--check"], env=environment,
+                                    capture_output=True, text=True,
+                                    check=False, timeout=120)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("not installed", result.stdout)
+
+    def test_it_refuses_a_broad_runtime_directory(self):
+        for directory in (os.path.expanduser("~"), "/"):
+            environment = dict(os.environ, KILIX_YAMNET_DIR=directory)
+            result = subprocess.run([str(YAMNET), "--check"], env=environment,
+                                    capture_output=True, text=True,
+                                    check=False, timeout=120)
+            self.assertEqual(result.returncode, 1, directory)
+            self.assertIn("refusing broad runtime path", result.stderr)
+
+    def test_it_records_one_path_and_not_a_command_line(self):
+        """A wrapper, so the recorded value has no space in it.
+
+        This is the whole reason the installer exists rather than an
+        instruction in a document.
+        """
+        installer = YAMNET.read_text(encoding="utf-8")
+        self.assertIn("KILIX_SOUND_CLASSIFIER=%s", installer)
+        self.assertIn("bin/kilix-listen-classify", installer)
+        # The interpreter and the script go inside the wrapper, never into
+        # the setting.
+        self.assertNotIn("KILIX_SOUND_CLASSIFIER=%s %s", installer)
+
+    def test_the_recorded_setting_has_no_space_in_it(self):
+        """And on this machine, in the file that is actually there.
+
+        A value with a space is unsourceable, which is how the classifier
+        went missing for every process the launcher did not start.
+        """
+        root = os.environ.get("GPU_TERMINAL_DATA_HOME") or os.path.join(
+            os.path.expanduser("~"), ".local", "gpu_terminal")
+        env_file = Path(root) / "kilix" / "config" / "kilix.env"
+        if not env_file.is_file():
+            self.skipTest("no kilix.env on this machine")
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            if not line.startswith("KILIX_SOUND_CLASSIFIER="):
+                continue
+            value = line.split("=", 1)[1]
+            self.assertNotIn(" ", value.strip(),
+                             "the classifier setting must be one path")
 
 
 if __name__ == "__main__":

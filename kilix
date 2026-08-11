@@ -872,6 +872,15 @@ _kilix_nvr_resolve() {
 # here: nothing downloads a quarter of a gigabyte until somebody asks for
 # detection, and asking once is enough because the installer records where
 # it put things.
+_kilix_yamnet_installer() {
+  local yamnet_installer="$KILIX_HOME/scripts/install-yamnet.sh"
+  if [ ! -f "$yamnet_installer" ] || [ -L "$yamnet_installer" ] || [ ! -x "$yamnet_installer" ]; then
+    echo "kilix yamnet: missing or unsafe installer: $yamnet_installer" >&2
+    return 1
+  fi
+  printf '%s\n' "$yamnet_installer"
+}
+
 _kilix_yolo_installer() {
   local yolo_installer="$KILIX_HOME/scripts/install-yolo.sh"
   if [ ! -f "$yolo_installer" ] || [ -L "$yolo_installer" ] || [ ! -x "$yolo_installer" ]; then
@@ -2210,6 +2219,35 @@ case "${1:-}" in
     _kilix_bonsai_resolve "$_bonsai_force" || exit 1
     [ "$_bonsai_install_only" = 0 ] || exit 0
     exec "${_KILIX_BONSAI_COMMAND[@]}" "$@" ;;
+  yamnet|classifier)
+    shift
+    _yamnet_action=--print-path
+    while :; do
+      case "${1:-}" in
+        install) _yamnet_action=--install; shift ;;
+        check|status) _yamnet_action=--check; shift ;;
+        update|upgrade) _yamnet_action=--upgrade; shift ;;
+        remove|uninstall) _yamnet_action=--remove; shift ;;
+        -h|--help|help)
+          echo "usage: $_self yamnet [install|check|update|remove]"
+          echo
+          echo "  $_self yamnet            install if needed, print the command"
+          echo "  $_self yamnet check      what is present, without changing it"
+          echo "  $_self yamnet install    build the virtualenv and fetch the model"
+          echo "  $_self yamnet update     bring its packages forward"
+          echo "  $_self yamnet remove     delete the runtime directory"
+          echo
+          echo "The sound-event half of the same idea as '$_self yolo':"
+          echo "kilix-sound-detect links no ML library, its classifier is a"
+          echo "subprocess, and this builds that subprocess's environment."
+          echo "The model is fetched by hash with its licence recorded."
+          exit 0 ;;
+        --) shift; break ;;
+        *) break ;;
+      esac
+    done
+    _yamnet_installer="$(_kilix_yamnet_installer)" || exit 1
+    exec "$_yamnet_installer" "$_yamnet_action" "$@" ;;
   yolo|detector)
     shift
     _yolo_action=--print-path

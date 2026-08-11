@@ -18,8 +18,9 @@ reimplementing it here. The row only appears on a machine that has the hardware.
 
 Runtimes are the fourth: not a program but the environment a subprocess needs.
 `kilix install yolo` builds the virtualenv and fetches the weights that
-kilix-nvr's detector runs in — the recorder links no ML library on purpose, and
-this is what turns that from a limitation into a one-line install.
+kilix-nvr's detector runs in, and `kilix install yamnet` does the same for the
+sound-event classifier — both link no ML library on purpose, and this is what
+turns that from a limitation into a one-line install.
 """
 from __future__ import annotations
 
@@ -182,8 +183,20 @@ RUNTIMES = (
         "label": "YOLO object detection",
         "helper": "install-yolo.sh",
         "directory": os.path.join("runtimes", "yolo"),
+        "directory_env": "KILIX_YOLO_DIR",
+        "command": "kilix-look-detect",
         "description": "Ultralytics YOLO26 in its own virtualenv — what "
                        "kilix-nvr detects people and vehicles with",
+    },
+    {
+        "id": "yamnet",
+        "label": "YAMNet sound events",
+        "helper": "install-yamnet.sh",
+        "directory": os.path.join("runtimes", "yamnet"),
+        "directory_env": "KILIX_YAMNET_DIR",
+        "command": "kilix-listen-classify",
+        "description": "YAMNet in its own virtualenv — what kilix-listen and "
+                       "kilix-nvr recognise barking, speech and glass with",
     },
 )
 
@@ -192,9 +205,12 @@ def _runtime_paths(runtime: dict) -> tuple[str, str]:
     """The runtime's directory and the command it installs."""
     root = os.environ.get("GPU_TERMINAL_DATA_HOME") or os.path.join(
         os.path.expanduser("~"), ".local", "gpu_terminal")
-    directory = os.environ.get("KILIX_YOLO_DIR") or os.path.join(
+    # Each runtime names its own override rather than sharing one: two
+    # runtimes reading KILIX_YOLO_DIR would put the sound model wherever
+    # somebody had redirected the detector.
+    directory = os.environ.get(runtime["directory_env"]) or os.path.join(
         root, runtime["directory"])
-    return directory, os.path.join(directory, "bin", "kilix-look-detect")
+    return directory, os.path.join(directory, "bin", runtime["command"])
 
 
 def _runtime_rows() -> list[dict]:
