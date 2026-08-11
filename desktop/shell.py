@@ -611,16 +611,43 @@ class Shell:
 
     def open_kilix_pdf(self):
         """Render the catalog PDF app as a managed Kilix 95 window."""
+        return self.open_catalog_application("kilix-pdf-conversion")
+
+    def open_catalog_application(self, content_id, action=None, arguments=()):
+        """Render any shared catalog application as a managed desktop box."""
         kilix = os.path.join(KILIX_HOME, "kilix")
         try:
             plan = kilix_content.application_plan(
-                "kilix-pdf-conversion", "window", launcher=kilix)
+                content_id, "window", arguments, launcher=kilix, action=action)
         except (kilix_content.CatalogError, ValueError) as error:
-            wm.msgbox(self.desk, "PDF Conversion", str(error), icon="error")
+            wm.msgbox(self.desk, "Kilix Application", str(error), icon="error")
             return False
+        if plan.single_instance:
+            for window in self.desk.wm.windows:
+                if getattr(window, "kilix_application_id", "") == content_id:
+                    self.desk.wm.activate(window)
+                    return True
         return self.open_in_xpane(
             plan.argv, plan.label, icon=plan.icon,
-            app_size=plan.preferred_size, cwd=os.path.expanduser("~"))
+            app_size=plan.preferred_size, cwd=os.path.expanduser("~"),
+            application_id=content_id)
+
+    def catalog_application_menu_items(self):
+        """Start-menu rows derived from the SDK's plain catalog records."""
+        try:
+            records = kilix_content.menu_records()
+        except Exception:                         # an unreadable catalog is empty
+            return []
+        return [
+            W.MenuItem(
+                record["label"],
+                icon="exe",
+                action=lambda content_id=record["id"]:
+                self.open_catalog_application(content_id),
+            )
+            for record in records
+            if record.get("kind") == "app"
+        ]
 
     @staticmethod
     def kilix_temps_target():
@@ -1035,17 +1062,19 @@ class Shell:
             wm.msgbox(self.desk, "kilix 95", f"{app}: {e}", icon="error")
 
     def open_in_xpane(self, argv, title, icon="exe", cwd=None, app_size=None,
-                      cleanup=None):
+                      cleanup=None, application_id=""):
         """Open an X11 command (already-split argv) as a window ON the desktop,
         the way apps/amp.py runs kilix-amp. app_size (w, h) sizes the private
         Xvfb / window; None fills the desktop (minus the taskbar). An Xvfb/XPane
         failure shows an error dialog — it must never take the desktop down."""
         from apps import xpane
         try:
-            self.desk.wm.add(xpane.XPane(
+            pane = xpane.XPane(
                 self.desk, list(argv), title, icon=icon, app_size=app_size,
                 cwd=cwd or os.path.expanduser("~"), fill=True,
-                cleanup=cleanup))
+                cleanup=cleanup)
+            pane.kilix_application_id = application_id
+            self.desk.wm.add(pane)
             return True
         except Exception as e:
             if cleanup is not None:

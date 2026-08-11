@@ -17,8 +17,9 @@ SGR-pixel mouse reporting (`?1003h`/`?1016h`), so mouse coordinates map
 repaints when something is dirty (input, clock tick, caret blink).
 
 Reuses the host through `config/kilix_sdk`: `kilix_sdk.term` provides raw mode
-and input parsing, while `kilix_sdk.graphics` provides the damage-aware shared
-presenter. Nothing else — the toolkit below is self-contained.
+and input parsing, `kilix_sdk.graphics` provides the damage-aware shared
+presenter, and `kilix_sdk.content` turns every shared catalog application into
+a managed XPane window. The toolkit below remains self-contained.
 
 ## Modules
 

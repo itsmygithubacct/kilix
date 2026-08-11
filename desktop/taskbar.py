@@ -486,6 +486,8 @@ class Taskbar:
             items = [
                 MI("Accessories", icon="folder", submenu=accessories()),
                 MI("Games", icon="games", submenu=games()),
+                MI("Kilix Applications", icon="folder",
+                   submenu=shell.catalog_application_menu_items()),
                 sub(),
                 MI("File Manager", icon="folder_open",
                    action=lambda: shell.open_app("filemgr")),

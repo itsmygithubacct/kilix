@@ -57,6 +57,42 @@ def test_pdf_conversion_opens_the_catalog_app_in_a_desktop_window():
     assert seen["kwargs"]["cwd"] == os.path.expanduser("~")
 
 
+def test_every_catalog_application_reaches_a_managed_desktop_window():
+    d = H.make_desk()
+    d.taskbar.open_start_menu()
+    programs = next(
+        item for item in d.menus.stack[0].items if item.label == "Programs")
+    catalog = next(
+        item for item in programs.submenu if item.label == "Kilix Applications")
+    labels = {item.label for item in catalog.submenu}
+    for expected in ("File Manager", "System Center", "Software Center",
+                     "Voice Studio", "Character Map", "Notepad"):
+        assert expected in labels, (expected, sorted(labels))
+
+    seen = {}
+    d.shell.open_in_xpane = lambda argv, title, **kwargs: seen.update(
+        argv=list(argv), title=title, kwargs=kwargs) or True
+    system = next(
+        item for item in catalog.submenu if item.label == "System Center")
+    system.action()
+    assert seen["argv"] == [
+        str(Path(H.KILIX_HOME) / "kilix"), "app", "window",
+        "kilix-system-center",
+    ]
+    assert seen["kwargs"]["application_id"] == "kilix-system-center"
+
+    existing = type("ExistingWindow", (), {
+        "kilix_application_id": "kilix-system-center",
+    })()
+    d.wm.windows.append(existing)
+    activated = []
+    d.wm.activate = activated.append
+    d.shell.open_in_xpane = lambda *args, **kwargs: (_ for _ in ()).throw(
+        AssertionError("a single-instance app opened a duplicate window"))
+    assert d.shell.open_catalog_application("kilix-system-center")
+    assert activated == [existing]
+
+
 def test_kilix_temps_launcher_forces_graphical_tab():
     d = H.make_desk()
     seen = {}
@@ -166,6 +202,7 @@ test_mux_icon_renders()
 test_desktop_mux_terminal_launcher()
 test_remote_launch_uses_private_credential()
 test_pdf_conversion_opens_the_catalog_app_in_a_desktop_window()
+test_every_catalog_application_reaches_a_managed_desktop_window()
 test_kilix_temps_launcher_forces_graphical_tab()
 test_kilix_temps_installed_command_precedes_source_launcher()
 test_kilix_memory_launcher_forces_graphical_tab()
