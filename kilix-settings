@@ -44,6 +44,16 @@ def _control_names() -> dict[str, str]:
     ):
         names[alias] = shared.PANE_MEMORY_MODE_KEY
     names[shared.PANE_MEMORY_MODE_KEY.lower()] = shared.PANE_MEMORY_MODE_KEY
+    for alias in (
+        "cpu",
+        "cpu_chip",
+        "cpu_load",
+        "cpu_mode",
+        "pane_cpu",
+        "pane_cpu_mode",
+    ):
+        names[alias] = shared.PANE_CPU_MODE_KEY
+    names[shared.PANE_CPU_MODE_KEY.lower()] = shared.PANE_CPU_MODE_KEY
     for alias in ("transcript", "session_log", "session_logs", "logging"):
         names[alias] = "KILIX_TRANSCRIPT"
     for alias in ("transcript_graphics", "log_graphics"):
@@ -107,6 +117,13 @@ MEMORY_MODE_SPEC = ChoiceSpec(
     "Pane memory chip (auto ≥1 GiB / always / off)",
     shared.PANE_MEMORY_MODE_CHOICES,
     shared.PANE_MEMORY_MODE_DEFAULT,
+)
+
+CPU_MODE_SPEC = ChoiceSpec(
+    shared.PANE_CPU_MODE_KEY,
+    "Pane CPU load (auto >1.0 / always / off)",
+    shared.PANE_CPU_MODE_CHOICES,
+    shared.PANE_CPU_MODE_DEFAULT,
 )
 
 TRANSCRIPT_GRAPHICS_SPEC = ChoiceSpec(
@@ -181,7 +198,7 @@ def _voice_specs() -> tuple[tuple[ChoiceSpec, ...], tuple[ChoiceSpec, ...]]:
 VOICE_LEADING_SPECS, VOICE_TRAILING_SPECS = _voice_specs()
 
 LEADING_CHOICES = {
-    "Pane buttons": (MEMORY_MODE_SPEC,),
+    "Pane buttons": (CPU_MODE_SPEC, MEMORY_MODE_SPEC),
     "Voice": VOICE_LEADING_SPECS,
 }
 # Sub-options sit next to the toggle they qualify rather than being grouped by
@@ -303,14 +320,20 @@ def _parse_assignment(value: str) -> tuple[str, object]:
             key for key in CONTROL_NAMES if not key.startswith("kilix_")))
         raise argparse.ArgumentTypeError(
             f"unknown control {name!r}; choose one of: {choices}")
-    if key == shared.PANE_MEMORY_MODE_KEY:
+    if key in (shared.PANE_CPU_MODE_KEY, shared.PANE_MEMORY_MODE_KEY):
         mode = raw.strip().lower()
         if mode == "on":
             mode = "always"
-        if mode not in shared.PANE_MEMORY_MODE_CHOICES:
-            choices = "|".join(shared.PANE_MEMORY_MODE_CHOICES)
+        choices_for_key = (
+            shared.PANE_CPU_MODE_CHOICES
+            if key == shared.PANE_CPU_MODE_KEY
+            else shared.PANE_MEMORY_MODE_CHOICES
+        )
+        if mode not in choices_for_key:
+            choices = "|".join(choices_for_key)
+            name = "CPU load" if key == shared.PANE_CPU_MODE_KEY else "memory"
             raise argparse.ArgumentTypeError(
-                f"pane memory mode must be {choices}"
+                f"pane {name} mode must be {choices}"
             )
         return key, mode
     if key == shared.TRANSCRIPT_GRAPHICS_KEY:
@@ -406,6 +429,12 @@ def _print_settings(values: dict[str, str]) -> None:
     for spec in shared.TOGGLE_SPECS:
         state = "on" if shared.truthy(values[spec.key]) else "off"
         print(f"{spec.key}={state}")
+    cpu_mode = values.get(
+        shared.PANE_CPU_MODE_KEY, shared.PANE_CPU_MODE_DEFAULT
+    ).strip().lower()
+    if cpu_mode not in shared.PANE_CPU_MODE_CHOICES:
+        cpu_mode = shared.PANE_CPU_MODE_DEFAULT
+    print(f"{shared.PANE_CPU_MODE_KEY}={cpu_mode}")
     mode = values.get(
         shared.PANE_MEMORY_MODE_KEY, shared.PANE_MEMORY_MODE_DEFAULT
     ).strip().lower()
@@ -555,6 +584,7 @@ def _run_tui(stdscr, initial_section: int | str | None = None) -> int | str:
         spec.key: shared.truthy(effective[spec.key])
         for spec in shared.TOGGLE_SPECS
     }
+    values[shared.PANE_CPU_MODE_KEY] = shared.pane_cpu_mode()
     values[shared.PANE_MEMORY_MODE_KEY] = shared.pane_memory_mode()
     values[shared.TRANSCRIPT_GRAPHICS_KEY] = shared.transcript_graphics()
     values[shared.TRANSCRIPT_LIMIT_KEY] = effective.get(
@@ -745,8 +775,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--set", action="append", default=[],
                         type=_parse_assignment,
                         metavar="CONTROL=VALUE",
-                        help=("set a toggle to on/off or pane_memory to "
-                              "auto/always/off"))
+                        help=("set a toggle to on/off or pane_cpu/pane_memory "
+                              "to auto/always/off"))
     parser.add_argument("--game", action="append", default=[],
                         type=_parse_game_assignment, metavar="GAME=on|off",
                         help="set game availability non-interactively")

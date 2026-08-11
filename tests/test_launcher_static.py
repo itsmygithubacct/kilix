@@ -295,6 +295,7 @@ class KilixLauncherTests(unittest.TestCase):
         tabs = (ROOT / "src" / "kitty" / "tabs.py").read_text()
         conf = (ROOT / "config" / "kitty.conf").read_text()
         readme = (ROOT / "README.md").read_text()
+        cpu = (ROOT / "src" / "kitty" / "kilix_cpu.py").read_text()
         memory = (ROOT / "src" / "kitty" / "kilix_memory.py").read_text()
         titlebar = (ROOT / "src" / "kitty" / "window_title_bar.py").read_text()
 
@@ -358,6 +359,11 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("U+F0083", conf)
         self.assertIn("Battery-in-chrome", readme)
         self.assertIn("Date/time-in-chrome", readme)
+        self.assertIn("KILIX_CHROME_PANE_CPU_MODE", cpu)
+        self.assertIn("loadavg", cpu)
+        self.assertIn("CPU_LOAD_THRESHOLD = 1.0", cpu)
+        self.assertIn("pane_cpu_text", titlebar)
+        self.assertIn("pane_resource_text", titlebar)
         self.assertIn("KILIX_CHROME_PANE_MEMORY_MODE", memory)
         self.assertIn("smaps_rollup", memory)
         self.assertIn("pane_memory_segment", memory)
@@ -495,6 +501,7 @@ class KilixLauncherTests(unittest.TestCase):
             "KILIX_NO_SOUND", "KILIX_SHELL_INTEGRATION", "KILIX_REF",
         ):
             self.assertIn(key, settings)
+        self.assertIn("PANE_CPU_MODE_KEY", settings)
         self.assertIn("PANE_MEMORY_MODE_KEY", settings)
         self.assertIn("get_env_key", settings)
         self.assertIn("set_env_key", settings)

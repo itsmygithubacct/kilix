@@ -124,6 +124,9 @@ TOGGLE_SPECS = (
 TOGGLE_BY_KEY = {spec.key: spec for spec in TOGGLE_SPECS}
 CLOCK_FORMAT_KEY = "KILIX_CHROME_CLOCK_FORMAT"
 CLOCK_FORMAT_DEFAULT = "%Y-%m-%d %H:%M"
+PANE_CPU_MODE_KEY = "KILIX_CHROME_PANE_CPU_MODE"
+PANE_CPU_MODE_DEFAULT = "auto"
+PANE_CPU_MODE_CHOICES = ("auto", "always", "off")
 PANE_MEMORY_MODE_KEY = "KILIX_CHROME_PANE_MEMORY_MODE"
 PANE_MEMORY_MODE_DEFAULT = "auto"
 PANE_MEMORY_MODE_CHOICES = ("auto", "always", "off")
@@ -292,6 +295,7 @@ CODING_KEYS = tuple(CODING_CHOICE_SPECS)
 
 MANAGED_KEYS = tuple(spec.key for spec in TOGGLE_SPECS) + (
     CLOCK_FORMAT_KEY,
+    PANE_CPU_MODE_KEY,
     PANE_MEMORY_MODE_KEY,
     TRANSCRIPT_GRAPHICS_KEY,
     TRANSCRIPT_LIMIT_KEY,
@@ -366,11 +370,16 @@ def truthy(value: object) -> bool:
 def _normalize_change(key: str, raw_value: object) -> str:
     if key in TOGGLE_BY_KEY:
         return "1" if truthy(raw_value) else "0"
-    if key == PANE_MEMORY_MODE_KEY:
+    if key in (PANE_CPU_MODE_KEY, PANE_MEMORY_MODE_KEY):
         value = str(raw_value).strip().lower()
-        if value not in PANE_MEMORY_MODE_CHOICES:
-            choices = ", ".join(PANE_MEMORY_MODE_CHOICES)
-            raise ValueError(f"{PANE_MEMORY_MODE_KEY} must be one of: {choices}")
+        choices_for_key = (
+            PANE_CPU_MODE_CHOICES
+            if key == PANE_CPU_MODE_KEY
+            else PANE_MEMORY_MODE_CHOICES
+        )
+        if value not in choices_for_key:
+            choices = ", ".join(choices_for_key)
+            raise ValueError(f"{key} must be one of: {choices}")
         return value
     if key == TRANSCRIPT_GRAPHICS_KEY:
         value = str(raw_value).strip().lower()
@@ -430,6 +439,7 @@ def defaults(*, migrate_environment: bool = False) -> dict[str, str]:
         for spec in TOGGLE_SPECS
     }
     values[CLOCK_FORMAT_KEY] = CLOCK_FORMAT_DEFAULT
+    values[PANE_CPU_MODE_KEY] = PANE_CPU_MODE_DEFAULT
     values[PANE_MEMORY_MODE_KEY] = PANE_MEMORY_MODE_DEFAULT
     values[TRANSCRIPT_GRAPHICS_KEY] = TRANSCRIPT_GRAPHICS_DEFAULT
     values[TRANSCRIPT_LIMIT_KEY] = TRANSCRIPT_LIMIT_DEFAULT
@@ -502,6 +512,7 @@ def _initial_text(values: Mapping[str, str]) -> str:
     lines.append(f"{CLOCK_FORMAT_KEY}={values[CLOCK_FORMAT_KEY]}")
     for spec in PANE_BUTTON_TOGGLES:
         lines.append(f"{spec.key}={values[spec.key]}")
+    lines.append(f"{PANE_CPU_MODE_KEY}={values[PANE_CPU_MODE_KEY]}")
     lines.append(f"{PANE_MEMORY_MODE_KEY}={values[PANE_MEMORY_MODE_KEY]}")
     lines.extend(("", SESSION_LOG_MARKER))
     for spec in SESSION_LOG_TOGGLES:
@@ -652,6 +663,16 @@ def pane_memory_mode(path: str | None = None) -> str:
     return (
         value if value in PANE_MEMORY_MODE_CHOICES
         else PANE_MEMORY_MODE_DEFAULT
+    )
+
+
+def pane_cpu_mode(path: str | None = None) -> str:
+    """Return the normalized pane CPU-load visibility policy."""
+    value = load(path).get(
+        PANE_CPU_MODE_KEY, PANE_CPU_MODE_DEFAULT).strip().lower()
+    return (
+        value if value in PANE_CPU_MODE_CHOICES
+        else PANE_CPU_MODE_DEFAULT
     )
 
 
@@ -839,6 +860,9 @@ __all__ = [
     "GAME_TOGGLES",
     "MANAGED_KEYS",
     "PANE_BUTTON_TOGGLES",
+    "PANE_CPU_MODE_CHOICES",
+    "PANE_CPU_MODE_DEFAULT",
+    "PANE_CPU_MODE_KEY",
     "PANE_MEMORY_MODE_CHOICES",
     "PANE_MEMORY_MODE_DEFAULT",
     "PANE_MEMORY_MODE_KEY",
@@ -869,6 +893,7 @@ __all__ = [
     "game_availability",
     "game_enabled",
     "load",
+    "pane_cpu_mode",
     "pane_memory_mode",
     "parse_text",
     "read_text",

@@ -87,6 +87,8 @@ class SharedSettingsTests(unittest.TestCase):
             self.assertEqual(values["KILIX_CHROME_TEMPERATURE"], "0")
             self.assertEqual(values[settings.CLOCK_FORMAT_KEY], "TIME")
             self.assertEqual(
+                values[settings.PANE_CPU_MODE_KEY], "auto")
+            self.assertEqual(
                 values[settings.PANE_MEMORY_MODE_KEY], "auto")
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
 
@@ -233,6 +235,8 @@ class SharedSettingsTests(unittest.TestCase):
             self.assertIn(
                 "KILIX_CHROME_BUTTON_SYNCHRONIZE_INPUT=1", text)
             self.assertIn(
+                f"{settings.PANE_CPU_MODE_KEY}=auto", text)
+            self.assertIn(
                 f"{settings.PANE_MEMORY_MODE_KEY}=auto", text)
             self.assertIn(settings.GAMES_MARKER, text)
             for key in settings.GAME_KEY_BY_ID.values():
@@ -251,6 +255,7 @@ class SharedSettingsTests(unittest.TestCase):
                 "--set", "network=off",
                 "--set", "synchronize_input=off",
                 "--set", "split_up=off",
+                "--set", "pane_cpu=always",
                 "--set", "pane_memory=always",
                 "--print",
             ], env=env, text=True, capture_output=True, check=True)
@@ -260,6 +265,8 @@ class SharedSettingsTests(unittest.TestCase):
             self.assertIn(
                 "KILIX_CHROME_BUTTON_SYNCHRONIZE_INPUT=off", result.stdout)
             self.assertIn("KILIX_CHROME_BUTTON_SPLIT_UP=off", result.stdout)
+            self.assertIn(
+                f"{settings.PANE_CPU_MODE_KEY}=always", result.stdout)
             self.assertIn(
                 f"{settings.PANE_MEMORY_MODE_KEY}=always", result.stdout)
             values = settings.load(str(path))
@@ -271,27 +278,39 @@ class SharedSettingsTests(unittest.TestCase):
                 values["KILIX_CHROME_BUTTON_SYNCHRONIZE_INPUT"]))
             self.assertFalse(settings.truthy(
                 values["KILIX_CHROME_BUTTON_SPLIT_UP"]))
+            self.assertEqual(settings.pane_cpu_mode(str(path)), "always")
             self.assertEqual(settings.pane_memory_mode(str(path)), "always")
 
-    def test_memory_mode_validation_and_cli_aliases(self):
+    def test_cpu_and_memory_mode_validation_and_cli_aliases(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.conf"
             settings.update(
-                {settings.PANE_MEMORY_MODE_KEY: "off"}, str(path))
+                {
+                    settings.PANE_CPU_MODE_KEY: "off",
+                    settings.PANE_MEMORY_MODE_KEY: "off",
+                }, str(path))
+            self.assertEqual(settings.pane_cpu_mode(str(path)), "off")
             self.assertEqual(settings.pane_memory_mode(str(path)), "off")
             with self.assertRaises(ValueError):
                 settings.update(
                     {settings.PANE_MEMORY_MODE_KEY: "sometimes"}, str(path))
+            with self.assertRaises(ValueError):
+                settings.update(
+                    {settings.PANE_CPU_MODE_KEY: "sometimes"}, str(path))
 
             env = dict(os.environ)
             env["GPU_TERMINAL_SETTINGS_FILE"] = str(path)
             result = subprocess.run([
                 str(ROOT / "kilix-settings"),
+                "--set", "cpu=on",
                 "--set", "memory=on",
                 "--print",
             ], env=env, text=True, capture_output=True, check=True)
             self.assertIn(
+                f"{settings.PANE_CPU_MODE_KEY}=always", result.stdout)
+            self.assertIn(
                 f"{settings.PANE_MEMORY_MODE_KEY}=always", result.stdout)
+            self.assertEqual(settings.pane_cpu_mode(str(path)), "always")
             self.assertEqual(settings.pane_memory_mode(str(path)), "always")
 
     def test_session_logging_defaults_to_on_with_bounded_elided_logs(self):
@@ -784,18 +803,22 @@ class SharedSettingsTests(unittest.TestCase):
         frame = "\n".join(item[2] for item in manager.frames[0])
         self.assertIn("Tmux Manager — download and run", frame)
 
-    def test_tui_cycles_pane_memory_mode(self):
+    def test_tui_cycles_pane_cpu_and_memory_modes(self):
         tui = _load_settings_tui()
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.conf"
             with mock.patch.dict(os.environ, {
                     "GPU_TERMINAL_SETTINGS_FILE": str(path),
                     "KITTY_PID": ""}, clear=False):
-                # Pane memory is the first row: auto -> always.
-                screen = FakeScreen([ord(" "), ord("s"), ord("q")])
+                # CPU and memory are the first two rows: auto -> always.
+                screen = FakeScreen([
+                    ord(" "), ord("j"), ord(" "), ord("s"), ord("q")
+                ])
                 self.assertEqual(tui._run_tui(screen, "pane-buttons"), 0)
+            self.assertEqual(settings.pane_cpu_mode(str(path)), "always")
             self.assertEqual(settings.pane_memory_mode(str(path)), "always")
             first_frame = "\n".join(item[2] for item in screen.frames[0])
+            self.assertIn("Pane CPU load", first_frame)
             self.assertIn("Pane memory chip", first_frame)
             self.assertIn("[ auto ]", first_frame)
 

@@ -30,7 +30,7 @@ Unreleased coordinated 0.1.9 work.
 Kilix now has one shared application boundary across the CLI, TUI, Kilix 95,
 IceWM, Cap, and Land. The host catalog currently exposes 24 applications.
 `kilix-content` schema 3 declares fixed named actions, accepted input types,
-capabilities, system commands, geometry, and lifecycle policy; SDK 1.12 turns
+capabilities, system commands, geometry, and lifecycle policy; SDK 1.13 turns
 each declaration into current-terminal, pane, and desktop-window plans.
 
 One immutable `kilix-tui-utils` checkout provides File Manager, System Center,
@@ -48,6 +48,13 @@ catalog as the external provider, renders terminal apps as managed XPane
 windows, and refocuses single-instance apps. Terminal-native PDF viewing also
 uses the catalog boundary, while PDF Conversion retains its frozen uv-managed
 runtime.
+
+Pane chrome now completes the paired CPU/RAM indicator originally specified
+for the prior release: the one-minute Linux load average appears to the left
+of the shared chip, while proportional process-tree memory remains on its
+right. CPU visibility defaults to `auto` above load `1.0`; either side can be
+set independently to `auto`, `always`, or `off`, and the chip appears whenever
+either value is visible.
 
 Optional desktop pins carried by this Kilix release advance to:
 
@@ -372,7 +379,8 @@ lives on `plebian-os` and plays at [plebian-os.com](https://plebian-os.com/#watc
   availability. SDK 1.10 adds catalog application plans for current-terminal,
   pane, and desktop-window presentation; SDK 1.12 exposes shared package and
   install identities plus named actions, accepted inputs, system commands, and
-  lifecycle policy from content schema 3. Native executable, TUI, and command
+  lifecycle policy from content schema 3; SDK 1.13 adds the shared pane CPU
+  visibility policy. Native executable, TUI, and command
   providers use the launcher’s executable/pin boundary instead.
 - **Self-contained** — prefers its bundled fork build, and falls back to a prebuilt kitty if you haven't built it.
 
@@ -668,7 +676,7 @@ buttons on the right (bold):
 
 | Button | Click does | Same as |
 |---|---|---|
-| memory chip | open Kilix Memory; width follows pane process-tree use | `kilix memory --graphics` |
+| CPU/RAM chip | open Kilix Memory; CPU is left, pane RAM is right | `kilix memory --graphics` |
 | keyboard | join/leave the pane's synchronized-input group | Tilix input synchronization |
 | `+` | increase font size for this Kilix window | `change_font_size current +2.0` |
 | `-` | decrease font size for this Kilix window | `change_font_size current -2.0` |
@@ -679,7 +687,8 @@ buttons on the right (bold):
 | `▢` | maximize / zoom the pane | `Ctrl+Alt+Z` |
 | `✕` | close the pane | `Ctrl+Alt+W` |
 
-The buttons are drawn as text or **Nerd Font icons** — a RAM chip and value,
+The buttons are drawn as text or **Nerd Font icons** — CPU load, a shared chip,
+and pane RAM,
 a keyboard for synchronized input, `+`/`-` for local font size, bold arrows for splits
 (pointing where the new pane lands), a maximize glyph, and a close ✕. They
 **highlight under the cursor**. A single keyboard click toggles that pane; its
@@ -694,15 +703,18 @@ clear, split right/down, close (maximize also lives on the `▢` button and
 The active pane's header is highlighted (bright blue); inactive panes are grayed —
 matching Tilix's active-pane cue.
 
-The memory chip is enabled in `auto` mode by default. It appears when the
-pane's shell and descendant processes reach 1 GiB, shows GiB to one decimal
-place (`1.1`), and grows from a square chip toward a RAM-stick shape as the
-number gains digits. Clicking it opens Kilix Memory in a new tab. Set the
-shared `KILIX_CHROME_PANE_MEMORY_MODE` preference to `always` to keep it
-visible and report smaller values in MiB/KiB, or `off` to remove it. The
-sampler uses proportional memory from Linux `smaps_rollup` where readable and
-RSS as a fallback, caches each process-tree sample, and refreshes title bars
-only when the displayed value changes.
+Both resource sides are enabled in `auto` mode by default. The CPU value is the
+one-minute Linux load average and appears to the left of the chip above `1.0`;
+set shared `KILIX_CHROME_PANE_CPU_MODE` to `always` to retain it at lower load,
+or `off` to hide it. Pane memory appears to the right when the pane's shell and
+descendant processes reach 1 GiB, shows GiB to one decimal place (`1.1`), and
+grows from a square chip toward a RAM-stick shape as the number gains digits.
+Set `KILIX_CHROME_PANE_MEMORY_MODE` to `always` to report smaller values in
+MiB/KiB, or `off` to hide that side. The chip remains whenever either side is
+visible, and clicking it opens Kilix Memory in a new tab. The memory sampler
+uses proportional values from Linux `smaps_rollup` where readable and RSS as a
+fallback. CPU and memory samples are cached and refresh title bars only when a
+displayed value changes.
 
 The far right of the page strip can show thermometer, volume, network,
 calendar, local date/time, and (when applicable) battery items. The thermometer
@@ -1568,7 +1580,8 @@ Use Start ▸ Settings in kilix 95, or edit
 `config/kitty.conf` defaults; add overrides to the user file.
 
 Use `kilix settings` for clickable chrome and Kilix 95 game availability.
-Thermometer, volume, network, calendar, date/time, battery, pane-memory mode,
+Thermometer, volume, network, calendar, date/time, battery, pane-CPU and
+pane-memory modes,
 synchronized input, font-size, four-way split, maximize, close, and game toggles all live in
 `~/.local/gpu_terminal/settings.conf`, which Kilix, Kilix 95, Pleb, and
 Plebian-OS share.
@@ -1586,7 +1599,9 @@ the same **Thermal status** control in its Top bar section. Likewise,
 `kilix settings --set synchronize_input=off` hides the keyboard button (and
 `=on` restores it). Use `kilix settings --set pane_memory=auto` for the
 default 1 GiB threshold, `pane_memory=always` for an always-visible MiB/KiB
-readout, or `pane_memory=off` to hide the chip.
+readout, or `pane_memory=off` to hide the RAM side. The symmetric
+`pane_cpu=auto` shows one-minute load above `1.0`; use `pane_cpu=always` or
+`pane_cpu=off` to override that policy.
 
 - **Quieter page strip:** `tab_bar_min_tabs 2` (hide it until a 2nd page) and
   `tab_bar_show_new_tab_button no` (hide the `+`).

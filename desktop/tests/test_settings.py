@@ -164,16 +164,20 @@ with conf("font_size 12\n") as path:
     assert not thermal.checked, "thermal widget should be disabled by default"
     kind, synchronize = win.fields["KILIX_CHROME_BUTTON_SYNCHRONIZE_INPUT"]
     assert synchronize.checked, "synchronized-input button should default on"
+    kind, cpu_mode = win.fields["KILIX_CHROME_PANE_CPU_MODE"]
+    assert cpu_mode.value == "auto", "pane CPU load should default to auto"
     kind, memory_mode = win.fields["KILIX_CHROME_PANE_MEMORY_MODE"]
     assert memory_mode.value == "auto", "pane memory chip should default to auto"
     thermal.checked = True
     volume.checked = False
     synchronize.checked = False
+    cpu_mode.index = cpu_mode.options.index("always")
     memory_mode.index = memory_mode.options.index("always")
     win._apply()
     assert "KILIX_CHROME_TEMPERATURE=1" in read(win.shared_path)
     assert "KILIX_CHROME_VOLUME=0" in read(win.shared_path)
     assert "KILIX_CHROME_BUTTON_SYNCHRONIZE_INPUT=0" in read(win.shared_path)
+    assert "KILIX_CHROME_PANE_CPU_MODE=always" in read(win.shared_path)
     assert "KILIX_CHROME_PANE_MEMORY_MODE=always" in read(win.shared_path)
 
     kind, wd = win.fields["KILIX_CHROME_CLOCK"]

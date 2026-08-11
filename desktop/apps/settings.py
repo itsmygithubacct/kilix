@@ -107,6 +107,13 @@ SETTING_PAGES = [
     ]),
     ("Pane", [
         S(
+            shared_settings.PANE_CPU_MODE_KEY,
+            "Pane CPU load",
+            "choice",
+            shared_settings.PANE_CPU_MODE_DEFAULT,
+            list(shared_settings.PANE_CPU_MODE_CHOICES),
+        ),
+        S(
             shared_settings.PANE_MEMORY_MODE_KEY,
             "Pane memory chip",
             "choice",
