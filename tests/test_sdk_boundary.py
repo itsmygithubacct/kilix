@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "config"))
 
 import kilix_sdk
-from kilix_sdk import content, graphics, paths, settings, state, term
+from kilix_sdk import content, graphics, paths, settings, state, telemetry, term
 
 
 class KilixSdkBoundaryTests(unittest.TestCase):
@@ -55,8 +55,9 @@ class KilixSdkBoundaryTests(unittest.TestCase):
         # presentation surfaces.
         # 1.12 exposes schema-3 actions, inputs, commands, and lifecycle policy.
         # 1.13 adds the shared pane CPU-load visibility policy.
-        self.assertEqual(kilix_sdk.SDK_API_VERSION, (1, 13))
-        self.assertEqual(kilix_sdk.SDK_VERSION, "1.13.0")
+        # 1.14 exposes the pinned shared telemetry ring and client contract.
+        self.assertEqual(kilix_sdk.SDK_API_VERSION, (1, 14))
+        self.assertEqual(kilix_sdk.SDK_VERSION, "1.14.0")
         kilix_sdk.require_compatible("1.0")
         kilix_sdk.require_compatible("1.5")
         kilix_sdk.require_compatible("1.6")
@@ -67,8 +68,9 @@ class KilixSdkBoundaryTests(unittest.TestCase):
         kilix_sdk.require_compatible("1.11")
         kilix_sdk.require_compatible("1.12")
         kilix_sdk.require_compatible("1.13")
+        kilix_sdk.require_compatible("1.14")
         with self.assertRaises(kilix_sdk.IncompatibleSDKError):
-            kilix_sdk.require_compatible("1.14")
+            kilix_sdk.require_compatible("1.15")
         with self.assertRaises(kilix_sdk.IncompatibleSDKError):
             kilix_sdk.require_compatible("2.0")
         for malformed in (
@@ -83,20 +85,35 @@ class KilixSdkBoundaryTests(unittest.TestCase):
         exec("from kilix_sdk import *", namespace)
         for name in (
                 "content", "graphics", "paths", "settings", "state", "term",
-                "tui_shell", "xapp", "xdgapps"):
+                "telemetry", "tui_shell", "xapp", "xdgapps"):
             self.assertIn(name, namespace)
 
     def test_shared_packages_are_pinned_without_sys_path_pollution(self):
         content_source = ROOT / "third_party" / "kilix-content" / "src"
         state_source = ROOT / "third_party" / "kilix-state" / "python" / "src"
+        telemetry_source = ROOT / "third_party" / "kilix-telemetry" / "src"
         self.assertNotIn(str(content_source), sys.path)
         self.assertNotIn(str(state_source), sys.path)
+        self.assertNotIn(str(telemetry_source), sys.path)
         self.assertTrue(
             Path(sys.modules["kilix_content"].__file__).resolve().is_relative_to(
                 content_source.resolve()))
         self.assertTrue(
             Path(sys.modules["kilix_state"].__file__).resolve().is_relative_to(
                 state_source.resolve()))
+        self.assertTrue(
+            Path(sys.modules["kilix_telemetry"].__file__).resolve().is_relative_to(
+                telemetry_source.resolve()))
+
+    def test_shared_telemetry_contract(self):
+        self.assertEqual(telemetry.TELEMETRY_API_VERSION, (1, 1))
+        self.assertEqual(telemetry.telemetry_version, "0.1.1")
+        self.assertIsInstance(telemetry.default_client(), telemetry.TelemetryClient)
+        self.assertIs(telemetry.default_client(), telemetry.default_client())
+        self.assertEqual(
+            telemetry.resolve_paths().directory,
+            Path(paths.telemetry_dir()),
+        )
 
     def test_preloaded_unrelated_package_cannot_override_host_pin(self):
         code = """

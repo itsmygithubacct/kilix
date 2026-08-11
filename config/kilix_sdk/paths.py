@@ -63,6 +63,12 @@ def session_dir() -> str:
     return _owned_dir("KILIX_SESSION_HOME", "session")
 
 
+def telemetry_dir() -> str:
+    value = os.environ.get("KILIX_TELEMETRY_RUNTIME") or os.path.join(
+        session_dir(), "telemetry")
+    return os.path.abspath(os.path.expanduser(value))
+
+
 def build_dir() -> str:
     return _owned_dir("KILIX_BUILD_DIRECTORY", "build")
 
@@ -100,4 +106,5 @@ __all__ = [
     "source_home",
     "state_dir",
     "storage_home",
+    "telemetry_dir",
 ]

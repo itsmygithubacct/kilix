@@ -667,7 +667,7 @@ def pane_memory_mode(path: str | None = None) -> str:
 
 
 def pane_cpu_mode(path: str | None = None) -> str:
-    """Return the normalized pane CPU-load visibility policy."""
+    """Return the normalized pane process-tree CPU visibility policy."""
     value = load(path).get(
         PANE_CPU_MODE_KEY, PANE_CPU_MODE_DEFAULT).strip().lower()
     return (

@@ -1,4 +1,7 @@
+import json
+import os
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -8,6 +11,40 @@ ROOT = Path(__file__).resolve().parents[1]
 class KilixLauncherTests(unittest.TestCase):
     def test_launcher_parses(self):
         subprocess.run(["bash", "-n", "kilix"], cwd=ROOT, check=True)
+
+    def test_telemetry_uses_the_pinned_shared_component(self):
+        launcher = (ROOT / "kilix").read_text()
+        helper = ROOT / "scripts" / "kilix-telemetry.sh"
+        modules = (ROOT / ".gitmodules").read_text()
+        subprocess.run(["bash", "-n", str(helper)], cwd=ROOT, check=True)
+        self.assertIn("third_party/kilix-telemetry", modules)
+        self.assertIn("KILIX_TELEMETRY_RUNTIME", launcher)
+        self.assertIn('kilix-telemetry.sh" start', launcher)
+        self.assertIn("telemetry)", launcher)
+        self.assertEqual(
+            subprocess.run(
+                ["git", "-C", "third_party/kilix-telemetry", "rev-parse", "HEAD"],
+                cwd=ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip(),
+            "af87c13ecbd2b147d2034d41fdd519b8bf9291d1",
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            environment = dict(os.environ)
+            environment["KILIX_TELEMETRY_RUNTIME"] = str(Path(tmp) / "runtime")
+            result = subprocess.run(
+                [str(helper), "snapshot", "--direct", "--no-processes"],
+                cwd=ROOT,
+                env=environment,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            snapshot = json.loads(result.stdout)
+            self.assertGreater(snapshot["system"]["logical_cpus"], 0)
 
     def test_temps_command_uses_the_unified_utility_installer(self):
         launcher = (ROOT / "kilix").read_text()
@@ -360,7 +397,9 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("Battery-in-chrome", readme)
         self.assertIn("Date/time-in-chrome", readme)
         self.assertIn("KILIX_CHROME_PANE_CPU_MODE", cpu)
-        self.assertIn("loadavg", cpu)
+        self.assertIn("pane_cpu_cores", cpu)
+        self.assertIn("_PROCESS_CPU_CORES", memory)
+        self.assertIn("kilix_telemetry", memory)
         self.assertIn("CPU_LOAD_THRESHOLD = 1.0", cpu)
         self.assertIn("pane_cpu_text", titlebar)
         self.assertIn("pane_resource_text", titlebar)

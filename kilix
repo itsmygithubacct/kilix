@@ -74,6 +74,7 @@ KILIX_CONFIG_HOME="${KILIX_CONFIG_HOME:-$KILIX_STORAGE_HOME/config}"
 KILIX_STATE_DIRECTORY="${KILIX_STATE_DIRECTORY:-$KILIX_STORAGE_HOME/state}"
 KILIX_CACHE_HOME="${KILIX_CACHE_HOME:-$KILIX_STORAGE_HOME/cache}"
 KILIX_SESSION_HOME="${KILIX_SESSION_HOME:-$KILIX_STORAGE_HOME/session}"
+KILIX_TELEMETRY_RUNTIME="${KILIX_TELEMETRY_RUNTIME:-$KILIX_SESSION_HOME/telemetry}"
 KILIX_DATA_HOME="${KILIX_DATA_HOME:-$KILIX_STORAGE_HOME/data}"
 KILIX_BUILD_DIRECTORY="${KILIX_BUILD_DIRECTORY:-$KILIX_STORAGE_HOME/build}"
 KILIX_PREBUILT_HOME="${KILIX_PREBUILT_HOME:-$KILIX_STORAGE_HOME/prebuilt/kitty.app}"
@@ -83,9 +84,10 @@ KILIX95_STATE_HOME="${KILIX95_STATE_HOME:-$KILIX95_STORAGE_HOME/state}"
 KILIX95_CACHE_HOME="${KILIX95_CACHE_HOME:-$KILIX95_STORAGE_HOME/cache}"
 KILIX95_SESSION_HOME="${KILIX95_SESSION_HOME:-$KILIX95_STORAGE_HOME/session}"
 KILIX95_DATA_HOME="${KILIX95_DATA_HOME:-$KILIX95_STORAGE_HOME/data}"
-export GPU_TERMINAL_SOURCE_HOME GPU_TERMINAL_HOME GPU_TERMINAL_SETTINGS_FILE
+export KILIX_HOME GPU_TERMINAL_SOURCE_HOME GPU_TERMINAL_HOME GPU_TERMINAL_SETTINGS_FILE
 export KILIX_STORAGE_HOME KILIX_CONFIG_HOME
-export KILIX_STATE_DIRECTORY KILIX_CACHE_HOME KILIX_SESSION_HOME KILIX_DATA_HOME
+export KILIX_STATE_DIRECTORY KILIX_CACHE_HOME KILIX_SESSION_HOME
+export KILIX_TELEMETRY_RUNTIME KILIX_DATA_HOME
 export KILIX_BUILD_DIRECTORY KILIX_PREBUILT_HOME
 export KILIX95_STORAGE_HOME KILIX95_CONFIG_HOME KILIX95_STATE_HOME
 export KILIX95_CACHE_HOME KILIX95_SESSION_HOME KILIX95_DATA_HOME
@@ -110,7 +112,8 @@ _kilix_validate_private_storage_layout() {
   esac
   for private in "$KILIX_CONFIG_HOME" "$KILIX_STATE_DIRECTORY" \
                  "$KILIX_CACHE_HOME" "$KILIX_SESSION_HOME" \
-                 "$KILIX_DATA_HOME" "$KILIX_BUILD_DIRECTORY"; do
+                 "$KILIX_TELEMETRY_RUNTIME" "$KILIX_DATA_HOME" \
+                 "$KILIX_BUILD_DIRECTORY"; do
     private="$(realpath -m -- "$private" 2>/dev/null)" || return 1
     case "$private" in "$storage"/*) ;;
       *) echo "kilix: writable roots must be strict descendants of Kilix storage: $private" >&2
@@ -392,6 +395,7 @@ _kilix_ensure_private_directory "$KILIX_STATE_DIRECTORY" state || exit 1
 _kilix_ensure_private_directory "$KILIX_BUILD_DIRECTORY" build || exit 1
 _kilix_ensure_private_directory "$KILIX_CACHE_HOME" cache || exit 1
 _kilix_ensure_private_directory "$KILIX_SESSION_HOME" session || exit 1
+_kilix_ensure_private_directory "$KILIX_TELEMETRY_RUNTIME" telemetry || exit 1
 _kilix_validate_private_storage_layout || exit 1
 
 FORK="$KILIX_BUILD_DIRECTORY/current/src/kitty/launcher/kitty"
@@ -1428,6 +1432,9 @@ case "${1:-}" in
   settings|--settings)
     shift
     exec python3 "$KILIX_HOME/kilix-settings" "$@" ;;
+  telemetry)
+    shift
+    exec "$KILIX_HOME/scripts/kilix-telemetry.sh" "$@" ;;
   cap|kilix-cap|mansion)
     shift
     export KILIX_DESKTOP_PROVIDER=cap
@@ -4087,7 +4094,13 @@ fi
 # (the rcfile is bash); it sources ~/.bashrc, keeps kitty's shell integration
 # working, then applies a kilix-only prompt. Delete config/kilix.bashrc to opt
 # out. KILIX_HOME is exported so the rcfile can find its prompt override.
-export KILIX_HOME
+
+# A normal terminal session starts the one per-user sampler before the first
+# pane is drawn. Chrome only reads the ring on its UI thread, so startup or a
+# slow procfs sample can never delay rendering. The daemon lock safely folds
+# concurrent windows into this single writer.
+"$KILIX_HOME/scripts/kilix-telemetry.sh" start || \
+  echo "kilix: shared telemetry could not be started; using local fallbacks" >&2
 
 # Normal panes are backed by an independent PTY owner. The kitty fork wraps
 # their final argv with this client after applying shell integration, so the

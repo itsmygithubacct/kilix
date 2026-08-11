@@ -818,7 +818,7 @@ class SharedSettingsTests(unittest.TestCase):
             self.assertEqual(settings.pane_cpu_mode(str(path)), "always")
             self.assertEqual(settings.pane_memory_mode(str(path)), "always")
             first_frame = "\n".join(item[2] for item in screen.frames[0])
-            self.assertIn("Pane CPU load", first_frame)
+            self.assertIn("Pane CPU use", first_frame)
             self.assertIn("Pane memory chip", first_frame)
             self.assertIn("[ auto ]", first_frame)
 

@@ -121,7 +121,7 @@ MEMORY_MODE_SPEC = ChoiceSpec(
 
 CPU_MODE_SPEC = ChoiceSpec(
     shared.PANE_CPU_MODE_KEY,
-    "Pane CPU load (auto >1.0 / always / off)",
+    "Pane CPU use (auto >1 core / always / off)",
     shared.PANE_CPU_MODE_CHOICES,
     shared.PANE_CPU_MODE_DEFAULT,
 )
@@ -331,7 +331,7 @@ def _parse_assignment(value: str) -> tuple[str, object]:
         )
         if mode not in choices_for_key:
             choices = "|".join(choices_for_key)
-            name = "CPU load" if key == shared.PANE_CPU_MODE_KEY else "memory"
+            name = "CPU use" if key == shared.PANE_CPU_MODE_KEY else "memory"
             raise argparse.ArgumentTypeError(
                 f"pane {name} mode must be {choices}"
             )

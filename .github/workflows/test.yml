@@ -31,15 +31,17 @@ jobs:
         run: |
           bash -n kilix bootstrap.sh build.sh config/browser.sh \
             scripts/build-state-library.sh \
+            scripts/kilix-telemetry.sh \
             scripts/install-build-deps.sh scripts/install-kilix-cap.sh \
             scripts/install-kilix-bonsai.sh scripts/install-kilix-voice.sh \
             scripts/build-multiplexer.sh
           shellcheck -S warning -x kilix bootstrap.sh build.sh \
             config/browser.sh \
+            scripts/kilix-telemetry.sh \
             scripts/build-state-library.sh scripts/install-build-deps.sh \
             scripts/install-kilix-cap.sh scripts/install-kilix-bonsai.sh \
             scripts/install-kilix-voice.sh scripts/build-multiplexer.sh
-          python3 -m compileall -q config desktop scripts tests third_party/kilix-state/python/src third_party/kilix-state/python/tests third_party/kitty-frame-presenter/src
+          python3 -m compileall -q config desktop scripts tests third_party/kilix-state/python/src third_party/kilix-state/python/tests third_party/kilix-telemetry/src third_party/kitty-frame-presenter/src
           git diff --check "$(git hash-object -t tree /dev/null)" HEAD -- . ':(exclude)src'
 
       - name: Run host tests
@@ -51,6 +53,8 @@ jobs:
           make --no-print-directory -C third_party/kilix-state BUILD_DIR="$RUNNER_TEMP/kilix-state-test" test
           PYTHONPATH=third_party/kilix-state/python/src \
             python3 -m unittest discover -s third_party/kilix-state/python/tests -p 'test_*.py'
+          PYTHONPATH=third_party/kilix-telemetry/src \
+            python3 -m unittest discover -s third_party/kilix-telemetry/tests -p 'test_*.py'
           python3 -m unittest discover -s tests -p 'test_*.py'
           python3 -m unittest discover -s third_party/kitty-frame-presenter/tests -p 'test_*.py'
 

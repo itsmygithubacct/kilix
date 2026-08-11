@@ -17,3 +17,6 @@
 [submodule "third_party/kilix-multiplexer"]
 	path = third_party/kilix-multiplexer
 	url = https://github.com/itsmygithubacct/kilix-multiplexer.git
+[submodule "third_party/kilix-telemetry"]
+	path = third_party/kilix-telemetry
+	url = https://github.com/itsmygithubacct/kilix-telemetry.git

@@ -30,7 +30,7 @@ Unreleased coordinated 0.1.9 work.
 Kilix now has one shared application boundary across the CLI, TUI, Kilix 95,
 IceWM, Cap, and Land. The host catalog currently exposes 24 applications.
 `kilix-content` schema 3 declares fixed named actions, accepted input types,
-capabilities, system commands, geometry, and lifecycle policy; SDK 1.13 turns
+capabilities, system commands, geometry, and lifecycle policy; SDK 1.14 turns
 each declaration into current-terminal, pane, and desktop-window plans.
 
 One immutable `kilix-tui-utils` checkout provides File Manager, System Center,
@@ -50,15 +50,25 @@ uses the catalog boundary, while PDF Conversion retains its frozen uv-managed
 runtime.
 
 Pane chrome now completes the paired CPU/RAM indicator originally specified
-for the prior release: the one-minute Linux load average appears to the left
-of the shared chip, while proportional process-tree memory remains on its
-right. CPU visibility defaults to `auto` above load `1.0`; either side can be
-set independently to `auto`, `always`, or `off`, and the chip appears whenever
-either value is visible.
+for the prior release. The CPU value on the left is the sampled CPU use of
+that pane's shell and descendant process tree, expressed in logical-core
+equivalents (`1.0` is one fully busy core); proportional process-tree memory
+remains on the right. CPU visibility defaults to `auto` above `1.0`; either
+side can be set independently to `auto`, `always`, or `off`, and the chip
+appears whenever either value is visible.
+
+The uv-managed `kilix-telemetry` 0.1.1 component now supplies CPU, memory,
+pressure, temperatures, fan speeds, process records, and recent history from
+one private mmap ring. One per-user sampler serves terminal chrome and the
+System Center CPU, Memory, and Temperatures apps shared by the CLI, TUI,
+Kilix 95, IceWM, Cap, and Land. Consumers keep direct local fallbacks, and
+Kitty's rendering thread only reads an already-running ring. SDK 1.14 exposes
+the pinned client as `kilix_sdk.telemetry`; `kilix telemetry status`,
+`snapshot`, `pane PID`, and `history` inspect the same source.
 
 Optional desktop pins carried by this Kilix release advance to:
 
-- **Kilix TUI utilities** — `98da1e53a0f15c73f70d9e028bf31b1c0b224474`;
+- **Kilix TUI utilities** — `c359d66f59f95689a9e7f3cf826b103244e55eb1`;
 - **Kilix Cap** — `074e9c1559a696c95095215d12c21795452f1933`;
 - **Kilix Land** — `78f601542432e814c0e4af1ae06850737442106c`;
 - **Kilix IceWM** — `61160987a23c647a2d27cd049ad320e0f798cf52`.
@@ -380,7 +390,8 @@ lives on `plebian-os` and plays at [plebian-os.com](https://plebian-os.com/#watc
   pane, and desktop-window presentation; SDK 1.12 exposes shared package and
   install identities plus named actions, accepted inputs, system commands, and
   lifecycle policy from content schema 3; SDK 1.13 adds the shared pane CPU
-  visibility policy. Native executable, TUI, and command
+  visibility policy, and SDK 1.14 exposes the pinned shared telemetry client.
+  Native executable, TUI, and command
   providers use the launcher’s executable/pin boundary instead.
 - **Self-contained** — prefers its bundled fork build, and falls back to a prebuilt kitty if you haven't built it.
 
@@ -695,7 +706,7 @@ buttons on the right (bold):
 | `▢` | maximize / zoom the pane | `Ctrl+Alt+Z` |
 | `✕` | close the pane | `Ctrl+Alt+W` |
 
-The buttons are drawn as text or **Nerd Font icons** — CPU load, a shared chip,
+The buttons are drawn as text or **Nerd Font icons** — pane CPU, a shared chip,
 and pane RAM,
 a keyboard for synchronized input, `+`/`-` for local font size, bold arrows for splits
 (pointing where the new pane lands), a maximize glyph, and a close ✕. They
@@ -711,18 +722,20 @@ clear, split right/down, close (maximize also lives on the `▢` button and
 The active pane's header is highlighted (bright blue); inactive panes are grayed —
 matching Tilix's active-pane cue.
 
-Both resource sides are enabled in `auto` mode by default. The CPU value is the
-one-minute Linux load average and appears to the left of the chip above `1.0`;
-set shared `KILIX_CHROME_PANE_CPU_MODE` to `always` to retain it at lower load,
-or `off` to hide it. Pane memory appears to the right when the pane's shell and
+Both resource sides are enabled in `auto` mode by default. The CPU value is
+the sampled use of the pane's shell and descendant processes in logical-core
+equivalents, and appears to the left of the chip above `1.0`; set shared
+`KILIX_CHROME_PANE_CPU_MODE` to `always` to retain it at lower use, or `off`
+to hide it. Pane memory appears to the right when the pane's shell and
 descendant processes reach 1 GiB, shows GiB to one decimal place (`1.1`), and
 grows from a square chip toward a RAM-stick shape as the number gains digits.
 Set `KILIX_CHROME_PANE_MEMORY_MODE` to `always` to report smaller values in
 MiB/KiB, or `off` to hide that side. The chip remains whenever either side is
 visible, and clicking it opens Kilix Memory in a new tab. The memory sampler
 uses proportional values from Linux `smaps_rollup` where readable and RSS as a
-fallback. CPU and memory samples are cached and refresh title bars only when a
-displayed value changes.
+fallback. A single `kilix-telemetry` sampler publishes both aggregates to a
+private mmap ring; title bars refresh only when a displayed value changes and
+retain local process-tree fallbacks if the shared service is unavailable.
 
 The far right of the page strip can show thermometer, volume, network,
 calendar, local date/time, and (when applicable) battery items. The thermometer
@@ -1608,7 +1621,8 @@ the same **Thermal status** control in its Top bar section. Likewise,
 `=on` restores it). Use `kilix settings --set pane_memory=auto` for the
 default 1 GiB threshold, `pane_memory=always` for an always-visible MiB/KiB
 readout, or `pane_memory=off` to hide the RAM side. The symmetric
-`pane_cpu=auto` shows one-minute load above `1.0`; use `pane_cpu=always` or
+`pane_cpu=auto` shows pane process-tree use above one core (`1.0`); use
+`pane_cpu=always` or
 `pane_cpu=off` to override that policy.
 
 - **Quieter page strip:** `tab_bar_min_tabs 2` (hide it until a 2nd page) and
