@@ -109,6 +109,28 @@ class Installer(unittest.TestCase):
                                     text=True, check=False, timeout=120)
             self.assertEqual(result.returncode, 0)
 
+    def test_it_prefers_uv_but_does_not_require_it(self):
+        """uv is minutes faster on a torch-sized install.
+
+        Named as the first way and not the only one: a machine without uv
+        should still be able to install a detector, so both paths have to
+        exist and `--check` has to say which one it would take.
+        """
+        installer = INSTALLER.read_text(encoding="utf-8")
+        self.assertIn('"$KILIX_UV" venv', installer)
+        self.assertIn('"$KILIX_UV" pip install', installer)
+        # ...and the fallback, for a machine that has never heard of uv.
+        self.assertIn("-m venv", installer)
+        self.assertIn("-m pip install", installer)
+
+        with tempfile.TemporaryDirectory() as scratch:
+            environment = dict(os.environ,
+                               KILIX_YOLO_DIR=os.path.join(scratch, "yolo"))
+            result = subprocess.run([str(INSTALLER), "--check"], env=environment,
+                                    capture_output=True, text=True, check=False,
+                                    timeout=120)
+            self.assertIn("installer:", result.stdout)
+
     def test_upgrade_before_install_says_so(self):
         with tempfile.TemporaryDirectory() as scratch:
             environment = dict(os.environ,

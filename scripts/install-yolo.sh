@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Prepare the YOLO object-detection runtime kilix-nvr detects with.
+# Prepare the YOLO object-detection runtime kilix-look and kilix-nvr detect
+# with.
 #
 # Unlike the other installers here, this one does not install a Kilix
 # component: it builds the *virtualenv* the detector subprocess runs in, and
@@ -7,8 +8,8 @@
 # is worth being clear about why it exists at all.
 #
 # kilix-object-detect deliberately links no ML runtime.  Its detector is a
-# subprocess
-# behind a fixed-size pipe, so where inference happens is a launch detail -
+# subprocess behind a fixed-size pipe, so where inference happens is a
+# launch detail -
 # this machine, a virtualenv, a box with a GPU over ssh.  The cost of that
 # design is that a fresh machine has a recorder and an analyzer which cannot
 # detect anything, and no obvious way to fix it.  This is the obvious way: one
@@ -31,9 +32,27 @@ KILIX_YOLO_ASSUME_YES="${KILIX_YOLO_ASSUME_YES:-0}"
 # NVIDIA display device gains nothing but the download.
 KILIX_YOLO_CUDA="${KILIX_YOLO_CUDA:-auto}"
 KILIX_PYTHON="${KILIX_PYTHON:-python3}"
+# uv creates the virtualenv and installs into it when it is there.  It is
+# minutes faster on a torch-sized install and resolves the same wheels, and
+# this is the one command in Kilix that downloads a gigabyte.  Falling back
+# to venv+pip rather than requiring it: a machine without uv should still be
+# able to install a detector.
+KILIX_UV="${KILIX_UV:-uv}"
 
 die() { printf 'kilix yolo: %s\n' "$*" >&2; exit 1; }
 log() { printf 'kilix yolo: %s\n' "$*" >&2; }
+
+have_uv() { command -v "$KILIX_UV" >/dev/null 2>&1; }
+
+# Install into the virtualenv by path, which both tools support, so an
+# environment made by either can be maintained by either.
+python_install() {
+  if have_uv; then
+    "$KILIX_UV" pip install --python "$python" "$@" >&2
+  else
+    "$python" -m pip install --quiet "$@" >&2
+  fi
+}
 
 usage() {
   cat <<'EOF'
@@ -49,6 +68,7 @@ Environment:
   KILIX_YOLO_DIR     where the virtualenv and weights live
   KILIX_YOLO_MODEL   weights to fetch, default yolo26s.pt
   KILIX_YOLO_CUDA    auto | 1 | 0 — auto follows the hardware
+  KILIX_UV           the uv to use; venv + pip when it is not found
 EOF
 }
 
@@ -125,6 +145,11 @@ want_cuda() {
 
 report() {
   printf 'runtime:   %s\n' "$yolo_dir"
+  if have_uv; then
+    printf 'installer: %s\n' "$("$KILIX_UV" --version 2>/dev/null || echo uv)"
+  else
+    printf 'installer: venv + pip (uv is not installed)\n'
+  fi
   if [ -x "$python" ]; then
     printf 'python:    %s\n' "$("$python" --version 2>&1)"
   else
@@ -158,7 +183,7 @@ confirm() {
   cat >&2 <<EOF
 kilix yolo installs the object detector's runtime into
     $yolo_dir
-It creates a virtualenv, pip installs ultralytics and torch ($size),
+It creates a virtualenv, installs ultralytics and torch into it ($size),
 and fetches $KILIX_YOLO_MODEL. Nothing is installed system-wide and
 nothing runs as root; deleting that directory removes all of it.
 EOF
@@ -177,9 +202,22 @@ install_runtime() {
 
   mkdir -p "$yolo_dir/models" "$yolo_dir/bin"
   if [ ! -x "$python" ]; then
-    log "creating the virtualenv"
-    "$KILIX_PYTHON" -m venv "$venv" \
-      || die "could not create a virtualenv (install python3-venv)"
+    if have_uv; then
+      local interpreter
+      # Resolved to a path first.  `uv venv --python python3` is a request
+      # uv may satisfy from an interpreter it downloads itself, which is a
+      # surprise when KILIX_PYTHON was set precisely to say which one: this
+      # machine's python3 is 3.11 and uv built the runtime on 3.14.
+      interpreter="$(command -v "$KILIX_PYTHON" 2>/dev/null || true)"
+      [ -n "$interpreter" ] || die "no interpreter called $KILIX_PYTHON"
+      log "creating the virtualenv with uv on $interpreter"
+      "$KILIX_UV" venv --python "$interpreter" "$venv" >&2 \
+        || die "uv could not create a virtualenv"
+    else
+      log "creating the virtualenv (uv is not installed; using venv)"
+      "$KILIX_PYTHON" -m venv "$venv" \
+        || die "could not create a virtualenv (install python3-venv)"
+    fi
   fi
   if want_cuda; then
     log "NVIDIA display device found: installing the CUDA build"
@@ -188,13 +226,13 @@ install_runtime() {
     log "(install the driver and re-run to get the CUDA one)"
     index=(--index-url https://download.pytorch.org/whl/cpu)
   fi
-  "$python" -m pip install --quiet --upgrade pip >&2 || true
-  # torch first and explicitly, so the index choice above applies to it: pulled
-  # in as an ultralytics dependency it would come from PyPI and be the CUDA
-  # build regardless.
-  "$python" -m pip install --quiet "${index[@]}" torch torchvision >&2 \
+  have_uv || "$python" -m pip install --quiet --upgrade pip >&2 || true
+  # torch first and explicitly, so the index choice above applies to it:
+  # pulled in as an ultralytics dependency it would come from PyPI and be the
+  # CUDA build regardless.
+  python_install "${index[@]}" torch torchvision \
     || die "could not install torch"
-  "$python" -m pip install --quiet ultralytics >&2 \
+  python_install ultralytics \
     || die "could not install ultralytics"
 
   if [ ! -f "$weights" ]; then
@@ -210,8 +248,8 @@ install_runtime() {
   [ -f "$weights" ] || die "$KILIX_YOLO_MODEL did not land in $yolo_dir/models"
 
   # A wrapper rather than an environment variable holding a command line:
-  # kilix-nvr splits KILIX_NVR_DETECT on spaces with no quoting, and a path
-  # with a space in it would silently become two arguments.
+  # KILIX_OBJECT_DETECTOR is split on spaces with no quoting, and a path with
+  # a space in it would silently become two arguments.
   cat > "$wrapper" <<EOF
 #!/bin/sh
 # Written by kilix install yolo. Re-run it to repoint this at a moved
@@ -254,7 +292,7 @@ remove_runtime() {
 upgrade_runtime() {
   runtime_ready || die "nothing installed at $yolo_dir yet"
   log "upgrading ultralytics and torch"
-  "$python" -m pip install --quiet --upgrade ultralytics torch torchvision >&2 \
+  python_install --upgrade ultralytics torch torchvision \
     || die "the upgrade failed; the previous runtime is still in place"
   # The weights are pinned to a name rather than a version, so a newer
   # ultralytics can want a different file.  Fetch on demand rather than
@@ -278,6 +316,10 @@ case "$action" in
   --install)
     if runtime_ready; then
       log "already installed at $yolo_dir"
+      # Recorded again anyway: re-running the install is how somebody
+      # repairs a setting that has gone stale, and refusing to touch it
+      # because the packages happen to be present makes that impossible.
+      record_setting
       printf '%s\n' "$wrapper"
       exit 0
     fi
