@@ -17,6 +17,7 @@ blit_direct = _gfx.blit_direct
 # Damage-aware updates: identify exact rectangles and edit those regions of the
 # displayed root image in place (a=f frame edits).
 diff_band = _gfx.diff_band
+diff_damage_rects = _gfx.diff_damage_rects
 diff_rect = _gfx.diff_rect
 diff_rects = _gfx.diff_rects
 extract_rect = _gfx.extract_rect
@@ -38,8 +39,9 @@ __all__ = [
     "CHUNK", "FRAME_BYTES", "FramePresenter", "FrameSocketTap",
     "TappedFrame", "PresentResult", "PresenterStats", "PosixShmRing",
     "ShmBusy", "write_frame",
-    "build_direct", "blit_direct", "diff_band", "diff_rect", "diff_rects",
-    "extract_rect", "detect_vertical_scroll", "build_compose",
+    "build_direct", "blit_direct", "diff_band", "diff_damage_rects",
+    "diff_rect", "diff_rects", "extract_rect", "detect_vertical_scroll",
+    "build_compose",
     "build_frame_edit", "blit_frame_edit", "build_frame_edit_file",
     "build_frame_edit_shm", "build_full_shm", "wrap_tmux_passthrough",
 ]

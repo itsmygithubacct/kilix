@@ -54,6 +54,7 @@ build_frame_edit_shm = _shared.build_frame_edit_shm
 build_full_shm = _shared.build_full_shm
 detect_vertical_scroll = _shared.detect_vertical_scroll
 diff_band = _shared.diff_band
+diff_damage_rects = _shared.diff_damage_rects
 diff_rect = _shared.diff_rect
 diff_rects = _shared.diff_rects
 extract_rect = _shared.extract_rect
@@ -180,6 +181,7 @@ __all__ = [
     "session_dir", "write_frame",
     "build_compose", "build_direct", "blit_direct", "build_frame_edit",
     "blit_frame_edit", "build_frame_edit_file", "build_frame_edit_shm",
-    "build_full_shm", "detect_vertical_scroll", "diff_band", "diff_rect",
-    "diff_rects", "extract_rect", "wrap_tmux_passthrough",
+    "build_full_shm", "detect_vertical_scroll", "diff_band",
+    "diff_damage_rects", "diff_rect", "diff_rects", "extract_rect",
+    "wrap_tmux_passthrough",
 ]

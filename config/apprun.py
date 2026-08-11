@@ -783,16 +783,26 @@ class AppPane:
             return False
         return self._mark_content_ready(CONTENT_READY_INITIAL_GRACE)
 
-    def _accept_frame(self, frame, *, content=False, startup=False):
-        if frame is None or frame == self.last_frame:
+    def _accept_frame(self, frame, *, content=False, startup=False,
+                      damage=None):
+        if frame is None:
             return False
+        if self.last_frame is not None:
+            if damage is None:
+                if frame == self.last_frame:
+                    return False
+            else:
+                damage = gfx.diff_damage_rects(
+                    self.last_frame, frame, self.app_w, self.app_h, damage)
+                if not damage:
+                    return False
         self.last_frame = frame
         now = time.time()
         self._last_change = now
         self.feed.offer(frame, now)      # encoders always receive full frames
         if self.ff is not None and self._cap_fps != self.fps:
             self._spawn_capture(self.fps)
-        self.blit(frame)
+        self.blit(frame, damage=damage)
         if content:
             self.content_frames += 1
             if self.content_frames == 1:
@@ -815,7 +825,7 @@ class AppPane:
             return
         if update is not None:
             self._dbg["cap"] += 1
-            self._accept_frame(update[0], content=True)
+            self._accept_frame(update[0], content=True, damage=update[1])
 
     def pump_frames(self):
         fd = self.ff.stdout.fileno()
@@ -845,14 +855,14 @@ class AppPane:
             self._cursor_capture_requested = False
             self._dbg["cap"] += 1
             try:
-                frame = self.capture.snapshot()
+                frame, damage = self.capture.snapshot_with_damage()
             except Exception as error:
                 log("cursor capture failed; switching to ffmpeg:",
                     type(error).__name__, error)
                 self._damage_unavailable = True
                 self._spawn_capture(self.fps)
             else:
-                self._accept_frame(frame)
+                self._accept_frame(frame, damage=damage)
         if (self.ff is not None and self._cap_fps > IDLE_FPS
                 and now - self._last_change > IDLE_AFTER):
             self._spawn_capture(IDLE_FPS)
@@ -874,7 +884,7 @@ class AppPane:
             log(f"frames={self.frames}")
         return result
 
-    def blit(self, rgb, force_full=False, scroll=None):
+    def blit(self, rgb, force_full=False, scroll=None, damage=None):
         """Offer a complete RGB frame to the shared damage-aware presenter."""
         if getattr(self, "presenter", None) is None:
             self.presenter = gfx.FramePresenter(
@@ -884,7 +894,8 @@ class AppPane:
         result = self.presenter.present(
             rgb, self.app_w, self.app_h, self.img_cols, self.img_rows,
             origin_row=self.off_row + 1, origin_column=self.off_col + 1,
-            content_key="app", force_full=force_full, scroll=scroll)
+            content_key="app", force_full=force_full, scroll=scroll,
+            damage=damage)
         return self._record_present(result)
 
     def _dbg_tick(self):

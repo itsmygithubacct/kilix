@@ -27,6 +27,14 @@ XVFB = shutil.which("Xvfb")
 class XDamageCaptureE2E(unittest.TestCase):
     WIDTH, HEIGHT = 320, 200
 
+    @staticmethod
+    def _bounds(rects):
+        x0 = min(rect[0] for rect in rects)
+        y0 = min(rect[1] for rect in rects)
+        x1 = max(rect[0] + rect[2] for rect in rects)
+        y1 = max(rect[1] + rect[3] for rect in rects)
+        return x0, y0, x1 - x0, y1 - y0
+
     @classmethod
     def setUpClass(cls):
         cls.xd = None
@@ -159,8 +167,8 @@ class XDamageCaptureE2E(unittest.TestCase):
                     break
                 update = capture.pump()
             self.assertIsNotNone(update, "mapped window produced no damage")
-            frame, rect = update
-            x, y, width, height = rect
+            frame, rects = update
+            x, y, width, height = self._bounds(rects)
             self.assertLessEqual(x, 10)
             self.assertLessEqual(y, 12)
             self.assertGreaterEqual(x + width, 74)
@@ -187,7 +195,8 @@ class XDamageCaptureE2E(unittest.TestCase):
                 update = capture.pump()
             self.assertIsNotNone(
                 update, "repainting a mapped child produced no damage")
-            frame, rect = update
+            frame, rects = update
+            self.assertTrue(rects)
             self.assertEqual(frame[at:at + 3], b"\x00\x00\x00")
             gc.free()
         finally:
@@ -233,9 +242,9 @@ class XDamageCaptureE2E(unittest.TestCase):
             # no second event for this later, disjoint repaint.
             window.fill_rectangle(gc, 60, 30, 5, 6)
             self.xd.sync()
-            rect = capture._take_damage()
-            self.assertIsNotNone(rect)
-            x, y, width, height = rect
+            rects = capture._take_damage()
+            self.assertGreaterEqual(len(rects), 2)
+            x, y, width, height = self._bounds(rects)
             self.assertLessEqual(x, 22)
             self.assertLessEqual(y, 27)
             self.assertGreaterEqual(x + width, 85)
@@ -293,8 +302,8 @@ class XDamageCaptureE2E(unittest.TestCase):
                 return rect
 
             capture._extract_damage = extract_then_queue_later_damage
-            frame, rect = capture.pump()
-            x, y, width, height = rect
+            frame, rects = capture.pump()
+            x, y, width, height = self._bounds(rects)
             self.assertLessEqual(x, 22)
             self.assertLessEqual(y, 27)
             self.assertGreaterEqual(x + width, 85)
@@ -348,6 +357,61 @@ class XDamageCaptureE2E(unittest.TestCase):
                 window.destroy()
                 self.xd.sync()
             capture.close()
+
+
+@unittest.skipUnless(HAVE_DEPS, "needs PIL + python-xlib")
+class CursorDamageTests(unittest.TestCase):
+    @staticmethod
+    def _cursor(x, y, serial):
+        class Cursor:
+            width = height = 1
+            xhot = yhot = 0
+            cursor_image = (0xFFFF0000,)
+
+        cursor = Cursor()
+        cursor.x, cursor.y, cursor.cursor_serial = x, y, serial
+        return cursor
+
+    def _capture(self, responses):
+        capture = object.__new__(xcapture.XDamageCapture)
+        capture.width = capture.height = 10
+        capture.frame = bytearray(10 * 10 * 3)
+        capture._cursor_supported = True
+        capture._cursor_signature = None
+        capture._cursor_rect = None
+        capture.root = object()
+
+        class Events:
+            def xfixes_get_cursor_image(self, _root):
+                response = responses.pop(0)
+                if isinstance(response, Exception):
+                    raise response
+                return response
+
+        capture.events = Events()
+        return capture
+
+    def test_cursor_motion_damages_old_and_new_locations(self):
+        capture = self._capture([
+            self._cursor(2, 3, 1),
+            self._cursor(7, 8, 1),
+            self._cursor(7, 8, 1),
+        ])
+        frame, damage = capture._with_cursor_damage()
+        self.assertEqual(damage, ((2, 3, 1, 1),))
+        at = (3 * 10 + 2) * 3
+        self.assertEqual(frame[at:at + 3], b"\xff\0\0")
+
+        _, damage = capture._with_cursor_damage()
+        self.assertEqual(damage, ((2, 3, 1, 1), (7, 8, 1, 1)))
+        _, damage = capture._with_cursor_damage()
+        self.assertEqual(damage, ())
+
+    def test_cursor_query_failure_requests_cpu_safe_diff(self):
+        capture = self._capture([RuntimeError("injected")])
+        frame, damage = capture._with_cursor_damage()
+        self.assertEqual(frame, bytes(capture.frame))
+        self.assertIsNone(damage)
 
 
 if __name__ == "__main__":

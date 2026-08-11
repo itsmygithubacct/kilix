@@ -31,6 +31,7 @@ ALL_PLANES = ctypes.c_ulong(-1).value
 IPC_PRIVATE = 0
 IPC_CREAT = 0o1000
 IPC_RMID = 0
+MAX_DAMAGE_RECTS = 8
 
 
 _XFIXES_RECTANGLE = rq.Struct(
@@ -255,6 +256,8 @@ class XDamageCapture:
             self._cursor_supported = bool(
                 draw_cursor and xfixes is not None and
                 self.events.has_extension("XFIXES"))
+            self._cursor_signature = None
+            self._cursor_rect = None
             self.events.sync()
 
             self.x11 = self._library("X11")
@@ -277,8 +280,7 @@ class XDamageCapture:
             # Damage object from only its earlier event rectangles can erase
             # a repaint that arrived between event delivery and DamageSubtract.
             initial_damage = self._take_damage()
-            if initial_damage is not None:
-                self.capture_rect(initial_damage)
+            self._capture_rects(initial_damage)
         except Exception:
             self.close()
             raise
@@ -389,6 +391,72 @@ class XDamageCapture:
         y1 = max(union[1] + union[3], rect[1] + rect[3])
         return x0, y0, x1 - x0, y1 - y0
 
+    def _clip_rect(self, rect):
+        if rect is None or rect[2] <= 0 or rect[3] <= 0:
+            return None
+        x0 = max(0, int(rect[0]))
+        y0 = max(0, int(rect[1]))
+        x1 = min(self.width, int(rect[0]) + int(rect[2]))
+        y1 = min(self.height, int(rect[1]) + int(rect[3]))
+        if x1 <= x0 or y1 <= y0:
+            return None
+        return x0, y0, x1 - x0, y1 - y0
+
+    @staticmethod
+    def _rects_touch(first, second):
+        return not (
+            first[0] + first[2] < second[0]
+            or second[0] + second[2] < first[0]
+            or first[1] + first[3] < second[1]
+            or second[1] + second[3] < first[1]
+        )
+
+    def _coalesce_rects(self, rects, limit=MAX_DAMAGE_RECTS):
+        """Bound region count while retaining distant damage separately."""
+        merged = []
+        for value in rects:
+            candidate = self._clip_rect(value)
+            if candidate is None:
+                continue
+            index = 0
+            while index < len(merged):
+                if self._rects_touch(candidate, merged[index]):
+                    candidate = self._union_rect(
+                        candidate, merged.pop(index))
+                    index = 0
+                else:
+                    index += 1
+            merged.append(candidate)
+
+        while len(merged) > limit:
+            best = None
+            for first_index in range(len(merged) - 1):
+                first = merged[first_index]
+                first_area = first[2] * first[3]
+                for second_index in range(first_index + 1, len(merged)):
+                    second = merged[second_index]
+                    union = self._union_rect(first, second)
+                    extra = (union[2] * union[3] - first_area
+                             - second[2] * second[3])
+                    choice = (extra, first_index, second_index, union)
+                    if best is None or choice[:3] < best[:3]:
+                        best = choice
+            _, first_index, second_index, union = best
+            merged[first_index] = union
+            merged.pop(second_index)
+        return tuple(sorted(merged, key=lambda rect: (rect[1], rect[0])))
+
+    def _capture_rects(self, rects):
+        bucketed = []
+        for rect in rects:
+            clipped = self._clip_rect(rect)
+            if clipped is not None:
+                bucketed.append(self._bucket(clipped))
+        captured = self._coalesce_rects(bucketed)
+        for rect in captured:
+            self.capture_rect(rect)
+        return captured
+
     def _extract_damage(self):
         """Move one snapshot of accumulated damage into the server region."""
         self.events.damage_subtract(
@@ -399,14 +467,14 @@ class XDamageCapture:
             opcode=protocol.get_extension_major("XFIXES"),
             region=self.damage_region,
         )
-        union = None
+        rects = []
         for area in fetched.rectangles:
-            union = self._union_rect(
-                union,
+            rect = self._clip_rect(
                 (int(area.x), int(area.y),
-                 int(area.width), int(area.height)),
-            )
-        return union
+                 int(area.width), int(area.height)))
+            if rect is not None:
+                rects.append(rect)
+        return tuple(rects)
 
     def _take_damage(self):
         """Atomically extract damage, including events queued by the reply.
@@ -419,36 +487,50 @@ class XDamageCapture:
         an event arriving after the final check remains on the socket and
         wakes the caller normally.
         """
-        union = None
+        rects = []
         while True:
             while self.events.pending_events():
                 self.events.next_event()
-            union = self._union_rect(union, self._extract_damage())
+            rects.extend(self._extract_damage())
             if not self.events.pending_events():
-                return union
+                return self._coalesce_rects(rects)
 
     def _drain_damage(self):
         return self._take_damage()
 
-    def _with_cursor(self):
+    def _with_cursor_damage(self):
         if not self._cursor_supported:
-            return bytes(self.frame)
+            return bytes(self.frame), ()
         result = bytearray(self.frame)
         try:
             cursor = self.events.xfixes_get_cursor_image(self.root)
         except Exception:
-            return bytes(result)
+            self._cursor_signature = None
+            self._cursor_rect = None
+            # The base frame is still valid. Unknown cursor state merely makes
+            # the presenter use its full-frame CPU comparison for this offer.
+            return bytes(result), None
         left = int(cursor.x) - int(cursor.xhot)
         top = int(cursor.y) - int(cursor.yhot)
-        for cy in range(int(cursor.height)):
+        cursor_width = int(cursor.width)
+        cursor_height = int(cursor.height)
+        signature = (
+            int(cursor.cursor_serial), left, top, cursor_width, cursor_height)
+        cursor_rect = self._clip_rect(
+            (left, top, cursor_width, cursor_height))
+        cursor_damage = ()
+        if signature != self._cursor_signature:
+            cursor_damage = self._coalesce_rects(
+                (self._cursor_rect, cursor_rect))
+        for cy in range(cursor_height):
             y = top + cy
             if not 0 <= y < self.height:
                 continue
-            for cx in range(int(cursor.width)):
+            for cx in range(cursor_width):
                 x = left + cx
                 if not 0 <= x < self.width:
                     continue
-                value = int(cursor.cursor_image[cy * cursor.width + cx])
+                value = int(cursor.cursor_image[cy * cursor_width + cx])
                 alpha = value >> 24
                 if not alpha:
                     continue
@@ -458,19 +540,35 @@ class XDamageCapture:
                 result[at] = ((value >> 16) & 0xFF) + result[at] * inverse // 255
                 result[at + 1] = ((value >> 8) & 0xFF) + result[at + 1] * inverse // 255
                 result[at + 2] = (value & 0xFF) + result[at + 2] * inverse // 255
-        return bytes(result)
+        self._cursor_signature = signature
+        self._cursor_rect = cursor_rect
+        return bytes(result), cursor_damage
+
+    def _with_cursor(self):
+        return self._with_cursor_damage()[0]
+
+    def snapshot_with_damage(self, capture_full=False):
+        captured = ()
+        if capture_full:
+            captured = (self.capture_rect(
+                (0, 0, self.width, self.height)),)
+        frame, cursor_damage = self._with_cursor_damage()
+        if cursor_damage is None:
+            return frame, None
+        return frame, self._coalesce_rects((*captured, *cursor_damage))
 
     def snapshot(self, capture_full=False):
-        if capture_full:
-            self.capture_rect((0, 0, self.width, self.height))
-        return self._with_cursor()
+        return self.snapshot_with_damage(capture_full)[0]
 
     def pump(self):
-        rect = self._drain_damage()
-        if rect is None:
+        rects = self._drain_damage()
+        if not rects:
             return None
-        captured = self.capture_rect(rect)
-        return self._with_cursor(), captured
+        captured = self._capture_rects(rects)
+        frame, cursor_damage = self._with_cursor_damage()
+        if cursor_damage is None:
+            return frame, None
+        return frame, self._coalesce_rects((*captured, *cursor_damage))
 
     def close(self):
         if getattr(self, "_closed", False):

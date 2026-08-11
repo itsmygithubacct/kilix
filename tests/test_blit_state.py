@@ -94,6 +94,39 @@ class AppPanePresenterTests(unittest.TestCase):
         finally:
             pane.presenter.close()
 
+    def test_blit_forwards_trusted_capture_damage(self):
+        pane = make_apppane(stream=True)
+        pane.presenter.enable_scroll = False
+        try:
+            first = solid(pane)
+            pane.blit(first)
+            changed = poke(first, pane.app_w, 17, 11)
+            with patch(
+                    "kitty_frame_presenter.presenter.diff_rect",
+                    side_effect=AssertionError("full-frame diff was used")):
+                result = pane.blit(
+                    changed, damage=((12, 8, 12, 10),))
+            self.assertEqual(result.rects, ((17, 11, 1, 1),))
+        finally:
+            pane.presenter.close()
+
+    def test_accept_frame_shrinks_damage_before_feeding_presenter(self):
+        pane = make_apppane(stream=True)
+        pane.last_frame = solid(pane)
+        pane.feed = Mock()
+        pane.ff = None
+        pane._cap_fps = pane.fps
+        pane.blit = Mock()
+        changed = poke(pane.last_frame, pane.app_w, 17, 11)
+        try:
+            self.assertTrue(pane._accept_frame(
+                changed, damage=((12, 8, 12, 10),)))
+            pane.blit.assert_called_once_with(
+                changed, damage=((17, 11, 1, 1),))
+            pane.feed.offer.assert_called_once()
+        finally:
+            pane.presenter.close()
+
     def test_changed_content_beats_static_fallback_and_logs_once(self):
         import apprun
         pane = make_apppane(stream=True)
