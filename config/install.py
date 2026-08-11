@@ -15,6 +15,11 @@ and prints it first — an install is never an opaque pipe to a shell.
 Drivers are the third kind, and the same rule holds: `kilix install
 nvidia-driver` runs the Plebian-OS helper that owns that install rather than
 reimplementing it here. The row only appears on a machine that has the hardware.
+
+Runtimes are the fourth: not a program but the environment a subprocess needs.
+`kilix install yolo` builds the virtualenv and fetches the weights that
+kilix-nvr's detector runs in — the recorder links no ML library on purpose, and
+this is what turns that from a limitation into a one-line install.
 """
 from __future__ import annotations
 
@@ -163,6 +168,93 @@ DRIVERS = (
         "description": "Proprietary NVIDIA driver — CUDA, NVENC/NVDEC, full clocks",
     },
 )
+
+
+# Runtimes are the fourth kind, and the newest.  A component installs a
+# program; a runtime installs the *environment a subprocess needs* — the
+# virtualenv and weights kilix-nvr's detector runs in, which the recorder
+# deliberately does not link.  That design makes where inference happens a
+# launch detail, and its cost is a fresh machine whose recorder cannot detect
+# anything with no obvious way to fix it.  This row is the obvious way.
+RUNTIMES = (
+    {
+        "id": "yolo",
+        "label": "YOLO object detection",
+        "helper": "install-yolo.sh",
+        "directory": os.path.join("runtimes", "yolo"),
+        "description": "Ultralytics YOLO26 in its own virtualenv — what "
+                       "kilix-nvr detects people and vehicles with",
+    },
+)
+
+
+def _runtime_paths(runtime: dict) -> tuple[str, str]:
+    """The runtime's directory and the command it installs."""
+    root = os.environ.get("GPU_TERMINAL_DATA_HOME") or os.path.join(
+        os.path.expanduser("~"), ".local", "gpu_terminal")
+    directory = os.environ.get("KILIX_YOLO_DIR") or os.path.join(
+        root, runtime["directory"])
+    return directory, os.path.join(directory, "bin", "kilix-nvr-detect")
+
+
+def _runtime_rows() -> list[dict]:
+    rows = []
+    for runtime in RUNTIMES:
+        directory, command = _runtime_paths(runtime)
+        # A file check, not a `--check` run: the helper's own check imports
+        # torch, which takes seconds, and this list is drawn every time
+        # somebody opens the software centre.  The wrapper is written last
+        # by the installer, after the model has been loaded once, so its
+        # presence means the whole install succeeded.
+        rows.append({
+            "id": runtime["id"],
+            "label": runtime["label"],
+            "kind": "runtime",
+            "description": runtime["description"],
+            "installed": os.access(command, os.X_OK),
+            "path": command if os.access(command, os.X_OK) else "",
+        })
+    return rows
+
+
+def _runtime(identifier: str) -> dict | None:
+    for runtime in RUNTIMES:
+        if runtime["id"] == identifier:
+            return runtime
+    return None
+
+
+def _runtime_helper(runtime: dict) -> str:
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
+        __file__))), "scripts", runtime["helper"])
+
+
+def _install_runtime(runtime: dict, *, assume_yes: bool) -> int:
+    helper = _runtime_helper(runtime)
+    if not os.access(helper, os.X_OK):
+        print(f"kilix install: {helper} is missing from this checkout",
+              file=sys.stderr)
+        return 2
+    argv = [helper, "--install"]
+    if assume_yes:
+        argv.append("--yes")
+    # Shown before it runs, like the agents: this one downloads hundreds of
+    # megabytes and the helper says how many before asking.
+    print(f"{runtime['label']} installs with:")
+    print(f"    {' '.join(argv)}")
+    return subprocess.run(argv, check=False).returncode
+
+
+def _update_runtime(runtime: dict) -> int:
+    helper = _runtime_helper(runtime)
+    directory, command = _runtime_paths(runtime)
+    if not os.access(command, os.X_OK):
+        print(f"kilix install: {runtime['label']} is not installed yet — "
+              f"`kilix install {runtime['id']}` first", file=sys.stderr)
+        return 2
+    print(f"{runtime['label']} updates in place at {directory}:")
+    print(f"    {helper} --upgrade")
+    return subprocess.run([helper, "--upgrade"], check=False).returncode
 
 
 def _nvidia_gpu_present() -> bool:
@@ -316,8 +408,8 @@ def _agent_rows() -> list[dict]:
 
 
 def rows() -> list[dict]:
-    """Everything installable: catalog, agents and applicable drivers."""
-    return _catalog_rows() + _agent_rows() + _driver_rows()
+    """Everything installable: catalog, agents, runtimes and any drivers."""
+    return _catalog_rows() + _agent_rows() + _runtime_rows() + _driver_rows()
 
 
 def _agent(identifier: str) -> dict | None:
@@ -341,6 +433,9 @@ def install(identifier: str, *, assume_yes: bool = False) -> int:
     agent = _agent(identifier)
     if agent is not None:
         return _install_agent(agent, assume_yes=assume_yes)
+    runtime = _runtime(identifier)
+    if runtime is not None:
+        return _install_runtime(runtime, assume_yes=assume_yes)
     return _install_catalog(identifier)
 
 
@@ -442,6 +537,9 @@ def update(identifier: str) -> int:
     driver = _driver(identifier)
     if driver is not None:
         return _update_driver(driver)
+    runtime = _runtime(identifier)
+    if runtime is not None:
+        return _update_runtime(runtime)
     agent = _agent(identifier)
     if agent is None:
         # Catalog content is pinned; "updating" it means installing the pin the
@@ -475,7 +573,7 @@ def _update_driver(driver: dict) -> int:
 
 def _print_table(entries: list[dict]) -> None:
     width = max((len(r.get("id", "")) for r in entries), default=2)
-    kinds = ("agent", "app", "game", "driver")
+    kinds = ("agent", "app", "game", "runtime", "driver")
     for kind in kinds:
         group = [r for r in entries if r.get("kind") == kind]
         if not group:

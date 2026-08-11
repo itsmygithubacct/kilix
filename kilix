@@ -39,6 +39,7 @@
 #   ./kilix bonsai [args]     # BitNet model store: browse, download, verify
 #   ./kilix rtsp [args]       # watch RTSP cameras: view one, or a grid
 #   ./kilix nvr [args]        # record cameras, detect, review what happened
+#   ./kilix yolo [install]    # the detection runtime the recorder uses
 #   ./kilix mask [args]       # paint region maps over an image (camera masks,
 #                             #   walkable space); --render/--selftest headless
 #   ./kilix open-url [URL]    # real browser first; in-pane fallback
@@ -564,6 +565,8 @@ _kilix_load_env_file() {
       KILIX_VOICE_LIB_URL|KILIX_VOICE_LIB_VERSION|KILIX_VOICE_LIB_SHA256|KILIX_VOICE_APACHE_LICENSE_FILE|\
       KILIX_VOICE_MODEL_URL|KILIX_VOICE_MODEL_SHA256|\
       KILIX_VOICE_LGRAPH_MODEL_URL|KILIX_VOICE_LGRAPH_MODEL_SHA256|\
+      KILIX_NVR_DETECT|KILIX_SOUND_CLASSIFIER|\
+      KILIX_YOLO_DIR|KILIX_YOLO_MODEL|KILIX_YOLO_CUDA|\
       KILIX_NERD_FONT_URL|KILIX_NERD_FONT_SHA256|KILIX_NERD_FONT_FILE_SHA256|KILIX_GO_TOOLCHAIN|KILIX_PYTHON)
         # An explicit process environment wins over persisted settings. Storage
         # roots are intentionally absent from this allowlist: they determine
@@ -826,6 +829,20 @@ _kilix_nvr_resolve() {
     return 1
   fi
   _KILIX_NVR_COMMAND=("$resolved")
+}
+
+# The detection runtime, which is not a program of ours but the virtualenv
+# the recorder's detector subprocess runs in.  Lazy like everything else
+# here: nothing downloads a quarter of a gigabyte until somebody asks for
+# detection, and asking once is enough because the installer records where
+# it put things.
+_kilix_yolo_installer() {
+  local installer="$KILIX_HOME/scripts/install-yolo.sh"
+  if [ ! -f "$installer" ] || [ -L "$installer" ] || [ ! -x "$installer" ]; then
+    echo "kilix yolo: missing or unsafe installer: $installer" >&2
+    return 1
+  fi
+  printf '%s\n' "$installer"
 }
 
 _KILIX_RTSP_PREFIX="${KILIX_RTSP_PREFIX:-$HOME/.local}"
@@ -2101,6 +2118,36 @@ case "${1:-}" in
     _kilix_bonsai_resolve "$_bonsai_force" || exit 1
     [ "$_bonsai_install_only" = 0 ] || exit 0
     exec "${_KILIX_BONSAI_COMMAND[@]}" "$@" ;;
+  yolo|detector)
+    shift
+    _yolo_action=--print-path
+    while :; do
+      case "${1:-}" in
+        install) _yolo_action=--install; shift ;;
+        check|status) _yolo_action=--check; shift ;;
+        update|upgrade) _yolo_action=--upgrade; shift ;;
+        remove|uninstall) _yolo_action=--remove; shift ;;
+        -h|--help|help)
+          echo "usage: $_self yolo [install|check|update|remove] [--yes]"
+          echo "the object-detection runtime the recorder detects with"
+          echo
+          echo "  $_self yolo              install if needed, print the command"
+          echo "  $_self yolo check        what is present, without changing it"
+          echo "  $_self yolo install      build the virtualenv and fetch weights"
+          echo "  $_self yolo update       bring its packages and weights forward"
+          echo "  $_self yolo remove       delete the runtime directory"
+          echo
+          echo "kilix-nvr links no ML library on purpose: its detector is a"
+          echo "subprocess, so where inference happens is a launch detail."
+          echo "This builds that subprocess's environment and tells Kilix"
+          echo "where it is.  Nothing installs system-wide or as root."
+          exit 0 ;;
+        --) shift; break ;;
+        *) break ;;
+      esac
+    done
+    _yolo_installer="$(_kilix_yolo_installer)" || exit 1
+    exec "$_yolo_installer" "$_yolo_action" "$@" ;;
   nvr|record|recorder)
     shift
     _nvr_install_only=0
