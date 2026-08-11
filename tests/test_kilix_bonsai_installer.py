@@ -147,7 +147,7 @@ class DispatchTests(unittest.TestCase):
     def test_a_prefix_install_off_path_is_run_not_reinstalled(self):
         # Desktop launch contexts run without ~/.local/bin on PATH; an
         # installed closure PATH cannot see must be run, not shadowed by a
-        # reinstall — the same order _kilix_voice_tool resolves in.
+        # reinstall — the explicit installed-first Bonsai resolution order.
         with tempfile.TemporaryDirectory() as home:
             bindir = Path(home) / "prefix" / "bin"
             bindir.mkdir(parents=True)

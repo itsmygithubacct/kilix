@@ -729,30 +729,57 @@ _kilix_voice_onoff() {
   if [ "$1" = 1 ]; then echo on; else echo off; fi
 }
 
-# Installed-command-first, pinned-installer-fallback — the resolution order the
-# tab-bar widgets use, so a click and the CLI can never end up running different
-# builds. Preferring an installed command also keeps kilix-voice usable while
-# KILIX_VOICE_REF is still unpinned and the installer refuses to run.
-#
-# "Installed" means PATH first and then the voice prefix the pinned installer
-# links into: desktop launch contexts often run without ~/.local/bin on PATH,
-# and an installed closure that PATH cannot see must be run, not reinstalled.
+# Reuse only the installer-managed entrypoint for the exact Voice commit this
+# launcher pins. A plain `kilix update` can otherwise leave an older kilix-stt
+# on PATH: that binary may answer --version while lacking newer catalog,
+# install, and default actions. The install stamp is published only after the
+# runtime generation and its prefix links pass the installer's checks.
 _kilix_voice_tool() {
-  local name="$1" force="$2" resolved installer
+  local name="$1" force="$2" resolved installer refs expected_line
+  local expected_ref="" installed_line="" installed_ref=""
+  local stamp="$KILIX_STATE_DIRECTORY/kilix-voice-install.refs"
+  local -a voice_installer
   shift 2
-  for resolved in "$(command -v "$name" 2>/dev/null || true)" \
-                  "$_KILIX_VOICE_PREFIX/bin/$name"; do
-    if [ "$force" = 0 ] && [ -n "$resolved" ] && [ -x "$resolved" ] \
-        && "$resolved" --version >/dev/null 2>&1; then
-      printf '%s\n' "$resolved"
-      return 0
-    fi
-  done
-  installer=("$KILIX_HOME/scripts/install-kilix-voice.sh" "$@")
-  [ "$force" = 0 ] || installer+=(--force)
+
+  installer="$KILIX_HOME/scripts/install-kilix-voice.sh"
+  if [ ! -f "$installer" ] || [ -L "$installer" ] || [ ! -x "$installer" ]; then
+    echo "kilix voice: missing or unsafe installer: $installer" >&2
+    return 1
+  fi
+  refs="$("$installer" --print-refs)" || {
+    echo "kilix voice: could not read the pinned Voice ref" >&2
+    return 1
+  }
+  expected_line="${refs%%$'\n'*}"
+  case "$expected_line" in kilix-voice=*) expected_ref="${expected_line#*=}" ;; esac
+  [[ "$expected_ref" =~ ^[0-9a-fA-F]{40}$ ]] || {
+    echo "kilix voice: installer returned an invalid Voice ref" >&2
+    return 1
+  }
+
+  if [ -f "$stamp" ] && [ ! -L "$stamp" ]; then
+    IFS= read -r installed_line <"$stamp" || true
+    case "$installed_line" in
+      kilix-voice=*) installed_ref="${installed_line#*=}" ;;
+    esac
+  fi
+  resolved="$_KILIX_VOICE_PREFIX/bin/$name"
+  if [ "$force" = 0 ] \
+      && [[ "$installed_ref" =~ ^[0-9a-fA-F]{40}$ ]] \
+      && [ "${installed_ref,,}" = "${expected_ref,,}" ] \
+      && [ -L "$resolved" ] \
+      && [ "$(readlink -- "$resolved" 2>/dev/null || true)" \
+           = "$_KILIX_VOICE_DATA/runtime/current/bin/$name" ] \
+      && [ -x "$resolved" ] && "$resolved" --version >/dev/null 2>&1; then
+    printf '%s\n' "$resolved"
+    return 0
+  fi
+
+  voice_installer=("$installer" "$@")
+  [ "$force" = 0 ] || voice_installer+=(--force)
   # Installer diagnostics are stderr-only here: this function's stdout is the
   # resolved path its caller execs.
-  "${installer[@]}" >&2 || return 1
+  "${voice_installer[@]}" >&2 || return 1
   resolved="$_KILIX_VOICE_PREFIX/bin/$name"
   [ -x "$resolved" ] || {
     echo "kilix voice: installer did not create $resolved" >&2
@@ -761,8 +788,8 @@ _kilix_voice_tool() {
   printf '%s\n' "$resolved"
 }
 
-# Kilix Bonsai resolves the way the two voice TUIs resolve: an installed
-# command wins, and otherwise the pinned installer runs and its result is used.
+# Kilix Bonsai has its own installed-command-first boundary: an installed
+# command wins, and otherwise its pinned installer runs and returns the result.
 #
 # There is deliberately no source-checkout branch. One existed while the
 # repository was unpublished, and had to go once it wasn't: a working tree is
@@ -778,10 +805,9 @@ _KILIX_BONSAI_PREFIX="${KILIX_BONSAI_PREFIX:-$HOME/.local}"
 declare -a _KILIX_BONSAI_COMMAND=()
 _kilix_bonsai_resolve() {
   local force="$1" resolved
-  # PATH first, then the install prefix — the same order _kilix_voice_tool
-  # uses and for the same reason: desktop launch contexts run without
-  # ~/.local/bin on PATH, and an installed closure PATH cannot see must be
-  # run, not reinstalled.
+  # PATH first, then the install prefix: desktop launch contexts run without
+  # ~/.local/bin on PATH, and an installed Bonsai closure PATH cannot see must
+  # be run, not reinstalled.
   for resolved in "$(command -v kilix-bonsai 2>/dev/null || true)" \
                   "$_KILIX_BONSAI_PREFIX/bin/kilix-bonsai"; do
     if [ "$force" = 0 ] && [ -n "$resolved" ] && [ -x "$resolved" ]; then

@@ -14,6 +14,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 KILIX = ROOT / "kilix"
+VOICE_INSTALLER = ROOT / "scripts" / "install-kilix-voice.sh"
 
 
 class VoiceCliTests(unittest.TestCase):
@@ -55,9 +56,50 @@ class VoiceCliTests(unittest.TestCase):
             check=check,
         )
 
+    def pinned_voice_ref(self):
+        refs = subprocess.check_output(
+            [VOICE_INSTALLER, "--print-refs"],
+            env=self.environment,
+            text=True,
+        )
+        line = refs.splitlines()[0]
+        self.assertTrue(line.startswith("kilix-voice="), line)
+        return line.removeprefix("kilix-voice=")
+
+    def install_voice_stamp(self, voice_ref: str | None = None):
+        state = Path(self.environment["KILIX_STATE_DIRECTORY"])
+        state.mkdir(parents=True, exist_ok=True)
+        stamp = state / "kilix-voice-install.refs"
+        stamp.write_text(
+            f"kilix-voice={voice_ref or self.pinned_voice_ref()}\n"
+            "libvosk=skipped\n"
+            "model-small-en-us=skipped\n"
+        )
+        stamp.chmod(0o600)
+        return stamp
+
+    def install_runtime_tool(self, name: str, script: str):
+        data = Path(self.environment["KILIX_DATA_HOME"]) / "voice"
+        generation = data / "runtime" / "generations" / "fixture"
+        generation_bin = generation / "bin"
+        generation_bin.mkdir(parents=True, exist_ok=True)
+        tool = generation_bin / name
+        tool.write_text(script)
+        tool.chmod(0o755)
+
+        current = data / "runtime" / "current"
+        if not current.exists() and not current.is_symlink():
+            current.symlink_to("generations/fixture")
+        prefix_bin = Path(self.environment["KILIX_VOICE_PREFIX"]) / "bin"
+        prefix_bin.mkdir(parents=True, exist_ok=True)
+        entrypoint = prefix_bin / name
+        entrypoint.symlink_to(current / "bin" / name)
+        self.install_voice_stamp()
+        return entrypoint
+
     def install_fake_daemon(self):
-        daemon = self.bin / "kilix-voiced"
-        daemon.write_text(
+        return self.install_runtime_tool(
+            "kilix-voiced",
             "#!/bin/sh\n"
             "if [ \"${1:-}\" = --version ]; then\n"
             "  printf '%s\\n' 'kilix-voiced fixture'\n"
@@ -66,11 +108,10 @@ class VoiceCliTests(unittest.TestCase):
             "printf '%s\\n' 'voice daemon foreground'\n"
             "printf 'argc=%s\\n' \"$#\"\n"
         )
-        daemon.chmod(0o755)
 
     def install_fake_stt(self):
-        tool = self.bin / "kilix-stt"
-        tool.write_text(
+        return self.install_runtime_tool(
+            "kilix-stt",
             "#!/bin/sh\n"
             "if [ \"${1:-}\" = --version ]; then\n"
             "  printf '%s\\n' 'kilix-stt fixture'\n"
@@ -78,8 +119,6 @@ class VoiceCliTests(unittest.TestCase):
             "fi\n"
             "printf 'arg=%s\\n' \"$@\"\n"
         )
-        tool.chmod(0o755)
-        return tool
 
     def test_stt_routes_model_catalog_install_and_default_arguments(self):
         self.install_fake_stt()
@@ -102,6 +141,74 @@ class VoiceCliTests(unittest.TestCase):
         self.assertIn("stt --install MODEL", help_result.stdout)
         self.assertIn("stt --default MODEL", help_result.stdout)
 
+    def test_stt_refreshes_a_runtime_from_the_previous_voice_pin(self):
+        repo = self.root / "voice-origin"
+        repo.mkdir()
+        (repo / "Makefile").write_text(
+            "install:\n"
+            "\tmkdir -p $(PREFIX)/bin\n"
+            "\tinstall -m 0755 kilix-tts kilix-stt kilix-voiced "
+            "$(PREFIX)/bin/\n"
+        )
+        fresh_script = (
+            "#!/bin/sh\n"
+            "if [ \"${1:-}\" = --version ]; then\n"
+            "  printf '%s\\n' \"${0##*/} fresh fixture\"\n"
+            "  exit 0\n"
+            "fi\n"
+            "printf '%s\\n' 'runtime=fresh'\n"
+            "printf 'arg=%s\\n' \"$@\"\n"
+        )
+        for name in ("kilix-tts", "kilix-stt", "kilix-voiced"):
+            tool = repo / name
+            tool.write_text(fresh_script)
+            tool.chmod(0o755)
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo,
+                       check=True)
+        subprocess.run(["git", "add", "."], cwd=repo, check=True)
+        subprocess.run(
+            [
+                "git", "-c", "user.name=Kilix test",
+                "-c", "user.email=kilix-test@example.invalid",
+                "commit", "-q", "-m", "fixture",
+            ],
+            cwd=repo,
+            check=True,
+        )
+        voice_ref = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=repo, text=True
+        ).strip()
+        self.environment.update({
+            "KILIX_VOICE_REPO": str(repo),
+            "KILIX_VOICE_REF": voice_ref,
+        })
+
+        stale_script = (
+            "#!/bin/sh\n"
+            "if [ \"${1:-}\" = --version ]; then exit 0; fi\n"
+            "printf '%s\\n' 'runtime=stale'\n"
+            "exit 2\n"
+        )
+        for name in ("kilix-tts", "kilix-stt", "kilix-voiced"):
+            self.install_runtime_tool(name, stale_script)
+        stamp = self.install_voice_stamp("0" * 40)
+
+        result = self.run_kilix(
+            "stt", "--install", "lgraph-en-us",
+            "--default", "lgraph-en-us",
+        )
+
+        self.assertEqual(result.stdout.splitlines(), [
+            "runtime=fresh",
+            "arg=--install",
+            "arg=lgraph-en-us",
+            "arg=--default",
+            "arg=lgraph-en-us",
+        ])
+        self.assertIn("installing the pinned voice engine", result.stderr)
+        self.assertEqual(
+            stamp.read_text().splitlines()[0], f"kilix-voice={voice_ref}")
+
     def test_opening_stt_only_bootstraps_the_download_free_runtime(self):
         launcher = KILIX.read_text()
         self.assertIn(
@@ -118,10 +225,8 @@ class VoiceCliTests(unittest.TestCase):
             result.stdout.splitlines(), ["voice daemon foreground", "argc=0"])
 
     def install_prefix_daemon(self):
-        prefix_bin = Path(self.environment["KILIX_VOICE_PREFIX"]) / "bin"
-        prefix_bin.mkdir(parents=True, exist_ok=True)
-        daemon = prefix_bin / "kilix-voiced"
-        daemon.write_text(
+        return self.install_runtime_tool(
+            "kilix-voiced",
             "#!/bin/sh\n"
             "if [ \"${1:-}\" = --version ]; then\n"
             "  printf '%s\\n' 'kilix-voiced prefix fixture'\n"
@@ -129,8 +234,6 @@ class VoiceCliTests(unittest.TestCase):
             "fi\n"
             "printf '%s\\n' 'prefix daemon foreground'\n"
         )
-        daemon.chmod(0o755)
-        return daemon
 
     def hermetic_path(self):
         """A PATH that cannot resolve voice tools installed on this machine."""
