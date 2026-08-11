@@ -16,9 +16,10 @@ from kilix_sdk import content, graphics, paths, settings, state, telemetry, term
 
 class KilixSdkBoundaryTests(unittest.TestCase):
     def test_paths_resolve_to_host_checkout(self):
-        self.assertEqual(Path(paths.kilix_home()), ROOT)
-        self.assertEqual(Path(paths.defaults_dir()), ROOT / "config")
-        self.assertEqual(Path(paths.launcher()), ROOT / "kilix")
+        with mock.patch.dict(os.environ, {"KILIX_HOME": ""}):
+            self.assertEqual(Path(paths.kilix_home()), ROOT)
+            self.assertEqual(Path(paths.defaults_dir()), ROOT / "config")
+            self.assertEqual(Path(paths.launcher()), ROOT / "kilix")
 
     def test_user_config_uses_project_storage_and_honors_override(self):
         with tempfile.TemporaryDirectory() as tmp:

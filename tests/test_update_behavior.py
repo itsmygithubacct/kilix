@@ -49,6 +49,19 @@ class UpdateBehaviorTests(unittest.TestCase):
         git("config", "user.email", "test@example.invalid", cwd=self.seed)
         git("config", "user.name", "Kilix Test", cwd=self.seed)
         shutil.copy2(ROOT / "kilix", self.seed / "kilix")
+        # These fixture tests exercise the lower two `--stack` rungs. Make the
+        # first rung explicitly absent instead of depending on whether the host
+        # running the suite happens to be an installed Plebian-OS system.
+        system_updater = "/usr/local/bin/plebian-os-update"
+        fixture_launcher = self.seed / "kilix"
+        launcher_text = fixture_launcher.read_text(encoding="utf-8")
+        self.assertEqual(launcher_text.count(system_updater), 2)
+        fixture_launcher.write_text(
+            launcher_text.replace(
+                system_updater, str(root / "missing-system-updater")
+            ),
+            encoding="utf-8",
+        )
         shutil.copy2(ROOT / "kilix-settings", self.seed / "kilix-settings")
         shutil.copytree(
             ROOT / "config" / "kilix_sdk",
