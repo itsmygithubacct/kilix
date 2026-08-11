@@ -130,16 +130,29 @@ class LauncherWiring(unittest.TestCase):
             self.assertIn(word, result.stdout)
 
     def test_the_setting_the_installer_writes_is_exported(self):
-        """`KILIX_NVR_DETECT` has to survive into a pane.
+        """`KILIX_OBJECT_DETECTOR` has to survive into a pane.
 
         The installer records it in kilix.env; the launcher exports only keys
         it lists. A key written but not listed is an install that works once,
         in the shell that ran it, and never again.
         """
         launcher = (ROOT / "kilix").read_text(encoding="utf-8")
-        self.assertIn("KILIX_NVR_DETECT", launcher)
-        self.assertIn("KILIX_SOUND_CLASSIFIER", launcher)
-        self.assertIn("KILIX_YOLO_DIR", launcher)
+        for key in ("KILIX_OBJECT_DETECTOR", "KILIX_SOUND_CLASSIFIER",
+                    "KILIX_YOLO_DIR"):
+            self.assertIn(key, launcher)
+
+    def test_the_runtime_points_at_the_module_that_owns_the_detector(self):
+        """The detector script moved into kilix-object-detect.
+
+        The installer used to resolve it out of the recorder's checkout and
+        record KILIX_NVR_DETECT. Both are wrong now, and both fail silently:
+        a wrapper pointing at a deleted script, and a setting nothing reads.
+        """
+        installer = INSTALLER.read_text(encoding="utf-8")
+        self.assertIn("install-kilix-object-detect.sh", installer)
+        self.assertIn("kilix-look-detect", installer)
+        self.assertIn("KILIX_OBJECT_DETECTOR=", installer)
+        self.assertNotIn("tools/kilix-nvr-detect", installer)
 
 
 if __name__ == "__main__":

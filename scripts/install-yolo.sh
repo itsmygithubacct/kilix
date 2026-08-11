@@ -6,12 +6,14 @@
 # fetches the model weights into it.  That is a different kind of thing and it
 # is worth being clear about why it exists at all.
 #
-# kilix-nvr deliberately links no ML runtime.  Its detector is a subprocess
+# kilix-object-detect deliberately links no ML runtime.  Its detector is a
+# subprocess
 # behind a fixed-size pipe, so where inference happens is a launch detail -
 # this machine, a virtualenv, a box with a GPU over ssh.  The cost of that
-# design is that a fresh machine has a recorder which cannot detect anything
-# and no obvious way to fix it.  This is the obvious way: one command that
-# builds the environment, fetches the weights, and tells Kilix where they are.
+# design is that a fresh machine has a recorder and an analyzer which cannot
+# detect anything, and no obvious way to fix it.  This is the obvious way: one
+# command that builds the environment, fetches the weights, and tells Kilix
+# where they are.
 #
 # Nothing is installed system-wide and nothing is installed as root.  The
 # virtualenv is the user's, under the GPU Terminal data root, and removing the
@@ -78,7 +80,7 @@ esac
 venv="$yolo_dir/venv"
 python="$venv/bin/python"
 weights="$yolo_dir/models/$KILIX_YOLO_MODEL"
-wrapper="$yolo_dir/bin/kilix-nvr-detect"
+wrapper="$yolo_dir/bin/kilix-look-detect"
 
 # ---------------------------------------------------------------- state ----
 
@@ -88,15 +90,15 @@ runtime_ready() {
 }
 
 detector_tool() {
-  # The detector script belongs to kilix-nvr, so kilix-nvr is what knows where
-  # it is.  Asking its installer both resolves the path and installs the
-  # recorder when it is missing - which is the right order: a detection
+  # The detector script belongs to kilix-object-detect, so that module is
+  # what knows where it is.  Asking its installer both resolves the path and
+  # fetches the module when it is missing - the right order: a detection
   # runtime with nothing to detect for is not worth building.
-  local nvr_binary
-  nvr_binary="$("$KILIX_HOME/scripts/install-kilix-nvr.sh" --print-path)" \
-    || die "kilix-nvr is needed for the detector script and could not be prepared"
-  local tool="${nvr_binary%/build/kilix-nvr}/tools/kilix-nvr-detect"
-  [ -f "$tool" ] || die "the kilix-nvr checkout has no tools/kilix-nvr-detect"
+  local look_binary
+  look_binary="$("$KILIX_HOME/scripts/install-kilix-object-detect.sh" --print-path)" \
+    || die "kilix-object-detect is needed for the detector script and could not be prepared"
+  local tool="${look_binary%/build/kilix-look}/tools/kilix-look-detect"
+  [ -f "$tool" ] || die "the kilix-object-detect checkout has no tools/kilix-look-detect"
   printf '%s\n' "$tool"
 }
 
@@ -228,21 +230,19 @@ record_setting() {
   local env_file="$config/kilix.env"
   mkdir -p "$config"
   [ -f "$env_file" ] || : > "$env_file"
-  local existing
-  existing="$(grep -c '^KILIX_NVR_DETECT=' "$env_file" 2>/dev/null || true)"
-  if [ "${existing:-0}" -gt 0 ]; then
-    # Rewritten in place rather than appended: two assignments in one file is
-    # a file whose meaning depends on read order.
-    local temporary
-    temporary="$(mktemp "$config/.kilix.env.XXXXXX")"
-    grep -v '^KILIX_NVR_DETECT=' "$env_file" > "$temporary"
-    printf 'KILIX_NVR_DETECT=%s\n' "$wrapper" >> "$temporary"
-    mv -- "$temporary" "$env_file"
-  else
-    printf 'KILIX_NVR_DETECT=%s\n' "$wrapper" >> "$env_file"
-  fi
+  local temporary
+  # Rewritten rather than appended: two assignments of one key in one file
+  # is a file whose meaning depends on read order.  KILIX_NVR_DETECT goes
+  # too - it was this setting's name before the detector moved into its own
+  # module, and a stale line pointing at a deleted script is worse than no
+  # line at all.
+  temporary="$(mktemp "$config/.kilix.env.XXXXXX")"
+  grep -v -e '^KILIX_OBJECT_DETECTOR=' -e '^KILIX_NVR_DETECT=' "$env_file" \
+    > "$temporary" || true
+  printf 'KILIX_OBJECT_DETECTOR=%s\n' "$wrapper" >> "$temporary"
+  mv -- "$temporary" "$env_file"
   chmod 600 "$env_file"
-  log "recorded KILIX_NVR_DETECT in $env_file"
+  log "recorded KILIX_OBJECT_DETECTOR in $env_file"
 }
 
 remove_runtime() {

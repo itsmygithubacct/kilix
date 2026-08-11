@@ -31,6 +31,7 @@ COMPONENTS = (
     ("install-kilix-mask.sh", "KILIX_MASK"),
     ("install-kilix-rtsp.sh", "KILIX_RTSP"),
     ("install-kilix-nvr.sh", "KILIX_NVR"),
+    ("install-kilix-object-detect.sh", "KILIX_LOOK"),
 )
 
 GIT_IDENTITY = {

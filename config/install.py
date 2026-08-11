@@ -194,7 +194,7 @@ def _runtime_paths(runtime: dict) -> tuple[str, str]:
         os.path.expanduser("~"), ".local", "gpu_terminal")
     directory = os.environ.get("KILIX_YOLO_DIR") or os.path.join(
         root, runtime["directory"])
-    return directory, os.path.join(directory, "bin", "kilix-nvr-detect")
+    return directory, os.path.join(directory, "bin", "kilix-look-detect")
 
 
 def _runtime_rows() -> list[dict]:
