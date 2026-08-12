@@ -16,7 +16,7 @@ KILIX_RTSP_ALLOW_MUTABLE_REF="${KILIX_RTSP_ALLOW_MUTABLE_REF:-0}"
 # resolves it — a first-use download and an existing checkout alike — so a moved
 # pin reaches machines that already have the component. Set
 # KILIX_RTSP_KEEP_EXISTING_CHECKOUT=1 to work from a checkout as it is.
-KILIX_RTSP_DEFAULT_REF=c276a741cc87c93dc6664df799b0f155f9b4ed76
+KILIX_RTSP_DEFAULT_REF=336213f814a87265dd02efdfe7d1c90052064ac7
 
 die() { printf 'kilix rtsp: %s\n' "$*" >&2; exit 1; }
 log() { printf 'kilix rtsp: %s\n' "$*" >&2; }

@@ -10,6 +10,7 @@ Both paths now resolve the same ref, under the same immutable-SHA validation.
 Keeping a checkout as it is stays possible and has to say so in as many words,
 because a silent decision is what caused this.
 """
+import json
 import os
 from pathlib import Path
 import re
@@ -269,6 +270,36 @@ class InstallerShapeTests(unittest.TestCase):
                 self.assertIn(
                     'if ! [[ "$install_ref" =~ ^[0-9a-fA-F]{40}$ ]]', body)
                 self.assertIn("%s_ALLOW_MUTABLE_REF" % prefix, body)
+
+
+class CatalogPinTests(unittest.TestCase):
+    """A catalog install and a host verb must select the same component."""
+
+    def test_camera_component_pins_match_the_shared_catalog(self):
+        catalog_path = (
+            ROOT / "third_party" / "kilix-content" / "src" /
+            "kilix_content" / "catalog" / "plebian.json"
+        )
+        catalog = json.loads(catalog_path.read_text())
+        content = {entry["id"]: entry for entry in catalog["content"]}
+        expected = (
+            ("install-kilix-rtsp.sh", "KILIX_RTSP", "kilix-rtsp"),
+            ("install-kilix-nvr.sh", "KILIX_NVR", "kilix-nvr"),
+            ("install-kilix-object-detect.sh", "KILIX_LOOK",
+             "kilix-object-detect"),
+        )
+
+        for installer, prefix, catalog_id in expected:
+            with self.subTest(component=catalog_id):
+                body = (SCRIPTS / installer).read_text()
+                match = re.search(
+                    r"(?m)^%s_DEFAULT_REF=([0-9a-f]{40})$" % prefix,
+                    body,
+                )
+                self.assertIsNotNone(match)
+                self.assertEqual(
+                    match.group(1), content[catalog_id]["source"]["ref"]
+                )
 
 
 if __name__ == "__main__":
