@@ -332,7 +332,7 @@ class EncoderFeed:
 class AppPane:
     def __init__(self, cmd, app_w, app_h, fps, serve=False, lan=False, hls=False,
                  audio=False, mse=False, webrtc=False, no_pane=False,
-                 fill=False, auto_fit=False):
+                 fill=False, auto_fit=False, manage_windows=True):
         self.cmd = cmd
         self.app_w, self.app_h = app_w, app_h   # None → sized from the pane
         self.fill = fill
@@ -343,6 +343,10 @@ class AppPane:
         self.mse, self.webrtc = mse, webrtc
         self.audio = audio               # capture app audio into the broadcasts
         self.no_pane = no_pane           # QW3: headless — no local pane at all
+        # Ordinary X apps have no WM on their private display, so the runner
+        # sizes, focuses and clamps their top-level windows. A desktop session
+        # supplies its own WM and must retain sole ownership of those windows.
+        self.manage_windows = bool(manage_windows)
         self.pulse_sink = None
         self.feed = EncoderFeed()
         self.session = os.environ.get("KILIX_SESSION") or f"run-{os.getpid()}"
@@ -703,6 +707,8 @@ class AppPane:
         screen (small apps like xclock default to a tiny window in the
         top-left corner otherwise), focus it, and park the pointer inside
         (PointerRoot focus follows the pointer)."""
+        if not self.manage_windows:
+            return
         deadline = time.time() + 15
         while time.time() < deadline:
             if self.fit_app_window(force=True):
@@ -753,7 +759,8 @@ class AppPane:
         second X event hook and still catches app-spawned windows within a
         fraction of a second.
         """
-        if self.xd is None or getattr(self, "_fit_suspended", False):
+        if (not getattr(self, "manage_windows", True) or self.xd is None
+                or getattr(self, "_fit_suspended", False)):
             return
         if now - getattr(self, "_last_window_fit", 0.0) < 0.5:
             return
@@ -928,7 +935,8 @@ class AppPane:
                    f"{self._dbg['kbps']:.0f}kb/s {self.capture_backend}")
         serve = f" · VNC :{self.rfb_port}" if self.serve else ""
         fit = ""
-        if getattr(self, "_auto_fit", False):
+        if (getattr(self, "manage_windows", True)
+                and getattr(self, "_auto_fit", False)):
             fit = (" · F10 fit:off" if getattr(self, "_fit_suspended", False)
                    else " · F10 fit:on")
         size_tag = "≡pane" if self.resizable else "fixed"
@@ -954,7 +962,8 @@ class AppPane:
         etype = ev.get("event", 1)
         if (mods & 4) and ev["key"] == "q" and etype == 1:
             raise KeyboardInterrupt
-        if (ev["key"] == "F10" and etype == 1
+        if (getattr(self, "manage_windows", True)
+                and ev["key"] == "F10" and etype == 1
                 and getattr(self, "_auto_fit", False)):
             self._fit_suspended = not getattr(self, "_fit_suspended", False)
             self.prev_status = None
@@ -1001,7 +1010,8 @@ class AppPane:
                     self.app_w, self.app_h = w, h
                     if getattr(self, "inj", None) is not None:
                         self.inj.app_w, self.inj.app_h = w, h
-                    self.fit_app_window(force=True)
+                    if getattr(self, "manage_windows", True):
+                        self.fit_app_window(force=True)
                     log(f"pane resize -> display {w}x{h}")
                 else:
                     self.resizable = False       # degrade to GPU scaling
@@ -1135,6 +1145,7 @@ def main():
     fps = 20
     serve = lan = hls = audio = mse = webrtc = fill = False
     auto_fit = None
+    manage_windows = True
     no_pane = os.environ.get("KILIX_NO_PANE") == "1"
     while args and args[0].startswith("--"):
         if args[0] == "--size" and len(args) > 1:
@@ -1176,6 +1187,12 @@ def main():
         elif args[0] == "--no-refit-windows":
             auto_fit = False
             args = args[1:]
+        elif args[0] == "--desktop-session":
+            # The child is a window manager/desktop, not a WM-less app. It
+            # owns placement, focus and resize policy for every X window.
+            manage_windows = False
+            auto_fit = False
+            args = args[1:]
         elif args[0] == "--debug":          # fps/bandwidth metrics -> status + file
             os.environ["KILIX_DEBUG"] = "1"
             args = args[1:]
@@ -1189,6 +1206,7 @@ def main():
     if not args:
         sys.exit("usage: kilix run [--size WxH] [--fps N] [--serve|--lan] "
                  "[--hls] [--mse] [--webrtc] [--audio] [--no-pane] [--debug] "
+                 "[--desktop-session] "
                  "command [args…]\n"
                  "  --size defaults to the pane's pixel size")
     if auto_fit is None:
@@ -1198,7 +1216,8 @@ def main():
     try:
         AppPane(args, app_w, app_h, fps, serve=serve, lan=lan, hls=hls,
                 audio=audio, mse=mse, webrtc=webrtc, no_pane=no_pane,
-                fill=fill, auto_fit=auto_fit).run()
+                fill=fill, auto_fit=auto_fit,
+                manage_windows=manage_windows).run()
     finally:
         cleanup_app_profile(temporary_profile)
 

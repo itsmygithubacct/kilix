@@ -247,6 +247,20 @@ try:
 finally:
     apprun.xtest.fake_input = orig_fake_input
 
+# A desktop session has its own WM. The host runner must never resize or even
+# clamp that WM's taskbar, menus, or managed client windows.
+pane = object.__new__(apprun.AppPane)
+pane.manage_windows = False
+pane.xd = FakeXD([manager, vm])
+pane._fit_suspended = False
+pane._last_window_fit = 0.0
+pane.fit_app_window = lambda *a, **kw: (_ for _ in ()).throw(
+    AssertionError("desktop session was fitted"))
+pane.clamp_app_windows = lambda: (_ for _ in ()).throw(
+    AssertionError("desktop session was clamped"))
+pane.focus_app_window()
+pane.maintain_app_window(1.0)
+
 
 class FakeInjector:
     def __init__(self):
@@ -307,6 +321,21 @@ finally:
 
 assert seen["args"] == ["steam"]
 assert seen["kw"]["auto_fit"] is True
+assert seen["kw"]["manage_windows"] is True
+assert seen["ran"] is True
+
+seen.clear()
+try:
+    apprun.AppPane = CapturingAppPane
+    sys.argv = ["apprun.py", "--desktop-session", "/bin/desktop-session"]
+    apprun.main()
+finally:
+    apprun.AppPane = orig_app_pane
+    sys.argv = orig_argv
+
+assert seen["args"] == ["/bin/desktop-session"]
+assert seen["kw"]["auto_fit"] is False
+assert seen["kw"]["manage_windows"] is False
 assert seen["ran"] is True
 
 print("test_apprun OK")
