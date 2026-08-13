@@ -80,7 +80,7 @@ Optional desktop pins carried by this Kilix release advance to:
 - **Kilix TUI utilities** — `f260792e3427c795387878cfa485d89fb16ff6db`;
 - **Kilix Cap** — `074e9c1559a696c95095215d12c21795452f1933`;
 - **Kilix Land** — `78f601542432e814c0e4af1ae06850737442106c`;
-- **Kilix IceWM** — `439e49a64fbcc8170ab23da352f1c54b5907637f`.
+- **Kilix IceWM** — `23df3a5959bd32b0cafcec571b39669c5a31a4e1`.
 
 ## Release 0.1.8
 

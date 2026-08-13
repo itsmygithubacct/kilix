@@ -85,6 +85,13 @@ class KilixIceWMInstallerTests(unittest.TestCase):
         self.assertIn("KILIX_ICEWM_ALLOW_MUTABLE_REF", self.text)
         self.assertIn("--print-ref", self.text)
 
+    def test_installer_selects_the_tested_provider_revision(self):
+        self.assertIn(
+            "KILIX_ICEWM_DEFAULT_REF="
+            "23df3a5959bd32b0cafcec571b39669c5a31a4e1",
+            self.text,
+        )
+
     def test_refuses_a_symlinked_entry_point(self):
         self.assertIn('[ -L "$entry" ]', self.text)
         self.assertIn("provider did not supply a regular executable", self.text)
