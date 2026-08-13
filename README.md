@@ -57,6 +57,13 @@ remains on the right. CPU visibility defaults to `auto` above `1.0`; either
 side can be set independently to `auto`, `always`, or `off`, and the chip
 appears whenever either value is visible.
 
+Launching a newer Kilix no longer rewrites an existing shared
+`settings.conf` merely to materialize newly introduced defaults. Missing keys
+still take their documented effective defaults and are persisted when the
+operator changes them explicitly. This keeps an in-place release transaction's
+operator settings byte-exact, including when the previous release's updater is
+the process coordinating the first hop.
+
 The uv-managed `kilix-telemetry` 0.1.2 component now supplies CPU, memory,
 pressure, temperatures, fan speeds, process records, and recent history from
 one private mmap ring. One per-user sampler serves terminal chrome and the

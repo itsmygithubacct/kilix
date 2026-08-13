@@ -218,7 +218,7 @@ class SharedSettingsTests(unittest.TestCase):
                 settings.update(
                     {settings.CODING_YOLO_KEY: "sometimes"}, str(path))
 
-    def test_ensure_adds_new_toggle_defaults_to_an_existing_shared_file(self):
+    def test_ensure_preserves_existing_bytes_and_supplies_new_defaults(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.conf"
             original = (
@@ -228,20 +228,18 @@ class SharedSettingsTests(unittest.TestCase):
             )
             path.write_text(original)
             settings.ensure_file(str(path))
-            text = path.read_text()
-            self.assertIn(original, text)
-            self.assertIn("KILIX_CHROME_VOLUME=1", text)
-            self.assertIn("KILIX_CHROME_TEMPERATURE=0", text)
-            self.assertIn(
-                "KILIX_CHROME_BUTTON_SYNCHRONIZE_INPUT=1", text)
-            self.assertIn(
-                f"{settings.PANE_CPU_MODE_KEY}=auto", text)
-            self.assertIn(
-                f"{settings.PANE_MEMORY_MODE_KEY}=auto", text)
-            self.assertIn(settings.GAMES_MARKER, text)
+            self.assertEqual(path.read_text(), original)
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+            values = settings.load(str(path))
+            self.assertEqual(values["KILIX_CHROME_VOLUME"], "1")
+            self.assertEqual(values["KILIX_CHROME_TEMPERATURE"], "0")
+            self.assertEqual(
+                values["KILIX_CHROME_BUTTON_SYNCHRONIZE_INPUT"], "1")
+            self.assertEqual(values[settings.PANE_CPU_MODE_KEY], "auto")
+            self.assertEqual(values[settings.PANE_MEMORY_MODE_KEY], "auto")
             for key in settings.GAME_KEY_BY_ID.values():
                 expected = "0" if key == "KILIX_GAME_DOOM" else "1"
-                self.assertIn(f"{key}={expected}", text)
+                self.assertEqual(values[key], expected)
 
     def test_noninteractive_tui_controls_use_same_file(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -328,20 +326,22 @@ class SharedSettingsTests(unittest.TestCase):
             self.assertIn(settings.SESSION_LOG_MARKER, text)
             self.assertIn("KILIX_TRANSCRIPT=1", text)
 
-    def test_session_logging_keys_reach_an_existing_shared_file(self):
-        # Upgrades must pick up the new defaults without losing user content.
+    def test_session_logging_defaults_do_not_rewrite_an_existing_file(self):
+        # Upgrades pick up new effective defaults without migrating user bytes.
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.conf"
             original = "# hand written\nKILIX_CHROME_CLOCK=0\n"
             path.write_text(original)
             settings.ensure_file(str(path))
-            text = path.read_text()
-            self.assertIn(original, text)
-            self.assertIn("KILIX_TRANSCRIPT=1", text)
-            self.assertIn(f"{settings.TRANSCRIPT_GRAPHICS_KEY}=elide", text)
-            self.assertIn(f"{settings.TRANSCRIPT_LIMIT_KEY}=8M", text)
-            self.assertIn(f"{settings.TRANSCRIPT_TOTAL_KEY}=5G", text)
-            self.assertIn(f"{settings.TRANSCRIPT_ARCHIVE_KEY}=1G", text)
+            self.assertEqual(path.read_text(), original)
+            self.assertTrue(settings.transcript_enabled(str(path)))
+            self.assertEqual(settings.transcript_graphics(str(path)), "elide")
+            self.assertEqual(
+                settings.transcript_limit(str(path)), 8 * 1024 * 1024)
+            self.assertEqual(
+                settings.transcript_total(str(path)), 5 * 1024 ** 3)
+            self.assertEqual(
+                settings.transcript_archive_total(str(path)), 1 * 1024 ** 3)
 
     def test_transcript_values_are_validated_not_coerced(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -440,17 +440,15 @@ class SharedSettingsTests(unittest.TestCase):
             self.assertEqual(settings.voice_device_out(str(fresh)), "default")
             self.assertFalse(settings.voice_history(str(fresh)))
 
-            # The upgrade path: an existing file gains the section without
-            # losing what the user already wrote.
+            # The upgrade path: an existing file remains byte-exact, while
+            # readers supply every newly introduced default dynamically.
             existing = Path(tmp) / "existing.conf"
             original = "# hand written\nKILIX_CHROME_CLOCK=0\n"
             existing.write_text(original)
             settings.ensure_file(str(existing))
-            upgraded = existing.read_text()
-            self.assertIn(original, upgraded)
-            self.assertIn(settings.VOICE_MARKER, upgraded)
-            self.assertIn(f"{settings.VOICE_STT_SUBMIT_KEY}=never", upgraded)
-            self.assertIn(f"{settings.VOICE_HISTORY_KEY}=off", upgraded)
+            self.assertEqual(existing.read_text(), original)
+            self.assertEqual(settings.stt_submit(str(existing)), "never")
+            self.assertFalse(settings.voice_history(str(existing)))
 
     def test_voice_keys_round_trip_through_update(self):
         with tempfile.TemporaryDirectory() as tmp:

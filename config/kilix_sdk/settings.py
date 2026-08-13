@@ -596,10 +596,16 @@ def _apply_changes(text: str, changes: Mapping[str, str]) -> str:
 
 
 def ensure_file(path: str | None = None) -> str:
-    """Create the shared file and add defaults introduced by newer hosts."""
+    """Create the shared file without migrating an existing operator file.
+
+    Readers already supply defaults for absent managed keys. Keeping an
+    existing file byte-exact means that launching a newer Kilix cannot turn a
+    release update into an implicit settings migration; a value is persisted
+    only when the operator changes it explicitly.
+    """
     target = _target_path(path)
     with _settings_lock(target):
-        text, exists = read_text(target)
+        _text, exists = read_text(target)
         if not exists:
             _atomic_write(target, _initial_text(defaults(migrate_environment=True)))
             return target
@@ -608,12 +614,6 @@ def ensure_file(path: str | None = None) -> str:
             os.fchmod(fd, 0o600)
         finally:
             os.close(fd)
-        present = parse_text(text)
-        missing = [key for key in MANAGED_KEYS if key not in present]
-        if missing:
-            values = defaults()
-            text = _apply_changes(text, {key: values[key] for key in missing})
-            _atomic_write(target, text)
     return target
 
 
