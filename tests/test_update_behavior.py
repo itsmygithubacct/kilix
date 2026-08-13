@@ -339,10 +339,48 @@ if [ "${FAKE_KILIX_BUILD_FAIL:-}" = after_stamp ]; then exit 25; fi
             ["git", "symbolic-ref", "--quiet", "HEAD"], cwd=self.checkout)
         self.assertNotEqual(branch.returncode, 0)
 
+    def test_parent_rollback_recurses_across_changed_and_new_submodules(self):
+        before_top = git("rev-parse", "HEAD", cwd=self.checkout,
+                         capture=True).stdout.strip()
+        before_src = self._src_head()
+        self._publish_with_src_change("outer-rollback-source")
+        git("-c", "protocol.file.allow=always", "submodule", "add",
+            str(self.src_remote), "third_party/new-module", cwd=self.seed)
+        git("commit", "-m", "introduce outer rollback module", cwd=self.seed)
+        git("push", "origin", "main", cwd=self.seed)
+        target = git("rev-parse", "HEAD", cwd=self.seed,
+                     capture=True).stdout.strip()
+
+        result = self._update(KILIX_REF=target)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            git("config", "--local", "--get", "submodule.recurse",
+                cwd=self.checkout, capture=True).stdout.strip(),
+            "true",
+        )
+        self.assertTrue((self.checkout / "third_party/new-module/.git").is_file())
+
+        # Match the checkout/reset pair used by the 0.1.8 outer updater.  It
+        # does not know the target's new submodule names, so the local recurse
+        # contract must make the pair sufficient on its own.
+        git("checkout", "--detach", before_top, cwd=self.checkout)
+        git("reset", "--hard", before_top, cwd=self.checkout)
+        self.assertEqual(self._src_head(), before_src)
+        self.assertFalse((self.checkout / "third_party/new-module").exists())
+        self.assertEqual(
+            git("status", "--porcelain", cwd=self.checkout,
+                capture=True).stdout.strip(),
+            "",
+        )
+
     def test_submodule_failure_rolls_top_level_sources_back(self):
         before = git("rev-parse", "HEAD", cwd=self.checkout,
                      capture=True).stdout.strip()
-        self._publish("submodule-change")
+        git("-c", "protocol.file.allow=always", "submodule", "add",
+            str(self.src_remote), "third_party/failing-new-module",
+            cwd=self.seed)
+        git("commit", "-m", "introduce failing submodule", cwd=self.seed)
+        git("push", "origin", "main", cwd=self.seed)
         wrapper = self.bindir / "git"
         state_file = Path(self.temp.name) / "submodule-failed-once"
         real_git = shutil.which("git")
@@ -357,6 +395,14 @@ if [ "${FAKE_KILIX_BUILD_FAIL:-}" = after_stamp ]; then exit 25; fi
         self.assertIn("rolling changed state back", result.stderr)
         self.assertEqual(git("rev-parse", "HEAD", cwd=self.checkout,
                              capture=True).stdout.strip(), before)
+        self.assertFalse(
+            (self.checkout / "third_party/failing-new-module").exists()
+        )
+        self.assertEqual(
+            git("status", "--porcelain", cwd=self.checkout,
+                capture=True).stdout.strip(),
+            "",
+        )
 
     def test_no_engine_fails_and_restores_changed_sources(self):
         self.prebuilt.unlink()

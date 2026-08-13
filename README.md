@@ -1025,7 +1025,10 @@ missing external checkout to be cloned. Automatic installs require
 `KILIX95_REF` to be a full immutable commit SHA; mutable tags/branches require
 the explicit `KILIX95_ALLOW_MUTABLE_REF=1` trust override. `kilix update`
 similarly honors `KILIX_REF` by fetching it from the validated origin and
-checking out the resolved commit detached.
+checking out the resolved commit detached. The updater moves the parent first,
+initializes the resulting recursive submodule graph, and leaves repository-local
+submodule recursion enabled so a coordinating outer checkout/reset also rolls
+back changed and newly introduced nested modules.
 Direct updates and fork builds serialize on the private
 `~/.local/gpu_terminal/kilix/state/build-update.lock`. An outer installer that
 already holds this lock must pass its open, locked descriptor to Kilix as

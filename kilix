@@ -3215,9 +3215,21 @@ case "${1:-}" in
     trap 'exit 129' HUP
     _update_sources_mutated=1
     if [ -n "${KILIX_REF:-}" ]; then
-      git -C "$KILIX_HOME" checkout --detach "$_target" || exit $?
+      git -C "$KILIX_HOME" -c submodule.recurse=false \
+        checkout --detach "$_target" || exit $?
     else
-      git -C "$KILIX_HOME" merge --ff-only "origin/$_branch" || exit $?
+      git -C "$KILIX_HOME" -c submodule.recurse=false \
+        merge --ff-only "origin/$_branch" || exit $?
+    fi
+    # A Plebian-OS whole-stack transaction can fail after this command has
+    # committed its own update.  Its outer rollback restores the Kilix parent
+    # with ordinary checkout/reset commands, so make those commands recurse
+    # through every old, changed, or newly introduced submodule.  Forward
+    # movement above deliberately changes only the parent first; otherwise a
+    # new gitlink could be traversed before `submodule update` initializes it.
+    if ! git -C "$KILIX_HOME" config --local submodule.recurse true; then
+      echo "kilix update: could not enable recursive submodule transactions" >&2
+      exit 1
     fi
     if ! git -C "$KILIX_HOME" submodule update --init --recursive; then
       echo "kilix update: submodule update failed" >&2
