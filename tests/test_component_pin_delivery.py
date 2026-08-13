@@ -275,6 +275,24 @@ class InstallerShapeTests(unittest.TestCase):
 class CatalogPinTests(unittest.TestCase):
     """A catalog install and a host verb must select the same component."""
 
+    def test_tui_utils_pin_matches_the_shared_catalog(self):
+        catalog_path = (
+            ROOT / "third_party" / "kilix-content" / "src" /
+            "kilix_content" / "catalog" / "plebian.json"
+        )
+        catalog = json.loads(catalog_path.read_text())
+        package = next(
+            entry for entry in catalog["packages"]
+            if entry["id"] == "kilix-tui-utils"
+        )
+        installer = (SCRIPTS / "install-kilix-tui-utils.sh").read_text()
+        match = re.search(
+            r"(?m)^KILIX_TUI_UTILS_DEFAULT_REF=([0-9a-f]{40})$",
+            installer,
+        )
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group(1), package["source"]["ref"])
+
     def test_camera_component_pins_match_the_shared_catalog(self):
         catalog_path = (
             ROOT / "third_party" / "kilix-content" / "src" /
