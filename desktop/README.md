@@ -2,7 +2,9 @@
 
 A Windows 95-style desktop rendered as **pixels** inside a kilix pane.
 Launch with `kilix desktop` (opens in its own tab). Quit via
-Start ▸ Shut Down…, or `Ctrl+Alt+Q`.
+Start ▸ Shut Down…, or `Ctrl+Alt+Q`. `PrtSc` saves a screenshot of the
+screen (`Alt+PrtSc`: just the active window) as a timestamped PNG in the
+desktop folder, where it shows up as an icon.
 
 ## How it works
 

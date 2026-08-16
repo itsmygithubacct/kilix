@@ -47,7 +47,9 @@ The bundled Kilix 95 fallback now builds its Programs submenu from the same
 catalog as the external provider, renders terminal apps as managed XPane
 windows, and refocuses single-instance apps. Terminal-native PDF viewing also
 uses the catalog boundary, while PDF Conversion retains its frozen uv-managed
-runtime.
+runtime. It also binds Print Screen: a shot of the screen — with `Alt`, of
+just the active window — lands as a timestamped PNG in the desktop folder,
+where it appears as an icon immediately.
 
 Pane chrome now completes the paired CPU/RAM indicator originally specified
 for the prior release. The CPU value on the left is the sampled CPU use of

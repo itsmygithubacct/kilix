@@ -66,6 +66,9 @@ _KEYPAD = {
     57425: ("Insert", ""), 57426: ("Delete", "")}
 for _i in range(10):
     _KEYPAD[57399 + _i] = (str(_i), str(_i))
+# PrintScreen also arrives only as a functional code — name it (text-less, so
+# it can never type into a field) for dispatch_key's screenshot binding.
+_KEYPAD[57361] = ("PrintScreen", "")
 
 
 class DeskTerm(kilix_term.Term):
@@ -392,6 +395,32 @@ class Desk:
             self.presenter.close(discard=discard)
             self.presenter = None
 
+    # ── screenshots (PrtSc) ─────────────────────────────────────────────────
+    def screenshot(self, window=None):
+        """Save the screen — or one window's surface — as a timestamped PNG.
+
+        The desktop already renders to an RGB framebuffer, so the capture is
+        a render + save. Shots land in the desktop folder, so each one shows
+        up as an icon the moment the key is pressed. Returns the path, or
+        None when the save failed (reported in a message box, never a crash).
+        """
+        self.render()                 # flush pending damage: shoot what shows
+        img = self.fb if window is None else window.render()
+        base = time.strftime("Screenshot %Y-%m-%d %H.%M.%S")
+        path = os.path.join(self.shell.dir, base + ".png")
+        n = 2
+        while os.path.exists(path):
+            path = os.path.join(self.shell.dir, f"{base} ({n}).png")
+            n += 1
+        try:
+            img.save(path)
+        except Exception as e:
+            wm_mod.msgbox(self, "Screenshot", str(e), icon="error")
+            return None
+        self.play_sound("asterisk")
+        self.shell.dir_changed(self.shell.dir)
+        return path
+
     # ── input normalization ─────────────────────────────────────────────────
     def _norm_key(self, raw):
         evt = raw.get("evt", 1)       # 1 press, 2 repeat, 3 release
@@ -523,6 +552,11 @@ class Desk:
         self._last_input = time.time()
         self._hover_since = self._last_input
         self._hide_tooltip()
+        if ev.key == "PrintScreen":
+            # global, before menus/modality: PrtSc captures the screen as it
+            # is, open menus included; Alt+PrtSc just the active window
+            self.screenshot(self.wm.active if ev.alt else None)
+            return
         if self.menus.active:
             self.menus.on_key(ev)
             return
