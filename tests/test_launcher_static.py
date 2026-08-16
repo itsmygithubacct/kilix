@@ -31,7 +31,7 @@ class KilixLauncherTests(unittest.TestCase):
                 capture_output=True,
                 text=True,
             ).stdout.strip(),
-            "6df4525805f875ade88dbf9d0b2da95aa847da1a",
+            "3affc0cc4b9a80517c452470a01e2103d29e9dbf",
         )
 
         with tempfile.TemporaryDirectory() as tmp:
