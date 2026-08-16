@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # kilix shell rc — loaded via `bash --rcfile` when kilix starts a shell (see
 # the `-o shell=` in ../kilix). This is how kilix carries prompt/shell tweaks
 # WITHOUT putting them in ~/.bashrc, where they would also leak into regular
