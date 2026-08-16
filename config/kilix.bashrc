@@ -135,3 +135,39 @@ if [ "${KILIX_STREAM:-}" = 1 ]; then
         fi
     }
 fi
+
+# 6. tmux-cli's `tb` pane logger. `kilix tmux` installs the pinned
+#    tmux-tui/tmux-cli source closure, but publishes tb.py as a `tb` command
+#    only when asked (--with-tb). Alias the delivered tb.py in kilix shells so
+#    the logger works out of the box, resolved through the installer's own
+#    stamp + managed checkout — the exact file a --with-tb link would point at.
+#    Never clobbers: an existing `tb` command/alias/function wins — silently
+#    when it already IS the delivered tb.py, with a note otherwise.
+if [[ $- == *i* ]]; then
+    _kilix_tb_storage="${KILIX_STORAGE_HOME:-${GPU_TERMINAL_HOME:-$HOME/.local/gpu_terminal}/kilix}"
+    _kilix_tb_stamp="${KILIX_STATE_DIRECTORY:-$_kilix_tb_storage/state}/tmux-tui-install.refs"
+    _kilix_tb_ref=""
+    if [ -f "$_kilix_tb_stamp" ] && [ -r "$_kilix_tb_stamp" ]; then
+        while IFS='=' read -r _kilix_tb_key _kilix_tb_value; do
+            [ "$_kilix_tb_key" = tmux-tui ] && _kilix_tb_ref="$_kilix_tb_value"
+        done < "$_kilix_tb_stamp"
+    fi
+    # the installer only ever stamps full commit SHAs — anything else is a
+    # corrupt stamp, not a path component
+    [[ "$_kilix_tb_ref" =~ ^[0-9a-fA-F]{40}$ ]] || _kilix_tb_ref=""
+    _kilix_tb_py="${GPU_TERMINAL_SOURCE_HOME:-$HOME/.local/gpu_terminal/sources}/.tmux-tui-sources/tmux-tui-$_kilix_tb_ref/tmux-cli/tb.py"
+    if [ -n "$_kilix_tb_ref" ] && [ -x "$_kilix_tb_py" ]; then
+        _kilix_tb_kind="$(type -t tb 2>/dev/null || true)"
+        if [ -z "$_kilix_tb_kind" ]; then
+            # shellcheck disable=SC2139  # expand the resolved path now, by design
+            alias tb="$(printf '%q' "$_kilix_tb_py")"
+        elif ! { [ "$_kilix_tb_kind" = file ] &&
+                 [ "$(readlink -f -- "$(type -P tb)" 2>/dev/null)" = \
+                   "$(readlink -f -- "$_kilix_tb_py" 2>/dev/null)" ]; }; then
+            printf 'kilix: leaving the existing tb %s in place; the tmux-cli logger is %s\n' \
+                "$_kilix_tb_kind" "$_kilix_tb_py" >&2
+        fi
+    fi
+    unset _kilix_tb_storage _kilix_tb_stamp _kilix_tb_ref _kilix_tb_key \
+        _kilix_tb_value _kilix_tb_py _kilix_tb_kind
+fi

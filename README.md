@@ -57,6 +57,12 @@ remains on the right. CPU visibility defaults to `auto` above `1.0`; either
 side can be set independently to `auto`, `always`, or `off`, and the chip
 appears whenever either value is visible.
 
+Kilix pane shells now alias `tb` to the tmux-cli logger delivered by the
+pinned `tmux-tui` closure once `kilix tmux` has installed it, so the logger
+works without the separately published `--with-tb` command. An existing `tb`
+command, alias, or function always wins: the alias is skipped with a note —
+silently when `tb` already resolves to the delivered tb.py.
+
 Launching a newer Kilix no longer rewrites an existing shared
 `settings.conf` merely to materialize newly introduced defaults. Missing keys
 still take their documented effective defaults and are persisted when the

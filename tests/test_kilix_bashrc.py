@@ -206,3 +206,103 @@ class RunAliasTests(unittest.TestCase):
                     self.record.read_text().splitlines(),
                     ["run", "chromium", "https://example.test"],
                 )
+
+
+class TbAliasTests(unittest.TestCase):
+    """The tmux-cli `tb` alias (kilix.bashrc section 6)."""
+
+    REF = "a" * 40
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        root = Path(self.temp.name)
+        self.bin = root / "bin"
+        self.bin.mkdir()
+        self.home = root / "home"
+        self.home.mkdir()
+        self.sources = root / "sources"
+        self.state = root / "state"
+        self.state.mkdir()
+        self.record = root / "tb-argv"
+        checkout = self.sources / ".tmux-tui-sources" / f"tmux-tui-{self.REF}"
+        self.tb_py = checkout / "tmux-cli" / "tb.py"
+        self.tb_py.parent.mkdir(parents=True)
+        self.tb_py.write_text(
+            "#!/bin/sh\n"
+            f'printf \'%s\\n\' "$@" > "{self.record}"\n')
+        self.tb_py.chmod(0o755)
+        (self.state / "tmux-tui-install.refs").write_text(
+            f"tmux-tui={self.REF}\ntmux-cli={'b' * 40}\n")
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def _shell(self, script, **extra):
+        env = {"PATH": f"{self.bin}:/usr/bin:/bin", "HOME": str(self.home),
+               "TERM": "dumb",
+               "GPU_TERMINAL_SOURCE_HOME": str(self.sources),
+               "KILIX_STATE_DIRECTORY": str(self.state)}
+        env.update(extra)
+        return subprocess.run(
+            ["bash", "--rcfile", str(RCFILE), "-i"], input=script, env=env,
+            capture_output=True, text=True, timeout=30)
+
+    def test_tb_aliases_to_the_delivered_tb_py(self):
+        out = self._shell("type -t tb\ntb log --pane 3\n")
+        self.assertEqual(out.stdout.strip(), "alias")
+        self.assertEqual(self.record.read_text().splitlines(),
+                         ["log", "--pane", "3"])
+
+    def test_nothing_installed_defines_nothing_quietly(self):
+        (self.state / "tmux-tui-install.refs").unlink()
+        out = self._shell("type -t tb\n")
+        self.assertEqual(out.stdout.strip(), "")
+        self.assertNotIn("tmux-cli logger", out.stderr)
+
+    def test_missing_checkout_defines_nothing_quietly(self):
+        self.tb_py.unlink()
+        out = self._shell("type -t tb\n")
+        self.assertEqual(out.stdout.strip(), "")
+        self.assertNotIn("tmux-cli logger", out.stderr)
+
+    def test_corrupt_stamp_ref_is_not_a_path_component(self):
+        (self.state / "tmux-tui-install.refs").write_text(
+            "tmux-tui=../../../../etc\n")
+        out = self._shell("type -t tb\n")
+        self.assertEqual(out.stdout.strip(), "")
+        self.assertNotIn("tmux-cli logger", out.stderr)
+
+    def test_user_alias_wins_with_a_visible_note(self):
+        (self.home / ".bashrc").write_text("alias tb='echo mine'\n")
+        out = self._shell("alias tb\ntb\n")
+        self.assertIn("echo mine", out.stdout)
+        self.assertIn("mine", out.stdout)
+        self.assertIn("leaving the existing tb alias", out.stderr)
+        self.assertFalse(self.record.exists(), "user alias was clobbered")
+
+    def test_user_function_wins_with_a_visible_note(self):
+        (self.home / ".bashrc").write_text("tb() { echo user-function; }\n")
+        out = self._shell("type -t tb\ntb\n")
+        self.assertEqual(out.stdout.strip().splitlines(),
+                         ["function", "user-function"])
+        self.assertIn("leaving the existing tb function", out.stderr)
+        self.assertFalse(self.record.exists(), "user function was clobbered")
+
+    def test_foreign_tb_command_wins_with_a_visible_note(self):
+        foreign = self.bin / "tb"
+        foreign.write_text("#!/bin/sh\necho foreign\n")
+        foreign.chmod(0o755)
+        out = self._shell("type -t tb\ntb\n")
+        self.assertEqual(out.stdout.strip().splitlines(),
+                         ["file", "foreign"])
+        self.assertIn("leaving the existing tb file", out.stderr)
+        self.assertFalse(self.record.exists(), "PATH command was shadowed")
+
+    def test_published_with_tb_link_is_honored_silently(self):
+        local_bin = self.home / ".local" / "bin"
+        local_bin.mkdir(parents=True)
+        (local_bin / "tb").symlink_to(self.tb_py)
+        out = self._shell("type -t tb\ntb from-link\n")
+        self.assertEqual(out.stdout.strip(), "file")
+        self.assertNotIn("tmux-cli logger", out.stderr)
+        self.assertEqual(self.record.read_text().splitlines(), ["from-link"])
