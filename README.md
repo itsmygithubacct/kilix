@@ -77,7 +77,7 @@ and pane CPU includes commands that exit between process-table scans.
 
 Optional desktop pins carried by this Kilix release advance to:
 
-- **Kilix TUI utilities** — `f260792e3427c795387878cfa485d89fb16ff6db`;
+- **Kilix TUI utilities** — `dc462372aa7417fa9bfccd82b8312d62d1077f82`;
 - **Kilix Cap** — `074e9c1559a696c95095215d12c21795452f1933`;
 - **Kilix Land** — `78f601542432e814c0e4af1ae06850737442106c`;
 - **Kilix IceWM** — `0b9f11b45fddc5370c37b00e9cd9e42ac5a5f6d7`.
