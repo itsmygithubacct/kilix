@@ -335,7 +335,7 @@ else:
         self.assertIs(graphics.write_frame, __import__("gfx").write_frame)
 
     def test_state_exposes_pinned_python_binding(self):
-        self.assertEqual(state.KILIX_STATE_ABI, (0, 4))
+        self.assertEqual(state.KILIX_STATE_ABI, (0, 5))
         self.assertEqual(state.binding_version, "0.1.0")
         self.assertEqual(state.Store.__mro__[1].__module__, "kilix_state.store")
 
