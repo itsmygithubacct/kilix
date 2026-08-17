@@ -34,9 +34,25 @@ class ToggleSpec:
     label: str
     section: str
     default: bool = True
+    desktop_default: bool | None = None
+    deferred: bool = False
+
+    def effective_default(self) -> bool:
+        if self.desktop_default is not None and in_desktop_session():
+            return self.desktop_default
+        return self.default
+
+
+def in_desktop_session() -> bool:
+    """Whether Kilix is the shell for a Pleb or Plebian-OS session."""
+    return (os.environ.get("XDG_SESSION_DESKTOP", "").casefold() == "pleb"
+            or os.environ.get("XDG_CURRENT_DESKTOP", "").casefold() == "pleb")
 
 
 TOP_BAR_TOGGLES = (
+    ToggleSpec(
+        "KILIX_CHROME_START_MENU", "Start menu", "Top bar", default=False,
+        desktop_default=True, deferred=True),
     ToggleSpec("KILIX_CHROME_TEMPERATURE", "Thermal status", "Top bar", default=False),
     ToggleSpec("KILIX_CHROME_VOLUME", "Volume", "Top bar"),
     ToggleSpec("KILIX_CHROME_NETWORK", "Network / Wi-Fi", "Top bar"),
@@ -436,7 +452,7 @@ def _normalize_change(key: str, raw_value: object) -> str:
 
 def defaults(*, migrate_environment: bool = False) -> dict[str, str]:
     values = {
-        spec.key: "1" if spec.default else "0"
+        spec.key: "1" if spec.effective_default() else "0"
         for spec in TOGGLE_SPECS
     }
     values[CLOCK_FORMAT_KEY] = CLOCK_FORMAT_DEFAULT
@@ -479,7 +495,8 @@ def enabled(key: str, path: str | None = None) -> bool:
     spec = TOGGLE_BY_KEY.get(key)
     if spec is None:
         raise KeyError(f"unknown shared Kilix toggle: {key}")
-    return truthy(load(path).get(key, "1" if spec.default else "0"))
+    return truthy(load(path).get(
+        key, "1" if spec.effective_default() else "0"))
 
 
 def coding_yolo(path: str | None = None) -> bool:
@@ -509,7 +526,8 @@ def game_availability(path: str | None = None) -> dict[str, bool]:
 def _initial_text(values: Mapping[str, str]) -> str:
     lines = [SETTINGS_HEADER, "", SETTINGS_MARKER]
     for spec in TOP_BAR_TOGGLES:
-        lines.append(f"{spec.key}={values[spec.key]}")
+        if not spec.deferred:
+            lines.append(f"{spec.key}={values[spec.key]}")
     lines.append(f"{CLOCK_FORMAT_KEY}={values[CLOCK_FORMAT_KEY]}")
     for spec in PANE_BUTTON_TOGGLES:
         lines.append(f"{spec.key}={values[spec.key]}")

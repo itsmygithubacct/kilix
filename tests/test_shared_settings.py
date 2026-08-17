@@ -726,7 +726,7 @@ class SharedSettingsTests(unittest.TestCase):
                 not settings.truthy(values[key])
                 for key in settings.GAME_KEY_BY_ID.values()))
             self.assertTrue(all(
-                settings.truthy(values[spec.key]) == spec.default
+                settings.truthy(values[spec.key]) == spec.effective_default()
                 for spec in settings.TOP_BAR_TOGGLES
                 + settings.PANE_BUTTON_TOGGLES))
             first_frame = "\n".join(
@@ -742,7 +742,8 @@ class SharedSettingsTests(unittest.TestCase):
             with mock.patch.dict(os.environ, {
                     "GPU_TERMINAL_SETTINGS_FILE": str(path),
                     "KITTY_PID": ""}, clear=True):
-                screen = FakeScreen([ord("j"), ord(" "), ord("s"), ord("q")])
+                screen = FakeScreen([
+                    ord("j"), ord("j"), ord(" "), ord("s"), ord("q")])
                 self.assertEqual(tui._run_tui(screen, "top-bar"), 0)
 
             self.assertFalse(settings.enabled(
@@ -757,11 +758,29 @@ class SharedSettingsTests(unittest.TestCase):
             self.assertIn("▶1 Top bar", first_frame)
             self.assertIn("─" * 20, first_frame)
             self.assertNotIn(" // ", first_frame)
-            self.assertIn("Top bar: 8/9 enabled", first_frame)
+            self.assertIn("Top bar: 8/10 enabled", first_frame)
             self.assertIn("Thermal status", first_frame)
             self.assertIn("Volume", first_frame)
             self.assertIn("Read pane aloud", first_frame)
             self.assertIn("Dictate to pane", first_frame)
+
+    def test_start_menu_default_is_deferred_and_desktop_specific(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "settings.conf")
+            with mock.patch.dict(os.environ, {}, clear=True):
+                settings.ensure_file(path)
+                self.assertFalse(settings.enabled(
+                    "KILIX_CHROME_START_MENU", path))
+            self.assertNotIn("KILIX_CHROME_START_MENU=", Path(path).read_text())
+            with mock.patch.dict(os.environ, {
+                    "XDG_CURRENT_DESKTOP": "Pleb"}, clear=True):
+                self.assertTrue(settings.enabled(
+                    "KILIX_CHROME_START_MENU", path))
+            settings.update({"KILIX_CHROME_START_MENU": "off"}, path)
+            with mock.patch.dict(os.environ, {
+                    "XDG_CURRENT_DESKTOP": "Pleb"}, clear=True):
+                self.assertFalse(settings.enabled(
+                    "KILIX_CHROME_START_MENU", path))
 
     def test_tui_tools_select_pinned_tmux_download_and_tb_install(self):
         tui = _load_settings_tui()

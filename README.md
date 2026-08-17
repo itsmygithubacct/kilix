@@ -378,6 +378,10 @@ lives on `plebian-os` and plays at [plebian-os.com](https://plebian-os.com/#watc
   reset, clear, split right/down, close.
 - **Drag-to-split by quadrant** — drag a pane's header onto another pane's edge to split it (Tilix's model).
 - **Pages (Tilix sessions)** — each page is a kitty tab, with an always-on page strip and a `+` button.
+- **Start menu** — an optional flame badge at the left of the page strip opens
+  new pages, settings, session managers, system monitors, the desktop, browser,
+  and updater. It defaults on when Kilix is the Pleb desktop shell and off in a
+  standalone terminal; `Ctrl+Alt+M` opens it without a mouse.
 - **Input broadcast** — `Ctrl+Alt+B` mirrors your typing to every pane in the page
   (Tilix's "synchronize input").
 - **Tilix look & keys** — per-pane title bars, active-pane highlight, dimmed inactive panes, Tango palette, Tilix keybindings.
@@ -791,6 +795,9 @@ a "page" you flip between. The page strip (kitty's powerline tab bar) is always
 visible across the top and ends with a clickable **`+`** to open a new page. You can
 **drag a tab to reorder** it, press **`F12`** for a visual page chooser (kilix's
 stand-in for Tilix's session sidebar), and **`F2`** to rename the current page.
+When enabled, the flame badge at the far left is the Kilix Start menu. Toggle it
+with `kilix settings --set start_menu=on|off`; an explicit choice is shared
+across hosts, while an unset value defaults on only in Pleb/Plebian-OS sessions.
 Run `kilix ls` from inside kilix to list the live pages, their tab IDs, pane
 counts, titles, and current working directories. The page
 shortcuts are in [Keybindings](#keybindings-tilix-layout).

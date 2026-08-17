@@ -57,8 +57,9 @@ class KilixSdkBoundaryTests(unittest.TestCase):
         # 1.12 exposes schema-3 actions, inputs, commands, and lifecycle policy.
         # 1.13 adds the shared pane CPU-load visibility policy.
         # 1.14 exposes the pinned shared telemetry ring and client contract.
-        self.assertEqual(kilix_sdk.SDK_API_VERSION, (1, 14))
-        self.assertEqual(kilix_sdk.SDK_VERSION, "1.14.0")
+        # 1.15 adds deferred per-desktop defaults for the Start menu.
+        self.assertEqual(kilix_sdk.SDK_API_VERSION, (1, 15))
+        self.assertEqual(kilix_sdk.SDK_VERSION, "1.15.0")
         kilix_sdk.require_compatible("1.0")
         kilix_sdk.require_compatible("1.5")
         kilix_sdk.require_compatible("1.6")
@@ -70,8 +71,9 @@ class KilixSdkBoundaryTests(unittest.TestCase):
         kilix_sdk.require_compatible("1.12")
         kilix_sdk.require_compatible("1.13")
         kilix_sdk.require_compatible("1.14")
+        kilix_sdk.require_compatible("1.15")
         with self.assertRaises(kilix_sdk.IncompatibleSDKError):
-            kilix_sdk.require_compatible("1.15")
+            kilix_sdk.require_compatible("1.16")
         with self.assertRaises(kilix_sdk.IncompatibleSDKError):
             kilix_sdk.require_compatible("2.0")
         for malformed in (

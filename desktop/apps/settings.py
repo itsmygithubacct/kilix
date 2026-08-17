@@ -92,6 +92,9 @@ SETTING_PAGES = [
         K("listen_on", "Remote socket", default="unix:@kilix-{kitty_pid}"),
     ]),
     ("Chrome", [
+        S(
+            "KILIX_CHROME_START_MENU", "Start menu", default=(
+                "1" if shared_settings.in_desktop_session() else "0")),
         S("KILIX_CHROME_TEMPERATURE", "Thermal status", default="0"),
         S("KILIX_CHROME_VOLUME", "Volume"),
         S("KILIX_CHROME_NETWORK", "Network / Wi-Fi"),
