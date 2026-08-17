@@ -413,6 +413,21 @@ class CursorDamageTests(unittest.TestCase):
         self.assertEqual(frame, bytes(capture.frame))
         self.assertIsNone(damage)
 
+    def test_cursor_composite_buffer_is_reused_and_old_patch_is_restored(self):
+        capture = self._capture([
+            self._cursor(2, 3, 1),
+            self._cursor(7, 8, 1),
+        ])
+        first, _ = capture._with_cursor_damage()
+        backing = capture._cursor_frame
+        second, _ = capture._with_cursor_damage()
+        self.assertIs(capture._cursor_frame, backing)
+        old = (3 * 10 + 2) * 3
+        new = (8 * 10 + 7) * 3
+        self.assertEqual(second[old:old + 3], b"\0\0\0")
+        self.assertEqual(second[new:new + 3], b"\xff\0\0")
+        self.assertNotEqual(first, second)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -314,6 +314,62 @@ class AppPanePresenterTests(unittest.TestCase):
 
 
 class BrowserPresenterTests(unittest.TestCase):
+    def test_motion_coalescing_preserves_action_boundaries(self):
+        import browse
+
+        move1 = {"kind": "mouse", "b": 35, "x": 1}
+        move2 = {"kind": "mouse", "b": 35, "x": 2}
+        press = {"kind": "mouse", "b": 0, "press": True}
+        drag1 = {"kind": "mouse", "b": 32, "x": 3}
+        drag2 = {"kind": "mouse", "b": 32, "x": 4}
+        key = {"kind": "key", "key": "x"}
+        self.assertEqual(
+            browse.coalesce_mouse_motion(
+                [move1, move2, press, drag1, drag2, key]),
+            [move2, press, drag2, key])
+
+    def test_pointer_repaint_supplies_old_and_new_damage(self):
+        import browse
+        from PIL import Image
+
+        browser = object.__new__(browse.Browse)
+        browser.cursor = True
+        browser.last_img = Image.new("RGB", (40, 40), (12, 12, 12))
+        browser.page_w = browser.page_h = 40
+        browser.cur_x = browser.cur_y = 2
+        browser._cur_saved = None
+        browser._cur_paint = 0.0
+        browser._cur_repaint_due = None
+        calls = []
+        browser._present = lambda **kwargs: calls.append(kwargs)
+        browser._paint_cursor_now(1.0)
+        browser.cur_x = browser.cur_y = 20
+        browser._paint_cursor_now(2.0)
+        self.assertEqual(len(calls[0]["damage"]), 1)
+        self.assertEqual(len(calls[1]["damage"]), 2)
+
+    def test_throttled_pointer_gets_a_trailing_repaint(self):
+        import browse
+        from PIL import Image
+
+        browser = object.__new__(browse.Browse)
+        browser.cursor = True
+        browser.last_img = Image.new("RGB", (40, 40), (12, 12, 12))
+        browser.page_w = browser.page_h = 40
+        browser.cur_x = browser.cur_y = 2
+        browser._cur_saved = None
+        browser._cur_paint = 10.0
+        browser._cur_repaint_due = None
+        calls = []
+        browser._present = lambda **kwargs: calls.append(kwargs)
+        with patch.object(browse.time, "monotonic", return_value=10.01):
+            browser._repaint_cursor()
+        self.assertEqual(browser._cur_repaint_due, 10.025)
+        browser.cur_x = browser.cur_y = 20
+        browser._flush_cursor_repaint(10.025)
+        self.assertEqual(len(calls), 1)
+        self.assertIsNone(browser._cur_repaint_due)
+
     def test_screencast_and_pointer_repaint_share_presenter(self):
         import browse
         from PIL import Image

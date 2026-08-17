@@ -375,6 +375,9 @@ class XDamageCapture:
             source = row * row_bytes
             target = (y + row) * stride + x * 3
             self.frame[target:target + row_bytes] = pixels[source:source + row_bytes]
+            cursor_frame = getattr(self, "_cursor_frame", None)
+            if cursor_frame is not None:
+                cursor_frame[target:target + row_bytes] = pixels[source:source + row_bytes]
         return x, y, width, height
 
     @staticmethod
@@ -501,7 +504,16 @@ class XDamageCapture:
     def _with_cursor_damage(self):
         if not self._cursor_supported:
             return bytes(self.frame), ()
-        result = bytearray(self.frame)
+        result = getattr(self, "_cursor_frame", None)
+        if result is None or len(result) != len(self.frame):
+            result = bytearray(self.frame)
+            self._cursor_frame = result
+        elif self._cursor_rect is not None:
+            x, y, width, height = self._cursor_rect
+            row_bytes = width * 3
+            for row in range(y, y + height):
+                start = (row * self.width + x) * 3
+                result[start:start + row_bytes] = self.frame[start:start + row_bytes]
         try:
             cursor = self.events.xfixes_get_cursor_image(self.root)
         except Exception:

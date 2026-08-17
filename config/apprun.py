@@ -1079,7 +1079,7 @@ class AppPane:
                 if self.ff is not None and self.ff.stdout in r:
                     self.pump_frames()
                 if self.term and self.term.fd in r:
-                    for ev in self.term.read_input():
+                    for ev in browse.coalesce_mouse_motion(self.term.read_input()):
                         if ev["kind"] == "key":
                             self.on_key(ev)
                         elif ev["kind"] == "mouse":

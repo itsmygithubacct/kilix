@@ -52,6 +52,23 @@ def log(*a):
             f.write(f"[{time.time():.3f}] " + " ".join(str(x) for x in a) + "\n")
 
 
+def coalesce_mouse_motion(events):
+    """Keep only the newest run of motion reports without crossing actions."""
+    result = []
+    pending = None
+    for ev in events:
+        if ev.get("kind") == "mouse" and ev.get("b", 0) & 32:
+            pending = ev
+            continue
+        if pending is not None:
+            result.append(pending)
+            pending = None
+        result.append(ev)
+    if pending is not None:
+        result.append(pending)
+    return result
+
+
 def profile_lock_state(lock):
     """Return absent, live, stale, or unknown for Chromium's SingletonLock."""
     if not os.path.lexists(lock):
@@ -509,6 +526,7 @@ class Browse:
         self.last_img = None
         self._cur_saved = None            # (patch Image, x, y)
         self._cur_paint = 0.0
+        self._cur_repaint_due = None
         extra = ()
         self.temp_profile = None
         self.presenter = gfx.FramePresenter(
@@ -622,6 +640,7 @@ class Browse:
             img = img.convert("RGB")
         self.last_img = img
         self._cur_saved = None
+        self._cur_repaint_due = None
         if self.cursor:
             self._stamp_cursor()
         w, h = img.size
@@ -652,7 +671,7 @@ class Browse:
         box = (max(0, sx), max(0, sy), min(w, sx + cw), min(h, sy + chh))
         if box[0] >= box[2] or box[1] >= box[3]:
             self._cur_saved = None
-            return
+            return None
         self._cur_saved = (img.crop(box), box[0], box[1])
         px = img.load()
         for dy, row in enumerate(CURSOR_ART):
@@ -661,26 +680,42 @@ class Browse:
                 if c == " " or not (0 <= x < w and 0 <= y < h):
                     continue
                 px[x, y] = (255, 255, 255) if c == "w" else (0, 0, 0)
+        return (box[0], box[1], box[2] - box[0], box[3] - box[1])
 
     def _unstamp_cursor(self):
+        rect = None
         if self._cur_saved and self.last_img is not None:
             patch, x, y = self._cur_saved
             self.last_img.paste(patch, (x, y))
+            rect = (x, y, patch.width, patch.height)
         self._cur_saved = None
+        return rect
+
+    def _paint_cursor_now(self, now):
+        old_rect = self._unstamp_cursor()
+        new_rect = self._stamp_cursor()
+        damage = tuple(rect for rect in (old_rect, new_rect) if rect is not None)
+        self._cur_paint = now
+        self._cur_repaint_due = None
+        if damage:
+            self._present(damage=damage)
 
     def _repaint_cursor(self):
         """Re-present the last frame with the pointer moved (throttled)."""
         if not self.cursor or self.last_img is None:
             return
-        now = time.time()
+        now = time.monotonic()
         if now - self._cur_paint < 0.025:
+            self._cur_repaint_due = self._cur_paint + 0.025
             return
-        self._cur_paint = now
-        self._unstamp_cursor()
-        self._stamp_cursor()
-        self._present()
+        self._paint_cursor_now(now)
 
-    def _present(self, scroll=None):
+    def _flush_cursor_repaint(self, now=None):
+        now = time.monotonic() if now is None else now
+        if self._cur_repaint_due is not None and now >= self._cur_repaint_due:
+            self._paint_cursor_now(now)
+
+    def _present(self, scroll=None, damage=None):
         img = self.last_img
         w, h = img.size
         if getattr(self, "presenter", None) is None:
@@ -689,7 +724,7 @@ class Browse:
                 in_tmux=bool(os.environ.get("TMUX")))
         return self.presenter.present(
             img.tobytes(), w, h, self.term.cols, self.view_rows,
-            content_key="browser", scroll=scroll)
+            content_key="browser", scroll=scroll, damage=damage)
 
     # ---- glyph layer -------------------------------------------------------
     def snapshot(self):
@@ -901,7 +936,8 @@ class Browse:
     def on_mouse(self, ev):
         self.last_input = time.time()
         b, x, y, press = ev["b"], ev["x"], ev["y"], ev["press"]
-        log(f"mouse b={b} x={x} y={y} press={press}")
+        if LOG_PATH:
+            log(f"mouse b={b} x={x} y={y} press={press}")
         if b & 256:               # kitty SGR-pixel LEAVE_INDICATOR: not a real event
             return
         self.cur_x, self.cur_y = x, y
@@ -1111,7 +1147,7 @@ class Browse:
                     self.on_cdp_event(m)
                 self.cdp.events.clear()
                 if self.term.fd in r:
-                    for ev in self.term.read_input():
+                    for ev in coalesce_mouse_motion(self.term.read_input()):
                         if ev["kind"] == "key":
                             self.on_key(ev)
                         elif ev["kind"] == "mouse":
@@ -1120,6 +1156,7 @@ class Browse:
                             self.on_paste(ev["text"])
                 self.flush_screencast()
                 self.presenter.flush()
+                self._flush_cursor_repaint()
                 if self.resized:
                     self.resized = False
                     self.do_resize()
