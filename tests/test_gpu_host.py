@@ -23,6 +23,12 @@ GL renderer: NV166
 
 
 class GpuHostTests(unittest.TestCase):
+    def test_launcher_selects_egl_before_kitty_creates_a_window(self):
+        launcher = (ROOT / "kilix").read_text()
+        export_at = launcher.index("export KILIX_GPU_DMABUF_IMPORT=1")
+        exec_at = launcher.index('exec "$BIN" --class kilix')
+        self.assertLess(export_at, exec_at)
+
     def test_kitty_import_completes_each_capture_lease_in_command_scope(self):
         source = (ROOT / "src/kitty/graphics.c").read_text()
         function = source.split("import_gpu_frame(", 1)[1].split(
