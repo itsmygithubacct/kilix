@@ -182,6 +182,76 @@ class BuildPreparationTests(unittest.TestCase):
         self.assertFalse(
             (self.base / "storage" / "build" / "prepared").exists())
 
+    def test_a_completed_build_publishes_the_notices_beside_the_font(self):
+        # The obligation is on the artifact a user receives, not on the source
+        # tree, so assert it against a promoted generation rather than against
+        # the staging step that wrote it.
+        (self.src / "setup.py").write_text(self._WORKING_SETUP)
+
+        result = self.run_build(self._system_env())
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        fonts = self.base / "storage" / "build" / "current" / "src" / "fonts"
+        self.assertEqual(
+            (fonts / "SymbolsNerdFontMono-Regular.ttf").read_bytes(),
+            self.font_bytes)
+        license_file = fonts / "SymbolsNerdFontMono-LICENSE.txt"
+        self.assertEqual(
+            license_file.read_bytes(),
+            (ROOT / "third_party" / "nerd-fonts" / "LICENSE").read_bytes())
+        self.assertEqual(stat.S_IMODE(license_file.stat().st_mode), 0o644)
+        provenance = fonts / "SymbolsNerdFontMono-PROVENANCE.txt"
+        self.assertEqual(stat.S_IMODE(provenance.stat().st_mode), 0o644)
+        recorded = provenance.read_text()
+        self.assertIn("Upstream repository: https://github.com/ryanoasis/"
+                      "nerd-fonts\n", recorded)
+        self.assertIn("Upstream release: v3.4.0\n", recorded)
+        self.assertIn(f"Source URL: {self.font.as_uri()}\n", recorded)
+
+    def test_a_build_that_loses_the_font_notices_is_not_promoted(self):
+        # The engine's own build runs over this tree after the notices are
+        # staged, so "we wrote them" is not the same claim as "they are there".
+        # A generation that lost them would ship a font with no terms attached.
+        (self.src / "setup.py").write_text(
+            self._WORKING_SETUP +
+            "for name in ('SymbolsNerdFontMono-LICENSE.txt',\n"
+            "             'SymbolsNerdFontMono-PROVENANCE.txt'):\n"
+            "    Path('fonts').joinpath(name).unlink()\n")
+
+        result = self.run_build(self._system_env())
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("refusing to publish the bundled font without its notice",
+                      result.stderr)
+        self.assertFalse(
+            (self.base / "storage" / "build" / "current").exists())
+
+    def test_a_truncated_published_font_notice_is_not_promoted(self):
+        (self.src / "setup.py").write_text(
+            self._WORKING_SETUP +
+            "Path('fonts/SymbolsNerdFontMono-LICENSE.txt').write_text(\n"
+            "    'SIL Open Font License 1.1\\n')\n")
+
+        result = self.run_build(self._system_env())
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("checksum mismatch for published Nerd Font license",
+                      result.stderr)
+        self.assertFalse(
+            (self.base / "storage" / "build" / "current").exists())
+
+    def test_published_provenance_without_its_upstream_is_not_promoted(self):
+        (self.src / "setup.py").write_text(self._WORKING_SETUP)
+        provenance = self.checkout / "third_party" / "nerd-fonts" / "PROVENANCE"
+        provenance.write_text("Component: Symbols Nerd Font Mono\n")
+
+        result = self.run_build(self._system_env())
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("does not record its Upstream repository", result.stderr)
+        self.assertFalse(
+            (self.base / "storage" / "build" / "current").exists())
+
     def test_mutable_ci_bundle_url_is_rejected(self):
         env = dict(self.env)
         env["KILIX_KITTY_DEPS_URL"] = (

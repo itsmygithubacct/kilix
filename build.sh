@@ -269,6 +269,39 @@ stage_font_notices() {
   mv -f -- "$tmpfile" "$provenance_target"
 }
 
+# The notices are a redistribution obligation of the bundled font, not a build
+# convenience: OFL 1.1 requires the license to travel with every copy. Staging
+# them is therefore not enough — anything that runs between preparation and
+# promotion (the engine's own build regenerates parts of this tree) could drop
+# them, and the generation would ship a font with no terms attached. Refuse to
+# promote such a generation, and check the artifact rather than the source.
+assert_font_notices_installed() {
+  local font_dir license_target provenance_target target field
+  font_dir="$(dirname "$font_file")"
+  license_target="$font_dir/SymbolsNerdFontMono-LICENSE.txt"
+  provenance_target="$font_dir/SymbolsNerdFontMono-PROVENANCE.txt"
+  if [ ! -f "$font_file" ] || [ -L "$font_file" ]; then
+    echo "kilix: generation has no bundled font to publish: $font_file" >&2
+    return 1
+  fi
+  for target in "$license_target" "$provenance_target"; do
+    if [ ! -f "$target" ] || [ -L "$target" ]; then
+      echo "kilix: refusing to publish the bundled font without its notice: $target" >&2
+      return 1
+    fi
+  done
+  verify_file "$license_target" "$font_notice_sha" \
+    "published Nerd Font license" || return 1
+  # Provenance that does not name where the font came from, which release it
+  # came from, and what this build actually fetched is not provenance.
+  for field in "Upstream repository" "Upstream release" "Source URL"; do
+    if ! grep -q "^$field: ." "$provenance_target"; then
+      echo "kilix: published font provenance does not record its $field" >&2
+      return 1
+    fi
+  done
+}
+
 prepare_font() {
   local tmpdir extracted tmpfile
   if verify_file "$font_file" "$font_file_sha" "extracted Nerd Font" 2>/dev/null; then
@@ -728,6 +761,7 @@ fi
 prepare_font
 
 if [ "${KILIX_BUILD_PREPARE_ONLY:-0}" = 1 ]; then
+  assert_font_notices_installed
   promote_prepared
   garbage_collect_generations \
     || echo "kilix: WARNING: dependency preparation committed but old build cleanup was incomplete" >&2
@@ -770,6 +804,7 @@ for built_launcher in "$launcher" "$kitten"; do
     exit 1
   fi
 done
+assert_font_notices_installed
 head="$src_head"
 printf '%s\n' "$source_id" >"$stage/source-id"
 if [ -n "$head" ]; then

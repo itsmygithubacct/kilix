@@ -512,7 +512,9 @@ explicitly confirmed termination action.
   Font release. Every promoted generation keeps the upstream license and a
   provenance record beside the font under `src/fonts/`; the record includes
   the effective source URL plus the verified archive and extracted-file
-  digests. An offline/release build may instead set
+  digests. A generation whose font has lost either notice is refused rather
+  than promoted, so no built artifact ships the font without its terms. An
+  offline/release build may instead set
   `KILIX_BUILD_MODE=bundle` with an immutable `KILIX_KITTY_DEPS_URL` and matching
   SHA-256; mutable kitty CI bundle URLs are rejected. **`scripts/install-build-deps.sh` installs
   all of that** on Fedora/RHEL (dnf), Debian/Ubuntu (apt), Arch (pacman), and
