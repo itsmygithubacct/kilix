@@ -14,6 +14,7 @@ esac
 
 packages='weston|14.0.2-1|cb2cddfc082a6f14d15e4682cdbb9778439f9b89123ed41356f108ccb3ebb48e
 libweston-14-0|14.0.2-1|882469912622c4ef2b0cf85d9cba56906250a6da7e935580feca868bb7dfe942
+libweston-14-dev|14.0.2-1|c543a6784fedee000a4b6f4edf0cf8d38611574cc1cd4e3610eac0fb6374a45a
 pipewire|1.4.2-1|36b7421700912553db2acda062d7a171de097302be28dfc858a82e5f2f77dbda
 pipewire-bin|1.4.2-1|ac30a24f7efc42afff5269b02c5a65068eb7ebba65f1d7749bd7737986de0d17
 libpipewire-0.3-modules|1.4.2-1|ee9a07d97d80369a7377b83bdfbc5178d80dd76a49b3df5bff294b878b9afa53
@@ -27,6 +28,7 @@ verify() {
     && test -x "$root/usr/bin/Xwayland" \
     && test -f "$root/usr/lib/x86_64-linux-gnu/libweston-14/gl-renderer.so" \
     && test -f "$root/usr/lib/x86_64-linux-gnu/libweston-14/pipewire-backend.so" \
+    && test -f "$root/usr/include/libweston-14/libweston/libweston.h" \
     && test -f "$root/usr/lib/x86_64-linux-gnu/pipewire-0.3/libpipewire-module-protocol-native.so"
 }
 

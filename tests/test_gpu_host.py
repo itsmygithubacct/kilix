@@ -50,14 +50,18 @@ class GpuHostTests(unittest.TestCase):
                 "usr/lib/x86_64-linux-gnu/libweston-14/xwayland.so",
                 "usr/libexec/weston-keyboard",
                 "usr/lib/x86_64-linux-gnu/pipewire-0.3/placeholder.so",
+                "build/libraries/gpu-host/kilix-weston-input.so",
             )
             for relative in paths:
                 path = root / relative
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(b"fixture")
-                if "/bin/" in relative or "/libexec/" in relative:
+                if ("/bin/" in relative or "/libexec/" in relative
+                        or relative.endswith("kilix-weston-input.so")):
                     path.chmod(0o700)
-            with patch.dict(os.environ, {"KILIX_GPU_HOST_ROOT": str(root)}):
+            with patch.dict(os.environ, {
+                    "KILIX_GPU_HOST_ROOT": str(root),
+                    "KILIX_BUILD_DIRECTORY": str(root / "build")}):
                 runtime = gpu_host.discover_runtime()
             self.assertIsNotNone(runtime)
             self.assertIn("pipewire-backend.so=", runtime.module_map)
@@ -66,7 +70,7 @@ class GpuHostTests(unittest.TestCase):
         runtime = gpu_host.GpuHostRuntime(
             Path("/runtime"), Path("/runtime/weston"), Path("/runtime/pipewire"),
             Path("/runtime/pw-dump"), Path("/runtime/pw-link"),
-            Path("/runtime/Xwayland"),
+            Path("/runtime/Xwayland"), Path("/runtime/kilix-input.so"),
             "modules", "/runtime/lib", (Path("/dev/dri/renderD128"),))
         command = gpu_host.weston_command(
             runtime, 1280, 720, "wayland-kilix-1", Path("/runtime/weston.log"),
@@ -74,6 +78,7 @@ class GpuHostTests(unittest.TestCase):
         self.assertIn("--backend=pipewire", command)
         self.assertIn("--renderer=gl", command)
         self.assertIn("--xwayland", command)
+        self.assertIn("--modules=kilix-weston-input.so", command)
         self.assertNotIn("--no-sandbox", command)
 
     def test_browser_environment_selects_native_wayland(self):

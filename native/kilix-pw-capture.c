@@ -3,13 +3,18 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/un.h>
 #include <unistd.h>
 
+#include <drm_fourcc.h>
 #include <pipewire/pipewire.h>
 #include <spa/param/video/format-utils.h>
 #include <spa/utils/result.h>
@@ -22,7 +27,122 @@ struct state {
     uint8_t *rgb;
     size_t rgb_size;
     uint64_t frames;
+    uint32_t storage_type;
+    int listen_fd;
+    int client_fd;
+    struct spa_source *listen_source;
+    struct spa_source *client_source;
+    struct pw_buffer *held;
+    const char *socket_path;
 };
+
+#define KILIX_DMABUF_MAGIC 0x4b444d41u
+#define KILIX_DMABUF_VERSION 1u
+struct dmabuf_frame {
+    uint32_t magic, version, width, height, stride, offset, fourcc;
+    uint32_t modifier_hi, modifier_lo;
+};
+
+static void release_held(struct state *state) {
+    if (state->held) {
+        pw_stream_queue_buffer(state->stream, state->held);
+        state->held = NULL;
+    }
+}
+
+static void close_client(struct state *state) {
+    if (state->client_source) {
+        pw_loop_destroy_source(pw_main_loop_get_loop(state->loop),
+                               state->client_source);
+        state->client_source = NULL;
+    }
+    if (state->client_fd >= 0) close(state->client_fd);
+    state->client_fd = -1;
+}
+
+static void client_ack(void *userdata, int fd, uint32_t mask) {
+    struct state *state = userdata;
+    uint8_t ack = 0;
+    if ((mask & SPA_IO_IN) && read(fd, &ack, 1) == 1 && ack == 1)
+        state->frames++;
+    close_client(state);
+    release_held(state);
+}
+
+static void send_held_frame(void *userdata, int fd, uint32_t mask) {
+    struct state *state = userdata;
+    if (!(mask & SPA_IO_IN)) return;
+    int client = accept4(fd, NULL, NULL, SOCK_CLOEXEC | SOCK_NONBLOCK);
+    if (client < 0) return;
+    struct ucred credentials = {0};
+    socklen_t credentials_size = sizeof(credentials);
+    if (getsockopt(client, SOL_SOCKET, SO_PEERCRED, &credentials,
+                   &credentials_size) < 0 || credentials_size != sizeof(credentials)
+            || credentials.uid != geteuid() || !state->held) {
+        close(client); return;
+    }
+    struct spa_buffer *buffer = state->held->buffer;
+    if (buffer->n_datas != 1 || buffer->datas[0].type != SPA_DATA_DmaBuf ||
+            !buffer->datas[0].chunk || buffer->datas[0].fd < 0) {
+        close(client); release_held(state); return;
+    }
+    const struct spa_data *plane = &buffer->datas[0];
+    const struct dmabuf_frame frame = {
+        .magic = KILIX_DMABUF_MAGIC, .version = KILIX_DMABUF_VERSION,
+        .width = state->format.size.width, .height = state->format.size.height,
+        .stride = plane->chunk->stride > 0 ? (uint32_t)plane->chunk->stride :
+                  state->format.size.width * 4u,
+        .offset = plane->chunk->offset,
+        .fourcc = DRM_FORMAT_XRGB8888,
+        .modifier_hi = (uint32_t)(state->format.modifier >> 32u),
+        .modifier_lo = (uint32_t)state->format.modifier,
+    };
+    char control[CMSG_SPACE(sizeof(int))] = {0};
+    struct iovec iov = {.iov_base = (void*)&frame, .iov_len = sizeof(frame)};
+    struct msghdr message = {
+        .msg_iov = &iov, .msg_iovlen = 1,
+        .msg_control = control, .msg_controllen = sizeof(control),
+    };
+    struct cmsghdr *header = CMSG_FIRSTHDR(&message);
+    header->cmsg_level = SOL_SOCKET; header->cmsg_type = SCM_RIGHTS;
+    header->cmsg_len = CMSG_LEN(sizeof(int));
+    int dma_fd = (int)plane->fd;
+    memcpy(CMSG_DATA(header), &dma_fd, sizeof(dma_fd));
+    if (sendmsg(client, &message, MSG_NOSIGNAL) != (ssize_t)sizeof(frame)) {
+        close(client); release_held(state); return;
+    }
+    close_client(state);
+    state->client_fd = client;
+    state->client_source = pw_loop_add_io(
+        pw_main_loop_get_loop(state->loop), client,
+        SPA_IO_IN | SPA_IO_HUP | SPA_IO_ERR, false, client_ack, state);
+    if (!state->client_source) {
+        close_client(state); release_held(state);
+    }
+}
+
+static int start_dmabuf_server(struct state *state, const char *path) {
+    const char *runtime = getenv("XDG_RUNTIME_DIR");
+    if (!runtime || path[0] != '/' || strncmp(path, runtime, strlen(runtime)) ||
+            path[strlen(runtime)] != '/' || strlen(path) >=
+            sizeof(((struct sockaddr_un*)0)->sun_path)) return -1;
+    state->listen_fd = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC |
+                              SOCK_NONBLOCK, 0);
+    if (state->listen_fd < 0) return -1;
+    struct sockaddr_un address = {.sun_family = AF_UNIX};
+    memcpy(address.sun_path, path, strlen(path) + 1u);
+    unlink(path);
+    mode_t old_mask = umask(0077);
+    int result = bind(state->listen_fd, (struct sockaddr*)&address,
+                      sizeof(address));
+    umask(old_mask);
+    if (result < 0 || listen(state->listen_fd, 1) < 0) return -1;
+    state->socket_path = path;
+    state->listen_source = pw_loop_add_io(
+        pw_main_loop_get_loop(state->loop), state->listen_fd,
+        SPA_IO_IN | SPA_IO_ERR, false, send_held_frame, state);
+    return state->listen_source ? 0 : -1;
+}
 
 static int write_all(int fd, const uint8_t *data, size_t size) {
     while (size) {
@@ -92,10 +212,35 @@ static void process_frame(void *userdata) {
         selected = candidate;
     }
     if (!selected) return;
+    if (state->socket_path) {
+        if (state->held) {
+            pw_stream_queue_buffer(state->stream, selected);
+            return;
+        }
+        struct spa_buffer *candidate_buffer = selected->buffer;
+        if (candidate_buffer->n_datas == 1 &&
+                candidate_buffer->datas[0].type == SPA_DATA_DmaBuf) {
+            state->held = selected;
+            uint8_t ready = 1;
+            if (write_all(STDOUT_FILENO, &ready, 1) != 0)
+                pw_main_loop_quit(state->loop);
+            return;
+        }
+        pw_stream_queue_buffer(state->stream, selected);
+        return;
+    }
     struct spa_buffer *buffer = selected->buffer;
-    if (buffer->n_datas < 1 || !buffer->datas[0].data ||
-            !buffer->datas[0].chunk || !state->rgb) goto done;
+    if (buffer->n_datas < 1) goto done;
     struct spa_data *plane = &buffer->datas[0];
+    if (plane->type != state->storage_type) {
+        state->storage_type = plane->type;
+        const char *storage = plane->type == SPA_DATA_DmaBuf ? "dmabuf" :
+            (plane->type == SPA_DATA_MemFd ? "memfd" :
+             (plane->type == SPA_DATA_MemPtr ? "memptr" : "other"));
+        fprintf(stderr, "kilix-pw-capture: storage=%s fd=%" PRId64 "\n",
+                storage, plane->fd);
+    }
+    if (!plane->data || !plane->chunk || !state->rgb) goto done;
     const struct spa_chunk *chunk = plane->chunk;
     const uint32_t width = state->format.size.width;
     const uint32_t height = state->format.size.height;
@@ -138,21 +283,23 @@ static const struct pw_stream_events stream_events = {
 };
 
 int main(int argc, char **argv) {
-    if (argc != 4) {
-        fprintf(stderr, "usage: kilix-pw-capture TARGET WIDTH HEIGHT\n");
+    bool dmabuf_server = argc == 6 && strcmp(argv[1], "--dmabuf-server") == 0;
+    int first = dmabuf_server ? 3 : 1;
+    if ((!dmabuf_server && argc != 4) || (dmabuf_server && argc != 6)) {
+        fprintf(stderr, "usage: kilix-pw-capture [--dmabuf-server SOCKET] TARGET WIDTH HEIGHT\n");
         return 2;
     }
     char *end = NULL;
-    unsigned long width = strtoul(argv[2], &end, 10);
+    unsigned long width = strtoul(argv[first + 1], &end, 10);
     if (!end || *end || width < 1 || width > 16384) return 2;
-    unsigned long height = strtoul(argv[3], &end, 10);
+    unsigned long height = strtoul(argv[first + 2], &end, 10);
     if (!end || *end || height < 1 || height > 16384) return 2;
 
     char *target_end = NULL;
-    unsigned long target_value = strtoul(argv[1], &target_end, 10);
+    unsigned long target_value = strtoul(argv[first], &target_end, 10);
     uint32_t target_id = (target_end && !*target_end && target_value <= UINT32_MAX) ?
         (uint32_t)target_value : PW_ID_ANY;
-    struct state state = {0};
+    struct state state = {.listen_fd = -1, .client_fd = -1};
     pw_init(&argc, &argv);
     state.loop = pw_main_loop_new(NULL);
     if (!state.loop) return 1;
@@ -164,17 +311,32 @@ int main(int argc, char **argv) {
         PW_KEY_MEDIA_TYPE, "Video",
         PW_KEY_MEDIA_CATEGORY, "Capture",
         PW_KEY_MEDIA_ROLE, "Screen",
-        PW_KEY_TARGET_OBJECT, argv[1], NULL);
+        PW_KEY_TARGET_OBJECT, argv[first], NULL);
     state.stream = pw_stream_new_simple(
         pw_main_loop_get_loop(state.loop), "kilix-pw-capture",
         properties, &stream_events, &state);
     if (!state.stream) return 1;
 
-    uint8_t storage[1024];
+    uint8_t storage[2048];
     struct spa_pod_builder builder = SPA_POD_BUILDER_INIT(storage, sizeof(storage));
     const struct spa_rectangle size = SPA_RECTANGLE((uint32_t)width, (uint32_t)height);
     const struct spa_fraction rate = SPA_FRACTION(0, 1);
-    const struct spa_pod *format = spa_pod_builder_add_object(
+    const struct spa_pod *formats[2];
+    struct spa_pod_frame frame;
+    spa_pod_builder_push_object(&builder, &frame, SPA_TYPE_OBJECT_Format,
+                                SPA_PARAM_EnumFormat);
+    spa_pod_builder_add(&builder,
+        SPA_FORMAT_mediaType, SPA_POD_Id(SPA_MEDIA_TYPE_video),
+        SPA_FORMAT_mediaSubtype, SPA_POD_Id(SPA_MEDIA_SUBTYPE_raw),
+        SPA_FORMAT_VIDEO_format, SPA_POD_Id(SPA_VIDEO_FORMAT_BGRx), 0);
+    spa_pod_builder_prop(&builder, SPA_FORMAT_VIDEO_modifier,
+                         SPA_POD_PROP_FLAG_MANDATORY);
+    spa_pod_builder_long(&builder, DRM_FORMAT_MOD_LINEAR);
+    spa_pod_builder_add(&builder,
+        SPA_FORMAT_VIDEO_size, SPA_POD_Rectangle(&size),
+        SPA_FORMAT_VIDEO_framerate, SPA_POD_Fraction(&rate), 0);
+    formats[0] = spa_pod_builder_pop(&builder, &frame);
+    formats[1] = spa_pod_builder_add_object(
         &builder, SPA_TYPE_OBJECT_Format, SPA_PARAM_EnumFormat,
         SPA_FORMAT_mediaType, SPA_POD_Id(SPA_MEDIA_TYPE_video),
         SPA_FORMAT_mediaSubtype, SPA_POD_Id(SPA_MEDIA_SUBTYPE_raw),
@@ -185,13 +347,25 @@ int main(int argc, char **argv) {
     int result = pw_stream_connect(
         state.stream, PW_DIRECTION_INPUT, target_id,
         PW_STREAM_FLAG_AUTOCONNECT | PW_STREAM_FLAG_MAP_BUFFERS,
-        &format, 1);
+        formats, 2);
     if (result < 0) {
         fprintf(stderr, "kilix-pw-capture: connect failed: %s\n",
                 spa_strerror(result));
         return 1;
     }
+    if (dmabuf_server && start_dmabuf_server(&state, argv[2]) < 0) {
+        fprintf(stderr, "kilix-pw-capture: DMA-BUF server failed: %s\n",
+                strerror(errno));
+        return 1;
+    }
     pw_main_loop_run(state.loop);
+    close_client(&state);
+    release_held(&state);
+    if (state.listen_source)
+        pw_loop_destroy_source(pw_main_loop_get_loop(state.loop),
+                               state.listen_source);
+    if (state.listen_fd >= 0) close(state.listen_fd);
+    if (state.socket_path) unlink(state.socket_path);
     pw_stream_destroy(state.stream);
     pw_main_loop_destroy(state.loop);
     free(state.rgb);

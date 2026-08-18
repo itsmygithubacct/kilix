@@ -26,6 +26,7 @@ class GpuHostRuntime:
     pw_dump: Path
     pw_link: Path
     xwayland: Path
+    input_module: Path
     module_map: str
     library_path: str
     render_nodes: tuple[Path, ...]
@@ -100,12 +101,22 @@ def discover_runtime() -> GpuHostRuntime | None:
     weston_modules = multiarch / "weston"
     libweston_modules = multiarch / "libweston-14"
     pipewire_modules = multiarch / "pipewire-0.3"
+    storage = Path(os.environ.get(
+        "KILIX_STORAGE_HOME", "~/.local/gpu_terminal/kilix")).expanduser()
+    build_root = Path(os.environ.get(
+        "KILIX_BUILD_DIRECTORY", storage / "build")).expanduser()
+    input_module = Path(os.environ.get(
+        "KILIX_WESTON_INPUT_MODULE",
+        build_root / "libraries/gpu-host/kilix-weston-input.so"))
+    if not _safe_executable(input_module):
+        return None
     module_paths = {
         "pipewire-backend.so": libweston_modules / "pipewire-backend.so",
         "gl-renderer.so": libweston_modules / "gl-renderer.so",
         "xwayland.so": libweston_modules / "xwayland.so",
         "kiosk-shell.so": weston_modules / "kiosk-shell.so",
         "weston-keyboard": prefix / "libexec/weston-keyboard",
+        "kilix-weston-input.so": input_module,
     }
     if not all(path.is_file() for path in module_paths.values()):
         return None
@@ -123,7 +134,7 @@ def discover_runtime() -> GpuHostRuntime | None:
     module_map = ";".join(
         f"{name}={path}" for name, path in module_paths.items())
     return GpuHostRuntime(
-        root, weston, pipewire, pw_dump, pw_link, xwayland,
+        root, weston, pipewire, pw_dump, pw_link, xwayland, input_module,
         module_map, library_path, render_nodes)
 
 
@@ -199,7 +210,8 @@ def weston_command(runtime: GpuHostRuntime, width: int, height: int,
     return (
         str(runtime.weston), "--backend=pipewire", "--renderer=gl",
         f"--width={width}", f"--height={height}", f"--socket={socket_name}",
-        "--shell=kiosk", "--xwayland", "--idle-time=0",
+        "--shell=kiosk", "--modules=kilix-weston-input.so", "--xwayland",
+        "--idle-time=0",
         f"--log={log_path}", "--", *command,
     )
 
@@ -227,6 +239,7 @@ def probe_runtime(runtime: GpuHostRuntime, timeout: float = 8.0) -> GpuProbe:
         runtime_dir = Path(temporary)
         runtime_dir.chmod(0o700)
         env = runtime.environment(runtime_dir)
+        env["KILIX_WESTON_INPUT_SOCKET"] = str(runtime_dir / "input.sock")
         log_path = runtime_dir / "weston.log"
         demo = runtime.root / "usr/bin/weston-simple-egl"
         if not _safe_executable(demo):
