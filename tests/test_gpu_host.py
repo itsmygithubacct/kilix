@@ -51,13 +51,15 @@ class GpuHostTests(unittest.TestCase):
                 "usr/libexec/weston-keyboard",
                 "usr/lib/x86_64-linux-gnu/pipewire-0.3/placeholder.so",
                 "build/libraries/gpu-host/kilix-weston-input.so",
+                "build/libraries/gpu-host/kilix-pw-capture",
             )
             for relative in paths:
                 path = root / relative
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(b"fixture")
                 if ("/bin/" in relative or "/libexec/" in relative
-                        or relative.endswith("kilix-weston-input.so")):
+                        or relative.endswith("kilix-weston-input.so")
+                        or relative.endswith("kilix-pw-capture")):
                     path.chmod(0o700)
             with patch.dict(os.environ, {
                     "KILIX_GPU_HOST_ROOT": str(root),
@@ -71,6 +73,7 @@ class GpuHostTests(unittest.TestCase):
             Path("/runtime"), Path("/runtime/weston"), Path("/runtime/pipewire"),
             Path("/runtime/pw-dump"), Path("/runtime/pw-link"),
             Path("/runtime/Xwayland"), Path("/runtime/kilix-input.so"),
+            Path("/runtime/kilix-pw-capture"),
             "modules", "/runtime/lib", (Path("/dev/dri/renderD128"),))
         command = gpu_host.weston_command(
             runtime, 1280, 720, "wayland-kilix-1", Path("/runtime/weston.log"),

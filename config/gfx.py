@@ -175,11 +175,26 @@ def build_frame_edit_file(path: str, width: int, height: int, x: int, y: int,
             f"s={width},v={height},q=2;{payload}\x1b\\")
 
 
+def build_gpu_import(path: str, width: int, height: int, columns: int,
+                     rows: int, image_id: int, origin_row: int = 1,
+                     origin_column: int = 1, place: bool = False,
+                     in_tmux: bool = False) -> str:
+    """Import a private DMA-BUF socket into Kitty, optionally placing it."""
+    payload = base64.b64encode(os.fsencode(path)).decode("ascii")
+    command = (f"\x1b_Ga=g,t=g,i={image_id},s={width},v={height},q=2;"
+               f"{payload}\x1b\\")
+    if place:
+        command += (f"\x1b[{origin_row};{origin_column}H"
+                    f"\x1b_Ga=p,i={image_id},p=1,c={columns},r={rows},q=2;\x1b\\")
+    return wrap_tmux_passthrough(command) if in_tmux else command
+
+
 __all__ = [
     "CHUNK", "FRAME_BYTES", "FramePresenter", "FrameSocketTap", "TappedFrame",
     "PresentResult", "PresenterStats", "PosixShmRing", "ShmBusy",
     "session_dir", "write_frame",
-    "build_compose", "build_direct", "blit_direct", "build_frame_edit",
+    "build_compose", "build_direct", "blit_direct", "build_gpu_import",
+    "build_frame_edit",
     "blit_frame_edit", "build_frame_edit_file", "build_frame_edit_shm",
     "build_full_shm", "detect_vertical_scroll", "diff_band",
     "diff_damage_rects", "diff_rect", "diff_rects", "extract_rect",

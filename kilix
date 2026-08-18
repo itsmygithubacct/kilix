@@ -4248,6 +4248,10 @@ print(value if value in settings.TAB_BAR_EDGE_CHOICES else settings.TAB_BAR_EDGE
 case "$_KILIX_TAB_BAR_EDGE" in top|bottom) ;; *) _KILIX_TAB_BAR_EDGE=top ;; esac
 KILIX_UI_OPTIONS=(-o "tab_bar_edge=$_KILIX_TAB_BAR_EDGE")
 
+# The paired Kitty fork uses an EGL OpenGL context so private Wayland frames
+# can be imported from DMA-BUF without a GPU-to-CPU readback.
+export KILIX_GPU_DMABUF_IMPORT=1
+
 # --class kilix: own WM_CLASS/app_id so kilix groups separately from kitty
 # in the taskbar and picks up the kilix icon via kilix.desktop.
 exec "$BIN" --class kilix \

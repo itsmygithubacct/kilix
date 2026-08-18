@@ -27,6 +27,7 @@ class GpuHostRuntime:
     pw_link: Path
     xwayland: Path
     input_module: Path
+    capture: Path
     module_map: str
     library_path: str
     render_nodes: tuple[Path, ...]
@@ -108,7 +109,10 @@ def discover_runtime() -> GpuHostRuntime | None:
     input_module = Path(os.environ.get(
         "KILIX_WESTON_INPUT_MODULE",
         build_root / "libraries/gpu-host/kilix-weston-input.so"))
-    if not _safe_executable(input_module):
+    capture = Path(os.environ.get(
+        "KILIX_GPU_CAPTURE",
+        build_root / "libraries/gpu-host/kilix-pw-capture"))
+    if not _safe_executable(input_module) or not _safe_executable(capture):
         return None
     module_paths = {
         "pipewire-backend.so": libweston_modules / "pipewire-backend.so",
@@ -134,7 +138,7 @@ def discover_runtime() -> GpuHostRuntime | None:
     module_map = ";".join(
         f"{name}={path}" for name, path in module_paths.items())
     return GpuHostRuntime(
-        root, weston, pipewire, pw_dump, pw_link, xwayland, input_module,
+        root, weston, pipewire, pw_dump, pw_link, xwayland, input_module, capture,
         module_map, library_path, render_nodes)
 
 
@@ -165,7 +169,14 @@ def link_capture_ports(runtime: GpuHostRuntime, environment: Mapping[str, str],
                 timeout=1, check=False)
             if linked.returncode == 0:
                 return
-            raise RuntimeError(linked.stderr.strip() or "PipeWire link failed")
+            # PipeWire 1.4 reports an already-created target-object link as
+            # failure with the misleading text "failed ...: Success".
+            # In this private graph the named source and sink are unique, so
+            # that result means the desired connection is already present.
+            detail = linked.stderr.strip()
+            if detail.endswith(": Success") or "File exists" in detail:
+                return
+            raise RuntimeError(detail or "PipeWire link failed")
         time.sleep(0.02)
     raise TimeoutError("PipeWire capture ports did not appear")
 

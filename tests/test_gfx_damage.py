@@ -185,6 +185,15 @@ class FrameEditEscapeTests(unittest.TestCase):
         payload = esc.split(";", 1)[1].split("\x1b", 1)[0]
         self.assertEqual(base64.b64decode(payload).decode(), path)
 
+    def test_gpu_import_uses_private_socket_and_first_placement(self):
+        path = "/run/user/1000/kilix/frame.sock"
+        esc = gfx.build_gpu_import(path, 800, 600, 80, 30, 17,
+                                   origin_row=2, origin_column=3, place=True)
+        self.assertIn("a=g,t=g,i=17,s=800,v=600,q=2", esc)
+        self.assertIn("\x1b[2;3H\x1b_Ga=p,i=17,p=1,c=80,r=30,q=2", esc)
+        payload = esc.split(";", 1)[1].split("\x1b", 1)[0]
+        self.assertEqual(base64.b64decode(payload).decode(), path)
+
     def test_shared_memory_full_and_edit_headers(self):
         full = gfx.build_full_shm("/kilix-test-full", 80, 40, 10, 5, 7)
         self.assertIn("a=T", full)

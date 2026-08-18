@@ -283,10 +283,11 @@ static const struct pw_stream_events stream_events = {
 };
 
 int main(int argc, char **argv) {
-    bool dmabuf_server = argc == 6 && strcmp(argv[1], "--dmabuf-server") == 0;
+    bool dmabuf_server = argc >= 6 && strcmp(argv[1], "--dmabuf-server") == 0;
     int first = dmabuf_server ? 3 : 1;
-    if ((!dmabuf_server && argc != 4) || (dmabuf_server && argc != 6)) {
-        fprintf(stderr, "usage: kilix-pw-capture [--dmabuf-server SOCKET] TARGET WIDTH HEIGHT\n");
+    if ((!dmabuf_server && argc != 4 && argc != 5) ||
+            (dmabuf_server && argc != 6 && argc != 7)) {
+        fprintf(stderr, "usage: kilix-pw-capture [--dmabuf-server SOCKET] TARGET WIDTH HEIGHT [FPS]\n");
         return 2;
     }
     char *end = NULL;
@@ -294,6 +295,11 @@ int main(int argc, char **argv) {
     if (!end || *end || width < 1 || width > 16384) return 2;
     unsigned long height = strtoul(argv[first + 2], &end, 10);
     if (!end || *end || height < 1 || height > 16384) return 2;
+    unsigned long fps = 60;
+    if (argc > first + 3) {
+        fps = strtoul(argv[first + 3], &end, 10);
+        if (!end || *end || fps < 1 || fps > 240) return 2;
+    }
 
     char *target_end = NULL;
     unsigned long target_value = strtoul(argv[first], &target_end, 10);
@@ -321,6 +327,7 @@ int main(int argc, char **argv) {
     struct spa_pod_builder builder = SPA_POD_BUILDER_INIT(storage, sizeof(storage));
     const struct spa_rectangle size = SPA_RECTANGLE((uint32_t)width, (uint32_t)height);
     const struct spa_fraction rate = SPA_FRACTION(0, 1);
+    const struct spa_fraction max_rate = SPA_FRACTION((uint32_t)fps, 1);
     const struct spa_pod *formats[2];
     struct spa_pod_frame frame;
     spa_pod_builder_push_object(&builder, &frame, SPA_TYPE_OBJECT_Format,
@@ -334,7 +341,8 @@ int main(int argc, char **argv) {
     spa_pod_builder_long(&builder, DRM_FORMAT_MOD_LINEAR);
     spa_pod_builder_add(&builder,
         SPA_FORMAT_VIDEO_size, SPA_POD_Rectangle(&size),
-        SPA_FORMAT_VIDEO_framerate, SPA_POD_Fraction(&rate), 0);
+        SPA_FORMAT_VIDEO_framerate, SPA_POD_Fraction(&rate),
+        SPA_FORMAT_VIDEO_maxFramerate, SPA_POD_Fraction(&max_rate), 0);
     formats[0] = spa_pod_builder_pop(&builder, &frame);
     formats[1] = spa_pod_builder_add_object(
         &builder, SPA_TYPE_OBJECT_Format, SPA_PARAM_EnumFormat,
@@ -343,10 +351,11 @@ int main(int argc, char **argv) {
         /* Weston's PipeWire backend currently exports XRGB8888 as BGRx. */
         SPA_FORMAT_VIDEO_format, SPA_POD_Id(SPA_VIDEO_FORMAT_BGRx),
         SPA_FORMAT_VIDEO_size, SPA_POD_Rectangle(&size),
-        SPA_FORMAT_VIDEO_framerate, SPA_POD_Fraction(&rate));
+        SPA_FORMAT_VIDEO_framerate, SPA_POD_Fraction(&rate),
+        SPA_FORMAT_VIDEO_maxFramerate, SPA_POD_Fraction(&max_rate));
     int result = pw_stream_connect(
         state.stream, PW_DIRECTION_INPUT, target_id,
-        PW_STREAM_FLAG_AUTOCONNECT | PW_STREAM_FLAG_MAP_BUFFERS,
+        PW_STREAM_FLAG_MAP_BUFFERS,
         formats, 2);
     if (result < 0) {
         fprintf(stderr, "kilix-pw-capture: connect failed: %s\n",

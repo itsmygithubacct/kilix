@@ -50,6 +50,7 @@ import signal
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import browse  # reuse Term (raw mode, kitty kbd/mouse parsing), not Chrome
@@ -58,6 +59,7 @@ import stream   # Xvnc/Xvfb + VNC/HLS/bridge supervisor for serve modes
 from app_profiles import (APP_PROFILE_STALE_SECONDS, cleanup_app_profile,
                           cleanup_stale_app_profiles, prepare_app_command)
 from kilix_sdk import xapp as xapp_sdk
+from kilix_sdk import gpu_host, gpu_session
 
 try:
     from Xlib import X
@@ -353,6 +355,7 @@ class AppPane:
         self.feed = EncoderFeed()
         self.session = os.environ.get("KILIX_SESSION") or f"run-{os.getpid()}"
         self.xapp = self.sup = None
+        self.gpu = None
         self.rfb_port = None
         self.disp_n = None
         self.full_pw = self.view_pw = None
@@ -392,6 +395,20 @@ class AppPane:
         self.xapp = xapp_sdk.XAppSession(
             self.session, self.app_w, self.app_h, fps)
         self.sup = self.xapp.supervisor
+        backend = os.environ.get("KILIX_RUN_BACKEND", "auto").casefold()
+        if backend not in ("auto", "wayland", "x11"):
+            raise ValueError("KILIX_RUN_BACKEND must be auto, wayland, or x11")
+        self.gpu_runtime = (gpu_host.discover_runtime()
+                            if backend != "x11" and self.term is not None
+                            and not (serve or lan or hls or mse or webrtc)
+                            and os.environ.get("TMUX") is None else None)
+        if backend == "wayland" and self.gpu_runtime is None:
+            raise RuntimeError("native Wayland GPU host is unavailable")
+        self.use_gpu = self.gpu_runtime is not None
+        if self.use_gpu:
+            # 0.2.0 keeps GPU compositor geometry stable; pane resizing only
+            # changes Kitty's placement and avoids restarting the GL client.
+            self.resizable = False
         self.wid = os.environ.get("KITTY_WINDOW_ID", str(os.getpid()))
         # In a streamed/served session (KILIX_STREAM=1) pixels are inlined;
         # otherwise FramePresenter uses its bounded POSIX shared-memory ring.
@@ -404,6 +421,7 @@ class AppPane:
             in_tmux=bool(os.environ.get("TMUX")), max_fps=fps)
             if self.term else None)
         self.frames = 0
+        self._gpu_placed = False
         # Launchers wait for the first post-startup change, or for a stable
         # initial frame to survive CONTENT_READY_GRACE. The latter covers fast,
         # static apps that finish painting before capture can observe a change.
@@ -468,8 +486,32 @@ class AppPane:
 
     # ---- processes ---------------------------------------------------------
     def start(self):
+        if self.use_gpu:
+            try:
+                self.start_gpu()
+                return
+            except Exception as error:
+                if os.environ.get("KILIX_RUN_BACKEND", "auto").casefold() == "wayland":
+                    raise
+                log("GPU host unavailable; secure X11 fallback:",
+                    type(error).__name__, error)
+                self.use_gpu = False
         self.start_display()
         self.start_app_and_capture()
+
+    def start_gpu(self):
+        session_home = os.environ.get("KILIX_SESSION_HOME") or os.path.join(
+            os.environ.get("KILIX_STORAGE_HOME", os.path.expanduser(
+                "~/.local/gpu_terminal/kilix")), "session")
+        self.gpu = gpu_session.Session(
+            self.gpu_runtime, tuple(self.cmd), self.app_w, self.app_h,
+            Path(session_home), fps=self.fps).start()
+        self.app = self.gpu.weston
+        self.inj = self.gpu.injector
+        self.disp = self.gpu.wayland_socket
+        self.capture_backend = "wayland-dmabuf"
+        self.status = f"{os.path.basename(self.cmd[0])} on private Wayland GPU"
+        log("GPU host on", self.gpu.wayland_socket)
 
     def start_display(self):
         if self.serve:
@@ -861,6 +903,23 @@ class AppPane:
         startup = self.last_frame is None
         self._accept_frame(frame, content=not startup, startup=startup)
 
+    def pump_gpu_frame(self):
+        if not self.gpu.consume_ready():
+            return
+        sequence = gfx.build_gpu_import(
+            str(self.gpu.frame_socket), self.app_w, self.app_h,
+            self.img_cols, self.img_rows, self.img_id,
+            origin_row=self.off_row + 1, origin_column=self.off_col + 1,
+            place=not self._gpu_placed)
+        self.term.write(sequence)
+        self._gpu_placed = True
+        self.frames += 1
+        self.content_frames += 1
+        self._dbg["cap"] += 1
+        self._dbg["blit"] += 1
+        self._last_change = self._blit_t = time.time()
+        self._mark_content_ready(CONTENT_READY_CHANGED)
+
     def tick_capture(self, now):
         """Idle housekeeping each loop pass: QW5 capture downshift and the E4
         keepalive that keeps VFR encoder sinks flowing on a static screen."""
@@ -986,7 +1045,8 @@ class AppPane:
                 os.killpg(self.app.pid, signal.SIGCONT)
             except ProcessLookupError:
                 return
-            if self.capture is None and self.ff is None:
+            if not getattr(self, "use_gpu", False) and \
+                    self.capture is None and self.ff is None:
                 self._spawn_capture(self.fps)
             else:
                 self._wake_capture()
@@ -1044,6 +1104,11 @@ class AppPane:
         keep the old behavior: recompute the GPU-scaled placement only.
         """
         self.term.refresh_size()
+        if self.use_gpu:
+            self.compute_layout()
+            self._gpu_placed = False
+            self.term.write("\x1b_Ga=d,d=A\x1b\\\x1b[2J")
+            return
         if self.resizable:
             t = self.term
             w = max(320, int(t.cols * t.cell_w)) & ~1
@@ -1116,6 +1181,8 @@ class AppPane:
                     rlist.append(self.capture)
                 if self.ff is not None:
                     rlist.append(self.ff.stdout)
+                if self.gpu is not None:
+                    rlist.append(self.gpu)
                 if self.term:
                     rlist.append(self.term.fd)
                 # write-select on encoder stdins with a queued frame, so a
@@ -1129,6 +1196,8 @@ class AppPane:
                     self.pump_damage()
                 if self.ff is not None and self.ff.stdout in r:
                     self.pump_frames()
+                if self.gpu is not None and self.gpu in r:
+                    self.pump_gpu_frame()
                 if self.term and self.term.fd in r:
                     for ev in browse.coalesce_mouse_motion(self.term.read_input()):
                         if ev["kind"] == "key":
@@ -1191,9 +1260,13 @@ class AppPane:
             if self.presenter is not None:
                 self.presenter.close()
             self._stop_capture()
+            if self.gpu is not None:
+                self.gpu.close()
+                self.gpu = None
             if self.xapp is not None:
                 self.xapp.close()
         if err:
+            log("fatal:", err)
             print(f"kilix run: {err}", file=sys.stderr)
             sys.exit(1)
 
