@@ -10,6 +10,7 @@ class WaylandInputTests(unittest.TestCase):
         sock = socket_class.return_value
         injector = wayland_input.Injector(
             "/tmp/private.sock", 800, 600, offset_x=1280)
+        injector.frame_rate(20)
         self.assertTrue(injector.key("ArrowLeft", 1))
         injector.mouse({"x": 50, "y": 25, "b": 0, "press": True},
                        (0, 0, 100, 50))
@@ -17,7 +18,8 @@ class WaylandInputTests(unittest.TestCase):
                        (0, 0, 100, 50))
         self.assertEqual(
             [call.args[0] for call in sock.sendall.call_args_list],
-            [b"o 1280 0\n", b"k 105 1\n", b"m 400 300\n", b"b 272 1\n",
+            [b"o 1280 0\n", b"r 20 0\n", b"k 105 1\n",
+             b"m 400 300\n", b"b 272 1\n",
              b"m 400 300\n", b"a 0 -1\n"])
 
     def test_key_mapping_is_case_insensitive_and_rejects_unknown(self):

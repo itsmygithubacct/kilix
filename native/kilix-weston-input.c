@@ -55,7 +55,20 @@ struct input_client {
     char buffer[4096];
     size_t used;
     double offset_x, offset_y;
+    struct weston_output *output;
 };
+
+static struct weston_output *output_at(struct input_bridge *bridge,
+                                       double x, double y) {
+    struct weston_output *output;
+    wl_list_for_each(output, &bridge->compositor->output_list, link) {
+        if (x >= output->pos.c.x && y >= output->pos.c.y &&
+                x < output->pos.c.x + output->width &&
+                y < output->pos.c.y + output->height)
+            return output;
+    }
+    return NULL;
+}
 
 static void close_client(struct input_client *client) {
     struct input_bridge *bridge = client->bridge;
@@ -98,6 +111,7 @@ static bool parse_line(struct input_client *client, const char *line) {
             && first <= 65535.0 && second <= 65535.0) {
         client->offset_x = first;
         client->offset_y = second;
+        client->output = output_at(bridge, first, second);
         return true;
     }
     if (sscanf(line, " %c %d %d %c", &type, &code, &state, &tail) != 3)
@@ -109,6 +123,11 @@ static bool parse_line(struct input_client *client, const char *line) {
                    state ? WL_KEYBOARD_KEY_STATE_PRESSED
                          : WL_KEYBOARD_KEY_STATE_RELEASED,
                    STATE_UPDATE_AUTOMATIC);
+        return true;
+    }
+    if (type == 'r' && code >= 1 && code <= 30 && state == 0 &&
+            client->output && client->output->current_mode) {
+        client->output->current_mode->refresh = code * 1000;
         return true;
     }
     if (type == 'b' && code >= BTN_LEFT && code <= BTN_TASK

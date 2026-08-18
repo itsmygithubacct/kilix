@@ -100,6 +100,7 @@ class Session:
             # created. Kiosk shell then assigns the root surface to the focused
             # output; dialogs inherit their parent's assignment.
             self.injector.position()
+            self.injector.frame_rate(self.fps)
             self.app = self._spawn(
                 self.command, stdout=subprocess.DEVNULL, stderr=app_log)
             self.weston = self.app  # AppPane monitors the application lifetime.
