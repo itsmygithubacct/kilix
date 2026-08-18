@@ -16,6 +16,7 @@ import tempfile
 import time
 
 from . import gpu_host
+from .process_signals import TERMINATION_SIGNALS
 
 
 SLOTS = ((1280, 720),) * 6
@@ -145,8 +146,8 @@ def run_daemon(session_home: Path) -> int:
         nonlocal stopping
         stopping = True
 
-    signal.signal(signal.SIGTERM, stop)
-    signal.signal(signal.SIGINT, stop)
+    for termination_signal in TERMINATION_SIGNALS:
+        signal.signal(termination_signal, stop)
     try:
         pipewire_log = open(runtime_dir / "pipewire.stderr", "wb")
         weston_log = open(runtime_dir / "weston.stderr", "wb")

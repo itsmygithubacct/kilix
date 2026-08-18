@@ -60,6 +60,7 @@ from app_profiles import (APP_PROFILE_STALE_SECONDS, cleanup_app_profile,
                           cleanup_stale_app_profiles, prepare_app_command)
 from kilix_sdk import xapp as xapp_sdk
 from kilix_sdk import gpu_host, gpu_session
+from kilix_sdk.process_signals import install_cleanup_signal_handlers
 
 try:
     from Xlib import X
@@ -1226,8 +1227,10 @@ class AppPane:
             signal.signal(signal.SIGWINCH,
                           lambda *a: setattr(self, "resized", True))
             os.set_blocking(self.term.fd, False)
-        for _s in (signal.SIGTERM, signal.SIGHUP):   # -> finally + sup.cleanup()
-            signal.signal(_s, lambda *a: sys.exit(0))
+        # Explicit pane close and ordinary terminal/process termination all
+        # unwind through the finally block below. Do not leave SIGQUIT on its
+        # default core-dump path or SIGINT dependent on an incidental catch.
+        install_cleanup_signal_handlers()
         err = None
         web = self.lan or self.hls or self.mse or self.webrtc
         gpu_web = web and self.use_gpu
