@@ -35,13 +35,13 @@ int main(void) {
     KilixDmaBufBlitRect r = {0};
     /* TL red, TR green, BL blue, BR yellow makes both axes observable. */
     if (!kilix_dmabuf_blit_rect(4, 2, KILIX_DMABUF_TRANSFORM_NONE, &r) ||
-            r.source_x0 != 4 || r.source_y0 != 0 ||
-            r.source_x1 != 0 || r.source_y1 != 2) return 1;
-    /* Weston already stores logical TL at buffer BR even when SPA says None.
-       A truthful producer-applied 180 composes back to the old Y-origin map. */
+            r.source_x0 != 0 || r.source_y0 != 0 ||
+            r.source_x1 != 4 || r.source_y1 != 2) return 1;
+    /* A producer-applied 180 reverses both axes relative to the direct
+       user-visible SPA-None mapping. */
     if (!kilix_dmabuf_blit_rect(4, 2, KILIX_DMABUF_TRANSFORM_180, &r) ||
-            r.source_x0 != 0 || r.source_y0 != 2 ||
-            r.source_x1 != 4 || r.source_y1 != 0) return 2;
+            r.source_x0 != 4 || r.source_y0 != 2 ||
+            r.source_x1 != 0 || r.source_y1 != 0) return 2;
     if (kilix_dmabuf_blit_rect(4, 2, KILIX_DMABUF_TRANSFORM_90, &r)) return 3;
     return 0;
 }
