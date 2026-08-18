@@ -89,6 +89,19 @@ published repository until integration. Release adoption must preserve the
 Kilix-to-Kitty pin, rerun both full test matrices, prove fallback on unsupported
 hardware, and demonstrate a real shared encode on a same-device VAAPI host.
 
+### Component pins moved for this release
+
+Kilix owns the immutable revision of every optional component, so these are the
+whole of what a release installs:
+
+- **Kilix Bonsai** → `b54e617968f63594bb5e6b887b4ed4e5a8b7f055`: the generated
+  `kilix-bonsai` and `bonsai-cpu` launchers quote the checkout path they exec,
+  so a store installed below a directory with a quote or a space in its name
+  runs instead of executing something else. An unknown model variant now says
+  so and exits, a gallery entry with malformed saved metadata no longer takes
+  the browser down with it, and an incomplete runtime pin is refused rather
+  than fetched.
+
 ## Release 0.1.9
 
 Published 2026-08-14 as part of the coordinated
