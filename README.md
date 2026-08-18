@@ -824,6 +824,21 @@ simple full-screen programs but is not real multiplexing. It does not carry
 graphics, mouse state, or a second interactive PTY. For true attach/view, start
 the session under tmux with `kilix serve` or `kilix mux <name>`.
 
+## Calculator
+
+```bash
+kilix calculator
+```
+
+The calculator opens over the current terminal session using the same native
+overlay theme as the Copy/Paste context window. Every button is clickable;
+digits, decimal point, arithmetic operators, percent and `=` also work from the
+keyboard, `Enter` calculates, `Backspace` edits, `C` clears, and `Esc` closes
+the overlay. The calculator includes memory controls, square root, reciprocal,
+sign change, clear-entry and divide-by-zero handling. It adapts when the pane
+is resized and reports the minimum usable size instead of drawing a clipped
+keypad.
+
 ## Open web URLs
 
 ```bash
