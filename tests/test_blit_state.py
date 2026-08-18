@@ -97,6 +97,37 @@ class AppPanePresenterTests(unittest.TestCase):
         pane.presenter.next_deadline = 9.0
         self.assertEqual(pane.loop_timeout(10.0), 0.0)
 
+    def test_focus_events_suspend_and_resume_local_app_group(self):
+        import apprun
+        pane = object.__new__(apprun.AppPane)
+        pane._pane_focused = True
+        pane._suspend_hidden = True
+        pane.fps = 20
+        pane.app = Mock(pid=4321, poll=Mock(return_value=None))
+        pane.ff = Mock()
+        pane.capture = None
+        pane.presenter = Mock()
+        pane.prev_status = "status"
+        pane._stop_capture = Mock(side_effect=lambda: (
+            setattr(pane, "ff", None), setattr(pane, "capture", None)))
+        pane._spawn_capture = Mock()
+        pane._wake_capture = Mock()
+        with patch.object(apprun.os, "killpg") as killpg:
+            pane.on_focus(False)
+            killpg.assert_called_with(4321, apprun.signal.SIGSTOP)
+            pane.on_focus(True)
+            killpg.assert_called_with(4321, apprun.signal.SIGCONT)
+        pane._stop_capture.assert_called_once()
+        pane._spawn_capture.assert_called_once_with(pane.fps)
+
+    def test_terminal_focus_sequences_are_parsed(self):
+        import apprun
+        term = object.__new__(apprun.RunTerm)
+        self.assertEqual(term._parse_csi("", "I"),
+                         {"kind": "focus", "focused": True})
+        self.assertEqual(term._parse_csi("", "O"),
+                         {"kind": "focus", "focused": False})
+
     def test_first_frame_is_full_then_exact_rect(self):
         pane = make_apppane(stream=True)
         try:

@@ -11,6 +11,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 import os
 import re
+import signal
 import subprocess
 import threading
 from typing import Iterable, Mapping
@@ -185,7 +186,7 @@ class XAppSession:
             raise ValueError("X app command must not be empty")
         self.app = self.supervisor.spawn(
             "app", argv, env=self.environment(env), cwd=cwd,
-            stdout=stdout, stderr=stderr)
+            stdout=stdout, stderr=stderr, start_new_session=True)
         return self.app
 
     def make_injector(self, *, width: int | None = None,
@@ -290,6 +291,14 @@ class XAppSession:
         self._closed = True
         self.release_input()
         self.stop_capture()
+        # A hidden pane may have frozen the application's private process
+        # group. Resume it so the supervisor's orderly TERM can be handled.
+        app_pid = getattr(self.app, "pid", None)
+        if app_pid is not None and self.app.poll() is None:
+            try:
+                os.killpg(app_pid, signal.SIGCONT)
+            except ProcessLookupError:
+                pass
         if self.xd is not None:
             try:
                 self.xd.close()

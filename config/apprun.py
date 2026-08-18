@@ -240,12 +240,12 @@ class RunTerm(browse.Term):
         # ?1003h = ANY-motion tracking (not just drag): the app needs free
         # pointer motion for hover/mouse-look, e.g. xeyes or an FPS.
         self.write("\x1b[?1049h\x1b[2J\x1b[?25l\x1b[?7l\x1b[>15u"
-                   "\x1b[?1003h\x1b[?1006h\x1b[?1016h\x1b[?2004h")
+                   "\x1b[?1003h\x1b[?1006h\x1b[?1016h\x1b[?2004h\x1b[?1004h")
 
     def restore(self):
         # browse.Term.restore disables ?1002l but not ?1003l (all-motion),
         # which we enable above — turn it off or the shell gets flooded.
-        self.write("\x1b[?1003l")
+        self.write("\x1b[?1003l\x1b[?1004l")
         super().restore()
 
     def _parse_csi(self, params, final):
@@ -438,6 +438,9 @@ class AppPane:
                           if fit_env is not None else auto_fit)
         self._fit_suspended = False
         self._next_housekeeping = time.monotonic()
+        self._pane_focused = True
+        self._suspend_hidden = not (
+            serve or lan or hls or mse or webrtc or no_pane)
         if self.term:
             self.compute_layout()
 
@@ -966,6 +969,41 @@ class AppPane:
                 self._cap_fps != self.fps:
             self._spawn_capture(self.fps)
 
+    def on_focus(self, focused):
+        """Freeze a purely local hidden app tree and stop fallback polling.
+
+        Kitty's DEC focus events cover tab switches as well as OS-window focus.
+        Broadcast apps stay live because they have viewers outside this pane.
+        """
+        focused = bool(focused)
+        if focused == self._pane_focused:
+            return
+        self._pane_focused = focused
+        if not self._suspend_hidden or self.app is None or self.app.poll() is not None:
+            return
+        if focused:
+            try:
+                os.killpg(self.app.pid, signal.SIGCONT)
+            except ProcessLookupError:
+                return
+            if self.capture is None and self.ff is None:
+                self._spawn_capture(self.fps)
+            else:
+                self._wake_capture()
+            if self.presenter is not None:
+                self.presenter.invalidate()
+            self.prev_status = None
+            log("pane visible: resumed app", self.app.pid)
+        else:
+            if self.ff is not None:
+                self._stop_capture()
+            try:
+                os.killpg(self.app.pid, signal.SIGSTOP)
+            except ProcessLookupError:
+                return
+            self.prev_status = None
+            log("pane hidden: suspended app", self.app.pid)
+
     def on_key(self, ev):
         self._wake_capture()
         mods = max(0, ev["mods"] - 1)
@@ -1099,6 +1137,8 @@ class AppPane:
                             self.on_mouse(ev)
                         elif ev["kind"] == "paste":
                             self.on_paste(ev["text"])
+                        elif ev["kind"] == "focus":
+                            self.on_focus(ev["focused"])
                 now = time.time()
                 if self.resized:
                     self.resized = False
@@ -1127,7 +1167,8 @@ class AppPane:
                 # during a warmup window (recover in <1s), then a cheap idle
                 # interval so an app sitting on a static screen isn't rewritten
                 # every tick. Animation blits on its own and resets the timer.
-                if self.term and self.last_frame is not None:
+                if (self.term and self._pane_focused
+                        and self.last_frame is not None):
                     idle = now - getattr(self, "_blit_t", 0)
                     warming = now - self._loop_start < 4
                     if idle > (0.4 if warming else 3):

@@ -389,6 +389,8 @@ class Term:
         return events
 
     def _parse_csi(self, params, final):
+        if not params and final in ("I", "O"):
+            return {"kind": "focus", "focused": final == "I"}
         if final in ("M", "m") and params.startswith("<"):
             try:
                 b, x, y = (int(v) for v in params[1:].split(";"))
