@@ -25,7 +25,10 @@ complete tree. Freedesktop launchers/icons are the intentional exception:
 
 ## Release 0.1.9
 
-Unreleased coordinated 0.1.9 work.
+Published 2026-08-14 as part of the coordinated
+[Plebian-OS 0.1.9 release](https://github.com/itsmygithubacct/plebian-os/releases/tag/v0.1.9).
+Kilix's public `v0.1.9` tag identifies the terminal component selected by that
+release.
 
 Kilix now has one shared application boundary across the CLI, TUI, Kilix 95,
 IceWM, Cap, and Land. The host catalog currently exposes 24 applications.
@@ -84,7 +87,8 @@ Optional desktop pins carried by this Kilix release advance to:
 
 ## Release 0.1.8
 
-Prepared 2026-08-07. **Not published yet.**
+Prepared 2026-08-07 and published 2026-08-09 as part of the coordinated
+[Plebian-OS 0.1.8 release](https://github.com/itsmygithubacct/plebian-os/releases/tag/v0.1.8).
 
 Upgrades from 0.1.7, the previous published release. Adds `kilix install`: one
 list of everything this system can install — the pinned content catalog and the
@@ -221,15 +225,10 @@ whole of what a release installs:
 
 ## Release 0.1.7
 
-Prepared 2026-08-02. **Not published yet.** The source closure is final and
-this repository's `VERSION` reads 0.1.7, but no 0.1.7 artifact or release tag
-has been published: publication requires an ISO built from this exact closure
-and accepted under Plebian-OS's
-[RELEASING.md](https://github.com/itsmygithubacct/plebian-os/blob/main/RELEASING.md)
-procedure. Until that lands, **0.1.2 remains the last published coordinated
-release**, and the newest tag on this repository is the Kilix-only `v0.1.4`
-described below. Read the sections that follow as what 0.1.7 contains, not as
-something you can install today.
+Published 2026-08-02 as part of the coordinated
+[Plebian-OS 0.1.7 release](https://github.com/itsmygithubacct/plebian-os/releases/tag/v0.1.7).
+That release established the fresh-install upgrade baseline and superseded the
+older Kilix-only `v0.1.4` component milestone described below.
 
 Version 0.1.7 is the coordinated stack release covering everything since 0.1.2,
 and is the first release Kilix shares with
