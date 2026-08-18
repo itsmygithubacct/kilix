@@ -19,6 +19,7 @@
 #include <spa/param/video/format-utils.h>
 #include <spa/utils/result.h>
 
+struct lease;
 struct state {
     struct pw_main_loop *loop;
     struct pw_stream *stream;
@@ -29,11 +30,18 @@ struct state {
     uint64_t frames;
     uint32_t storage_type;
     int listen_fd;
-    int client_fd;
     struct spa_source *listen_source;
-    struct spa_source *client_source;
     struct pw_buffer *held;
+    struct lease *leases;
     const char *socket_path;
+};
+
+struct lease {
+    struct state *state;
+    struct lease *next;
+    struct spa_source *source;
+    struct pw_buffer *buffer;
+    int fd;
 };
 
 #define KILIX_DMABUF_MAGIC 0x4b444d41u
@@ -50,23 +58,20 @@ static void release_held(struct state *state) {
     }
 }
 
-static void close_client(struct state *state) {
-    if (state->client_source) {
-        pw_loop_destroy_source(pw_main_loop_get_loop(state->loop),
-                               state->client_source);
-        state->client_source = NULL;
-    }
-    if (state->client_fd >= 0) close(state->client_fd);
-    state->client_fd = -1;
-}
-
 static void client_ack(void *userdata, int fd, uint32_t mask) {
-    struct state *state = userdata;
+    struct lease *lease = userdata;
+    struct state *state = lease->state;
     uint8_t ack = 0;
     if ((mask & SPA_IO_IN) && read(fd, &ack, 1) == 1 && ack == 1)
         state->frames++;
-    close_client(state);
-    release_held(state);
+    struct lease **cursor = &state->leases;
+    while (*cursor && *cursor != lease) cursor = &(*cursor)->next;
+    if (*cursor) *cursor = lease->next;
+    if (lease->source)
+        pw_loop_destroy_source(pw_main_loop_get_loop(state->loop), lease->source);
+    if (lease->fd >= 0) close(lease->fd);
+    if (lease->buffer) pw_stream_queue_buffer(state->stream, lease->buffer);
+    free(lease);
 }
 
 static void send_held_frame(void *userdata, int fd, uint32_t mask) {
@@ -111,13 +116,16 @@ static void send_held_frame(void *userdata, int fd, uint32_t mask) {
     if (sendmsg(client, &message, MSG_NOSIGNAL) != (ssize_t)sizeof(frame)) {
         close(client); release_held(state); return;
     }
-    close_client(state);
-    state->client_fd = client;
-    state->client_source = pw_loop_add_io(
+    struct lease *lease = calloc(1, sizeof(*lease));
+    if (!lease) { close(client); release_held(state); return; }
+    lease->state = state; lease->fd = client; lease->buffer = state->held;
+    state->held = NULL;
+    lease->next = state->leases; state->leases = lease;
+    lease->source = pw_loop_add_io(
         pw_main_loop_get_loop(state->loop), client,
-        SPA_IO_IN | SPA_IO_HUP | SPA_IO_ERR, false, client_ack, state);
-    if (!state->client_source) {
-        close_client(state); release_held(state);
+        SPA_IO_IN | SPA_IO_HUP | SPA_IO_ERR, false, client_ack, lease);
+    if (!lease->source) {
+        client_ack(lease, client, 0);
     }
 }
 
@@ -305,7 +313,7 @@ int main(int argc, char **argv) {
     unsigned long target_value = strtoul(argv[first], &target_end, 10);
     uint32_t target_id = (target_end && !*target_end && target_value <= UINT32_MAX) ?
         (uint32_t)target_value : PW_ID_ANY;
-    struct state state = {.listen_fd = -1, .client_fd = -1};
+    struct state state = {.listen_fd = -1};
     pw_init(&argc, &argv);
     state.loop = pw_main_loop_new(NULL);
     if (!state.loop) return 1;
@@ -368,7 +376,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     pw_main_loop_run(state.loop);
-    close_client(&state);
+    while (state.leases) client_ack(state.leases, state.leases->fd, 0);
     release_held(&state);
     if (state.listen_source)
         pw_loop_destroy_source(pw_main_loop_get_loop(state.loop),
