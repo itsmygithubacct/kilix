@@ -50,6 +50,13 @@ class PtyBrokerIntegrationTests(unittest.TestCase):
         self.assertIn("kilix_close_persistent_window", boss)
         self.assertIn("kilix_close_persistent_window", title_bar)
 
+    def test_remote_close_terminates_persistent_session(self):
+        boss = (ROOT / "src" / "kitty" / "boss.py").read_text()
+        close_window = (
+            ROOT / "src" / "kitty" / "rc" / "close_window.py").read_text()
+        self.assertIn("def close_window_explicitly", boss)
+        self.assertIn("boss.close_window_explicitly(window)", close_window)
+
     def test_configuration_and_command_are_bounded(self):
         module = load_module()
         with tempfile.TemporaryDirectory() as temporary:
