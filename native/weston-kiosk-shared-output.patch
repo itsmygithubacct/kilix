@@ -1,0 +1,59 @@
+--- a/kiosk-shell/kiosk-shell.c
++++ b/kiosk-shell/kiosk-shell.c
+@@ -235,6 +235,40 @@ kiosk_shell_surface_find_best_output_for_xwayland(struct kiosk_shell_surface *s
+ 	return NULL;
+ }
+ 
++static struct weston_output *
++kiosk_shell_surface_find_client_output(struct kiosk_shell_surface *shsurf)
++{
++	struct weston_desktop_client *client =
++		weston_desktop_surface_get_client(shsurf->desktop_surface);
++	struct weston_layer *layers[] = {
++		&shsurf->shell->normal_layer, &shsurf->shell->inactive_layer };
++	struct weston_view *view;
++	unsigned int i;
++
++	for (i = 0; i < ARRAY_LENGTH(layers); i++) {
++		wl_list_for_each(view, &layers[i]->view_list.link, layer_link.link) {
++			struct kiosk_shell_surface *other =
++				get_kiosk_shell_surface(view->surface);
++			if (other && other != shsurf && other->output &&
++			    weston_desktop_surface_get_client(other->desktop_surface) == client)
++				return other->output;
++		}
++	}
++	return NULL;
++}
++
++static struct weston_output *
++kiosk_shell_surface_find_free_output(struct kiosk_shell_surface *shsurf)
++{
++	struct kiosk_shell_output *shoutput;
++
++	wl_list_for_each(shoutput, &shsurf->shell->output_list, link) {
++		if (!shoutput->active_surface_tree)
++			return shoutput->output;
++	}
++	return NULL;
++}
++
+ static struct weston_output *
+ kiosk_shell_surface_find_best_output(struct kiosk_shell_surface *shsurf)
+ {
+@@ -269,6 +303,15 @@ kiosk_shell_surface_find_best_output(struct kiosk_shell_surface *shsurf)
+ 	if (root->output)
+ 		return root->output;
+ 
++	/* Kilix leases outputs in list order. Keep every wl_client on its first
++	 * output, and put a new client on the first output without an active tree. */
++	output = kiosk_shell_surface_find_client_output(shsurf);
++	if (output)
++		return output;
++	output = kiosk_shell_surface_find_free_output(shsurf);
++	if (output)
++		return output;
++
+ 	output = weston_shell_utils_get_focused_output(shsurf->shell->compositor);
+ 	if (output)
+ 		return output;

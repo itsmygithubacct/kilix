@@ -113,13 +113,17 @@ def discover_runtime() -> GpuHostRuntime | None:
     capture = Path(os.environ.get(
         "KILIX_GPU_CAPTURE",
         build_root / "libraries/gpu-host/kilix-pw-capture"))
-    if not _safe_executable(input_module) or not _safe_executable(capture):
+    kiosk_shell = Path(os.environ.get(
+        "KILIX_WESTON_KIOSK_SHELL",
+        build_root / "libraries/gpu-host/kilix-kiosk-shell.so"))
+    if (not _safe_executable(input_module) or not _safe_executable(capture)
+            or not _safe_executable(kiosk_shell)):
         return None
     module_paths = {
         "pipewire-backend.so": libweston_modules / "pipewire-backend.so",
         "gl-renderer.so": libweston_modules / "gl-renderer.so",
         "xwayland.so": libweston_modules / "xwayland.so",
-        "kiosk-shell.so": weston_modules / "kiosk-shell.so",
+        "kiosk-shell.so": kiosk_shell,
         "weston-keyboard": prefix / "libexec/weston-keyboard",
         "kilix-weston-input.so": input_module,
     }
@@ -165,10 +169,15 @@ def link_capture_ports(runtime: GpuHostRuntime, environment: Mapping[str, str],
             stdin=subprocess.DEVNULL, capture_output=True, text=True,
             timeout=1, check=False)
         if source in outputs.stdout.splitlines() and sink in inputs.stdout.splitlines():
-            linked = subprocess.run(
-                (str(runtime.pw_link), source, sink), env=dict(environment),
-                stdin=subprocess.DEVNULL, capture_output=True, text=True,
-                timeout=1, check=False)
+            try:
+                linked = subprocess.run(
+                    (str(runtime.pw_link), source, sink), env=dict(environment),
+                    stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                    timeout=1, check=False)
+            except subprocess.TimeoutExpired:
+                last_error = "PipeWire link negotiation timed out"
+                time.sleep(0.02)
+                continue
             if linked.returncode == 0:
                 return
             # PipeWire 1.4 reports an already-created target-object link as
@@ -231,6 +240,19 @@ def weston_command(runtime: GpuHostRuntime, width: int, height: int,
         "--shell=kiosk", "--modules=kilix-weston-input.so", "--xwayland",
         "--idle-time=0",
         f"--log={log_path}", "--", *command,
+    )
+
+
+def shared_weston_command(runtime: GpuHostRuntime, socket_name: str,
+                          log_path: Path, config_path: Path) -> tuple[str, ...]:
+    """Start the long-lived multi-output host without an application child."""
+    if not re.fullmatch(r"wayland-[A-Za-z0-9_.-]+", socket_name):
+        raise ValueError("unsafe Wayland socket name")
+    return (
+        str(runtime.weston), "--backend=pipewire", "--renderer=gl",
+        f"--socket={socket_name}", "--shell=kiosk",
+        "--modules=kilix-weston-input.so", "--xwayland", "--idle-time=0",
+        f"--config={config_path}", f"--log={log_path}",
     )
 
 
@@ -327,6 +349,9 @@ def _probe_identity(runtime: GpuHostRuntime) -> dict:
     build_current = Path(os.environ.get(
         "KILIX_BUILD_DIRECTORY", "~/.local/gpu_terminal/kilix/build"
     )).expanduser() / "current"
+    module_paths = dict(item.split("=", 1) for item in runtime.module_map.split(";")
+                        if "=" in item)
+    kiosk_path = module_paths.get("kiosk-shell.so")
     return {
         "schema": 1,
         "kilix_ref": os.environ.get("KILIX_REF", ""),
@@ -334,6 +359,7 @@ def _probe_identity(runtime: GpuHostRuntime) -> dict:
         "weston": identity(runtime.weston),
         "capture": identity(runtime.capture),
         "input": identity(runtime.input_module),
+        "kiosk": identity(Path(kiosk_path)) if kiosk_path else [],
         "drivers": drivers,
     }
 

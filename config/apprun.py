@@ -511,11 +511,15 @@ class AppPane:
         self.gpu = gpu_session.Session(
             self.gpu_runtime, tuple(self.cmd), self.app_w, self.app_h,
             Path(session_home), fps=self.fps).start()
+        if (self.app_w, self.app_h) != (self.gpu.width, self.gpu.height):
+            self.app_w, self.app_h = self.gpu.width, self.gpu.height
+            self.compute_layout()
         self.app = self.gpu.weston
         self.inj = self.gpu.injector
         self.disp = self.gpu.wayland_socket
         self.capture_backend = "wayland-dmabuf"
-        self.status = f"{os.path.basename(self.cmd[0])} on private Wayland GPU"
+        self.status = (f"{os.path.basename(self.cmd[0])} on shared Wayland GPU "
+                       f"slot {self.gpu.slot}")
         log("GPU host on", self.gpu.wayland_socket)
 
     def start_display(self):

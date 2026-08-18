@@ -321,13 +321,16 @@ int main(int argc, char **argv) {
                        quit_signal, &state);
     pw_loop_add_signal(pw_main_loop_get_loop(state.loop), SIGTERM,
                        quit_signal, &state);
+    const char *node_name = getenv("KILIX_CAPTURE_NODE_NAME");
+    if (!node_name || !*node_name) node_name = "kilix-pw-capture";
     struct pw_properties *properties = pw_properties_new(
         PW_KEY_MEDIA_TYPE, "Video",
         PW_KEY_MEDIA_CATEGORY, "Capture",
         PW_KEY_MEDIA_ROLE, "Screen",
-        PW_KEY_TARGET_OBJECT, argv[first], NULL);
+        PW_KEY_TARGET_OBJECT, argv[first],
+        PW_KEY_NODE_NAME, node_name, NULL);
     state.stream = pw_stream_new_simple(
-        pw_main_loop_get_loop(state.loop), "kilix-pw-capture",
+        pw_main_loop_get_loop(state.loop), node_name,
         properties, &stream_events, &state);
     if (!state.stream) return 1;
 

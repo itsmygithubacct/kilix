@@ -29,13 +29,20 @@ BUTTONS = {1: 0x110, 2: 0x112, 3: 0x111}
 class Injector:
     """Send compact newline-delimited events to a private Weston module."""
 
-    def __init__(self, path: str | Path, app_w: int, app_h: int):
+    def __init__(self, path: str | Path, app_w: int, app_h: int,
+                 offset_x: int = 0, offset_y: int = 0):
         self.app_w, self.app_h = app_w, app_h
         self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.socket.connect(str(path))
+        self._send(f"o {max(0, int(offset_x))} {max(0, int(offset_y))}")
 
     def _send(self, event: str) -> None:
         self.socket.sendall(event.encode("ascii") + b"\n")
+
+    def position(self, x: int = 0, y: int = 0) -> None:
+        """Move the shared seat inside this injector's assigned output."""
+        self._send(f"m {min(self.app_w - 1, max(0, int(x)))} "
+                   f"{min(self.app_h - 1, max(0, int(y)))}")
 
     @staticmethod
     def code_for(key) -> int:
@@ -76,4 +83,3 @@ class Injector:
 
     def close(self) -> None:
         self.socket.close()
-

@@ -36,27 +36,35 @@ void weston_seat_release(struct weston_seat *);
 int weston_seat_init_pointer(struct weston_seat *);
 int weston_seat_init_keyboard(struct weston_seat *, struct xkb_keymap *);
 
+struct input_client;
 struct input_bridge {
     struct weston_compositor *compositor;
     struct weston_seat seat;
     struct wl_listener destroy_listener;
     struct wl_event_source *listen_source;
-    struct wl_event_source *client_source;
     int listen_fd;
-    int client_fd;
     char socket_path[sizeof(((struct sockaddr_un *)0)->sun_path)];
-    char buffer[4096];
-    size_t used;
+    struct input_client *clients;
 };
 
-static void close_client(struct input_bridge *bridge) {
-    if (bridge->client_source) {
-        wl_event_source_remove(bridge->client_source);
-        bridge->client_source = NULL;
-    }
-    if (bridge->client_fd >= 0) close(bridge->client_fd);
-    bridge->client_fd = -1;
-    bridge->used = 0;
+struct input_client {
+    struct input_bridge *bridge;
+    struct input_client *next;
+    struct wl_event_source *source;
+    int fd;
+    char buffer[4096];
+    size_t used;
+    double offset_x, offset_y;
+};
+
+static void close_client(struct input_client *client) {
+    struct input_bridge *bridge = client->bridge;
+    struct input_client **cursor = &bridge->clients;
+    while (*cursor && *cursor != client) cursor = &(*cursor)->next;
+    if (*cursor) *cursor = client->next;
+    if (client->source) wl_event_source_remove(client->source);
+    if (client->fd >= 0) close(client->fd);
+    free(client);
 }
 
 static void focus_pointer_surface(struct input_bridge *bridge) {
@@ -66,7 +74,8 @@ static void focus_pointer_surface(struct input_bridge *bridge) {
                                        pointer->focus->surface);
 }
 
-static bool parse_line(struct input_bridge *bridge, const char *line) {
+static bool parse_line(struct input_client *client, const char *line) {
+    struct input_bridge *bridge = client->bridge;
     char type = 0, tail = 0;
     int code = 0, state = 0;
     double first = 0.0, second = 0.0;
@@ -76,10 +85,19 @@ static bool parse_line(struct input_bridge *bridge, const char *line) {
     if (sscanf(line, " %c %lf %lf %c", &type, &first, &second, &tail) == 3
             && type == 'm' && first >= 0.0 && second >= 0.0
             && first <= 65535.0 && second <= 65535.0) {
-        struct weston_coord_global pos = { .c = weston_coord(first, second) };
+        struct weston_coord_global pos = {
+            .c = weston_coord(first + client->offset_x,
+                              second + client->offset_y) };
         notify_motion_absolute(&bridge->seat, &now, pos);
         focus_pointer_surface(bridge);
         notify_pointer_frame(&bridge->seat);
+        return true;
+    }
+    if (sscanf(line, " %c %lf %lf %c", &type, &first, &second, &tail) == 3
+            && type == 'o' && first >= 0.0 && second >= 0.0
+            && first <= 65535.0 && second <= 65535.0) {
+        client->offset_x = first;
+        client->offset_y = second;
         return true;
     }
     if (sscanf(line, " %c %d %d %c", &type, &code, &state, &tail) != 3)
@@ -118,40 +136,40 @@ static bool parse_line(struct input_bridge *bridge, const char *line) {
 }
 
 static int client_ready(int fd, uint32_t mask, void *data) {
-    struct input_bridge *bridge = data;
+    struct input_client *client = data;
     if (mask & (WL_EVENT_HANGUP | WL_EVENT_ERROR)) {
-        close_client(bridge);
+        close_client(client);
         return 0;
     }
     for (;;) {
-        ssize_t count = read(fd, bridge->buffer + bridge->used,
-                             sizeof(bridge->buffer) - bridge->used);
-        if (count > 0) bridge->used += (size_t)count;
-        else if (count == 0) { close_client(bridge); return 0; }
+        ssize_t count = read(fd, client->buffer + client->used,
+                             sizeof(client->buffer) - client->used);
+        if (count > 0) client->used += (size_t)count;
+        else if (count == 0) { close_client(client); return 0; }
         else if (errno == EINTR) continue;
         else if (errno == EAGAIN || errno == EWOULDBLOCK) break;
-        else { close_client(bridge); return 0; }
-        if (bridge->used == sizeof(bridge->buffer)) {
-            close_client(bridge);
+        else { close_client(client); return 0; }
+        if (client->used == sizeof(client->buffer)) {
+            close_client(client);
             return 0;
         }
     }
     size_t consumed = 0;
-    while (consumed < bridge->used) {
-        char *newline = memchr(bridge->buffer + consumed, '\n',
-                               bridge->used - consumed);
+    while (consumed < client->used) {
+        char *newline = memchr(client->buffer + consumed, '\n',
+                               client->used - consumed);
         if (!newline) break;
         *newline = '\0';
-        if (!parse_line(bridge, bridge->buffer + consumed)) {
-            close_client(bridge);
+        if (!parse_line(client, client->buffer + consumed)) {
+            close_client(client);
             return 0;
         }
-        consumed = (size_t)(newline - bridge->buffer) + 1u;
+        consumed = (size_t)(newline - client->buffer) + 1u;
     }
     if (consumed) {
-        memmove(bridge->buffer, bridge->buffer + consumed,
-                bridge->used - consumed);
-        bridge->used -= consumed;
+        memmove(client->buffer, client->buffer + consumed,
+                client->used - consumed);
+        client->used -= consumed;
     }
     return 0;
 }
@@ -168,12 +186,16 @@ static int accept_client(int fd, uint32_t mask, void *data) {
         close(client);
         return 0;
     }
-    close_client(bridge);
-    bridge->client_fd = client;
-    bridge->client_source = wl_event_loop_add_fd(
+    struct input_client *input = calloc(1, sizeof(*input));
+    if (!input) { close(client); return 0; }
+    input->bridge = bridge;
+    input->fd = client;
+    input->next = bridge->clients;
+    bridge->clients = input;
+    input->source = wl_event_loop_add_fd(
         wl_display_get_event_loop(bridge->compositor->wl_display), client,
-        WL_EVENT_READABLE, client_ready, bridge);
-    if (!bridge->client_source) close_client(bridge);
+        WL_EVENT_READABLE, client_ready, input);
+    if (!input->source) close_client(input);
     return 0;
 }
 
@@ -181,7 +203,7 @@ static void destroy_bridge(struct wl_listener *listener, void *data) {
     (void)data;
     struct input_bridge *bridge = wl_container_of(
         listener, bridge, destroy_listener);
-    close_client(bridge);
+    while (bridge->clients) close_client(bridge->clients);
     if (bridge->listen_source) wl_event_source_remove(bridge->listen_source);
     if (bridge->listen_fd >= 0) close(bridge->listen_fd);
     unlink(bridge->socket_path);
@@ -204,7 +226,7 @@ WL_EXPORT int wet_module_init(struct weston_compositor *compositor,
 
     struct input_bridge *bridge = calloc(1, sizeof(*bridge));
     if (!bridge) return -1;
-    bridge->listen_fd = bridge->client_fd = -1;
+    bridge->listen_fd = -1;
     bridge->compositor = compositor;
     memcpy(bridge->socket_path, path, strlen(path) + 1u);
     bridge->listen_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC |
@@ -217,7 +239,7 @@ WL_EXPORT int wet_module_init(struct weston_compositor *compositor,
     int bound = bind(bridge->listen_fd, (struct sockaddr *)&address,
                      sizeof(address));
     umask(old_mask);
-    if (bound < 0 || listen(bridge->listen_fd, 1) < 0) goto fail;
+    if (bound < 0 || listen(bridge->listen_fd, 16) < 0) goto fail;
 
     weston_seat_init(&bridge->seat, compositor, "kilix-input");
     if (weston_seat_init_keyboard(&bridge->seat, NULL) < 0) goto fail_seat;

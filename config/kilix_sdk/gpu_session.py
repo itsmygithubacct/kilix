@@ -1,4 +1,4 @@
-"""Lifecycle for a private, DMA-BUF-backed Kilix Wayland application."""
+"""Lifecycle for one application slot in Kilix's shared GPU host."""
 
 from __future__ import annotations
 
@@ -6,11 +6,12 @@ import os
 from pathlib import Path
 import shutil
 import signal
+import select
 import subprocess
 import tempfile
 import time
 
-from . import gpu_host, wayland_input
+from . import gpu_broker, gpu_host, wayland_input
 
 
 class Session:
@@ -18,21 +19,19 @@ class Session:
                  width: int, height: int, session_home: Path, fps: int = 60):
         self.runtime, self.command = runtime, command
         self.width, self.height = width, height
+        self.requested_width, self.requested_height = width, height
+        self.session_home = session_home
         self.fps = min(240, max(1, int(fps)))
-        session_home.mkdir(parents=True, exist_ok=True, mode=0o700)
-        self.runtime_dir = Path(tempfile.mkdtemp(prefix="gpu-run-", dir=session_home))
-        self.runtime_dir.chmod(0o700)
-        self.frame_socket = self.runtime_dir / "frame.sock"
-        self.input_socket = self.runtime_dir / "input.sock"
-        self.wayland_socket = f"wayland-kilix-{os.getpid()}-{self.runtime_dir.name[-6:]}"
-        self.environment = runtime.environment(self.runtime_dir)
-        self.environment.update(gpu_host.app_environment(command))
-        self.environment["WAYLAND_DISPLAY"] = self.wayland_socket
-        self.environment["KILIX_WESTON_INPUT_SOCKET"] = str(self.input_socket)
+        self.runtime_dir = self.local_dir = None
+        self.frame_socket = self.input_socket = None
+        self.wayland_socket = ""
+        self.environment = {}
         self.processes: list[subprocess.Popen] = []
         self.logs = []
-        self.pipewire = self.capture = self.weston = None
+        self.capture = self.app = self.weston = None
         self.injector = None
+        self.lease = None
+        self.slot = -1
 
     def _spawn(self, argv, **kwargs):
         process = subprocess.Popen(
@@ -47,52 +46,74 @@ class Session:
                 return
             if any(p.poll() is not None for p in self.processes):
                 details = []
-                for log in (*self.runtime_dir.glob("*.stderr"),
-                            self.runtime_dir / "weston.log"):
-                    try:
-                        text = log.read_text(errors="replace").strip()
-                    except OSError:
-                        continue
-                    if text:
-                        details.append(f"{log.stem}: {text[-500:]}")
+                if self.local_dir:
+                    for log in self.local_dir.glob("*.stderr"):
+                        try:
+                            text = log.read_text(errors="replace").strip()
+                        except OSError:
+                            continue
+                        if text:
+                            details.append(f"{log.stem}: {text[-500:]}")
                 suffix = f" ({'; '.join(details)})" if details else ""
                 raise RuntimeError(
-                    f"GPU host exited while waiting for {kind}{suffix}")
+                    f"GPU slot exited while waiting for {kind}{suffix}")
             time.sleep(0.02)
-        raise TimeoutError(f"GPU host timed out waiting for {kind}")
+        raise TimeoutError(f"GPU slot timed out waiting for {kind}")
 
     def start(self, timeout: float = 8.0) -> "Session":
         deadline = time.monotonic() + timeout
-        log_path = self.runtime_dir / "weston.log"
         try:
-            pipewire_log = open(self.runtime_dir / "pipewire.stderr", "wb")
-            self.logs.append(pipewire_log)
-            self.pipewire = self._spawn(
-                (str(self.runtime.pipewire),), stdout=subprocess.DEVNULL,
-                stderr=pipewire_log)
-            self._wait_path(self.runtime_dir / "pipewire-0", deadline, "PipeWire")
-            capture_log = open(self.runtime_dir / "capture.stderr", "wb")
-            self.logs.append(capture_log)
+            self.lease, allocation = gpu_broker.acquire(
+                self.session_home, self.width, self.height, timeout)
+            self.slot = int(allocation["slot"])
+            self.width, self.height = (int(allocation["width"]),
+                                       int(allocation["height"]))
+            self.runtime_dir = Path(allocation["runtime_dir"])
+            self.wayland_socket = str(allocation["wayland_socket"])
+            self.input_socket = Path(allocation["input_socket"])
+            self.local_dir = Path(tempfile.mkdtemp(
+                prefix=f"gpu-slot-{self.slot}-", dir=self.session_home))
+            self.local_dir.chmod(0o700)
+            self.frame_socket = self.runtime_dir / (
+                f"frame-{self.slot}-{os.getpid()}-{self.local_dir.name[-6:]}.sock")
+            self.environment = self.runtime.environment(self.runtime_dir)
+            self.environment.update(gpu_host.app_environment(self.command))
+            self.environment["WAYLAND_DISPLAY"] = self.wayland_socket
+            node_name = f"kilix-pw-capture-{self.slot}"
+            self.environment["KILIX_CAPTURE_NODE_NAME"] = node_name
+
+            capture_log = open(self.local_dir / "capture.stderr", "wb")
+            app_log = open(self.local_dir / "app.stderr", "wb")
+            self.logs.extend((capture_log, app_log))
+            source_name = f"weston.pipewire-{self.slot}"
             self.capture = self._spawn(
                 (str(self.runtime.capture), "--dmabuf-server",
-                 str(self.frame_socket), "-", str(self.width), str(self.height),
-                 str(self.fps)),
+                 str(self.frame_socket), source_name,
+                 str(self.width), str(self.height), str(self.fps)),
                 stdout=subprocess.PIPE, stderr=capture_log)
             os.set_blocking(self.capture.stdout.fileno(), False)
             self._wait_path(self.frame_socket, deadline, "DMA-BUF transport")
-            weston_argv = gpu_host.weston_command(
-                self.runtime, self.width, self.height, self.wayland_socket,
-                log_path, self.command)
-            weston_stderr = open(self.runtime_dir / "weston.stderr", "wb")
-            self.logs.append(weston_stderr)
-            self.weston = self._spawn(
-                weston_argv, stdout=subprocess.DEVNULL, stderr=weston_stderr)
-            self._wait_path(self.input_socket, deadline, "native input")
+            self.injector = wayland_input.Injector(
+                self.input_socket, self.width, self.height,
+                int(allocation["offset_x"]), int(allocation["offset_y"]))
+            # Move the shared seat to this output before the first toplevel is
+            # created. Kiosk shell then assigns the root surface to the focused
+            # output; dialogs inherit their parent's assignment.
+            self.injector.position()
+            self.app = self._spawn(
+                self.command, stdout=subprocess.DEVNULL, stderr=app_log)
+            self.weston = self.app  # AppPane monitors the application lifetime.
             gpu_host.link_capture_ports(
                 self.runtime, self.environment,
+                source=f"{source_name}:output_1",
+                sink=f"{node_name}:input_1",
                 timeout=max(0.1, deadline - time.monotonic()))
-            self.injector = wayland_input.Injector(
-                self.input_socket, self.width, self.height)
+            ready, _, _ = select.select(
+                (self.capture.stdout,), (), (),
+                max(0.1, deadline - time.monotonic()))
+            if not ready:
+                raise TimeoutError("GPU slot timed out waiting for first frame")
+            self.lease.sendall(b"R")
             return self
         except Exception:
             self.close()
@@ -130,17 +151,23 @@ class Session:
                 except ProcessLookupError:
                     pass
         for process in reversed(self.processes):
-            if process.poll() is None:
+            if process.poll() is not None:
+                continue
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
                 try:
-                    process.wait(timeout=2)
-                except subprocess.TimeoutExpired:
-                    try:
-                        os.killpg(process.pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
-                    process.wait()
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.wait()
         self.processes.clear()
         for log in self.logs:
             log.close()
         self.logs.clear()
-        shutil.rmtree(self.runtime_dir, ignore_errors=True)
+        if self.lease is not None:
+            self.lease.close()
+            self.lease = None
+        if self.local_dir is not None:
+            shutil.rmtree(self.local_dir, ignore_errors=True)
+            self.local_dir = None
