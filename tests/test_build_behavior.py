@@ -29,6 +29,8 @@ class BuildPreparationTests(unittest.TestCase):
         (self.src / "dependencies").mkdir(parents=True)
         (self.src / "fonts").mkdir()
         shutil.copy2(ROOT / "build.sh", self.checkout / "build.sh")
+        notices = self.checkout / "third_party" / "nerd-fonts"
+        shutil.copytree(ROOT / "third_party" / "nerd-fonts", notices)
         (self.src / "go.mod").write_text(
             "module example.invalid/test\n\ngo 1.26.0\n\ntoolchain go1.26.4\n")
         (self.src / "setup.py").write_text("raise SystemExit('not invoked')\n")
@@ -122,6 +124,18 @@ class BuildPreparationTests(unittest.TestCase):
         self.assertEqual(
             (self.base / "storage" / "build" / "prepared" / "src" / "fonts" /
              "SymbolsNerdFontMono-Regular.ttf").read_bytes(), self.font_bytes)
+        font_dir = (self.base / "storage" / "build" / "prepared" / "src" /
+                    "fonts")
+        self.assertEqual(
+            (font_dir / "SymbolsNerdFontMono-LICENSE.txt").read_bytes(),
+            (ROOT / "third_party" / "nerd-fonts" / "LICENSE").read_bytes())
+        provenance = (font_dir /
+                      "SymbolsNerdFontMono-PROVENANCE.txt").read_text()
+        self.assertIn(f"Source URL: {self.font.as_uri()}", provenance)
+        self.assertIn(f"Archive SHA-256: {sha256(self.font)}", provenance)
+        self.assertIn(
+            "Extracted font SHA-256: " +
+            hashlib.sha256(self.font_bytes).hexdigest(), provenance)
         self.assertEqual(list(self.src.rglob("*.so")), [])
 
     def test_corrupt_cache_and_extracted_font_self_heal(self):
@@ -132,11 +146,111 @@ class BuildPreparationTests(unittest.TestCase):
         installed_font = (self.base / "storage" / "build" / "prepared" /
                           "src" / "fonts" /
                           "SymbolsNerdFontMono-Regular.ttf")
+        font_dir = installed_font.parent
+        installed_license = font_dir / "SymbolsNerdFontMono-LICENSE.txt"
+        installed_provenance = font_dir / "SymbolsNerdFontMono-PROVENANCE.txt"
         installed_font.write_bytes(b"partial")
+        installed_license.write_bytes(b"stale")
+        installed_provenance.write_bytes(b"stale")
         result = self.run_build()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(sha256(cached), sha256(self.deps))
         self.assertEqual(installed_font.read_bytes(), self.font_bytes)
+        self.assertEqual(
+            installed_license.read_bytes(),
+            (ROOT / "third_party" / "nerd-fonts" / "LICENSE").read_bytes())
+        self.assertIn(self.font.as_uri(), installed_provenance.read_text())
+
+    def test_missing_font_notice_refuses_artifact(self):
+        (self.checkout / "third_party" / "nerd-fonts" /
+         "LICENSE").unlink()
+        result = self.run_build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("missing or unsafe Nerd Font notice", result.stderr)
+        self.assertFalse(
+            (self.base / "storage" / "build" / "prepared").exists())
+        font_dir = (self.base / "storage" / "build" / "generations")
+        self.assertEqual(list(font_dir.glob("build.*/src/fonts/*LICENSE*")), [])
+
+    def test_modified_font_license_refuses_artifact(self):
+        license_path = (self.checkout / "third_party" / "nerd-fonts" /
+                        "LICENSE")
+        license_path.write_text(license_path.read_text() + "modified\n")
+        result = self.run_build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("checksum mismatch for Nerd Font license", result.stderr)
+        self.assertFalse(
+            (self.base / "storage" / "build" / "prepared").exists())
+
+    def test_a_completed_build_publishes_the_notices_beside_the_font(self):
+        # The obligation is on the artifact a user receives, not on the source
+        # tree, so assert it against a promoted generation rather than against
+        # the staging step that wrote it.
+        (self.src / "setup.py").write_text(self._WORKING_SETUP)
+
+        result = self.run_build(self._system_env())
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        fonts = self.base / "storage" / "build" / "current" / "src" / "fonts"
+        self.assertEqual(
+            (fonts / "SymbolsNerdFontMono-Regular.ttf").read_bytes(),
+            self.font_bytes)
+        license_file = fonts / "SymbolsNerdFontMono-LICENSE.txt"
+        self.assertEqual(
+            license_file.read_bytes(),
+            (ROOT / "third_party" / "nerd-fonts" / "LICENSE").read_bytes())
+        self.assertEqual(stat.S_IMODE(license_file.stat().st_mode), 0o644)
+        provenance = fonts / "SymbolsNerdFontMono-PROVENANCE.txt"
+        self.assertEqual(stat.S_IMODE(provenance.stat().st_mode), 0o644)
+        recorded = provenance.read_text()
+        self.assertIn("Upstream repository: https://github.com/ryanoasis/"
+                      "nerd-fonts\n", recorded)
+        self.assertIn("Upstream release: v3.4.0\n", recorded)
+        self.assertIn(f"Source URL: {self.font.as_uri()}\n", recorded)
+
+    def test_a_build_that_loses_the_font_notices_is_not_promoted(self):
+        # The engine's own build runs over this tree after the notices are
+        # staged, so "we wrote them" is not the same claim as "they are there".
+        # A generation that lost them would ship a font with no terms attached.
+        (self.src / "setup.py").write_text(
+            self._WORKING_SETUP +
+            "for name in ('SymbolsNerdFontMono-LICENSE.txt',\n"
+            "             'SymbolsNerdFontMono-PROVENANCE.txt'):\n"
+            "    Path('fonts').joinpath(name).unlink()\n")
+
+        result = self.run_build(self._system_env())
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("refusing to publish the bundled font without its notice",
+                      result.stderr)
+        self.assertFalse(
+            (self.base / "storage" / "build" / "current").exists())
+
+    def test_a_truncated_published_font_notice_is_not_promoted(self):
+        (self.src / "setup.py").write_text(
+            self._WORKING_SETUP +
+            "Path('fonts/SymbolsNerdFontMono-LICENSE.txt').write_text(\n"
+            "    'SIL Open Font License 1.1\\n')\n")
+
+        result = self.run_build(self._system_env())
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("checksum mismatch for published Nerd Font license",
+                      result.stderr)
+        self.assertFalse(
+            (self.base / "storage" / "build" / "current").exists())
+
+    def test_published_provenance_without_its_upstream_is_not_promoted(self):
+        (self.src / "setup.py").write_text(self._WORKING_SETUP)
+        provenance = self.checkout / "third_party" / "nerd-fonts" / "PROVENANCE"
+        provenance.write_text("Component: Symbols Nerd Font Mono\n")
+
+        result = self.run_build(self._system_env())
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("does not record its Upstream repository", result.stderr)
+        self.assertFalse(
+            (self.base / "storage" / "build" / "current").exists())
 
     def test_mutable_ci_bundle_url_is_rejected(self):
         env = dict(self.env)
