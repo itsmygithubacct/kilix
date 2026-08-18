@@ -751,17 +751,19 @@ calendar, local date/time, and (when applicable) battery items. The thermometer
 is disabled by default; when enabled it shows the hottest readable Linux
 thermal-zone/hwmon temperature to one decimal place in green below 80°C, yellow
 at 80–89°C, or red from 90°C. It sits at the left edge of the status group and
-opens `kilix-temps --graphics` in a new tab. A neutral `--°` remains clickable
-when no sensor can be read. The volume icon opens
-`pulsemixer` in an overlay pane (`alsamixer` is used as a fallback). It sits to
-the left of the network/Wi-Fi icon, which remains immediately left of the
-calendar and opens `nmtui`. Click the calendar icon for a navigable month
-widget, or click the date/time text for a live local-date, clock, and timezone
-widget.
+opens a compact status card on one click and `kilix-temps --graphics` on a
+double-click. A neutral `--°` remains clickable when no sensor can be read.
+The volume icon opens a compact slider on one click, the full clickable
+`kilix-volume` output selector on a double-click, and a settings card with a
+live Mute checkbox on right-click. It sits to the left of the network/Wi-Fi
+icon, which shows compact connection status on one click and opens `nmtui` on
+a double-click. Click the calendar icon for a navigable month widget, or click
+the date/time text for a live local-date, clock, and timezone widget.
 When Linux reports a laptop battery is **discharging**, a battery status item appears to its right.
 It is green above 50%, yellow at 50% and below, red at 20% and below, and
-shows the percentage to the left of the battery icon. Clicking it toggles the
-percentage on/off. Use `kilix settings` or Start ▸ Settings ▸ Top bar / Pane
+shows the percentage to the left of the battery icon. One click shows battery
+details and a double-click toggles the percentage on/off. Right-clicking the
+non-volume widgets opens Kilix Settings. Use `kilix settings` or Start ▸ Settings ▸ Top bar / Pane
 buttons in Kilix 95 to remove and re-add every status item and title-bar button.
 Both interfaces update the single non-executable source of truth at
 `~/.local/gpu_terminal/settings.conf` (override with
