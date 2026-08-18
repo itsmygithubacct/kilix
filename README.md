@@ -19,7 +19,8 @@ state, `cache/` for regenerable data, `session/` for sockets and frame files,
 `data/` for optional downloads, `build/` for compiled fork generations, and
 `prebuilt/` for the fallback kitty bundle. `KILIX_STORAGE_HOME` relocates the
 complete tree. Freedesktop launchers/icons are the intentional exception:
-`--install-desktop` uses the standard XDG application paths.
+`--install-desktop` uses the standard XDG application paths, and records what
+it wrote in `state/` so `--uninstall-desktop` can take exactly that back out.
 
 ![kilix — pages strip with + button, per-pane title bars with clickable split/maximize/close buttons, splits, and icat](config/kilix_demo.png)
 
@@ -1496,7 +1497,9 @@ user overrides outside the checkout.
 `kilix --install-desktop` installs `kilix.desktop` (with `StartupWMClass=kilix`) and
 the icons into `~/.local/share`, so kilix appears in the app menu and the taskbar
 shows its icon instead of kitty's. Log out/in or restart your panel if the icon
-doesn't appear immediately (icon caches are lazy).
+doesn't appear immediately (icon caches are lazy). `kilix --uninstall-desktop`
+takes it all back out again, removing only the files that install wrote and
+that nothing has changed since — see [Uninstall](#uninstall).
 
 ## Troubleshooting
 
@@ -1515,10 +1518,27 @@ doesn't appear immediately (icon caches are lazy).
 ## Uninstall
 
 ```bash
+kilix --uninstall-desktop                                           # only if you ran --install-desktop
 rm -rf ~/.local/gpu_terminal/sources/kilix                          # project source
 # Optional: remove settings/state only if you do not want to preserve them:
 rm -rf "$HOME/.local/gpu_terminal/kilix"
-# only if you ran --install-desktop:
+```
+
+`--uninstall-desktop` is the counterpart to `--install-desktop`, and the
+freedesktop directories it writes into are shared with every other application
+on the machine, so it does not delete paths by name. The install records which
+files it created and what they contained; the uninstall removes only the ones
+still byte-identical to that record, refreshes the desktop and icon caches,
+and prunes the directories it created if it left them empty. A `kilix.desktop`
+you edited yourself, or a `kilix.png` some other package now owns, is named on
+stderr and left in place — the run then exits non-zero and keeps its record so
+it can be re-run once you have dealt with those files.
+
+The record lives at `$KILIX_STORAGE_HOME/state/desktop-entry.manifest`. Without
+it — an entry installed by hand, or by a kilix predating this verb — the
+removal is manual:
+
+```bash
 rm -f  ~/.local/share/applications/kilix.desktop
 rm -f  ~/.local/share/icons/hicolor/*/apps/kilix.png
 update-desktop-database ~/.local/share/applications 2>/dev/null || true

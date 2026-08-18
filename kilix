@@ -60,6 +60,7 @@
 #   ./kilix --build           # build the forked kitty from ./src
 #   ./kilix --which           # print the kitty binary kilix uses + its version
 #   ./kilix --install-desktop # desktop entry + icon (own taskbar group)
+#   ./kilix --uninstall-desktop # remove exactly what --install-desktop wrote
 set -euo pipefail
 umask 077
 
@@ -1451,6 +1452,83 @@ _kilix_voice_pane_text() {
     return 1
   fi
   printf '%s' "$text"
+}
+
+# Freedesktop launcher and icons are the one thing Kilix writes outside its own
+# storage tree, into directories every other application on the machine shares.
+# Undoing that cannot mean deleting the paths --install-desktop happens to use:
+# by then the .desktop may be a user's hand-edited copy and the icon may belong
+# to a package installed since. So the install records exactly which files it
+# wrote, their contents at the moment it wrote them, and which directories it
+# had to create; the uninstall removes only entries that still match that
+# record, and prunes only directories it created and left empty.
+_KILIX_DESKTOP_ENTRY_MANIFEST="$KILIX_STATE_DIRECTORY/desktop-entry.manifest"
+_KILIX_DESKTOP_ENTRY_MANIFEST_HEADER="kilix-desktop-entry 1"
+_KILIX_DESKTOP_ENTRY_DIRS=()
+
+_kilix_desktop_entry_digest() {
+  local line
+  line="$(sha256sum -- "$1")" || return 1
+  printf '%s\n' "${line%% *}"
+}
+
+# mkdir -p that records only the directories it actually created, so an
+# uninstall never prunes one that was already on the machine.
+_kilix_desktop_entry_mkdir() {
+  local target="$1" prefix="" rest component
+  case "$target" in /*) rest="${target#/}" ;;
+    *) echo "kilix: refusing a relative desktop install path: $target" >&2
+       return 1 ;;
+  esac
+  while [ -n "$rest" ]; do
+    component="${rest%%/*}"
+    if [ "$component" = "$rest" ]; then rest=""; else rest="${rest#*/}"; fi
+    [ -n "$component" ] || continue
+    prefix="$prefix/$component"
+    [ -d "$prefix" ] && continue
+    mkdir -- "$prefix" || return 1
+    _KILIX_DESKTOP_ENTRY_DIRS+=("$prefix")
+  done
+}
+
+# Re-installing must not forget that an earlier install created these
+# directories, so carry the surviving ones forward instead of re-deriving
+# ownership from a run that found them already present.
+_kilix_desktop_entry_carry_recorded_dirs() {
+  local line kind rest
+  [ -f "$_KILIX_DESKTOP_ENTRY_MANIFEST" ] || return 0
+  [ ! -L "$_KILIX_DESKTOP_ENTRY_MANIFEST" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    kind="${line%%$'\t'*}"
+    rest="${line#*$'\t'}"
+    [ "$kind" = dir ] || continue
+    if [ ! -d "$rest" ] || [ -L "$rest" ]; then continue; fi
+    _KILIX_DESKTOP_ENTRY_DIRS+=("$rest")
+  done < "$_KILIX_DESKTOP_ENTRY_MANIFEST"
+}
+
+_kilix_desktop_entry_record() {
+  local tmp path digest directory ok=1
+  tmp="$(mktemp "$_KILIX_DESKTOP_ENTRY_MANIFEST.partial.XXXXXX")" || return 1
+  {
+    printf '%s\n' "$_KILIX_DESKTOP_ENTRY_MANIFEST_HEADER"
+    for path in "$@"; do
+      if digest="$(_kilix_desktop_entry_digest "$path")"; then
+        printf 'file\t%s\t%s\n' "$digest" "$path"
+      else
+        ok=0
+      fi
+    done
+    for directory in ${_KILIX_DESKTOP_ENTRY_DIRS[@]+"${_KILIX_DESKTOP_ENTRY_DIRS[@]}"}; do
+      printf 'dir\t%s\n' "$directory"
+    done
+  } >"$tmp" || ok=0
+  if [ "$ok" != 1 ] || ! chmod 0600 -- "$tmp" \
+       || ! mv -f -- "$tmp" "$_KILIX_DESKTOP_ENTRY_MANIFEST"; then
+    rm -f -- "$tmp"
+    echo "kilix: could not record what --install-desktop wrote" >&2
+    return 1
+  fi
 }
 
 case "${1:-}" in
@@ -3286,7 +3364,13 @@ case "${1:-}" in
     for _i in kitty.app-128.png kitty.app.png kilix-512.png; do
       [ -f "$KILIX_HOME/config/$_i" ] || { echo "kilix: missing icon $KILIX_HOME/config/$_i" >&2; exit 1; }
     done
-    mkdir -p "$apps" "$icons/128x128/apps" "$icons/256x256/apps" "$icons/512x512/apps"
+    command -v sha256sum >/dev/null 2>&1 \
+      || { echo "kilix: sha256sum is required to record what --install-desktop writes" >&2; exit 1; }
+    _kilix_desktop_entry_carry_recorded_dirs
+    for _d in "$apps" "$icons/128x128/apps" "$icons/256x256/apps" \
+              "$icons/512x512/apps"; do
+      _kilix_desktop_entry_mkdir "$_d" || exit 1
+    done
     cp "$KILIX_HOME/config/kitty.app-128.png" "$icons/128x128/apps/kilix.png"
     cp "$KILIX_HOME/config/kitty.app.png"     "$icons/256x256/apps/kilix.png"
     cp "$KILIX_HOME/config/kilix-512.png"     "$icons/512x512/apps/kilix.png"
@@ -3304,6 +3388,11 @@ Categories=System;TerminalEmulator;
 StartupWMClass=kilix
 StartupNotify=true
 EOF
+    _kilix_desktop_entry_record \
+      "$icons/128x128/apps/kilix.png" \
+      "$icons/256x256/apps/kilix.png" \
+      "$icons/512x512/apps/kilix.png" \
+      "$apps/kilix.desktop" || exit 1
     if command -v update-desktop-database >/dev/null; then
       update-desktop-database "$apps" || true
     fi
@@ -3311,6 +3400,105 @@ EOF
       gtk-update-icon-cache -f -t "$icons" 2>/dev/null || true
     fi
     echo "installed: $apps/kilix.desktop (+ hicolor icons). Log out/in or restart your panel if the icon doesn't show immediately."
+    exit 0 ;;
+  --uninstall-desktop)
+    # The counterpart to --install-desktop, with the ownership rule stated
+    # above the manifest helpers: remove what the install recorded writing,
+    # only while it is still byte-identical to what was written, and say so
+    # about anything left behind rather than deleting a file someone edited.
+    if [ ! -f "$_KILIX_DESKTOP_ENTRY_MANIFEST" ] \
+         || [ -L "$_KILIX_DESKTOP_ENTRY_MANIFEST" ]; then
+      echo "kilix: nothing recorded to uninstall at $_KILIX_DESKTOP_ENTRY_MANIFEST" >&2
+      echo "kilix: only an entry installed by this checkout's --install-desktop can be removed this way; see 'Uninstall' in the README to remove one by hand" >&2
+      exit 1
+    fi
+    command -v sha256sum >/dev/null 2>&1 \
+      || { echo "kilix: sha256sum is required to tell an untouched install from an edited one" >&2; exit 1; }
+    _removed=0 _kept=0 _absent=0 _lineno=0 _apps_dir="" _icons_dir=""
+    _owned_dirs=()
+    while IFS= read -r _entry || [ -n "$_entry" ]; do
+      _lineno=$((_lineno + 1))
+      if [ "$_lineno" = 1 ]; then
+        [ "$_entry" = "$_KILIX_DESKTOP_ENTRY_MANIFEST_HEADER" ] || {
+          echo "kilix: unrecognized install record format: $_KILIX_DESKTOP_ENTRY_MANIFEST" >&2
+          exit 1
+        }
+        continue
+      fi
+      [ -n "$_entry" ] || continue
+      _kind="${_entry%%$'\t'*}"
+      _rest="${_entry#*$'\t'}"
+      case "$_kind" in
+        file)
+          _digest="${_rest%%$'\t'*}"
+          _path="${_rest#*$'\t'}" ;;
+        dir)
+          _path="$_rest" ;;
+        *)
+          echo "kilix: unrecognized install record entry on line $_lineno" >&2
+          exit 1 ;;
+      esac
+      case "$_path" in /*) ;;
+        *) echo "kilix: refusing a relative path in the install record on line $_lineno: $_path" >&2
+           exit 1 ;;
+      esac
+      if [ "$_kind" = dir ]; then
+        _owned_dirs+=("$_path")
+        continue
+      fi
+      if [ ! -e "$_path" ] && [ ! -L "$_path" ]; then
+        _absent=$((_absent + 1))
+        continue
+      fi
+      if [ -L "$_path" ] || [ ! -f "$_path" ]; then
+        echo "kilix: kept (no longer a regular file, so not this install's): $_path" >&2
+        _kept=$((_kept + 1))
+        continue
+      fi
+      _actual="$(_kilix_desktop_entry_digest "$_path")" || {
+        echo "kilix: could not read $_path" >&2; exit 1; }
+      if [ "$_actual" != "$_digest" ]; then
+        echo "kilix: kept (changed since it was installed): $_path" >&2
+        _kept=$((_kept + 1))
+        continue
+      fi
+      rm -f -- "$_path" || { echo "kilix: could not remove $_path" >&2; exit 1; }
+      _removed=$((_removed + 1))
+      case "$_path" in
+        *.desktop) _apps_dir="${_path%/*}" ;;
+        */icons/hicolor/*) _icons_dir="${_path%%/icons/hicolor/*}/icons/hicolor" ;;
+      esac
+    done < "$_KILIX_DESKTOP_ENTRY_MANIFEST"
+    # Refresh before pruning: these tools drop their own cache file out of a
+    # directory that no longer has anything to cache, and that file is the
+    # difference between an empty directory and one that cannot be pruned.
+    if [ -n "$_apps_dir" ] && [ -d "$_apps_dir" ] \
+         && command -v update-desktop-database >/dev/null; then
+      update-desktop-database "$_apps_dir" || true
+    fi
+    if [ -n "$_icons_dir" ] && [ -d "$_icons_dir" ] \
+         && command -v gtk-update-icon-cache >/dev/null; then
+      gtk-update-icon-cache -f -t "$_icons_dir" 2>/dev/null || true
+    fi
+    # Newest first, so a directory this install created inside another one it
+    # created can empty out before its parent is considered.
+    for (( _i=${#_owned_dirs[@]} - 1; _i >= 0; _i-- )); do
+      _dir="${_owned_dirs[$_i]}"
+      if [ ! -d "$_dir" ] || [ -L "$_dir" ]; then continue; fi
+      rmdir -- "$_dir" 2>/dev/null || true
+    done
+    printf 'removed: %d installed file(s)' "$_removed"
+    [ "$_absent" = 0 ] || printf ', %d already gone' "$_absent"
+    [ "$_kept" = 0 ] || printf ', %d kept for you to review' "$_kept"
+    printf '\n'
+    if [ "$_kept" != 0 ]; then
+      # Keeping the record lets a re-run finish the job once the listed files
+      # are dealt with; deleting it would strand them with no owner.
+      echo "kilix: install record retained at $_KILIX_DESKTOP_ENTRY_MANIFEST" >&2
+      exit 1
+    fi
+    rm -f -- "$_KILIX_DESKTOP_ENTRY_MANIFEST"
+    echo "Log out/in or restart your panel if the entry lingers in the menu."
     exit 0 ;;
 esac
 
