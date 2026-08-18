@@ -226,6 +226,9 @@ static void send_held_frame(void *userdata, int fd, uint32_t mask) {
         .transform = video_transform ? video_transform->transform :
                      SPA_META_TRANSFORMATION_None,
     };
+    if (state->trace_all)
+        fprintf(stderr, "kilix-pw-capture: trace frame-transform=%u\n",
+                frame.transform);
     char control[CMSG_SPACE(sizeof(int))] = {0};
     struct iovec iov = {.iov_base = (void*)&frame, .iov_len = sizeof(frame)};
     struct msghdr message = {
