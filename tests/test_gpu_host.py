@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -22,6 +23,41 @@ GL renderer: NV166
 
 
 class GpuHostTests(unittest.TestCase):
+    def test_kitty_import_completes_each_capture_lease_in_command_scope(self):
+        source = (ROOT / "src/kitty/graphics.c").read_text()
+        function = source.split("import_gpu_frame(", 1)[1].split(
+            "renderer_is_software(", 1)[0]
+        header = (ROOT / "src/kitty/graphics.h").read_text()
+        self.assertIn("glBlitFramebuffer", source)
+        self.assertIn("glFinish()", source)
+        self.assertIn("const uint8_t ack = valid ? 1 : 0", function)
+        self.assertIn("safe_close(transfer_socket", function)
+        self.assertIn("safe_close(fd", function)
+        self.assertNotIn("kilix_transfer_socket", header)
+        self.assertNotIn("kilix_dmabuf_fd", header)
+
+    def test_capture_telemetry_tracks_producer_damage_independently(self):
+        available = shutil.which("pkg-config") is not None and subprocess.run(
+            ("pkg-config", "--exists", "libpipewire-0.3", "libdrm"),
+            check=False).returncode == 0
+        if not available:
+            self.skipTest("PipeWire and DRM development files are unavailable")
+        with tempfile.TemporaryDirectory() as temporary:
+            environment = dict(os.environ)
+            environment["KILIX_BUILD_DIRECTORY"] = temporary
+            environment["KILIX_SOURCE_HOME"] = str(ROOT)
+            subprocess.run((str(ROOT / "scripts/build-gpu-capture.sh"),),
+                           env=environment, check=True, capture_output=True)
+            capture = Path(temporary) / "libraries/gpu-host/kilix-pw-capture"
+            result = subprocess.run(
+                (str(capture), "--telemetry-selftest"), check=True,
+                capture_output=True, text=True)
+        self.assertIn("sequence-changes=2", result.stderr)
+        self.assertIn("damage-frames=3", result.stderr)
+        self.assertIn("damage-regions=6", result.stderr)
+        self.assertIn("empty=3", result.stderr)
+        self.assertIn("acked=0", result.stderr)
+
     def test_documented_installer_builds_every_required_helper(self):
         installer = (ROOT / "scripts/install-gpu-host.sh").read_text()
         probe = (ROOT / "config/gpu_host_probe.py").read_text()

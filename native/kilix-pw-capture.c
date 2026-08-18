@@ -34,6 +34,15 @@ struct state {
     struct pw_buffer *held;
     struct lease *leases;
     const char *socket_path;
+    bool trace;
+    struct {
+        uint64_t process, dequeued, coalesced, sequence_changes;
+        uint64_t damage_frames, damage_regions, empty_frames;
+        uint64_t held, held_busy, ready, accepts, rejected;
+        uint64_t sent, send_failed, leases, acked, declined, disconnected;
+    } telemetry;
+    uint64_t last_sequence;
+    bool have_sequence;
 };
 
 struct lease {
@@ -51,6 +60,96 @@ struct dmabuf_frame {
     uint32_t modifier_hi, modifier_lo;
 };
 
+static bool trace_sample(uint64_t count) {
+    return count <= 8u || (count & (count - 1u)) == 0u;
+}
+
+static void trace_event(const struct state *state, const char *event,
+                        uint64_t count) {
+    if (state->trace && trace_sample(count))
+        fprintf(stderr, "kilix-pw-capture: trace event=%s count=%" PRIu64 "\n",
+                event, count);
+}
+
+static void print_telemetry(const struct state *state) {
+    fprintf(stderr,
+        "kilix-pw-capture: telemetry process=%" PRIu64
+        " dequeued=%" PRIu64 " coalesced=%" PRIu64
+        " sequence-changes=%" PRIu64 " damage-frames=%" PRIu64
+        " damage-regions=%" PRIu64 " empty=%" PRIu64
+        " held=%" PRIu64 " held-busy=%" PRIu64 " ready=%" PRIu64
+        " accepts=%" PRIu64 " rejected=%" PRIu64 " sent=%" PRIu64
+        " send-failed=%" PRIu64 " leases=%" PRIu64 " acked=%" PRIu64
+        " declined=%" PRIu64 " disconnected=%" PRIu64 "\n",
+        state->telemetry.process, state->telemetry.dequeued,
+        state->telemetry.coalesced, state->telemetry.sequence_changes,
+        state->telemetry.damage_frames, state->telemetry.damage_regions,
+        state->telemetry.empty_frames, state->telemetry.held,
+        state->telemetry.held_busy, state->telemetry.ready,
+        state->telemetry.accepts, state->telemetry.rejected,
+        state->telemetry.sent, state->telemetry.send_failed,
+        state->telemetry.leases, state->telemetry.acked,
+        state->telemetry.declined, state->telemetry.disconnected);
+}
+
+static void note_buffer_metadata(struct state *state,
+                                 const struct spa_buffer *buffer) {
+    const struct spa_meta_header *header = spa_buffer_find_meta_data(
+        buffer, SPA_META_Header, sizeof(*header));
+    if (header && (!state->have_sequence || header->seq != state->last_sequence)) {
+        state->telemetry.sequence_changes++;
+        state->last_sequence = header->seq;
+        state->have_sequence = true;
+    }
+    const struct spa_meta *damage = spa_buffer_find_meta(buffer,
+                                                         SPA_META_VideoDamage);
+    if (damage) {
+        uint64_t regions = 0;
+        const struct spa_meta_region *region;
+        spa_meta_for_each(region, damage) {
+            if (!spa_meta_region_is_valid(region)) break;
+            regions++;
+        }
+        if (regions) {
+            state->telemetry.damage_frames++;
+            state->telemetry.damage_regions += regions;
+        }
+    }
+    if (buffer->n_datas && buffer->datas[0].chunk &&
+            (buffer->datas[0].chunk->flags & SPA_CHUNK_FLAG_EMPTY))
+        state->telemetry.empty_frames++;
+}
+
+static int telemetry_selftest(void) {
+    struct state state = {0};
+    struct spa_meta_header header = {.seq = 41};
+    struct spa_meta_region regions[3] = {
+        {.region = {.size = SPA_RECTANGLE(20, 10)}},
+        {.region = {.size = SPA_RECTANGLE(5, 4)}},
+        {.region = {.size = SPA_RECTANGLE(0, 0)}},
+    };
+    struct spa_meta metas[2] = {
+        {.type = SPA_META_Header, .size = sizeof(header), .data = &header},
+        {.type = SPA_META_VideoDamage, .size = sizeof(regions), .data = regions},
+    };
+    struct spa_chunk chunk = {.flags = SPA_CHUNK_FLAG_EMPTY};
+    struct spa_data data = {.chunk = &chunk};
+    const struct spa_buffer buffer = {
+        .n_metas = 2, .n_datas = 1, .metas = metas, .datas = &data,
+    };
+    note_buffer_metadata(&state, &buffer);
+    note_buffer_metadata(&state, &buffer);
+    header.seq++;
+    note_buffer_metadata(&state, &buffer);
+    if (state.telemetry.sequence_changes != 2 ||
+            state.telemetry.damage_frames != 3 ||
+            state.telemetry.damage_regions != 6 ||
+            state.telemetry.empty_frames != 3 || !trace_sample(8) ||
+            !trace_sample(16) || trace_sample(15)) return 1;
+    print_telemetry(&state);
+    return 0;
+}
+
 static void release_held(struct state *state) {
     if (state->held) {
         pw_stream_queue_buffer(state->stream, state->held);
@@ -62,8 +161,18 @@ static void client_ack(void *userdata, int fd, uint32_t mask) {
     struct lease *lease = userdata;
     struct state *state = lease->state;
     uint8_t ack = 0;
-    if ((mask & SPA_IO_IN) && read(fd, &ack, 1) == 1 && ack == 1)
+    ssize_t received = (mask & SPA_IO_IN) ? read(fd, &ack, 1) : -1;
+    if (received == 1 && ack == 1) {
         state->frames++;
+        state->telemetry.acked++;
+        trace_event(state, "ack", state->telemetry.acked);
+    } else if (received == 1) {
+        state->telemetry.declined++;
+        trace_event(state, "decline", state->telemetry.declined);
+    } else {
+        state->telemetry.disconnected++;
+        trace_event(state, "disconnect", state->telemetry.disconnected);
+    }
     struct lease **cursor = &state->leases;
     while (*cursor && *cursor != lease) cursor = &(*cursor)->next;
     if (*cursor) *cursor = lease->next;
@@ -79,11 +188,14 @@ static void send_held_frame(void *userdata, int fd, uint32_t mask) {
     if (!(mask & SPA_IO_IN)) return;
     int client = accept4(fd, NULL, NULL, SOCK_CLOEXEC | SOCK_NONBLOCK);
     if (client < 0) return;
+    state->telemetry.accepts++;
     struct ucred credentials = {0};
     socklen_t credentials_size = sizeof(credentials);
     if (getsockopt(client, SOL_SOCKET, SO_PEERCRED, &credentials,
                    &credentials_size) < 0 || credentials_size != sizeof(credentials)
             || credentials.uid != geteuid() || !state->held) {
+        state->telemetry.rejected++;
+        trace_event(state, "reject", state->telemetry.rejected);
         close(client); return;
     }
     struct spa_buffer *buffer = state->held->buffer;
@@ -114,13 +226,18 @@ static void send_held_frame(void *userdata, int fd, uint32_t mask) {
     int dma_fd = (int)plane->fd;
     memcpy(CMSG_DATA(header), &dma_fd, sizeof(dma_fd));
     if (sendmsg(client, &message, MSG_NOSIGNAL) != (ssize_t)sizeof(frame)) {
+        state->telemetry.send_failed++;
+        trace_event(state, "send-failed", state->telemetry.send_failed);
         close(client); release_held(state); return;
     }
+    state->telemetry.sent++;
     struct lease *lease = calloc(1, sizeof(*lease));
     if (!lease) { close(client); release_held(state); return; }
     lease->state = state; lease->fd = client; lease->buffer = state->held;
     state->held = NULL;
     lease->next = state->leases; state->leases = lease;
+    state->telemetry.leases++;
+    trace_event(state, "lease", state->telemetry.leases);
     lease->source = pw_loop_add_io(
         pw_main_loop_get_loop(state->loop), client,
         SPA_IO_IN | SPA_IO_HUP | SPA_IO_ERR, false, client_ack, lease);
@@ -213,25 +330,38 @@ static void param_changed(void *userdata, uint32_t id,
 
 static void process_frame(void *userdata) {
     struct state *state = userdata;
+    state->telemetry.process++;
     struct pw_buffer *selected = NULL;
     struct pw_buffer *candidate;
     while ((candidate = pw_stream_dequeue_buffer(state->stream)) != NULL) {
-        if (selected) pw_stream_queue_buffer(state->stream, selected);
+        state->telemetry.dequeued++;
+        if (selected) {
+            state->telemetry.coalesced++;
+            pw_stream_queue_buffer(state->stream, selected);
+        }
         selected = candidate;
     }
     if (!selected) return;
     if (state->socket_path) {
         if (state->held) {
+            state->telemetry.held_busy++;
+            trace_event(state, "held-busy", state->telemetry.held_busy);
             pw_stream_queue_buffer(state->stream, selected);
             return;
         }
         struct spa_buffer *candidate_buffer = selected->buffer;
         if (candidate_buffer->n_datas == 1 &&
                 candidate_buffer->datas[0].type == SPA_DATA_DmaBuf) {
+            note_buffer_metadata(state, candidate_buffer);
             state->held = selected;
+            state->telemetry.held++;
             uint8_t ready = 1;
             if (write_all(STDOUT_FILENO, &ready, 1) != 0)
                 pw_main_loop_quit(state->loop);
+            else {
+                state->telemetry.ready++;
+                trace_event(state, "ready", state->telemetry.ready);
+            }
             return;
         }
         pw_stream_queue_buffer(state->stream, selected);
@@ -291,6 +421,8 @@ static const struct pw_stream_events stream_events = {
 };
 
 int main(int argc, char **argv) {
+    if (argc == 2 && strcmp(argv[1], "--telemetry-selftest") == 0)
+        return telemetry_selftest();
     bool dmabuf_server = argc >= 6 && strcmp(argv[1], "--dmabuf-server") == 0;
     int first = dmabuf_server ? 3 : 1;
     if ((!dmabuf_server && argc != 4 && argc != 5) ||
@@ -314,6 +446,8 @@ int main(int argc, char **argv) {
     uint32_t target_id = (target_end && !*target_end && target_value <= UINT32_MAX) ?
         (uint32_t)target_value : PW_ID_ANY;
     struct state state = {.listen_fd = -1};
+    const char *trace = getenv("KILIX_GPU_CAPTURE_TRACE");
+    state.trace = trace && *trace && strcmp(trace, "0") != 0;
     pw_init(&argc, &argv);
     state.loop = pw_main_loop_new(NULL);
     if (!state.loop) return 1;
@@ -389,6 +523,7 @@ int main(int argc, char **argv) {
     pw_stream_destroy(state.stream);
     pw_main_loop_destroy(state.loop);
     free(state.rgb);
+    print_telemetry(&state);
     pw_deinit();
     return state.frames ? 0 : 1;
 }
