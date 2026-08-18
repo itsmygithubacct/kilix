@@ -1151,6 +1151,9 @@ class AppPane:
         self._wake_capture()
         mods = max(0, ev["mods"] - 1)
         etype = ev.get("event", 1)
+        if os.environ.get("KILIX_INPUT_LATENCY_TRACE") == "1":
+            log_marker("input-inject kind=key key={} event={} monotonic_ns={}".format(
+                ev["key"], etype, time.monotonic_ns()))
         if (mods & 4) and ev["key"] == "q" and etype == 1:
             raise KeyboardInterrupt
         if (getattr(self, "manage_windows", True)
@@ -1170,6 +1173,9 @@ class AppPane:
 
     def on_mouse(self, ev):
         self._wake_capture()
+        if os.environ.get("KILIX_INPUT_LATENCY_TRACE") == "1":
+            log_marker("input-inject kind=mouse event={} monotonic_ns={}".format(
+                ev.get("event", "unknown"), time.monotonic_ns()))
         self.inj.mouse(ev, self.box)
         if self.capture is not None:
             # X cursors are server-side sprites and do not damage root pixels.

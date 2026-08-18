@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -66,9 +67,15 @@ static bool trace_sample(uint64_t count) {
 
 static void trace_event(const struct state *state, const char *event,
                         uint64_t count) {
-    if (state->trace && trace_sample(count))
-        fprintf(stderr, "kilix-pw-capture: trace event=%s count=%" PRIu64 "\n",
-                event, count);
+    if (state->trace && trace_sample(count)) {
+        struct timespec now = {0};
+        (void)clock_gettime(CLOCK_MONOTONIC, &now);
+        uint64_t monotonic_ns = (uint64_t)now.tv_sec * UINT64_C(1000000000) +
+                                (uint64_t)now.tv_nsec;
+        fprintf(stderr, "kilix-pw-capture: trace event=%s count=%" PRIu64
+                        " monotonic_ns=%" PRIu64 "\n",
+                event, count, monotonic_ns);
+    }
 }
 
 static void print_telemetry(const struct state *state) {
