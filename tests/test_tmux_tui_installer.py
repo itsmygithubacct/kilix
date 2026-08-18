@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import re
 import stat
 import subprocess
 import tempfile
@@ -10,6 +11,13 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = ROOT / "scripts" / "install-tmux-tui.sh"
+
+# The published closure this release installs. tmux-tui records tmux-cli as a
+# gitlink, so the second value is not a free choice: it is what
+# `git ls-tree <TMUX_TUI> tmux-cli` reports, and a pair that disagrees fails
+# the installer's own gitlink check at install time on every machine.
+SELECTED_TMUX_TUI_COMMIT = "e442022e82f26106c6ed12b4691fdfbf0ae21a3e"
+SELECTED_TMUX_CLI_COMMIT = "c1c9a3ff1617a5e517bd60d32222d545b58f5466"
 
 
 def git(repo: Path, *args: str) -> str:
@@ -85,7 +93,8 @@ class TmuxTuiInstallerTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def run_installer(self, *args: str, check: bool = True):
+    def run_installer(self, *args: str, check: bool = True,
+                      cli_ref: str | None = None):
         env = dict(os.environ)
         env.update({
             "GPU_TERMINAL_SOURCE_HOME": str(self.source),
@@ -93,7 +102,7 @@ class TmuxTuiInstallerTests(unittest.TestCase):
             "TMUX_TUI_PREFIX": str(self.prefix),
             "TMUX_TUI_REPO": str(self.tui),
             "TMUX_TUI_REF": self.tui_ref,
-            "TMUX_CLI_REF": self.cli_ref,
+            "TMUX_CLI_REF": cli_ref or self.cli_ref,
         })
         return subprocess.run(
             [str(INSTALLER), *args],
@@ -147,6 +156,43 @@ class TmuxTuiInstallerTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 1)
         self.assertIn("full 40-character commit SHA", result.stderr)
+
+    def test_a_cli_ref_that_is_not_the_recorded_gitlink_is_refused(self):
+        # Both halves are immutable SHAs, so only the gitlink comparison can
+        # catch a pair that was advanced one value at a time. Installing the
+        # outer repository while silently accepting whatever tmux-cli it
+        # carries is the failure this closure exists to prevent.
+        result = self.run_installer(
+            check=False, cli_ref=self.tui_ref)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("tmux-cli resolved to", result.stderr)
+
+
+class SelectedClosureTests(unittest.TestCase):
+    """The installer's defaults are the closure this release ships."""
+
+    def setUp(self):
+        self.body = INSTALLER.read_text(encoding="utf-8")
+
+    def _default(self, name: str) -> str:
+        match = re.search(
+            r'(?m)^%s="\$\{%s:-([0-9a-f]{40})\}"$' % (name, name), self.body)
+        self.assertIsNotNone(match, "no %s default found" % name)
+        return match.group(1)
+
+    def test_the_pinned_closure_is_the_selected_pair(self):
+        self.assertEqual(self._default("TMUX_TUI_REF"),
+                         SELECTED_TMUX_TUI_COMMIT)
+        self.assertEqual(self._default("TMUX_CLI_REF"),
+                         SELECTED_TMUX_CLI_COMMIT)
+
+    def test_the_closure_is_declared_in_one_place(self):
+        # Two refs stated once each: a second declaration is how one half of
+        # the pair gets advanced and the other left behind.
+        for name in ("TMUX_TUI_REF", "TMUX_CLI_REF"):
+            with self.subTest(ref=name):
+                self.assertEqual(
+                    len(re.findall(r"(?m)^%s=" % name, self.body)), 1)
 
 
 if __name__ == "__main__":

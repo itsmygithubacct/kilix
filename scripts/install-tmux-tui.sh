@@ -12,10 +12,12 @@ TMUX_TUI_PREFIX="${TMUX_TUI_PREFIX:-$HOME/.local}"
 
 # This pair is one immutable source closure. tmux-tui vendors tmux-cli as a
 # submodule; keeping both expected commits here makes a changed gitlink fail
-# closed even when a caller overrides the outer repository.
+# closed even when a caller overrides the outer repository. The two values are
+# therefore not independent: TMUX_CLI_REF has to be the gitlink tmux-tui itself
+# records at TMUX_TUI_REF, so they move together or not at all.
 TMUX_TUI_REPO="${TMUX_TUI_REPO:-https://github.com/itsmygithubacct/tmux-tui.git}"
-TMUX_TUI_REF="${TMUX_TUI_REF:-a1ab67938b754adbb509a9f48c0e1c795421f4bf}"
-TMUX_CLI_REF="${TMUX_CLI_REF:-51e9801a9c26211494231577eb24c9ed799252db}"
+TMUX_TUI_REF="${TMUX_TUI_REF:-e442022e82f26106c6ed12b4691fdfbf0ae21a3e}"
+TMUX_CLI_REF="${TMUX_CLI_REF:-c1c9a3ff1617a5e517bd60d32222d545b58f5466}"
 
 die() { printf 'kilix tmux: %s\n' "$*" >&2; exit 1; }
 log() { printf 'kilix tmux: %s\n' "$*" >&2; }
