@@ -17,7 +17,7 @@ helper_path() {
 }
 
 verify_helpers() {
-  for builder in build-weston-input.sh build-gpu-capture.sh \
+  for builder in build-weston-pipewire.sh build-weston-input.sh build-gpu-capture.sh \
                  build-kilix-kiosk-shell.sh; do
     helper=$(helper_path "$builder")
     if ! test -f "$helper" || test -L "$helper" || ! test -x "$helper"; then
@@ -28,7 +28,7 @@ verify_helpers() {
 }
 
 build_helpers() {
-  for builder in build-weston-input.sh build-gpu-capture.sh \
+  for builder in build-weston-pipewire.sh build-weston-input.sh build-gpu-capture.sh \
                  build-kilix-kiosk-shell.sh; do
     KILIX_GPU_HOST_HOME=$TARGET "$SOURCE_HOME/scripts/$builder"
   done

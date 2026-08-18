@@ -75,10 +75,17 @@ class GpuHostTests(unittest.TestCase):
     def test_documented_installer_builds_every_required_helper(self):
         installer = (ROOT / "scripts/install-gpu-host.sh").read_text()
         probe = (ROOT / "config/gpu_host_probe.py").read_text()
-        for builder in ("build-weston-input.sh", "build-gpu-capture.sh",
+        for builder in ("build-weston-pipewire.sh", "build-weston-input.sh", "build-gpu-capture.sh",
                         "build-kilix-kiosk-shell.sh"):
             self.assertIn(builder, installer)
         self.assertIn('"install": "scripts/install-gpu-host.sh"', probe)
+
+    def test_pinned_weston_pipewire_producer_advertises_60_hz(self):
+        patch = (ROOT / "native/weston-pipewire-60hz.patch").read_text()
+        builder = (ROOT / "scripts/build-weston-pipewire.sh").read_text()
+        self.assertIn(".framerate = 60", patch)
+        self.assertIn("weston-pipewire-60hz.patch", builder)
+        self.assertIn("libweston-14/pipewire-backend.so", builder)
 
     def test_hardware_probe_requires_real_renderer_and_dmabuf(self):
         probe = gpu_host.parse_weston_log(HARDWARE_LOG)

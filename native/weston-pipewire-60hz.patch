@@ -1,0 +1,11 @@
+--- a/libweston/backend-pipewire/pipewire.c
++++ b/libweston/backend-pipewire/pipewire.c
+@@ -110,7 +110,7 @@
+ static const struct pipewire_config default_config = {
+ 	.width = 640,
+ 	.height = 480,
+-	.framerate = 30,
++	.framerate = 60,
+ };
+ 
+ static void
