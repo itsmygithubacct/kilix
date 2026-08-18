@@ -471,10 +471,10 @@ int main(int argc, char **argv) {
     uint8_t storage[2048];
     struct spa_pod_builder builder = SPA_POD_BUILDER_INIT(storage, sizeof(storage));
     const struct spa_rectangle size = SPA_RECTANGLE((uint32_t)width, (uint32_t)height);
-    /* An unspecified rate lets PipeWire settle on Weston's 30 Hz default even
-     * when this sink was started for 60 Hz.  Request the session rate as both
-     * the nominal and maximum rate so the graph and output pacing agree. */
-    const struct spa_fraction rate = SPA_FRACTION((uint32_t)fps, 1);
+    /* Weston publishes a wildcard nominal rate and a bounded maximum. Match
+     * that shape: fixing the nominal rate prevents PipeWire from intersecting
+     * the otherwise compatible 0/1 producer format with this input. */
+    const struct spa_fraction rate = SPA_FRACTION(0, 1);
     const struct spa_fraction max_rate = SPA_FRACTION((uint32_t)fps, 1);
     const struct spa_pod *formats[2];
     struct spa_pod_frame frame;

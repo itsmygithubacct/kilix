@@ -23,12 +23,14 @@ GL renderer: NV166
 
 
 class GpuHostTests(unittest.TestCase):
-    def test_capture_requests_session_rate_and_host_accepts_60_hz(self):
+    def test_capture_wildcards_nominal_rate_and_requests_60_hz_maximum(self):
         capture = (ROOT / "native/kilix-pw-capture.c").read_text()
         input_module = (ROOT / "native/kilix-weston-input.c").read_text()
         self.assertIn(
+            "const struct spa_fraction rate = SPA_FRACTION(0, 1)", capture)
+        self.assertIn(
+            "const struct spa_fraction max_rate = "
             "SPA_FRACTION((uint32_t)fps, 1)", capture)
-        self.assertNotIn("SPA_FRACTION(0, 1)", capture)
         self.assertIn("code >= 1 && code <= 60", input_module)
 
     def test_launcher_selects_egl_before_kitty_creates_a_window(self):
