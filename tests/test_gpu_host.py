@@ -23,6 +23,14 @@ GL renderer: NV166
 
 
 class GpuHostTests(unittest.TestCase):
+    def test_capture_requests_session_rate_and_host_accepts_60_hz(self):
+        capture = (ROOT / "native/kilix-pw-capture.c").read_text()
+        input_module = (ROOT / "native/kilix-weston-input.c").read_text()
+        self.assertIn(
+            "SPA_FRACTION((uint32_t)fps, 1)", capture)
+        self.assertNotIn("SPA_FRACTION(0, 1)", capture)
+        self.assertIn("code >= 1 && code <= 60", input_module)
+
     def test_launcher_selects_egl_before_kitty_creates_a_window(self):
         launcher = (ROOT / "kilix").read_text()
         export_at = launcher.index("export KILIX_GPU_DMABUF_IMPORT=1")

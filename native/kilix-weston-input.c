@@ -125,7 +125,7 @@ static bool parse_line(struct input_client *client, const char *line) {
                    STATE_UPDATE_AUTOMATIC);
         return true;
     }
-    if (type == 'r' && code >= 1 && code <= 30 && state == 0 &&
+    if (type == 'r' && code >= 1 && code <= 60 && state == 0 &&
             client->output && client->output->current_mode) {
         client->output->current_mode->refresh = code * 1000;
         return true;

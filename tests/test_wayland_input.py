@@ -27,6 +27,16 @@ class WaylandInputTests(unittest.TestCase):
         self.assertEqual(wayland_input.Injector.code_for(chr(57442)), 29)
         self.assertEqual(wayland_input.Injector.code_for("MediaPlay"), 0)
 
+    @mock.patch("kilix_sdk.wayland_input.socket.socket")
+    def test_frame_rate_preserves_60_hz_and_caps_above_it(self, socket_class):
+        sock = socket_class.return_value
+        injector = wayland_input.Injector("/tmp/private.sock", 800, 600)
+        injector.frame_rate(60)
+        injector.frame_rate(144)
+        self.assertEqual(
+            [call.args[0] for call in sock.sendall.call_args_list],
+            [b"o 0 0\n", b"r 60 0\n", b"r 60 0\n"])
+
 
 if __name__ == "__main__":
     unittest.main()

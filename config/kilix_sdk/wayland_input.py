@@ -46,7 +46,7 @@ class Injector:
 
     def frame_rate(self, fps: int) -> None:
         """Set this output's damage-driven compositor ceiling."""
-        self._send(f"r {min(30, max(1, int(fps)))} 0")
+        self._send(f"r {min(60, max(1, int(fps)))} 0")
 
     @staticmethod
     def code_for(key) -> int:
