@@ -23,6 +23,40 @@ GL renderer: NV166
 
 
 class GpuHostTests(unittest.TestCase):
+    def test_dmabuf_asymmetric_quadrants_follow_producer_transform(self):
+        compiler = shutil.which("cc")
+        if compiler is None:
+            self.skipTest("C compiler is unavailable")
+        source = r'''
+#include <stdint.h>
+#include "kilix-dmabuf-orientation.h"
+
+int main(void) {
+    KilixDmaBufBlitRect r = {0};
+    /* TL red, TR green, BL blue, BR yellow makes both axes observable. */
+    if (!kilix_dmabuf_blit_rect(4, 2, KILIX_DMABUF_TRANSFORM_NONE, &r) ||
+            r.source_x0 != 0 || r.source_y0 != 2 ||
+            r.source_x1 != 4 || r.source_y1 != 0) return 1;
+    /* A producer-applied 180 maps logical TL to buffer BR. The composed blit
+       must reverse X and cancel the baseline Y inversion. */
+    if (!kilix_dmabuf_blit_rect(4, 2, KILIX_DMABUF_TRANSFORM_180, &r) ||
+            r.source_x0 != 4 || r.source_y0 != 0 ||
+            r.source_x1 != 0 || r.source_y1 != 2) return 2;
+    if (kilix_dmabuf_blit_rect(4, 2, KILIX_DMABUF_TRANSFORM_90, &r)) return 3;
+    return 0;
+}
+'''
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fixture = root / "orientation.c"
+            binary = root / "orientation"
+            fixture.write_text(source)
+            subprocess.run((compiler, "-std=c11", "-Wall", "-Wextra",
+                            "-Werror", "-I", str(ROOT / "src/kitty"),
+                            str(fixture), "-o", str(binary)), check=True,
+                           capture_output=True)
+            subprocess.run((str(binary),), check=True)
+
     def test_dmabuf_receive_waits_for_delayed_descriptor_and_times_out(self):
         compiler = shutil.which("cc")
         if compiler is None:

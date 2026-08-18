@@ -55,10 +55,10 @@ struct lease {
 };
 
 #define KILIX_DMABUF_MAGIC 0x4b444d41u
-#define KILIX_DMABUF_VERSION 1u
+#define KILIX_DMABUF_VERSION 2u
 struct dmabuf_frame {
     uint32_t magic, version, width, height, stride, offset, fourcc;
-    uint32_t modifier_hi, modifier_lo;
+    uint32_t modifier_hi, modifier_lo, transform;
 };
 
 static bool trace_sample(uint64_t count) {
@@ -211,6 +211,9 @@ static void send_held_frame(void *userdata, int fd, uint32_t mask) {
         close(client); release_held(state); return;
     }
     const struct spa_data *plane = &buffer->datas[0];
+    const struct spa_meta_videotransform *video_transform =
+        spa_buffer_find_meta_data(buffer, SPA_META_VideoTransform,
+                                  sizeof(*video_transform));
     const struct dmabuf_frame frame = {
         .magic = KILIX_DMABUF_MAGIC, .version = KILIX_DMABUF_VERSION,
         .width = state->format.size.width, .height = state->format.size.height,
@@ -220,6 +223,8 @@ static void send_held_frame(void *userdata, int fd, uint32_t mask) {
         .fourcc = DRM_FORMAT_XRGB8888,
         .modifier_hi = (uint32_t)(state->format.modifier >> 32u),
         .modifier_lo = (uint32_t)state->format.modifier,
+        .transform = video_transform ? video_transform->transform :
+                     SPA_META_TRANSFORMATION_None,
     };
     char control[CMSG_SPACE(sizeof(int))] = {0};
     struct iovec iov = {.iov_base = (void*)&frame, .iov_len = sizeof(frame)};
