@@ -19,7 +19,7 @@ from . import gpu_host
 
 
 SLOTS = ((1280, 720),) * 6
-IDLE_TIMEOUT = 60.0
+IDLE_TIMEOUT = 5.0
 
 
 def _paths(session_home: Path) -> tuple[Path, Path]:
@@ -29,6 +29,11 @@ def _paths(session_home: Path) -> tuple[Path, Path]:
 def _private_parent(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True, mode=0o700)
     path.chmod(0o700)
+
+
+def _idle_expired(client_count: int, idle_since: float, now: float) -> bool:
+    """Return true only after the last lease has been absent for the bound."""
+    return client_count == 0 and now - idle_since >= IDLE_TIMEOUT
 
 
 def _connect(path: Path, timeout: float) -> socket.socket:
@@ -176,7 +181,7 @@ def run_daemon(session_home: Path) -> int:
             next_x += width
 
         while not stopping and all(p.poll() is None for p in processes):
-            if not clients and time.monotonic() - idle_since >= IDLE_TIMEOUT:
+            if _idle_expired(len(clients), idle_since, time.monotonic()):
                 break
             for key, _mask in selector.select(0.5):
                 if key.fileobj is server:

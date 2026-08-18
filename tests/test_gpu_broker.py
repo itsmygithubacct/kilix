@@ -7,6 +7,13 @@ from kilix_sdk import gpu_broker
 
 
 class GpuBrokerTests(unittest.TestCase):
+    def test_idle_shutdown_is_bounded_and_never_interrupts_a_lease(self):
+        self.assertEqual(gpu_broker.IDLE_TIMEOUT, 5.0)
+        started = 100.0
+        self.assertFalse(gpu_broker._idle_expired(0, started, 104.999))
+        self.assertTrue(gpu_broker._idle_expired(0, started, 105.0))
+        self.assertFalse(gpu_broker._idle_expired(1, started, 1000.0))
+
     def test_shared_host_has_six_uniform_outputs(self):
         self.assertEqual(gpu_broker.SLOTS, ((1280, 720),) * 6)
         with tempfile.TemporaryDirectory() as temporary:
