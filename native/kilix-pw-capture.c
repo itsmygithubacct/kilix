@@ -35,7 +35,7 @@ struct state {
     struct pw_buffer *held;
     struct lease *leases;
     const char *socket_path;
-    bool trace;
+    bool trace, trace_all;
     struct {
         uint64_t process, dequeued, coalesced, sequence_changes;
         uint64_t damage_frames, damage_regions, empty_frames;
@@ -67,7 +67,7 @@ static bool trace_sample(uint64_t count) {
 
 static void trace_event(const struct state *state, const char *event,
                         uint64_t count) {
-    if (state->trace && trace_sample(count)) {
+    if (state->trace && (state->trace_all || trace_sample(count))) {
         struct timespec now = {0};
         (void)clock_gettime(CLOCK_MONOTONIC, &now);
         uint64_t monotonic_ns = (uint64_t)now.tv_sec * UINT64_C(1000000000) +
@@ -455,6 +455,8 @@ int main(int argc, char **argv) {
     struct state state = {.listen_fd = -1};
     const char *trace = getenv("KILIX_GPU_CAPTURE_TRACE");
     state.trace = trace && *trace && strcmp(trace, "0") != 0;
+    const char *trace_all = getenv("KILIX_GPU_CAPTURE_TRACE_ALL");
+    state.trace_all = trace_all && *trace_all && strcmp(trace_all, "0") != 0;
     pw_init(&argc, &argv);
     state.loop = pw_main_loop_new(NULL);
     if (!state.loop) return 1;
