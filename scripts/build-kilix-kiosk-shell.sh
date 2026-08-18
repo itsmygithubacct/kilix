@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-SOURCE_HOME=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+SOURCE_HOME=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 GPU_ROOT=${KILIX_GPU_HOST_ROOT:-${KILIX_GPU_HOST_HOME:-${KILIX_STORAGE_HOME:-$HOME/.local/gpu_terminal/kilix}/dependencies/gpu-host}/root}
 BUILD_ROOT=${KILIX_BUILD_DIRECTORY:-${KILIX_STORAGE_HOME:-$HOME/.local/gpu_terminal/kilix}/build}
 OUTPUT=${KILIX_WESTON_KIOSK_SHELL:-$BUILD_ROOT/libraries/gpu-host/kilix-kiosk-shell.so}
@@ -9,6 +9,12 @@ DATA_ROOT=${KILIX_DATA_HOME:-${KILIX_STORAGE_HOME:-$HOME/.local/gpu_terminal/kil
 ARCHIVE=$DATA_ROOT/gpu-host-sources/weston-14.0.2.tar.xz
 URL=https://deb.debian.org/debian/pool/main/w/weston/weston_14.0.2.orig.tar.xz
 DIGEST=b47216b3530da76d02a3a1acbf1846a9cd41d24caa86448f9c46f78f20b6e0ac
+
+case ${1:-} in
+  --print-path) printf '%s\n' "$OUTPUT"; exit 0 ;;
+  ''|--build) ;;
+  *) echo 'usage: build-kilix-kiosk-shell.sh [--build|--print-path]' >&2; exit 2 ;;
+esac
 
 test -f "$GPU_ROOT/usr/include/libweston-14/libweston/libweston.h" || {
   echo 'kilix kiosk shell: install GPU host dependencies first' >&2

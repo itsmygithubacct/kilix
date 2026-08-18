@@ -15,7 +15,7 @@ def main() -> int:
         result = {
             "available": False,
             "reason": "GPU host runtime is not installed",
-            "install": "scripts/install-gpu-host-deps.sh",
+            "install": "scripts/install-gpu-host.sh",
         }
     else:
         probe = probe_runtime(runtime)

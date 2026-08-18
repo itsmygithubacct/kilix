@@ -22,6 +22,14 @@ GL renderer: NV166
 
 
 class GpuHostTests(unittest.TestCase):
+    def test_documented_installer_builds_every_required_helper(self):
+        installer = (ROOT / "scripts/install-gpu-host.sh").read_text()
+        probe = (ROOT / "config/gpu_host_probe.py").read_text()
+        for builder in ("build-weston-input.sh", "build-gpu-capture.sh",
+                        "build-kilix-kiosk-shell.sh"):
+            self.assertIn(builder, installer)
+        self.assertIn('"install": "scripts/install-gpu-host.sh"', probe)
+
     def test_hardware_probe_requires_real_renderer_and_dmabuf(self):
         probe = gpu_host.parse_weston_log(HARDWARE_LOG)
         self.assertTrue(probe.available)
