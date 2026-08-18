@@ -23,13 +23,14 @@ complete tree. Freedesktop launchers/icons are the intentional exception:
 
 ![kilix — pages strip with + button, per-pane title bars with clickable split/maximize/close buttons, splits, and icat](config/kilix_demo.png)
 
-## Release 0.2.0 (in development)
+## Release 0.2.0
 
-The 0.2.0 work is being qualified as a coordinated Plebian-OS release. Features
-described in this section are implemented in the isolated
-`work/0.2.0-start-menu` Kilix and Kitty candidates; they are not part of the
-published 0.1.9 tag and must pass the final integration and release gates before
-publication.
+Prepared 2026-08-18. **Not published yet.** This is the Kilix component
+selected for the coordinated Plebian-OS 0.2.0 release, and it upgrades from
+0.1.9, the last published release. Some features described below are carried by
+candidates that join at final integration and must pass the release gates
+before publication, so read this section as what 0.2.0 contains rather than as
+something you can install today.
 
 ### Kilix Start menu and page-strip placement
 
@@ -88,6 +89,46 @@ The exact candidates and verification evidence are maintained outside the
 published repository until integration. Release adoption must preserve the
 Kilix-to-Kitty pin, rerun both full test matrices, prove fallback on unsupported
 hardware, and demonstrate a real shared encode on a same-device VAAPI host.
+
+### Terminal calculator
+
+`kilix calculator` opens a calculator over the current session in the same
+native overlay theme as the Copy/Paste context window. Every button is
+clickable; digits, the decimal point, arithmetic operators, percent and `=`
+also work from the keyboard, `Enter` calculates, `Backspace` edits, `C` clears
+and `Esc` closes. It carries memory controls, square root, reciprocal, sign
+change, clear-entry and divide-by-zero handling, adapts when the pane is
+resized, and reports the minimum usable size instead of drawing a clipped
+keypad.
+
+### Interactive top bar widgets
+
+The top bar's status items are controls rather than read-outs. The calendar
+icon opens a navigable month and the date/time text opens a live local-date,
+clock and timezone widget. The volume icon opens a compact slider on one click,
+the full clickable `kilix-volume` output selector on a double-click, and a
+settings card with a live Mute checkbox on right-click. The network icon shows
+compact connection status on one click and opens `nmtui` on a double-click.
+Right-clicking a non-volume widget opens Kilix Settings.
+
+### Desktop application launching
+
+A desktop session now keeps sole ownership of its X windows. Ordinary X
+applications have no window manager on their private display, so the app runner
+continues to size, focus and clamp their top-level windows; a session that
+supplies its own window manager keeps that runner out of its windows entirely.
+
+The pinned application catalog advances to a revision whose desktop launchers
+all start their application, and the utility installer stays on the catalog's
+pinned revision instead of resolving a moving one. The IceWM provider advance
+carries its terminal launch support.
+
+Optional desktop pins carried by this Kilix release advance to:
+
+- **Kilix TUI utilities** — `f260792e3427c795387878cfa485d89fb16ff6db`;
+- **Kilix IceWM** — `0b9f11b45fddc5370c37b00e9cd9e42ac5a5f6d7`.
+
+Kilix Cap and Kilix Land stay on the pins 0.1.9 selected.
 
 ## Release 0.1.9
 
