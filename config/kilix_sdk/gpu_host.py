@@ -32,6 +32,7 @@ class GpuHostRuntime:
     module_map: str
     library_path: str
     render_nodes: tuple[Path, ...]
+    encoder: Path | None = None
 
     def environment(self, runtime_dir: Path) -> dict[str, str]:
         env = dict(os.environ)
@@ -55,6 +56,13 @@ class GpuProbe:
     render_node: str = ""
     dmabuf: bool = False
     pbo: bool = False
+
+
+@dataclass(frozen=True)
+class EncoderProbe:
+    available: bool
+    reason: str
+    render_node: str = ""
 
 
 def _safe_executable(path: Path) -> bool:
@@ -113,6 +121,9 @@ def discover_runtime() -> GpuHostRuntime | None:
     capture = Path(os.environ.get(
         "KILIX_GPU_CAPTURE",
         build_root / "libraries/gpu-host/kilix-pw-capture"))
+    encoder = Path(os.environ.get(
+        "KILIX_DMABUF_ENCODER",
+        build_root / "libraries/gpu-host/kilix-dmabuf-encode"))
     kiosk_shell = Path(os.environ.get(
         "KILIX_WESTON_KIOSK_SHELL",
         build_root / "libraries/gpu-host/kilix-kiosk-shell.so"))
@@ -144,7 +155,71 @@ def discover_runtime() -> GpuHostRuntime | None:
         f"{name}={path}" for name, path in module_paths.items())
     return GpuHostRuntime(
         root, weston, pipewire, pw_dump, pw_link, xwayland, input_module, capture,
-        module_map, library_path, render_nodes)
+        module_map, library_path, render_nodes,
+        encoder if _safe_executable(encoder) else None)
+
+
+def probe_encoder(runtime: GpuHostRuntime, render_node: str = "",
+                  timeout: float = 4.0) -> EncoderProbe:
+    """Find a DRM node able to import BGRx DMA-BUF and encode H.264 in-place."""
+    if runtime.encoder is None:
+        return EncoderProbe(False, "DMA-BUF encoder helper is unavailable")
+    nodes = tuple(node for node in runtime.render_nodes
+                  if not render_node or str(node) == render_node)
+    if not nodes:
+        return EncoderProbe(False, "compositor DRM node is unavailable")
+    for node in nodes:
+        try:
+            result = subprocess.run(
+                (str(runtime.encoder), "/nonexistent/kilix-probe.sock", "64", "64",
+                 "20", "20", str(node), "1000000"), stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+                timeout=timeout, check=False)
+        except subprocess.TimeoutExpired:
+            continue
+        if result.returncode == 0:
+            return EncoderProbe(True, "direct DMA-BUF H.264", str(node))
+    return EncoderProbe(False, "no DRM node can import BGRx and encode H.264")
+
+
+def probe_encoder_cached(runtime: GpuHostRuntime, render_node: str = "",
+                         timeout: float = 4.0) -> EncoderProbe:
+    """Cache the encoder proof under the same driver/build identity as Weston."""
+    cache_home = Path(os.environ.get(
+        "KILIX_CACHE_HOME", "~/.local/gpu_terminal/kilix/cache")).expanduser()
+    cache_home.mkdir(parents=True, exist_ok=True, mode=0o700)
+    cache_home.chmod(0o700)
+    path = cache_home / "gpu-encoder-probe.json"
+    wanted = _probe_identity(runtime)
+    wanted["compositor_render_node"] = render_node
+    wanted["encoder"] = []
+    if runtime.encoder is not None:
+        info = runtime.encoder.stat()
+        wanted["encoder"] = [info.st_dev, info.st_ino, info.st_size,
+                             info.st_mtime_ns]
+    try:
+        info = path.stat()
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if (info.st_uid == os.geteuid() and not info.st_mode & 0o077
+                and payload.get("identity") == wanted):
+            return EncoderProbe(**payload["probe"])
+    except (OSError, ValueError, TypeError, KeyError):
+        pass
+    probe = probe_encoder(runtime, render_node, timeout)
+    fd, temporary = tempfile.mkstemp(prefix=".gpu-encoder-", dir=cache_home)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump({"identity": wanted, "probe": probe.__dict__}, stream,
+                      sort_keys=True)
+            stream.write("\n")
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, path)
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+    return probe
 
 
 _PORT_NAME = re.compile(r"[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+\Z")

@@ -542,11 +542,13 @@ class StreamSupervisor:
         return sink, f"{sink}.monitor"
 
     # ---- broadcast encoders (H.264 + optional AAC audio) --------------------
-    def _enc_argv(self, name, n, w, h, fps, keyint_sec, debug, audio, piped):
+    def _enc_argv(self, name, n, w, h, fps, keyint_sec, debug, audio, piped,
+                  encoded=False):
         """Shared front half of every broadcast encoder: metrics feed, video
         input (x11grab, or a piped rawvideo feed for single-capture fan-out),
         optional pulse-monitor audio, and the H.264 + AAC codec args."""
-        pre, vargs = _video_encode_args(fps, keyint_sec, vfr=piped)
+        pre, vargs = ([], ["-c:v", "copy"]) if encoded else \
+            _video_encode_args(fps, keyint_sec, vfr=piped)
         argv = ["ffmpeg", "-hide_banner", "-loglevel", "error"]
         if debug:
             # ffmpeg writes frame=/fps=/bitrate=/total_size=/drop_frames= here
@@ -555,7 +557,10 @@ class StreamSupervisor:
                      os.path.join(self.runtime_dir, f"{name}.progress"),
                      "-stats_period", "1"]
         argv += pre                        # global opts (e.g. -vaapi_device)
-        if piped:
+        if encoded:
+            argv += ["-fflags", "+genpts", "-f", "h264", "-framerate",
+                     str(fps), "-i", "pipe:0"]
+        elif piped:
             argv += ["-thread_queue_size", "512"] + _raw_input_args(w, h)
         else:
             argv += ["-thread_queue_size", "512", "-f", "x11grab",
@@ -579,7 +584,7 @@ class StreamSupervisor:
                           env=env)
 
     def start_hls(self, n, w, h, outdir, fps=15, debug=False, audio=None,
-                  hls_time=0.5, piped=False):
+                  hls_time=0.5, piped=False, encoded=False):
         """HLS broadcast. QW2: 0.5 s fMP4 segments, list of 3 — ~1.5-2.5 s glass
         latency, the segmented-HLS floor. The keyframe cadence must equal the
         segment length (HLS only cuts on an IDR frame). piped=True → feed frames
@@ -587,7 +592,7 @@ class StreamSupervisor:
         os.makedirs(outdir, exist_ok=True)
         m3u8 = os.path.join(outdir, "live.m3u8")
         argv = self._enc_argv(f"hls-{n}", n, w, h, fps, hls_time, debug,
-                              audio, piped)
+                              audio, piped, encoded)
         argv += ["-f", "hls", "-hls_time", str(hls_time), "-hls_list_size", "3",
                  "-hls_segment_type", "fmp4",
                  "-hls_fmp4_init_filename", "init.mp4",
@@ -596,22 +601,23 @@ class StreamSupervisor:
         return self._spawn_enc(f"hls-{n}", argv, piped)
 
     def start_ts(self, n, w, h, ts_port, fps=15, debug=False, audio=None,
-                 piped=False):
+                 piped=False, encoded=False):
         """MPEG-TS to the wsbridge's loopback fan-out (E1: TS over WebSocket →
         mpegts.js/MSE, sub-second glass latency). Segment-free, so the GOP can
         be long (2 s) — a big bitrate saving on mostly-static screens. The
         bridge must already be listening on ts_port (see wait_port)."""
-        argv = self._enc_argv(f"ts-{n}", n, w, h, fps, 2.0, debug, audio, piped)
+        argv = self._enc_argv(f"ts-{n}", n, w, h, fps, 2.0, debug, audio,
+                              piped, encoded)
         argv += ["-muxdelay", "0", "-muxpreload", "0", "-pat_period", "0.4",
                  "-f", "mpegts", f"tcp://127.0.0.1:{ts_port}"]
         return self._spawn_enc(f"ts-{n}", argv, piped)
 
     def start_rtsp_pub(self, n, w, h, rtsp_port, path="kilix", fps=15,
-                       debug=False, audio=None, piped=False):
+                       debug=False, audio=None, piped=False, encoded=False):
         """Publish into MediaMTX over loopback RTSP (E2: WebRTC tier). MediaMTX
         re-serves it as WHEP/WebRTC to browsers with sub-500 ms latency."""
         argv = self._enc_argv(f"rtsp-{n}", n, w, h, fps, 2.0, debug, audio,
-                              piped)
+                              piped, encoded)
         argv += ["-f", "rtsp", "-rtsp_transport", "tcp",
                  f"rtsp://127.0.0.1:{rtsp_port}/{path}"]
         return self._spawn_enc(f"rtsp-{n}", argv, piped)

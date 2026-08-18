@@ -333,6 +333,63 @@ class EncoderFeed:
         return [s["fd"] for s in self.sinks if s["cur"] is not None]
 
 
+class EncodedFeed:
+    """Reliable one-encode fan-out to lightweight container muxers."""
+
+    MAX_PENDING = 8 << 20
+
+    def __init__(self):
+        from collections import deque
+        self._deque = deque
+        self.source = None
+        self.sinks = []
+
+    def attach(self, process):
+        self.source = process.stdout
+
+    def add(self, process):
+        fd = process.stdin.fileno()
+        os.set_blocking(fd, False)
+        self.sinks.append({"fd": fd, "chunks": self._deque(), "off": 0,
+                           "pending": 0})
+
+    def read(self):
+        while True:
+            try:
+                chunk = os.read(self.source.fileno(), 65536)
+            except BlockingIOError:
+                return
+            if not chunk:
+                raise EOFError("direct GPU encoder closed")
+            for sink in self.sinks:
+                sink["chunks"].append(chunk)
+                sink["pending"] += len(chunk)
+                if sink["pending"] > self.MAX_PENDING:
+                    raise RuntimeError("broadcast muxer fell behind the encoder")
+            if len(chunk) < 65536:
+                return
+
+    def pump(self):
+        for sink in self.sinks:
+            chunks = sink["chunks"]
+            while chunks:
+                chunk = chunks[0]
+                try:
+                    count = os.write(sink["fd"], chunk[sink["off"]:])
+                except BlockingIOError:
+                    break
+                except OSError as error:
+                    raise BrokenPipeError("broadcast muxer closed") from error
+                sink["off"] += count
+                sink["pending"] -= count
+                if sink["off"] == len(chunk):
+                    chunks.popleft()
+                    sink["off"] = 0
+
+    def pending_fds(self):
+        return [sink["fd"] for sink in self.sinks if sink["chunks"]]
+
+
 class AppPane:
     def __init__(self, cmd, app_w, app_h, fps, serve=False, lan=False, hls=False,
                  audio=False, mse=False, webrtc=False, no_pane=False,
@@ -353,6 +410,7 @@ class AppPane:
         self.manage_windows = bool(manage_windows)
         self.pulse_sink = None
         self.feed = EncoderFeed()
+        self.encoded_feed = EncodedFeed()
         self.session = os.environ.get("KILIX_SESSION") or f"run-{os.getpid()}"
         self.xapp = self.sup = None
         self.gpu = None
@@ -398,14 +456,23 @@ class AppPane:
         backend = os.environ.get("KILIX_RUN_BACKEND", "auto").casefold()
         if backend not in ("auto", "wayland", "x11"):
             raise ValueError("KILIX_RUN_BACKEND must be auto, wayland, or x11")
+        web = hls or mse or webrtc
         self.gpu_runtime = (gpu_host.discover_runtime()
-                            if backend != "x11" and self.term is not None
-                            and not (serve or lan or hls or mse or webrtc)
+                            if backend != "x11" and not serve and not lan
+                            and (self.term is not None or web)
                             and os.environ.get("TMUX") is None else None)
+        self.encoder_capability = None
         if self.gpu_runtime is not None:
             gpu_capability = gpu_host.probe_cached(self.gpu_runtime)
             if not gpu_capability.available:
                 log("GPU host rejected:", gpu_capability.reason)
+                self.gpu_runtime = None
+        if self.gpu_runtime is not None and web:
+            self.encoder_capability = gpu_host.probe_encoder_cached(
+                self.gpu_runtime, gpu_capability.render_node)
+            if not self.encoder_capability.available:
+                log("direct GPU encoder rejected:",
+                    self.encoder_capability.reason)
                 self.gpu_runtime = None
         if backend == "wayland" and self.gpu_runtime is None:
             raise RuntimeError("native Wayland GPU host is unavailable")
@@ -579,7 +646,8 @@ class AppPane:
         monitor = None
         if self.audio:
             self.pulse_sink, monitor = self.sup.make_null_sink(self.session)
-        piped = not self.no_pane
+        direct = self.use_gpu
+        piped = direct or not self.no_pane
         w, h, fps = self.app_w, self.app_h, self.fps
         what = f"run {os.path.basename(self.cmd[0])}"
         need_bridge = self.lan or self.hls or self.mse
@@ -600,17 +668,17 @@ class AppPane:
                 "lan" if self.lan else "loopback")
         if self.hls:
             p = self.sup.start_hls(n, w, h, hlsdir, fps=fps, debug=self.debug,
-                                   audio=monitor, piped=piped)
+                                   audio=monitor, piped=piped, encoded=direct)
             if piped:
-                self.feed.add(p)
+                (self.encoded_feed if direct else self.feed).add(p)
         if self.mse:
             # the encoder connects OUT to the bridge's TS listener
             if not stream.wait_port(ts_port):
                 raise RuntimeError("kilix: bridge TS port did not come up")
             p = self.sup.start_ts(n, w, h, ts_port, fps=fps, debug=self.debug,
-                                  audio=monitor, piped=piped)
+                                  audio=monitor, piped=piped, encoded=direct)
             if piped:
-                self.feed.add(p)
+                (self.encoded_feed if direct else self.feed).add(p)
         if self.webrtc:
             self.rtsp_port = stream.free_port()
             self.webrtc_port = (8889 if stream.port_free(8889)
@@ -620,10 +688,15 @@ class AppPane:
                                     token=self.token, lan=self.lan)
             p = self.sup.start_rtsp_pub(n, w, h, self.rtsp_port, fps=fps,
                                         debug=self.debug, audio=monitor,
-                                        piped=piped)
+                                        piped=piped, encoded=direct)
             if piped:
-                self.feed.add(p)
+                (self.encoded_feed if direct else self.feed).add(p)
             log("webrtc on", self.webrtc_port, "rtsp", self.rtsp_port)
+        if direct:
+            keyint = max(1, round(fps * (0.5 if self.hls else 2.0)))
+            encoder = self.gpu.start_encoder(
+                self.encoder_capability.render_node, keyint)
+            self.encoded_feed.attach(encoder)
 
     def start_app_and_capture(self):
         # Connect to the private display FIRST and shrink its screen to the
@@ -1157,7 +1230,19 @@ class AppPane:
             signal.signal(_s, lambda *a: sys.exit(0))
         err = None
         web = self.lan or self.hls or self.mse or self.webrtc
-        if self.serve or web:
+        gpu_web = web and self.use_gpu
+        if gpu_web:
+            try:
+                self.start_gpu()
+                self._start_web_tier(None)
+                self.announce()
+            except Exception as e:
+                if self.gpu is not None:
+                    self.gpu.close()
+                    self.gpu = None
+                print(f"kilix run: {e}", file=sys.stderr)
+                sys.exit(1)
+        elif self.serve or web:
             # Bring the servers up first so connect details print to the LOCAL
             # terminal before the app takes the alt screen (and never into the
             # captured stream — secrets must not reach remote viewers).
@@ -1172,7 +1257,9 @@ class AppPane:
         if self.term:
             self.term.enter()
         try:
-            if self.serve or web:
+            if gpu_web:
+                pass                         # application already owns GPU slot
+            elif self.serve or web:
                 self.start_app_and_capture()   # display already up
             else:
                 self.start()
@@ -1192,13 +1279,16 @@ class AppPane:
                     rlist.append(self.ff.stdout)
                 if self.gpu is not None:
                     rlist.append(self.gpu)
+                if self.encoded_feed.source is not None:
+                    rlist.append(self.encoded_feed.source)
                 if self.term:
                     rlist.append(self.term.fd)
                 # write-select on encoder stdins with a queued frame, so a
                 # briefly-full pipe drains as soon as the encoder catches up
                 monotonic_now = time.monotonic()
                 r, w, _ = select.select(
-                    rlist, self.feed.pending_fds(), [],
+                    rlist, (self.feed.pending_fds() +
+                            self.encoded_feed.pending_fds()), [],
                     self.loop_timeout(monotonic_now))
                 monotonic_now = time.monotonic()
                 if self.capture is not None and self.capture in r:
@@ -1206,7 +1296,17 @@ class AppPane:
                 if self.ff is not None and self.ff.stdout in r:
                     self.pump_frames()
                 if self.gpu is not None and self.gpu in r:
-                    self.pump_gpu_frame()
+                    if self.term is not None:
+                        self.pump_gpu_frame()
+                    else:
+                        # The primary capture also proves the app's first
+                        # paint to the broker. Headless broadcasts discard its
+                        # later notifications; the encoder has an independent
+                        # DMA-BUF consumer and cannot be stalled by this pipe.
+                        self.gpu.consume_ready()
+                if (self.encoded_feed.source is not None and
+                        self.encoded_feed.source in r):
+                    self.encoded_feed.read()
                 if self.term and self.term.fd in r:
                     for ev in browse.coalesce_mouse_motion(self.term.read_input()):
                         if ev["kind"] == "key":
@@ -1235,6 +1335,7 @@ class AppPane:
                 # flush queued pixels immediately. With no work, loop_timeout
                 # sleeps until the one-second housekeeping deadline.
                 self.tick_capture(now)
+                self.encoded_feed.pump()
                 if monotonic_now >= self._next_housekeeping:
                     self._next_housekeeping = monotonic_now + 1.0
                     self.maintain_app_window(now)

@@ -34,8 +34,9 @@ class Session:
         self.slot = -1
 
     def _spawn(self, argv, **kwargs):
+        environment = kwargs.pop("env", self.environment)
         process = subprocess.Popen(
-            argv, env=self.environment, stdin=subprocess.DEVNULL,
+            argv, env=environment, stdin=subprocess.DEVNULL,
             start_new_session=True, **kwargs)
         self.processes.append(process)
         return process
@@ -140,6 +141,47 @@ class Session:
             if len(chunk) < 4096:
                 break
         return ready
+
+    def start_encoder(self, render_node: str, keyint: int,
+                      bitrate: int = 4_000_000,
+                      timeout: float = 4.0) -> subprocess.Popen:
+        """Attach a second zero-copy capture consumer and encode it once.
+
+        The local Kitty presenter retains its own consumer, so neither output
+        can stall the other and both continue to lease DMA-BUFs correctly.
+        """
+        if self.local_dir is None or self.runtime_dir is None or self.slot < 0:
+            raise RuntimeError("GPU session has not started")
+        if self.runtime.encoder is None:
+            raise RuntimeError("DMA-BUF encoder helper is unavailable")
+        frame_socket = self.runtime_dir / (
+            f"encode-{self.slot}-{os.getpid()}-{self.local_dir.name[-6:]}.sock")
+        node_name = f"kilix-pw-encode-{self.slot}-{os.getpid()}"
+        source_name = f"weston.pipewire-{self.slot}"
+        environment = dict(self.environment)
+        environment["KILIX_CAPTURE_NODE_NAME"] = node_name
+        capture_log = open(self.local_dir / "encode-capture.stderr", "wb")
+        encoder_log = open(self.local_dir / "encoder.stderr", "wb")
+        self.logs.extend((capture_log, encoder_log))
+        capture = self._spawn(
+            (str(self.runtime.capture), "--dmabuf-server", str(frame_socket),
+             source_name, str(self.width), str(self.height), str(self.fps)),
+            stdout=subprocess.DEVNULL, stderr=capture_log, env=environment)
+        deadline = time.monotonic() + timeout
+        self._wait_path(frame_socket, deadline, "encoder DMA-BUF transport")
+        gpu_host.link_capture_ports(
+            self.runtime, environment, source=f"{source_name}:output_1",
+            sink=f"{node_name}:input_1",
+            timeout=max(0.1, deadline - time.monotonic()))
+        encoder = self._spawn(
+            (str(self.runtime.encoder), str(frame_socket), str(self.width),
+             str(self.height), str(self.fps), str(max(1, keyint)), render_node,
+             str(max(10_000, bitrate))), stdout=subprocess.PIPE,
+            stderr=encoder_log, env=environment)
+        os.set_blocking(encoder.stdout.fileno(), False)
+        self.encoder_capture = capture
+        self.encoder = encoder
+        return encoder
 
     def close(self) -> None:
         if self.injector is not None:
