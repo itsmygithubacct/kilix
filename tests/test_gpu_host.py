@@ -23,6 +23,70 @@ GL renderer: NV166
 
 
 class GpuHostTests(unittest.TestCase):
+    def test_dmabuf_receive_waits_for_delayed_descriptor_and_times_out(self):
+        compiler = shutil.which("cc")
+        if compiler is None:
+            self.skipTest("C compiler is unavailable")
+        source = r'''
+#define _GNU_SOURCE
+#include <fcntl.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <sys/socket.h>
+#include <sys/wait.h>
+#include "kilix-dmabuf-transport.h"
+
+int main(void) {
+    int pair[2];
+    if (socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0, pair) < 0) return 1;
+    pid_t child = fork();
+    if (child < 0) return 2;
+    if (!child) {
+        close(pair[0]);
+        const struct timespec delay = {.tv_nsec = 30000000};
+        nanosleep(&delay, NULL);
+        int payload_fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
+        uint64_t record = UINT64_C(0x1122334455667788);
+        char control[CMSG_SPACE(sizeof(int))] = {0};
+        struct iovec iov = {.iov_base = &record, .iov_len = sizeof(record)};
+        struct msghdr message = {
+            .msg_iov = &iov, .msg_iovlen = 1,
+            .msg_control = control, .msg_controllen = sizeof(control),
+        };
+        struct cmsghdr *header = CMSG_FIRSTHDR(&message);
+        header->cmsg_level = SOL_SOCKET; header->cmsg_type = SCM_RIGHTS;
+        header->cmsg_len = CMSG_LEN(sizeof(int));
+        memcpy(CMSG_DATA(header), &payload_fd, sizeof(payload_fd));
+        int ok = sendmsg(pair[1], &message, MSG_NOSIGNAL) == sizeof(record);
+        close(payload_fd); close(pair[1]); _exit(ok ? 0 : 3);
+    }
+    close(pair[1]);
+    uint64_t record = 0;
+    int received = kilix_dmabuf_receive_bounded(
+        pair[0], &record, sizeof(record), 200);
+    if (received < 0 || record != UINT64_C(0x1122334455667788)) return 4;
+    close(received); close(pair[0]);
+    int status = 0;
+    if (waitpid(child, &status, 0) != child || status != 0) return 5;
+
+    if (socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0, pair) < 0) return 6;
+    errno = 0;
+    received = kilix_dmabuf_receive_bounded(pair[0], &record, sizeof(record), 20);
+    close(pair[0]); close(pair[1]);
+    return received == -1 && errno == ETIMEDOUT ? 0 : 7;
+}
+'''
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fixture = root / "receive.c"
+            binary = root / "receive"
+            fixture.write_text(source)
+            subprocess.run((compiler, "-std=c11", "-Wall", "-Wextra",
+                            "-Werror", "-I", str(ROOT / "src/kitty"),
+                            str(fixture), "-o", str(binary)), check=True,
+                           capture_output=True)
+            subprocess.run((str(binary),), check=True, timeout=2)
+
     def test_capture_wildcards_nominal_rate_and_requests_60_hz_maximum(self):
         capture = (ROOT / "native/kilix-pw-capture.c").read_text()
         input_module = (ROOT / "native/kilix-weston-input.c").read_text()
