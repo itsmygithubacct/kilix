@@ -68,8 +68,10 @@ except ImportError:
 LOG_PATH = os.environ.get("KILIX_RUN_LOG")
 
 # The private display's framebuffer allocation; RRSetScreenSize can move the
-# visible screen anywhere up to this. 4K default ≈ 24 MB of Xvfb framebuffer.
-DEFAULT_MAX_SCREEN = "3840x2160"
+# visible screen anywhere up to this. 1080p is the default CPU budget: a 4K
+# RGB snapshot is 24 MiB and makes every unavoidable full-frame operation four
+# times as expensive. Operators that prefer native 4K can set KILIX_RUN_MAX.
+DEFAULT_MAX_SCREEN = "1920x1080"
 # A changed capture proves that an app painted after the startup snapshot.
 # Some fast, static apps finish before capture starts, however, so accept a
 # stable initial frame after this grace period instead of leaving launchers
@@ -435,6 +437,7 @@ class AppPane:
         self._auto_fit = (fit_env.lower() not in ("0", "false", "no", "off")
                           if fit_env is not None else auto_fit)
         self._fit_suspended = False
+        self._next_housekeeping = time.monotonic()
         if self.term:
             self.compute_layout()
 
@@ -879,6 +882,13 @@ class AppPane:
             self._record_present(self.presenter.flush())
         self._settle_initial_frame(now)
 
+    def loop_timeout(self, now):
+        """Sleep until real work is due instead of waking four times a second."""
+        deadlines = [self._next_housekeeping]
+        if self.presenter is not None and self.presenter.next_deadline is not None:
+            deadlines.append(self.presenter.next_deadline)
+        return max(0.0, min(1.0, min(deadlines) - now))
+
     def _record_present(self, result):
         if not result.emitted:
             return result
@@ -1072,8 +1082,11 @@ class AppPane:
                     rlist.append(self.term.fd)
                 # write-select on encoder stdins with a queued frame, so a
                 # briefly-full pipe drains as soon as the encoder catches up
-                r, w, _ = select.select(rlist, self.feed.pending_fds(),
-                                        [], 0.25)
+                monotonic_now = time.monotonic()
+                r, w, _ = select.select(
+                    rlist, self.feed.pending_fds(), [],
+                    self.loop_timeout(monotonic_now))
+                monotonic_now = time.monotonic()
                 if self.capture is not None and self.capture in r:
                     self.pump_damage()
                 if self.ff is not None and self.ff.stdout in r:
@@ -1100,8 +1113,13 @@ class AppPane:
                         now >= self._resize_deadline:
                     self._resize_deadline = None
                     self.do_resize()
+                # Event readiness and presenter deadlines wake select(), so
+                # flush queued pixels immediately. With no work, loop_timeout
+                # sleeps until the one-second housekeeping deadline.
                 self.tick_capture(now)
-                self.maintain_app_window(now)
+                if monotonic_now >= self._next_housekeeping:
+                    self._next_housekeeping = monotonic_now + 1.0
+                    self.maintain_app_window(now)
                 # A first placement can be dropped right after startup (seen
                 # as a pane that stays black while the app clearly has output;
                 # q=2 means we never hear the error). Placement is otherwise

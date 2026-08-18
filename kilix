@@ -1464,6 +1464,9 @@ case "${1:-}" in
     # distinct flag for the launcher's own version.)
     cat "$KILIX_HOME/VERSION" 2>/dev/null || echo unknown
     exit 0 ;;
+  deps|prereqs)
+    shift
+    exec "$KILIX_HOME/scripts/install-build-deps.sh" "$@" ;;
   settings|--settings)
     shift
     exec python3 "$KILIX_HOME/kilix-settings" "$@" ;;
@@ -4232,9 +4235,22 @@ if [ "${KILIX_SHELL_INTEGRATION:-1}" != 0 ] \
   KILIX_SHELL=(-o "shell=$_ushell --rcfile $KILIX_HOME/config/kilix.bashrc")
 fi
 
+# Page-strip placement is a shared Kilix preference rather than a generated
+# rewrite of the user's kitty.conf. Apply it last so the explicit product
+# setting consistently wins over tracked defaults and local config includes.
+_KILIX_TAB_BAR_EDGE="$(python3 -c "
+import sys
+sys.path.insert(0, '$KILIX_HOME/config')
+from kilix_sdk import settings
+value = settings.load().get(settings.TAB_BAR_EDGE_KEY, settings.TAB_BAR_EDGE_DEFAULT)
+print(value if value in settings.TAB_BAR_EDGE_CHOICES else settings.TAB_BAR_EDGE_DEFAULT)
+" 2>/dev/null)"
+case "$_KILIX_TAB_BAR_EDGE" in top|bottom) ;; *) _KILIX_TAB_BAR_EDGE=top ;; esac
+KILIX_UI_OPTIONS=(-o "tab_bar_edge=$_KILIX_TAB_BAR_EDGE")
+
 # --class kilix: own WM_CLASS/app_id so kilix groups separately from kitty
 # in the taskbar and picks up the kilix icon via kilix.desktop.
 exec "$BIN" --class kilix \
   --config "$KITTY_CONFIG_DIRECTORY/kitty.conf" \
   --config "$KILIX_RC_CONFIG_FILE" \
-  "${KILIX_SHELL[@]}" "$@"
+  "${KILIX_UI_OPTIONS[@]}" "${KILIX_SHELL[@]}" "$@"

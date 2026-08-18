@@ -31,7 +31,7 @@ class KilixLauncherTests(unittest.TestCase):
                 capture_output=True,
                 text=True,
             ).stdout.strip(),
-            "3affc0cc4b9a80517c452470a01e2103d29e9dbf",
+            "c8d14169573d244ed187e005cc1b50c0e96e0830",
         )
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -586,6 +586,8 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("KILIX_RUN_AUTO_FIT|KILIX_NO_PANE", launcher)
         self.assertIn("KILIX_BROWSE_BACKEND", launcher)
         self.assertIn("KILIX_SHELL_INTEGRATION", launcher)
+        self.assertIn("TAB_BAR_EDGE_KEY", launcher)
+        self.assertIn('tab_bar_edge=$_KILIX_TAB_BAR_EDGE', launcher)
         self.assertIn("KILIX_NO_SOUND|KILIX_XPANE_WM", launcher)
         self.assertIn("SETTING_PAGES", settings)
         for key in (
@@ -682,6 +684,11 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("_clone_args=()", text)
         self.assertIn('git clone "${_clone_args[@]}" "$_k95_repo" "$_k95_dir"', text)
         self.assertNotIn("${KILIX95_BRANCH:+", text)
+
+    def test_windows_keys_open_the_contextual_start_menu(self):
+        conf = (ROOT / "config" / "kitty.conf").read_text()
+        self.assertIn("map left_super   kilix_windows_key", conf)
+        self.assertIn("map right_super  kilix_windows_key", conf)
 
     def test_prebuilt_bootstrap_can_pin_and_verify(self):
         text = (ROOT / "bootstrap.sh").read_text()

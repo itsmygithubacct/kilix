@@ -54,6 +54,9 @@ def _control_names() -> dict[str, str]:
     ):
         names[alias] = shared.PANE_CPU_MODE_KEY
     names[shared.PANE_CPU_MODE_KEY.lower()] = shared.PANE_CPU_MODE_KEY
+    for alias in ("tab_bar", "tab_bar_edge", "page_strip", "page_strip_edge"):
+        names[alias] = shared.TAB_BAR_EDGE_KEY
+    names[shared.TAB_BAR_EDGE_KEY.lower()] = shared.TAB_BAR_EDGE_KEY
     for alias in ("transcript", "session_log", "session_logs", "logging"):
         names[alias] = "KILIX_TRANSCRIPT"
     for alias in ("transcript_graphics", "log_graphics"):
@@ -124,6 +127,13 @@ CPU_MODE_SPEC = ChoiceSpec(
     "Pane CPU use (auto >1 core / always / off)",
     shared.PANE_CPU_MODE_CHOICES,
     shared.PANE_CPU_MODE_DEFAULT,
+)
+
+TAB_BAR_EDGE_SPEC = ChoiceSpec(
+    shared.TAB_BAR_EDGE_KEY,
+    "Page strip position (top / bottom; next launch)",
+    shared.TAB_BAR_EDGE_CHOICES,
+    shared.tab_bar_edge_default(),
 )
 
 TRANSCRIPT_GRAPHICS_SPEC = ChoiceSpec(
@@ -198,6 +208,7 @@ def _voice_specs() -> tuple[tuple[ChoiceSpec, ...], tuple[ChoiceSpec, ...]]:
 VOICE_LEADING_SPECS, VOICE_TRAILING_SPECS = _voice_specs()
 
 LEADING_CHOICES = {
+    "Top bar": (TAB_BAR_EDGE_SPEC,),
     "Pane buttons": (CPU_MODE_SPEC, MEMORY_MODE_SPEC),
     "Voice": VOICE_LEADING_SPECS,
 }
@@ -320,6 +331,12 @@ def _parse_assignment(value: str) -> tuple[str, object]:
             key for key in CONTROL_NAMES if not key.startswith("kilix_")))
         raise argparse.ArgumentTypeError(
             f"unknown control {name!r}; choose one of: {choices}")
+    if key == shared.TAB_BAR_EDGE_KEY:
+        edge = raw.strip().lower()
+        if edge not in shared.TAB_BAR_EDGE_CHOICES:
+            raise argparse.ArgumentTypeError(
+                "page strip position must be top|bottom")
+        return key, edge
     if key in (shared.PANE_CPU_MODE_KEY, shared.PANE_MEMORY_MODE_KEY):
         mode = raw.strip().lower()
         if mode == "on":
@@ -429,6 +446,12 @@ def _print_settings(values: dict[str, str]) -> None:
     for spec in shared.TOGGLE_SPECS:
         state = "on" if shared.truthy(values[spec.key]) else "off"
         print(f"{spec.key}={state}")
+    edge = values.get(
+        shared.TAB_BAR_EDGE_KEY, shared.TAB_BAR_EDGE_DEFAULT
+    ).strip().lower()
+    if edge not in shared.TAB_BAR_EDGE_CHOICES:
+        edge = shared.TAB_BAR_EDGE_DEFAULT
+    print(f"{shared.TAB_BAR_EDGE_KEY}={edge}")
     cpu_mode = values.get(
         shared.PANE_CPU_MODE_KEY, shared.PANE_CPU_MODE_DEFAULT
     ).strip().lower()
@@ -586,6 +609,11 @@ def _run_tui(stdscr, initial_section: int | str | None = None) -> int | str:
     }
     values[shared.PANE_CPU_MODE_KEY] = shared.pane_cpu_mode()
     values[shared.PANE_MEMORY_MODE_KEY] = shared.pane_memory_mode()
+    edge = str(effective.get(
+        shared.TAB_BAR_EDGE_KEY, shared.TAB_BAR_EDGE_DEFAULT)).strip().lower()
+    values[shared.TAB_BAR_EDGE_KEY] = (
+        edge if edge in shared.TAB_BAR_EDGE_CHOICES
+        else shared.TAB_BAR_EDGE_DEFAULT)
     values[shared.TRANSCRIPT_GRAPHICS_KEY] = shared.transcript_graphics()
     values[shared.TRANSCRIPT_LIMIT_KEY] = effective.get(
         shared.TRANSCRIPT_LIMIT_KEY, shared.TRANSCRIPT_LIMIT_DEFAULT)

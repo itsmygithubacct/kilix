@@ -81,6 +81,22 @@ class AppPanePresenterTests(unittest.TestCase):
     def tearDown(self):
         os.environ.pop("TMUX", None)
 
+    def test_default_capture_budget_is_1080p(self):
+        import apprun
+        self.assertEqual(apprun.DEFAULT_MAX_SCREEN, "1920x1080")
+
+    def test_idle_loop_sleeps_until_housekeeping_or_present(self):
+        import apprun
+        pane = object.__new__(apprun.AppPane)
+        pane._next_housekeeping = 11.0
+        pane._resize_deadline = None
+        pane.presenter = Mock(next_deadline=None)
+        self.assertEqual(pane.loop_timeout(10.0), 1.0)
+        pane.presenter.next_deadline = 10.125
+        self.assertAlmostEqual(pane.loop_timeout(10.0), 0.125)
+        pane.presenter.next_deadline = 9.0
+        self.assertEqual(pane.loop_timeout(10.0), 0.0)
+
     def test_first_frame_is_full_then_exact_rect(self):
         pane = make_apppane(stream=True)
         try:

@@ -147,6 +147,14 @@ PANE_CPU_MODE_CHOICES = ("auto", "always", "off")
 PANE_MEMORY_MODE_KEY = "KILIX_CHROME_PANE_MEMORY_MODE"
 PANE_MEMORY_MODE_DEFAULT = "auto"
 PANE_MEMORY_MODE_CHOICES = ("auto", "always", "off")
+TAB_BAR_EDGE_KEY = "KILIX_TAB_BAR_EDGE"
+TAB_BAR_EDGE_DEFAULT = "top"
+TAB_BAR_EDGE_CHOICES = ("top", "bottom")
+
+
+def tab_bar_edge_default() -> str:
+    """Default page-strip edge for the current host session."""
+    return "bottom" if in_desktop_session() else TAB_BAR_EDGE_DEFAULT
 
 # Kitty ships images as APC sequences whose payload is base64 pixel data, so a
 # pane running the desktop, a browser, or icat can emit megabytes per second.
@@ -312,6 +320,7 @@ CODING_KEYS = tuple(CODING_CHOICE_SPECS)
 
 MANAGED_KEYS = tuple(spec.key for spec in TOGGLE_SPECS) + (
     CLOCK_FORMAT_KEY,
+    TAB_BAR_EDGE_KEY,
     PANE_CPU_MODE_KEY,
     PANE_MEMORY_MODE_KEY,
     TRANSCRIPT_GRAPHICS_KEY,
@@ -387,13 +396,13 @@ def truthy(value: object) -> bool:
 def _normalize_change(key: str, raw_value: object) -> str:
     if key in TOGGLE_BY_KEY:
         return "1" if truthy(raw_value) else "0"
-    if key in (PANE_CPU_MODE_KEY, PANE_MEMORY_MODE_KEY):
+    if key in (PANE_CPU_MODE_KEY, PANE_MEMORY_MODE_KEY, TAB_BAR_EDGE_KEY):
         value = str(raw_value).strip().lower()
-        choices_for_key = (
-            PANE_CPU_MODE_CHOICES
-            if key == PANE_CPU_MODE_KEY
-            else PANE_MEMORY_MODE_CHOICES
-        )
+        choices_for_key = {
+            PANE_CPU_MODE_KEY: PANE_CPU_MODE_CHOICES,
+            PANE_MEMORY_MODE_KEY: PANE_MEMORY_MODE_CHOICES,
+            TAB_BAR_EDGE_KEY: TAB_BAR_EDGE_CHOICES,
+        }[key]
         if value not in choices_for_key:
             choices = ", ".join(choices_for_key)
             raise ValueError(f"{key} must be one of: {choices}")
@@ -458,6 +467,7 @@ def defaults(*, migrate_environment: bool = False) -> dict[str, str]:
     values[CLOCK_FORMAT_KEY] = CLOCK_FORMAT_DEFAULT
     values[PANE_CPU_MODE_KEY] = PANE_CPU_MODE_DEFAULT
     values[PANE_MEMORY_MODE_KEY] = PANE_MEMORY_MODE_DEFAULT
+    values[TAB_BAR_EDGE_KEY] = tab_bar_edge_default()
     values[TRANSCRIPT_GRAPHICS_KEY] = TRANSCRIPT_GRAPHICS_DEFAULT
     values[TRANSCRIPT_LIMIT_KEY] = TRANSCRIPT_LIMIT_DEFAULT
     values[TRANSCRIPT_TOTAL_KEY] = TRANSCRIPT_TOTAL_DEFAULT
@@ -885,6 +895,10 @@ __all__ = [
     "PANE_MEMORY_MODE_CHOICES",
     "PANE_MEMORY_MODE_DEFAULT",
     "PANE_MEMORY_MODE_KEY",
+    "TAB_BAR_EDGE_CHOICES",
+    "TAB_BAR_EDGE_DEFAULT",
+    "TAB_BAR_EDGE_KEY",
+    "tab_bar_edge_default",
     "SETTINGS_BASENAME",
     "SETTINGS_MAX_BYTES",
     "SESSION_LOG_MARKER",

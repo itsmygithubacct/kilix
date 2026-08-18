@@ -237,6 +237,8 @@ class SharedSettingsTests(unittest.TestCase):
                 values["KILIX_CHROME_BUTTON_SYNCHRONIZE_INPUT"], "1")
             self.assertEqual(values[settings.PANE_CPU_MODE_KEY], "auto")
             self.assertEqual(values[settings.PANE_MEMORY_MODE_KEY], "auto")
+            self.assertEqual(
+                values[settings.TAB_BAR_EDGE_KEY], settings.tab_bar_edge_default())
             for key in settings.GAME_KEY_BY_ID.values():
                 expected = "0" if key == "KILIX_GAME_DOOM" else "1"
                 self.assertEqual(values[key], expected)
@@ -255,6 +257,7 @@ class SharedSettingsTests(unittest.TestCase):
                 "--set", "split_up=off",
                 "--set", "pane_cpu=always",
                 "--set", "pane_memory=always",
+                "--set", "tab_bar_edge=bottom",
                 "--print",
             ], env=env, text=True, capture_output=True, check=True)
             self.assertIn("KILIX_CHROME_VOLUME=off", result.stdout)
@@ -267,6 +270,8 @@ class SharedSettingsTests(unittest.TestCase):
                 f"{settings.PANE_CPU_MODE_KEY}=always", result.stdout)
             self.assertIn(
                 f"{settings.PANE_MEMORY_MODE_KEY}=always", result.stdout)
+            self.assertIn(
+                f"{settings.TAB_BAR_EDGE_KEY}=bottom", result.stdout)
             values = settings.load(str(path))
             self.assertFalse(settings.truthy(values["KILIX_CHROME_VOLUME"]))
             self.assertTrue(settings.truthy(
@@ -278,6 +283,31 @@ class SharedSettingsTests(unittest.TestCase):
                 values["KILIX_CHROME_BUTTON_SPLIT_UP"]))
             self.assertEqual(settings.pane_cpu_mode(str(path)), "always")
             self.assertEqual(settings.pane_memory_mode(str(path)), "always")
+            self.assertEqual(
+                values[settings.TAB_BAR_EDGE_KEY], "bottom")
+
+    def test_tab_bar_edge_rejects_unsupported_positions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "settings.conf")
+            settings.update({settings.TAB_BAR_EDGE_KEY: "bottom"}, path)
+            self.assertEqual(settings.load(path)[settings.TAB_BAR_EDGE_KEY], "bottom")
+            with self.assertRaises(ValueError):
+                settings.update({settings.TAB_BAR_EDGE_KEY: "left"}, path)
+
+    def test_tab_bar_edge_default_is_host_specific_but_override_wins(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            standalone = str(Path(tmp) / "standalone.conf")
+            desktop = str(Path(tmp) / "desktop.conf")
+            with mock.patch.dict(os.environ, {}, clear=True):
+                self.assertEqual(
+                    settings.load(standalone)[settings.TAB_BAR_EDGE_KEY], "top")
+            with mock.patch.dict(
+                    os.environ, {"XDG_SESSION_DESKTOP": "pleb"}, clear=True):
+                self.assertEqual(
+                    settings.load(desktop)[settings.TAB_BAR_EDGE_KEY], "bottom")
+                settings.update({settings.TAB_BAR_EDGE_KEY: "top"}, desktop)
+                self.assertEqual(
+                    settings.load(desktop)[settings.TAB_BAR_EDGE_KEY], "top")
 
     def test_cpu_and_memory_mode_validation_and_cli_aliases(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -743,7 +773,7 @@ class SharedSettingsTests(unittest.TestCase):
                     "GPU_TERMINAL_SETTINGS_FILE": str(path),
                     "KITTY_PID": ""}, clear=True):
                 screen = FakeScreen([
-                    ord("j"), ord("j"), ord(" "), ord("s"), ord("q")])
+                    ord("j"), ord("j"), ord("j"), ord(" "), ord("s"), ord("q")])
                 self.assertEqual(tui._run_tui(screen, "top-bar"), 0)
 
             self.assertFalse(settings.enabled(
@@ -758,7 +788,7 @@ class SharedSettingsTests(unittest.TestCase):
             self.assertIn("▶1 Top bar", first_frame)
             self.assertIn("─" * 20, first_frame)
             self.assertNotIn(" // ", first_frame)
-            self.assertIn("Top bar: 8/10 enabled", first_frame)
+            self.assertIn("Top bar: 9/11 enabled", first_frame)
             self.assertIn("Thermal status", first_frame)
             self.assertIn("Volume", first_frame)
             self.assertIn("Read pane aloud", first_frame)
