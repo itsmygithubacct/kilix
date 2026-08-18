@@ -4151,6 +4151,14 @@ if [ "${1:-}" = icat ] && [ -x "$KITTEN" ]; then
   exec "$KITTEN" icat "$@"
 fi
 
+# A native calculator overlay for an ordinary terminal pane. It deliberately
+# rides the same ask kitten used by Kilix's Copy/Paste context window, so its
+# theme, mouse protocol, resizing and terminal restoration stay in one place.
+if [ "${1:-}" = calculator ] && [ -x "$KITTEN" ]; then
+  shift
+  exec "$KITTEN" ask --type=calculator --title=Calculator "$@"
+fi
+
 # Kittens (kilix icat foo.png, kilix diff a b, …) run via the sibling kitten
 # launcher, not by opening a new terminal window. The kitten list is probed
 # from `kitten --help` so it tracks whatever the active binary ships; any

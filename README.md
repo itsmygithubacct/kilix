@@ -23,9 +23,119 @@ complete tree. Freedesktop launchers/icons are the intentional exception:
 
 ![kilix — pages strip with + button, per-pane title bars with clickable split/maximize/close buttons, splits, and icat](config/kilix_demo.png)
 
+## Release 0.2.0
+
+Prepared 2026-08-18. **Not published yet.** This is the Kilix component
+selected for the coordinated Plebian-OS 0.2.0 release, and it upgrades from
+0.1.9, the last published release. Some features described below are carried by
+candidates that join at final integration and must pass the release gates
+before publication, so read this section as what 0.2.0 contains rather than as
+something you can install today.
+
+### Kilix Start menu and page-strip placement
+
+An optional flame badge at the far left of the page strip opens a physical,
+hierarchical Start menu over the terminal. It uses the same dark blue, white,
+and highlighted-blue palette as Kilix's clickable chrome. The menu includes new
+pages, settings, session tools, system monitors, desktop providers, applications,
+packages, browser actions, power/session actions, and the most complete updater
+available on the host. Submenus open beside their parent. Menu width grows to
+fit the longest item instead of clipping labels such as “Build Host
+Applications.”
+
+The menu supports mouse selection, arrow-key navigation, `Enter`, `Esc`, and
+mnemonic letters. `Ctrl+Alt+M` toggles it. The left or right Windows/Super key
+opens the Kilix menu unless Kilix 95 or IceWM owns the active desktop context;
+in those cases the key is delegated to that desktop's Start menu.
+
+Configure the shared behavior with:
+
+```bash
+kilix settings --set start_menu=on       # or off
+kilix settings --set tab_bar_edge=top    # or bottom
+```
+
+An explicit setting wins everywhere. With no explicit choice, standalone Kilix
+keeps the 0.2.0 page strip at the top, while Pleb and Plebian-OS sessions default
+it to the bottom. The Start badge defaults on for the Pleb desktop shell and off
+for a standalone terminal. These are presentation defaults, not separate forks;
+all hosts read the same non-executable `settings.conf` contract.
+
+### GPU application and streaming efficiency
+
+The 0.2.0 candidate adds a capability-gated GPU host for graphical applications.
+Compatible Wayland applications share one private Weston/PipeWire host instead
+of starting one compositor and capture stack per pane. Each output is paced to
+its requested frame rate, hidden outputs stop producing frames, and unchanged
+surfaces emit no duplicate frame. Pointer motion and buttons travel through the
+dedicated input channel instead of forcing display polling.
+
+On compatible hardware, PipeWire exports DMA-BUF frames and the Kitty fork
+imports them as EGLImages for direct texture sampling. Reference-counted leases
+keep producer buffers alive through presentation, and large image edits use
+asynchronous GPU upload buffers. Streaming probes a real FFmpeg/VAAPI encode,
+then encodes H.264 once and lets HLS, MSE, and WebRTC copy that shared stream
+instead of running independent encoders.
+
+Every accelerated path is optional. Probe results are cached privately and
+invalidated by helper, driver, device, or build changes. Software renderers,
+cross-device video pipelines, missing DMA-BUF support, and failed real-frame
+encode probes retain the authenticated X11/raw-frame path; codec names alone do
+not qualify a host. The first-use GPU-host installer provisions and verifies the
+native capture, input, kiosk-shell, and encoder helpers required by the selected
+path.
+
+The exact candidates and verification evidence are maintained outside the
+published repository until integration. Release adoption must preserve the
+Kilix-to-Kitty pin, rerun both full test matrices, prove fallback on unsupported
+hardware, and demonstrate a real shared encode on a same-device VAAPI host.
+
+### Terminal calculator
+
+`kilix calculator` opens a calculator over the current session in the same
+native overlay theme as the Copy/Paste context window. Every button is
+clickable; digits, the decimal point, arithmetic operators, percent and `=`
+also work from the keyboard, `Enter` calculates, `Backspace` edits, `C` clears
+and `Esc` closes. It carries memory controls, square root, reciprocal, sign
+change, clear-entry and divide-by-zero handling, adapts when the pane is
+resized, and reports the minimum usable size instead of drawing a clipped
+keypad.
+
+### Interactive top bar widgets
+
+The top bar's status items are controls rather than read-outs. The calendar
+icon opens a navigable month and the date/time text opens a live local-date,
+clock and timezone widget. The volume icon opens a compact slider on one click,
+the full clickable `kilix-volume` output selector on a double-click, and a
+settings card with a live Mute checkbox on right-click. The network icon shows
+compact connection status on one click and opens `nmtui` on a double-click.
+Right-clicking a non-volume widget opens Kilix Settings.
+
+### Desktop application launching
+
+A desktop session now keeps sole ownership of its X windows. Ordinary X
+applications have no window manager on their private display, so the app runner
+continues to size, focus and clamp their top-level windows; a session that
+supplies its own window manager keeps that runner out of its windows entirely.
+
+The pinned application catalog advances to a revision whose desktop launchers
+all start their application, and the utility installer stays on the catalog's
+pinned revision instead of resolving a moving one. The IceWM provider advance
+carries its terminal launch support.
+
+Optional desktop pins carried by this Kilix release advance to:
+
+- **Kilix TUI utilities** — `dc462372aa7417fa9bfccd82b8312d62d1077f82`;
+- **Kilix IceWM** — `0b9f11b45fddc5370c37b00e9cd9e42ac5a5f6d7`.
+
+Kilix Cap and Kilix Land stay on the pins 0.1.9 selected.
+
 ## Release 0.1.9
 
-Unreleased coordinated 0.1.9 work.
+Published 2026-08-14 as part of the coordinated
+[Plebian-OS 0.1.9 release](https://github.com/itsmygithubacct/plebian-os/releases/tag/v0.1.9).
+Kilix's public `v0.1.9` tag identifies the terminal component selected by that
+release.
 
 Kilix now has one shared application boundary across the CLI, TUI, Kilix 95,
 IceWM, Cap, and Land. The host catalog currently exposes 24 applications.
@@ -85,14 +195,15 @@ and pane CPU includes commands that exit between process-table scans.
 
 Optional desktop pins carried by this Kilix release advance to:
 
-- **Kilix TUI utilities** — `dc462372aa7417fa9bfccd82b8312d62d1077f82`;
+- **Kilix TUI utilities** — `dbdf8e5d8f3d4ab64bb555acd7c8f53cd0241c0a`;
 - **Kilix Cap** — `074e9c1559a696c95095215d12c21795452f1933`;
 - **Kilix Land** — `78f601542432e814c0e4af1ae06850737442106c`;
-- **Kilix IceWM** — `0b9f11b45fddc5370c37b00e9cd9e42ac5a5f6d7`.
+- **Kilix IceWM** — `61160987a23c647a2d27cd049ad320e0f798cf52`.
 
 ## Release 0.1.8
 
-Prepared 2026-08-07. **Not published yet.**
+Prepared 2026-08-07 and published 2026-08-09 as part of the coordinated
+[Plebian-OS 0.1.8 release](https://github.com/itsmygithubacct/plebian-os/releases/tag/v0.1.8).
 
 Upgrades from 0.1.7, the previous published release. Adds `kilix install`: one
 list of everything this system can install — the pinned content catalog and the
@@ -229,15 +340,10 @@ whole of what a release installs:
 
 ## Release 0.1.7
 
-Prepared 2026-08-02. **Not published yet.** The source closure is final and
-this repository's `VERSION` reads 0.1.7, but no 0.1.7 artifact or release tag
-has been published: publication requires an ISO built from this exact closure
-and accepted under Plebian-OS's
-[RELEASING.md](https://github.com/itsmygithubacct/plebian-os/blob/main/RELEASING.md)
-procedure. Until that lands, **0.1.2 remains the last published coordinated
-release**, and the newest tag on this repository is the Kilix-only `v0.1.4`
-described below. Read the sections that follow as what 0.1.7 contains, not as
-something you can install today.
+Published 2026-08-02 as part of the coordinated
+[Plebian-OS 0.1.7 release](https://github.com/itsmygithubacct/plebian-os/releases/tag/v0.1.7).
+That release established the fresh-install upgrade baseline and superseded the
+older Kilix-only `v0.1.4` component milestone described below.
 
 Version 0.1.7 is the coordinated stack release covering everything since 0.1.2,
 and is the first release Kilix shares with
@@ -759,17 +865,19 @@ calendar, local date/time, and (when applicable) battery items. The thermometer
 is disabled by default; when enabled it shows the hottest readable Linux
 thermal-zone/hwmon temperature to one decimal place in green below 80°C, yellow
 at 80–89°C, or red from 90°C. It sits at the left edge of the status group and
-opens `kilix-temps --graphics` in a new tab. A neutral `--°` remains clickable
-when no sensor can be read. The volume icon opens
-`pulsemixer` in an overlay pane (`alsamixer` is used as a fallback). It sits to
-the left of the network/Wi-Fi icon, which remains immediately left of the
-calendar and opens `nmtui`. Click the calendar icon for a navigable month
-widget, or click the date/time text for a live local-date, clock, and timezone
-widget.
+opens a compact status card on one click and `kilix-temps --graphics` on a
+double-click. A neutral `--°` remains clickable when no sensor can be read.
+The volume icon opens a compact slider on one click, the full clickable
+`kilix-volume` output selector on a double-click, and a settings card with a
+live Mute checkbox on right-click. It sits to the left of the network/Wi-Fi
+icon, which shows compact connection status on one click and opens `nmtui` on
+a double-click. Click the calendar icon for a navigable month widget, or click
+the date/time text for a live local-date, clock, and timezone widget.
 When Linux reports a laptop battery is **discharging**, a battery status item appears to its right.
 It is green above 50%, yellow at 50% and below, red at 20% and below, and
-shows the percentage to the left of the battery icon. Clicking it toggles the
-percentage on/off. Use `kilix settings` or Start ▸ Settings ▸ Top bar / Pane
+shows the percentage to the left of the battery icon. One click shows battery
+details and a double-click toggles the percentage on/off. Right-clicking the
+non-volume widgets opens Kilix Settings. Use `kilix settings` or Start ▸ Settings ▸ Top bar / Pane
 buttons in Kilix 95 to remove and re-add every status item and title-bar button.
 Both interfaces update the single non-executable source of truth at
 `~/.local/gpu_terminal/settings.conf` (override with
@@ -787,10 +895,15 @@ The buttons only exist in the **fork build** — the prebuilt fallback is a plai
 ## Pages (Tilix sessions)
 
 Tilix groups panes into **sessions**; kilix maps each session to a kitty **tab** —
-a "page" you flip between. The page strip (kitty's powerline tab bar) is always
-visible across the top and ends with a clickable **`+`** to open a new page. You can
+a "page" you flip between. In 0.1.9 the page strip (kitty's powerline tab bar)
+is always visible across the top and ends with a clickable **`+`** to open a new
+page. The 0.2.0 candidate can place it at the top or bottom as described in
+[Kilix Start menu and page-strip placement](#kilix-start-menu-and-page-strip-placement).
+You can
 **drag a tab to reorder** it, press **`F12`** for a visual page chooser (kilix's
 stand-in for Tilix's session sidebar), and **`F2`** to rename the current page.
+In 0.2.0, the optional flame badge at the far left toggles the hierarchical
+Kilix Start menu; `Ctrl+Alt+M` provides the same action without a mouse.
 Run `kilix ls` from inside kilix to list the live pages, their tab IDs, pane
 counts, titles, and current working directories. The page
 shortcuts are in [Keybindings](#keybindings-tilix-layout).
@@ -831,6 +944,21 @@ read-only and polls `kitten @ get-text`, so it is useful for shell output and
 simple full-screen programs but is not real multiplexing. It does not carry
 graphics, mouse state, or a second interactive PTY. For true attach/view, start
 the session under tmux with `kilix serve` or `kilix mux <name>`.
+
+## Calculator
+
+```bash
+kilix calculator
+```
+
+The calculator opens over the current terminal session using the same native
+overlay theme as the Copy/Paste context window. Every button is clickable;
+digits, decimal point, arithmetic operators, percent and `=` also work from the
+keyboard, `Enter` calculates, `Backspace` edits, `C` clears, and `Esc` closes
+the overlay. The calculator includes memory controls, square root, reciprocal,
+sign change, clear-entry and divide-by-zero handling. It adapts when the pane
+is resized and reports the minimum usable size instead of drawing a clipped
+keypad.
 
 ## Open web URLs
 
