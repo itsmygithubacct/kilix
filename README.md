@@ -23,6 +23,72 @@ complete tree. Freedesktop launchers/icons are the intentional exception:
 
 ![kilix — pages strip with + button, per-pane title bars with clickable split/maximize/close buttons, splits, and icat](config/kilix_demo.png)
 
+## Release 0.2.0 (in development)
+
+The 0.2.0 work is being qualified as a coordinated Plebian-OS release. Features
+described in this section are implemented in the isolated
+`work/0.2.0-start-menu` Kilix and Kitty candidates; they are not part of the
+published 0.1.9 tag and must pass the final integration and release gates before
+publication.
+
+### Kilix Start menu and page-strip placement
+
+An optional flame badge at the far left of the page strip opens a physical,
+hierarchical Start menu over the terminal. It uses the same dark blue, white,
+and highlighted-blue palette as Kilix's clickable chrome. The menu includes new
+pages, settings, session tools, system monitors, desktop providers, applications,
+packages, browser actions, power/session actions, and the most complete updater
+available on the host. Submenus open beside their parent. Menu width grows to
+fit the longest item instead of clipping labels such as “Build Host
+Applications.”
+
+The menu supports mouse selection, arrow-key navigation, `Enter`, `Esc`, and
+mnemonic letters. `Ctrl+Alt+M` toggles it. The left or right Windows/Super key
+opens the Kilix menu unless Kilix 95 or IceWM owns the active desktop context;
+in those cases the key is delegated to that desktop's Start menu.
+
+Configure the shared behavior with:
+
+```bash
+kilix settings --set start_menu=on       # or off
+kilix settings --set tab_bar_edge=top    # or bottom
+```
+
+An explicit setting wins everywhere. With no explicit choice, standalone Kilix
+keeps the 0.2.0 page strip at the top, while Pleb and Plebian-OS sessions default
+it to the bottom. The Start badge defaults on for the Pleb desktop shell and off
+for a standalone terminal. These are presentation defaults, not separate forks;
+all hosts read the same non-executable `settings.conf` contract.
+
+### GPU application and streaming efficiency
+
+The 0.2.0 candidate adds a capability-gated GPU host for graphical applications.
+Compatible Wayland applications share one private Weston/PipeWire host instead
+of starting one compositor and capture stack per pane. Each output is paced to
+its requested frame rate, hidden outputs stop producing frames, and unchanged
+surfaces emit no duplicate frame. Pointer motion and buttons travel through the
+dedicated input channel instead of forcing display polling.
+
+On compatible hardware, PipeWire exports DMA-BUF frames and the Kitty fork
+imports them as EGLImages for direct texture sampling. Reference-counted leases
+keep producer buffers alive through presentation, and large image edits use
+asynchronous GPU upload buffers. Streaming probes a real FFmpeg/VAAPI encode,
+then encodes H.264 once and lets HLS, MSE, and WebRTC copy that shared stream
+instead of running independent encoders.
+
+Every accelerated path is optional. Probe results are cached privately and
+invalidated by helper, driver, device, or build changes. Software renderers,
+cross-device video pipelines, missing DMA-BUF support, and failed real-frame
+encode probes retain the authenticated X11/raw-frame path; codec names alone do
+not qualify a host. The first-use GPU-host installer provisions and verifies the
+native capture, input, kiosk-shell, and encoder helpers required by the selected
+path.
+
+The exact candidates and verification evidence are maintained outside the
+published repository until integration. Release adoption must preserve the
+Kilix-to-Kitty pin, rerun both full test matrices, prove fallback on unsupported
+hardware, and demonstrate a real shared encode on a same-device VAAPI host.
+
 ## Release 0.1.9
 
 Published 2026-08-14 as part of the coordinated
@@ -80,10 +146,10 @@ and pane CPU includes commands that exit between process-table scans.
 
 Optional desktop pins carried by this Kilix release advance to:
 
-- **Kilix TUI utilities** — `f260792e3427c795387878cfa485d89fb16ff6db`;
+- **Kilix TUI utilities** — `dbdf8e5d8f3d4ab64bb555acd7c8f53cd0241c0a`;
 - **Kilix Cap** — `074e9c1559a696c95095215d12c21795452f1933`;
 - **Kilix Land** — `78f601542432e814c0e4af1ae06850737442106c`;
-- **Kilix IceWM** — `0b9f11b45fddc5370c37b00e9cd9e42ac5a5f6d7`.
+- **Kilix IceWM** — `61160987a23c647a2d27cd049ad320e0f798cf52`.
 
 ## Release 0.1.8
 
@@ -780,10 +846,15 @@ The buttons only exist in the **fork build** — the prebuilt fallback is a plai
 ## Pages (Tilix sessions)
 
 Tilix groups panes into **sessions**; kilix maps each session to a kitty **tab** —
-a "page" you flip between. The page strip (kitty's powerline tab bar) is always
-visible across the top and ends with a clickable **`+`** to open a new page. You can
+a "page" you flip between. In 0.1.9 the page strip (kitty's powerline tab bar)
+is always visible across the top and ends with a clickable **`+`** to open a new
+page. The 0.2.0 candidate can place it at the top or bottom as described in
+[Kilix Start menu and page-strip placement](#kilix-start-menu-and-page-strip-placement).
+You can
 **drag a tab to reorder** it, press **`F12`** for a visual page chooser (kilix's
 stand-in for Tilix's session sidebar), and **`F2`** to rename the current page.
+In 0.2.0, the optional flame badge at the far left toggles the hierarchical
+Kilix Start menu; `Ctrl+Alt+M` provides the same action without a mouse.
 Run `kilix ls` from inside kilix to list the live pages, their tab IDs, pane
 counts, titles, and current working directories. The page
 shortcuts are in [Keybindings](#keybindings-tilix-layout).
