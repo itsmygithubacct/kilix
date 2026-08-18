@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import os
 from pathlib import Path
 import re
@@ -153,6 +154,7 @@ def link_capture_ports(runtime: GpuHostRuntime, environment: Mapping[str, str],
     if not _PORT_NAME.fullmatch(source) or not _PORT_NAME.fullmatch(sink):
         raise ValueError("unsafe PipeWire port name")
     deadline = time.monotonic() + max(0.1, timeout)
+    last_error = ""
     while time.monotonic() < deadline:
         outputs = subprocess.run(
             (str(runtime.pw_link), "-o"), env=dict(environment),
@@ -176,9 +178,14 @@ def link_capture_ports(runtime: GpuHostRuntime, environment: Mapping[str, str],
             detail = linked.stderr.strip()
             if detail.endswith(": Success") or "File exists" in detail:
                 return
-            raise RuntimeError(detail or "PipeWire link failed")
+            # Node ports appear before their formats are always negotiated.
+            # PipeWire reports that short startup interval as EINVAL; retrying
+            # inside the existing deadline avoids making static clients race
+            # their own first paint. Preserve the detail for a useful timeout.
+            last_error = detail or "PipeWire link failed"
         time.sleep(0.02)
-    raise TimeoutError("PipeWire capture ports did not appear")
+    suffix = f": {last_error}" if last_error else ""
+    raise TimeoutError(f"PipeWire capture ports did not become linkable{suffix}")
 
 
 def parse_weston_log(text: str) -> GpuProbe:
@@ -300,3 +307,65 @@ def probe_runtime(runtime: GpuHostRuntime, timeout: float = 8.0) -> GpuProbe:
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait(timeout=1)
+
+
+def _probe_identity(runtime: GpuHostRuntime) -> dict:
+    def identity(path: Path) -> list[int]:
+        info = path.stat()
+        return [info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns]
+
+    drivers = []
+    for node in runtime.render_nodes:
+        device = Path("/sys/class/drm") / node.name / "device"
+        try:
+            driver = (device / "driver").resolve()
+            version_path = driver / "module/version"
+            version = version_path.read_text().strip() if version_path.is_file() else ""
+            drivers.append([node.name, str(driver), version, identity(node)])
+        except OSError:
+            drivers.append([node.name, "", "", identity(node)])
+    build_current = Path(os.environ.get(
+        "KILIX_BUILD_DIRECTORY", "~/.local/gpu_terminal/kilix/build"
+    )).expanduser() / "current"
+    return {
+        "schema": 1,
+        "kilix_ref": os.environ.get("KILIX_REF", ""),
+        "build": os.path.realpath(build_current),
+        "weston": identity(runtime.weston),
+        "capture": identity(runtime.capture),
+        "input": identity(runtime.input_module),
+        "drivers": drivers,
+    }
+
+
+def probe_cached(runtime: GpuHostRuntime, timeout: float = 8.0) -> GpuProbe:
+    """Cache the hardware proof until the GPU, driver, or build changes."""
+    cache_home = Path(os.environ.get(
+        "KILIX_CACHE_HOME", "~/.local/gpu_terminal/kilix/cache")).expanduser()
+    cache_home.mkdir(parents=True, exist_ok=True, mode=0o700)
+    cache_home.chmod(0o700)
+    path = cache_home / "gpu-host-probe.json"
+    wanted = _probe_identity(runtime)
+    try:
+        info = path.stat()
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if (info.st_uid == os.geteuid() and not info.st_mode & 0o077
+                and payload.get("identity") == wanted):
+            return GpuProbe(**payload["probe"])
+    except (OSError, ValueError, TypeError, KeyError):
+        pass
+    probe = probe_runtime(runtime, timeout=timeout)
+    payload = {"identity": wanted, "probe": probe.__dict__}
+    fd, temporary = tempfile.mkstemp(prefix=".gpu-probe-", dir=cache_home)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(payload, stream, sort_keys=True)
+            stream.write("\n")
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, path)
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+    return probe

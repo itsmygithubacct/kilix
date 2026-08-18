@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -90,6 +91,47 @@ class GpuHostTests(unittest.TestCase):
         self.assertEqual(
             gpu_host.app_environment(("google-chrome",))["OZONE_PLATFORM"], "wayland")
         self.assertEqual(gpu_host.app_environment(("xterm",)), {})
+
+    def test_pipewire_link_retries_until_formats_are_negotiated(self):
+        runtime = gpu_host.GpuHostRuntime(
+            Path("/runtime"), Path("/runtime/weston"), Path("/runtime/pipewire"),
+            Path("/runtime/pw-dump"), Path("/runtime/pw-link"),
+            Path("/runtime/Xwayland"), Path("/runtime/kilix-input.so"),
+            Path("/runtime/kilix-pw-capture"),
+            "modules", "/runtime/lib", (Path("/dev/dri/renderD128"),))
+        ready_out = subprocess.CompletedProcess([], 0,
+            "weston.pipewire:output_1\n", "")
+        ready_in = subprocess.CompletedProcess([], 0,
+            "kilix-pw-capture:input_1\n", "")
+        negotiating = subprocess.CompletedProcess([], 1, "", "failed: Invalid argument")
+        linked = subprocess.CompletedProcess([], 0, "", "")
+        with patch.object(gpu_host.subprocess, "run", side_effect=(
+                ready_out, ready_in, negotiating, ready_out, ready_in, linked)) as run, \
+                patch.object(gpu_host.time, "sleep"):
+            gpu_host.link_capture_ports(runtime, {}, timeout=1)
+        self.assertEqual(run.call_count, 6)
+
+    def test_probe_cache_is_keyed_by_runtime_identity(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            files = [root / name for name in ("weston", "pipewire", "pw-dump",
+                                               "pw-link", "Xwayland", "input.so",
+                                               "capture", "renderD128")]
+            for path in files:
+                path.write_bytes(b"one")
+            runtime = gpu_host.GpuHostRuntime(
+                root, *files[:7], "modules", "/runtime/lib", (files[7],))
+            expected = gpu_host.GpuProbe(True, "cached", "NV166", str(files[7]),
+                                         True, True)
+            with patch.dict(os.environ, {"KILIX_CACHE_HOME": str(root / "cache"),
+                                         "KILIX_BUILD_DIRECTORY": str(root / "build")}), \
+                    patch.object(gpu_host, "probe_runtime", return_value=expected) as probe:
+                self.assertEqual(gpu_host.probe_cached(runtime), expected)
+                self.assertEqual(gpu_host.probe_cached(runtime), expected)
+                self.assertEqual(probe.call_count, 1)
+                files[6].write_bytes(b"changed")
+                self.assertEqual(gpu_host.probe_cached(runtime), expected)
+                self.assertEqual(probe.call_count, 2)
 
 
 if __name__ == "__main__":

@@ -402,6 +402,11 @@ class AppPane:
                             if backend != "x11" and self.term is not None
                             and not (serve or lan or hls or mse or webrtc)
                             and os.environ.get("TMUX") is None else None)
+        if self.gpu_runtime is not None:
+            gpu_capability = gpu_host.probe_cached(self.gpu_runtime)
+            if not gpu_capability.available:
+                log("GPU host rejected:", gpu_capability.reason)
+                self.gpu_runtime = None
         if backend == "wayland" and self.gpu_runtime is None:
             raise RuntimeError("native Wayland GPU host is unavailable")
         self.use_gpu = self.gpu_runtime is not None
