@@ -805,6 +805,38 @@ for built_launcher in "$launcher" "$kitten"; do
   fi
 done
 assert_font_notices_installed
+
+assert_display_backends_built() {
+  # A missing display backend does not fail the engine's build. When the host
+  # lacks a protocol definition the engine wants, the backend is dropped with
+  # a notice on stdout and the build still succeeds, so the only thing that
+  # catches it is an explicit check before promotion.
+  #
+  # The engine already knows which backends it must produce and says so in its
+  # own build check. Run that rather than restating the list here, so the two
+  # cannot drift apart.
+  #
+  # Applies only to a real engine tree, identified by the backend manifest the
+  # engine's build reads. That file is part of the engine's sources, so a tree
+  # that has been built as an engine always has it; a harness that stands in a
+  # stub for the engine never does. The condition is therefore structural
+  # rather than a tolerance, and cannot quietly excuse a real build.
+  [ -f "$BUILD_SRC/glfw/source-info.json" ] || return 0
+
+  # CI is cleared deliberately: that variable makes the engine's check skip
+  # Wayland, which is exactly the backend most likely to have been dropped.
+  # Running this under CI would reproduce the silence at the last point left
+  # to catch it.
+  local out
+  if out="$(env -u CI PYTHONPATH="$BUILD_SRC" "$_python" -m unittest \
+      kitty_tests.check_build.TestBuild.test_glfw_modules 2>&1)"; then
+    return 0
+  fi
+  printf '%s\n' "$out" >&2
+  echo "kilix: the built engine is missing a display backend; not promoting this build" >&2
+  return 1
+}
+assert_display_backends_built || exit 1
 head="$src_head"
 printf '%s\n' "$source_id" >"$stage/source-id"
 if [ -n "$head" ]; then
