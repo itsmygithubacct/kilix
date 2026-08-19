@@ -62,6 +62,28 @@ class DesktopEntryTests(unittest.TestCase):
     def installed_paths(self):
         return [self.entry, *self.icon_files]
 
+    def assertReleased(self, directory):
+        """Uninstall prunes a directory it created, but only while empty.
+
+        Asserting the directory is simply gone tests something stronger than
+        the contract, and something that is not true of a normal desktop
+        machine: `update-desktop-database` writes `mimeinfo.cache` into the
+        applications directory as a side effect of installing an entry, so
+        after uninstall the directory legitimately still holds a file this
+        install never recorded and correctly must not be removed. That made
+        the suite pass only on hosts which happen to lack that tool.
+
+        What the contract actually forbids is retaining a directory that IS
+        empty, so that is what this checks.
+        """
+        if not directory.exists():
+            return
+        remaining = sorted(p.name for p in directory.iterdir())
+        self.assertTrue(
+            remaining,
+            f"{directory} survived while empty; an empty directory this "
+            f"install created must be pruned")
+
     def test_install_then_uninstall_leaves_nothing_behind(self):
         self.install()
         for path in self.installed_paths():
@@ -75,8 +97,8 @@ class DesktopEntryTests(unittest.TestCase):
             self.assertFalse(path.exists(), path)
         self.assertFalse(self.manifest.exists())
         # Only directories this install created, and only while empty.
-        self.assertFalse(self.apps.exists())
-        self.assertFalse(self.icons.exists())
+        self.assertReleased(self.apps)
+        self.assertReleased(self.icons)
         self.assertIn("removed: 4 installed file(s)", result.stdout)
 
     def test_the_record_is_private_and_names_what_was_written(self):
@@ -128,7 +150,7 @@ class DesktopEntryTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("4 already gone", result.stdout)
         self.assertFalse(self.manifest.exists())
-        self.assertFalse(self.apps.exists())
+        self.assertReleased(self.apps)
 
     def test_a_replaced_icon_is_never_followed(self):
         # A symlink where a recorded regular file was is somebody else's
@@ -170,8 +192,8 @@ class DesktopEntryTests(unittest.TestCase):
         result = self.run_kilix("--uninstall-desktop")
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertFalse(self.apps.exists())
-        self.assertFalse(self.icons.exists())
+        self.assertReleased(self.apps)
+        self.assertReleased(self.icons)
 
     def test_uninstall_without_a_record_refuses_and_removes_nothing(self):
         self.apps.mkdir(parents=True)
