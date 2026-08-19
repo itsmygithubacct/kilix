@@ -127,9 +127,10 @@ carries its terminal launch support.
 Optional desktop pins carried by this Kilix release advance to:
 
 - **Kilix TUI utilities** — `dc462372aa7417fa9bfccd82b8312d62d1077f82`;
+- **Kilix Land** — `631b0d7f6da1cc1b8ff8656fffd8f2a9195df39d`;
 - **Kilix IceWM** — `0b9f11b45fddc5370c37b00e9cd9e42ac5a5f6d7`.
 
-Kilix Cap and Kilix Land stay on the pins 0.1.9 selected.
+Kilix Cap stays on the pin 0.1.9 selected.
 
 ### Component pins moved for this release
 
