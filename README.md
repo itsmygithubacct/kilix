@@ -1703,8 +1703,8 @@ gtk-update-icon-cache -f ~/.local/share/icons/hicolor 2>/dev/null || true
 ## Development
 
 `./src` is a submodule of the
-[kitty fork](https://github.com/itsmygithubacct/kitty/tree/clickable-chrome)
-(branch `clickable-chrome`). It's a **full fork** — kilix keeps whatever changes make the
+[kitty fork](https://github.com/itsmygithubacct/kitty/tree/release/0.2.0)
+(branch `release/0.2.0`). It's a **full fork** — kilix keeps whatever changes make the
 best experience. The clickable-button feature is these Python files:
 
 - `kitty/window_title_bar.py` — draws the keyboard and
