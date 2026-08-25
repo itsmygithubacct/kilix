@@ -28,7 +28,10 @@ class VoiceCliTests(unittest.TestCase):
         self.bin.mkdir()
         storage = self.root / "gpu-terminal" / "kilix"
         self.environment = {
-            **os.environ,
+            key: value for key, value in os.environ.items()
+            if not key.startswith(("KILIX", "GPU_TERMINAL_", "PLEB_"))
+        }
+        self.environment.update({
             "HOME": str(self.home),
             "PATH": f"{self.bin}{os.pathsep}{os.environ.get('PATH', '')}",
             "GPU_TERMINAL_HOME": str(self.root / "gpu-terminal"),
@@ -43,7 +46,7 @@ class VoiceCliTests(unittest.TestCase):
             "KILIX_BUILD_DIRECTORY": str(storage / "build"),
             "KILIX_PREBUILT_HOME": str(storage / "prebuilt" / "kitty.app"),
             "KILIX_VOICE_PREFIX": str(self.root / "prefix"),
-        }
+        })
 
     def run_kilix(self, *arguments: str, check: bool = True,
                   input_text: str | None = None):

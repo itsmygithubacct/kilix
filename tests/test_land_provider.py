@@ -40,7 +40,7 @@ class KilixLandProviderTests(unittest.TestCase):
         ).stdout.strip()
         self.env = os.environ.copy()
         for key in tuple(self.env):
-            if key.startswith("KILIX_LAND_DESKTOP_"):
+            if key.startswith(("KILIX", "GPU_TERMINAL_", "PLEB_")):
                 self.env.pop(key)
         self.env.update({
             "HOME": str(self.home),

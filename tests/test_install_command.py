@@ -8,6 +8,7 @@ install from the command line and a launch from the Start menu cannot end up on
 different builds.
 """
 import os
+from pathlib import Path
 import subprocess
 import sys
 import unittest
@@ -396,8 +397,8 @@ class DriverTests(unittest.TestCase):
 
     def test_the_driver_install_is_not_reimplemented_here(self):
         """No apt, no dkms, no nvidia-detect in this module."""
-        source = open(os.path.join(ROOT, "config", "install.py"),
-                      encoding="utf-8").read()
+        source = (Path(ROOT) / "config" / "install.py").read_text(
+            encoding="utf-8")
         body = "\n".join(line for line in source.splitlines()
                          if not line.strip().startswith("#"))
         for token in ("apt-get", "apt install", "dkms ", "modprobe"):
@@ -426,7 +427,7 @@ class SafetyTests(unittest.TestCase):
         self.assertEqual(calls, [], "nothing may run before consent")
 
     def test_the_launcher_exposes_the_subcommand(self):
-        source = open(os.path.join(ROOT, "kilix"), encoding="utf-8").read()
+        source = (Path(ROOT) / "kilix").read_text(encoding="utf-8")
         self.assertIn("install|--install)", source)
         self.assertIn("config/install.py", source)
 
@@ -434,8 +435,8 @@ class SafetyTests(unittest.TestCase):
 class ContractTests(unittest.TestCase):
     def test_the_catalog_half_uses_the_desktop_content_module(self):
         """Not a second installer: the same one the Start menu drives."""
-        source = open(os.path.join(ROOT, "config", "install.py"),
-                      encoding="utf-8").read()
+        source = (Path(ROOT) / "config" / "install.py").read_text(
+            encoding="utf-8")
         self.assertIn("_games.ensure(", source)
         self.assertIn("_games.game_ready(", source)
 
