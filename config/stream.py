@@ -816,7 +816,8 @@ paths:
             if have_ts:
                 w(f"   low-latency: http://localhost:{http_port}/watch{q}   (~0.3-1 s)")
             if have_hls:
-                w(f"   view (mpv) : mpv http://localhost:{http_port}/{hls_path}{q}")
+                w(f"   view (mpv) : mpv --vo=kitty,sixel,tct "
+                  f"http://localhost:{http_port}/{hls_path}{q}")
         if webrtc_port:
             w(f"   WebRTC     : ssh -N -L {webrtc_port}:127.0.0.1:{webrtc_port} {user}@{host}")
             w(f"                then open  http://localhost:{webrtc_port}/kilix"
