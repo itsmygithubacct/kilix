@@ -48,7 +48,6 @@ from __future__ import annotations
 import os
 import re
 import signal
-import subprocess
 import sys
 import time
 
@@ -417,16 +416,34 @@ def _kilix_command() -> str:
     return path
 
 
-def _spawn_detached(argv: list) -> subprocess.Popen:
+def _spawn_detached(argv: list) -> int:
     """Fixed argv, stdio on /dev/null, its own session so a closing
-    terminal never HUPs it. No shell is ever involved."""
-    return subprocess.Popen(
-        argv,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
+    terminal never HUPs it. No shell is ever involved. posix_spawn returns
+    only the pid, so a deliberately long-lived detached child does not leave
+    a discarded subprocess wrapper that emits ResourceWarning."""
+    devnull = os.open(os.devnull, os.O_RDWR)
+    actions = [
+        (os.POSIX_SPAWN_DUP2, devnull, descriptor)
+        for descriptor in (0, 1, 2)
+    ]
+    if devnull > 2:
+        actions.append((os.POSIX_SPAWN_CLOSE, devnull))
+    try:
+        return os.posix_spawn(
+            argv[0], argv, os.environ, file_actions=actions, setsid=True)
+    finally:
+        os.close(devnull)
+
+
+def _child_status(pid: int):
+    """Return an exited direct child's status without blocking, else None."""
+    try:
+        waited, status = os.waitpid(pid, os.WNOHANG)
+    except ChildProcessError:
+        return None if _alive(pid) else 0
+    if waited == 0:
+        return None
+    return os.waitstatus_to_exitcode(status)
 
 
 def _session_file_directory() -> str:
@@ -464,9 +481,9 @@ def cmd_open(profile_id: str) -> int:
     profile = load_profile(profile_id)
     kilix = _kilix_command()
     if profile["desktop"]:
-        child = _spawn_detached([kilix] + desktop_arguments(profile))
+        child_pid = _spawn_detached([kilix] + desktop_arguments(profile))
         time.sleep(0.3)
-        status = child.poll()
+        status = _child_status(child_pid)
         if status is not None and status != 0:
             raise ProfileError("the %s provider did not start"
                                % profile["desktop"])
@@ -483,15 +500,15 @@ def cmd_open(profile_id: str) -> int:
     session_path = os.path.join(directory,
                                 "laptop-%s.session" % profile_id)
     _write_private(session_path, session_text(profile))
-    child = _spawn_detached([kilix, "--session", session_path])
-    record_session(profile_id, child.pid)
+    child_pid = _spawn_detached([kilix, "--session", session_path])
+    record_session(profile_id, child_pid)
     deadline = time.monotonic() + 0.3
     while time.monotonic() < deadline:
-        if child.poll() is not None:
+        if _child_status(child_pid) is not None:
             clear_session(profile_id)
             raise ProfileError("the session exited immediately")
         time.sleep(0.05)
-    print("laptop %s: opened (pid %d)" % (profile_id, child.pid))
+    print("laptop %s: opened (pid %d)" % (profile_id, child_pid))
     return 0
 
 
