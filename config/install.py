@@ -21,6 +21,11 @@ Runtimes are the fourth: not a program but the environment a subprocess needs.
 kilix-nvr's detector runs in, and `kilix install yamnet` does the same for the
 sound-event classifier — both link no ML library on purpose, and this is what
 turns that from a limitation into a one-line install.
+
+Soundbanks are the fifth kind. They are optional, pinned data for an installed
+application, with download and normalized disk sizes visible before the user
+opts in. Kilix Techno remains usable with native fallback synthesis when none
+are installed.
 """
 from __future__ import annotations
 
@@ -34,6 +39,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from kilix_sdk import content, paths  # noqa: E402
 import content_app  # noqa: E402
+import techno_soundbanks  # noqa: E402
 
 # The desktop's games module already owns catalog installation: which root a
 # kind installs under, the recorded install directory, the readiness check and
@@ -245,6 +251,29 @@ def _runtime_helper(runtime: dict) -> str:
         __file__))), "scripts", runtime["helper"])
 
 
+def _soundbank(identifier: str) -> dict | None:
+    return techno_soundbanks.by_id(identifier)
+
+
+def _soundbank_helper() -> str:
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
+        __file__))), "scripts", "install-kilix-techno-soundbank.py")
+
+
+def _install_soundbank(soundbank: dict, *, assume_yes: bool) -> int:
+    helper = _soundbank_helper()
+    if not os.access(helper, os.X_OK):
+        print(f"kilix install: {helper} is missing or not executable",
+              file=sys.stderr)
+        return 2
+    argv = [helper, "--install", soundbank["id"]]
+    if assume_yes:
+        argv.append("--yes")
+    print(f"{soundbank['label']} installs with:")
+    print(f"    {' '.join(argv)}")
+    return subprocess.run(argv, check=False).returncode
+
+
 def _install_runtime(runtime: dict, *, assume_yes: bool) -> int:
     helper = _runtime_helper(runtime)
     if not os.access(helper, os.X_OK):
@@ -424,8 +453,9 @@ def _agent_rows() -> list[dict]:
 
 
 def rows() -> list[dict]:
-    """Everything installable: catalog, agents, runtimes and any drivers."""
-    return _catalog_rows() + _agent_rows() + _runtime_rows() + _driver_rows()
+    """Everything installable, including optional application data."""
+    return (_catalog_rows() + _agent_rows() + _runtime_rows() +
+            techno_soundbanks.rows() + _driver_rows())
 
 
 def _agent(identifier: str) -> dict | None:
@@ -443,6 +473,9 @@ def _driver(identifier: str) -> dict | None:
 
 
 def install(identifier: str, *, assume_yes: bool = False) -> int:
+    soundbank = _soundbank(identifier)
+    if soundbank is not None:
+        return _install_soundbank(soundbank, assume_yes=assume_yes)
     driver = _driver(identifier)
     if driver is not None:
         return _install_driver(driver, assume_yes=assume_yes)
@@ -550,6 +583,9 @@ def _install_catalog(identifier: str) -> int:
 
 
 def update(identifier: str) -> int:
+    soundbank = _soundbank(identifier)
+    if soundbank is not None:
+        return _install_soundbank(soundbank, assume_yes=True)
     driver = _driver(identifier)
     if driver is not None:
         return _update_driver(driver)
@@ -589,7 +625,7 @@ def _update_driver(driver: dict) -> int:
 
 def _print_table(entries: list[dict]) -> None:
     width = max((len(r.get("id", "")) for r in entries), default=2)
-    kinds = ("agent", "app", "game", "runtime", "driver")
+    kinds = ("agent", "app", "game", "runtime", "soundbank", "driver")
     for kind in kinds:
         group = [r for r in entries if r.get("kind") == kind]
         if not group:
@@ -597,7 +633,9 @@ def _print_table(entries: list[dict]) -> None:
         print(f"\n{kind}s")
         for row in sorted(group, key=lambda r: r["label"].lower()):
             mark = "installed" if row.get("installed") else ""
-            print(f"  {row['id']:<{width}}  {row['label']:<24} {mark}")
+            size = row.get("size", "")
+            detail = " · ".join(part for part in (mark, size) if part)
+            print(f"  {row['id']:<{width}}  {row['label']:<34} {detail}")
     print("\ninstall one with:  kilix install <id>")
     print("update one with:   kilix install --update <id>")
 

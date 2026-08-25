@@ -47,6 +47,73 @@ class ListingTests(unittest.TestCase):
                 bool(installer._resolve_agent_command(agent["command"])))
 
 
+class SoundbankTests(unittest.TestCase):
+    def test_six_curated_banks_report_license_and_both_sizes(self):
+        rows = installer.techno_soundbanks.rows()
+        self.assertEqual(len(rows), 6)
+        self.assertTrue(all(row["kind"] == "soundbank" for row in rows))
+        for row in rows:
+            self.assertGreater(row["download_bytes"], 0)
+            self.assertGreater(row["installed_bytes"], 0)
+            self.assertIn("down /", row["size"])
+            self.assertIn("license", row)
+
+    def test_install_defers_to_the_pinned_soundbank_helper(self):
+        pack = installer.techno_soundbanks.PACKS[0]
+        calls = []
+        with mock.patch.object(installer, "_soundbank_helper",
+                               return_value="/opt/kilix/install-bank"), \
+             mock.patch.object(installer.os, "access", return_value=True), \
+             mock.patch.object(
+                 installer.subprocess, "run",
+                 side_effect=lambda argv, **kwargs: calls.append(argv) or
+                 mock.Mock(returncode=0)):
+            code = installer.install(pack["id"], assume_yes=True)
+        self.assertEqual(code, 0)
+        self.assertEqual(calls, [["/opt/kilix/install-bank", "--install",
+                                  pack["id"], "--yes"]])
+
+    def test_incomplete_directories_are_not_claimed_installed(self):
+        import tempfile
+        from pathlib import Path
+        pack = installer.techno_soundbanks.PACKS[0]
+        with tempfile.TemporaryDirectory() as temporary, \
+             mock.patch.object(installer.techno_soundbanks, "root",
+                               return_value=Path(temporary)):
+            target = Path(temporary) / pack["directory"]
+            target.mkdir()
+            (target / ".kilix-bank").write_text(
+                '{"schema": 1, "id": "techno-tr808-fischer"}\n',
+                encoding="utf-8")
+            row = next(item for item in installer.techno_soundbanks.rows()
+                       if item["id"] == pack["id"])
+        self.assertFalse(row["installed"])
+
+    def test_receipt_checksums_detect_modified_sample_data(self):
+        import hashlib
+        import json
+        import tempfile
+        from pathlib import Path
+        pack = installer.techno_soundbanks.PACKS[0]
+        with tempfile.TemporaryDirectory() as temporary, \
+             mock.patch.object(installer.techno_soundbanks, "root",
+                               return_value=Path(temporary)):
+            target = Path(temporary) / pack["directory"]
+            target.mkdir()
+            checksums = {}
+            for name in installer.techno_soundbanks.output_names(pack):
+                payload = (name.encode("utf-8") + b"-sample").ljust(64, b".")
+                (target / name).write_bytes(payload)
+                checksums[name] = hashlib.sha256(payload).hexdigest()
+            (target / ".kilix-bank").write_text(json.dumps({
+                "schema": 1, "id": pack["id"], "files": checksums,
+            }), encoding="utf-8")
+            self.assertTrue(installer.techno_soundbanks.ready(pack))
+            with (target / "kick.wav").open("ab") as handle:
+                handle.write(b"changed")
+            self.assertFalse(installer.techno_soundbanks.ready(pack))
+
+
 class ResolutionTests(unittest.TestCase):
     """Installed is a fact about the disk, not about this shell's PATH.
 
