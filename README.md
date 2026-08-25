@@ -24,14 +24,24 @@ it wrote in `state/` so `--uninstall-desktop` can take exactly that back out.
 
 ![kilix — pages strip with + button, per-pane title bars with clickable split/maximize/close buttons, splits, and icat](config/kilix_demo.png)
 
+## Release 0.2.1
+
+Prepared 2026-08-25 for the coordinated Plebian-OS 0.2.1 release. The supported
+upgrade source is 0.2.0. This component remains an unpublished candidate until
+the coordinated image and upgrade acceptance gates pass.
+
+- Kilix Techno soundbanks install lazily from immutable, checksum-bound CC0
+  source archives. The bundled catalog also carries compact CC0 instrument and
+  effect packs without making any audio download part of base installation.
+- Laptop sessions detach without leaving wrapper processes behind.
+- Stream connection advice keeps mpv rendering inside the terminal with the
+  ordered `kitty,sixel,tct` video-output fallback instead of opening a GUI
+  window.
+
 ## Release 0.2.0
 
-Prepared 2026-08-18. **Not published yet.** This is the Kilix component
-selected for the coordinated Plebian-OS 0.2.0 release, and it upgrades from
-0.1.9, the last published release. Some features described below are carried by
-candidates that join at final integration and must pass the release gates
-before publication, so read this section as what 0.2.0 contains rather than as
-something you can install today.
+Published 2026-08-19 as the Kilix component selected for the coordinated
+Plebian-OS 0.2.0 release. It upgrades from 0.1.9.
 
 ### Kilix Start menu and page-strip placement
 
