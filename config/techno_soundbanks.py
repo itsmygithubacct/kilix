@@ -1,9 +1,10 @@
-"""Pinned, redistributable sample subsets offered to Kilix Techno.
+"""Pinned, redistributable audio subsets offered to Kilix Techno.
 
 The application stays network-free.  These records are consumed only by the
 explicit ``kilix install`` path and describe exactly which upstream bytes are
-downloaded, which voices survive curation, and what their canonical installed
-footprint is after conversion to mono 16-bit/44.1 kHz WAV.
+downloaded, which voices survive curation, and their installed footprint.
+Legacy packs are normalized to mono WAV; asset packs preserve WAV, SFZ and SF2
+so the shared Kilix audio asset layer exercises the native format directly.
 """
 from __future__ import annotations
 
@@ -11,6 +12,18 @@ import json
 import hashlib
 import os
 from pathlib import Path
+
+
+CC0_URL = "https://creativecommons.org/publicdomain/zero/1.0/"
+ONGENET_REVISION = "4ac5ff452134866e923d19f58451aad64804cba1"
+ONGENET_RAW = (
+    "https://raw.githubusercontent.com/1-chris/Ongenet/"
+    f"{ONGENET_REVISION}/"
+)
+ONGENET_ATTRIBUTION = (
+    "https://github.com/1-chris/Ongenet/blob/"
+    f"{ONGENET_REVISION}/Content/Core/ATTRIBUTION.md"
+)
 
 
 PACKS = (
@@ -152,6 +165,191 @@ PACKS = (
              "a488e7cdca983fc53c4399fa0c492d582510dd48ee35e5336113b0041f8f55b1"),
             ("ocean-drum.wav", "Membranophones/Other%20Membranophones/Ocean%20Drum/OceanDrum_Sus_2_Mid.wav", 3_966_032,
              "6642dbaeef3f4feb94765ecdbd3d0411c623b3a6b3078110201bddd722948d9d"),
+        ),
+    },
+    {
+        "id": "techno-ongenet-kit",
+        "directory": "ongenet-kit",
+        "label": "Kilix Techno: Ongenet Kit",
+        "description": "Six compact procedural drums; the curated CC0 default kit",
+        "license": "CC0-1.0",
+        "license_url": CC0_URL,
+        "license_evidence": ONGENET_ATTRIBUTION,
+        "source": "https://github.com/1-chris/Ongenet",
+        "download_source": "https://github.com/1-chris/Ongenet",
+        "revision": ONGENET_REVISION,
+        "download_bytes": 146_674,
+        "installed_bytes": 146_674,
+        "mode": "assets",
+        "raw_base": ONGENET_RAW,
+        "install_note": "Preserved source WAV files; no conversion.",
+        "files": (
+            ("kick.wav", "Content/Core/Samples/Drums/OngenetKit/kick_120bpm_punch.wav", 39_734,
+             "c758859504a929d06097185df6d00c0cb6670e6513ecfe4e8ce1a9161b6ae5bd"),
+            ("snare.wav", "Content/Core/Samples/Drums/OngenetKit/snare_crack.wav", 24_740,
+             "4d42e977bfce00186628e7d7f1b2eedaa14b04587c006a5014d10904a3b62083"),
+            ("clap.wav", "Content/Core/Samples/Drums/OngenetKit/clap_room.wav", 26_504,
+             "8ab73c527ffa4a99e003de22d333575f27c3b1a31027761ea88cfac5b1fda547"),
+            ("closed-hat.wav", "Content/Core/Samples/Drums/OngenetKit/hat_closed.wav", 7_100,
+             "8027e2ef8eb46217e1f9d4d4c208697c343952cc34bdcdfc1ed1e131f6029046"),
+            ("open-hat.wav", "Content/Core/Samples/Drums/OngenetKit/hat_open.wav", 30_912,
+             "ce86e3faeb4bbbf6075388336eb6b24fccb6c9a867a1b10c9424c6bd9b1591b3"),
+            ("ride.wav", "Content/Core/Samples/Drums/OngenetKit/ride_tick.wav", 17_684,
+             "de1a3645cc25df41b034ea24962d4e0998878424663664d7d1abd1d56c1baa53"),
+        ),
+    },
+    {
+        "id": "techno-vcsl-acoustic",
+        "directory": "vcsl-acoustic",
+        "label": "Kilix Techno: VCSL Acoustic SFZ",
+        "description": "Four curated SFZ instruments: kick, snare, Strumstick and Kawai piano",
+        "license": "CC0-1.0",
+        "license_url": CC0_URL,
+        "license_evidence": ONGENET_ATTRIBUTION,
+        "source": "https://github.com/sgossner/VCSL",
+        "download_source": "https://github.com/1-chris/Ongenet",
+        "revision": ONGENET_REVISION,
+        "download_bytes": 6_624_200,
+        "installed_bytes": 6_624_200,
+        "mode": "assets",
+        "raw_base": ONGENET_RAW,
+        "install_note": "Preserved SFZ maps plus the one WAV region selected by Kilix.",
+        "files": (
+            ("kick.sfz", "Content/Core/Soundfonts/VCSL/Membranophones/Struck%20Membranophones/Bass%20Drum%201.sfz", 1_372,
+             "b612aa0afef74ce35ba390042a581c583a78f9328fba90c19ab64fbdb9c4802f"),
+            ("Bass Drum 1/BDrumNew_hit_v5_rr1_Sum.wav", "Content/Core/Soundfonts/VCSL/Membranophones/Struck%20Membranophones/Bass%20Drum%201/BDrumNew_hit_v5_rr1_Sum.wav", 588_092,
+             "642aaf3375eaff1307973f7de3ccbf74d18e71fb3cf9412e021b08fc3bf1981c"),
+            ("snare.sfz", "Content/Core/Soundfonts/VCSL/Membranophones/Struck%20Membranophones/Snare%20Drum%2C%20Modern%201.sfz", 5_097,
+             "e731950940683b944bbae86307b3c1ad6693724818b8ea862ff83c032dc4316f"),
+            ("Snare Drum, Modern 1/Snare2_HitNS_v5_rr1_Mid.wav", "Content/Core/Soundfonts/VCSL/Membranophones/Struck%20Membranophones/Snare%20Drum%2C%20Modern%201/Snare2_HitNS_v5_rr1_Mid.wav", 168_240,
+             "422855e723dea59d316bd71346397833340a20c538c648c1b4369e9a3617b61b"),
+            ("strumstick.sfz", "Content/Core/Soundfonts/VCSL/Chordophones/Composite%20Chordophones/Strumstick.sfz", 8_698,
+             "450e4ab1a58136191b51dadd2de5c3f0ddb01edacfbcb3fb28e8b619defd3a09"),
+            ("Strumstick/Finger/Strumstick_Finger_Str2_Main_B2_vl2_rr1.wav", "Content/Core/Soundfonts/VCSL/Chordophones/Composite%20Chordophones/Strumstick/Finger/Strumstick_Finger_Str2_Main_B2_vl2_rr1.wav", 1_532_882,
+             "04b5e2167dadb7c8c4956af63ea5317cbcdc7869a6f103ea82cd541956723c4d"),
+            ("piano.sfz", "Content/Core/Soundfonts/VCSL/Piano.sfz", 36_491,
+             "f4c5447f8662915545ab1acd598c11e3515811298240f060d1a96297ae59bd86"),
+            ("Chordophones/Zithers/Grand Piano, Kawai/Sustains/GPiano_sus_C3_v2_rr1_Player.wav", "Content/Core/Soundfonts/VCSL/Chordophones/Zithers/Grand%20Piano%2C%20Kawai/Sustains/GPiano_sus_C3_v2_rr1_Player.wav", 4_283_328,
+             "fce33012fe900309abafd1a4d6d254d142b0cbf33834c7a72c2fd1ada4e746e1"),
+        ),
+    },
+    {
+        "id": "techno-vsco2ce",
+        "directory": "vsco2ce",
+        "label": "Kilix Techno: VSCO 2 CE SFZ",
+        "description": "Four compact SFZ orchestra voices for strings, woodwind and brass",
+        "license": "CC0-1.0",
+        "license_url": CC0_URL,
+        "license_evidence": ONGENET_ATTRIBUTION,
+        "source": "https://github.com/sgossner/VSCO-2-CE",
+        "download_source": "https://github.com/1-chris/Ongenet",
+        "revision": ONGENET_REVISION,
+        "download_bytes": 1_184_344,
+        "installed_bytes": 1_184_344,
+        "mode": "assets",
+        "raw_base": ONGENET_RAW,
+        "install_note": "Preserved SFZ maps plus the one WAV region selected by Kilix.",
+        "files": (
+            ("violin-pizz.sfz", "Content/Core/Soundfonts/VSCO2CE/ViolinEnsPizz.sfz", 5_069,
+             "c94b1129e5a8c7e7f7a8e556f6d7c491dbe88875cc2080a0fd2794eb77f5b733"),
+            ("Strings/Violin Section/Pizz/VlnEns_Pizz_B2_v2_rr1.wav", "Content/Core/Soundfonts/VSCO2CE/Strings/Violin%20Section/Pizz/VlnEns_Pizz_B2_v2_rr1.wav", 180_134,
+             "71aaf7c111d427e76d91a58efc4cf661880cae85ec91123f8f57d421fe36cd06"),
+            ("cello-pizz.sfz", "Content/Core/Soundfonts/VSCO2CE/CelloEnsPizz.sfz", 5_637,
+             "84e586f7518b99c11da5efddb321a9ea4b9edc4149b96f3e9621f4c7e9fc3cca"),
+            ("Strings/Cello Section/pizzT/pizzT_C3_v2_RR1.wav", "Content/Core/Soundfonts/VSCO2CE/Strings/Cello%20Section/pizzT/pizzT_C3_v2_RR1.wav", 762_122,
+             "fbc86686ef092e92e473dce4d1ff5f1e351dcc76ed2d94b0d336c1346f314e59"),
+            ("clarinet-stac.sfz", "Content/Core/Soundfonts/VSCO2CE/ClarinetStac.sfz", 7_495,
+             "e3657824a241cfc55b9bac03e359da24068498955597cf8dbc2684330b3ddfed"),
+            ("Woodwinds/Clarinet/stac/DCClar_stac_D3_v2_rr1_sum.wav", "Content/Core/Soundfonts/VSCO2CE/Woodwinds/Clarinet/stac/DCClar_stac_D3_v2_rr1_sum.wav", 101_040,
+             "ffd6122784c9acb0e49890955be3130d9634c25b99fed501d03eed4e6d882d98"),
+            ("horn-stac.sfz", "Content/Core/Soundfonts/VSCO2CE/FHornStac.sfz", 6_263,
+             "cdb75af40a2fc88f0e4f311e46677e74346004f2946606fd8905323543ca9201"),
+            ("Brass/F Horn/stac/MOHorn_stac_C3_v2_rr1.wav", "Content/Core/Soundfonts/VSCO2CE/Brass/F%20Horn/stac/MOHorn_stac_C3_v2_rr1.wav", 116_584,
+             "fdaf3d5ad1e732a6e8e466ee232b101fe83b4cc79e79941315fba3037666eedf"),
+        ),
+    },
+    {
+        "id": "techno-sf2-chaosbank",
+        "directory": "sf2-chaosbank",
+        "label": "Kilix Techno: ChaosBank SF2",
+        "description": "Compact general-MIDI SoundFont, rendered on demand by Kilix",
+        "license": "CC0-1.0 (as declared by distributor)",
+        "license_url": CC0_URL,
+        "license_evidence": ONGENET_ATTRIBUTION,
+        "source": "https://github.com/bratpeki/soundfonts",
+        "download_source": "https://github.com/1-chris/Ongenet",
+        "revision": ONGENET_REVISION,
+        "download_bytes": 12_038_662,
+        "installed_bytes": 12_038_662,
+        "mode": "assets",
+        "raw_base": ONGENET_RAW,
+        "install_note": "Preserved source SF2; Ongenet supplies the CC0 declaration.",
+        "files": (
+            ("ChaosBank.sf2", "Content/Core/Soundfonts/Sf2/GM/ChaosBank/ChaosBank.sf2", 12_038_662,
+             "0a107e182fee704ad9b91cbbad2febf97f55cf778ff656ed49415c6a5addd01e"),
+        ),
+    },
+    {
+        "id": "techno-sf2-jnsgm2",
+        "directory": "sf2-jnsgm2",
+        "label": "Kilix Techno: JNS-GM 2 SF2",
+        "description": "General-MIDI SoundFont with a stronger synth-bass palette",
+        "license": "CC0-1.0 (as declared by distributor)",
+        "license_url": CC0_URL,
+        "license_evidence": ONGENET_ATTRIBUTION,
+        "source": "https://github.com/bratpeki/soundfonts",
+        "download_source": "https://github.com/1-chris/Ongenet",
+        "revision": ONGENET_REVISION,
+        "download_bytes": 33_187_490,
+        "installed_bytes": 33_187_490,
+        "mode": "assets",
+        "raw_base": ONGENET_RAW,
+        "install_note": "Preserved source SF2; Ongenet supplies the CC0 declaration.",
+        "files": (
+            ("Jnsgm2.sf2", "Content/Core/Soundfonts/Sf2/GM/Jnsgm2/Jnsgm2.sf2", 33_187_490,
+             "dc48cb5c322cab23fce1b18442066be30ccc49a184603c7a3bf7615003ee137d"),
+        ),
+    },
+    {
+        "id": "techno-sf2-masterpiece",
+        "directory": "sf2-masterpiece",
+        "label": "Kilix Techno: Masterpiece SF2",
+        "description": "General-MIDI SoundFont curated for keys and pads",
+        "license": "CC0-1.0 (as declared by distributor)",
+        "license_url": CC0_URL,
+        "license_evidence": ONGENET_ATTRIBUTION,
+        "source": "https://github.com/bratpeki/soundfonts",
+        "download_source": "https://github.com/1-chris/Ongenet",
+        "revision": ONGENET_REVISION,
+        "download_bytes": 29_208_234,
+        "installed_bytes": 29_208_234,
+        "mode": "assets",
+        "raw_base": ONGENET_RAW,
+        "install_note": "Preserved source SF2; Ongenet supplies the CC0 declaration.",
+        "files": (
+            ("Masterpiece.sf2", "Content/Core/Soundfonts/Sf2/GM/Masterpiece/Masterpiece.sf2", 29_208_234,
+             "52d854c93853ec97380af351595fdcce0571242763b7879fd96caac6f86aaf79"),
+        ),
+    },
+    {
+        "id": "techno-sf2-unison",
+        "directory": "sf2-unison",
+        "label": "Kilix Techno: Unison SF2",
+        "description": "General-MIDI SoundFont curated for synth lead textures",
+        "license": "CC0-1.0 (as declared by distributor)",
+        "license_url": CC0_URL,
+        "license_evidence": ONGENET_ATTRIBUTION,
+        "source": "https://github.com/bratpeki/soundfonts",
+        "download_source": "https://github.com/1-chris/Ongenet",
+        "revision": ONGENET_REVISION,
+        "download_bytes": 29_258_148,
+        "installed_bytes": 29_258_148,
+        "mode": "assets",
+        "raw_base": ONGENET_RAW,
+        "install_note": "Preserved source SF2; Ongenet supplies the CC0 declaration.",
+        "files": (
+            ("Unison.SF2", "Content/Core/Soundfonts/Sf2/GM/Unison/Unison.SF2", 29_258_148,
+             "a9af8184b7afd36dc8fde39992ff67542d01eb486295c353fc54d3f3b693d51c"),
         ),
     },
 )

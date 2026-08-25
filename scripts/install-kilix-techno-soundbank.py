@@ -24,6 +24,7 @@ import techno_soundbanks as catalog  # noqa: E402
 
 
 MAX_SAMPLE_BYTES = 64 * 1024 * 1024
+MAX_ASSET_BYTES = 256 * 1024 * 1024
 MAX_SAMPLE_SECONDS = 60
 CANONICAL_RATE = 44_100
 USER_AGENT = "kilix-techno-soundbank-installer/1"
@@ -157,6 +158,31 @@ def _direct(pack: dict, work: Path, stage: Path) -> None:
         _normalize_wav(source, stage / output)
 
 
+def _asset_destination(stage: Path, output: str) -> Path:
+    relative = PurePosixPath(output)
+    parts = relative.parts
+    if relative.is_absolute() or "\\" in output or not parts or \
+            any(part in ("", ".", "..") for part in parts):
+        raise InstallError(f"unsafe asset destination: {output}")
+    destination = stage.joinpath(*parts)
+    destination.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+    return destination
+
+
+def _assets(pack: dict, work: Path, stage: Path) -> None:
+    for index, (output, upstream, size, digest) in enumerate(pack["files"]):
+        if size <= 0 or size > MAX_ASSET_BYTES:
+            raise InstallError(f"asset exceeds bounded size: {output}")
+        downloaded = work / f"source-{index}"
+        _download(pack["raw_base"] + upstream, size, digest, downloaded)
+        destination = _asset_destination(stage, output)
+        try:
+            os.rename(downloaded, destination)
+            os.chmod(destination, 0o644)
+        except OSError as error:
+            raise InstallError(f"cannot publish asset {output}: {error}") from error
+
+
 def _archive(pack: dict, work: Path) -> Path:
     archive = work / ("source.zip" if pack["mode"] == "zip" else "source.tgz")
     _download(pack["archive_url"], pack["download_bytes"],
@@ -244,29 +270,40 @@ def _write_metadata(pack: dict, stage: Path) -> None:
         sample_bytes += sample.stat().st_size
     if sample_bytes != pack["installed_bytes"]:
         raise InstallError(
-            f"normalized footprint changed: {sample_bytes}, expected "
+            f"installed footprint changed: {sample_bytes}, expected "
             f"{pack['installed_bytes']}")
+    license_url = pack.get(
+        "license_url",
+        "https://creativecommons.org/publicdomain/zero/1.0/")
+    download_source = pack.get("download_source", pack["source"])
+    license_evidence = pack.get("license_evidence", pack["source"])
     notice = (
         f"{pack['label']} curated sample subset\n\n"
         f"Sample license: {pack['license']}\n"
-        "CC0 1.0 Universal: https://creativecommons.org/publicdomain/zero/1.0/\n"
-        f"Upstream license statement and source: {pack['source']}\n\n"
+        f"License terms: {license_url}\n"
+        f"License evidence: {license_evidence}\n"
+        f"Original source: {pack['source']}\n"
+        f"Pinned byte distributor: {download_source}\n\n"
         "These samples are optional data. They are not relicensed under the "
         "Kilix Techno application's MIT code license.\n"
     )
     source_text = (
-        f"Source: {pack['source']}\n"
+        f"Original source: {pack['source']}\n"
+        f"Downloaded from: {download_source}\n"
         f"Pinned revision/release: {pack['revision']}\n"
         f"Downloaded bytes: {pack['download_bytes']}\n"
-        f"Installed canonical sample bytes: {sample_bytes}\n"
-        "Conversion: selected sources only; mono PCM, 16-bit, 44100 Hz.\n"
+        f"Installed audio asset bytes: {sample_bytes}\n"
+        f"Install treatment: {pack.get('install_note', 'Selected sources only; mono PCM, 16-bit, 44100 Hz.')}\n"
     )
     provenance = {
         "schema": 1,
         "id": pack["id"],
         "source": pack["source"],
+        "download_source": download_source,
         "revision": pack["revision"],
         "license": pack["license"],
+        "license_url": license_url,
+        "license_evidence": license_evidence,
         "download_bytes": pack["download_bytes"],
         "installed_sample_bytes": sample_bytes,
         "files": files,
@@ -278,7 +315,7 @@ def _write_metadata(pack: dict, stage: Path) -> None:
              json.dumps(provenance, indent=2, sort_keys=True) + "\n")):
         path.write_text(text, encoding="utf-8")
         os.chmod(path, 0o644)
-    for path in stage.iterdir():
+    for path in stage.rglob("*"):
         if path.is_file() and not path.is_symlink():
             with path.open("rb") as handle:
                 os.fsync(handle.fileno())
@@ -288,11 +325,14 @@ def _write_metadata(pack: dict, stage: Path) -> None:
     os.chmod(receipt, 0o644)
     with receipt.open("rb") as handle:
         os.fsync(handle.fileno())
-    directory_fd = os.open(stage, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        os.fsync(directory_fd)
-    finally:
-        os.close(directory_fd)
+    directories = [path for path in stage.rglob("*") if path.is_dir()]
+    directories.append(stage)
+    for directory in reversed(directories):
+        directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
 
 
 def install(pack: dict, assume_yes: bool) -> int:
@@ -301,7 +341,9 @@ def install(pack: dict, assume_yes: bool) -> int:
     print(f"  download: {catalog.human_size(pack['download_bytes'])}")
     print(f"  installed samples: {catalog.human_size(pack['installed_bytes'])}")
     print(f"  license: {pack['license']}")
-    print(f"  source: {pack['source']} @ {pack['revision']}")
+    print(f"  source: {pack['source']}")
+    print(f"  pinned download: {pack.get('download_source', pack['source'])} "
+          f"@ {pack['revision']}")
     print(f"  destination: {target}")
     if catalog.ready(pack):
         print("already installed and receipt-verified")
@@ -327,6 +369,8 @@ def install(pack: dict, assume_yes: bool) -> int:
         stage.mkdir(mode=0o755)
         if pack["mode"] == "direct":
             _direct(pack, work, stage)
+        elif pack["mode"] == "assets":
+            _assets(pack, work, stage)
         elif pack["mode"] == "zip":
             _zip(pack, work, stage)
         elif pack["mode"] == "forge":

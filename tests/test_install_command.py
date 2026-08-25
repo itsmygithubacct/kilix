@@ -48,9 +48,9 @@ class ListingTests(unittest.TestCase):
 
 
 class SoundbankTests(unittest.TestCase):
-    def test_six_curated_banks_report_license_and_both_sizes(self):
+    def test_all_curated_banks_report_license_and_both_sizes(self):
         rows = installer.techno_soundbanks.rows()
-        self.assertEqual(len(rows), 6)
+        self.assertEqual(len(rows), 13)
         self.assertTrue(all(row["kind"] == "soundbank" for row in rows))
         for row in rows:
             self.assertGreater(row["download_bytes"], 0)
@@ -112,6 +112,30 @@ class SoundbankTests(unittest.TestCase):
             with (target / "kick.wav").open("ab") as handle:
                 handle.write(b"changed")
             self.assertFalse(installer.techno_soundbanks.ready(pack))
+
+    def test_nested_sfz_pack_receipt_is_verified(self):
+        import hashlib
+        import json
+        import tempfile
+        from pathlib import Path
+        pack = installer.techno_soundbanks.by_id("techno-vcsl-acoustic")
+        self.assertIsNotNone(pack)
+        with tempfile.TemporaryDirectory() as temporary, \
+             mock.patch.object(installer.techno_soundbanks, "root",
+                               return_value=Path(temporary)):
+            target = Path(temporary) / pack["directory"]
+            target.mkdir()
+            checksums = {}
+            for name in installer.techno_soundbanks.output_names(pack):
+                payload = (name.encode("utf-8") + b"-asset").ljust(64, b".")
+                path = target / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(payload)
+                checksums[name] = hashlib.sha256(payload).hexdigest()
+            (target / ".kilix-bank").write_text(json.dumps({
+                "schema": 1, "id": pack["id"], "files": checksums,
+            }), encoding="utf-8")
+            self.assertTrue(installer.techno_soundbanks.ready(pack))
 
 
 class ResolutionTests(unittest.TestCase):
