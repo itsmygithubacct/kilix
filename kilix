@@ -14,6 +14,7 @@
 #   ./kilix watch <pane-id>   # best-effort read-only text watch of a live pane
 #   ./kilix fullscreen        # toggle this tab's OS window fullscreen
 #   ./kilix switch [--scope S] # go to a page or pane (F12; scope all|page|other)
+#   ./kilix panes [COMMAND]    # pane activity/session dashboard, CLI or TUI
 #   ./kilix new-pane [DIR]    # open a pane left/right/down of this one
 #   ./kilix new-tab [--title T] # open a new page
 #   ./kilix mux [name]        # open a tmux-backed kilix tab for real attach/view
@@ -3709,6 +3710,31 @@ case "${1:-}" in
   remote)
     shift
     _kilix_remote_mux "$@" ;;
+  panes|pane-center)
+    shift
+    # This richer surface lives with the shared TUI toolkit, but is a Kilix
+    # command: agents should not need to know which component draws it. Prefer
+    # the installed closure, then the explicitly configured development
+    # checkout, with the conventional source tree as the final source fallback.
+    _panes_bin="${KILIX_TUI_UTILS_PREFIX:-$HOME/.local}/bin/kilix-panes"
+    if [ -x "$_panes_bin" ]; then
+      exec "$_panes_bin" "$@"
+    fi
+    if _panes_bin="$(command -v kilix-panes 2>/dev/null)" \
+         && [ -x "$_panes_bin" ]; then
+      exec "$_panes_bin" "$@"
+    fi
+    for _panes_src in \
+      "$KILIX_TUI_UTILS_DIR/tools/switcher/main.py" \
+      "${GPU_TERMINAL_SOURCE_HOME:-$HOME/.local/gpu_terminal/sources}/kilix-desktops/kilix-tui-utils/tools/switcher/main.py"
+    do
+      if [ -f "$_panes_src" ] && command -v python3 >/dev/null 2>&1; then
+        exec python3 "$_panes_src" "$@"
+      fi
+    done
+    echo "kilix panes: the pane center is not installed." >&2
+    echo "Install it with kilix-tui-utils/install.sh." >&2
+    exit 127 ;;
   switch|switcher)
     shift
     # Prefer the installed command, exactly as the thermometer and memory chip

@@ -112,8 +112,14 @@ binary resolution for you, and they print human-readable tables:
 ```
 kilix ls              kilix new-pane        kilix watch
 kilix ls --panes      kilix new-tab         kilix focus
-                      kilix fullscreen
+kilix panes            kilix panes --json    kilix fullscreen
 ```
+
+`kilix panes` is the centralized interface for automation. With no arguments
+it opens the Pane Center TUI. `list`, `dump`, `wait`, `focus`, and `send` expose
+the same pane/session/broker model as a CLI; `--json` emits the versioned
+`kilix.panes/v1` snapshot. Prefer it over joining raw Kitty, `/proc`, rollout,
+and broker records yourself.
 
 `kilix split` is an alias for `new-pane`; `kilix new-page` is an alias for
 `new-tab`.
@@ -154,7 +160,21 @@ ACT  #  PANE_ID  TAB_ID  OSWIN  TITLE                     PROC     CWD
 `$KITTY_WINDOW_ID` — useful for "open a pane next to me" and for not reading or
 killing yourself by accident.
 
-For programmatic use, ask for the raw state instead of parsing the table:
+For programmatic use, ask the Pane Center for its joined state instead of
+parsing the table:
+
+```sh
+kilix panes --json
+```
+
+Each pane record includes its page, foreground process tree, cwd, explicit
+activity state, current coding-session metadata, broker attachment/journal
+state, and a short description of what it is doing. Codex state is
+conservative: a live process whose newest turn boundary is `task_complete` is
+`idle`; `task_started` is `working`; missing evidence remains `agent`.
+
+Ask for Kitty's raw state only when you need layout fields the joined snapshot
+does not expose:
 
 ```sh
 kitten @ --password-file "$KILIX_RC_PASSWORD_FILE" ls
@@ -238,8 +258,16 @@ kitten @ --password-file "$KILIX_RC_PASSWORD_FILE" \
 
 ### Reading a pane
 
-`kilix watch` is the read primitive. `--once` prints a single snapshot and
-exits — that is the form automation wants:
+`kilix panes dump` is the convenient line-oriented primitive:
+
+```sh
+kilix panes dump 111 --lines 40             # includes scrollback
+kilix panes dump 111 --lines 20 --screen    # visible screen only
+kilix panes dump 111 --lines 40 --json      # pane metadata plus text
+```
+
+`kilix watch` remains the live read primitive. `--once` prints a single
+snapshot and exits:
 
 ```sh
 kilix watch 111 --once                      # visible screen
@@ -263,7 +291,17 @@ kitten @ --password-file "$KILIX_RC_PASSWORD_FILE" \
 Input is deliberately the narrowest route in the whole interface. `send-text`
 is authorised **only** when the target is matched by broker session — not by
 ID, not by title, not by "all panes". Resolve the session from the pane's
-environment, then send:
+environment, then send. `kilix panes send` performs that resolution, rejects
+ambiguous targets and the caller's own pane, splits UTF-8 at the 1024-byte
+policy boundary, and uses carriage return for an explicit `--enter`:
+
+```sh
+kilix panes send 111 'text without submitting it'
+kilix panes send 111 --enter 'submit this prompt'
+printf 'submit this prompt' | kilix panes send 111 --enter
+```
+
+The lower-level equivalent is:
 
 ```sh
 PANE=111
@@ -282,8 +320,13 @@ printf 'uptime\n' | kitten @ --password-file "$KILIX_RC_PASSWORD_FILE" \
   send-text --match "env:KITTY_PTY_BROKER_SESSION=$SESS" --stdin
 ```
 
-The trailing newline is the Enter key. Without it the text lands on the command
-line and just sits there.
+For an ordinary shell, the trailing line feed submits the command; without it
+the text lands on the command line and just sits there. Do not generalize that
+lower-level example to full-screen programs: `send-text` transmits bytes, not
+an abstract Enter key. The Pane Center's `--enter` sends carriage return,
+which submits the current Codex TUI as well as an ordinary shell. Treat text
+placement and submission as separate target-program operations, then read the
+pane back to verify the intended effect.
 
 The rules the authoriser enforces, all of which reject silently if broken:
 
@@ -338,6 +381,10 @@ after=$(kilix watch "$PANE" --once --plain)
 [ "$before" != "$after" ] || echo "send-text did not land — check the match form"
 ```
 
+The same caveat applies when `kilix panes send` reports `accepted`: that means
+the terminal client accepted the bounded request, not that the target program
+interpreted it. Verify with `kilix panes dump "$PANE" --lines 20 --screen`.
+
 
 ## 8. Closing up
 
@@ -357,6 +404,21 @@ per task and never closes one ends up with a page nobody can read.
 
 
 ## 9. Recipes
+
+**Wait for a Codex pane, inspect it, then hand it another prompt.** `idle` is
+reported only after an explicit completed turn while the live Codex process
+still owns the rollout, so this avoids prompt-shaped screen heuristics:
+
+```sh
+PANE=111
+kilix panes wait "$PANE" --for idle --timeout 600 || exit
+kilix panes dump "$PANE" --lines 20 --screen
+kilix panes send "$PANE" --enter 'continue with the next item'
+sleep 1
+kilix panes dump "$PANE" --lines 20 --screen
+```
+
+The final read is required because pane input remains fire-and-forget.
 
 **Start a long job in an existing pane on the right.** Resolve the spatial
 neighbor from the split layout instead of assuming that the second JSON row is
@@ -524,7 +586,7 @@ printf 'bash /tmp/job.sh\n' | kitten @ --password-file "$KILIX_RC_PASSWORD_FILE"
 | `Remote control is disabled…` | no `--password-file`, or the wrong credential |
 | `The user rejected this password or it is disallowed…` | command is not on the §7 allowlist |
 | `send-text` exits 0, nothing happens | match form is not `env:KITTY_PTY_BROKER_SESSION=…`, or payload >1024 bytes |
-| text appears but nothing runs | no trailing newline in the payload |
+| text appears but nothing runs | the target did not receive its submit control; shells normally accept line feed, while full-screen programs may require carriage return or another key sequence |
 | `KITTY_LISTEN_ON` is empty although Kilix is visible | the agent runner stripped pane variables; use the bounded §1 recovery and require an unambiguous socket |
 | broker `attach` reports `busy` for the target pane | its visible frontend already owns the read-write attachment; use broker-session-scoped `send-text` |
 | `id N is ambiguous` | bare ID matches a tab and a pane; qualify it |

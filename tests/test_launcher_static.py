@@ -197,7 +197,7 @@ class KilixLauncherTests(unittest.TestCase):
         """
         launcher = (ROOT / "kilix").read_text()
         for tool in ("kilix-temps", "kilix-memory", "kilix-launcher",
-                     "kilix-volume", "kilix-rollout-resume"):
+                     "kilix-volume", "kilix-rollout-resume", "kilix-panes"):
             self.assertIn(
                 f'"${{KILIX_TUI_UTILS_PREFIX:-$HOME/.local}}/bin/{tool}"',
                 launcher, tool)
@@ -213,6 +213,13 @@ class KilixLauncherTests(unittest.TestCase):
             '_switch_bin="${KILIX_TUI_UTILS_PREFIX:-$HOME/.local}'
             '/bin/kilix-switch"', launcher)
         self.assertIn('"$_KILIX_BONSAI_PREFIX/bin/kilix-bonsai"', launcher)
+
+    def test_panes_is_a_first_class_cli_with_a_checkout_fallback(self):
+        launcher = (ROOT / "kilix").read_text()
+        self.assertIn("panes|pane-center)", launcher)
+        self.assertIn(
+            '"$KILIX_TUI_UTILS_DIR/tools/switcher/main.py"', launcher)
+        self.assertIn('exec python3 "$_panes_src" "$@"', launcher)
 
     def test_desktop_provider_knobs_are_wired(self):
         text = (ROOT / "kilix").read_text()
