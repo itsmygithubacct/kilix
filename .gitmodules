@@ -1,7 +1,7 @@
 [submodule "src"]
 	path = src
 	url = https://github.com/itsmygithubacct/kitty.git
-	branch = release/0.2.0
+	branch = track-b/f118-kitty-v0.48.2
 [submodule "third_party/kitty-frame-presenter"]
 	path = third_party/kitty-frame-presenter
 	url = https://github.com/itsmygithubacct/kitty-frame-presenter.git
