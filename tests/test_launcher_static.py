@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import signal
 import subprocess
 import tempfile
@@ -571,7 +572,14 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("tab_bar_rows_for_count(tab_bar_item_count)", state)
         self.assertIn("tab_bar_content_height", state)
         self.assertIn("bool tab_bar_show_new_tab_button", state_h)
-        self.assertIn("opt('tab_bar_show_new_tab_button', 'no', option_type='to_bool', ctype='bool'", optdef)
+        # Match the option's declared facts rather than one line's formatting:
+        # upstream reflows these calls, and the pin move to Kitty 0.48.2 turned
+        # this exact call multi-line without changing a single argument.
+        self.assertRegex(
+            optdef,
+            r"opt\(\s*'tab_bar_show_new_tab_button',\s*'no',"
+            r"\s*option_type='to_bool',\s*ctype='bool',",
+        )
         self.assertIn("convert_from_opts_tab_bar_show_new_tab_button", toc)
         self.assertIn("self.tab_bar.tab_id_at(int(x), int(y))", tabs)
         self.assertIn("tm.tab_bar.tab_id_at(x, y)", boss)
