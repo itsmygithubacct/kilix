@@ -117,6 +117,44 @@ class FakeInjector:
 
 
 class XAppSessionTests(unittest.TestCase):
+    def test_display_size_reads_and_closes_the_authenticated_root(self):
+        seen = {}
+
+        class Root:
+            def get_geometry(self):
+                return type("Geometry", (), {"width": 960, "height": 600})()
+
+        class Connection:
+            def __init__(self, name):
+                seen["name"] = name
+                seen["authority"] = os.environ.get("XAUTHORITY")
+                self.closed = False
+
+            def screen(self):
+                return type("Screen", (), {"root": Root()})()
+
+            def close(self):
+                self.closed = True
+                seen["closed"] = True
+
+        previous = os.environ.get("XAUTHORITY")
+        os.environ["XAUTHORITY"] = "/tmp/original-auth"
+        with mock.patch.object(xapp.xdisplay, "Display", Connection):
+            try:
+                self.assertEqual(
+                    xapp.display_size(":77", xauthority="/tmp/private-auth"),
+                    (960, 600),
+                )
+            finally:
+                if previous is None:
+                    os.environ.pop("XAUTHORITY", None)
+                else:
+                    os.environ["XAUTHORITY"] = previous
+        self.assertEqual(seen["name"], ":77")
+        self.assertEqual(seen["authority"], "/tmp/private-auth")
+        self.assertTrue(seen["closed"])
+        self.assertEqual(os.environ.get("XAUTHORITY"), previous)
+
     def test_dimensions_display_port_and_capture_inputs_are_validated(self):
         supervisor = FakeSupervisor()
         session = xapp.XAppSession(

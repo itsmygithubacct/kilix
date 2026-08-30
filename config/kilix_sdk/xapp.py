@@ -20,6 +20,8 @@ import xcapture
 import xinject
 from Xlib import display as xdisplay
 
+from ._process import stop_process as _stop_process
+
 
 _XAUTHORITY_LOCK = threading.RLock()
 _PROCESS_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
@@ -48,32 +50,6 @@ def _positive(value: int | None, fallback: int, label: str) -> int:
     if selected <= 0:
         raise ValueError(f"{label} must be positive")
     return selected
-
-
-def _stop_process(process, timeout: float = 2.0) -> None:
-    if process is None:
-        return
-    if process.poll() is None:
-        try:
-            process.terminate()
-            process.wait(timeout=timeout)
-        except Exception:
-            try:
-                process.kill()
-            except Exception:
-                pass
-            try:
-                process.wait(timeout=1)
-            except Exception:
-                pass
-    for handle in (getattr(process, "stdin", None),
-                   getattr(process, "stdout", None),
-                   getattr(process, "stderr", None)):
-        if handle is not None:
-            try:
-                handle.close()
-            except Exception:
-                pass
 
 
 @dataclass(frozen=True)
@@ -305,4 +281,38 @@ class XAppSession:
         self.close()
 
 
-__all__ = ["CaptureStart", "XAppSession"]
+def display_size(
+    display: str | None = None,
+    *,
+    xauthority: str | None = None,
+) -> tuple[int, int]:
+    """Return the root pixel dimensions for an authenticated X display."""
+    selected = display or os.environ.get("DISPLAY")
+    if not selected:
+        raise RuntimeError("an X DISPLAY is required")
+    authority = xauthority
+    if authority is None:
+        authority = os.environ.get("XAUTHORITY")
+
+    connection = None
+    try:
+        if authority:
+            with _temporary_xauthority(authority):
+                connection = xdisplay.Display(selected)
+                geometry = connection.screen().root.get_geometry()
+        else:
+            connection = xdisplay.Display(selected)
+            geometry = connection.screen().root.get_geometry()
+        width, height = int(geometry.width), int(geometry.height)
+        if width <= 0 or height <= 0:
+            raise RuntimeError("X display reported invalid root dimensions")
+        return width, height
+    finally:
+        if connection is not None:
+            try:
+                connection.close()
+            except Exception:
+                pass
+
+
+__all__ = ["CaptureStart", "XAppSession", "display_size"]

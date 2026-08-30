@@ -145,6 +145,35 @@ whole of what a release installs:
   the browser down with it, and an incomplete runtime pin is refused rather
   than fetched.
 
+### Waydroid session ownership
+
+Kilix SDK 1.15 adds a shared nested-Wayland session owner for applications
+that must live inside an existing Kilix X surface. It supervises a private
+Weston-on-X11 compositor, prefers its accelerated renderer with a Pixman
+startup fallback, validates socket readiness, preserves the host audio runtime,
+serializes exclusive clients, and stops clients before their compositor.
+`kilix_sdk.xapp.display_size()` exposes the authenticated parent display
+geometry without leaking X authority state.
+
+SDK 1.16 adds the shared privileged-helper boundary used by first-use system
+components. It accepts only one absolute, argument-free helper, validates the
+helper and its ancestry as root-owned and non-writable, and presents `sudo`
+through the caller's terminal or a supervised X terminal for graphical apps.
+Installation policy and downloads remain inside the root-owned OS helper.
+
+SDK 1.17 adds the shared selection bridge that carries text between a nested
+Wayland session and the provider-owned X display. Both sides are event-driven:
+the X side arms XFIXES selection-owner notifications and the Wayland side
+blocks on its compositor's data-device events, so an idle bridge consumes no
+poll wakeups of its own.
+
+Kilix Waydroid is the first consumer. Its repository contains only Android
+runtime preflight, first-use handoff, and session policy; privilege, capture,
+input, display ownership, clipboard transport and process cleanup stay in
+Kilix. The shared content catalog exposes Android as one application, so Kilix
+panes, Kilix 95, and IceWM all use their existing generic application surfaces
+rather than provider-specific launch code.
+
 ## Release 0.1.9
 
 Published 2026-08-14 as part of the coordinated

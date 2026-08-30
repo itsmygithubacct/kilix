@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "config"))
 
 import kilix_sdk
-from kilix_sdk import content, graphics, paths, settings, state, telemetry, term
+from kilix_sdk import content, graphics, paths, privilege, settings, state, telemetry, term
 
 
 class KilixSdkBoundaryTests(unittest.TestCase):
@@ -57,8 +57,10 @@ class KilixSdkBoundaryTests(unittest.TestCase):
         # 1.12 exposes schema-3 actions, inputs, commands, and lifecycle policy.
         # 1.13 adds the shared pane CPU-load visibility policy.
         # 1.14 exposes the pinned shared telemetry ring and client contract.
-        self.assertEqual(kilix_sdk.SDK_API_VERSION, (1, 14))
-        self.assertEqual(kilix_sdk.SDK_VERSION, "1.14.0")
+        # 1.15 adds supervised nested-Wayland sessions and X display sizing.
+        # 1.16 adds trusted first-use system-helper invocation.
+        self.assertEqual(kilix_sdk.SDK_API_VERSION, (1, 16))
+        self.assertEqual(kilix_sdk.SDK_VERSION, "1.16.0")
         kilix_sdk.require_compatible("1.0")
         kilix_sdk.require_compatible("1.5")
         kilix_sdk.require_compatible("1.6")
@@ -70,8 +72,10 @@ class KilixSdkBoundaryTests(unittest.TestCase):
         kilix_sdk.require_compatible("1.12")
         kilix_sdk.require_compatible("1.13")
         kilix_sdk.require_compatible("1.14")
+        kilix_sdk.require_compatible("1.15")
+        kilix_sdk.require_compatible("1.16")
         with self.assertRaises(kilix_sdk.IncompatibleSDKError):
-            kilix_sdk.require_compatible("1.15")
+            kilix_sdk.require_compatible("1.17")
         with self.assertRaises(kilix_sdk.IncompatibleSDKError):
             kilix_sdk.require_compatible("2.0")
         for malformed in (
@@ -85,8 +89,8 @@ class KilixSdkBoundaryTests(unittest.TestCase):
         namespace = {}
         exec("from kilix_sdk import *", namespace)
         for name in (
-                "content", "graphics", "paths", "settings", "state", "term",
-                "telemetry", "tui_shell", "xapp", "xdgapps"):
+                "content", "graphics", "paths", "privilege", "settings", "state", "term",
+                "telemetry", "tui_shell", "wayland", "xapp", "xdgapps"):
             self.assertIn(name, namespace)
 
     def test_shared_packages_are_pinned_without_sys_path_pollution(self):
