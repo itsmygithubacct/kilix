@@ -22,6 +22,7 @@
 #   ./kilix screen-size ...   # show/increase/decrease/reset terminal scale
 #   ./kilix settings          # shared chrome/game settings TUI and CLI
 #   ./kilix games ...         # list, play, enable, or disable stack games
+#   ./kilix steam ...         # read-only Steam status/plan; launch fail-closed
 #   ./kilix power ...         # logout|reboot|poweroff, no confirmation here
 #   ./kilix launcher          # catalog TUI: stack programs, apps, launchers
 #   ./kilix app run ID        # install/run one pinned catalog application
@@ -390,6 +391,15 @@ _kilix_transcript_reap_periodically() {
     sleep 60
   done
 }
+
+# Steam's public-base staging surface is deliberately available before any
+# writable Kilix storage or Kitty bootstrap. It can inspect the fixed packaged
+# client and describe consent, but run/install stop before a tab or privileged
+# action until their external gates return.
+if [ "${1:-}" = "steam" ]; then
+  shift
+  exec python3 "$KILIX_HOME/config/steam.py" "$@"
+fi
 
 _kilix_validate_private_storage_layout || exit 1
 _kilix_ensure_private_directory "$KILIX_STORAGE_HOME" storage || exit 1
