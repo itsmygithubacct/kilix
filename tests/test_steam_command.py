@@ -1,5 +1,6 @@
 import contextlib
 from io import StringIO
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -18,6 +19,20 @@ import steam
 
 
 class SteamCommandTests(unittest.TestCase):
+    @staticmethod
+    def _status_payload(classification="absent", **changes):
+        exact = classification == "exact"
+        status = {
+            "classification": classification,
+            "helper_verified": exact,
+            "policy_verified": exact,
+            "i386_enabled": exact,
+            "package_installed": exact,
+            "launcher_verified": exact,
+        }
+        status.update(changes)
+        return json.dumps(status, separators=(",", ":"))
+
     def test_consent_moments_are_structurally_separate(self):
         self.assertEqual(len(steam.CONSENT_MOMENTS), 2)
         license_moment, trust_moment = steam.CONSENT_MOMENTS
@@ -148,25 +163,69 @@ class SteamCommandTests(unittest.TestCase):
     def test_probe_accepts_only_closed_classification_set(self):
         for classification in sorted(steam._CLASSIFICATIONS):
             result = steam.ClientResult(
-                0, f'{{"classification":"{classification}"}}', "")
+                0 if classification == "exact" else 3,
+                self._status_payload(classification),
+                "",
+            )
             with self.subTest(classification=classification), \
                     mock.patch.object(steam, "_run_client", return_value=result):
                 status, _ = steam._probe()
                 self.assertEqual(status["classification"], classification)
         invalid = steam.ClientResult(
-            0, '{"classification":"caller-selected"}', "")
+            3, self._status_payload("caller-selected"), "")
         with mock.patch.object(steam, "_run_client", return_value=invalid), \
                 self.assertRaisesRegex(
                     steam.SteamUnavailable, "invalid classification"):
             steam._probe()
 
         contradiction = steam.ClientResult(
-            3, '{"classification":"exact"}', "")
+            3, self._status_payload("exact"), "")
         with mock.patch.object(
                 steam, "_run_client", return_value=contradiction), \
                 self.assertRaisesRegex(
                     steam.SteamUnavailable, "contradicted"):
             steam._probe()
+
+    def test_probe_rejects_schema_drift_and_duplicate_members(self):
+        missing = json.loads(self._status_payload())
+        del missing["launcher_verified"]
+        malformed = (
+            json.dumps(missing),
+            self._status_payload(caller_selected=True),
+            self._status_payload(helper_verified=1),
+        )
+        for payload in malformed:
+            with self.subTest(payload=payload), \
+                    mock.patch.object(
+                        steam, "_run_client",
+                        return_value=steam.ClientResult(3, payload, "")), \
+                    self.assertRaisesRegex(
+                        steam.SteamUnavailable, "invalid status schema"):
+                steam._probe()
+
+        payload = '{"classification":"absent",' + \
+            self._status_payload("absent")[1:]
+        with mock.patch.object(
+                steam, "_run_client",
+                return_value=steam.ClientResult(3, payload, "")), \
+                self.assertRaisesRegex(
+                    steam.SteamUnavailable, "invalid output"):
+            steam._probe()
+
+    def test_probe_rejects_evidence_and_exit_status_contradictions(self):
+        cases = (
+            steam.ClientResult(
+                0, self._status_payload("exact", policy_verified=False), ""),
+            steam.ClientResult(0, self._status_payload("absent"), ""),
+            steam.ClientResult(70, self._status_payload("absent"), ""),
+        )
+        for result in cases:
+            with self.subTest(result=result), \
+                    mock.patch.object(
+                        steam, "_run_client", return_value=result), \
+                    self.assertRaisesRegex(
+                        steam.SteamUnavailable, "contradicted"):
+                steam._probe()
 
     def test_provider_absence_is_not_promoted_to_capability(self):
         with mock.patch.dict(sys.modules, {"kilix_sdk.gpu_session": None}):

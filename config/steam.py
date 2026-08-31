@@ -37,6 +37,15 @@ _CLASSIFICATIONS = frozenset((
     "unrelated-running",
 ))
 
+_STATUS_BOOLEAN_FIELDS = (
+    "helper_verified",
+    "policy_verified",
+    "i386_enabled",
+    "package_installed",
+    "launcher_verified",
+)
+_STATUS_FIELDS = frozenset(("classification", *_STATUS_BOOLEAN_FIELDS))
+
 
 @dataclass(frozen=True)
 class ConsentMoment:
@@ -222,25 +231,46 @@ def _run_client(command: str) -> ClientResult:
     )
 
 
+def _unique_json_object(
+        pairs: list[tuple[str, object]]) -> dict[str, object]:
+    value: dict[str, object] = {}
+    for key, member in pairs:
+        if key in value:
+            raise ValueError("duplicate JSON member")
+        value[key] = member
+    return value
+
+
 def _probe() -> tuple[Mapping[str, object], ClientResult]:
     result = _run_client("status")
     if not result.stdout:
         raise SteamUnavailable(
             _bounded_reason(result.stderr or "Steam system probe failed"))
     try:
-        status = json.loads(result.stdout)
-    except (TypeError, json.JSONDecodeError) as error:
+        status = json.loads(
+            result.stdout, object_pairs_hook=_unique_json_object)
+    except (TypeError, ValueError) as error:
         raise SteamUnavailable(
             "Steam system probe returned invalid output") from error
-    if not isinstance(status, dict):
-        raise SteamUnavailable("Steam system probe returned invalid output")
-    classification = status.get("classification")
+    if not isinstance(status, dict) or frozenset(status) != _STATUS_FIELDS:
+        raise SteamUnavailable(
+            "Steam system probe returned an invalid status schema")
+    if any(type(status[field]) is not bool
+           for field in _STATUS_BOOLEAN_FIELDS):
+        raise SteamUnavailable(
+            "Steam system probe returned an invalid status schema")
+    classification = status["classification"]
     if classification not in _CLASSIFICATIONS:
         raise SteamUnavailable(
             "Steam system probe returned an invalid classification")
-    if classification == "exact" and result.returncode != 0:
+    if (classification == "exact"
+            and not all(status[field] for field in _STATUS_BOOLEAN_FIELDS)):
         raise SteamUnavailable(
-            "Steam system probe contradicted its exact classification")
+            "Steam system probe contradicted its exact evidence")
+    expected_returncode = 0 if classification == "exact" else 3
+    if result.returncode != expected_returncode:
+        raise SteamUnavailable(
+            "Steam system probe contradicted its classification")
     return status, result
 
 
