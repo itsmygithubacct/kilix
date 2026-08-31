@@ -249,7 +249,7 @@ def _probe() -> tuple[Mapping[str, object], ClientResult]:
     try:
         status = json.loads(
             result.stdout, object_pairs_hook=_unique_json_object)
-    except (TypeError, ValueError) as error:
+    except (RecursionError, TypeError, ValueError) as error:
         raise SteamUnavailable(
             "Steam system probe returned invalid output") from error
     if not isinstance(status, dict) or frozenset(status) != _STATUS_FIELDS:
@@ -260,6 +260,9 @@ def _probe() -> tuple[Mapping[str, object], ClientResult]:
         raise SteamUnavailable(
             "Steam system probe returned an invalid status schema")
     classification = status["classification"]
+    if type(classification) is not str:
+        raise SteamUnavailable(
+            "Steam system probe returned an invalid classification")
     if classification not in _CLASSIFICATIONS:
         raise SteamUnavailable(
             "Steam system probe returned an invalid classification")

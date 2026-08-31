@@ -178,6 +178,17 @@ class SteamCommandTests(unittest.TestCase):
                     steam.SteamUnavailable, "invalid classification"):
             steam._probe()
 
+        for classification in ([], {}):
+            payload = json.loads(self._status_payload())
+            payload["classification"] = classification
+            result = steam.ClientResult(3, json.dumps(payload), "")
+            with self.subTest(classification=classification), \
+                    mock.patch.object(
+                        steam, "_run_client", return_value=result), \
+                    self.assertRaisesRegex(
+                        steam.SteamUnavailable, "invalid classification"):
+                steam._probe()
+
         contradiction = steam.ClientResult(
             3, self._status_payload("exact"), "")
         with mock.patch.object(
@@ -205,6 +216,16 @@ class SteamCommandTests(unittest.TestCase):
 
         payload = '{"classification":"absent",' + \
             self._status_payload("absent")[1:]
+        with mock.patch.object(
+                steam, "_run_client",
+                return_value=steam.ClientResult(3, payload, "")), \
+                self.assertRaisesRegex(
+                    steam.SteamUnavailable, "invalid output"):
+            steam._probe()
+
+        depth = steam.OUTPUT_LIMIT // 4
+        payload = "[" * depth + "0" + "]" * depth
+        self.assertLess(len(payload), steam.OUTPUT_LIMIT)
         with mock.patch.object(
                 steam, "_run_client",
                 return_value=steam.ClientResult(3, payload, "")), \
