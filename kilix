@@ -3704,7 +3704,7 @@ _kilix_screen_size_cmd() {
 }
 
 case "${1:-}" in
-  ls|focus|watch|fullscreen|new-pane|split|new-tab|new-page)
+  ls|focus|watch|fullscreen|pane|tab|new-pane|split|new-tab|new-page)
     _remote_cmd="$1"; shift
     _kilix_remote_control "$_remote_cmd" "$@" ;;
   remote)
