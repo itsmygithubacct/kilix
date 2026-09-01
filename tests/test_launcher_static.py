@@ -320,8 +320,24 @@ class KilixLauncherTests(unittest.TestCase):
     def test_ls_lists_live_tabs_via_kitty_remote_control(self):
         launcher = (ROOT / "kilix").read_text()
         remote = (ROOT / "config" / "remote.py").read_text()
-        self.assertIn("ls|focus|watch|fullscreen|new-pane|split|new-tab|new-page)",
-                      launcher)
+        # Assert each verb dispatches, not the exact alternation. Written as one
+        # literal, this broke the day `pane` and `tab` were added between
+        # `fullscreen` and `new-pane` -- which is a legitimate change the test
+        # should not have opposed. The verbs that must keep working are the
+        # point; their order in the case statement is not.
+        dispatch = next(
+            line for line in launcher.splitlines()
+            if line.strip().startswith("ls|focus|watch|fullscreen|")
+            and line.rstrip().endswith(")")
+        )
+        cases = [tok.strip() for tok in dispatch.strip().rstrip(")").split("|")]
+        for verb in ("ls", "focus", "watch", "fullscreen",
+                     "new-pane", "split", "new-tab", "new-page"):
+            self.assertIn(verb, cases,
+                          f"{verb} must keep dispatching; AGENTS.md has taught it")
+        for verb in ("pane", "tab"):
+            self.assertIn(verb, cases,
+                          f"{verb} is the 0.2.1 verb and must dispatch")
         self.assertIn('KILIX_KITTEN="$KITTEN" exec python3 "$KILIX_HOME/config/remote.py"', launcher)
         self.assertIn('run_kitten(["ls"], authenticated=True)', remote)
         self.assertIn('"--panes"', remote)
