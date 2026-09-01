@@ -104,7 +104,7 @@ then set `SOURCE_PANE` explicitly. Do not infer it from whichever pane happens
 to be focused.
 
 
-## 2. Two interfaces
+## 2. Three interfaces
 
 **Prefer the `kilix` verbs.** They are stable, they handle credential and
 binary resolution for you, and they print human-readable tables:
@@ -124,8 +124,24 @@ and broker records yourself.
 `kilix split` is an alias for `new-pane`; `kilix new-page` is an alias for
 `new-tab`.
 
-**Drop to `kitten @` only for what the verbs don't cover** — closing a pane,
-reading raw JSON, or the `send-text` route in §6:
+**If you are running Python, import the library instead of shelling out.**
+`kilix_sdk.panes` is the same model the verbs are built on, and it hands back
+ids rather than tables you have to parse:
+
+```python
+from kilix_sdk import panes
+
+pid = panes.split("right", cwd="/srv/work")      # returns the new pane id
+panes.send(pid, "make test", submit=True)
+panes.close(pid)
+```
+
+Most agents in this codebase are already Python. Parsing the output of a verb
+you could have called as a function is how the five separate re-implementations
+of `kitten @ ls` walking got written.
+
+**Drop to `kitten @` only for what neither covers** — it is the escape hatch,
+not the interface:
 
 ```sh
 kitten @ --password-file "$KILIX_RC_PASSWORD_FILE" <command> ...
@@ -241,17 +257,36 @@ build, or use 'kilix new-pane right' for now
 
 Restart Kilix, or use the opposite direction.
 
-**A pane closes when its command exits.** `kilix new-pane right -- ls` flashes
-and vanishes; you will usually not read anything off it. If you need the output
-to stay on screen, keep the pane alive. Either hold it open:
+**A pane closes when its command exits.** `pane right -- ls` flashes and
+vanishes; you will usually not read anything off it. Pass `--hold` to keep it
+on screen:
 
 ```sh
-kitten @ --password-file "$KILIX_RC_PASSWORD_FILE" \
-  launch --location=vsplit --hold --title "results" -- ./slow-job.sh
+pane right --hold -- ./slow-job.sh
 ```
 
 …or end the command with something that waits (`; exec bash`, `; read -r`).
-`--hold` is not exposed on `kilix new-pane`; go through `launch` for it.
+
+**`--porcelain` prints the new id and nothing else**, which is what makes the
+verbs composable from a shell:
+
+```sh
+pane send "$(pane right --porcelain)" 'make test' --submit
+```
+
+**`pane quad` gives you four panes where this one is** — the layout for
+supervising several workers at once. In the library it is `panes.quad()`, and
+`split(anchor=<id>)` places a pane next to a *named* pane rather than the
+focused one; `anchor=` maps onto the engine's existing `--next-to`, so there is
+nothing new to install.
+
+**`quad` on a small terminal is refused, not attempted.** Four panes out of an
+80×24 terminal are unusable, so `quad` checks the resulting size first and fails
+with the actual measurement rather than leaving you a mess to unpick.
+
+One constraint worth knowing: when anchoring over remote control, the engine
+ignores the anchor unless the matched pane is in the target tab. Within one tab
+— which is every `quad` — that never bites.
 
 
 ## 6. Reading and typing
@@ -399,11 +434,41 @@ Closing a pane kills what runs in it. Check `foreground_processes` in the `ls`
 JSON before closing something you did not open — and never match your own
 `$KITTY_WINDOW_ID`.
 
-Agents that open panes should clean them up. A long session that splits a pane
-per task and never closes one ends up with a page nobody can read.
+Agents that open panes should clean them up, and now have the id to do it
+with. Every creating call hands one back — `--porcelain` from a verb,
+the return value from `panes.split()` and `panes.quad()` — so keep them and
+close exactly what you opened:
+
+```python
+opened = panes.quad(commands=[["./worker.sh", "a"], ["./worker.sh", "b"], ["./worker.sh", "c"]])
+try:
+    ...
+finally:
+    for pid in opened:
+        panes.close(pid)
+```
+
+Close by remembered id, never by matching a pattern: a pattern cannot tell your
+panes from the user's. A long session that splits a pane per task and never
+closes one ends up with a page nobody can read.
 
 
 ## 9. Recipes
+
+**Fan four workers out and give each one a task.** This is the case the pane
+library exists for: one call makes the layout, and the ids come back in the
+order the panes were created, so nothing has to be matched or guessed.
+
+```python
+from kilix_sdk import panes
+
+ids = panes.quad(commands=[["./worker.sh", "a"], ["./worker.sh", "b"], ["./worker.sh", "c"]])
+for pid, task in zip(ids, tasks):
+    panes.send(pid, task, submit=True)
+```
+
+`quad` is transactional: if the third split fails, the panes it already made are
+closed before it raises, because the caller cannot tell which panes were theirs.
 
 **Wait for a Codex pane, inspect it, then hand it another prompt.** `idle` is
 reported only after an explicit completed turn while the live Codex process
