@@ -10,6 +10,10 @@ import importlib.util
 import sys
 import types
 import unittest
+from contextlib import redirect_stderr
+import io
+
+import panes_stub
 from pathlib import Path
 
 
@@ -62,28 +66,21 @@ class RecordingPanes(types.ModuleType):
         self.calls.append(("send", target, dict(kwargs, text=text)))
 
 
-def install_stub():
-    """Put a recording kilix_sdk.panes on sys.modules and load remote.py."""
-    panes = RecordingPanes()
-    package = types.ModuleType("kilix_sdk")
-    package.panes = panes
-    package.__path__ = []
-    sys.modules["kilix_sdk"] = package
-    sys.modules["kilix_sdk.panes"] = panes
+def install_stub(test):
+    """Put a recording kilix_sdk.panes on sys.modules and load remote.py.
 
-    spec = importlib.util.spec_from_file_location(
-        "kilix_remote_under_test", ROOT / "config" / "remote.py")
-    assert spec is not None and spec.loader is not None
-    remote = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(remote)
+    Takes the TestCase so the stub is removed again afterwards; leaving it
+    behind poisoned every later module in a discover run.
+    """
+    panes = RecordingPanes()
+    remote = panes_stub.install_and_load(
+        test, panes, ROOT, "kilix_remote_under_test")
     return remote, panes
 
 
 class SplitDirections(unittest.TestCase):
     def setUp(self):
-        self.remote, self.panes = install_stub()
-        # engine_predates readlinks /proc; in a test there is no live engine.
-        self.remote.engine_predates = lambda location: False
+        self.remote, self.panes = install_stub(self)
 
     def split_call(self):
         return [c for c in self.panes.calls if c[0] == "split"][0]
@@ -95,36 +92,40 @@ class SplitDirections(unittest.TestCase):
     def test_each_canonical_direction_passes_through(self):
         for direction in ("right", "left", "up", "down"):
             with self.subTest(direction=direction):
-                self.remote, self.panes = install_stub()
-                self.remote.engine_predates = lambda location: False
+                self.remote, self.panes = install_stub(self)
                 self.assertEqual(self.remote.main(["pane", direction]), 0)
                 self.assertEqual(self.split_call()[1], direction)
 
     def test_above_and_below_normalise_onto_existing_keys(self):
         for word, expected in (("above", "up"), ("below", "down")):
             with self.subTest(word=word):
-                self.remote, self.panes = install_stub()
-                self.remote.engine_predates = lambda location: False
+                self.remote, self.panes = install_stub(self)
                 self.assertEqual(self.remote.main(["pane", word]), 0)
                 self.assertEqual(self.split_call()[1], expected)
 
-    def test_normalised_direction_is_a_pane_locations_key(self):
+    def test_normalised_direction_is_a_library_location_key(self):
+        # The verb normalises; the library owns the word -> --location map.
+        # Asserting across the seam is the point: it is what stops the CLI
+        # offering a word the library cannot place.
+        real = panes_stub.real_module()
         for word in ("right", "left", "up", "down", "above", "below"):
             with self.subTest(word=word):
                 self.assertIn(self.remote.normalize_direction(word),
-                              self.remote.PANE_LOCATIONS)
+                              real.PANE_LOCATIONS)
 
     def test_synonyms_do_not_add_engine_locations(self):
-        self.assertEqual(set(self.remote.PANE_LOCATIONS),
+        self.assertEqual(set(self.remote.CANONICAL_DIRECTIONS),
                          {"right", "left", "up", "down"})
         self.assertEqual(set(self.remote.PANE_DIRECTION_SYNONYMS),
                          {"above", "below"})
+        self.assertEqual(set(self.remote.PANE_DIRECTIONS),
+                         set(self.remote.CANONICAL_DIRECTIONS)
+                         | set(self.remote.PANE_DIRECTION_SYNONYMS))
 
 
 class SplitOptions(unittest.TestCase):
     def setUp(self):
-        self.remote, self.panes = install_stub()
-        self.remote.engine_predates = lambda location: False
+        self.remote, self.panes = install_stub(self)
 
     def kwargs(self):
         return [c for c in self.panes.calls if c[0] == "split"][0][2]
@@ -140,8 +141,7 @@ class SplitOptions(unittest.TestCase):
     def test_hold_is_exposed_and_off_by_default(self):
         self.remote.main(["pane", "right", "--hold"])
         self.assertIs(self.kwargs()["hold"], True)
-        self.remote, self.panes = install_stub()
-        self.remote.engine_predates = lambda location: False
+        self.remote, self.panes = install_stub(self)
         self.remote.main(["pane", "right"])
         self.assertIs(self.kwargs()["hold"], False)
 
@@ -164,8 +164,7 @@ class SplitOptions(unittest.TestCase):
 
 class PorcelainOutput(unittest.TestCase):
     def setUp(self):
-        self.remote, self.panes = install_stub()
-        self.remote.engine_predates = lambda location: False
+        self.remote, self.panes = install_stub(self)
 
     def test_porcelain_prints_only_the_id(self):
         import io
@@ -186,11 +185,26 @@ class PorcelainOutput(unittest.TestCase):
 
 
 class EnginePredatesStillGuards(unittest.TestCase):
+    """The guard moved into the library; the verb still refuses on it.
+
+    panes.split() raises EnginePredatesLocation now, so what this pins is that
+    the verb catches it, exits 2, and turns it into advice naming a direction
+    the operator can actually use.
+    """
+
     def test_left_is_refused_on_an_older_engine(self):
-        remote, panes = install_stub()
-        remote.engine_predates = lambda location: location == "vsplit-before"
-        self.assertEqual(remote.main(["pane", "left"]), 2)
-        self.assertEqual([c for c in panes.calls if c[0] == "split"], [])
+        remote, panes = install_stub(self)
+
+        def refuse(direction="right", **kwargs):
+            panes.calls.append(("split", direction, kwargs))
+            raise panes.EnginePredatesLocation(direction, "vsplit-before")
+
+        panes.split = refuse
+        buffer = io.StringIO()
+        with redirect_stderr(buffer):
+            self.assertEqual(remote.main(["pane", "left"]), 2)
+        self.assertIn("predates 'left'", buffer.getvalue())
+        self.assertIn("kilix pane right", buffer.getvalue())
 
 
 if __name__ == "__main__":

@@ -17,6 +17,8 @@ import json
 import sys
 import types
 import unittest
+
+import panes_stub
 from contextlib import redirect_stdout
 from pathlib import Path
 
@@ -229,19 +231,11 @@ class Verb(unittest.TestCase):
     def load_remote(self):
         stub = types.ModuleType("kilix_sdk.panes")
         stub.quad = lambda **kwargs: (201, 202, 203)
-        package = types.ModuleType("kilix_sdk")
-        package.panes = stub
-        package.__path__ = []
-        saved = {k: sys.modules.get(k) for k in ("kilix_sdk", "kilix_sdk.panes")}
-        sys.modules["kilix_sdk"] = package
-        sys.modules["kilix_sdk.panes"] = stub
-        self.addCleanup(lambda: sys.modules.update(
-            {k: v for k, v in saved.items() if v is not None}))
-        spec = importlib.util.spec_from_file_location(
-            "kilix_remote_quad_verb", ROOT / "config" / "remote.py")
-        remote = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(remote)
-        return remote
+        # The old restore here kept only keys that were already present, so a
+        # stub installed where the real package had not been imported yet was
+        # never removed.  panes_stub.install deletes those instead.
+        panes_stub.install(self, stub)
+        return panes_stub.load_remote(ROOT, "kilix_remote_quad_verb")
 
     def test_porcelain_prints_only_the_ids(self):
         remote = self.load_remote()

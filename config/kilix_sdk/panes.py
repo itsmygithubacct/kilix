@@ -43,6 +43,21 @@ PANE_LOCATIONS: Mapping[str, str] = {
 
 FORK_ONLY_LOCATIONS = frozenset({"vsplit-before", "hsplit-before"})
 
+#: "above"/"below" are the words humans reach for; "up"/"down" are the keys
+#: PANE_LOCATIONS is mapped from.  Both live here so the direction vocabulary
+#: has one home and a front end does not have to carry half of it.
+PANE_DIRECTION_SYNONYMS: Mapping[str, str] = {"above": "up", "below": "down"}
+
+#: The direction words a front end should offer.  Deliberately excludes the
+#: raw engine names in PANE_LOCATIONS, which are an implementation detail.
+PANE_DIRECTIONS: tuple[str, ...] = (
+    "right", "left", "down", "up", "above", "below")
+
+
+def normalize_direction(direction: str) -> str:
+    """Fold ``above``/``below`` onto the PANE_LOCATIONS keys."""
+    return PANE_DIRECTION_SYNONYMS.get(direction, direction)
+
 #: ``quad`` refuses below this per-pane size rather than making four unusably
 #: narrow panes the caller then has to unpick (design section 9).
 QUAD_MIN_COLUMNS = 40
@@ -55,6 +70,22 @@ class PaneError(RuntimeError):
 
 class AmbiguousTarget(PaneError):
     """A bare id matches both a tab and a pane."""
+
+
+class EnginePredatesLocation(PaneError):
+    """The running engine is too old to place a pane where it was asked to.
+
+    Carries ``direction`` and ``location`` so a front end can render its own
+    advice without re-deriving which build knows what.  A plain message would
+    force every caller to parse prose to say "use right instead of left".
+    """
+
+    def __init__(self, direction: str, location: str) -> None:
+        super().__init__(
+            f"the running engine is older than this build and does not know "
+            f"--location={location}")
+        self.direction = direction
+        self.location = location
 
 
 class NoSuchTarget(PaneError):
@@ -311,13 +342,26 @@ def snapshot(*, timeout: float = 2.0) -> Workspace:
 # --- operations ------------------------------------------------------------
 
 def _run(args: Sequence[str], *, authenticated: bool = True,
+         via_tty: bool = False,
          timeout: float = 2.0) -> subprocess.CompletedProcess[str]:
+    """One ``kitten @`` invocation.  The only place in Kilix that runs one.
+
+    ``via_tty`` drops ``KITTY_LISTEN_ON`` from the child environment, which
+    makes the kitten talk to the terminal on its controlling tty instead of the
+    socket.  ``resize-os-window --self`` needs that: over the socket "self" is
+    the socket peer, not the OS window the operator is looking at.
+    """
     command = [KITTEN, "@"]
     if authenticated and RC_PASSWORD_FILE:
         command.extend(["--password-file", RC_PASSWORD_FILE])
+    env = None
+    if via_tty:
+        env = os.environ.copy()
+        env.pop("KITTY_LISTEN_ON", None)
     return subprocess.run(
         [*command, *args],
         check=False,
+        env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -325,8 +369,10 @@ def _run(args: Sequence[str], *, authenticated: bool = True,
     )
 
 
-def _check(args: Sequence[str], what: str, *, timeout: float = 2.0) -> str:
-    proc = _run(args, timeout=timeout)
+def _check(args: Sequence[str], what: str, *, via_tty: bool = False,
+           authenticated: bool = True, timeout: float = 2.0) -> str:
+    proc = _run(args, authenticated=authenticated, via_tty=via_tty,
+                timeout=timeout)
     if proc.returncode != 0:
         detail = proc.stderr.strip() or f"kitten exited {proc.returncode}"
         raise PaneError(f"{what}: {detail}")
@@ -353,20 +399,26 @@ def split_argv(direction: str = "right", *,
 
     Exposed so the argv can be asserted in a test without a live engine.
     """
+    direction = normalize_direction(direction)
     if direction not in PANE_LOCATIONS:
         raise PaneError(
             f"unknown direction {direction!r}; "
             f"expected one of {', '.join(sorted(PANE_LOCATIONS))}")
     location = PANE_LOCATIONS[direction]
     if engine_predates(location):
-        raise PaneError(
-            f"the running engine is older than this build and does not know "
-            f"--location={location}; restart Kilix to pick up the new engine")
+        raise EnginePredatesLocation(direction, location)
     argv = ["launch", "--type=window", f"--location={location}"]
     if cwd:
         argv.append(f"--cwd={cwd}")
     if anchor is not None:
         argv.append(f"--next-to=id:{int(anchor)}")
+    else:
+        # anchor=None is documented as "the calling pane", and only --self
+        # means that.  Without it the engine hangs the split off whichever
+        # pane has FOCUS, so a split asked for from a background pane lands
+        # somewhere else entirely.  remote.py carried this flag before the
+        # library did; it belongs here, with the rest of the placement.
+        argv.append("--self")
     if title:
         argv.append(f"--title={title}")
     if hold:
@@ -493,23 +545,38 @@ def new_tab(*, cwd: str = "current", title: str = "",
     ``command`` is argv and is passed after ``--``.  ``shell_string`` is a
     single string run through the shell.  Passing both is a caller error.
     """
-    if command and shell_string:
-        raise PaneError("new_tab: pass command= or shell_string=, not both")
-    argv = ["launch", "--type=tab"]
-    if cwd:
-        argv.append(f"--cwd={cwd}")
-    if title:
-        argv.append(f"--title={title}")
-    if shell_string:
-        argv.extend(["--", "/bin/sh", "-c", shell_string])
-    elif command:
-        argv.append("--")
-        argv.extend(str(part) for part in command)
+    argv = new_tab_argv(cwd=cwd, title=title, command=command,
+                        shell_string=shell_string)
     out = _check(argv, "new_tab")
     try:
         return int(out)
     except ValueError as exc:
         raise PaneError(f"new_tab: engine returned {out!r}, not an id") from exc
+
+
+def new_tab_argv(*, cwd: str = "current", title: str = "",
+                 command: Sequence[str] = (),
+                 shell_string: str = "") -> list[str]:
+    """The exact ``kitten @`` argv :func:`new_tab` would run.
+
+    Symmetric with :func:`split_argv`, and for the same reason: it lets the
+    argv be asserted without a live engine.
+    """
+    if command and shell_string:
+        raise PaneError("new_tab: pass command= or shell_string=, not both")
+    argv = ["launch", "--type=tab", "--self"]
+    if cwd:
+        argv.append(f"--cwd={cwd}")
+    if title:
+        # --tab-title names the tab; --title names the window inside it.  For
+        # --type=tab the operator means the former.
+        argv.extend(["--tab-title", title])
+    if shell_string:
+        argv.extend(["--", "/bin/sh", "-c", shell_string])
+    elif command:
+        argv.append("--")
+        argv.extend(str(part) for part in command)
+    return argv
 
 
 def rename_tab(target: int | str, title: str) -> None:
@@ -519,13 +586,58 @@ def rename_tab(target: int | str, title: str) -> None:
            f"rename_tab {value}")
 
 
-def read(target: int | str, *, extent: str = "screen") -> str:
-    """Return the text of a pane."""
+def read(target: int | str, *, extent: str = "screen",
+         ansi: bool = False, cursor: bool = False) -> str:
+    """Return the text of a pane.
+
+    ``ansi`` keeps the pane's styling instead of flattening it, and ``cursor``
+    adds the cursor position escape.  ``kilix watch`` renders a live pane and
+    needs both; the default stays plain text so ordinary callers are not
+    handed escape sequences they did not ask for.
+    """
     kind, value = _match(target)
     if kind != "pane":
         raise NoSuchTarget(f"read: {value} is a tab, not a pane")
-    return _check(["get-text", "--match", f"id:{value}", f"--extent={extent}"],
-                  f"read pane {value}")
+    argv = ["get-text", "--match", f"id:{value}", f"--extent={extent}"]
+    if ansi:
+        argv.append("--ansi")
+    if cursor:
+        argv.append("--add-cursor")
+    return _check(argv, f"read pane {value}")
+
+
+def read_raw(target: int | str, *, extent: str = "screen",
+             ansi: bool = False, cursor: bool = False) -> str:
+    """:func:`read` without the trailing-whitespace strip.
+
+    ``read`` is the ergonomic one and strips, which is right for a caller that
+    wants the text.  A live renderer must not strip: the blank tail of a
+    screen is part of the frame, and eating it makes the display jump.
+    """
+    kind, value = _match(target)
+    if kind != "pane":
+        raise NoSuchTarget(f"read_raw: {value} is a tab, not a pane")
+    argv = ["get-text", "--match", f"id:{value}", f"--extent={extent}"]
+    if ansi:
+        argv.append("--ansi")
+    if cursor:
+        argv.append("--add-cursor")
+    proc = _run(argv)
+    if proc.returncode != 0:
+        detail = proc.stderr.strip() or f"kitten exited {proc.returncode}"
+        raise PaneError(f"read pane {value}: {detail}")
+    return proc.stdout
+
+
+def fullscreen() -> None:
+    """Toggle content-only fullscreen for this pane's OS window.
+
+    Goes over the controlling tty rather than the socket, because ``--self``
+    over the socket resolves to the socket peer rather than to the window the
+    operator is in front of.
+    """
+    _check(["resize-os-window", "--self", "--action", "toggle-fullscreen"],
+           "fullscreen", via_tty=True, authenticated=False)
 
 
 def send(target: int | str, text: str, *, submit: bool = False) -> None:

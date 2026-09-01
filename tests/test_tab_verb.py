@@ -13,6 +13,8 @@ import json
 import sys
 import types
 import unittest
+
+import panes_stub
 from contextlib import redirect_stdout
 from pathlib import Path
 
@@ -95,24 +97,17 @@ class RecordingPanes(types.ModuleType):
         return 119
 
 
-def install_stub():
+def install_stub(test):
+    """As in test_panes_split: the stub must not outlive the test."""
     panes = RecordingPanes()
-    package = types.ModuleType("kilix_sdk")
-    package.panes = panes
-    package.__path__ = []
-    sys.modules["kilix_sdk"] = package
-    sys.modules["kilix_sdk.panes"] = panes
-    spec = importlib.util.spec_from_file_location(
-        "kilix_remote_tab_under_test", ROOT / "config" / "remote.py")
-    assert spec is not None and spec.loader is not None
-    remote = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(remote)
+    remote = panes_stub.install_and_load(
+        test, panes, ROOT, "kilix_remote_tab_under_test")
     return remote, panes
 
 
 class ShellStringVersusArgv(unittest.TestCase):
     def setUp(self):
-        self.remote, self.panes = install_stub()
+        self.remote, self.panes = install_stub(self)
 
     def new_tab_kwargs(self):
         return [c for c in self.panes.calls if c[0] == "new_tab"][0][1]
@@ -126,7 +121,7 @@ class ShellStringVersusArgv(unittest.TestCase):
     def test_each_metacharacter_triggers_the_shell_branch(self):
         for char in ("&", "|", ";", "<", ">", "(", ")", "$", "`", "\n"):
             with self.subTest(char=char):
-                self.remote, self.panes = install_stub()
+                self.remote, self.panes = install_stub(self)
                 self.remote.main(["tab", "new", f"echo x{char}y"])
                 self.assertIn("shell_string", self.new_tab_kwargs())
 
@@ -162,7 +157,7 @@ class ShellStringVersusArgv(unittest.TestCase):
 
 class TabNavigation(unittest.TestCase):
     def setUp(self):
-        self.remote, self.panes = install_stub()
+        self.remote, self.panes = install_stub(self)
 
     def test_left_and_right_focus_rather_than_reorder(self):
         self.remote.main(["tab", "left"])
@@ -186,7 +181,7 @@ class TabNavigation(unittest.TestCase):
 
 class MachineOutput(unittest.TestCase):
     def setUp(self):
-        self.remote, self.panes = install_stub()
+        self.remote, self.panes = install_stub(self)
 
     def test_porcelain_prints_only_the_id(self):
         buffer = io.StringIO()

@@ -1,5 +1,6 @@
 import importlib.util
 import base64
+import sys
 import re
 import unittest
 from pathlib import Path
@@ -27,6 +28,15 @@ RC_SPEC = importlib.util.spec_from_file_location(
 assert RC_SPEC is not None and RC_SPEC.loader is not None
 REMOTE = importlib.util.module_from_spec(RC_SPEC)
 RC_SPEC.loader.exec_module(REMOTE)
+
+# The verbs no longer hold a transport of their own: every one of them goes
+# through kilix_sdk.panes, whose _run is now the single place in Kilix that
+# executes `kitten @`.  These tests intercept there instead, which keeps them
+# end-to-end through REMOTE.main() while still asserting the exact argv the
+# terminal would receive -- and makes the chokepoint itself the thing under
+# test.
+sys.path.insert(0, str(ROOT / "config"))
+import kilix_sdk.panes as PANES  # noqa: E402
 
 
 def allowed(command, *, from_socket=False, window=object(), **payload):
@@ -159,8 +169,8 @@ class PaneAndPageCreationTests(unittest.TestCase):
         # The stale-engine guard is a property of whatever terminal the suite
         # happens to run under, so it is held off here; the tests that care
         # about it drive it directly.
-        with mock.patch.object(REMOTE, "engine_predates", return_value=False):
-            with mock.patch.object(REMOTE, "run_kitten", return_value=done) as spy:
+        with mock.patch.object(PANES, "engine_predates", return_value=False):
+            with mock.patch.object(PANES, "_run", return_value=done) as spy:
                 code = REMOTE.main(argv)
         return code, (spy.call_args[0][0] if spy.call_args else None), spy
 
@@ -193,8 +203,8 @@ class PaneAndPageCreationTests(unittest.TestCase):
         # An engine older than this checkout ignores a location it does not
         # know and falls back to its default, so the pane silently appears on
         # the opposite side. Refusing is the only honest answer.
-        with mock.patch.object(REMOTE, "engine_predates", return_value=True):
-            with mock.patch.object(REMOTE, "run_kitten") as spy:
+        with mock.patch.object(PANES, "engine_predates", return_value=True):
+            with mock.patch.object(PANES, "_run") as spy:
                 for direction in ("left", "up"):
                     self.assertEqual(REMOTE.main(["new-pane", direction]), 2,
                                      direction)
@@ -203,16 +213,16 @@ class PaneAndPageCreationTests(unittest.TestCase):
     def test_the_stale_engine_guard_never_blocks_the_far_side(self):
         # right and down have worked in every engine, so the guard must not
         # touch them even when it fires for the others.
-        self.assertFalse(REMOTE.engine_predates("vsplit"))
-        self.assertFalse(REMOTE.engine_predates("hsplit"))
+        self.assertFalse(PANES.engine_predates("vsplit"))
+        self.assertFalse(PANES.engine_predates("hsplit"))
 
     def test_the_guard_stays_quiet_when_it_cannot_tell(self):
         # No pid, or no build directory: guessing "stale" would break the
         # command everywhere it cannot introspect, which is worse than the
         # thing it guards against.
         for env in ({}, {"KITTY_PID": "1"}, {"KILIX_BUILD_DIRECTORY": "/nope"}):
-            with mock.patch.dict(REMOTE.os.environ, env, clear=True):
-                self.assertFalse(REMOTE.engine_predates("vsplit-before"), env)
+            with mock.patch.dict(PANES.os.environ, env, clear=True):
+                self.assertFalse(PANES.engine_predates("vsplit-before"), env)
 
     def test_the_fork_provides_the_near_side_locations(self):
         # The CLI is only as good as the fork underneath it, so pin that the
@@ -251,7 +261,7 @@ class PaneAndPageCreationTests(unittest.TestCase):
 
     def test_creation_is_authenticated(self):
         with mock.patch.object(
-                REMOTE, "run_kitten",
+                PANES, "_run",
                 return_value=mock.Mock(returncode=0, stdout="", stderr="")) as spy:
             REMOTE.main(["new-tab"])
         self.assertTrue(spy.call_args.kwargs.get("authenticated"))

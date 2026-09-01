@@ -339,11 +339,19 @@ class KilixLauncherTests(unittest.TestCase):
             self.assertIn(verb, cases,
                           f"{verb} is the 0.2.1 verb and must dispatch")
         self.assertIn('KILIX_KITTEN="$KITTEN" exec python3 "$KILIX_HOME/config/remote.py"', launcher)
-        self.assertIn('run_kitten(["ls"], authenticated=True)', remote)
+        # The verb keeps the surface -- the flag and the column headings --
+        # and the library keeps the engine query.  Asserting each marker where
+        # it now lives is what pins the split; asserting the query against
+        # remote.py would pass again the moment a transport crept back in.
         self.assertIn('"--panes"', remote)
         self.assertIn('"TAB_ID"', remote)
         self.assertIn('"PANE_ID"', remote)
-        self.assertIn('"foreground_processes"', remote)
+        panes = (ROOT / "config" / "kilix_sdk" / "panes.py").read_text()
+        self.assertIn('_run(["ls"]', panes)
+        self.assertIn('"foreground_processes"', panes)
+        # And the rule itself: the verbs hold no transport of their own.
+        self.assertNotIn("subprocess", remote)
+        self.assertNotIn("run_kitten", remote)
 
     def test_screen_size_command_is_wired(self):
         launcher = (ROOT / "kilix").read_text()
@@ -692,11 +700,13 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn('-- "$_self" serve "$_mux_name"', launcher)
         self.assertIn('exec "$_self" serve "$_mux_name"', launcher)
         self.assertIn('new-session -A -s "$_session"', launcher)
-        self.assertIn('"focus-tab"', remote)
-        self.assertIn('"focus-window"', remote)
-        self.assertIn('"get-text"', remote)
+        # The verb keeps its surface; the engine words moved to the library.
+        panes = (ROOT / "config" / "kilix_sdk" / "panes.py").read_text()
+        self.assertIn('"focus-tab"', panes)
+        self.assertIn('"focus-window"', panes)
+        self.assertIn('"get-text"', panes)
+        self.assertIn('"resize-os-window", "--self", "--action", "toggle-fullscreen"', panes)
         self.assertIn('def cmd_fullscreen', remote)
-        self.assertIn('"resize-os-window", "--self", "--action", "toggle-fullscreen"', remote)
         self.assertIn('"--interval"', remote)
         self.assertIn("refusing to watch the current pane", remote)
         self.assertIn('"Mux Terminal"', shell)
@@ -712,7 +722,11 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn('payload.get("self") is True', policy)
         self.assertIn('payload.get("action") == "toggle-fullscreen"', policy)
         self.assertIn("not from_socket", policy)
-        self.assertIn("via_tty=True", remote)
+        # Fullscreen still goes over the tty rather than the socket, because
+        # --self over the socket is the socket peer.  That now lives with the
+        # rest of the transport, in the library.
+        self.assertIn("via_tty=True",
+                      (ROOT / "config" / "kilix_sdk" / "panes.py").read_text())
         self.assertIn("_kilix_init_rc_password", (ROOT / "kilix").read_text())
         self.assertIn('"%s" launch ls focus-window focus-tab get-text',
                       (ROOT / "kilix").read_text())
