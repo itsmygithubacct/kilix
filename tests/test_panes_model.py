@@ -251,5 +251,68 @@ class SplitArgvContractTests(unittest.TestCase):
             "split() returning the new pane id is the point of the module")
 
 
+class PaneIdMapperTests(unittest.TestCase):
+    """`index`/`tab_index`/`pane_for_pid`/`locate`.
+
+    The ancestry walk is exercised against a stubbed `_parent_pid` rather than
+    the live `/proc`, so the test states the process tree it depends on instead
+    of inheriting whatever the machine happens to be running.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.ws = panes.parse(json.loads(FIXTURE.read_text()))
+
+    def setUp(self):
+        self._real_parent = panes._parent_pid
+        self.addCleanup(setattr, panes, "_parent_pid", self._real_parent)
+
+    def _tree(self, edges):
+        panes._parent_pid = lambda pid: edges.get(pid, 0)
+
+    def test_index_keys_every_live_pane(self):
+        index = self.ws.index()
+        self.assertEqual(sorted(index), sorted(p.id for p in self.ws.panes()))
+        self.assertIs(index[49], self.ws.find_pane(49))
+
+    def test_tab_index_keys_every_live_tab(self):
+        index = self.ws.tab_index()
+        self.assertEqual(sorted(index), sorted(t.id for t in self.ws.tabs()))
+        self.assertIs(index[2], self.ws.find_tab(2))
+
+    def test_pane_for_pid_finds_the_pane_that_owns_a_descendant(self):
+        # 999 -> 998 -> 57891, and 57891 is pane 49's launched process.
+        self._tree({999: 998, 998: 57891})
+        self.assertEqual(self.ws.pane_for_pid(999).id, 49)
+
+    def test_pane_for_pid_accepts_the_pane_process_itself(self):
+        self._tree({})
+        self.assertEqual(self.ws.pane_for_pid(57891).id, 49)
+
+    def test_pane_for_pid_is_none_outside_every_pane(self):
+        # a chain that reaches init without passing through any pane
+        self._tree({4242: 4241, 4241: 1})
+        self.assertIsNone(self.ws.pane_for_pid(4242))
+
+    def test_pane_for_pid_is_bounded_when_ancestry_cycles(self):
+        # a pid whose parent chain loops must terminate, not hang
+        self._tree({500: 501, 501: 500})
+        self.assertIsNone(self.ws.pane_for_pid(500, max_hops=8))
+
+    def test_pane_for_pid_stops_at_max_hops(self):
+        # a chain longer than the bound must not resolve, proving the bound
+        # is enforced rather than merely present
+        self._tree({10: 11, 11: 12, 12: 57891})
+        self.assertIsNone(self.ws.pane_for_pid(10, max_hops=2))
+        self.assertEqual(self.ws.pane_for_pid(10, max_hops=3).id, 49)
+
+    def test_locate_keeps_unresolved_pids_as_none(self):
+        self._tree({999: 57891})
+        found = self.ws.locate([999, 4242])
+        self.assertEqual(sorted(found), [999, 4242])
+        self.assertEqual(found[999].id, 49)
+        self.assertIsNone(found[4242])
+
+
 if __name__ == "__main__":
     unittest.main()

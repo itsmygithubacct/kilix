@@ -24,7 +24,7 @@ import json
 import os
 import subprocess
 from dataclasses import dataclass, field
-from typing import Any, Iterator, Mapping, Sequence
+from typing import Any, Iterable, Iterator, Mapping, Sequence
 
 
 KITTEN = os.environ.get("KILIX_KITTEN", "kitten")
@@ -231,6 +231,54 @@ class Workspace:
                 return tab.panes[0] if tab.panes else None
         return None
 
+    def index(self) -> dict[int, Pane]:
+        """Every live pane keyed by pane id.
+
+        The verbs address panes as ``pane:<id>``; callers that need to go the
+        other way were rebuilding this dict by hand, so it lives here now.
+        """
+        return {pane.id: pane for pane in self.panes()}
+
+    def tab_index(self) -> dict[int, Tab]:
+        """Every live tab keyed by tab id."""
+        return {tab.id: tab for tab in self.tabs()}
+
+    def pane_for_pid(self, pid: int, *, max_hops: int = 64) -> Pane | None:
+        """The pane a process is running in, or ``None``.
+
+        ``Pane.pid`` is the process the engine launched in the pane, so
+        anything started inside it -- a shell job, an agent, a nested session
+        -- is a descendant of it. Walk ``/proc`` upward until a pane claims
+        the ancestor. ``max_hops`` bounds the walk so a pid cycle or a re-used
+        pid cannot hang the caller.
+
+        Answers only for processes on this machine; a pid from elsewhere
+        resolves to ``None`` rather than to the wrong pane.
+        """
+        owners = {pane.pid: pane for pane in self.panes() if pane.pid}
+        current = int(pid)
+        # examine the pid itself, then up to max_hops ancestors -- checking
+        # after the final hop rather than before it, or a pane exactly
+        # max_hops up is stepped onto and then thrown away.
+        for _ in range(max_hops + 1):
+            if current <= 1:
+                break
+            owner = owners.get(current)
+            if owner is not None:
+                return owner
+            current = _parent_pid(current)
+        return None
+
+    def locate(self, pids: Iterable[int], *,
+               max_hops: int = 64) -> dict[int, Pane | None]:
+        """:meth:`pane_for_pid` for many pids at once.
+
+        Unresolved pids are kept with a ``None`` value rather than dropped, so
+        the caller can tell "not in any pane" from "never asked".
+        """
+        return {int(pid): self.pane_for_pid(pid, max_hops=max_hops)
+                for pid in pids}
+
     def tree(self) -> str:
         """One ASCII tree, so the CLI, the TUI and agents render identically."""
         me = self.me()
@@ -264,6 +312,25 @@ class Workspace:
 
 
 # --- building the model ----------------------------------------------------
+
+def _parent_pid(pid: int) -> int:
+    """The parent of ``pid``, or ``0`` when it cannot be read.
+
+    Field 4 of ``/proc/<pid>/stat`` is the ppid, but field 2 is the comm and
+    may itself contain spaces and parentheses, so split on the LAST ``") "``
+    rather than on whitespace -- splitting on the first mis-parses a process
+    whose name contains one.
+    """
+    try:
+        with open(f"/proc/{pid}/stat", encoding="utf-8", errors="replace") as handle:
+            stat = handle.read()
+    except (OSError, ValueError):
+        return 0
+    try:
+        return int(stat.rsplit(") ", 1)[1].split()[1])
+    except (IndexError, ValueError):
+        return 0
+
 
 def _text(value: Any) -> str:
     if value is None:
