@@ -18,9 +18,15 @@ from _env_support import STACK_PREFIXES, sandbox_env  # noqa: E402
 TESTS_DIR = pathlib.Path(__file__).resolve().parent
 
 # Modules still building a child environment from a raw copy of os.environ.
+#
+# Not every remaining one is debt. test_laptop_verb and test_sdk_boundary set
+# their sandbox INTO os.environ deliberately, with cleanup, and then hand it
+# down -- for those, os.environ IS the fixture and stripping it takes the test's
+# own configuration away. Converting them was tried and reverted; the suite
+# caught it.
 # This number may go DOWN. It must never go up: every one of them is a test
 # that can be decided by whoever happens to be running it.
-UNSANITISED_MODULE_BUDGET = 6
+UNSANITISED_MODULE_BUDGET = 4
 
 
 def _without_exempt(text: str, exempt: str) -> str:

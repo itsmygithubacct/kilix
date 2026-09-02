@@ -1,11 +1,19 @@
 import json
 import os
+import pathlib
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
+
+# The suite runs both as `discover -s tests` (bare module names) and as
+# `-m unittest tests.<module>` (package), so name this directory explicitly.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from _env_support import sandbox_env  # noqa: E402
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -35,8 +43,8 @@ class KilixLauncherTests(unittest.TestCase):
         )
 
         with tempfile.TemporaryDirectory() as tmp:
-            environment = dict(os.environ)
-            environment["KILIX_TELEMETRY_RUNTIME"] = str(Path(tmp) / "runtime")
+            environment = sandbox_env(
+                KILIX_TELEMETRY_RUNTIME=str(Path(tmp) / "runtime"))
             result = subprocess.run(
                 [str(helper), "snapshot", "--direct", "--no-processes"],
                 cwd=ROOT,
@@ -52,7 +60,7 @@ class KilixLauncherTests(unittest.TestCase):
         helper = ROOT / "scripts" / "kilix-telemetry.sh"
         with tempfile.TemporaryDirectory() as tmp:
             runtime = Path(tmp) / "runtime"
-            environment = dict(os.environ, KILIX_TELEMETRY_RUNTIME=str(runtime))
+            environment = sandbox_env(KILIX_TELEMETRY_RUNTIME=str(runtime))
             subprocess.run(
                 [str(helper), "serve", "--once", "--quiet"],
                 cwd=ROOT,
