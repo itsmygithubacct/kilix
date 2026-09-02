@@ -300,6 +300,31 @@ class VoiceCliTests(unittest.TestCase):
         self.assertIn("auto_null", warned[0])
         self.assertTrue(any("inaudible" in line for line in lines))
 
+    def _configure_devices(self, **keys):
+        path = Path(self.environment["GPU_TERMINAL_SETTINGS_FILE"])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("".join(f"{k}={v}\n" for k, v in keys.items()))
+
+    def test_explicitly_configured_devices_are_not_blamed_for_a_null_default(self):
+        # The operator pointed both channels at real devices; the server's
+        # default being null is then a note, not a fault in either channel.
+        self.hermetic_path()
+        self._stub_pactl("auto_null")
+        self._configure_devices(KILIX_VOICE_DEVICE_OUT="alsa_output.pci.analog-stereo",
+                                KILIX_VOICE_DEVICE_IN="alsa_input.pci.analog-stereo")
+        result = self.run_kilix("voice", "doctor")
+        self.assertNotIn("audio device: NONE", result.stdout)
+        self.assertIn("explicitly configured devices", result.stdout)
+
+    def test_only_the_channel_on_the_default_is_named(self):
+        self.hermetic_path()
+        self._stub_pactl("auto_null")
+        self._configure_devices(KILIX_VOICE_DEVICE_OUT="alsa_output.pci.analog-stereo")
+        result = self.run_kilix("voice", "doctor")
+        self.assertIn("audio device: NONE", result.stdout)
+        self.assertIn("dictate will capture silence", result.stdout)
+        self.assertNotIn("speak will exit 0", result.stdout)
+
     def test_the_control_a_real_sink_draws_no_warning(self):
         self.hermetic_path()
         self._stub_pactl("alsa_output.pci-0000_00_1b.0.analog-stereo")

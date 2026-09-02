@@ -1402,10 +1402,25 @@ _kilix_voice_doctor() {
     "input device: $_KILIX_VOICE_DEVICE_IN${default_source:+ ($default_source)}" \
     "output device: $_KILIX_VOICE_DEVICE_OUT${default_sink:+ ($default_sink)}"
   if [ "$audio_device" = none ]; then
-    printf '%s\n' \
-      "audio device: NONE (the server's default sink is ${default_sink:-unset}, a null device)" \
-      "  speak will exit 0 and be inaudible; dictate will capture silence." \
-      "  Give the machine an audio device (a VM needs one in its launch command)."
+    # Only the channels routed through the server's default are affected. An
+    # explicitly configured sink or source is used as named, whatever the
+    # default is, so say which of speak and dictate is actually silent rather
+    # than condemning a machine whose operator already pointed both elsewhere.
+    affected=""
+    [ "$_KILIX_VOICE_DEVICE_OUT" = default ] && affected="speak will exit 0 and be inaudible"
+    if [ "$_KILIX_VOICE_DEVICE_IN" = default ]; then
+      affected="${affected:+$affected; }dictate will capture silence"
+    fi
+    if [ -n "$affected" ]; then
+      printf '%s\n' \
+        "audio device: NONE (the server's default sink is ${default_sink:-unset}, a null device)" \
+        "  $affected." \
+        "  Give the machine an audio device (a VM needs one in its launch command)."
+    else
+      printf '%s\n' \
+        "audio device: the server's default sink is ${default_sink:-unset}, a null device," \
+        "  but both channels use explicitly configured devices, which are used as named."
+    fi
   fi
   if [ -f "$library" ]; then
     printf 'speech library: %s\n' "$library"
