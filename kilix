@@ -1378,6 +1378,15 @@ _kilix_voice_doctor() {
     | awk -F': ' '$1 == "Default Source" { print $2 }')"
   default_sink="$(printf '%s\n' "$info" \
     | awk -F': ' '$1 == "Default Sink" { print $2 }')"
+  # A machine with no audio device still gets a server: PulseAudio falls back
+  # to auto_null and every speak "succeeds" into it, silently. Doctor exists to
+  # turn that into a sentence. The sink name is the probe rather than
+  # /proc/asound, which is absent on a VM without a sound module at all.
+  audio_device="present"
+  case "$default_sink" in
+    auto_null|auto_null.*|"")
+      [ -n "$server" ] && audio_device="none" ;;
+  esac
   printf '%s\n' \
     "widgets: speak $(_kilix_voice_onoff "$_KILIX_VOICE_SPEAK"), dictate $(_kilix_voice_onoff "$_KILIX_VOICE_DICTATE")" \
     "read-aloud: $_KILIX_VOICE_TTS_ENGINE, voice $_KILIX_VOICE_TTS_VOICE, $_KILIX_VOICE_TTS_RATE wpm, extent $_KILIX_VOICE_TTS_EXTENT, cap $cap" \
@@ -1392,6 +1401,12 @@ _kilix_voice_doctor() {
     "audio server: ${server:-unreachable}" \
     "input device: $_KILIX_VOICE_DEVICE_IN${default_source:+ ($default_source)}" \
     "output device: $_KILIX_VOICE_DEVICE_OUT${default_sink:+ ($default_sink)}"
+  if [ "$audio_device" = none ]; then
+    printf '%s\n' \
+      "audio device: NONE (the server's default sink is ${default_sink:-unset}, a null device)" \
+      "  speak will exit 0 and be inaudible; dictate will capture silence." \
+      "  Give the machine an audio device (a VM needs one in its launch command)."
+  fi
   if [ -f "$library" ]; then
     printf 'speech library: %s\n' "$library"
   else

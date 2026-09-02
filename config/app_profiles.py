@@ -86,7 +86,18 @@ def cleanup_app_profile(profile: str | None) -> None:
 
 
 def cleanup_stale_app_profiles(parent: str, now: float | None = None) -> None:
-    """Collect old abandoned profiles without touching live container PIDs."""
+    """Collect abandoned profiles without touching live container PIDs.
+
+    A profile is reaped as soon as the process that owns it is gone -- the
+    directory name carries the owner's PID and start time, so liveness needs
+    no bookkeeping. Age is only a backstop for names that carry no start time,
+    where a reused PID cannot be told from the original owner.
+
+    This used to require BOTH conditions: older than a week AND owner gone. A
+    run that dies before its own cleanup (a killed pane, a reboot) then left
+    ~120 MB behind for seven days, and on a machine that opens a browser daily
+    the total only ever grew: ten dead profiles, 1.2 GB, on a 0.2.1 install.
+    """
     now = time.time() if now is None else now
     try:
         entries = list(os.scandir(parent))
@@ -101,13 +112,17 @@ def cleanup_stale_app_profiles(parent: str, now: float | None = None) -> None:
         except OSError:
             continue
         if (not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode)
-                or info.st_uid != os.geteuid()
-                or now - info.st_mtime < APP_PROFILE_STALE_SECONDS
-                or _pid_is_running(
-                    int(match.group("pid")),
-                    int(match.group("start"))
-                    if match.group("start") is not None else None)):
+                or info.st_uid != os.geteuid()):
             continue
+        start = (int(match.group("start"))
+                 if match.group("start") is not None else None)
+        if _pid_is_running(int(match.group("pid")), start):
+            # Alive -- or a reused PID we cannot distinguish from the owner
+            # because the name has no start time. Only in that second case
+            # does age decide, so an unverifiable claimant does not keep a
+            # profile forever.
+            if start is not None or now - info.st_mtime < APP_PROFILE_STALE_SECONDS:
+                continue
         cleanup_app_profile(entry.path)
 
 
