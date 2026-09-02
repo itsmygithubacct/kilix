@@ -1,8 +1,17 @@
 import os
+import pathlib
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+# The suite runs both as `discover -s tests` (bare module names) and as
+# `-m unittest tests.<module>` (package), so name this directory explicitly
+# rather than relying on either style's import roots.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from _env_support import sandbox_env  # noqa: E402
+
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -38,11 +47,7 @@ class KilixLandProviderTests(unittest.TestCase):
         self.ref = run(
             ["git", "rev-parse", "HEAD"], cwd=self.remote
         ).stdout.strip()
-        self.env = os.environ.copy()
-        for key in tuple(self.env):
-            if key.startswith("KILIX_LAND_DESKTOP_"):
-                self.env.pop(key)
-        self.env.update({
+        self.env = sandbox_env(**{
             "HOME": str(self.home),
             "GPU_TERMINAL_SOURCE_HOME": str(self.source_home),
             "KILIX95_DIR": str(
