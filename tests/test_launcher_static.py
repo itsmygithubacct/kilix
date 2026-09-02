@@ -324,10 +324,19 @@ class KilixLauncherTests(unittest.TestCase):
                       module)
         self.assertIn('PACKAGES: tuple[str, ...] = ("fprintd",)', module)
         self.assertIn('PAM_PACKAGES: tuple[str, ...] = ("libpam-fprintd",)', module)
-        for action in ("ensure", "status", "doctor", "install", "list",
-                       "enroll", "verify", "delete"):
+        for action in ("ensure", "status", "doctor", "install", "list", "enroll", "verify", "delete",
+                       "init", "passwd", "lock", "unlock", "password", "forget", "agent"):
             self.assertIn(f'subparsers.add_parser("{action}"', module)
         self.assertNotIn("os.open(", module)   # the reader's USB node is never opened
+        # The custody agent is a separate root process: the key never comes from
+        # anywhere but a passphrase or a verify-match, and it runs hardened.
+        agent = (ROOT / "config" / "fingerlock_agent.py").read_text()
+        self.assertIn('if session.result != "verify-match":', agent)
+        self.assertIn("SO_PEERCRED", agent)
+        for hardening in ("NoNewPrivileges=yes", "ProtectHome=yes", "LimitCORE=0", "SocketMode=0666"):
+            self.assertIn(hardening, agent)
+        self.assertIn('LOCKER_PACKAGES: tuple[str, ...] = ("python3-nacl",)',
+                      (ROOT / "config" / "fingerlock_locker.py").read_text())
 
     def test_ls_lists_live_tabs_via_kitty_remote_control(self):
         launcher = (ROOT / "kilix").read_text()

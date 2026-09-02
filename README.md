@@ -761,6 +761,7 @@ kilix stt --models --json         # versioned machine-readable catalog contract
 kilix stt --install lgraph-en-us --default lgraph-en-us
 kilix voice doctor                # dependency and audio-device diagnostics
 kilix fingerlock                  # fingerprint reader: install fprintd on first use, enroll, verify
+kilix fingerlock lock FILE...     # seal files; unlock with a touch, or the passphrase
 kilix tts                         # read-aloud settings and test-phrase TUI
 kilix stt                         # dictation settings and microphone-level TUI
 kilix speak "hello"               # read explicit text aloud
@@ -877,6 +878,49 @@ The first verified reader class is the Synaptics Prometheus touch sensor
 (`06cb:00bd`) in ThinkPad P and T models, driven by libfprint's `synaptics`
 driver. Use `--redact` before sharing output: it removes the USB serial, port,
 and device node.
+
+### Locking files and passwords
+
+```sh
+kilix fingerlock init                     # a passphrase-rooted locker, once
+kilix fingerlock lock holiday.jpg notes/  # -> holiday.jpg.flk; the original is removed
+kilix fingerlock unlock holiday.jpg.flk   # touch the sensor, or type the passphrase
+kilix fingerlock password set wifi        # store a secret by name
+kilix fingerlock password get wifi        # print it after a touch
+kilix fingerlock install --agent          # make unlocking a touch (root, once)
+kilix fingerlock forget                   # lock everything until the passphrase again
+```
+
+A fingerprint reader answers "match" or "no match"; it never yields a key. So
+the passphrase is the root of trust, and the fingerprint is how you avoid
+typing it. `init` makes a locker: an X25519 keypair whose seed is wrapped
+under an Argon2id key derived from your passphrase, stored in
+`~/.local/gpu_terminal/fingerlock/locker.json` with the public key in the
+clear. `lock` seals a file to that public key, so locking never asks for
+anything: a random per-file key is sealed into the container header and the
+data follows in authenticated XChaCha20-Poly1305 chunks, each bound to the
+header and its position, so a container that is edited, truncated or
+reordered fails to open. `passwd` changes the passphrase by rewrapping the
+seed; every container stays openable.
+
+`unlock` needs the private key. Without the agent it asks for the passphrase
+every time and still works everywhere. With the agent installed, the first
+unlock after boot asks for the passphrase and hands the key to
+`kilix-fingerlock-agent`, a small root service (socket-activated, hardened,
+no core dumps) that keeps it in memory for up to `--ttl` seconds (default
+twelve hours). Every later unlock asks the agent, which verifies one of your
+enrolled fingers through fprintd and returns the key only on a match. The
+agent identifies callers by their uid on the socket and refuses any that are
+not in an active seat session, so an SSH login or a cron job cannot pull the
+key even as you. `forget` drops it early; so does a reboot.
+
+What this protects: your locked files against another process of yours that
+never touched the sensor, against a stolen disk, and against remote sessions.
+What it does not protect against: root, the kernel, or anything that can read
+the agent's memory, the same boundary fprintd itself has. The primitives are
+libsodium's through `python3-nacl`, installed on first use, and match the ones
+the Kilix credential vault chose, so the locker can move its keys into that
+vault as a presence-gated record once the vault is qualified.
 
 ## Clickable buttons (the headline feature)
 

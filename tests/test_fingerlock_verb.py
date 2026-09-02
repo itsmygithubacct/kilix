@@ -379,8 +379,9 @@ class DoctorTests(unittest.TestCase):
 
     def doctor(self, *, client=None, run=None, **kwargs):
         return fl.run_doctor(root=self.root, client=client, environ={"XDG_SESSION_ID": "2"},
-                             run=run or fake_run(installed=("fprintd",)), proc=self.root / "proc",
-                             access=deny, **kwargs)
+                             run=run or fake_run(installed=("fprintd", "python3-nacl")),
+                             proc=self.root / "proc", access=deny,
+                             locker_home=self.root / "locker", **kwargs)
 
     def statuses(self, report):
         return {c.id: c.status for c in report.checks}
@@ -393,9 +394,12 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(status["packages"], "fail")
         self.assertEqual(status["libfprint"], "fail")
         self.assertEqual(status["fprintd-reachable"], "skip")
-        self.assertEqual(report.missing_packages, ["fprintd"])
+        self.assertEqual(report.missing_packages, ["fprintd", "python3-nacl"])
         self.assertFalse(report.usable)
         self.assertEqual({c.id: c.hint for c in report.checks}["packages"], "kilix fingerlock install")
+        status_by_id = {c.id: c.status for c in report.checks}
+        self.assertEqual(status_by_id["locker"], "info")
+        self.assertEqual(status_by_id["agent"], "info")
 
     def test_full_stack_is_usable(self):
         build_tree(self.root, hwdb=True, fprintd=True)
@@ -415,6 +419,9 @@ class DoctorTests(unittest.TestCase):
         self.assertTrue(self.doctor(client=client).usable)
         report = self.doctor(client=client, with_pam=True)
         self.assertEqual(report.missing_packages, ["libpam-fprintd"])
+        report = self.doctor(client=client, run=fake_run(installed=("fprintd",)))
+        self.assertEqual(report.missing_packages, ["python3-nacl"])
+        self.assertFalse(report.usable)
         self.assertFalse(report.usable)
 
     def test_no_reader(self):

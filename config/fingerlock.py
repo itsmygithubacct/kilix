@@ -23,12 +23,23 @@ caller has none. Plebian OS points apt at a dated snapshot, so the versions
 this installs are the release's, not today's. No repository is added and no
 recommends are pulled, so installing fprintd never changes how login works.
 
+Locking. `init` makes a locker: an X25519 keypair whose seed is wrapped under
+an Argon2id key from a passphrase (config/fingerlock_locker.py). `lock` seals
+files into `.flk` containers with the public key, so it never asks for
+anything; `unlock` and `password get` need the private key, which comes from
+the passphrase or, once deposited for this boot, from the root agent
+(config/fingerlock_agent.py) after a fingerprint match. The agent is what
+makes the fingerprint mean something: fprintd only ever says match or no
+match, so a privileged process must hold the key and release it on a match.
+Without the agent everything still works with the passphrase.
+
 Exit statuses are stable: 0 success, 1 not usable, 2 usage, 3 no reader or
-no fprintd device, 4 a dependency is missing or was refused, 5 polkit or
-fprintd refused the caller, 6 fprintd failed, 7 an enrollment ended without
-completing, 8 verification found no match, 9 a timeout. `--json` emits one
-`kilix.fingerlock/v1` object on stdout; prompts and scan progress go to
-stderr in both modes.
+no fprintd device, 4 a dependency is missing or was refused, 5 polkit, fprintd
+or the agent refused the caller, 6 fprintd or the agent failed, 7 an
+enrollment ended without completing, 8 verification found no match, 9 a
+timeout, 10 a locker or container problem, 11 a wrong passphrase. `--json`
+emits one `kilix.fingerlock/v1` object on stdout; prompts and scan progress
+go to stderr in both modes.
 """
 
 from __future__ import annotations
@@ -50,70 +61,39 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Protocol, Sequence
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from fingerlock_core import (  # noqa: E402
+    ANY_FINGER, AUTH_TIMEOUT_SECONDS, BINDINGS_HINT, DEVICE_IFACE, ENROLL_COMPLETED,
+    ERROR_PREFIX, MANAGER_PATH, NO_REPLY, PROG, VERIFY_MATCH, VERIFY_NO_MATCH,
+    AccessDenied, DependencyUnavailable, DeviceInfo, DeviceNotFound, FingerlockError,
+    FprintdClient, NoMatch, OperationFailed, OperationTimeout, ServiceFailure, Session,
+    StatusEvent, TtyAgent, UsageError, _read, bindings_available, describe, polkit_agents,
+    translate_error,
+)
+
+import fingerlock_agent as agentmod  # noqa: E402
+import fingerlock_locker as lockermod  # noqa: E402
+from fingerlock_locker import Locker, LockerError, WrongPassphrase  # noqa: E402
+
 SCHEMA = "kilix.fingerlock/v1"
 REDACTED = "<redacted>"
-PROG = "kilix fingerlock"
 
 # --- packages ---------------------------------------------------------------
 
 PACKAGES: tuple[str, ...] = ("fprintd",)
+LOCKER_PACKAGES: tuple[str, ...] = lockermod.LOCKER_PACKAGES   # ("python3-nacl",)
 PAM_PACKAGES: tuple[str, ...] = ("libpam-fprintd",)
+AGENT_FILES: tuple[str, ...] = ("fingerlock_core.py", "fingerlock_agent.py")
 INSTALL_ARGV: tuple[str, ...] = ("apt-get", "install", "-y", "--no-install-recommends")
 INSTALL_HINT = f"{PROG} install"
-BINDINGS_HINT = "apt: python3-dbus python3-gi"
 
 FINGERS: tuple[str, ...] = (
     "left-thumb", "left-index-finger", "left-middle-finger", "left-ring-finger",
     "left-little-finger", "right-thumb", "right-index-finger",
     "right-middle-finger", "right-ring-finger", "right-little-finger",
 )
-ANY_FINGER = "any"
 DEFAULT_ENROLL_FINGER = "right-index-finger"
-
-
-# --- errors -------------------------------------------------------------------
-
-class FingerlockError(Exception):
-    code = "EUNKNOWN"
-    exit_status = 1
-    dbus_name = ""
-    session: Any = None
-
-    def __init__(self, message: str = "") -> None:
-        super().__init__(message)
-        self.message = message or self.code
-
-
-class UsageError(FingerlockError):
-    code, exit_status = "EUSAGE", 2
-
-
-class DeviceNotFound(FingerlockError):
-    code, exit_status = "ENODEVICE", 3
-
-
-class DependencyUnavailable(FingerlockError):
-    code, exit_status = "EDEPENDENCY", 4
-
-
-class AccessDenied(FingerlockError):
-    code, exit_status = "EACCESS", 5
-
-
-class ServiceFailure(FingerlockError):
-    code, exit_status = "ESERVICE", 6
-
-
-class OperationFailed(FingerlockError):
-    code, exit_status = "EOPERATION", 7
-
-
-class NoMatch(FingerlockError):
-    code, exit_status = "ENOMATCH", 8
-
-
-class OperationTimeout(FingerlockError):
-    code, exit_status = "ETIMEOUT", 9
 
 
 # --- USB discovery (read-only) ------------------------------------------------
@@ -233,13 +213,6 @@ def _first_glob(root: str | os.PathLike[str], patterns: Iterable[str]) -> Path |
         if matches:
             return Path(matches[0])
     return None
-
-
-def _read(path: Path) -> str | None:
-    try:
-        return path.read_text(encoding="utf-8", errors="replace").strip()
-    except OSError:
-        return None
 
 
 def _speed(text: str | None) -> float | None:
@@ -434,425 +407,6 @@ def install_packages(packages: Sequence[str], *, yes: bool, want_json: bool,
         raise DependencyUnavailable(f"package installation failed (exit {proc.returncode})")
 
 
-# --- fprintd over D-Bus ---------------------------------------------------------
-
-BUS_NAME = "net.reactivated.Fprint"
-MANAGER_PATH = "/net/reactivated/Fprint/Manager"
-MANAGER_IFACE = "net.reactivated.Fprint.Manager"
-DEVICE_IFACE = "net.reactivated.Fprint.Device"
-PROPERTIES_IFACE = "org.freedesktop.DBus.Properties"
-ERROR_PREFIX = "net.reactivated.Fprint.Error."
-NO_REPLY = "org.freedesktop.DBus.Error.NoReply"
-SERVICE_ABSENT = ("org.freedesktop.DBus.Error.ServiceUnknown",
-                  "org.freedesktop.DBus.Error.NameHasNoOwner")
-ENROLL_COMPLETED = "enroll-completed"
-VERIFY_MATCH = "verify-match"
-VERIFY_NO_MATCH = "verify-no-match"
-ENROLL_TERMINAL = frozenset({"enroll-completed", "enroll-failed", "enroll-data-full",
-                             "enroll-duplicate", "enroll-disconnected", "enroll-unknown-error"})
-VERIFY_TERMINAL = frozenset({"verify-match", "verify-no-match", "verify-disconnected",
-                             "verify-unknown-error"})
-STATUS_TEXT = {
-    "enroll-stage-passed": "stage passed; lift the finger and touch again",
-    "enroll-retry-scan": "scan not usable; touch again",
-    "enroll-swipe-too-short": "swipe too short; try again",
-    "enroll-finger-not-centered": "finger not centered; try again",
-    "enroll-remove-and-retry": "remove the finger, then touch again",
-    "enroll-completed": "enrollment completed",
-    "enroll-failed": "enrollment failed",
-    "enroll-data-full": "the reader's print storage is full",
-    "enroll-duplicate": "this finger is already enrolled",
-    "enroll-disconnected": "the reader disconnected",
-    "enroll-unknown-error": "unknown reader error",
-    "verify-match": "match",
-    "verify-no-match": "no match",
-    "verify-retry-scan": "scan not usable; touch again",
-    "verify-swipe-too-short": "swipe too short; try again",
-    "verify-finger-not-centered": "finger not centered; try again",
-    "verify-remove-and-retry": "remove the finger, then touch again",
-    "verify-disconnected": "the reader disconnected",
-    "verify-unknown-error": "unknown reader error",
-}
-# Calls fprintd may hold while a polkit agent collects a password: Claim and
-# ListEnrolledFingers when acting for another user, EnrollStart and the delete
-# calls always. They are issued asynchronously with this timeout while the
-# GLib loop runs, which keeps Ctrl-C working. VerifyStart never prompts.
-AUTH_TIMEOUT_SECONDS = 600.0
-
-
-def describe(result: str) -> str:
-    return STATUS_TEXT.get(result, result)
-
-
-def bindings_available() -> tuple[bool, str]:
-    try:
-        import dbus  # noqa: F401
-        import dbus.mainloop.glib  # noqa: F401
-        import gi
-        gi.require_version("GLib", "2.0")
-        from gi.repository import GLib  # noqa: F401
-    except Exception as exc:  # ImportError, ValueError from require_version
-        return False, f"{exc.__class__.__name__}: {exc}"
-    return True, "python3-dbus and python3-gi are importable"
-
-
-class BusLike(Protocol):
-    def interface(self, path: str, name: str) -> Any: ...
-
-    def run_until(self, predicate: Callable[[], bool], timeout: float) -> bool: ...
-
-
-class SystemBus:
-    """dbus-python system bus with a GLib loop for signals and replies."""
-
-    def __init__(self) -> None:
-        ok, reason = bindings_available()
-        if not ok:
-            raise DependencyUnavailable(f"D-Bus bindings unavailable ({reason}); {BINDINGS_HINT}")
-        import dbus
-        from dbus.mainloop.glib import DBusGMainLoop
-        from gi.repository import GLib
-        DBusGMainLoop(set_as_default=True)
-        self._dbus, self._glib = dbus, GLib
-        self._bus = dbus.SystemBus()
-
-    def interface(self, path: str, name: str) -> Any:
-        return self._dbus.Interface(self._bus.get_object(BUS_NAME, path), name)
-
-    def run_until(self, predicate: Callable[[], bool], timeout: float) -> bool:
-        if predicate():
-            return True
-        loop = self._glib.MainLoop()
-        state = {"timed_out": False}
-
-        def on_timeout() -> bool:
-            state["timed_out"] = True
-            loop.quit()
-            return False
-
-        def poll() -> bool:
-            if predicate():
-                loop.quit()
-                return False
-            return True
-
-        self._glib.timeout_add(max(1, int(timeout * 1000)), on_timeout)
-        self._glib.timeout_add(100, poll)
-        loop.run()
-        return not state["timed_out"] and predicate()
-
-
-@dataclass(frozen=True)
-class DeviceInfo:
-    path: str
-    name: str
-    scan_type: str
-    num_enroll_stages: int
-    finger_present: bool | None
-    finger_needed: bool | None
-
-    def as_dict(self) -> dict[str, Any]:
-        return {"path": self.path, "name": self.name, "scan_type": self.scan_type,
-                "num_enroll_stages": self.num_enroll_stages,
-                "finger_present": self.finger_present, "finger_needed": self.finger_needed}
-
-
-@dataclass(frozen=True)
-class StatusEvent:
-    result: str
-    done: bool
-    elapsed: float
-
-    def as_dict(self) -> dict[str, Any]:
-        return {"result": self.result, "done": self.done, "elapsed": self.elapsed,
-                "text": describe(self.result)}
-
-
-@dataclass
-class Session:
-    """One enrollment or verification, fed by fprintd status signals."""
-
-    kind: str
-    finger: str
-    device: str
-    events: list[StatusEvent] = field(default_factory=list)
-    result: str | None = None
-    done: bool = False
-    timed_out: bool = False
-    selected_finger: str | None = None
-    started: float = field(default_factory=time.monotonic)
-
-    @property
-    def succeeded(self) -> bool:
-        return self.result == (ENROLL_COMPLETED if self.kind == "enroll" else VERIFY_MATCH)
-
-    @property
-    def stages_passed(self) -> int:
-        return sum(1 for event in self.events if event.result == "enroll-stage-passed")
-
-    def handle(self, result: str, done: bool) -> bool:
-        result, done = str(result), bool(done)
-        self.events.append(StatusEvent(result, done, round(time.monotonic() - self.started, 3)))
-        terminal = ENROLL_TERMINAL if self.kind == "enroll" else VERIFY_TERMINAL
-        if done or result in terminal:
-            self.done, self.result = True, result
-        return self.done
-
-    def as_dict(self) -> dict[str, Any]:
-        return {"kind": self.kind, "finger": self.finger, "device": self.device,
-                "result": self.result, "result_text": describe(self.result) if self.result else None,
-                "succeeded": self.succeeded, "done": self.done, "timed_out": self.timed_out,
-                "stages_passed": self.stages_passed, "selected_finger": self.selected_finger,
-                "events": [event.as_dict() for event in self.events]}
-
-
-def translate_error(exc: BaseException) -> FingerlockError:
-    """Map a D-Bus exception onto a typed failure carrying the D-Bus name."""
-    name_getter = getattr(exc, "get_dbus_name", None)
-    name = (name_getter() if callable(name_getter) else None) or ""
-    message_getter = getattr(exc, "get_dbus_message", None)
-    message = (message_getter() if callable(message_getter) else str(exc)) or ""
-    message = message.strip()
-    if name in SERVICE_ABSENT:
-        error: FingerlockError = DependencyUnavailable(
-            "fprintd is not installed or cannot be activated on the system bus")
-    elif name == "org.freedesktop.DBus.Error.AccessDenied":
-        error = AccessDenied(message or name)
-    elif name.startswith(ERROR_PREFIX):
-        short = name[len(ERROR_PREFIX):]
-        cls = {"PermissionDenied": AccessDenied, "NoSuchDevice": DeviceNotFound,
-               "InvalidFingername": UsageError}.get(short, ServiceFailure)
-        error = cls(f"{short}: {message}" if message else short)
-    elif name:
-        error = ServiceFailure(f"{name}: {message}" if message else name)
-    else:
-        error = ServiceFailure(message or exc.__class__.__name__)
-    error.dbus_name = name
-    return error
-
-
-StatusCallback = Callable[[StatusEvent, Session], None]
-StartCallback = Callable[[Session], None]
-
-
-class FprintdClient:
-    def __init__(self, bus: BusLike | None = None, *, auth_timeout: float = AUTH_TIMEOUT_SECONDS) -> None:
-        self._bus = bus
-        self.auth_timeout = auth_timeout
-
-    @property
-    def bus(self) -> BusLike:
-        if self._bus is None:
-            self._bus = SystemBus()
-        return self._bus
-
-    @staticmethod
-    def _call(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-        try:
-            return fn(*args, **kwargs)
-        except FingerlockError:
-            raise
-        except Exception as exc:
-            if hasattr(exc, "get_dbus_name"):
-                raise translate_error(exc) from exc
-            raise
-
-    def _call_gated(self, fn: Callable[..., Any], *args: Any) -> Any:
-        outcome: dict[str, Any] = {}
-        self._call(fn, *args,
-                   reply_handler=lambda *values: outcome.__setitem__("values", values),
-                   error_handler=lambda exc: outcome.__setitem__("error", exc),
-                   timeout=self.auth_timeout)
-        if not self.bus.run_until(lambda: bool(outcome), self.auth_timeout + 5.0):
-            raise OperationTimeout(f"fprintd did not answer within {self.auth_timeout:g}s")
-        if "error" in outcome:
-            error = translate_error(outcome["error"])
-            if error.dbus_name == NO_REPLY:
-                raise OperationTimeout(f"fprintd did not answer within {self.auth_timeout:g}s; "
-                                       "an authentication prompt may be unanswered") from outcome["error"]
-            raise error
-        values = outcome["values"]
-        return values[0] if len(values) == 1 else (values or None)
-
-    def _iface(self, path: str, name: str) -> Any:
-        return self._call(self.bus.interface, path, name)
-
-    @staticmethod
-    def _quiet(fn: Callable[..., Any], *args: Any) -> None:
-        try:
-            fn(*args)
-        except Exception:
-            pass
-
-    def _device_info(self, path: str) -> DeviceInfo:
-        props = self._call(self._iface(path, PROPERTIES_IFACE).GetAll, DEVICE_IFACE)
-        return DeviceInfo(
-            path=str(path), name=str(props.get("name", "")),
-            scan_type=str(props.get("scan-type", "")),
-            num_enroll_stages=int(props.get("num-enroll-stages", 0)),
-            finger_present=bool(props["finger-present"]) if "finger-present" in props else None,
-            finger_needed=bool(props["finger-needed"]) if "finger-needed" in props else None,
-        )
-
-    def list_devices(self) -> list[DeviceInfo]:
-        manager = self._iface(MANAGER_PATH, MANAGER_IFACE)
-        return [self._device_info(str(path)) for path in self._call(manager.GetDevices)]
-
-    def default_device(self) -> DeviceInfo:
-        manager = self._iface(MANAGER_PATH, MANAGER_IFACE)
-        try:
-            path = self._call(manager.GetDefaultDevice)
-        except ServiceFailure as exc:
-            raise DeviceNotFound(exc.message) from exc
-        return self._device_info(str(path))
-
-    def enrolled_fingers(self, device_path: str, username: str = "") -> list[str]:
-        device = self._iface(device_path, DEVICE_IFACE)
-        try:
-            fingers = self._call_gated(device.ListEnrolledFingers, username)
-        except ServiceFailure as exc:
-            if exc.dbus_name == ERROR_PREFIX + "NoEnrolledPrints":
-                return []
-            raise
-        return [str(finger) for finger in fingers or ()]
-
-    def _run_action(self, kind: str, device_path: str, finger: str, *, username: str,
-                    timeout: float, on_start: StartCallback | None,
-                    on_status: StatusCallback | None) -> Session:
-        device = self._iface(device_path, DEVICE_IFACE)
-        session = Session(kind=kind, finger=finger, device=device_path)
-        try:
-            self._perform(device, session, username=username, timeout=timeout,
-                          on_start=on_start, on_status=on_status)
-        except FingerlockError as exc:
-            exc.session = session
-            raise
-        return session
-
-    def _perform(self, device: Any, session: Session, *, username: str, timeout: float,
-                 on_start: StartCallback | None, on_status: StatusCallback | None) -> None:
-        enrolling = session.kind == "enroll"
-        stop = device.EnrollStop if enrolling else device.VerifyStop
-
-        def on_signal(result: Any, done: Any) -> None:
-            session.handle(result, done)
-            if on_status is not None:
-                on_status(session.events[-1], session)
-
-        def on_selected(selected: Any) -> None:
-            session.selected_finger = str(selected)
-
-        self._call_gated(device.Claim, username)
-        matches: list[Any] = []
-        try:
-            matches.append(device.connect_to_signal(
-                "EnrollStatus" if enrolling else "VerifyStatus", on_signal))
-            if enrolling:
-                self._call_gated(device.EnrollStart, session.finger)
-            else:
-                matches.append(device.connect_to_signal("VerifyFingerSelected", on_selected))
-                self._call(device.VerifyStart, session.finger)
-            if on_start is not None:
-                on_start(session)
-            if not self.bus.run_until(lambda: session.done, timeout):
-                session.timed_out = True
-        finally:
-            for match in matches:
-                self._quiet(match.remove)
-            self._quiet(stop)
-            self._quiet(device.Release)
-
-    def enroll(self, device_path: str, finger: str, *, username: str = "", timeout: float = 120.0,
-               on_start: StartCallback | None = None, on_status: StatusCallback | None = None) -> Session:
-        return self._run_action("enroll", device_path, finger, username=username,
-                                timeout=timeout, on_start=on_start, on_status=on_status)
-
-    def verify(self, device_path: str, finger: str = ANY_FINGER, *, username: str = "",
-               timeout: float = 60.0, on_start: StartCallback | None = None,
-               on_status: StatusCallback | None = None) -> Session:
-        return self._run_action("verify", device_path, finger, username=username,
-                                timeout=timeout, on_start=on_start, on_status=on_status)
-
-    def delete(self, device_path: str, finger: str | None = None, *, username: str = "") -> None:
-        device = self._iface(device_path, DEVICE_IFACE)
-        self._call_gated(device.Claim, username)
-        try:
-            if finger:
-                self._call_gated(device.DeleteEnrolledFinger, finger)
-            else:
-                self._call_gated(device.DeleteEnrolledFingers2)
-        finally:
-            self._quiet(device.Release)
-
-
-# --- polkit tty agent -------------------------------------------------------------
-
-POLKIT_AGENT_PREFIXES = (
-    "polkit-gnome", "polkit-kde", "polkit-mate", "mate-polkit", "lxpolkit", "lxqt-policykit",
-    "xfce-polkit", "hyprpolkitagent", "pkttyagent", "gnome-shell", "ukui-polkit", "deepin-polkit",
-)
-
-
-def polkit_agents(proc: str | os.PathLike[str] = "/proc") -> set[str]:
-    found: set[str] = set()
-    try:
-        entries = list(Path(proc).iterdir())
-    except OSError:
-        return found
-    for entry in entries:
-        if not entry.name.isdigit():
-            continue
-        comm = _read(entry / "comm") or ""
-        if comm.startswith(POLKIT_AGENT_PREFIXES):
-            found.add(comm)
-    return found
-
-
-class TtyAgent:
-    """pkttyagent for one command; waits for its registration before use."""
-
-    REGISTER_TIMEOUT = 5.0
-
-    def __init__(self, enabled: bool, *, spawn: Callable[..., Any] = subprocess.Popen) -> None:
-        self.enabled = enabled
-        self.spawn = spawn
-        self.process: Any = None
-        self.registered = False
-
-    def __enter__(self) -> "TtyAgent":
-        if not self.enabled:
-            return self
-        read_end, write_end = os.pipe()
-        try:
-            self.process = self.spawn(
-                ["pkttyagent", "--process", str(os.getpid()), "--notify-fd", str(write_end)],
-                pass_fds=(write_end,))
-        except OSError as exc:
-            os.close(read_end)
-            os.close(write_end)
-            sys.stderr.write(f"{PROG}: pkttyagent unavailable ({exc})\n")
-            return self
-        os.close(write_end)
-        try:
-            ready, _, _ = select.select([read_end], [], [], self.REGISTER_TIMEOUT)
-            if ready:
-                os.read(read_end, 1)
-                self.registered = True
-            else:
-                sys.stderr.write(f"{PROG}: pkttyagent did not register in time\n")
-        finally:
-            os.close(read_end)
-        return self
-
-    def __exit__(self, *_exc: object) -> None:
-        if self.process is not None and self.process.poll() is None:
-            self.process.terminate()
-            try:
-                self.process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-
-
 # --- doctor -------------------------------------------------------------------------
 
 REENUMERATION_WARN_THRESHOLD = 10
@@ -930,7 +484,8 @@ def run_doctor(*, root: str | os.PathLike[str] = "/", client: FprintdClient | No
                proc: str | os.PathLike[str] = "/proc",
                history: Callable[..., PortHistory] = port_history,
                access: Callable[[str, int], bool] = os.access,
-               with_pam: bool = False) -> Report:
+               with_pam: bool = False, with_locker: bool = True,
+               locker_home: Path | None = None) -> Report:
     base, proc_path = Path(root), Path(proc)
     environ = os.environ if environ is None else environ
     report = Report()
@@ -946,7 +501,7 @@ def run_doctor(*, root: str | os.PathLike[str] = "/", client: FprintdClient | No
         checks.append(Check("reader", "fail", "no USB fingerprint reader found",
                             "compare lsusb; SPI and embedded readers are not covered yet"))
 
-    wanted = PACKAGES + (PAM_PACKAGES if with_pam else ())
+    wanted = PACKAGES + (LOCKER_PACKAGES if with_locker else ()) + (PAM_PACKAGES if with_pam else ())
     report.missing_packages = missing_packages(wanted, run=run)
     if report.missing_packages:
         checks.append(Check("packages", "fail",
@@ -1033,6 +588,20 @@ def run_doctor(*, root: str | os.PathLike[str] = "/", client: FprintdClient | No
     pam = _first_glob(base, PAM_MODULE_GLOBS)
     checks.append(Check("pam", "info", f"pam_fprintd present ({pam}); fingerprint login is possible") if pam else
                   Check("pam", "info", "libpam-fprintd not installed; login stays password-only (optional: install --pam)"))
+
+    locker = Locker(locker_home)
+    checks.append(Check("locker", "info", f"locker at {locker.path}") if locker.exists() else
+                  Check("locker", "info", f"no locker yet ({PROG} init creates one at {locker.path})"))
+    unit = base / "etc/systemd/system" / agentmod.SERVICE_UNIT
+    sock = base / agentmod.SOCKET_PATH.lstrip("/")
+    if not unit.is_file():
+        checks.append(Check("agent", "info", "fingerprint-gated unlock agent not installed "
+                            f"({PROG} install --agent); unlocking asks for the passphrase"))
+    elif not sock.exists():
+        checks.append(Check("agent", "warn", "agent installed but its socket is absent",
+                            f"sudo systemctl enable --now {agentmod.SOCKET_UNIT}"))
+    else:
+        checks.append(Check("agent", "ok", f"agent socket present at {agentmod.SOCKET_PATH}"))
     return report
 
 
@@ -1174,17 +743,74 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 0 if report.usable else 1
 
 
+def agent_install_argvs(source_dir: Path) -> list[list[str]]:
+    """The fixed root commands that stage the agent: files, units, enable."""
+    argvs: list[list[str]] = []
+    for name in AGENT_FILES:
+        argvs.append(["install", "-D", "-m", "0644", "-o", "root", "-g", "root",
+                      str(source_dir / name), f"{agentmod.INSTALL_DIR}/{name}"])
+    argvs.append(["install", "-D", "-m", "0644", "-o", "root", "-g", "root",
+                  str(source_dir / "units" / agentmod.SOCKET_UNIT), f"/etc/systemd/system/{agentmod.SOCKET_UNIT}"])
+    argvs.append(["install", "-D", "-m", "0644", "-o", "root", "-g", "root",
+                  str(source_dir / "units" / agentmod.SERVICE_UNIT), f"/etc/systemd/system/{agentmod.SERVICE_UNIT}"])
+    argvs.append(["systemctl", "daemon-reload"])
+    argvs.append(["systemctl", "enable", "--now", agentmod.SOCKET_UNIT])
+    return argvs
+
+
+def install_agent(*, yes: bool, want_json: bool, run: Callable[..., Any] = subprocess.run,
+                  ask: Callable[[str], str] = input, source_dir: Path | None = None) -> list[list[str]]:
+    """Stage the agent as root through one sudo argv per step, shown first."""
+    source_dir = source_dir or Path(__file__).resolve().parent
+    units = source_dir / "units"
+    _private_units(units)
+    argvs = agent_install_argvs(source_dir)
+    if not yes:
+        if want_json or not _interactive_terminal():
+            raise DependencyUnavailable("installing the agent needs a terminal, or --yes")
+        sys.stderr.write(f"{PROG}: about to run as root:\n" + "".join(f"  {' '.join(a)}\n" for a in argvs))
+        try:
+            answer = ask("proceed? [y/N] ")
+        except EOFError:
+            answer = ""
+        if answer.strip().lower() not in ("y", "yes"):
+            raise DependencyUnavailable("agent installation declined")
+    for argv in argvs:
+        full = elevated_argv(argv, title="Install the fingerlock agent")
+        sys.stderr.write(f"{PROG}: running {' '.join(full)}\n")
+        proc = run(full)
+        if proc.returncode != 0:
+            raise DependencyUnavailable(f"agent installation failed at {' '.join(argv)} (exit {proc.returncode})")
+    return argvs
+
+
+def _private_units(units: Path) -> None:
+    """Write the two unit files beside the module, from the agent's own text."""
+    units.mkdir(mode=0o755, exist_ok=True)
+    for name, text in ((agentmod.SOCKET_UNIT, agentmod.SOCKET_UNIT_TEXT),
+                       (agentmod.SERVICE_UNIT, agentmod.SERVICE_UNIT_TEXT)):
+        path = units / name
+        if not path.exists() or path.read_text() != text:
+            path.write_text(text)
+
+
 def cmd_install(args: argparse.Namespace) -> int:
-    wanted = PACKAGES + (PAM_PACKAGES if args.pam else ())
+    wanted = PACKAGES + LOCKER_PACKAGES + (PAM_PACKAGES if args.pam else ())
     missing = missing_packages(wanted)
     if missing:
         install_packages(missing, yes=args.yes, want_json=args.json)
+    agent_steps: list[list[str]] = []
+    if args.agent:
+        agent_steps = install_agent(yes=args.yes, want_json=args.json)
     report = run_doctor(with_pam=args.pam)
-    data = {"requested": list(wanted), "installed_now": missing, "report": report.as_dict(redact=args.redact)}
+    data = {"requested": list(wanted), "installed_now": missing, "agent_steps": agent_steps,
+            "report": report.as_dict(redact=args.redact)}
     if args.json:
         emit_json("install", data)
     else:
         sys.stdout.write(("installed " + ", ".join(missing) if missing else "nothing to install; " + ", ".join(wanted) + " present") + "\n")
+        if agent_steps:
+            sys.stdout.write("agent installed and enabled\n")
         _print_report(report)
     return 0 if report.usable else 1
 
@@ -1211,6 +837,11 @@ def cmd_ensure(args: argparse.Namespace) -> int:
     sys.stdout.write(f"reader: {report.readers[0].label} via fprintd" + (f" ({device.name})" if device else "") + "\n")
     sys.stdout.write("enrolled: " + (", ".join(fingers) if fingers else
                                      f"none yet; run: {PROG} enroll {DEFAULT_ENROLL_FINGER}") + "\n")
+    locker = Locker()
+    sys.stdout.write(f"locker: {locker.path}\n" if locker.exists() else f"locker: none yet ({PROG} init)\n")
+    agent = agentmod.AgentClient()
+    sys.stdout.write("unlock: fingerprint touch (agent installed)\n" if agent.available() else
+                     f"unlock: passphrase ({PROG} install --agent makes it a touch)\n")
     return 0
 
 
@@ -1277,11 +908,286 @@ def cmd_delete(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- locker commands ------------------------------------------------------------------
+
+def _read_passphrase(args: argparse.Namespace, prompt: str) -> str:
+    fd = getattr(args, "passphrase_fd", None)
+    if fd is not None:
+        # Unbuffered, one byte at a time, so a second passphrase on the same
+        # descriptor is still there for the next call.
+        line = bytearray()
+        try:
+            while len(line) < 4096:
+                byte = os.read(int(fd), 1)
+                if not byte or byte == b"\n":
+                    break
+                line += byte
+        except OSError as exc:
+            raise UsageError(f"cannot read --passphrase-fd {fd}: {exc}") from exc
+        return line.decode("utf-8", "replace")
+    if not _interactive_terminal():
+        raise AccessDenied("the locker needs its passphrase; run from a terminal or pass --passphrase-fd")
+    import getpass
+    return getpass.getpass(prompt)
+
+
+def _agent(args: argparse.Namespace) -> agentmod.AgentClient:
+    return agentmod.AgentClient(getattr(args, "agent_socket", None) or agentmod.SOCKET_PATH)
+
+
+def obtain_private_key(args: argparse.Namespace, locker: Locker, info: lockermod.LockerInfo) -> tuple[bytes, str]:
+    """The locker's private key: from the agent after a touch, else the passphrase."""
+    agent = _agent(args)
+    use_agent = not getattr(args, "passphrase", False) and agent.available()
+    if use_agent:
+        try:
+            held = agent.status()
+        except agentmod.AgentUnavailable:
+            held = {"held": False}
+        if held.get("held") and held.get("locker_id") == info.locker_id:
+            sys.stderr.write("touch the sensor to unlock\n")
+            return agent.release(info.locker_id, getattr(args, "finger", ANY_FINGER)), "fingerprint"
+    passphrase = _read_passphrase(args, "locker passphrase: ")
+    private = locker.derive_private_key(passphrase, info)
+    if use_agent and not getattr(args, "no_deposit", False):
+        try:
+            reply = agent.deposit(private, info.locker_id, float(getattr(args, "ttl", agentmod.DEFAULT_TTL_SECONDS)))
+            hours = int(reply.get("expires_in", 0)) // 3600
+            sys.stderr.write(f"fingerprint unlock enabled for about {hours} h; {PROG} forget ends it early\n")
+        except FingerlockError as exc:
+            sys.stderr.write(f"{PROG}: fingerprint unlock not enabled ({exc.message})\n")
+    return private, "passphrase"
+
+
+def _locker(args: argparse.Namespace) -> Locker:
+    home = getattr(args, "locker_home", None)
+    return Locker(Path(home) if home else None)
+
+
+def cmd_init(args: argparse.Namespace) -> int:
+    locker = _locker(args)
+    if locker.exists():
+        raise LockerError(f"a locker already exists at {locker.path}")
+    first = _read_passphrase(args, "new locker passphrase: ")
+    if getattr(args, "passphrase_fd", None) is None:
+        if _read_passphrase(args, "again: ") != first:
+            raise UsageError("the passphrases do not match")
+    info = locker.init(first, kdf=args.kdf)
+    data = {"locker_id": info.locker_id, "path": str(locker.path), "kdf": args.kdf}
+    if args.json:
+        emit_json("init", data)
+    else:
+        sys.stdout.write(f"locker {info.locker_id} created at {locker.path}\n")
+        sys.stdout.write(f"lock files with: {PROG} lock FILE...; unlock with a touch once the agent is installed\n")
+    return 0
+
+
+def cmd_passwd(args: argparse.Namespace) -> int:
+    locker = _locker(args)
+    locker.info()
+    old = _read_passphrase(args, "current locker passphrase: ")
+    new = _read_passphrase(args, "new locker passphrase: ")
+    if getattr(args, "passphrase_fd", None) is None and _read_passphrase(args, "again: ") != new:
+        raise UsageError("the passphrases do not match")
+    info = locker.change_passphrase(old, new)
+    agent = _agent(args)
+    if agent.available():
+        try:
+            agent.forget()
+        except FingerlockError:
+            pass
+    if args.json:
+        emit_json("passwd", {"locker_id": info.locker_id})
+    else:
+        sys.stdout.write("passphrase changed; every container stays openable\n")
+    return 0
+
+
+def cmd_lock(args: argparse.Namespace) -> int:
+    locker = _locker(args)
+    info = locker.info()
+    results = []
+    for raw in args.paths:
+        source = Path(raw)
+        if not source.is_file():
+            raise UsageError(f"{source} is not a file")
+        if source.name.endswith(lockermod.SUFFIX):
+            raise UsageError(f"{source} is already a container")
+        container = lockermod.container_for(source)
+        header = lockermod.lock_file(source, container, info, remove_source=not args.keep)
+        results.append({"source": str(source), "container": str(container), "size": header["size"],
+                        "removed_source": not args.keep})
+        if not args.json:
+            sys.stdout.write(f"locked {source} -> {container}" + ("" if args.keep else " (original removed)") + "\n")
+    if args.json:
+        emit_json("lock", {"locker_id": info.locker_id, "files": results})
+    return 0
+
+
+def cmd_unlock(args: argparse.Namespace) -> int:
+    locker = _locker(args)
+    info = locker.info()
+    containers = [Path(raw) for raw in args.paths]
+    for container in containers:
+        lockermod.read_header(container)
+    if args.stdout and len(containers) != 1:
+        raise UsageError("--stdout takes exactly one container")
+    private, source = obtain_private_key(args, locker, info)
+    results = []
+    try:
+        for container in containers:
+            if args.stdout:
+                header = lockermod.unlock_file(container, None, private, sink=sys.stdout.buffer)
+                sys.stdout.buffer.flush()
+                results.append({"container": str(container), "to": "-", "size": header["size"]})
+                continue
+            destination = lockermod.original_for(container)
+            header = lockermod.unlock_file(container, destination, private, overwrite=args.force,
+                                           remove_container=not args.keep)
+            results.append({"container": str(container), "to": str(destination), "size": header["size"],
+                            "removed_container": not args.keep})
+            if not args.json:
+                sys.stdout.write(f"unlocked {container} -> {destination}\n")
+    finally:
+        private = b"\0" * len(private)
+    if args.json and not args.stdout:
+        emit_json("unlock", {"locker_id": info.locker_id, "key_source": source, "files": results})
+    return 0
+
+
+def cmd_password(args: argparse.Namespace) -> int:
+    locker = _locker(args)
+    info = locker.info()
+    action = args.password_action
+    if action != "list" and not args.name:
+        raise UsageError(f"password {action} needs a NAME")
+    if action == "list":
+        names = locker.password_names()
+        if args.json:
+            emit_json("password", {"names": names})
+        else:
+            sys.stdout.write("".join(f"{n}\n" for n in names) if names else "(no passwords stored)\n")
+        return 0
+    path = locker.password_path(args.name)
+    if action == "delete":
+        if not path.exists():
+            raise UsageError(f"no password named {args.name}")
+        os.unlink(path)
+        if args.json:
+            emit_json("password", {"deleted": args.name})
+        else:
+            sys.stdout.write(f"deleted {args.name}\n")
+        return 0
+    if action == "set":
+        if path.exists() and not args.force:
+            raise UsageError(f"{args.name} exists (use --force to replace)")
+        if args.stdin:
+            secret = sys.stdin.buffer.read()
+        else:
+            import getpass
+            if not _interactive_terminal():
+                raise UsageError("pass --stdin, or run from a terminal")
+            secret = getpass.getpass(f"secret for {args.name}: ").encode("utf-8")
+        import tempfile
+        with tempfile.NamedTemporaryFile(dir=str(locker.passwords_dir), prefix=".plain-", delete=False) as handle:
+            os.chmod(handle.name, 0o600)
+            handle.write(secret)
+            plain = Path(handle.name)
+        try:
+            if path.exists():
+                os.unlink(path)
+            lockermod.lock_file(plain, path, info, name=args.name, remove_source=True)
+        finally:
+            try:
+                os.unlink(plain)
+            except FileNotFoundError:
+                pass
+        if args.json:
+            emit_json("password", {"set": args.name, "bytes": len(secret)})
+        else:
+            sys.stdout.write(f"stored {args.name} ({len(secret)} bytes)\n")
+        return 0
+    if action == "get":
+        if not path.exists():
+            raise UsageError(f"no password named {args.name}")
+        private, source = obtain_private_key(args, locker, info)
+        try:
+            import io
+            buffer = io.BytesIO()
+            lockermod.unlock_file(path, None, private, sink=buffer)
+        finally:
+            private = b"\0" * len(private)
+        secret = buffer.getvalue()
+        if args.json:
+            emit_json("password", {"name": args.name, "secret": secret.decode("utf-8", "replace"), "key_source": source})
+        else:
+            sys.stdout.buffer.write(secret)
+            if not secret.endswith(b"\n"):
+                sys.stdout.buffer.write(b"\n")
+            sys.stdout.buffer.flush()
+        return 0
+    raise UsageError("password: set NAME | get NAME | list | delete NAME")
+
+
+def cmd_forget(args: argparse.Namespace) -> int:
+    agent = _agent(args)
+    if not agent.available():
+        if args.json:
+            emit_json("forget", {"forgotten": False, "agent": False})
+        else:
+            sys.stdout.write("no agent installed; nothing was held\n")
+        return 0
+    forgotten = agent.forget()
+    if args.json:
+        emit_json("forget", {"forgotten": forgotten, "agent": True})
+    else:
+        sys.stdout.write("locker key forgotten; the next unlock asks for the passphrase\n" if forgotten
+                         else "nothing was held\n")
+    return 0
+
+
+def cmd_agent(args: argparse.Namespace) -> int:
+    agent = _agent(args)
+    data: dict[str, Any] = {"socket": agent.path, "available": agent.available()}
+    if agent.available():
+        try:
+            data.update(agent.status())
+        except FingerlockError as exc:
+            data.update({"ok": False, "error": exc.message})
+    if args.json:
+        emit_json("agent", data)
+        return 0
+    if not data["available"]:
+        sys.stdout.write(f"agent: not installed ({PROG} install --agent)\n")
+        return 1
+    if data.get("held"):
+        sys.stdout.write(f"agent: holding the locker key for {int(data.get('expires_in', 0)) // 60} more minutes\n")
+    else:
+        sys.stdout.write("agent: running, no key held; the next unlock asks for the passphrase\n")
+    return 0
+
+
 # --- argument parsing ----------------------------------------------------------------
 
 class ArgumentParser(argparse.ArgumentParser):
     def error(self, message: str) -> None:
         raise UsageError(message)
+
+
+def _locker_options(parser: argparse.ArgumentParser, *, key: bool = True) -> None:
+    parser.add_argument("--locker-home", metavar="DIR", help=argparse.SUPPRESS)
+    parser.add_argument("--agent-socket", metavar="PATH", help=argparse.SUPPRESS)
+    parser.add_argument("--passphrase-fd", type=int, metavar="FD",
+                        help="read the passphrase from this descriptor instead of the terminal")
+    if key:
+        parser.add_argument("--passphrase", action="store_true",
+                            help="use the passphrase even when the agent could ask for a touch")
+        parser.add_argument("--finger", default=ANY_FINGER, choices=(ANY_FINGER,) + FINGERS, metavar="FINGER",
+                            help="finger to verify for the touch; default any")
+        parser.add_argument("--no-deposit", action="store_true",
+                            help="do not hand the key to the agent after a passphrase unlock")
+        parser.add_argument("--ttl", type=float, default=agentmod.DEFAULT_TTL_SECONDS, metavar="SECONDS",
+                            help="how long the agent may keep the key after a passphrase unlock")
 
 
 def _common(parser: argparse.ArgumentParser, *, auth: bool = False, install: bool = False) -> None:
@@ -1291,6 +1197,8 @@ def _common(parser: argparse.ArgumentParser, *, auth: bool = False, install: boo
         parser.add_argument("--pam", action="store_true",
                             help="also want libpam-fprintd, which enables fingerprint login and sudo")
         parser.add_argument("--yes", action="store_true", help="install without asking (sudo may still prompt)")
+        parser.add_argument("--agent", action="store_true",
+                            help="also install the root agent that makes unlocking a fingerprint touch")
     if auth:
         parser.add_argument("--user", default="", metavar="NAME",
                             help="act for another user (needs administrative polkit approval)")
@@ -1347,10 +1255,59 @@ def build_parser() -> argparse.ArgumentParser:
     delete.add_argument("--all", action="store_true", help="delete every enrolled finger")
     _common(delete, auth=True)
     delete.set_defaults(handler=cmd_delete)
+
+    init = subparsers.add_parser("init", help="create the locker: a passphrase-rooted keypair for locking")
+    init.add_argument("--kdf", default="moderate", choices=tuple(lockermod.KDF_PRESETS),
+                      help="Argon2id cost preset (default moderate)")
+    _common(init)
+    _locker_options(init, key=False)
+    init.set_defaults(handler=cmd_init)
+
+    passwd = subparsers.add_parser("passwd", help="change the locker passphrase (containers stay openable)")
+    _common(passwd)
+    _locker_options(passwd, key=False)
+    passwd.set_defaults(handler=cmd_passwd)
+
+    lock = subparsers.add_parser("lock", help="seal files into .flk containers; needs no unlock")
+    lock.add_argument("paths", nargs="+", metavar="FILE")
+    lock.add_argument("--keep", action="store_true", help="keep the plaintext file beside the container")
+    _common(lock)
+    _locker_options(lock, key=False)
+    lock.set_defaults(handler=cmd_lock)
+
+    unlock = subparsers.add_parser("unlock", help="open .flk containers: a touch, or the passphrase")
+    unlock.add_argument("paths", nargs="+", metavar="CONTAINER")
+    unlock.add_argument("--keep", action="store_true", help="keep the container beside the file")
+    unlock.add_argument("--force", action="store_true", help="overwrite an existing file")
+    unlock.add_argument("--stdout", action="store_true", help="write one container's content to stdout")
+    _common(unlock)
+    _locker_options(unlock)
+    unlock.set_defaults(handler=cmd_unlock)
+
+    password = subparsers.add_parser("password", help="store and fetch named secrets in the locker")
+    password.add_argument("password_action", choices=("set", "get", "list", "delete"), metavar="ACTION",
+                          help="set NAME | get NAME | list | delete NAME")
+    password.add_argument("name", nargs="?", metavar="NAME")
+    password.add_argument("--stdin", action="store_true", help="read the secret from stdin when setting")
+    password.add_argument("--force", action="store_true", help="replace an existing name")
+    _common(password)
+    _locker_options(password)
+    password.set_defaults(handler=cmd_password)
+
+    forget = subparsers.add_parser("forget", help="make the agent drop the locker key (lock everything)")
+    _common(forget)
+    _locker_options(forget, key=False)
+    forget.set_defaults(handler=cmd_forget)
+
+    agent = subparsers.add_parser("agent", help="whether the fingerprint-unlock agent is installed and holding a key")
+    _common(agent)
+    _locker_options(agent, key=False)
+    agent.set_defaults(handler=cmd_agent)
     return parser
 
 
-ACTIONS = ("ensure", "status", "doctor", "install", "list", "enroll", "verify", "delete")
+ACTIONS = ("ensure", "status", "doctor", "install", "list", "enroll", "verify", "delete",
+           "init", "passwd", "lock", "unlock", "password", "forget", "agent")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
