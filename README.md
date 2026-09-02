@@ -1060,9 +1060,21 @@ catalogue; scripts and terminal-only programs are not changed. Set
 
 Contained Chromium- and Firefox-family launches receive a private, disposable
 per-tab profile so an already-running native browser cannot capture the URL and
-escape Kilix. Pass an explicit Chromium `--user-data-dir` or Firefox
-`--profile` when persistent browser state is required; explicit profiles are
-never replaced.
+escape Kilix. That also means every launch is a fresh login. For a persistent
+session set `KILIX_RUN_BROWSER_PROFILE=<directory>` in `kilix.env` (created
+0700 on first use, and refused if it is a symlink or shared); every launch then
+shares that profile, and one profile means one browser -- a second launch joins
+the first (Chromium) or refuses (Firefox). Pass an explicit Chromium
+`--user-data-dir` or Firefox `--profile` to choose per launch; explicit
+profiles are never replaced and never deleted.
+
+Modifier keys are forwarded *with* the key that needs them, never on their own:
+a bare Alt press whose release went to another pane -- because the `alt+arrow`
+that followed it was a kitty binding that moved focus -- used to leave Alt
+latched in the app's private display, so every later key arrived as an Alt
+chord until something released it. Now the injector presses modifiers around
+each key and releases them with it, and lets everything go on focus-out and on
+exit.
 
 **Tab-fill & scalable.** With no `--size`, the app's screen *tracks the pane*:
 it starts at the pane's exact pixel size and a pane resize **resizes the

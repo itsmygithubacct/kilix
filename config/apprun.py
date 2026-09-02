@@ -237,16 +237,20 @@ class RunTerm(browse.Term):
         # alternates + all-keys-as-escapes — releases matter for games.
         # ?1003h = ANY-motion tracking (not just drag): the app needs free
         # pointer motion for hover/mouse-look, e.g. xeyes or an FPS.
+        # ?1004h = focus reporting: a focus-out is when the pane can no longer
+        # see the release of anything it forwarded, so the injector lets go.
         self.write("\x1b[?1049h\x1b[2J\x1b[?25l\x1b[?7l\x1b[>15u"
-                   "\x1b[?1003h\x1b[?1006h\x1b[?1016h\x1b[?2004h")
+                   "\x1b[?1003h\x1b[?1006h\x1b[?1016h\x1b[?2004h\x1b[?1004h")
 
     def restore(self):
         # browse.Term.restore disables ?1002l but not ?1003l (all-motion),
         # which we enable above — turn it off or the shell gets flooded.
-        self.write("\x1b[?1003l")
+        self.write("\x1b[?1003l\x1b[?1004l")
         super().restore()
 
     def _parse_csi(self, params, final):
+        if not params and final in ("I", "O"):     # ?1004 focus in / out
+            return {"kind": "focus", "in": final == "I"}
         ev = super()._parse_csi(params, final)
         parts = params.split(";") if params else []
         if ev is None and final == "~" and parts:
@@ -971,7 +975,16 @@ class AppPane:
                 self.fit_app_window(force=True)
         if etype == 2:
             return                       # Xvfb autorepeats held keys itself
-        self.inj.key(ev["key"], etype)
+        # Modifiers travel with the key that needs them and are released with
+        # it; a bare modifier is never forwarded on its own (see xinject.chord).
+        self.inj.chord(ev["key"], mods, etype)
+
+    def on_focus(self, ev):
+        """Pane lost or regained focus. On focus-out nothing forwarded from
+        here can be released by us any more, so release it all now rather
+        than leaving a modifier latched in the private display."""
+        if not ev.get("in") and getattr(self, "inj", None) is not None:
+            self.inj.release_all()
 
     def on_paste(self, text):
         self._wake_capture()
@@ -1086,6 +1099,8 @@ class AppPane:
                             self.on_mouse(ev)
                         elif ev["kind"] == "paste":
                             self.on_paste(ev["text"])
+                        elif ev["kind"] == "focus":
+                            self.on_focus(ev)
                 now = time.time()
                 if self.resized:
                     self.resized = False
@@ -1127,6 +1142,12 @@ class AppPane:
         except Exception as e:
             err = f"{type(e).__name__}: {e}"
         finally:
+            inj = getattr(self, "inj", None)
+            if inj is not None:
+                try:
+                    inj.release_all()    # never exit with a key held down
+                except Exception:
+                    pass
             if self.term:
                 self.term.restore()
             if self.presenter is not None:

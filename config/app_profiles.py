@@ -24,6 +24,14 @@ CHROMIUM_COMMANDS = {
 }
 FIREFOX_COMMANDS = {"firefox", "firefox-esr"}
 APP_PROFILE_STALE_SECONDS = 7 * 24 * 60 * 60
+
+# Set to a directory to give every contained browser launch the SAME profile,
+# so logins, cookies and history outlive the pane. Unset means the private,
+# disposable per-launch profile. An explicit --user-data-dir / --profile on
+# the command line still wins over both. One profile means one browser: a
+# second launch against the same profile joins the first (Chromium) or refuses
+# (Firefox, which keeps --no-remote), which is the price of persistence.
+PERSISTENT_PROFILE_ENV = "KILIX_RUN_BROWSER_PROFILE"
 APP_PROFILE_NAME = re.compile(
     r"^.+?-(?P<pid>\d+)(?:-(?P<start>\d+))?-[A-Za-z0-9_]+$")
 
@@ -129,8 +137,29 @@ def _new_profile(name: str) -> str:
     return profile
 
 
+def _persistent_profile() -> str | None:
+    """The operator's persistent browser profile, if configured.
+
+    Created 0700 if absent and held to the same private-directory rule as the
+    disposable profiles: a symlink, a shared parent or someone else's directory
+    is refused loudly rather than used quietly.
+    """
+    value = os.environ.get(PERSISTENT_PROFILE_ENV, "").strip()
+    if not value:
+        return None
+    path = os.path.abspath(os.path.expanduser(value))
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    _require_private_directory(path, "persistent browser profile")
+    return path
+
+
 def prepare_app_command(command: list[str]) -> tuple[list[str], str | None]:
-    """Return a singleton-safe browser argv and its temporary profile path."""
+    """Return a singleton-safe browser argv and its temporary profile path.
+
+    The second value is the profile to delete when the run ends. It is None
+    when the caller chose a profile explicitly and when the persistent profile
+    from KILIX_RUN_BROWSER_PROFILE is in use -- neither is ours to remove.
+    """
     command = list(command)
     if not command:
         return command, None
@@ -140,6 +169,12 @@ def prepare_app_command(command: list[str]) -> tuple[list[str], str | None]:
                or arg.startswith("--user-data-dir=")
                for arg in command[1:]):
             return command, None
+        persistent = _persistent_profile()
+        if persistent:
+            return [
+                command[0], f"--user-data-dir={persistent}", "--no-first-run",
+                "--no-default-browser-check", *command[1:],
+            ], None
         profile = _new_profile(name)
         return [
             command[0], f"--user-data-dir={profile}", "--no-first-run",
@@ -157,9 +192,14 @@ def prepare_app_command(command: list[str]) -> tuple[list[str], str | None]:
                or arg.startswith(("-profile=", "--profile="))
                for arg in args_lower):
             return command, None
-        profile = _new_profile(name)
         no_remote = any(
             arg in {"-no-remote", "--no-remote"} for arg in args_lower)
+        persistent = _persistent_profile()
+        if persistent:
+            return [command[0], "--profile", persistent,
+                    *([] if no_remote else ["--no-remote"]),
+                    *command[1:]], None
+        profile = _new_profile(name)
         return [command[0], "--profile", profile,
                 *([] if no_remote else ["--no-remote"]),
                 *command[1:]], profile
@@ -168,6 +208,7 @@ def prepare_app_command(command: list[str]) -> tuple[list[str], str | None]:
 
 __all__ = [
     "APP_PROFILE_STALE_SECONDS",
+    "PERSISTENT_PROFILE_ENV",
     "cleanup_app_profile",
     "cleanup_stale_app_profiles",
     "prepare_app_command",

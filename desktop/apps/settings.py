@@ -244,6 +244,7 @@ SETTING_PAGES = [
           list(shared_settings.CODING_YOLO_CHOICES)),
         E("KILIX_BROWSE_BACKEND", "Browser renderer", "choice", "presenter",
           ["presenter", "go"]),
+        E("KILIX_RUN_BROWSER_PROFILE", "Persistent browser profile"),
         E("KILIX_RUN_AUTO_FIT", "Auto-fit X apps", "bool", "1", ("1", "0")),
         E("KILIX_NO_PANE", "Headless run default", "bool", "0", ("1", "0")),
         E("KILIX_DEBUG", "Debug metrics", "bool", "0", ("1", "0")),

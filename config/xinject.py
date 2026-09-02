@@ -28,12 +28,76 @@ NAME_KEYSYMS = {"Enter": "Return", "Escape": "Escape",
                 **{f"F{i}": f"F{i}" for i in range(1, 13)}}
 
 
+# kitty keyboard-protocol modifier bits, after the protocol's +1 offset is
+# removed (apprun does that before calling in). Order is the press order.
+MOD_SHIFT, MOD_ALT, MOD_CTRL, MOD_SUPER = 1, 2, 4, 8
+MOD_BITS = ((MOD_SHIFT, "Shift_L"), (MOD_ALT, "Alt_L"),
+            (MOD_CTRL, "Control_L"), (MOD_SUPER, "Super_L"))
+
+
 class Injector:
     def __init__(self, xd, app_w, app_h):
         self.xd = xd
         self.app_w, self.app_h = app_w, app_h
         self._keys_down = set()      # keycodes currently pressed
         self._btns_down = set()      # X button numbers currently pressed
+        self._mod_holds = {}         # modifier keycode -> chords holding it
+
+    def is_modifier(self, key):
+        """True for a bare modifier key event (Shift/Ctrl/Alt/Super alone)."""
+        return len(key) == 1 and ord(key) in MOD_KEYSYMS
+
+    def chord(self, key, mods, etype):
+        """Inject *key* with the *mods* bitmask held only for this event.
+
+        The pane's modifier keys are never injected on their own. A bare Alt
+        press forwarded into the private display, whose matching release then
+        went to a different pane -- because the chord that followed it was a
+        kitty binding that moved focus -- left Mod1 latched in the X server,
+        and every later key reached the app as an Alt chord. Modifiers are
+        pressed around the key that needs them and released with it, so there
+        is no press that can outlive its release. Overlapping chords share a
+        modifier by count, so releasing one key does not drop a modifier that
+        another held key still needs.
+
+        etype: 1 = press, 3 = release. Returns True if a key was injected.
+        """
+        if self.is_modifier(key):
+            return False
+        keysym = self.keysym_for(key)
+        if not keysym:
+            return False
+        keycode = self.xd.keysym_to_keycode(keysym)
+        if not keycode:
+            return False
+        modcodes = []
+        for bit, name in MOD_BITS:
+            if mods & bit:
+                code = self.xd.keysym_to_keycode(XK.string_to_keysym(name))
+                if code:
+                    modcodes.append(code)
+        if etype == 1:
+            for code in modcodes:
+                if self._mod_holds.get(code, 0) == 0:
+                    xtest.fake_input(self.xd, X.KeyPress, code)
+                    self._keys_down.add(code)
+                self._mod_holds[code] = self._mod_holds.get(code, 0) + 1
+            xtest.fake_input(self.xd, X.KeyPress, keycode)
+            self._keys_down.add(keycode)
+        else:
+            xtest.fake_input(self.xd, X.KeyRelease, keycode)
+            self._keys_down.discard(keycode)
+            for code in reversed(modcodes):
+                held = self._mod_holds.get(code, 0)
+                if held <= 1:
+                    self._mod_holds.pop(code, None)
+                    if code in self._keys_down:
+                        xtest.fake_input(self.xd, X.KeyRelease, code)
+                        self._keys_down.discard(code)
+                else:
+                    self._mod_holds[code] = held - 1
+        self.xd.flush()
+        return True
 
     def keysym_for(self, key):
         if len(key) == 1:
@@ -136,7 +200,8 @@ class Injector:
         self.xd.flush()
 
     def release_all(self):
-        """Release every key/button we still hold — call on client disconnect
+        """Release every key/button we still hold — call on client disconnect,
+        on pane focus-out, and on every exit path
         or shutdown so nothing stays stuck down on the shared display."""
         for keycode in list(self._keys_down):
             try:
@@ -154,3 +219,4 @@ class Injector:
             self.xd.flush()
         except Exception:
             pass
+        self._mod_holds.clear()
