@@ -20,7 +20,12 @@ TESTS_DIR = pathlib.Path(__file__).resolve().parent
 # Modules still building a child environment from a raw copy of os.environ.
 # This number may go DOWN. It must never go up: every one of them is a test
 # that can be decided by whoever happens to be running it.
-UNSANITISED_MODULE_BUDGET = 26
+UNSANITISED_MODULE_BUDGET = 16
+
+
+def _without_exempt(text: str, exempt: str) -> str:
+    """*text* with every line containing *exempt* removed."""
+    return "\n".join(line for line in text.splitlines() if exempt not in line)
 
 
 class SandboxEnvTests(unittest.TestCase):
@@ -66,6 +71,11 @@ class SandboxEnvTests(unittest.TestCase):
         # Assembled, not written literally: spelled out in one piece these
         # match the file that searches for them, and the check reports itself.
         needles = ("os.environ" + ".copy()", "dict(os." + "environ", "**os." + "environ")
+        # patch.dict(os.environ, ...) patches THIS process's environment for
+        # in-process code. It builds no child environment and is not the defect
+        # -- counting it inflated this budget by four modules and would make
+        # the instrument report debt that cannot be paid.
+        exempt = "patch." + "dict(os.environ"
         # This module is skipped, and not as a convenience: it polices how
         # OTHER modules build a child environment and builds none itself, so a
         # match here is always its own vocabulary. It reported itself twice
@@ -75,7 +85,7 @@ class SandboxEnvTests(unittest.TestCase):
         offenders = sorted(
             path.name for path in TESTS_DIR.glob("test_*.py")
             if path.name != pathlib.Path(__file__).name
-            and any(n in path.read_text() for n in needles)
+            and any(n in _without_exempt(path.read_text(), exempt) for n in needles)
         )
         self.assertLessEqual(
             len(offenders), UNSANITISED_MODULE_BUDGET,
