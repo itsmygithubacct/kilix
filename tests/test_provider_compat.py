@@ -10,6 +10,20 @@ CHECKER = ROOT / "scripts" / "check-desktop-provider.py"
 
 
 class ProviderCompatibilityTests(unittest.TestCase):
+    def test_the_manifest_version_is_the_repository_version(self):
+        """VERSION and desktop/provider.json must move together.
+
+        Nothing asserted this before, and the two drifted apart twice in one
+        day: once by bumping VERSION alone, once by correcting the manifest
+        while a stale staged VERSION rode along and inverted the mismatch.
+        Kilix-95's own boundary test compares its manifest against this one, so
+        a repository whose two halves disagree fails a *sibling* project's
+        suite, which is a slow and confusing way to find out.
+        """
+        version = (ROOT / "VERSION").read_text().strip()
+        manifest = json.loads((ROOT / "desktop" / "provider.json").read_text())
+        self.assertEqual(manifest["version"], version)
+
     def test_builtin_contract_and_security_baseline(self):
         subprocess.run(
             ["python3", str(CHECKER), str(ROOT / "desktop")], check=True)
