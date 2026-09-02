@@ -5,11 +5,19 @@ and prepares it safely. They read the launcher as text rather than running a
 desktop, so they need neither an X display nor a built IceWM.
 """
 import os
+import pathlib
 import re
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+# The suite runs both as `discover -s tests` (bare module names) and as
+# `-m unittest tests.<module>` (package), so name this directory explicitly.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from _env_support import sandbox_env  # noqa: E402
+
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -126,12 +134,8 @@ class KilixIceWMInstallerDeliveryTests(unittest.TestCase):
         self.ref = run(
             ["git", "rev-parse", "HEAD"], cwd=self.remote
         ).stdout.strip()
-        self.env = os.environ.copy()
-        for key in tuple(self.env):
-            if key.startswith("KILIX_ICEWM_"):
-                self.env.pop(key)
-        self.env.update(
-            {
+        self.env = sandbox_env(
+            **{
                 "HOME": str(self.home),
                 "GPU_TERMINAL_SOURCE_HOME": str(self.source_home),
                 "KILIX_ICEWM_DIR": str(self.checkout),

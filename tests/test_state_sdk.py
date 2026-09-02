@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+import pathlib
 import stat
 import subprocess
 import sys
@@ -13,6 +14,12 @@ sys.path.insert(0, str(ROOT / "config"))
 
 from kilix_sdk import state
 
+# The suite runs both as `discover -s tests` (bare module names) and as
+# `-m unittest tests.<module>` (package), so name this directory explicitly.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from _env_support import sandbox_env  # noqa: E402
+
+
 
 class KilixStateSdkTests(unittest.TestCase):
     @classmethod
@@ -24,7 +31,7 @@ class KilixStateSdkTests(unittest.TestCase):
             "KILIX_STORAGE_HOME": str(cls.storage),
             "KILIX_BUILD_DIRECTORY": str(cls.build),
         }
-        environment = dict(os.environ, **cls.environment)
+        environment = sandbox_env(**cls.environment)
         result = subprocess.run(
             [str(ROOT / "scripts" / "build-state-library.sh"), "--print-path"],
             check=True, capture_output=True, text=True, env=environment)

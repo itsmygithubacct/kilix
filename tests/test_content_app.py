@@ -3,6 +3,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 import os
+import pathlib
 import subprocess
 import sys
 import tempfile
@@ -14,12 +15,17 @@ sys.path.insert(0, str(ROOT / "config"))
 
 import content_app  # noqa: E402
 
+# The suite runs both as `discover -s tests` (bare module names) and as
+# `-m unittest tests.<module>` (package), so name this directory explicitly.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from _env_support import sandbox_env  # noqa: E402
+
+
 
 class ContentAppTests(unittest.TestCase):
     def test_ref_is_read_only_and_matches_the_catalog(self):
         with tempfile.TemporaryDirectory() as temporary:
-            environment = dict(os.environ)
-            environment.update({
+            environment = sandbox_env(**{
                 "HOME": temporary,
                 "GPU_TERMINAL_HOME": str(Path(temporary) / "gpu-terminal"),
             })

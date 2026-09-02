@@ -1,11 +1,19 @@
 import hashlib
 import os
+import pathlib
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+# The suite runs both as `discover -s tests` (bare module names) and as
+# `-m unittest tests.<module>` (package), so name this directory explicitly.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from _env_support import sandbox_env  # noqa: E402
+
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,12 +24,9 @@ def digest(path):
 
 
 def clean_env():
-    env = dict(os.environ)
-    for name in tuple(env):
-        if name.startswith("KILIX_") or name in (
-                "GPU_TERMINAL_HOME", "GPU_TERMINAL_SETTINGS_FILE"):
-            env.pop(name)
-    return env
+    # KILIX_ with the underscore missed KILIX95_* entirely; sandbox_env
+    # strips the family.
+    return sandbox_env()
 
 
 class UserConfigBehaviorTests(unittest.TestCase):
