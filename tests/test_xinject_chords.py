@@ -64,6 +64,15 @@ class ChordTests(unittest.TestCase):
         self.assertEqual(self.inj._keys_down, set(),
                          "a chord must leave nothing held down")
 
+    def test_a_modifier_let_go_before_the_key_is_still_released(self):
+        # Alt+L, but the operator lifts Alt first: the key's release event then
+        # carries mods=0. The Alt pressed at key-down must still be released.
+        self.inj.chord("l", xinject.MOD_ALT, 1)
+        self.assertFalse(self.inj.chord(ALT_KEY, 0, 3))    # bare Alt release, ignored
+        self.inj.chord("l", 0, 3)                          # key release, no mods reported
+        self.assertEqual(self.inj._keys_down, set(), "Alt stayed down after the key came up")
+        self.assertIn((X.KeyRelease, 64), self.events)
+
     def test_overlapping_chords_share_a_modifier_by_count(self):
         # Ctrl held, A pressed, then L pressed, then A released: Ctrl must stay
         # down for L, and go up only when L goes up.

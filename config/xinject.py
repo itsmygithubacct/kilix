@@ -42,6 +42,7 @@ class Injector:
         self._keys_down = set()      # keycodes currently pressed
         self._btns_down = set()      # X button numbers currently pressed
         self._mod_holds = {}         # modifier keycode -> chords holding it
+        self._chord_mods = {}        # key keycode -> modifier keycodes pressed for it
 
     def is_modifier(self, key):
         """True for a bare modifier key event (Shift/Ctrl/Alt/Super alone)."""
@@ -70,13 +71,13 @@ class Injector:
         keycode = self.xd.keysym_to_keycode(keysym)
         if not keycode:
             return False
-        modcodes = []
-        for bit, name in MOD_BITS:
-            if mods & bit:
-                code = self.xd.keysym_to_keycode(XK.string_to_keysym(name))
-                if code:
-                    modcodes.append(code)
         if etype == 1:
+            modcodes = []
+            for bit, name in MOD_BITS:
+                if mods & bit:
+                    code = self.xd.keysym_to_keycode(XK.string_to_keysym(name))
+                    if code:
+                        modcodes.append(code)
             for code in modcodes:
                 if self._mod_holds.get(code, 0) == 0:
                     xtest.fake_input(self.xd, X.KeyPress, code)
@@ -84,7 +85,14 @@ class Injector:
                 self._mod_holds[code] = self._mod_holds.get(code, 0) + 1
             xtest.fake_input(self.xd, X.KeyPress, keycode)
             self._keys_down.add(keycode)
+            self._chord_mods[keycode] = modcodes
         else:
+            # Release the modifiers this key was PRESSED with, not the ones the
+            # release event reports. An operator who lets go of Alt before the
+            # key produces a release with mods=0; computing from that would
+            # leave the Alt pressed at key-down held for ever -- the same latch
+            # this method exists to remove.
+            modcodes = self._chord_mods.pop(keycode, [])
             xtest.fake_input(self.xd, X.KeyRelease, keycode)
             self._keys_down.discard(keycode)
             for code in reversed(modcodes):
@@ -220,3 +228,4 @@ class Injector:
         except Exception:
             pass
         self._mod_holds.clear()
+        self._chord_mods.clear()
