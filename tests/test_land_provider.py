@@ -76,6 +76,14 @@ class KilixLandProviderTests(unittest.TestCase):
         )
         runner.chmod(0o755)
         (self.remote / "Makefile").write_text(
+            # .PHONY, not a timestamp rule. A test can rewrite runner
+            # within the same clock tick as the previous build, and make
+            # then judges the target up to date and copies nothing -- so
+            # the source is the new one while the binary is still the old
+            # one, which reads exactly like the installer having reset the
+            # checkout. This fixture exists to produce a binary from
+            # runner, not to exercise make's incrementality.
+            ".PHONY: all kilix-land-desktop\n"
             "all: kilix-land-desktop\n\n"
             "kilix-land-desktop: runner\n"
             "\tcp runner $@\n"
