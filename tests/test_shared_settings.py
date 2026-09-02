@@ -4,6 +4,7 @@ import importlib.machinery
 import importlib.util
 import os
 from pathlib import Path
+import pathlib
 import shutil
 import stat
 import subprocess
@@ -18,6 +19,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "config"))
 
 from kilix_sdk import content, settings
+
+# The suite runs both as `discover -s tests` (bare module names) and as
+# `-m unittest tests.<module>` (package), so name this directory explicitly.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from _env_support import sandbox_env  # noqa: E402
+
 
 
 def _load_settings_tui():
@@ -244,8 +251,7 @@ class SharedSettingsTests(unittest.TestCase):
     def test_noninteractive_tui_controls_use_same_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.conf"
-            env = dict(os.environ)
-            env["GPU_TERMINAL_SETTINGS_FILE"] = str(path)
+            env = sandbox_env(GPU_TERMINAL_SETTINGS_FILE=str(path))
             result = subprocess.run([
                 str(ROOT / "kilix-settings"),
                 "--set", "volume=off",
@@ -296,8 +302,7 @@ class SharedSettingsTests(unittest.TestCase):
                 settings.update(
                     {settings.PANE_CPU_MODE_KEY: "sometimes"}, str(path))
 
-            env = dict(os.environ)
-            env["GPU_TERMINAL_SETTINGS_FILE"] = str(path)
+            env = sandbox_env(GPU_TERMINAL_SETTINGS_FILE=str(path))
             result = subprocess.run([
                 str(ROOT / "kilix-settings"),
                 "--set", "cpu=on",
@@ -365,8 +370,7 @@ class SharedSettingsTests(unittest.TestCase):
     def test_transcript_cli_aliases_and_size_suffixes(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.conf"
-            env = dict(os.environ)
-            env["GPU_TERMINAL_SETTINGS_FILE"] = str(path)
+            env = sandbox_env(GPU_TERMINAL_SETTINGS_FILE=str(path))
             result = subprocess.run([
                 str(ROOT / "kilix-settings"),
                 "--set", "transcript=off",
@@ -398,8 +402,7 @@ class SharedSettingsTests(unittest.TestCase):
         # member retain valid defaults; the optional older tier may become off.
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.conf"
-            env = dict(os.environ)
-            env["GPU_TERMINAL_SETTINGS_FILE"] = str(path)
+            env = sandbox_env(GPU_TERMINAL_SETTINGS_FILE=str(path))
             subprocess.run(
                 [str(ROOT / "kilix-settings"), "--disable-all"],
                 env=env, text=True, capture_output=True, check=True)
@@ -554,8 +557,7 @@ class SharedSettingsTests(unittest.TestCase):
     def test_voice_cli_aliases_reach_the_shared_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.conf"
-            env = dict(os.environ)
-            env["GPU_TERMINAL_SETTINGS_FILE"] = str(path)
+            env = sandbox_env(GPU_TERMINAL_SETTINGS_FILE=str(path))
             result = subprocess.run([
                 str(ROOT / "kilix-settings"),
                 "--set", "speak=off",
@@ -648,8 +650,7 @@ class SharedSettingsTests(unittest.TestCase):
     def test_game_cli_names_and_listing_use_same_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.conf"
-            env = dict(os.environ)
-            env["GPU_TERMINAL_SETTINGS_FILE"] = str(path)
+            env = sandbox_env(GPU_TERMINAL_SETTINGS_FILE=str(path))
             result = subprocess.run([
                 str(ROOT / "kilix-settings"),
                 "--set", "bashed-earth=off",
@@ -669,11 +670,7 @@ class SharedSettingsTests(unittest.TestCase):
 
     def test_kilix_cli_enables_thermometer_in_shared_config(self):
         with tempfile.TemporaryDirectory() as tmp:
-            env = dict(os.environ)
-            for key in list(env):
-                if key.startswith("KILIX") or key.startswith("GPU_TERMINAL"):
-                    env.pop(key)
-            env["GPU_TERMINAL_HOME"] = tmp
+            env = sandbox_env(GPU_TERMINAL_HOME=tmp)
             result = subprocess.run([
                 str(ROOT / "kilix"), "settings",
                 "--set", "temperature=on", "--print",
@@ -685,11 +682,7 @@ class SharedSettingsTests(unittest.TestCase):
 
     def test_kilix_games_subcommand_changes_root_config(self):
         with tempfile.TemporaryDirectory() as tmp:
-            env = dict(os.environ)
-            for key in list(env):
-                if key.startswith("KILIX") or key.startswith("GPU_TERMINAL"):
-                    env.pop(key)
-            env["GPU_TERMINAL_HOME"] = tmp
+            env = sandbox_env(GPU_TERMINAL_HOME=tmp)
             result = subprocess.run([
                 str(ROOT / "kilix"), "games", "disable", "doom", "kilix-pong",
                 "kilix-lights", "super-kilix"

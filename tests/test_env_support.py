@@ -26,7 +26,7 @@ TESTS_DIR = pathlib.Path(__file__).resolve().parent
 # caught it.
 # This number may go DOWN. It must never go up: every one of them is a test
 # that can be decided by whoever happens to be running it.
-UNSANITISED_MODULE_BUDGET = 4
+UNSANITISED_MODULE_BUDGET = 1
 
 
 def _without_exempt(text: str, exempt: str) -> str:

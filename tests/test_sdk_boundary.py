@@ -1,3 +1,4 @@
+import pathlib
 import sys
 import os
 import subprocess
@@ -12,6 +13,12 @@ sys.path.insert(0, str(ROOT / "config"))
 
 import kilix_sdk
 from kilix_sdk import content, graphics, paths, settings, state, telemetry, term
+
+# The suite runs both as `discover -s tests` (bare module names) and as
+# `-m unittest tests.<module>` (package), so name this directory explicitly.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from _env_support import sandbox_env  # noqa: E402
+
 
 
 class KilixSdkBoundaryTests(unittest.TestCase):
@@ -132,8 +139,7 @@ except ImportError as error:
 else:
     raise SystemExit('unrelated package was accepted')
 """
-        env = dict(os.environ)
-        env["PYTHONPATH"] = str(ROOT / "config")
+        env = sandbox_env(PYTHONPATH=str(ROOT / "config"))
         subprocess.run(
             [sys.executable, "-c", code], env=env, cwd=ROOT, check=True)
 
