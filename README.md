@@ -760,6 +760,7 @@ kilix stt --models                # all speech models, sizes, install/runtime st
 kilix stt --models --json         # versioned machine-readable catalog contract
 kilix stt --install lgraph-en-us --default lgraph-en-us
 kilix voice doctor                # dependency and audio-device diagnostics
+kilix fingerlock                  # fingerprint reader: install fprintd on first use, enroll, verify
 kilix tts                         # read-aloud settings and test-phrase TUI
 kilix stt                         # dictation settings and microphone-level TUI
 kilix speak "hello"               # read explicit text aloud
@@ -830,6 +831,52 @@ asynchronous synthesis or playback error is shown once rather than disappearing
 into daemon output. Dictation device/model errors, an empty result, or a missing
 final response are likewise shown in a dialog instead of looking like a dead
 click.
+
+## Fingerprint reader
+
+`kilix fingerlock` is the host verb for the machine's fingerprint reader. With
+no arguments it finds the reader, installs what Debian needs the first time
+it is asked to, and reports what is enrolled:
+
+```sh
+kilix fingerlock                  # find the reader; install fprintd on first use
+kilix fingerlock enroll           # enroll the right index finger (or name one)
+kilix fingerlock verify           # touch the sensor; exit 0 on a match, 8 on none
+kilix fingerlock list             # enrolled fingers
+kilix fingerlock delete --all     # forget them
+kilix fingerlock doctor --json    # every check, as one kilix.fingerlock/v1 object
+```
+
+Discovery is read-only: the verb reads sysfs and asks the kernel whether the
+USB node is openable, and never opens it. Support is decided by libfprint's
+own hardware database once it is installed; a reader whose vendor is known but
+whose ID the database lacks is reported as unknown, not as supported.
+
+The lazy install is one fixed command, `apt-get install -y
+--no-install-recommends fprintd`, run as root through `sudo` in your terminal
+(or in `xterm` when the caller has no terminal) after you say yes, or at once
+with `--yes`. Plebian OS points apt at a dated snapshot, so this installs the
+release's versions. No repository is added and no recommends are pulled, so
+installing fprintd never changes how login works. Fingerprint login and sudo
+are a separate, explicit choice: `kilix fingerlock install --pam` adds
+`libpam-fprintd`, which Debian then enables through `pam-auth-update`.
+
+Everything after installation goes through fprintd over the system D-Bus,
+behind polkit. Verifying is allowed from an active seat session. Enrolling and
+deleting also need your password through a polkit authentication agent, and a
+bare terminal session may not have one: `--tty-agent` runs `pkttyagent` for
+the duration of the command and waits for it to register before asking
+fprintd for anything. The verb waits up to `--auth-timeout` seconds (default
+600) for that prompt, separately from `--timeout`, which bounds the scanning,
+and Ctrl-C works throughout. Every command accepts `--json`; prompts and scan
+progress go to stderr in both modes, and `enroll`/`verify` failures carry the
+partial session record. Exit statuses are stable and documented at the top of
+`config/fingerlock.py`.
+
+The first verified reader class is the Synaptics Prometheus touch sensor
+(`06cb:00bd`) in ThinkPad P and T models, driven by libfprint's `synaptics`
+driver. Use `--redact` before sharing output: it removes the USB serial, port,
+and device node.
 
 ## Clickable buttons (the headline feature)
 

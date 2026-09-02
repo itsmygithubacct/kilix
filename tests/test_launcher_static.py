@@ -309,6 +309,26 @@ class KilixLauncherTests(unittest.TestCase):
         for token in ("open PROFILE", "close PROFILE", "status", "list"):
             self.assertIn(token, module)
 
+    def test_fingerlock_verb_is_host_owned_and_installs_lazily(self):
+        # `kilix fingerlock` is the one host-side owner of fingerprint reader
+        # access: read-only USB discovery, a lazy Debian install through one
+        # fixed apt-get argv run as root, and fprintd over D-Bus behind
+        # polkit. Desktops delegate here rather than each shelling out to
+        # fprintd-* or apt on their own.
+        text = (ROOT / "kilix").read_text()
+        self.assertIn("fingerlock|--fingerlock|fingerprint)", text)
+        case = text.split("fingerlock|--fingerlock|fingerprint)")[1].split(";;")[0]
+        self.assertIn('exec python3 "$KILIX_HOME/config/fingerlock.py"', case)
+        module = (ROOT / "config" / "fingerlock.py").read_text()
+        self.assertIn('INSTALL_ARGV: tuple[str, ...] = ("apt-get", "install", "-y", "--no-install-recommends")',
+                      module)
+        self.assertIn('PACKAGES: tuple[str, ...] = ("fprintd",)', module)
+        self.assertIn('PAM_PACKAGES: tuple[str, ...] = ("libpam-fprintd",)', module)
+        for action in ("ensure", "status", "doctor", "install", "list",
+                       "enroll", "verify", "delete"):
+            self.assertIn(f'subparsers.add_parser("{action}"', module)
+        self.assertNotIn("os.open(", module)   # the reader's USB node is never opened
+
     def test_ls_lists_live_tabs_via_kitty_remote_control(self):
         launcher = (ROOT / "kilix").read_text()
         remote = (ROOT / "config" / "remote.py").read_text()
