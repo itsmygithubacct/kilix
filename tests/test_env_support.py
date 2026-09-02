@@ -20,7 +20,7 @@ TESTS_DIR = pathlib.Path(__file__).resolve().parent
 # Modules still building a child environment from a raw copy of os.environ.
 # This number may go DOWN. It must never go up: every one of them is a test
 # that can be decided by whoever happens to be running it.
-UNSANITISED_MODULE_BUDGET = 10
+UNSANITISED_MODULE_BUDGET = 6
 
 
 def _without_exempt(text: str, exempt: str) -> str:

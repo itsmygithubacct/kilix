@@ -13,10 +13,18 @@ because a silent decision is what caused this.
 import json
 import os
 from pathlib import Path
+import pathlib
 import re
 import subprocess
+import sys
 import tempfile
 import unittest
+
+# The suite runs both as `discover -s tests` (bare module names) and as
+# `-m unittest tests.<module>` (package), so name this directory explicitly.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from _env_support import sandbox_env  # noqa: E402
+
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -46,7 +54,7 @@ GIT_IDENTITY = {
 def git(*argv, cwd=None):
     result = subprocess.run(
         ["git", *argv], cwd=cwd, check=True, text=True, capture_output=True,
-        env=dict(os.environ, **GIT_IDENTITY))
+        env=sandbox_env(**GIT_IDENTITY))
     return result.stdout.strip()
 
 
@@ -96,11 +104,7 @@ class ExistingCheckoutTests(unittest.TestCase):
         return checkout
 
     def _run(self, installer, tmp, checkout, origin, prefix, **extra):
-        env = dict(os.environ)
-        for key in list(env):
-            if key.startswith(("KILIX", "GPU_TERMINAL")):
-                env.pop(key)
-        env.update({
+        env = sandbox_env(**{
             "HOME": str(tmp),
             "KILIX_HOME": str(ROOT),
             "GPU_TERMINAL_SOURCE_HOME": str(tmp / "sources"),

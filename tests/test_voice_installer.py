@@ -8,13 +8,21 @@ without a network, a model, or an audio device.
 import hashlib
 import os
 from pathlib import Path
+import pathlib
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import textwrap
 import unittest
 import zipfile
+
+# The suite runs both as `discover -s tests` (bare module names) and as
+# `-m unittest tests.<module>` (package), so name this directory explicitly.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from _env_support import sandbox_env  # noqa: E402
+
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -180,8 +188,7 @@ class KilixVoiceInstallerTests(unittest.TestCase):
         ).strip()
 
     def environment(self, **overrides: str | None) -> dict[str, str]:
-        environment = {
-            **os.environ,
+        environment = sandbox_env(**{
             "KILIX_HOME": str(self.checkout),
             "GPU_TERMINAL_SOURCE_HOME": str(self.source),
             "GPU_TERMINAL_HOME": str(self.root / "data"),
@@ -192,7 +199,7 @@ class KilixVoiceInstallerTests(unittest.TestCase):
             "KILIX_VOICE_REPO": str(self.repo),
             "KILIX_VOICE_REF": self.ref,
             "KILIX_VOICE_APACHE_LICENSE_FILE": str(self.apache_license),
-        }
+        })
         for key, value in overrides.items():
             if value is None:
                 environment.pop(key, None)

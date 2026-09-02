@@ -1,6 +1,7 @@
 import fcntl
 import hashlib
 import os
+import pathlib
 import shlex
 import shutil
 import stat
@@ -11,6 +12,12 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+
+# The suite runs both as `discover -s tests` (bare module names) and as
+# `-m unittest tests.<module>` (package), so name this directory explicitly.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from _env_support import sandbox_env  # noqa: E402
+
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -69,12 +76,9 @@ class BuildPreparationTests(unittest.TestCase):
             f'exec {shlex.quote(sys.executable)} "$@"\n')
         self.build_python.chmod(0o755)
 
-        self.env = dict(os.environ)
-        for key in tuple(self.env):
-            if (key.startswith("KILIX_") or key == "GPU_TERMINAL_HOME" or
-                    key == "GOMAXPROCS"):
-                self.env.pop(key)
-        self.env.update({
+        # GOMAXPROCS is not part of the stack family, so it is dropped
+        # explicitly rather than by prefix.
+        self.env = sandbox_env(**{
             "HOME": str(self.base / "home"),
             "KILIX_STORAGE_HOME": str(self.base / "storage"),
             "KILIX_BUILD_MODE": "bundle",
@@ -87,6 +91,7 @@ class BuildPreparationTests(unittest.TestCase):
             "KILIX_NERD_FONT_FILE_SHA256": hashlib.sha256(
                 self.font_bytes).hexdigest(),
         })
+        self.env.pop("GOMAXPROCS", None)
 
     def tearDown(self):
         self.temp.cleanup()
