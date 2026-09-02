@@ -1,6 +1,9 @@
+import contextlib
 import importlib.util
 import base64
 import re
+import sys
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -122,6 +125,86 @@ class RemoteControlPolicyTests(unittest.TestCase):
             "signal-child", "load-config", "set-user-vars", "env",
         }
         self.assertEqual(forbidden.intersection(self.password_allowlist()), set())
+
+    # ---- send-text on the unauthenticated path ---------------------------
+    #
+    # These mock kitty.fast_data_types because the rule imports get_boss inside
+    # the function. Without the mock that import raises in a test process and
+    # the rule returns False from its except branch -- so every assertion would
+    # pass for the wrong reason, and the window scoping would never run. The
+    # single pre-existing send-text assertion was passing exactly that way.
+
+    @staticmethod
+    def _window(os_window_id):
+        return mock.Mock(os_window_id=os_window_id)
+
+    @contextlib.contextmanager
+    def _boss(self, targets):
+        """Stand in for kitty's boss, returning *targets* from match_windows."""
+        boss = mock.Mock()
+        boss.match_windows.return_value = list(targets)
+        fake = types.ModuleType("kitty.fast_data_types")
+        fake.get_boss = lambda: boss
+        parent = sys.modules.get("kitty") or types.ModuleType("kitty")
+        with mock.patch.dict(sys.modules,
+                             {"kitty": parent, "kitty.fast_data_types": fake}):
+            yield boss
+
+    def test_send_text_to_itself_is_allowed(self):
+        # No match at all is self-targeted, and needs no boss lookup.
+        self.assertTrue(allowed("send-text", window=self._window(1), text="hi"))
+
+    def test_send_text_reaches_a_sibling_in_the_same_os_window(self):
+        here = self._window(7)
+        with self._boss([self._window(7)]):
+            self.assertTrue(
+                allowed("send-text", window=here, match="id:2", text="hi"))
+
+    def test_send_text_cannot_reach_another_os_window(self):
+        here = self._window(7)
+        with self._boss([self._window(9)]):
+            self.assertFalse(
+                allowed("send-text", window=here, match="id:2", text="hi"))
+
+    def test_one_target_outside_the_window_denies_the_whole_send(self):
+        # all() is over every target, so a mixed set must not be permitted on
+        # the strength of the ones that happen to be local.
+        here = self._window(7)
+        with self._boss([self._window(7), self._window(9)]):
+            self.assertFalse(
+                allowed("send-text", window=here, match="id:2", text="hi"))
+
+    def test_a_match_resolving_to_nothing_is_denied(self):
+        # all([]) is True, so without the explicit emptiness check a match that
+        # names no window would be permitted by vacuous truth -- which is how a
+        # typo in a match expression becomes an allow.
+        here = self._window(7)
+        with self._boss([]):
+            self.assertFalse(
+                allowed("send-text", window=here, match="nope:1", text="hi"))
+
+    def test_broadcast_is_denied_whatever_the_match_says(self):
+        here = self._window(7)
+        with self._boss([self._window(7)]):
+            self.assertFalse(
+                allowed("send-text", window=here, all=True, text="hi"))
+
+    def test_a_windowless_request_is_denied(self):
+        self.assertFalse(allowed("send-text", window=None, text="hi"))
+
+    def test_an_unresolvable_boss_is_denied_not_assumed(self):
+        # The rule cannot prove the target is local, so it must refuse rather
+        # than fall through to a permissive default.
+        here = self._window(7)
+        boss = mock.Mock()
+        boss.match_windows.side_effect = RuntimeError("no boss")
+        fake = types.ModuleType("kitty.fast_data_types")
+        fake.get_boss = lambda: boss
+        parent = sys.modules.get("kitty") or types.ModuleType("kitty")
+        with mock.patch.dict(sys.modules,
+                             {"kitty": parent, "kitty.fast_data_types": fake}):
+            self.assertFalse(
+                allowed("send-text", window=here, match="id:2", text="hi"))
 
     def test_multiplexer_input_is_bounded_and_pane_scoped(self):
         pane = "0123456789abcdef0123456789abcdef"
