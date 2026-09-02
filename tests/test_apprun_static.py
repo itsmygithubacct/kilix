@@ -22,6 +22,15 @@ class ForwardingDisciplineTests(unittest.TestCase):
         self.assertIn("release_all()", on_focus.group(0))
         self.assertIn('elif ev["kind"] == "focus":', APPRUN)
 
+    def test_a_refused_profile_directory_is_reported_not_raised(self):
+        # _persistent_profile raises RuntimeError for a symlink or a directory
+        # owned by someone else. At the CLI that must read as one line with
+        # the path in it and exit 1, not a Python traceback.
+        i = APPRUN.index("prepare_app_command(args)")
+        window = APPRUN[max(0, i - 200): i + 400]
+        self.assertIn("except RuntimeError", window)
+        self.assertIn('print(f"kilix run: {e}", file=sys.stderr)', window)
+
     def test_every_exit_path_releases_everything(self):
         finally_block = re.search(r"        finally:\n(.*?)\n            if self\.term:\n                self\.term\.restore\(\)", APPRUN, re.S)
         self.assertIsNotNone(finally_block)

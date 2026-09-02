@@ -1233,7 +1233,13 @@ def main():
     if auto_fit is None:
         auto_fit = os.path.basename(args[0]).lower() in (
             "virtualbox", "virtualboxvm", "vbox", "steam")
-    args, temporary_profile = prepare_app_command(args)
+    try:
+        args, temporary_profile = prepare_app_command(args)
+    except RuntimeError as e:
+        # A refused persistent profile (a symlink, someone else's directory)
+        # is a configuration error, not a crash: say what and stop.
+        print(f"kilix run: {e}", file=sys.stderr)
+        sys.exit(1)
     try:
         AppPane(args, app_w, app_h, fps, serve=serve, lan=lan, hls=hls,
                 audio=audio, mse=mse, webrtc=webrtc, no_pane=no_pane,
