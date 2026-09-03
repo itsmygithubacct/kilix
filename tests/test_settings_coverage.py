@@ -15,9 +15,11 @@ sys.path.insert(0, str(ROOT / "config"))
 from kilix_sdk import settings as shared  # noqa: E402
 
 SOURCE = (ROOT / "desktop" / "apps" / "settings.py").read_text()
-# Keys built at run time from a list, rather than written out one by one. The
-# generator must be present for the family to count as covered.
-GENERATED = {"KILIX_GAME_": 'return "KILIX_GAME_" + game_id.upper()'}
+# Keys the app offers as a family rather than one by one: the Games page is
+# built from the SDK's GAME_TOGGLES, so the family counts as covered only while
+# the app still iterates that symbol. (The first version of this test looked
+# for the SDK's own key builder in the app's source, where it never was.)
+GENERATED = {"KILIX_GAME_": "shared_settings.GAME_TOGGLES"}
 
 
 class SettingsCoverageTests(unittest.TestCase):
@@ -28,7 +30,8 @@ class SettingsCoverageTests(unittest.TestCase):
         for key in shared.MANAGED_KEYS:
             prefix = next((p for p in GENERATED if key.startswith(p)), None)
             if prefix:
-                self.assertIn(GENERATED[prefix], SOURCE, f"generator for {prefix}* is gone")
+                self.assertIn(GENERATED[prefix], SOURCE,
+                              f"the app no longer builds the {prefix}* family from the SDK")
                 continue
             if key in SOURCE or (constants.get(key) and constants[key] in SOURCE):
                 continue
