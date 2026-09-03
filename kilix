@@ -1363,6 +1363,7 @@ _kilix_voice_tool_state() {
 
 _kilix_voice_doctor() {
   local info server default_source default_sink library model cap tool
+  local audio_device affected sink_desc
   _kilix_read_voice_config
   cap="$_KILIX_VOICE_TTS_MAX_CHARS"
   [ "$cap" = unlimited ] || cap="$cap characters"
@@ -1412,13 +1413,23 @@ _kilix_voice_doctor() {
       affected="${affected:+$affected; }dictate will capture silence"
     fi
     if [ -n "$affected" ]; then
+      if [ -n "$default_sink" ]; then
+        sink_desc="the server's default sink is $default_sink, a null device"
+      else
+        sink_desc="the server reports no default sink at all"
+      fi
       printf '%s\n' \
-        "audio device: NONE (the server's default sink is ${default_sink:-unset}, a null device)" \
+        "audio device: NONE ($sink_desc)" \
         "  $affected." \
         "  Give the machine an audio device (a VM needs one in its launch command)."
     else
+      if [ -n "$default_sink" ]; then
+        sink_desc="the server's default sink is $default_sink, a null device,"
+      else
+        sink_desc="the server reports no default sink at all,"
+      fi
       printf '%s\n' \
-        "audio device: the server's default sink is ${default_sink:-unset}, a null device," \
+        "audio device: $sink_desc" \
         "  but both channels use explicitly configured devices, which are used as named."
     fi
   fi

@@ -325,6 +325,19 @@ class VoiceCliTests(unittest.TestCase):
         self.assertIn("dictate will capture silence", result.stdout)
         self.assertNotIn("speak will exit 0", result.stdout)
 
+    def test_a_server_with_no_default_sink_line_is_named_as_such(self):
+        # pactl info reachable, but no "Default Sink" line at all -- an empty
+        # sink list. That is not "a null device"; say what was observed.
+        self.hermetic_path()
+        stub = self.bin / "pactl"
+        stub.write_text("#!/bin/sh\n[ \"$1\" = info ] || exit 0\n"
+                        "printf 'Server Name: pulseaudio\\nServer Version: 17.0\\n'\n")
+        stub.chmod(0o755)
+        result = self.run_kilix("voice", "doctor")
+        self.assertIn("audio device: NONE", result.stdout)
+        self.assertIn("reports no default sink", result.stdout)
+        self.assertNotIn("unset, a null device", result.stdout)
+
     def test_the_control_a_real_sink_draws_no_warning(self):
         self.hermetic_path()
         self._stub_pactl("alsa_output.pci-0000_00_1b.0.analog-stereo")
