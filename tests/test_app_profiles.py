@@ -119,6 +119,16 @@ class PrepareAppCommandTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 app_profiles.prepare_app_command(["chromium"])
 
+    def test_a_persistent_profile_path_that_is_a_file_is_refused_as_configuration(self):
+        # os.makedirs raises FileExistsError here, which is not RuntimeError,
+        # so without translation it would escape the CLI as a traceback.
+        as_file = os.path.join(self.tmp.name, "profile-is-a-file")
+        open(as_file, "w").close()
+        with mock.patch.dict(os.environ, {app_profiles.PERSISTENT_PROFILE_ENV: as_file}):
+            with self.assertRaises(RuntimeError) as caught:
+                app_profiles.prepare_app_command(["chromium"])
+        self.assertIn(as_file, str(caught.exception))
+
     def test_the_control_an_unset_setting_changes_nothing(self):
         argv_a, prof_a = app_profiles.prepare_app_command(["chromium"])
         self.assertIsNotNone(prof_a)

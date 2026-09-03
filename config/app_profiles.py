@@ -163,7 +163,14 @@ def _persistent_profile() -> str | None:
     if not value:
         return None
     path = os.path.abspath(os.path.expanduser(value))
-    os.makedirs(path, mode=0o700, exist_ok=True)
+    try:
+        os.makedirs(path, mode=0o700, exist_ok=True)
+    except OSError as e:
+        # A file already at that path, or a parent that cannot be written to,
+        # is the same class of misconfiguration as a symlink: refuse it in the
+        # one exception type the CLI turns into a message rather than a trace.
+        raise RuntimeError(
+            f"cannot use persistent browser profile directory {path}: {e}") from e
     _require_private_directory(path, "persistent browser profile")
     return path
 
