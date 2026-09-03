@@ -30,8 +30,10 @@ class SettingsCoverageTests(unittest.TestCase):
         for key in shared.MANAGED_KEYS:
             prefix = next((p for p in GENERATED if key.startswith(p)), None)
             if prefix:
-                self.assertIn(GENERATED[prefix], SOURCE,
-                              f"the app no longer builds the {prefix}* family from the SDK")
+                # assertTrue, not assertIn: a failed assertIn prints the whole
+                # haystack, and the haystack here is the app's source.
+                self.assertTrue(GENERATED[prefix] in SOURCE,
+                                f"the app no longer builds the {prefix}* family from the SDK")
                 continue
             if key in SOURCE or (constants.get(key) and constants[key] in SOURCE):
                 continue
