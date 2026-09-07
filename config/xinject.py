@@ -33,6 +33,9 @@ NAME_KEYSYMS = {"Enter": "Return", "Escape": "Escape",
 MOD_SHIFT, MOD_ALT, MOD_CTRL, MOD_SUPER = 1, 2, 4, 8
 MOD_BITS = ((MOD_SHIFT, "Shift_L"), (MOD_ALT, "Alt_L"),
             (MOD_CTRL, "Control_L"), (MOD_SUPER, "Super_L"))
+MOD_KEY_BITS = {57441: MOD_SHIFT, 57442: MOD_CTRL, 57443: MOD_ALT,
+                57444: MOD_SUPER, 57447: MOD_SHIFT, 57448: MOD_CTRL,
+                57449: MOD_ALT, 57450: MOD_SUPER}
 
 
 class Injector:
@@ -41,8 +44,44 @@ class Injector:
         self.app_w, self.app_h = app_w, app_h
         self._keys_down = set()      # keycodes currently pressed
         self._btns_down = set()      # X button numbers currently pressed
-        self._mod_holds = {}         # modifier keycode -> chords holding it
+        self._mod_holds = {}         # modifier keycode -> keyboard/mouse owners
         self._chord_mods = {}        # key keycode -> modifier keycodes pressed for it
+        self._mouse_mods = []        # one modifier owner for the pointer gesture
+        self._mouse_mask = 0
+
+    def _modifier_codes(self, mods):
+        codes = []
+        for bit, name in MOD_BITS:
+            if mods & bit:
+                code = self.xd.keysym_to_keycode(XK.string_to_keysym(name))
+                if code:
+                    codes.append(code)
+        return codes
+
+    def _hold_modifiers(self, codes):
+        for code in codes:
+            if self._mod_holds.get(code, 0) == 0:
+                xtest.fake_input(self.xd, X.KeyPress, code)
+                self._keys_down.add(code)
+            self._mod_holds[code] = self._mod_holds.get(code, 0) + 1
+
+    def _release_modifiers(self, codes):
+        for code in reversed(codes):
+            held = self._mod_holds.get(code, 0)
+            if held <= 1:
+                self._mod_holds.pop(code, None)
+                if code in self._keys_down:
+                    xtest.fake_input(self.xd, X.KeyRelease, code)
+                    self._keys_down.discard(code)
+            else:
+                self._mod_holds[code] = held - 1
+
+    def _set_mouse_modifiers(self, mods):
+        codes = self._modifier_codes(mods)
+        self._release_modifiers([c for c in self._mouse_mods if c not in codes])
+        self._hold_modifiers([c for c in codes if c not in self._mouse_mods])
+        self._mouse_mods = codes
+        self._mouse_mask = mods
 
     def is_modifier(self, key):
         """True for a bare modifier key event (Shift/Ctrl/Alt/Super alone)."""
@@ -51,7 +90,7 @@ class Injector:
     def chord(self, key, mods, etype):
         """Inject *key* with the *mods* bitmask held only for this event.
 
-        The pane's modifier keys are never injected on their own. A bare Alt
+        The pane's modifier keys are never injected without a gesture. A bare Alt
         press forwarded into the private display, whose matching release then
         went to a different pane -- because the chord that followed it was a
         kitty binding that moved focus -- left Mod1 latched in the X server,
@@ -64,6 +103,14 @@ class Injector:
         etype: 1 = press, 3 = release. Returns True if a key was injected.
         """
         if self.is_modifier(key):
+            # A drag can change between copy/move/selection modes while the
+            # pointer is stationary. Bare modifiers may update that existing
+            # gesture, but may never start a hold that focus loss can strand.
+            if self._btns_down and etype in (1, 3):
+                bit = MOD_KEY_BITS[ord(key)]
+                mask = self._mouse_mask | bit if etype == 1 else self._mouse_mask & ~bit
+                self._set_mouse_modifiers(mask)
+                self.xd.flush()
             return False
         keysym = self.keysym_for(key)
         if not keysym:
@@ -72,17 +119,8 @@ class Injector:
         if not keycode:
             return False
         if etype == 1:
-            modcodes = []
-            for bit, name in MOD_BITS:
-                if mods & bit:
-                    code = self.xd.keysym_to_keycode(XK.string_to_keysym(name))
-                    if code:
-                        modcodes.append(code)
-            for code in modcodes:
-                if self._mod_holds.get(code, 0) == 0:
-                    xtest.fake_input(self.xd, X.KeyPress, code)
-                    self._keys_down.add(code)
-                self._mod_holds[code] = self._mod_holds.get(code, 0) + 1
+            modcodes = self._modifier_codes(mods)
+            self._hold_modifiers(modcodes)
             xtest.fake_input(self.xd, X.KeyPress, keycode)
             self._keys_down.add(keycode)
             self._chord_mods[keycode] = modcodes
@@ -95,15 +133,7 @@ class Injector:
             modcodes = self._chord_mods.pop(keycode, [])
             xtest.fake_input(self.xd, X.KeyRelease, keycode)
             self._keys_down.discard(keycode)
-            for code in reversed(modcodes):
-                held = self._mod_holds.get(code, 0)
-                if held <= 1:
-                    self._mod_holds.pop(code, None)
-                    if code in self._keys_down:
-                        xtest.fake_input(self.xd, X.KeyRelease, code)
-                        self._keys_down.discard(code)
-                else:
-                    self._mod_holds[code] = held - 1
+            self._release_modifiers(modcodes)
         self.xd.flush()
         return True
 
@@ -184,11 +214,22 @@ class Injector:
 
     def mouse(self, ev, box):
         """Map a pane-pixel mouse event through `box` (x,y,w,h — the on-screen
-        image rect) into app pixels, then inject motion/buttons/wheel."""
+        image rect) into app pixels, then inject motion/buttons/wheel.
+
+        SGR carries its own Shift/Alt/Ctrl bits. Keep them while a button is
+        held, update them on each event, and release this pointer's modifier
+        ownership when the gesture ends. Hover and wheel holds last one event.
+        Keyboard chords retain their own independent modifier ownership.
+        """
         bx, by, bw, bh = box
         ax = min(self.app_w - 1, max(0, round((ev["x"] - bx) * self.app_w / bw)))
         ay = min(self.app_h - 1, max(0, round((ev["y"] - by) * self.app_h / bh)))
         b = ev["b"]
+        if b & 256:                     # kitty's leave indicator, not a click
+            return
+        mods = ((MOD_SHIFT if b & 4 else 0) | (MOD_ALT if b & 8 else 0)
+                | (MOD_CTRL if b & 16 else 0))
+        self._set_mouse_modifiers(mods)
         if b & 64:                       # wheel -> X buttons 4/5
             btn = 4 if (b & 3) == 0 else 5
             xtest.fake_input(self.xd, X.MotionNotify, x=ax, y=ay)
@@ -205,20 +246,22 @@ class Injector:
             else:
                 xtest.fake_input(self.xd, X.ButtonRelease, btn)
                 self._btns_down.discard(btn)
+        if not self._btns_down:
+            self._set_mouse_modifiers(0)
         self.xd.flush()
 
     def release_all(self):
         """Release every key/button we still hold — call on client disconnect,
         on pane focus-out, and on every exit path
         or shutdown so nothing stays stuck down on the shared display."""
-        for keycode in list(self._keys_down):
-            try:
-                xtest.fake_input(self.xd, X.KeyRelease, keycode)
-            except Exception:
-                pass
         for btn in list(self._btns_down):
             try:
                 xtest.fake_input(self.xd, X.ButtonRelease, btn)
+            except Exception:
+                pass
+        for keycode in list(self._keys_down):
+            try:
+                xtest.fake_input(self.xd, X.KeyRelease, keycode)
             except Exception:
                 pass
         self._keys_down.clear()
@@ -229,3 +272,5 @@ class Injector:
             pass
         self._mod_holds.clear()
         self._chord_mods.clear()
+        self._mouse_mods.clear()
+        self._mouse_mask = 0
