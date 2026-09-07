@@ -266,8 +266,8 @@ class FakeInjector:
     def __init__(self):
         self.keys = []
 
-    def key(self, key, etype):
-        self.keys.append((key, etype))
+    def chord(self, key, mods, etype):
+        self.keys.append((key, mods, etype))
 
 
 pane = object.__new__(apprun.AppPane)
@@ -281,12 +281,12 @@ pane.fit_app_window = lambda force=False: fit_calls.append(force) or True
 pane.on_key({"key": "F10", "mods": 1, "event": 1})
 assert pane._fit_suspended is True
 assert pane.prev_status is None
-assert pane.inj.keys == [("F10", 1)]
+assert pane.inj.keys == [("F10", 0, 1)]
 assert fit_calls == []
 
 pane.on_key({"key": "F10", "mods": 1, "event": 3})
 assert pane._fit_suspended is True
-assert pane.inj.keys[-1] == ("F10", 3)
+assert pane.inj.keys[-1] == ("F10", 0, 3)
 
 pane.on_key({"key": "F10", "mods": 1, "event": 1})
 assert pane._fit_suspended is False
@@ -296,7 +296,10 @@ pane._auto_fit = False
 pane.on_key({"key": "F10", "mods": 1, "event": 1})
 assert pane._fit_suspended is False
 assert fit_calls == [True]
-assert pane.inj.keys[-1] == ("F10", 1)
+assert pane.inj.keys[-1] == ("F10", 0, 1)
+
+pane.on_key({"key": "a", "mods": 3, "event": 1})
+assert pane.inj.keys[-1] == ("a", 2, 1)
 
 orig_argv = sys.argv
 orig_app_pane = apprun.AppPane
