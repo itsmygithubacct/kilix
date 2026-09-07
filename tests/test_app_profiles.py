@@ -53,14 +53,27 @@ class StaleProfileReapingTests(unittest.TestCase):
         app_profiles.cleanup_stale_app_profiles(self.parent)
         self.assertTrue(os.path.exists(path), "reaped a profile whose owner is alive")
 
-    def test_a_live_pid_with_no_start_time_is_kept_only_for_a_week(self):
-        # Without a start time a reused PID cannot be told from the owner, so
-        # age is the only thing that can end such a claim.
+    def test_a_live_pid_with_no_start_time_is_kept_whatever_its_age(self):
+        # A legacy name cannot distinguish PID reuse from a long-lived owner.
+        # Age is not proof that it is safe to destroy the browser's data.
         young = self._profile(os.getpid(), None, age_seconds=86400)
         old = self._profile(os.getpid(), None, age_seconds=8 * 86400)
         app_profiles.cleanup_stale_app_profiles(self.parent)
         self.assertTrue(os.path.exists(young))
-        self.assertFalse(os.path.exists(old))
+        self.assertTrue(os.path.exists(old))
+
+    def test_an_unreadable_live_process_start_does_not_authorize_deletion(self):
+        path = self._profile(os.getpid(), 12345, age_seconds=30 * 86400)
+        with mock.patch.object(app_profiles, "_process_start", return_value=None):
+            app_profiles.cleanup_stale_app_profiles(self.parent)
+        self.assertTrue(os.path.exists(path))
+
+    def test_a_reused_pid_with_a_known_different_start_is_reaped(self):
+        start = app_profiles._process_start(os.getpid())
+        self.assertIsNotNone(start)
+        path = self._profile(os.getpid(), start + 1, age_seconds=0)
+        app_profiles.cleanup_stale_app_profiles(self.parent)
+        self.assertFalse(os.path.exists(path))
 
 
 class PrepareAppCommandTests(unittest.TestCase):

@@ -14,7 +14,6 @@ import re
 import shutil
 import stat
 import tempfile
-import time
 
 
 CHROMIUM_COMMANDS = {
@@ -63,7 +62,10 @@ def _pid_is_running(pid: int, expected_start: int | None = None) -> bool:
     except PermissionError:
         return True
     if expected_start is not None:
-        return _process_start(pid) == expected_start
+        actual_start = _process_start(pid)
+        # kill(0) proved a process is alive. A failed /proc read is not proof
+        # that it is a different process and must not authorize data deletion.
+        return actual_start is None or actual_start == expected_start
     return True
 
 
@@ -90,15 +92,15 @@ def cleanup_stale_app_profiles(parent: str, now: float | None = None) -> None:
 
     A profile is reaped as soon as the process that owns it is gone -- the
     directory name carries the owner's PID and start time, so liveness needs
-    no bookkeeping. Age is only a backstop for names that carry no start time,
-    where a reused PID cannot be told from the original owner.
+    no bookkeeping. A live PID without a recorded or readable start time is
+    retained: its age cannot distinguish PID reuse from a long-lived owner.
+    ``now`` remains accepted for callers of the older age-based interface.
 
     This used to require BOTH conditions: older than a week AND owner gone. A
     run that dies before its own cleanup (a killed pane, a reboot) then left
     ~120 MB behind for seven days, and on a machine that opens a browser daily
     the total only ever grew: ten dead profiles, 1.2 GB, on a 0.2.1 install.
     """
-    now = time.time() if now is None else now
     try:
         entries = list(os.scandir(parent))
     except OSError:
@@ -117,12 +119,7 @@ def cleanup_stale_app_profiles(parent: str, now: float | None = None) -> None:
         start = (int(match.group("start"))
                  if match.group("start") is not None else None)
         if _pid_is_running(int(match.group("pid")), start):
-            # Alive -- or a reused PID we cannot distinguish from the owner
-            # because the name has no start time. Only in that second case
-            # does age decide, so an unverifiable claimant does not keep a
-            # profile forever.
-            if start is not None or now - info.st_mtime < APP_PROFILE_STALE_SECONDS:
-                continue
+            continue
         cleanup_app_profile(entry.path)
 
 
