@@ -132,6 +132,56 @@ class PrepareAppCommandTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 app_profiles.prepare_app_command(["chromium"])
 
+    def test_a_symlinked_ancestor_is_refused_without_changing_its_target(self):
+        real = Path(self.tmp.name) / "real"
+        real.mkdir(mode=0o700)
+        existing = real / "profile"
+        existing.mkdir(mode=0o755)
+        existing.chmod(0o755)
+        (existing / "cookies").write_text("keep")
+        link = Path(self.tmp.name) / "link"
+        link.symlink_to(real, target_is_directory=True)
+        for leaf in ("profile", "missing/nested"):
+            with self.subTest(leaf=leaf):
+                with mock.patch.dict(os.environ, {
+                        app_profiles.PERSISTENT_PROFILE_ENV: str(link / leaf)}):
+                    with self.assertRaises(RuntimeError):
+                        app_profiles.prepare_app_command(["chromium"])
+        self.assertEqual(stat.S_IMODE(existing.stat().st_mode), 0o755)
+        self.assertEqual((existing / "cookies").read_text(), "keep")
+        self.assertFalse((real / "missing").exists())
+
+    def test_a_writable_ancestor_is_refused_before_creating_a_profile(self):
+        shared = Path(self.tmp.name) / "shared"
+        shared.mkdir()
+        private = shared / "private"
+        private.mkdir(mode=0o700)
+        for permissions in (0o777, 0o770, 0o702):
+            with self.subTest(permissions=oct(permissions)):
+                shared.chmod(permissions)
+                with mock.patch.dict(os.environ, {
+                        app_profiles.PERSISTENT_PROFILE_ENV: str(private / "profile")}):
+                    with self.assertRaises(RuntimeError):
+                        app_profiles.prepare_app_command(["firefox"])
+                self.assertEqual(stat.S_IMODE(shared.stat().st_mode), permissions)
+                self.assertFalse((private / "profile").exists())
+
+    def test_private_creation_preserves_existing_parent_permissions_and_data(self):
+        parent = Path(self.tmp.name) / "parent"
+        parent.mkdir(mode=0o755)
+        parent.chmod(0o755)
+        (parent / "sentinel").write_text("keep")
+        persistent = parent / "nested" / "profile"
+        with mock.patch.dict(os.environ, {
+                app_profiles.PERSISTENT_PROFILE_ENV: str(persistent)}):
+            argv, cleanup = app_profiles.prepare_app_command(["chromium"])
+        self.assertIsNone(cleanup)
+        self.assertIn(f"--user-data-dir={persistent}", argv)
+        self.assertEqual(stat.S_IMODE(parent.stat().st_mode), 0o755)
+        self.assertEqual(stat.S_IMODE(persistent.parent.stat().st_mode), 0o700)
+        self.assertEqual(stat.S_IMODE(persistent.stat().st_mode), 0o700)
+        self.assertEqual((parent / "sentinel").read_text(), "keep")
+
     def test_a_persistent_profile_path_that_is_a_file_is_refused_as_configuration(self):
         # os.makedirs raises FileExistsError here, which is not RuntimeError,
         # so without translation it would escape the CLI as a traceback.

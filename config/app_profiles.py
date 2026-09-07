@@ -152,23 +152,52 @@ def _new_profile(name: str) -> str:
 def _persistent_profile() -> str | None:
     """The operator's persistent browser profile, if configured.
 
-    Created 0700 if absent and held to the same private-directory rule as the
-    disposable profiles: a symlink, a shared parent or someone else's directory
-    is refused loudly rather than used quietly.
+    Created 0700 if absent. Walk through directory descriptors so no symlink
+    is followed, and validate ancestors before creating or changing anything
+    below them. Existing parent permissions are never changed.
     """
     value = os.environ.get(PERSISTENT_PROFILE_ENV, "").strip()
     if not value:
         return None
     path = os.path.abspath(os.path.expanduser(value))
+    parts = [part for part in path.split(os.sep) if part]
+    if not parts:
+        raise RuntimeError(f"unsafe persistent browser profile directory: {path}")
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    directory = None
     try:
-        os.makedirs(path, mode=0o700, exist_ok=True)
+        directory = os.open(os.sep, flags)
+        for index, part in enumerate(parts):
+            parent = os.fstat(directory)
+            # Root-owned sticky directories such as /tmp protect a user's
+            # entries from other users' replacement. Other writable ancestors
+            # could redirect a later browser launch even if the leaf is 0700.
+            sticky_root = parent.st_uid == 0 and parent.st_mode & stat.S_ISVTX
+            if (parent.st_uid not in {0, os.geteuid()}
+                    or (parent.st_mode & 0o022 and not sticky_root)):
+                raise RuntimeError(
+                    f"unsafe persistent browser profile ancestor: {path}")
+            try:
+                child = os.open(part, flags, dir_fd=directory)
+            except FileNotFoundError:
+                try:
+                    os.mkdir(part, mode=0o700, dir_fd=directory)
+                except FileExistsError:
+                    pass  # A concurrent launch may have created it; recheck.
+                child = os.open(part, flags, dir_fd=directory)
+            os.close(directory)
+            directory = child
+            if index == len(parts) - 1:
+                if os.fstat(directory).st_uid != os.geteuid():
+                    raise RuntimeError(
+                        f"unsafe persistent browser profile directory: {path}")
+                os.fchmod(directory, 0o700)
     except OSError as e:
-        # A file already at that path, or a parent that cannot be written to,
-        # is the same class of misconfiguration as a symlink: refuse it in the
-        # one exception type the CLI turns into a message rather than a trace.
         raise RuntimeError(
             f"cannot use persistent browser profile directory {path}: {e}") from e
-    _require_private_directory(path, "persistent browser profile")
+    finally:
+        if directory is not None:
+            os.close(directory)
     return path
 
 
