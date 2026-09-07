@@ -624,7 +624,8 @@ class KilixLauncherTests(unittest.TestCase):
             "KILIX_CHROME_BUTTON_SPLIT_LEFT",
             "KILIX_CHROME_BUTTON_CLOSE",
             "KILIX_DESKTOP_PROVIDER", "KILIX_DESKTOP_FLAVOR", "KILIX95_AUTO_INSTALL",
-            "KILIX_RUN_AUTO_FIT", "KILIX_BROWSE_BACKEND", "KILIX_HW", "KILIX_DESKTOP_DIR",
+            "KILIX_RUN_AUTO_FIT", "KILIX_RUN_BROWSER_PROFILE", "KILIX_BROWSE_BACKEND",
+            "KILIX_HW", "KILIX_DESKTOP_DIR",
             "KILIX_NO_SOUND", "KILIX_SHELL_INTEGRATION", "KILIX_REF",
         ):
             self.assertIn(key, settings)

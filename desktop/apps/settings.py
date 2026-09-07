@@ -102,6 +102,16 @@ SETTING_PAGES = [
         S("KILIX_CHROME_BATTERY", "Battery"),
         S("KILIX_CHROME_WINDOWS", "Native window taskbar (Pleb)"),
         E("KILIX_BATTERY_SUPPLY_DIR", "Battery supply dir"),
+        # A shared SDK key beside the page-strip settings it belongs with.
+        # Every provider must offer every shared key; this one was missing
+        # here and in Kilix 95 alike, and shipped that way in 0.2.1.
+        S(
+            shared_settings.TAB_BAR_EDGE_KEY,
+            "Page strip edge",
+            "choice",
+            shared_settings.TAB_BAR_EDGE_DEFAULT,
+            list(shared_settings.TAB_BAR_EDGE_CHOICES),
+        ),
         K("tab_bar_min_tabs", "Show page strip at", default="1"),
         K("tab_bar_show_new_tab_button", "New-page button", "bool", "yes"),
     ]),
@@ -244,6 +254,7 @@ SETTING_PAGES = [
           list(shared_settings.CODING_YOLO_CHOICES)),
         E("KILIX_BROWSE_BACKEND", "Browser renderer", "choice", "presenter",
           ["presenter", "go"]),
+        E("KILIX_RUN_BROWSER_PROFILE", "Persistent browser profile"),
         E("KILIX_RUN_AUTO_FIT", "Auto-fit X apps", "bool", "1", ("1", "0")),
         E("KILIX_NO_PANE", "Headless run default", "bool", "0", ("1", "0")),
         E("KILIX_DEBUG", "Debug metrics", "bool", "0", ("1", "0")),
