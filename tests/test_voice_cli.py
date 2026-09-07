@@ -278,13 +278,15 @@ class VoiceCliTests(unittest.TestCase):
         self.assertIn(str(Path(self.environment["KILIX_VOICE_PREFIX"]) / "bin"),
                       stt[0])
 
-    def _stub_pactl(self, default_sink):
+    def _stub_pactl(self, default_sink, default_source=None):
+        if default_source is None:
+            default_source = default_sink + ".monitor"
         stub = self.bin / "pactl"
         stub.write_text(
             "#!/bin/sh\n"
             "[ \"$1\" = info ] || exit 0\n"
             "printf 'Server Name: pulseaudio\\nServer Version: 17.0\\n'\n"
-            f"printf 'Default Source: {default_sink}.monitor\\nDefault Sink: {default_sink}\\n'\n")
+            f"printf 'Default Source: {default_source}\\nDefault Sink: {default_sink}\\n'\n")
         stub.chmod(0o755)
 
     def test_voice_doctor_says_so_when_the_only_sink_is_a_null_device(self):
@@ -295,7 +297,7 @@ class VoiceCliTests(unittest.TestCase):
         self._stub_pactl("auto_null")
         result = self.run_kilix("voice", "doctor")
         lines = result.stdout.splitlines()
-        warned = [line for line in lines if line.startswith("audio device: NONE")]
+        warned = [line for line in lines if line.startswith("audio output: NONE")]
         self.assertEqual(len(warned), 1, result.stdout)
         self.assertIn("auto_null", warned[0])
         self.assertTrue(any("inaudible" in line for line in lines))
@@ -313,7 +315,8 @@ class VoiceCliTests(unittest.TestCase):
         self._configure_devices(KILIX_VOICE_DEVICE_OUT="alsa_output.pci.analog-stereo",
                                 KILIX_VOICE_DEVICE_IN="alsa_input.pci.analog-stereo")
         result = self.run_kilix("voice", "doctor")
-        self.assertNotIn("audio device: NONE", result.stdout)
+        self.assertNotIn("audio output: NONE", result.stdout)
+        self.assertNotIn("audio input: MONITOR", result.stdout)
         self.assertIn("explicitly configured devices", result.stdout)
 
     def test_only_the_channel_on_the_default_is_named(self):
@@ -321,9 +324,9 @@ class VoiceCliTests(unittest.TestCase):
         self._stub_pactl("auto_null")
         self._configure_devices(KILIX_VOICE_DEVICE_OUT="alsa_output.pci.analog-stereo")
         result = self.run_kilix("voice", "doctor")
-        self.assertIn("audio device: NONE", result.stdout)
-        self.assertIn("dictate will capture silence", result.stdout)
-        self.assertNotIn("speak will exit 0", result.stdout)
+        self.assertIn("audio input: MONITOR", result.stdout)
+        self.assertIn("dictate captures monitor audio", result.stdout)
+        self.assertNotIn("audio output: NONE", result.stdout)
 
     def test_a_server_with_no_default_sink_line_is_named_as_such(self):
         # pactl info reachable, but no "Default Sink" line at all -- an empty
@@ -334,16 +337,54 @@ class VoiceCliTests(unittest.TestCase):
                         "printf 'Server Name: pulseaudio\\nServer Version: 17.0\\n'\n")
         stub.chmod(0o755)
         result = self.run_kilix("voice", "doctor")
-        self.assertIn("audio device: NONE", result.stdout)
+        self.assertIn("audio output: NONE", result.stdout)
         self.assertIn("reports no default sink", result.stdout)
         self.assertNotIn("unset, a null device", result.stdout)
 
     def test_the_control_a_real_sink_draws_no_warning(self):
         self.hermetic_path()
-        self._stub_pactl("alsa_output.pci-0000_00_1b.0.analog-stereo")
+        self._stub_pactl("alsa_output.pci-0000_00_1b.0.analog-stereo",
+                         "alsa_input.real_microphone")
         result = self.run_kilix("voice", "doctor")
-        self.assertNotIn("audio device: NONE", result.stdout)
+        self.assertNotIn("audio output: NONE", result.stdout)
+        self.assertNotIn("audio input: MONITOR", result.stdout)
         self.assertIn("audio server: pulseaudio 17.0", result.stdout)
+
+    def test_a_real_microphone_is_not_blamed_for_a_null_output(self):
+        self.hermetic_path()
+        self._stub_pactl("auto_null", "alsa_input.real_microphone")
+        result = self.run_kilix("voice", "doctor")
+        self.assertIn("audio output: NONE", result.stdout)
+        self.assertNotIn("audio input: NONE", result.stdout)
+        self.assertNotIn("audio input: MONITOR", result.stdout)
+        self.assertNotIn("dictate will capture silence", result.stdout)
+
+    def test_monitor_input_is_diagnosed_independently_of_output(self):
+        self.hermetic_path()
+        for source in ("auto_null.monitor", "alsa_output.real_speakers.monitor"):
+            with self.subTest(source=source):
+                self._stub_pactl("alsa_output.real_speakers", source)
+                result = self.run_kilix("voice", "doctor")
+                self.assertNotIn("audio output: NONE", result.stdout)
+                self.assertIn("audio input: MONITOR", result.stdout)
+                self.assertIn("dictate captures monitor audio", result.stdout)
+
+    def test_missing_input_is_diagnosed_independently_of_output(self):
+        self.hermetic_path()
+        self._stub_pactl("alsa_output.real_speakers", "")
+        result = self.run_kilix("voice", "doctor")
+        self.assertNotIn("audio output: NONE", result.stdout)
+        self.assertIn("audio input: NONE", result.stdout)
+        self.assertIn("reports no default source", result.stdout)
+
+    def test_explicit_null_routes_are_diagnosed_even_with_real_defaults(self):
+        self.hermetic_path()
+        self._stub_pactl("alsa_output.real_speakers", "alsa_input.real_microphone")
+        self._configure_devices(KILIX_VOICE_DEVICE_OUT="auto_null",
+                                KILIX_VOICE_DEVICE_IN="auto_null.monitor")
+        result = self.run_kilix("voice", "doctor")
+        self.assertIn("audio output: NONE", result.stdout)
+        self.assertIn("audio input: MONITOR", result.stdout)
 
     def test_voice_daemon_rejects_arguments_and_is_documented_in_help(self):
         self.install_fake_daemon()
