@@ -25,7 +25,17 @@ LAUNCHER = ROOT / "kilix"
 
 
 def run(argv, **environment):
-    env = dict(os.environ, **environment)
+    env = dict(os.environ)
+    if "GPU_TERMINAL_HOME" in environment or "KILIX_STORAGE_HOME" in environment:
+        # CI exports build/storage roots. A test's new parent must derive its
+        # own writable children instead of inheriting paths under CI's parent.
+        for key in ("GPU_TERMINAL_SETTINGS_FILE", "KILIX_STORAGE_HOME",
+                    "KILIX_CONFIG_HOME", "KILIX_STATE_DIRECTORY",
+                    "KILIX_CACHE_HOME", "KILIX_SESSION_HOME",
+                    "KILIX_TELEMETRY_RUNTIME", "KILIX_DATA_HOME",
+                    "KILIX_BUILD_DIRECTORY", "KILIX_PREBUILT_HOME"):
+            env.pop(key, None)
+    env.update(environment)
     return subprocess.run(argv, capture_output=True, text=True, env=env,
                           timeout=120)
 
