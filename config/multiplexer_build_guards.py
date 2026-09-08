@@ -154,19 +154,25 @@ def search_roots(trace, snapshot, *, include_private=False):
     """
     roots = set()
     starts = ends = 0
+    listing = False
     for line in trace.decode().splitlines():
         if line.startswith('#include ') and line.endswith(' search starts here:'):
             starts += 1
+            listing = True
         elif line == 'End of search list.':
             ends += 1
+            listing = False
         elif line.startswith(('ignoring nonexistent directory "', 'ignoring duplicate directory "')):
             roots.add(line.split('"', 1)[1].rsplit('"', 1)[0])
-        elif line.startswith(' '):
-            # GCC's search entries are the indented directory-only lines.
-            value = line.strip()
-            path = Path(value)
-            if path.is_dir() or (snapshot / path).is_dir():
-                roots.add(value)
+        elif listing and line.startswith(' '):
+            # GCC's search entries are the indented lines of the search block
+            # itself. Indented lines outside that block are ordinary compiler
+            # diagnostics and are not part of the reported search. What the
+            # compiler reported is a fact about the past: it is recorded as
+            # searched whether or not the directory still exists now, so a
+            # directory removed before this parse stays admitted, watched and
+            # compared instead of silently leaving the population.
+            roots.add(line.strip())
     if not starts or not ends:
         raise ValueError('compiler did not report its include search')
     return sorted({os.path.abspath(snapshot / root) for root in roots

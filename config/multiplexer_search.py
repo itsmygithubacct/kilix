@@ -15,6 +15,11 @@ from multiplexer_build_guards import BuildBoundaryChanged, search_identity, sear
 MAX_PACKET = 65536
 
 
+def _reason(error):
+    """A bounded errno phrase; the errno string's private path stays out."""
+    return os.strerror(error.errno) if error.errno else type(error).__name__
+
+
 def receive(peer, size):
     raw, controls, flags, _address = peer.recvmsg(size, 256, socket.MSG_CMSG_CLOEXEC)
     credentials = []
@@ -238,10 +243,9 @@ class SearchAdmission:
                 # reason. An escaping errno string would instead carry the
                 # private generation path, and would not be the typed refusal
                 # every other rejection on this untrusted request path raises.
-                reason = os.strerror(error.errno) if error.errno else type(error).__name__
                 raise BuildBoundaryChanged(
-                    'compiler diagnostic ' + name[:64] + ' is unavailable at admission: ' + reason
-                ) from error
+                    'compiler diagnostic ' + name[:64]
+                    + ' is unavailable at admission: ' + _reason(error)) from error
             if not stat.S_ISREG(found.st_mode) or found.st_uid != uid or found.st_mode & 0o077 or found.st_nlink != 1 or found.st_size:
                 raise BuildBoundaryChanged('compiler diagnostic identity differs at admission')
             # Link-only GCC invocations have no preprocessing search. The
@@ -265,8 +269,23 @@ class SearchAdmission:
         if set(actual) != self.history.roots:
             raise BuildBoundaryChanged('actual compiler search differs from admitted history')
         found = {}
-        for path in self.diagnostics.iterdir():
-            info = path.lstat()
+        # Only the two filesystem calls are guarded, and each still refuses: a
+        # completion that cannot read its own diagnostic population is a
+        # boundary change, not a success and not a raw errno carrying the
+        # private generation path.
+        try:
+            entries = list(self.diagnostics.iterdir())
+        except OSError as error:
+            raise BuildBoundaryChanged(
+                'compiler diagnostic population is unavailable at completion: '
+                + _reason(error)) from error
+        for path in entries:
+            try:
+                info = path.lstat()
+            except OSError as error:
+                raise BuildBoundaryChanged(
+                    'compiler diagnostic ' + path.name[:64]
+                    + ' is unavailable at completion: ' + _reason(error)) from error
             found[path.name] = (info.st_dev, info.st_ino)
         if found != self.logs:
             raise BuildBoundaryChanged('actual compiler diagnostics differ from admitted invocations')

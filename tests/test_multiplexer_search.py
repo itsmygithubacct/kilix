@@ -3,6 +3,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import struct
 import subprocess
 import sys
@@ -271,6 +272,153 @@ class SearchTests(fixture.InstalledBuildTests):
                             # reads an ended channel or is reset, never READY.
                             self.assertNotIn('READY', output)
                 self.assertFalse((root / 's').exists())
+        self.assertEqual(len(os.listdir('/proc/self/fd')), before)
+
+    def admit(self, module, label, roots, log='gcc-control.log'):
+        """Drive one real request to READY and return the live admission.
+
+        The endpoint, socket, credentials, requester process and inotify
+        population are all real; only the reported search list is supplied by
+        the caller, in the exact form the compiler prints it. The caller owns
+        the returned admission and directory descriptor.
+        """
+        root = self.root / label
+        root.mkdir()
+        diagnostics = root / 'logs'
+        diagnostics.mkdir(mode=0o700)
+        (diagnostics / log).touch(mode=0o600)
+        directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        try:
+            endpoint = '/proc/self/fd/' + str(directory) + '/s'
+            admission = module.SearchAdmission(endpoint, self.source, diagnostics, lambda: None)
+        except BaseException:
+            os.close(directory)
+            raise
+        try:
+            trace = ('#include <...> search starts here:\n'
+                     + ''.join(' ' + str(entry) + '\n' for entry in roots)
+                     + 'End of search list.\n')
+            packet = log.encode('ascii') + b'\0' + trace.encode()
+            script = ('import json,socket,sys\n'
+                's=socket.socket(socket.AF_UNIX,socket.SOCK_SEQPACKET);s.connect(sys.argv[1])\n'
+                's.send(bytes.fromhex(sys.argv[2]));s.shutdown(socket.SHUT_WR)\n'
+                'print(json.dumps(s.recv(32).decode()),flush=True)\n')
+            child = subprocess.Popen(['/usr/bin/python3', '-B', '-c', script, endpoint, packet.hex()],
+                                     pass_fds=(directory,), stdout=subprocess.PIPE,
+                                     stderr=subprocess.PIPE, text=True)
+            try:
+                deadline = time.monotonic() + 3
+                while not admission.logs:
+                    self.assertLess(time.monotonic(), deadline)
+                    admission.check()
+                    time.sleep(.005)
+                output, errors = child.communicate(timeout=3)
+            except BaseException:
+                child.kill()
+                child.communicate()
+                raise
+            self.assertEqual(child.returncode, 0, errors)
+            self.assertEqual(json.loads(output), 'READY')
+        except BaseException:
+            admission.close()
+            os.close(directory)
+            raise
+        return admission, directory, diagnostics, trace.encode(), root
+
+    def test_reported_but_absent_root_is_admitted_watched_and_refuses_on_creation(self):
+        """A search entry the compiler reported must not leave the population.
+
+        The reported list is supplied here rather than produced by a compiler
+        that then loses the directory: that window is in-process and exposes no
+        external observable. The list is in GCC's exact printed form, and every
+        other part of this control -- socket, credentials, requester process,
+        inotify population and refusal -- is the real production path.
+        """
+        module = self.module()
+        before = len(os.listdir('/proc/self/fd'))
+        absent = self.root / 'reported-then-absent'
+        self.assertFalse(absent.exists())
+        admission, directory, _diagnostics, _trace, root = self.admit(
+            module, 'absent-root', (absent, self.headers))
+        try:
+            # Retained as a root, recorded as absent, and its name watched on
+            # the nearest existing ancestor.
+            self.assertIn(str(absent), admission.history.roots)
+            self.assertIsNone(admission.history.state[str(absent)])
+            self.assertIn((str(self.root.resolve()), absent.name), admission.history.paths)
+            admission.history.check()
+            absent.mkdir()
+            with self.assertRaises(module.BuildBoundaryChanged):
+                admission.history.check()
+            (absent / 'late.h').write_bytes(b'#define LATE 1\n')
+            shutil.rmtree(absent)
+            # The history stays failed; a later create/use/remove cannot clear it.
+            with self.assertRaises(module.BuildBoundaryChanged):
+                admission.history.check()
+        finally:
+            admission.close()
+            os.close(directory)
+        self.assertFalse((root / 's').exists())
+        self.assertEqual(len(os.listdir('/proc/self/fd')), before)
+
+    def test_unexaminable_diagnostic_population_refuses_completion(self):
+        """finish() must classify its own diagnostic population failures.
+
+        Four arms perturb the real directory. The `vanishing` arm is
+        instrumented and disclosed: an entry removed between the directory
+        listing and its lstat is an in-process window with no external
+        observable, so that arm alone replaces the admission's diagnostics
+        attribute with a test-only object that unlinks what it yields. It is
+        not, and is not presented as, an uninstrumented observation.
+        """
+        module = self.module()
+
+        class Vanishing:
+            def __init__(self, path):
+                self.path = path
+
+            def iterdir(self):
+                for entry in self.path.iterdir():
+                    entry.unlink()
+                    yield entry
+
+        expected = {'directory-absent': 'population is unavailable',
+                    'directory-unreadable': 'population is unavailable',
+                    'entry-unreadable': 'gcc-control.log',
+                    'vanishing': 'gcc-control.log'}
+        before = len(os.listdir('/proc/self/fd'))
+        for arm in ('valid', 'directory-absent', 'directory-unreadable',
+                    'entry-unreadable', 'vanishing'):
+            with self.subTest(arm=arm):
+                admission, directory, diagnostics, trace, _root = self.admit(
+                    module, 'finish-' + arm, (self.headers,))
+                try:
+                    if arm == 'directory-absent':
+                        shutil.rmtree(diagnostics)
+                    elif arm in ('directory-unreadable', 'entry-unreadable'):
+                        diagnostics.chmod(0o300 if arm == 'directory-unreadable' else 0o600)
+                        self.addCleanup(diagnostics.chmod, 0o700)
+                    elif arm == 'vanishing':
+                        admission.diagnostics = Vanishing(diagnostics)
+                    if arm == 'valid':
+                        self.assertIsNone(admission.finish(trace))
+                        continue
+                    with self.assertRaises(module.BuildBoundaryChanged) as caught:
+                        admission.finish(trace)
+                    error = caught.exception
+                    # Typed, so a caller discriminating on the boundary change
+                    # classifies it, and still a ValueError for the operator path.
+                    self.assertNotIsInstance(error, OSError)
+                    self.assertIsInstance(error, ValueError)
+                    self.assertIn('unavailable at completion', str(error))
+                    self.assertIn(expected[arm], str(error))
+                    self.assertNotIn(str(diagnostics), str(error))
+                    self.assertNotIn(str(self.root), str(error))
+                    # The original errno is preserved as the chained cause.
+                    self.assertIsInstance(error.__cause__, OSError)
+                finally:
+                    admission.close()
+                    os.close(directory)
         self.assertEqual(len(os.listdir('/proc/self/fd')), before)
 
     def test_history_missing_overflow_and_same_tick_restoration_refuse(self):
