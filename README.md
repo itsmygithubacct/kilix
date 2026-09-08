@@ -1564,6 +1564,25 @@ error. Amp and the multiplexer use the same installed native library.
 `KILIX_MULTIPLEXER_COMMIT` to its full commit hash. This does not change the
 release pin.
 
+The multiplexer compiles a private snapshot of the exact Git objects, after
+checking every working file independently of Git index optimization flags.
+Builds use the provisioned GCC toolchain and a fixed compiler environment;
+ambient `CPATH`, `C_INCLUDE_PATH`, `LIBRARY_PATH`, compiler search overrides,
+loader injection and make environment overrides are not inherited. Use explicit
+`CFLAGS`, `CPPFLAGS`, `LDFLAGS` and `LDLIBS` for supported flags, and
+`PKG_CONFIG_PATH`/`PKG_CONFIG_LIBDIR` to select the installed package. Compiler
+plugins, response files, alternate sysroots/specs, profiling/module/LTO inputs,
+precompiled headers, linker scripts and dependency-output overrides
+are refused. No model setup occurs in this build path.
+
+Reuse checks the compiler/tool bytes, actual GCC header dependencies and linker
+inputs, native/Content package identity and all output digests. Changed inputs
+force a fresh generation; a dependency changed during compilation refuses the
+build. Unprovable ancestor stability disables reuse. Failed or interrupted
+compilation preserves previous published outputs, and the dedicated owner
+retains the build lock through descendant cleanup. The private build command
+has one 240-second budget including lock wait and raw Git capture.
+
 ### 3. A GUI app — view + control from a browser or VNC client
 
 `kilix run` can expose the app it's already running on its private display:
