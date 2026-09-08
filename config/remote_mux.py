@@ -169,6 +169,8 @@ def cmd_serve(ns: argparse.Namespace) -> int:
                 "--audio-channels", str(ns.audio_channels),
                 "--audio-budget", str(ns.audio_budget),
             ])
+        argv.extend(["--audio-codec", ns.audio_codec,
+                     "--audio-bitrate", str(ns.audio_bitrate)])
         if ns.lan:
             argv.append("--lan")
         if ns.tls:
@@ -206,6 +208,8 @@ def cmd_attach(ns: argparse.Namespace, *, view: bool) -> int:
             argv.append("--no-audio")
         elif ns.audio_output:
             argv.extend(["--audio-output", ns.audio_output])
+        argv.extend(["--audio-codec", ns.audio_codec,
+                     "--audio-bitrate", str(ns.audio_bitrate)])
         os.execve(attach, argv, launch_environment())
     except (OSError, RuntimeError, ValueError) as exc:
         return fail(str(exc))
@@ -239,6 +243,8 @@ def parser() -> argparse.ArgumentParser:
     serve.add_argument("--audio-rate", type=int, default=48000)
     serve.add_argument("--audio-channels", type=int, default=2)
     serve.add_argument("--audio-budget", type=int, default=0)
+    serve.add_argument("--audio-codec", choices=("auto", "encodec", "pcm"), default="auto")
+    serve.add_argument("--audio-bitrate", type=int, choices=(3, 6, 12), default=6)
 
     for name in ("attach", "view"):
         attach = commands.add_parser(name, help=f"{name} a remote pane")
@@ -252,6 +258,8 @@ def parser() -> argparse.ArgumentParser:
         attach.add_argument("--seconds", type=int, default=0)
         attach.add_argument("--audio-output", default="")
         attach.add_argument("--no-audio", action="store_true")
+        attach.add_argument("--audio-codec", choices=("auto", "encodec", "pcm"), default="auto")
+        attach.add_argument("--audio-bitrate", type=int, choices=(3, 6, 12), default=6)
     return root
 
 
