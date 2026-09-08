@@ -145,7 +145,7 @@ class NamedLock:
             raise BuildBoundaryChanged('build lock name changed')
 
 
-def search_roots(trace, snapshot):
+def search_roots(trace, snapshot, *, include_private=False):
     """Read GCC's actual preprocessor search, including ignored absent roots.
 
     -Wp,-v prints the search after driver, make, explicit flags and pkg-config
@@ -170,7 +170,7 @@ def search_roots(trace, snapshot):
     if not starts or not ends:
         raise ValueError('compiler did not report its include search')
     return sorted({os.path.abspath(snapshot / root) for root in roots
-                   if not Path(os.path.abspath(snapshot / root)).is_relative_to(snapshot.parent)})
+                   if include_private or not Path(os.path.abspath(snapshot / root)).is_relative_to(snapshot.parent)})
 
 
 def search_identity(roots, check):

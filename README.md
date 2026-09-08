@@ -1579,7 +1579,15 @@ Reuse checks the compiler/tool bytes, actual GCC header dependencies and linker
 inputs, native/Content package identity and all output digests. GCC's reported
 include search directories, including absent and earlier directories, are also
 recorded. Adding an earlier or nested header invalidates reuse even if the
-previously consumed header is unchanged. Changed inputs
+previously consumed header is unchanged. Before each actual compile, the
+captured helper discovers GCC's search with a preprocessing-only pass that
+preserves its search/language arguments. The build owner registers continuing
+kernel history before acknowledging compilation. This includes absent paths,
+symlink targets and negative `__has_include` decisions. Actual compiler logs
+must match the admitted population; discovery output cannot authorize a binary.
+Changed or unavailable relevant history refuses before fresh publication.
+Unchanged search paths share the owner's existing watches across translation
+units; ordinary complete generations still support reuse. Changed inputs
 force a fresh generation; a dependency changed during compilation refuses the
 build. Unprovable ancestor stability disables reuse. Failed or interrupted
 compilation preserves previous published outputs, and the dedicated owner

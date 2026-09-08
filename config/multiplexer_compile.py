@@ -17,9 +17,10 @@ import time
 from multiplexer_build_io import BuildIO, check_source, read_file, source_files
 from multiplexer_build_guards import (BuildBoundaryChanged, DirectoryEvents, DirectoryHistory, NamedLock,
                                      search_identity, search_roots)
+from multiplexer_search import SearchAdmission
 
 FLAGS = ('CFLAGS', 'CPPFLAGS', 'LDFLAGS', 'LDLIBS')
-SCHEMA = 'kilix.multiplexer.build/v3'
+SCHEMA = 'kilix.multiplexer.build/v4'
 
 
 def linker_flags(token):
@@ -303,6 +304,8 @@ def build(args, package_plan):
     generation_identity = None
     generation_fd = None
     stage_events = None
+    search_admission = None
+    search_endpoint = '-'
     published = False
     try:
         lock = os.open('.build.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK,
@@ -334,6 +337,8 @@ def build(args, package_plan):
         (generation / 'tmp').mkdir()
         diagnostics = generation / 'tmp/compiler'
         diagnostics.mkdir(mode=0o700)
+        discovery_logs = generation / 'tmp/search'
+        discovery_logs.mkdir(mode=0o700)
         def compiler_boundary():
             owner.check()
             try:
@@ -344,8 +349,11 @@ def build(args, package_plan):
             except (OSError, BuildBoundaryChanged) as exc:
                 raise BuildBoundaryChanged('private build generation changed') from exc
             compiler_logs(diagnostics)
+            compiler_logs(discovery_logs)
             if driver_history is not None:
                 driver_history.check()
+            if search_admission is not None:
+                search_admission.check()
         io.boundary_check = compiler_boundary
         env = environment(generation)
         source = Path(args.source).resolve(strict=True)
@@ -367,10 +375,17 @@ def build(args, package_plan):
         diagnostic_helper = driver / 'exec.py'
         diagnostic_helper.write_bytes(helper_bytes)
         diagnostic_helper.chmod(0o400)
+        search_helpers = {}
+        for name in ('multiplexer_search.py', 'multiplexer_build_guards.py'):
+            raw = read_file(Path(__file__).with_name(name), check=io.check)
+            (driver / name).write_bytes(raw)
+            (driver / name).chmod(0o400)
+            search_helpers[name] = sha(raw)
         driver.chmod(0o500)
         driver_history = DirectoryHistory(driver, io.check)
         inputs = dict(source_commit=args.commit, source_tree=tree, tools=tools, package=native,
                       compiler_diagnostic_helper=sha(helper_bytes),
+                      compiler_search_helpers=search_helpers,
                       flags={key: env.get(key) for key in FLAGS}, compiler=str(compiler),
                       pkg_config={key: env.get(key) for key in ('PKG_CONFIG_PATH', 'PKG_CONFIG_LIBDIR')}, ENCODEC=1)
         signature = sha(canonical(inputs))
@@ -386,7 +401,7 @@ def build(args, package_plan):
             return ['/usr/bin/make', '--silent', '--no-print-directory', '-C', str(root / 'source'),
                     'BUILD_DIR=' + str(root / 'out'), 'ENCODEC=1',
                     'CC=' + shlex.join(['/usr/bin/python3', str(diagnostic_helper), str(compiler),
-                                       str(diagnostics), '-MD', '-Wp,-v', '-Wl,-t']), 'AR=/usr/bin/ar',
+                                       str(diagnostics), str(search_endpoint), '-MD', '-Wp,-v', '-Wl,-t']), 'AR=/usr/bin/ar',
                     'ENCODEC_CFLAGS=' + native['cflags'], 'ENCODEC_LIBS=' + native['libs']]
         def binaries(root):
             for name in ('kmx-serve', 'kmx-attach'):
@@ -432,6 +447,27 @@ def build(args, package_plan):
             compiler_boundary()
             history.check()
         (generation / 'out').mkdir()
+        search_endpoint = Path('/proc/self/fd') / str(directory) / generation.name / 'tmp/search.sock'
+        # Admission's traversal must check the original budget without
+        # recursively entering its own request handler.
+        next_search_guard_check = 0
+        def search_check():
+            nonlocal next_search_guard_check
+            if io.stopped:
+                raise InterruptedError('multiplexer build interrupted')
+            now = time.monotonic()
+            if now >= io.deadline:
+                raise TimeoutError('multiplexer build deadline exceeded')
+            # Every entry checks cancellation/deadline. Drain retained guard
+            # events at the same 25ms cadence as command polling, rather than
+            # resolving every ancestor for every unrelated system-header name.
+            # Full boundary checks and search-history drains still bracket
+            # compilation and each publication replacement.
+            if now >= next_search_guard_check:
+                owner.check()
+                driver_history.check()
+                next_search_guard_check = now + .025
+        search_admission = SearchAdmission(search_endpoint, snapshot, diagnostics, search_check)
         started = time.time_ns()
         # A failed freshness check cannot select a default/disabled recipe.
         io.run(make(generation) + ['--question', 'all'], env, allowed=(0, 1, 2))
@@ -443,6 +479,7 @@ def build(args, package_plan):
             raise ValueError('combined build command output exceeds its bound')
         if code:
             raise ValueError('build command failed: ' + trace[-4000:].decode('utf-8', 'replace'))
+        search_admission.finish(trace)
         io.boundary_check = check_boundaries
         io.check()
         binaries(generation / 'out')
@@ -451,7 +488,7 @@ def build(args, package_plan):
             raise ValueError('external compiler dependency changed during compilation')
         cacheable = all(parent[3] <= started for row in deps.values() for parent in row['parents'])
         roots = search_roots(trace, snapshot)
-        search = search_identity(roots, io.check)
+        search = search_identity(roots, search_check)
         if any(row is not None and max(row['entry'][-1], row.get('target', [0])[-1]) > started
                for row in search.values()):
             cacheable = False
@@ -475,7 +512,8 @@ def build(args, package_plan):
             if current['parents'] != row['parents']:
                 cacheable = False
         artifacts = artifact_files(generation / 'out', io)
-        if search_identity(roots, io.check) != search:
+        search_admission.finish(trace)
+        if search_identity(roots, search_check) != search:
             raise ValueError('compiler include search changed before publication')
         record = dict(schema=SCHEMA, signature=signature, inputs=inputs, generation=generation.name,
                       artifacts=artifacts, dependencies=deps, cacheable=cacheable,
@@ -498,6 +536,8 @@ def build(args, package_plan):
             owner.close()
         if stage_events is not None:
             stage_events.close()
+        if search_admission is not None:
+            search_admission.close()
         if not published:
             # Use the held directory even after a visible base-name change;
             # never clean a replacement generation belonging to another inode.
