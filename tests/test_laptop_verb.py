@@ -19,6 +19,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -176,12 +177,71 @@ class LaptopVerbTests(unittest.TestCase):
         self.assertEqual(self.laptop.session_pid("alive"), os.getpid())
         dead = subprocess.Popen(["true"])
         dead.wait()
-        self.laptop.record_session("dead", dead.pid)
+        Path(self.laptop.pid_path("dead")).write_text("%d\n" % dead.pid)
         self.assertIsNone(self.laptop.session_pid("dead"))
         self.assertFalse(Path(self.laptop.pid_path("dead")).exists())
         Path(self.laptop.pid_path("junk")).write_text("not-a-pid\n")
         self.assertIsNone(self.laptop.session_pid("junk"))
         self.assertFalse(Path(self.laptop.pid_path("junk")).exists())
+
+    def test_registry_binds_pid_to_boot_and_process_start(self):
+        self.laptop.record_session("bench", os.getpid())
+        record = Path(self.laptop.pid_path("bench"))
+        lines = record.read_text().splitlines()
+        self.assertEqual(lines[0], str(os.getpid()))
+        self.assertRegex(lines[1], r"^boot_id=[0-9a-f-]{36}$")
+        self.assertRegex(lines[2], r"^start_time=[0-9]+$")
+        self.assertEqual(record.stat().st_mode & 0o777, 0o600)
+
+    def test_reused_pid_and_previous_boot_never_signal_an_unrelated_process(self):
+        self._write("bench.profile", "pane.1.cwd=~\n")
+        with subprocess.Popen(["sleep", "60"]) as unrelated:
+            try:
+                for field in ("boot_id", "start_time"):
+                    with self.subTest(field=field):
+                        self.laptop.record_session("bench", unrelated.pid)
+                        record = Path(self.laptop.pid_path("bench"))
+                        lines = record.read_text().splitlines()
+                        record.write_text("\n".join(
+                            field + "=stale" if line.startswith(field + "=")
+                            else line for line in lines) + "\n")
+                        self.assertEqual(self.laptop.cmd_close("bench"), 0)
+                        self.assertIsNone(unrelated.poll())
+                        self.assertFalse(record.exists())
+            finally:
+                unrelated.terminate()
+
+    def test_live_legacy_registry_is_preserved_and_refused(self):
+        self._write("bench.profile", "pane.1.cwd=~\n")
+        self.laptop.record_session("bench", os.getpid())
+        record = Path(self.laptop.pid_path("bench"))
+        record.write_text("%d\n" % os.getpid())
+        with mock.patch.object(self.laptop.signal, "pidfd_send_signal") as send:
+            for action in (self.laptop.cmd_open, self.laptop.cmd_close):
+                with self.assertRaisesRegex(self.laptop.ProfileError, "legacy"):
+                    action("bench")
+            send.assert_not_called()
+        self.assertEqual(record.read_text(), "%d\n" % os.getpid())
+
+    def test_identity_is_rechecked_after_opening_process_descriptor(self):
+        self.laptop.record_session("bench", os.getpid())
+        self._write("bench.profile", "pane.1.cwd=~\n")
+        identity = self.laptop._process_identity(os.getpid())
+        with mock.patch.object(self.laptop, "_process_identity", side_effect=[
+                identity, (identity[0], "0")]), \
+                mock.patch.object(self.laptop.signal, "pidfd_send_signal") as send:
+            self.assertEqual(self.laptop.cmd_close("bench"), 0)
+            send.assert_not_called()
+
+    def test_unreadable_identity_preserves_registry_and_refuses_close(self):
+        self.laptop.record_session("bench", os.getpid())
+        with mock.patch.object(self.laptop, "_process_identity", side_effect=
+                self.laptop.ProfileError("cannot verify")), \
+                mock.patch.object(self.laptop.signal, "pidfd_send_signal") as send:
+            with self.assertRaises(self.laptop.ProfileError):
+                self.laptop.cmd_close("bench")
+            send.assert_not_called()
+        self.assertTrue(Path(self.laptop.pid_path("bench")).exists())
 
     def test_open_records_and_close_terminates(self):
         self._write("bench.profile", "name=Bench\npane.1.cwd=~\n")

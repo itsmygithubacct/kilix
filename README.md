@@ -244,9 +244,10 @@ Adds the host verbs every desktop provider was reimplementing (SDK 1.8):
 - `kilix laptop list|open PROFILE|status|close PROFILE` — the laptop session
   profiles every desktop's laptop object reads
   (`~/.local/gpu_terminal/laptop/<id>.profile`), opened and closed host-side
-  with a shared run registry (`run/<id>.pid`, real process-liveness checks),
-  so a session opened from any desktop shows as running — and can be closed —
-  from every other.
+  with a shared run registry (`run/<id>.pid`). The host verifies boot identity
+  and process start time before reporting a session as running or closing it.
+  Live records written by older desktops with only a PID are reported as
+  `unverified`; close those windows manually before reopening the profile.
 - `kilix_sdk.xdgapps` — the freedesktop `.desktop` scanner Kilix 95's Start
   menu always had, promoted into the SDK for every consumer (SDK 1.7 → 1.8);
   now also the one authored source of the copy the TUI stack mirrors, gaining
@@ -1568,9 +1569,10 @@ Two things that look like failure but are not:
 Scripts should not assume `xclip`/`xsel`; use `kitty +kitten clipboard`, which
 talks to the terminal directly.
 
-### Going to a page or a pane — `F12`
+### Pane Center — `F12` or `kilix panes`
 
-`F12` opens **`kilix-switch`**, from
+`F12` opens the **Pane Center** (`kilix-panes`, with `kilix-switch` retained as
+the compatible command), from
 [kilix-tui-utils](https://github.com/itsmygithubacct/kilix-tui-utils), over the
 current pane. It replaces the two choosers kitty ships, which were the same
 thing twice — a numbered list of titles, one for pages and one for panes. A
@@ -1578,12 +1580,31 @@ title is a poor handle on a pane, since several are `bash` and several more are
 whatever directory they started in, so the list told you least exactly when you
 had enough windows to need it.
 
-The switcher shows one tree of pages and their panes with the process and
-directory that actually identify each one, a filter (`/`) across all of it, and
-a live view of what the highlighted pane is currently showing. `Tab` cycles
-between everything, this page, and everywhere else; `Ctrl+Shift+B` `q` opens it
-already scoped to this page. It can also rename and close what it lists, and
-closing always asks first.
+The center shows one tree of pages and their panes with activity, coding-agent
+session, process, directory, PTY-broker journal state, current task, and a live
+view of what the highlighted pane is showing. `Tab` cycles between everything,
+this page, and everywhere else; `Ctrl+Shift+B` `q` opens it already scoped to
+this page. `/` filters, `s` sends and submits a bounded message, and it can also
+rename or close what it lists; closing always asks first.
+
+`kilix panes` with no arguments opens that TUI. Its CLI is the same data model,
+intended for agents and scripts:
+
+```sh
+kilix panes list
+kilix panes --json
+kilix panes dump PANE --lines 40
+kilix panes wait PANE --for idle --timeout 300
+kilix panes send PANE --enter 'continue'
+```
+
+Codex `idle` is conservative: the live process must still own its rollout and
+the newest explicit turn boundary must be `task_complete`; `task_started` is
+`working`, and missing evidence stays `agent`. Targets accept pane IDs, unique
+labels, or broker/coding-session prefixes and reject ambiguity. Messages use
+the exact per-pane broker-session match and the existing 1024-byte authorizer;
+an accepted send is still fire-and-forget, so use `dump` to verify delivery
+when it matters.
 
 It reaches the terminal through the same scoped remote-control credential every
 Kilix pane already holds — the one behind `kilix ls`, `kilix focus` and

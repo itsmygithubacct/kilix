@@ -48,6 +48,7 @@ TOP_BAR_TOGGLES = (
     ToggleSpec("KILIX_CHROME_WINDOWS", "Native window taskbar (Pleb)", "Top bar"),
     ToggleSpec("KILIX_CHROME_SPEAK", "Read pane aloud", "Top bar"),
     ToggleSpec("KILIX_CHROME_DICTATE", "Dictate to pane", "Top bar"),
+    ToggleSpec("KILIX_CHROME_START_MENU", "Start menu", "Top bar", default=False),
 )
 
 PANE_BUTTON_TOGGLES = (
@@ -131,6 +132,9 @@ PANE_CPU_MODE_CHOICES = ("auto", "always", "off")
 PANE_MEMORY_MODE_KEY = "KILIX_CHROME_PANE_MEMORY_MODE"
 PANE_MEMORY_MODE_DEFAULT = "auto"
 PANE_MEMORY_MODE_CHOICES = ("auto", "always", "off")
+TAB_BAR_EDGE_KEY = "KILIX_CHROME_TAB_BAR_EDGE"
+TAB_BAR_EDGE_DEFAULT = "top"
+TAB_BAR_EDGE_CHOICES = ("top", "bottom")
 
 # Kitty ships images as APC sequences whose payload is base64 pixel data, so a
 # pane running the desktop, a browser, or icat can emit megabytes per second.
@@ -298,6 +302,7 @@ MANAGED_KEYS = tuple(spec.key for spec in TOGGLE_SPECS) + (
     CLOCK_FORMAT_KEY,
     PANE_CPU_MODE_KEY,
     PANE_MEMORY_MODE_KEY,
+    TAB_BAR_EDGE_KEY,
     TRANSCRIPT_GRAPHICS_KEY,
     TRANSCRIPT_LIMIT_KEY,
     TRANSCRIPT_TOTAL_KEY,
@@ -382,6 +387,12 @@ def _normalize_change(key: str, raw_value: object) -> str:
             choices = ", ".join(choices_for_key)
             raise ValueError(f"{key} must be one of: {choices}")
         return value
+    if key == TAB_BAR_EDGE_KEY:
+        value = str(raw_value).strip().lower()
+        if value not in TAB_BAR_EDGE_CHOICES:
+            choices = ", ".join(TAB_BAR_EDGE_CHOICES)
+            raise ValueError(f"{TAB_BAR_EDGE_KEY} must be one of: {choices}")
+        return value
     if key == TRANSCRIPT_GRAPHICS_KEY:
         value = str(raw_value).strip().lower()
         if value not in TRANSCRIPT_GRAPHICS_CHOICES:
@@ -442,6 +453,12 @@ def defaults(*, migrate_environment: bool = False) -> dict[str, str]:
     values[CLOCK_FORMAT_KEY] = CLOCK_FORMAT_DEFAULT
     values[PANE_CPU_MODE_KEY] = PANE_CPU_MODE_DEFAULT
     values[PANE_MEMORY_MODE_KEY] = PANE_MEMORY_MODE_DEFAULT
+    values[TAB_BAR_EDGE_KEY] = TAB_BAR_EDGE_DEFAULT
+    # Match the engine's contextual default without persisting it on first use.
+    values["KILIX_CHROME_START_MENU"] = "1" if (
+        os.environ.get("XDG_SESSION_DESKTOP", "").lower() == "pleb"
+        or os.environ.get("XDG_CURRENT_DESKTOP", "") == "Pleb"
+    ) else "0"
     values[TRANSCRIPT_GRAPHICS_KEY] = TRANSCRIPT_GRAPHICS_DEFAULT
     values[TRANSCRIPT_LIMIT_KEY] = TRANSCRIPT_LIMIT_DEFAULT
     values[TRANSCRIPT_TOTAL_KEY] = TRANSCRIPT_TOTAL_DEFAULT
@@ -509,12 +526,15 @@ def game_availability(path: str | None = None) -> dict[str, bool]:
 def _initial_text(values: Mapping[str, str]) -> str:
     lines = [SETTINGS_HEADER, "", SETTINGS_MARKER]
     for spec in TOP_BAR_TOGGLES:
+        if spec.key == "KILIX_CHROME_START_MENU" and spec.key not in os.environ:
+            continue
         lines.append(f"{spec.key}={values[spec.key]}")
     lines.append(f"{CLOCK_FORMAT_KEY}={values[CLOCK_FORMAT_KEY]}")
     for spec in PANE_BUTTON_TOGGLES:
         lines.append(f"{spec.key}={values[spec.key]}")
     lines.append(f"{PANE_CPU_MODE_KEY}={values[PANE_CPU_MODE_KEY]}")
     lines.append(f"{PANE_MEMORY_MODE_KEY}={values[PANE_MEMORY_MODE_KEY]}")
+    lines.append(f"{TAB_BAR_EDGE_KEY}={values[TAB_BAR_EDGE_KEY]}")
     lines.extend(("", SESSION_LOG_MARKER))
     for spec in SESSION_LOG_TOGGLES:
         lines.append(f"{spec.key}={values[spec.key]}")
@@ -871,6 +891,9 @@ __all__ = [
     "SETTINGS_MAX_BYTES",
     "SESSION_LOG_MARKER",
     "SESSION_LOG_TOGGLES",
+    "TAB_BAR_EDGE_CHOICES",
+    "TAB_BAR_EDGE_DEFAULT",
+    "TAB_BAR_EDGE_KEY",
     "TOGGLE_BY_KEY",
     "TOGGLE_SPECS",
     "TOP_BAR_TOGGLES",

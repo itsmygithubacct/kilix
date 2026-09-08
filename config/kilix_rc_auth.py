@@ -31,7 +31,10 @@ def is_cmd_allowed(pcmd, window, from_socket, extra_data):
         # the launcher's private runtime credential and is unaffected by any of
         # this. Permitted within one OS window: a pane may type into itself or a
         # sibling it shares a window with, and may not reach another window.
-        if window is None or payload.get("all"):
+        # The engine's tab selector replaces the window match. This path
+        # accepts only window selectors so it can prove every actual target
+        # belongs to the caller's OS window.
+        if window is None or payload.get("all") or payload.get("match_tab"):
             return False
 
         match = payload.get("match") or ""

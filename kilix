@@ -14,6 +14,7 @@
 #   ./kilix watch <pane-id>   # best-effort read-only text watch of a live pane
 #   ./kilix fullscreen        # toggle this tab's OS window fullscreen
 #   ./kilix switch [--scope S] # go to a page or pane (F12; scope all|page|other)
+#   ./kilix panes [COMMAND]    # pane activity/session dashboard, CLI or TUI
 #   ./kilix new-pane [DIR]    # open a pane left/right/down of this one
 #   ./kilix new-tab [--title T] # open a new page
 #   ./kilix mux [name]        # open a tmux-backed kilix tab for real attach/view
@@ -463,7 +464,7 @@ _kilix_init_user_config() {
   # Refresh managed symlinks on every launch so moving/reinstalling the checkout
   # does not strand the XDG configuration at an obsolete absolute path.
   for _asset in kitty.app.png kitty.app-128.png kilix-512.png \
-                kilix_rc_auth.py open-actions.conf; do
+                kilix_rc_auth.py chrome_settings.py open-actions.conf; do
     _kilix_refresh_managed_link "$KILIX_USER_CONFIG_DIRECTORY/$_asset" \
       "$KILIX_DEFAULT_CONFIG_DIRECTORY/$_asset" 2>/dev/null || true
   done
@@ -1607,6 +1608,18 @@ case "${1:-}" in
       || { echo "kilix launcher: installer did not create $_launcher_installed" >&2; exit 1; }
     [ "$_launcher_install_only" = 0 ] || exit 0
     exec "$_launcher_installed" ;;
+  panes|pane-center)
+    shift
+    # Use the same pinned closure for fresh installs and existing machines.
+    # Dispatch before engine setup: listing panes and --help need no new window.
+    "$KILIX_HOME/scripts/install-kilix-tui-utils.sh" --print-path >/dev/null
+    _panes_bin="${KILIX_TUI_UTILS_PREFIX:-$HOME/.local}/bin/kilix-panes"
+    if [ ! -x "$_panes_bin" ] \
+       || [ ! -f "$KILIX_TUI_UTILS_DIR/src/kilix_tui/pane_center.py" ]; then
+      echo "kilix panes: the selected utility checkout does not provide Pane Center; update kilix-tui-utils." >&2
+      exit 1
+    fi
+    exec "$_panes_bin" "$@" ;;
   laptop|--laptop)
     # Laptop session profiles as a host verb: list | open PROFILE | status |
     # close PROFILE. config/laptop.py owns the shared profile convention

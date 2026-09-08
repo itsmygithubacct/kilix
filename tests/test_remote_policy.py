@@ -1,6 +1,8 @@
 import importlib.util
 import base64
 import re
+import sys
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -42,6 +44,27 @@ def mux_allowed(command="send-text", **payload):
 
 
 class RemoteControlPolicyTests(unittest.TestCase):
+
+    def test_send_text_cannot_override_the_os_window_check_with_a_tab(self):
+        caller = types.SimpleNamespace(os_window_id=100)
+        sibling = types.SimpleNamespace(os_window_id=100)
+        outside = types.SimpleNamespace(os_window_id=200)
+        boss = types.SimpleNamespace(
+            match_windows=lambda match, self_window=None:
+                [sibling] if match == "id:2" else [outside])
+        native = types.ModuleType("kitty.fast_data_types")
+        native.get_boss = lambda: boss
+        with mock.patch.dict(sys.modules, {
+                "kitty": types.ModuleType("kitty"),
+                "kitty.fast_data_types": native}):
+            self.assertTrue(allowed("send-text", window=caller, match=""))
+            self.assertTrue(allowed("send-text", window=caller, match="id:2"))
+            self.assertFalse(allowed("send-text", window=caller, match="id:3"))
+            for match in ("", "id:2"):
+                with self.subTest(match=match):
+                    self.assertFalse(allowed(
+                        "send-text", window=caller, match=match,
+                        match_tab="id:22", data="text:marker\n"))
 
     def test_fullscreen_is_limited_to_callers_own_os_window(self):
         self.assertTrue(allowed("resize-os-window", **{

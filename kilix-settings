@@ -54,6 +54,8 @@ def _control_names() -> dict[str, str]:
     ):
         names[alias] = shared.PANE_CPU_MODE_KEY
     names[shared.PANE_CPU_MODE_KEY.lower()] = shared.PANE_CPU_MODE_KEY
+    names["tab_bar_edge"] = shared.TAB_BAR_EDGE_KEY
+    names[shared.TAB_BAR_EDGE_KEY.lower()] = shared.TAB_BAR_EDGE_KEY
     for alias in ("transcript", "session_log", "session_logs", "logging"):
         names[alias] = "KILIX_TRANSCRIPT"
     for alias in ("transcript_graphics", "log_graphics"):
@@ -124,6 +126,13 @@ CPU_MODE_SPEC = ChoiceSpec(
     "Pane CPU use (auto >1 core / always / off)",
     shared.PANE_CPU_MODE_CHOICES,
     shared.PANE_CPU_MODE_DEFAULT,
+)
+
+TAB_BAR_EDGE_SPEC = ChoiceSpec(
+    shared.TAB_BAR_EDGE_KEY,
+    "Page strip edge",
+    shared.TAB_BAR_EDGE_CHOICES,
+    shared.TAB_BAR_EDGE_DEFAULT,
 )
 
 TRANSCRIPT_GRAPHICS_SPEC = ChoiceSpec(
@@ -205,6 +214,7 @@ LEADING_CHOICES = {
 # type: the session-logging controls follow their on/off control, and the voice
 # presets bracket the punctuation toggle the way the shared file writes them.
 TRAILING_CHOICES = {
+    "Top bar": (TAB_BAR_EDGE_SPEC,),
     "Session logging": (
         TRANSCRIPT_GRAPHICS_SPEC, TRANSCRIPT_LIMIT_SPEC,
         TRANSCRIPT_TOTAL_SPEC, TRANSCRIPT_ARCHIVE_SPEC,
@@ -343,6 +353,11 @@ def _parse_assignment(value: str) -> tuple[str, object]:
             raise argparse.ArgumentTypeError(
                 f"transcript graphics must be {choices}")
         return key, mode
+    if key == shared.TAB_BAR_EDGE_KEY:
+        edge = raw.strip().lower()
+        if edge not in shared.TAB_BAR_EDGE_CHOICES:
+            raise argparse.ArgumentTypeError("page strip edge must be top|bottom")
+        return key, edge
     if key == shared.TRANSCRIPT_LIMIT_KEY:
         size = raw.strip().upper().removesuffix("IB").removesuffix("B")
         # A raw byte count is accepted too, so a scripted caller need not know
@@ -429,6 +444,7 @@ def _print_settings(values: dict[str, str]) -> None:
     for spec in shared.TOGGLE_SPECS:
         state = "on" if shared.truthy(values[spec.key]) else "off"
         print(f"{spec.key}={state}")
+    print(f"{shared.TAB_BAR_EDGE_KEY}={values[shared.TAB_BAR_EDGE_KEY]}")
     cpu_mode = values.get(
         shared.PANE_CPU_MODE_KEY, shared.PANE_CPU_MODE_DEFAULT
     ).strip().lower()
@@ -595,7 +611,7 @@ def _run_tui(stdscr, initial_section: int | str | None = None) -> int | str:
         shared.TRANSCRIPT_TOTAL_KEY, shared.TRANSCRIPT_TOTAL_DEFAULT)
     values[shared.TRANSCRIPT_ARCHIVE_KEY] = effective.get(
         shared.TRANSCRIPT_ARCHIVE_KEY, shared.TRANSCRIPT_ARCHIVE_DEFAULT)
-    for spec in VOICE_LEADING_SPECS + VOICE_TRAILING_SPECS:
+    for spec in (TAB_BAR_EDGE_SPEC, *VOICE_LEADING_SPECS, *VOICE_TRAILING_SPECS):
         stored = str(effective.get(spec.key, spec.default)).strip().lower()
         values[spec.key] = stored if stored in spec.choices else spec.default
     original = dict(values)

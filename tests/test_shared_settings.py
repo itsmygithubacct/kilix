@@ -62,6 +62,52 @@ class FakeScreen:
 
 
 class SharedSettingsTests(unittest.TestCase):
+    def test_page_strip_aliases_persist_and_show_the_choice(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.conf"
+            env = dict(os.environ, GPU_TERMINAL_SETTINGS_FILE=str(path), KITTY_PID="")
+            for key, value in (("tab_bar_edge", "bottom"),
+                               (settings.TAB_BAR_EDGE_KEY, "top"),
+                               ("start_menu", "on")):
+                result = subprocess.run(
+                    [sys.executable, str(ROOT / "kilix-settings"), "--print", "--set", f"{key}={value}"],
+                    env=env, capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                if key != "start_menu":
+                    self.assertIn(f"{settings.TAB_BAR_EDGE_KEY}={value}", result.stdout)
+            self.assertTrue(settings.enabled("KILIX_CHROME_START_MENU", str(path)))
+            before = path.read_bytes()
+            result = subprocess.run(
+                [sys.executable, str(ROOT / "kilix-settings"), "--set", "tab_bar_edge=sideways"],
+                env=env, capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(path.read_bytes(), before)
+
+    def test_page_strip_config_generator_rereads_and_validates_settings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.conf"
+            env = dict(os.environ, GPU_TERMINAL_SETTINGS_FILE=str(path))
+            for value, expected in (("bottom", "tab_bar_edge bottom\n"),
+                                    ("top", "tab_bar_edge top\n"), ("sideways", "")):
+                path.write_text(f"{settings.TAB_BAR_EDGE_KEY}={value}\n")
+                result = subprocess.run(
+                    [sys.executable, str(ROOT / "config/chrome_settings.py")],
+                    env=env, capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, expected)
+
+    def test_start_menu_default_follows_desktop_until_explicitly_changed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "settings.conf")
+            with mock.patch.dict(os.environ, {}, clear=True):
+                settings.ensure_file(path)
+                self.assertNotIn("KILIX_CHROME_START_MENU=", Path(path).read_text())
+                self.assertFalse(settings.enabled("KILIX_CHROME_START_MENU", path))
+                os.environ["XDG_CURRENT_DESKTOP"] = "Pleb"
+                self.assertTrue(settings.enabled("KILIX_CHROME_START_MENU", path))
+                settings.update({"KILIX_CHROME_START_MENU": False}, path)
+                self.assertFalse(settings.enabled("KILIX_CHROME_START_MENU", path))
+
     def test_default_path_is_at_shared_gpu_terminal_root(self):
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch.dict(os.environ, {
@@ -757,7 +803,7 @@ class SharedSettingsTests(unittest.TestCase):
             self.assertIn("▶1 Top bar", first_frame)
             self.assertIn("─" * 20, first_frame)
             self.assertNotIn(" // ", first_frame)
-            self.assertIn("Top bar: 8/9 enabled", first_frame)
+            self.assertIn("Top bar: 9/11 enabled", first_frame)
             self.assertIn("Thermal status", first_frame)
             self.assertIn("Volume", first_frame)
             self.assertIn("Read pane aloud", first_frame)

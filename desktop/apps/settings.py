@@ -92,7 +92,11 @@ SETTING_PAGES = [
         K("listen_on", "Remote socket", default="unix:@kilix-{kitty_pid}"),
     ]),
     ("Chrome", [
+        S(shared_settings.TAB_BAR_EDGE_KEY, "Page strip edge", "choice",
+          shared_settings.TAB_BAR_EDGE_DEFAULT,
+          list(shared_settings.TAB_BAR_EDGE_CHOICES)),
         S("KILIX_CHROME_TEMPERATURE", "Thermal status", default="0"),
+        S("KILIX_CHROME_START_MENU", "Start menu", default="0"),
         S("KILIX_CHROME_VOLUME", "Volume"),
         S("KILIX_CHROME_NETWORK", "Network / Wi-Fi"),
         S("KILIX_CHROME_CALENDAR", "Calendar"),

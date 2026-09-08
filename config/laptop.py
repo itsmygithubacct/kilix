@@ -18,26 +18,22 @@ panes become lines of a kitty --session file, launches are fixed argv
 vectors, and the two characters that could change how kitty splits a line
 (double quotes, control bytes) are refused at parse time.
 
-RUN REGISTRY (the shared contract; kilix-cap, kilix-land-desktop, and
-kilix-launcher implement the same rules over the same files):
+RUN REGISTRY:
 
   directory  <profiles>/run — <profiles> is $KILIX_LAPTOP_PROFILES
              (absolute) or ~/.local/gpu_terminal/laptop; every level is
              created 0700 on first write.
-  file       run/<profile-id>.pid — a single line holding the ASCII
-             decimal PID of the session's kilix/kitty process and a
-             trailing newline, written 0600 via a same-directory temp
-             file + rename by whichever surface spawned the session, at
-             spawn time.
-  liveness   a profile is RUNNING iff its pid file parses to a pid > 1
-             AND kill(pid, 0) succeeds or fails with EPERM, AND — when
-             /proc/<pid>/stat is readable — the process state is not Z:
-             a zombie's window is already gone, only an unreaped parent
-             keeps the pid visible. The file alone is never trusted:
-             ESRCH, a zombie, or an unparsable file marks it STALE, and
-             any reader that notices a stale file deletes it.
-  close      SIGTERM to the recorded pid; the pid file is removed once
-             the process is gone (immediately when it already is).
+  file       run/<profile-id>.pid — ASCII decimal PID on the first line,
+             followed by boot_id= and start_time= lines binding it to a
+             process instance. Written atomically, mode 0600. The first
+             line remains readable by older desktop implementations.
+  liveness   a live, non-zombie process must match both identity fields.
+             Dead or mismatched records are stale and removed. A live
+             legacy PID-only record is unverified: preserve it and refuse
+             open/close until its window is closed manually.
+  close      verify identity after opening a Linux process descriptor,
+             then send SIGTERM through that descriptor so PID reuse
+             cannot redirect the signal to another process.
   scope      only pane profiles are tracked. A desktop profile opens a
              provider tab through `kilix <provider>` whose wrapper exits
              once the tab exists, so there is no long-lived pid to
@@ -47,9 +43,10 @@ from __future__ import annotations
 
 import os
 import re
+import select
 import signal
-import subprocess
 import sys
+import tempfile
 import time
 
 PROFILE_SUFFIX = ".profile"
@@ -67,6 +64,7 @@ USAGE = """usage: kilix laptop [list|open PROFILE|status|close PROFILE]
                  session window and is recorded in the run registry; a
                  desktop profile opens that provider (not tracked)
   status         one line per profile: running (pid N) | stopped | desktop
+                 | unverified (legacy or unreadable process identity)
   close PROFILE  SIGTERM the profile's recorded session, then remove its
                  registry entry
 Profiles live in ~/.local/gpu_terminal/laptop (KILIX_LAPTOP_PROFILES
@@ -314,16 +312,19 @@ def _ensure_directory(path: str) -> None:
 
 
 def _write_private(path: str, text: str) -> None:
-    temp = path + ".tmp"
-    descriptor = os.open(temp,
-                         os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    descriptor, temp = tempfile.mkstemp(dir=os.path.dirname(path),
+                                       prefix=".%s." % os.path.basename(path))
     try:
         # latin-1 undoes the byte-preserving decode load_profile performed,
         # so session files carry the profile's original bytes.
-        os.write(descriptor, text.encode("latin-1"))
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(text.encode("latin-1"))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp, path)
     finally:
-        os.close(descriptor)
-    os.replace(temp, path)
+        if os.path.exists(temp):
+            os.unlink(temp)
 
 
 def pid_path(profile_id: str) -> str:
@@ -331,8 +332,36 @@ def pid_path(profile_id: str) -> str:
 
 
 def record_session(profile_id: str, pid: int) -> None:
+    identity = _process_identity(pid)
+    if identity is None:
+        raise ProfileError("the session exited immediately")
     _ensure_directory(run_directory())
-    _write_private(pid_path(profile_id), "%d\n" % pid)
+    _write_private(pid_path(profile_id), "%d\nboot_id=%s\nstart_time=%s\n"
+                   % (pid, *identity))
+
+
+def _process_identity(pid: int):
+    """Boot and start ticks, None if exited; unreadable identity is an error."""
+    try:
+        with open("/proc/%d/stat" % pid, "rb") as handle:
+            if os.fstat(handle.fileno()).st_uid != os.geteuid():
+                raise ProfileError("the session process belongs to another user")
+            fields = handle.read().rsplit(b") ", 1)[1].split()
+        if fields[0] in (b"Z", b"X"):
+            return None
+        start = str(int(fields[19]))
+    except (FileNotFoundError, ProcessLookupError):
+        return None
+    except (OSError, ValueError, IndexError) as error:
+        raise ProfileError("cannot verify the session process identity") from error
+    try:
+        with open("/proc/sys/kernel/random/boot_id", encoding="ascii") as handle:
+            boot = handle.read().strip()
+        if not re.fullmatch(r"[0-9a-f-]{36}", boot):
+            raise ValueError("invalid boot id")
+    except (OSError, ValueError) as error:
+        raise ProfileError("cannot verify the session boot identity") from error
+    return boot, start
 
 
 def _alive(pid: int) -> bool:
@@ -357,26 +386,44 @@ def _alive(pid: int) -> bool:
     return True
 
 
-def session_pid(profile_id: str):
-    """The RUNNING pid, or None. A stale or unparsable file is deleted on
-    sight — the file alone is never trusted."""
+def _session_record(profile_id: str):
     path = pid_path(profile_id)
     try:
         with open(path, "r", encoding="ascii", errors="strict") as handle:
-            first = handle.readline(64).strip()
-    except (OSError, UnicodeDecodeError):
+            lines = handle.read(1024).splitlines()
+    except FileNotFoundError:
         return None
+    except (OSError, UnicodeDecodeError) as error:
+        raise ProfileError("cannot read the session registry") from error
     try:
-        pid = int(first)
-    except ValueError:
+        pid = int(lines[0])
+    except (ValueError, IndexError):
         pid = 0
-    if pid > 1 and _alive(pid):
-        return pid
-    try:
-        os.unlink(path)
-    except OSError:
-        pass
-    return None
+    if pid <= 1:
+        clear_session(profile_id)
+        return None
+    fields = dict(line.split("=", 1) for line in lines[1:] if "=" in line)
+    return pid, (fields.get("boot_id"), fields.get("start_time"))
+
+
+def _verified_record(profile_id: str, record) -> bool:
+    pid, recorded = record
+    current = _process_identity(pid)
+    if current is None:
+        clear_session(profile_id)
+        return False
+    if not all(recorded):
+        raise ProfileError("unverified legacy session; close its window manually")
+    if current != recorded:
+        clear_session(profile_id)
+        return False
+    return True
+
+
+def session_pid(profile_id: str):
+    """Return only a verified live process; never adopt a reused PID."""
+    record = _session_record(profile_id)
+    return record[0] if record and _verified_record(profile_id, record) else None
 
 
 def clear_session(profile_id: str) -> None:
@@ -417,16 +464,34 @@ def _kilix_command() -> str:
     return path
 
 
-def _spawn_detached(argv: list) -> subprocess.Popen:
+def _spawn_detached(argv: list) -> int:
     """Fixed argv, stdio on /dev/null, its own session so a closing
-    terminal never HUPs it. No shell is ever involved."""
-    return subprocess.Popen(
-        argv,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
+    terminal never HUPs it. No shell is ever involved. posix_spawn returns
+    only the pid, so a deliberately long-lived detached child does not leave
+    a discarded subprocess wrapper that emits ResourceWarning."""
+    devnull = os.open(os.devnull, os.O_RDWR)
+    actions = [
+        (os.POSIX_SPAWN_DUP2, devnull, descriptor)
+        for descriptor in (0, 1, 2)
+    ]
+    if devnull > 2:
+        actions.append((os.POSIX_SPAWN_CLOSE, devnull))
+    try:
+        return os.posix_spawn(
+            argv[0], argv, os.environ, file_actions=actions, setsid=True)
+    finally:
+        os.close(devnull)
+
+
+def _child_status(pid: int):
+    """Return an exited direct child's status without blocking, else None."""
+    try:
+        waited, status = os.waitpid(pid, os.WNOHANG)
+    except ChildProcessError:
+        return None if _alive(pid) else 0
+    if waited == 0:
+        return None
+    return os.waitstatus_to_exitcode(status)
 
 
 def _session_file_directory() -> str:
@@ -452,7 +517,11 @@ def cmd_status() -> int:
         if profile["desktop"]:
             print("%s desktop" % profile_id)
             continue
-        pid = session_pid(profile_id)
+        try:
+            pid = session_pid(profile_id)
+        except ProfileError:
+            print("%s unverified" % profile_id)
+            continue
         if pid is not None:
             print("%s running (pid %d)" % (profile_id, pid))
         else:
@@ -464,9 +533,9 @@ def cmd_open(profile_id: str) -> int:
     profile = load_profile(profile_id)
     kilix = _kilix_command()
     if profile["desktop"]:
-        child = _spawn_detached([kilix] + desktop_arguments(profile))
+        child_pid = _spawn_detached([kilix] + desktop_arguments(profile))
         time.sleep(0.3)
-        status = child.poll()
+        status = _child_status(child_pid)
         if status is not None and status != 0:
             raise ProfileError("the %s provider did not start"
                                % profile["desktop"])
@@ -483,38 +552,63 @@ def cmd_open(profile_id: str) -> int:
     session_path = os.path.join(directory,
                                 "laptop-%s.session" % profile_id)
     _write_private(session_path, session_text(profile))
-    child = _spawn_detached([kilix, "--session", session_path])
-    record_session(profile_id, child.pid)
+    child_pid = _spawn_detached([kilix, "--session", session_path])
+    try:
+        record_session(profile_id, child_pid)
+    except (ProfileError, OSError):
+        # This is still our unreaped direct child, so its PID cannot be reused.
+        try:
+            os.kill(child_pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        os.waitpid(child_pid, 0)
+        raise
     deadline = time.monotonic() + 0.3
     while time.monotonic() < deadline:
-        if child.poll() is not None:
+        if _child_status(child_pid) is not None:
             clear_session(profile_id)
             raise ProfileError("the session exited immediately")
         time.sleep(0.05)
-    print("laptop %s: opened (pid %d)" % (profile_id, child.pid))
+    print("laptop %s: opened (pid %d)" % (profile_id, child_pid))
     return 0
 
 
 def cmd_close(profile_id: str) -> int:
     if not valid_id(profile_id):
         raise ProfileError("That profile name is not valid.")
-    pid = session_pid(profile_id)
-    if pid is None:
+    record = _session_record(profile_id)
+    if record is None or not _verified_record(profile_id, record):
         profile_path = os.path.join(profiles_directory(),
                                     profile_id + PROFILE_SUFFIX)
         if not os.path.isfile(profile_path):
             raise ProfileError("no such profile")
         print("laptop %s: not running" % profile_id)
         return 0
+    pid = record[0]
+    if not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal"):
+        raise ProfileError("safe session close requires Linux process descriptors")
     try:
-        os.kill(pid, signal.SIGTERM)
+        descriptor = os.pidfd_open(pid)
     except ProcessLookupError:
-        pass
-    except PermissionError as error:
-        raise ProfileError("cannot signal pid %d" % pid) from error
-    deadline = time.monotonic() + 5.0
-    while time.monotonic() < deadline:
-        if not _alive(pid):
+        clear_session(profile_id)
+        print("laptop %s: closed" % profile_id)
+        return 0
+    except OSError as error:
+        raise ProfileError("cannot safely open session process %d" % pid) from error
+    try:
+        # A PID could have been reused between the first check and pidfd_open.
+        if not _verified_record(profile_id, record):
+            print("laptop %s: not running" % profile_id)
+            return 0
+        try:
+            signal.pidfd_send_signal(descriptor, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        except OSError as error:
+            raise ProfileError("cannot signal session process %d" % pid) from error
+        poller = select.poll()
+        poller.register(descriptor, select.POLLIN)
+        if poller.poll(5000):
             try:
                 os.waitpid(pid, os.WNOHANG)  # reap if it was our child
             except (ChildProcessError, OSError):
@@ -522,7 +616,8 @@ def cmd_close(profile_id: str) -> int:
             clear_session(profile_id)
             print("laptop %s: closed" % profile_id)
             return 0
-        time.sleep(0.1)
+    finally:
+        os.close(descriptor)
     print("laptop %s: still shutting down (pid %d)" % (profile_id, pid),
           file=sys.stderr)
     return 1
