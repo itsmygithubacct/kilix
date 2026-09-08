@@ -45,17 +45,20 @@ Plebian-OS 0.2.0 release. It upgrades from 0.1.9.
 
 ### Kilix Start menu and page-strip placement
 
-An optional flame badge at the far left of the page strip opens a physical,
-hierarchical Start menu over the terminal. It uses the same dark blue, white,
+The optional three-line Start button (☰) at the far left of the page strip opens
+a drop-down above the panes. The panes retain their size and continue updating
+behind it. The menu opens upward when the page strip is at the bottom, and
+fits within the terminal window. It uses the same dark blue, white,
 and highlighted-blue palette as Kilix's clickable chrome. The menu includes new
 pages, settings, session tools, system monitors, desktop providers, applications,
 packages, browser actions, power/session actions, and the most complete updater
-available on the host. Submenus open beside their parent. Menu width grows to
-fit the longest item instead of clipping labels such as “Build Host
-Applications.”
+available on the host. Each menu level sizes itself to its labels, with
+keyboard scrolling when the window is too short to show all entries.
 
 The menu supports mouse selection, arrow-key navigation, `Enter`, `Esc`, and
-mnemonic letters. `Ctrl+Alt+M` toggles it. The left or right Windows/Super key
+mnemonic letters. Clicking outside dismisses it and returns focus to the
+original pane. Clicking Start again or pressing `Ctrl+Alt+M` toggles it.
+The left or right Windows/Super key
 opens the Kilix menu unless Kilix 95 or IceWM owns the active desktop context;
 in those cases the key is delegated to that desktop's Start menu.
 
@@ -121,6 +124,12 @@ the full clickable `kilix-volume` output selector on a double-click, and a
 settings card with a live Mute checkbox on right-click. The network icon shows
 compact connection status on one click and opens `nmtui` on a double-click.
 Right-clicking a non-volume widget opens Kilix Settings.
+
+Calendar, clock, volume, network, battery and temperature cards use the same
+popup layer as Start. They open next to the clicked control, above the panes,
+and stay within the window when resized. Clicking the same control again or
+outside its card dismisses it. Moving to another page or application also
+closes the popup. Double-clicking temperature still opens its full dashboard.
 
 ### Desktop application launching
 
