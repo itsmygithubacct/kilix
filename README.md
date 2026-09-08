@@ -1004,6 +1004,46 @@ on a maximized/stacked pane is rejected.
 The buttons only exist in the **fork build** — the prebuilt fallback is a plain
 (Tilix-themed) kitty with no buttons. See [Development](#development) for how the fork works.
 
+## Explicit model setup
+
+`kilix models list` and `kilix models show ID` inspect the pinned Content
+catalog without initializing settings, installation directories or receipts.
+The plan shows the exact model/version, source, notices, disk allowances and
+actual host root. An inherited `KILIX_CONTENT_ROOT` does not override that root.
+
+```sh
+kilix models list
+kilix models show encodec-24khz-stateful
+kilix models install encodec-24khz-stateful --input /absolute/user-supplied/checkpoint.th
+kilix models install whisper-tiny-ggml
+```
+
+Installation requires an interactive terminal and explicit confirmation;
+there is no `--yes` option or piped consent. Exact notices are shown before
+recording the selected artifact's decisions. Informational notices do not ask
+for license acceptance; affirmative requirements have separate, initially
+declined choices. User-supplied input is verified against the packaged size
+and digest, and recorded as supply, not acceptance of invented model terms.
+No checkpoint or its derivatives are bundled with this command.
+
+The host packages the current exact notice texts. A future notice not bundled
+here requires `--notice LICENSE_ID=/absolute/text`, whose digest must match the
+new catalog. Unknown, altered or unsafe terminal text is refused. Explicit
+`--root /absolute/installer/root` before the subcommand targets another actual
+installer root, for example Kilix 95's separate apps root; it does not migrate
+models or reinterpret receipts. The same private per-user Content receipt
+store remains authoritative. `kilix models reconcile-receipts` explicitly
+recovers an interrupted receipt transaction without inventing any decision.
+
+Setup uses the existing pinned tool, receipt, bounded acquisition/conversion
+and atomic selection APIs. Model availability still depends on the selected
+release's working delivery sources; an unpublished or unavailable source is
+not treated as installed. Disk allowances are not measured RAM/VRAM fit, and
+installation is not provider readiness or performance qualification. Ordinary
+Amp/remote/voice launches never invoke this setup UI, acquire models or accept
+terms automatically. The per-command setup timeout defaults to 900 seconds
+and can be set from 1 to 3600 with `install --timeout`.
+
 ## Pages (Tilix sessions)
 
 Tilix groups panes into **sessions**; kilix maps each session to a kitty **tab** —

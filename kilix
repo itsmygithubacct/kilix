@@ -28,6 +28,7 @@
 #   ./kilix agent-control ... # bounded coding-session inspection and control
 #   ./kilix app run ID        # install/run one pinned catalog application
 #   ./kilix app window ID     # render a terminal app in a desktop window
+#   ./kilix models ...       # inspect or explicitly set up receipt-gated models
 #   ./kilix laptop ...        # list/open/status/close laptop session profiles
 #   ./kilix temps [args]       # run the pinned graphical thermal dashboard
 #   ./kilix memory [args]      # run the graphical RAM/pressure dashboard
@@ -96,8 +97,8 @@ export KILIX_BUILD_DIRECTORY KILIX_PREBUILT_HOME
 export KILIX95_STORAGE_HOME KILIX95_CONFIG_HOME KILIX95_STATE_HOME
 export KILIX95_CACHE_HOME KILIX95_SESSION_HOME KILIX95_DATA_HOME
 
-# These source-only commands also work before engine/storage setup or submodule
-# initialization. Listing skills must not initialize the user's shared settings.
+# These commands also work before engine/storage setup. Model inspection needs
+# the pinned Content package, but never initializes shared settings or receipts.
 case "${1:-}" in
   skills)
     shift
@@ -105,6 +106,9 @@ case "${1:-}" in
   agent-control)
     shift
     exec python3 "$KILIX_HOME/config/agent_control.py" "$@" ;;
+  models)
+    shift
+    exec python3 "$KILIX_HOME/config/content_models.py" "$@" ;;
 esac
 
 _kilix_validate_private_storage_layout() {
