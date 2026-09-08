@@ -1725,9 +1725,13 @@ gtk-update-icon-cache -f ~/.local/share/icons/hicolor 2>/dev/null || true
 ## Development
 
 `./src` is a submodule of the
-[kitty fork](https://github.com/itsmygithubacct/kitty/tree/release/0.2.0)
-(branch `release/0.2.0`). It's a **full fork** — kilix keeps whatever changes make the
-best experience. The clickable-button feature is these Python files:
+[kitty fork](https://github.com/itsmygithubacct/kitty/tree/track-b/f118-kitty-v0.48.2)
+(branch `track-b/f118-kitty-v0.48.2`). It's a **full fork** — kilix keeps whatever changes make the
+best experience. The pinned source integrates Kitty **0.48.2** with Kilix's
+custom chrome, pane controls, PTY broker, and graphics support. Run
+`./kilix --build` after updating the source pin; newly opened Kilix windows use
+the rebuilt engine, while existing windows keep their current engine until
+reopened. The clickable-button feature is these Python files:
 
 - `kitty/window_title_bar.py` — draws the keyboard and
   `+ - ← ↑ ↓ → ▢ ✕` in each pane title bar, recording which cells map to which
