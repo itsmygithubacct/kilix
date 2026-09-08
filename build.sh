@@ -483,8 +483,10 @@ trap 'exit 143' TERM
 BUILD_SRC="$stage/src"
 mkdir -p "$BUILD_SRC"
 if [ -n "$src_head" ]; then
-  git -C "$KILIX_HOME/src" archive --format=tar "$src_head" \
-    | tar -C "$BUILD_SRC" -xf -
+  # Keep the tracked executable modes inside the private generation directory.
+  # Applying our storage umask to archive entries strips the SSH helpers' modes.
+  git -c tar.umask=0022 -C "$KILIX_HOME/src" archive --format=tar "$src_head" \
+    | tar -C "$BUILD_SRC" -xpf -
 else
   # Packaging/test source trees need not contain Git metadata.
   cp -a "$KILIX_HOME/src/." "$BUILD_SRC/"

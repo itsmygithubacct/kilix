@@ -138,6 +138,18 @@ class BuildPreparationTests(unittest.TestCase):
             hashlib.sha256(self.font_bytes).hexdigest(), provenance)
         self.assertEqual(list(self.src.rglob("*.so")), [])
 
+    def test_tracked_snapshot_preserves_executable_modes_in_private_storage(self):
+        helper = self.src / "ssh-helper"
+        helper.write_text("#!/bin/sh\nexit 0\n")
+        helper.chmod(0o755)
+        self.init_src_git()
+        result = self.run_build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        prepared = self.base / "storage/build/prepared"
+        self.assertEqual(stat.S_IMODE((prepared / "src/ssh-helper").stat().st_mode),
+                         0o755)
+        self.assertEqual(stat.S_IMODE(prepared.resolve().stat().st_mode), 0o700)
+
     def test_corrupt_cache_and_extracted_font_self_heal(self):
         self.assertEqual(self.run_build().returncode, 0)
         cached = (self.base / "storage" / "cache" / "build" /

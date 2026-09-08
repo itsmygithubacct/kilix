@@ -564,7 +564,11 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("tab_bar_rows_for_count(tab_bar_item_count)", state)
         self.assertIn("tab_bar_content_height", state)
         self.assertIn("bool tab_bar_show_new_tab_button", state_h)
-        self.assertIn("opt('tab_bar_show_new_tab_button', 'no', option_type='to_bool', ctype='bool'", optdef)
+        self.assertRegex(
+            optdef,
+            r"opt\(\s*'tab_bar_show_new_tab_button',\s*'no',\s*"
+            r"option_type='to_bool',\s*ctype='bool'",
+        )
         self.assertIn("convert_from_opts_tab_bar_show_new_tab_button", toc)
         self.assertIn("self.tab_bar.tab_id_at(int(x), int(y))", tabs)
         self.assertIn("tm.tab_bar.tab_id_at(x, y)", boss)
