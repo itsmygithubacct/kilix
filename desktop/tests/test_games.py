@@ -2,6 +2,7 @@
 and an installer error that isn't RuntimeError/OSError must be shown, not
 leaked out of main() with the tab (F36). No network: conf files + stubs only."""
 import builtins
+import hashlib
 import io
 import os
 import subprocess
@@ -209,9 +210,14 @@ try:
     games._fetch("file://" + src, dst, lambda _msg: None,
                  sha256="0" * 64)
     assert False, "checksum mismatch was accepted"
-except RuntimeError as e:
-    assert "sha256 mismatch" in str(e)
+except games.kilix_content.InstallError as e:
+    # Content sanitizes mirror failures so paths and URL tokens cannot leak.
+    assert src not in str(e)
 assert not os.path.exists(dst), "bad artifact must be removed"
+games._fetch("file://" + src, dst, lambda _msg: None,
+             sha256=hashlib.sha256(b"not the expected artifact").hexdigest())
+with open(dst, "rb") as f:
+    assert f.read() == b"not the expected artifact", "verified artifact was not published"
 
 
 # F36: main() catches installer errors that don't subclass RuntimeError/OSError
