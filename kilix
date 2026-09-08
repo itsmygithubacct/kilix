@@ -71,6 +71,18 @@ umask 077
 # Resolve symlinks so `ln -s .../kilix ~/.local/bin/kilix` still finds the project.
 _self="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 KILIX_HOME="$(cd "$(dirname "$_self")" && pwd)"
+# BEGIN TUI ROOT ARGUMENTS
+# Validate before writable setup; scratch state stays in the helper process.
+# The alias dispatch below resets inherited selection and normalizes argv again.
+# Keep this validation branch local; the entire function remains linted.
+_kilix_validate_tui_root_arguments() {
+  case "${1:-}" in
+    tui|kilix-tui|desktop)
+      bash "$KILIX_HOME/scripts/validate-tui-root.sh" "$@" || exit 2 ;;
+  esac
+}
+_kilix_validate_tui_root_arguments "$@"
+# END TUI ROOT ARGUMENTS
 GPU_TERMINAL_SOURCE_HOME="${GPU_TERMINAL_SOURCE_HOME:-$HOME/.local/gpu_terminal/sources}"
 GPU_TERMINAL_HOME="${GPU_TERMINAL_HOME:-$HOME/.local/gpu_terminal}"
 GPU_TERMINAL_SETTINGS_FILE="${GPU_TERMINAL_SETTINGS_FILE:-$GPU_TERMINAL_HOME/settings.conf}"
@@ -1584,6 +1596,8 @@ _kilix_desktop_entry_record() {
   fi
 }
 
+# Only explicit argv selects an embedding store, including at tab reentry.
+_kilix_tui_explicit_root=
 case "${1:-}" in
   # build.sh is invoked from the checkout root everywhere: it is cwd-independent
   # today, but running it from the caller's directory would let any future
@@ -1608,6 +1622,14 @@ case "${1:-}" in
     set -- desktop "$@" ;;
   tui|kilix-tui)
     shift
+    if [ "${1:-}" = --content-root ]; then
+      # Preserve legal trailing newlines; remove only the helper's output newline.
+      _kilix_tui_explicit_root="$(python3 "$KILIX_HOME/scripts/install-kilix-amp.py" \
+        --print-root --content-root "$2" && printf .)" || exit 2
+      _kilix_tui_explicit_root="${_kilix_tui_explicit_root%.}"
+      _kilix_tui_explicit_root="${_kilix_tui_explicit_root%$'\n'}"
+      shift 2
+    fi
     export KILIX_DESKTOP_PROVIDER=tui
     export KILIX_DESKTOP_NAME="${KILIX_DESKTOP_NAME:-Kilix TUI}"
     set -- desktop "$@" ;;
@@ -4171,9 +4193,12 @@ if [ "${1:-}" = "desktop" ]; then
     # Kitty's match sees the launch command rather than every child, so inspect
     # foreground_processes from @ ls and compare the provider's exact target.
     _dwid=""
-    if [ "$_KILIX_DESKTOP_MODE" = python ] \
+    # An explicit TUI store and its arguments need a fresh launch: a matching
+    # foreground pathname does not bind the existing window to that request.
+    if [ -z "$_kilix_tui_explicit_root" ] && {
+         [ "$_KILIX_DESKTOP_MODE" = python ] \
          || [ "$_KILIX_DESKTOP_MODE" = executable ] \
-         || [ "$_KILIX_DESKTOP_MODE" = tui ]; then
+         || [ "$_KILIX_DESKTOP_MODE" = tui ]; }; then
       _dwid="$("$KITTEN" @ --password-file "$KILIX_RC_PASSWORD_FILE" ls 2>/dev/null | KILIX_DESKTOP_MAIN="$_KILIX_DESKTOP_MAIN" KILIX_DESKTOP_MODE="$_KILIX_DESKTOP_MODE" python3 -c 'import json,os,sys
 try: d=json.load(sys.stdin)
 except Exception: sys.exit(0)
@@ -4193,6 +4218,12 @@ print(ids[0] if ids else "")' 2>/dev/null)"
       "$KITTEN" @ --password-file "$KILIX_RC_PASSWORD_FILE" focus-window --match "id:$_dwid" >/dev/null 2>&1
       exit 0
     fi
+    # Reenter the public explicit selector: the new tab's inherited environment
+    # belongs to the terminal server and cannot carry caller root authority.
+    case "$_KILIX_DESKTOP_MODE:$_kilix_tui_explicit_root" in
+      tui:/*) set -- tui --content-root "$_kilix_tui_explicit_root" "$@" ;;
+      *) set -- desktop "$@" ;;
+    esac
     exec "$KITTEN" @ --password-file "$KILIX_RC_PASSWORD_FILE" \
       launch --type=tab --cwd=current --self --tab-title "${KILIX_DESKTOP_NAME:-desktop}" \
       --env KILIX_IN_OVERLAY=1 --env "KILIX_STREAM=${KILIX_STREAM:-}" \
@@ -4249,7 +4280,7 @@ print(ids[0] if ids else "")' 2>/dev/null)"
       --env "KILIX_LAND_DESKTOP_CONFIG_HOME=${KILIX_LAND_DESKTOP_CONFIG_HOME:-}" \
       --env "KILIX_LAND_DESKTOP_EXTERNAL_APPS=${KILIX_LAND_DESKTOP_EXTERNAL_APPS:-}" \
       --env "KILIX_LAND_DESKTOP_AUDIO=${KILIX_LAND_DESKTOP_AUDIO:-}" \
-      -- "$_self" desktop "$@"
+      -- "$_self" "$@"
   fi
   rc=0
   case "$_KILIX_DESKTOP_MODE" in
@@ -4279,8 +4310,16 @@ print(ids[0] if ids else "")' 2>/dev/null)"
       # KILIX_HOME joins PATH so the desktop's launch registry resolves the
       # `kilix` subcommand fallbacks without guessing at checkout paths.
       _cap_home="$KILIX_HOME"
+      _tui_content_root="${_kilix_tui_explicit_root:-}"
+      if [ -z "$_tui_content_root" ]; then
+        _tui_content_root="$(python3 "$KILIX_HOME/scripts/install-kilix-amp.py" --print-root \
+          && printf .)" || _kilix_desktop_die "could not resolve the TUI content root"
+        _tui_content_root="${_tui_content_root%.}"
+        _tui_content_root="${_tui_content_root%$'\n'}"
+      fi
       PATH="$_cap_home:${PATH:-/usr/local/bin:/usr/bin:/bin}" \
         KILIX_HOME="$_cap_home" KILIX_KITTEN="$KITTEN" \
+        KILIX_CONTENT_ROOT="$_tui_content_root" \
         "$_KILIX_DESKTOP_MAIN" "$@" || rc=$? ;;
     *)
       _kilix_desktop_die "internal error: no desktop mode selected" ;;

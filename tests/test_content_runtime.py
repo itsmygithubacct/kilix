@@ -148,6 +148,79 @@ class ContentRuntimeTests(unittest.TestCase):
             self.assertEqual(result.stdout, selected + "/desktop-apps\n")
             self.assertFalse(Path(selected).exists())
 
+    def _tui_launch(self, fixture, arguments):
+        # Execute the exact alias parsing/reset and final launch blocks; only
+        # intervening desktop preparation is omitted. Both root queries are real.
+        launcher = (ROOT / "kilix").read_text()
+        block = launcher.split('    tui)\n      # KILIX_HOME joins PATH', 1)[1].split('    *)\n', 1)[0]
+        block = '    tui)\n      # KILIX_HOME joins PATH' + block
+        alias = launcher.split('  tui|kilix-tui)\n', 1)[1].split(
+            '  land|kilix-land|kilix-land-desktop)\n', 1)[0]
+        preflight = launcher.split('# BEGIN TUI ROOT ARGUMENTS\n', 1)[1].split(
+            '# END TUI ROOT ARGUMENTS\n', 1)[0]
+        reset = '_kilix_tui_explicit_root=\n'
+        self.assertIn(reset + 'case "${1:-}" in\n', launcher)
+        desktop = fixture / 'desktop'
+        desktop.write_text('#!/usr/bin/python3\nimport json,os,sys\n'
+            'print(json.dumps({"root":os.environ["KILIX_CONTENT_ROOT"],'
+            '"argv":sys.argv[1:]}))\n')
+        desktop.chmod(0o700)
+        script = ('set -eu\n_kilix_desktop_die() { exit 1; }\n' + preflight + reset
+            + 'case "${1:-}" in\n  tui|kilix-tui)\n' + alias + 'esac\n'
+            + '[ "$1" = desktop ]\nshift\ncase tui in\n' + block + 'esac\n')
+        return subprocess.run(['bash', '-c', script, 'fixture', *arguments], env={
+            'PATH': os.defpath, 'HOME': str(fixture), 'KILIX_HOME': str(ROOT),
+            'KILIX_DATA_HOME': str(fixture / "host data 'quoted'"),
+            'KILIX_CONTENT_ROOT': str(fixture / 'stale95'),
+            '_kilix_tui_explicit_root': str(fixture / 'forged-private-root'),
+            'KITTEN': 'fixture', '_KILIX_DESKTOP_MAIN': str(desktop),
+            'PYTHONDONTWRITEBYTECODE': '1',
+        }, capture_output=True, text=True, timeout=10)
+
+    def test_ordinary_tui_dispatch_replaces_stale_root_with_host_storage(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = Path(temporary)
+            expected = str(fixture / "host data 'quoted'" / 'desktop-apps')
+            for alias in ('tui', 'kilix-tui'):
+                with self.subTest(alias=alias):
+                    result = self._tui_launch(fixture, [alias, '--screenshot'])
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(json.loads(result.stdout), {
+                        'root': expected, 'argv': ['--screenshot']})
+            self.assertFalse(Path(expected).exists())
+
+    def test_explicit_tui_root_preserves_caller_selection_and_remaining_arguments(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = Path(temporary)
+            for alias in ('tui', 'kilix-tui'):
+                for leaf in ("95 'quoted' $HOME $(false) `false`", '95 newline\n'):
+                    with self.subTest(alias=alias, leaf=leaf):
+                        raw = str(fixture) + '/unused/../' + leaf
+                        result = self._tui_launch(fixture, [alias, '--content-root', raw,
+                            '--screenshot', 'two words'])
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertEqual(json.loads(result.stdout), {
+                            'root': os.path.normpath(raw),
+                            'argv': ['--screenshot', 'two words']})
+                        self.assertFalse(Path(os.path.normpath(raw)).exists())
+            self.assertFalse((fixture / "host data 'quoted'").exists())
+            self.assertFalse((fixture / 'unused').exists())
+
+    def test_invalid_explicit_tui_root_refuses_without_launch_or_store_creation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = Path(temporary)
+            for alias in ('tui', 'kilix-tui'):
+                for arguments in (['--content-root'], ['--content-root', 'relative'],
+                        ['--content-root', ''], ['--content-root', '--screenshot'],
+                        ['--content-root', str(fixture / 'one'),
+                         '--content-root', str(fixture / 'two')]):
+                    with self.subTest(alias=alias, arguments=arguments):
+                        result = self._tui_launch(fixture, [alias, *arguments])
+                        self.assertEqual(result.returncode, 2, result.stderr)
+                        self.assertEqual(result.stdout, '')
+                        self.assertIn('content-root', result.stderr)
+            self.assertEqual([p.name for p in fixture.iterdir()], ['desktop'])
+
     def test_shell_amp_dispatch_preserves_quoted_root_and_headless_arguments(self):
         # Run the exact dispatch block. Only application installation is replaced
         # by a fixture; root resolution executes the real shared Python helper.
