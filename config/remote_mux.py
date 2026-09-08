@@ -15,6 +15,7 @@ import sys
 from typing import Any
 
 import remote as live
+from kilix_sdk._content_runtime import launch_environment
 
 
 KILIX_HOME = Path(__file__).resolve().parents[1]
@@ -176,7 +177,7 @@ def cmd_serve(ns: argparse.Namespace) -> int:
             argv.append("--no-tls")
         if ns.token:
             argv.extend(["--token", ns.token])
-        os.execv(serve, argv)
+        os.execve(serve, argv, launch_environment())
     except (OSError, RuntimeError, ValueError) as exc:
         return fail(str(exc))
     return 1
@@ -205,7 +206,7 @@ def cmd_attach(ns: argparse.Namespace, *, view: bool) -> int:
             argv.append("--no-audio")
         elif ns.audio_output:
             argv.extend(["--audio-output", ns.audio_output])
-        os.execv(attach, argv)
+        os.execve(attach, argv, launch_environment())
     except (OSError, RuntimeError, ValueError) as exc:
         return fail(str(exc))
     return 1

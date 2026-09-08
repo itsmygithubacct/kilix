@@ -2061,6 +2061,9 @@ case "${1:-}" in
     [ -n "$_amp_installed" ] && [ -x "$_amp_installed" ] \
       || { echo "kilix amp: installer did not create $_amp_installed" >&2; exit 1; }
     [ "$_amp_install_only" = 0 ] || exit 0
+    KILIX_CONTENT_ROOT="$(python3 "$KILIX_HOME/scripts/install-kilix-amp.py" --print-root)" \
+      || { echo "kilix amp: could not resolve the content root" >&2; exit 1; }
+    export KILIX_CONTENT_ROOT
     if [ "$_amp_headless" = 1 ]; then
       # The backend outlives the caller's terminal, so it gets the session
       # directory rather than a pane's environment.

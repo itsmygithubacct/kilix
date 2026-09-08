@@ -27,14 +27,9 @@ HOST_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HOST_ROOT / "config"))
 
 from kilix_sdk import content as kilix_content  # noqa: E402
-from kilix_sdk import paths  # noqa: E402
+from kilix_sdk._content_runtime import apps_root  # noqa: E402
 
 CONTENT_ID = "kilix-amp"
-
-
-def apps_root() -> str:
-    """Where Kilix 95 keeps installed catalog apps, so both paths agree."""
-    return os.path.join(paths.data_dir(), "desktop-apps")
 
 
 def report(message: str) -> None:
@@ -46,10 +41,18 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="install-kilix-amp.py",
         description="Install the pinned Kilix Amp and print its executable.")
-    parser.add_argument(
+    output = parser.add_mutually_exclusive_group()
+    output.add_argument(
         "--print-ref", action="store_true",
         help="print the pinned catalog commit and change nothing")
+    output.add_argument(
+        "--print-root", action="store_true",
+        help="print the normalized catalog root and change nothing")
     args = parser.parse_args(argv)
+
+    if args.print_root:
+        print(apps_root())
+        return 0
 
     try:
         spec = kilix_content.default_catalog().require(CONTENT_ID)

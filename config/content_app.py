@@ -25,14 +25,9 @@ import shutil
 import sys
 
 from kilix_sdk import content
-from kilix_sdk import paths
+from kilix_sdk._content_runtime import apps_root, launch_environment
 
 _INSTALLABLE_SOURCES = frozenset(("git", "archive"))
-
-
-def apps_root() -> str:
-    """Directory shared by every catalog application launch surface."""
-    return os.path.join(paths.data_dir(), "desktop-apps")
 
 
 def _report(content_id: str, message: str) -> None:
@@ -116,7 +111,7 @@ def _exec(
     content_id: str,
     action: str = "",
 ) -> None:
-    environment = dict(os.environ)
+    environment = launch_environment()
     environment["KILIX_APP_ID"] = content_id
     environment["KILIX_APP_SURFACE"] = surface
     if action:

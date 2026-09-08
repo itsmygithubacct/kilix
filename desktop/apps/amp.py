@@ -10,6 +10,7 @@ import os
 
 import wm
 import storage
+from kilix_sdk._content_runtime import launch_environment
 from . import xpane
 
 
@@ -55,6 +56,8 @@ def _seed_sample(amp_dir):
 
 
 def _spawn(desk, exe, path=None):
+    import games
+
     if not exe:
         return
     d = os.path.dirname(exe)
@@ -69,10 +72,10 @@ def _spawn(desk, exe, path=None):
             # (EQ / playlist) are never clipped
             # private, persistent config: window layout survives sessions and
             # never collides with a user-level kilix-amp install
-            env={
+            env=launch_environment(root=games.APPS_DIR, base={
                 "XDG_CONFIG_HOME": storage.config_dir("app-state"),
                 "XDG_DATA_HOME": storage.data_dir("app-state"),
-            },
+            }),
             cwd=d))
     except Exception as e:
         wm.msgbox(desk, "Media Player",

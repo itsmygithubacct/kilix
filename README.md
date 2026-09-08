@@ -1427,11 +1427,17 @@ right-click menu everywhere. Built in:
   a Winamp 2.x clone, into `~/.local/gpu_terminal/kilix-95/data/apps`. The same
   binary also runs `--headless`, serving a control socket that the TUI Music
   tool drives — one decoder behind both front ends rather than two that drift.
-  `kilix amp` is the same install with a name a caller can reach: it builds the
+  `kilix amp` uses the same catalog pin: it builds the
   pinned player if needed and runs it, `kilix amp --headless` runs the backend
   with no windows, and `kilix amp --install-only` just builds it (what `pleb
   install` uses to get it in place before anyone asks). The commit comes from
   the pinned content catalog, so moving that pin rebuilds on the next call.
+  CLI and bundled-desktop installs use the host's `data/desktop-apps` root;
+  Kilix 95 keeps its own `data/apps` store. Each launch passes its actual
+  installer root as `KILIX_CONTENT_ROOT`, overriding a stale inherited value.
+  Private XDG application state remains separate from model/receipt storage.
+  Catalog app and remote multiplexer launches also pass the host's normalized
+  content root, including relocated Kilix storage paths.
 - **PDF Viewer** — `kilix pdf-view DOCUMENT.pdf` installs the catalog-pinned
   [kilix-pdf](https://github.com/itsmygithubacct/kilix-pdf) viewer and opens the
   document in the current terminal. Poppler/Cairo provides complete CPU

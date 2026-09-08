@@ -26,6 +26,7 @@ import zipfile
 import storage
 from kilix_sdk import content as kilix_content
 from kilix_sdk import settings as shared_settings
+from kilix_sdk._content_runtime import normalized_root
 
 HOME = os.path.expanduser("~")
 CONF = storage.config_dir("desktop-games.conf")
@@ -409,7 +410,7 @@ def _repo_ready(cp, section, binary, managed_dir, repo, ref):
 
 
 def _content_root(spec):
-    return APPS_DIR if spec.kind == "app" else GAMES_DIR
+    return normalized_root(APPS_DIR if spec.kind == "app" else GAMES_DIR)
 
 
 def _catalog_ready(content_id, cp=None):

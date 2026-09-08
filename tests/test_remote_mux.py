@@ -73,11 +73,13 @@ class RemoteMultiplexerTests(unittest.TestCase):
                  return_value=Path("/tmp/frame.tap")), \
              mock.patch.object(
                  REMOTE_MUX, "input_helper", return_value="scoped-input"), \
-             mock.patch.object(REMOTE_MUX.os, "execv") as execute:
+             mock.patch.object(REMOTE_MUX.os, "execve") as execute:
             self.assertEqual(REMOTE_MUX.cmd_serve(ns), 1)
 
-        executable, argv = execute.call_args.args
+        executable, argv, environment = execute.call_args.args
         self.assertEqual(executable, "/bin/kmx-serve")
+        self.assertEqual(environment["KILIX_CONTENT_ROOT"],
+                         REMOTE_MUX.launch_environment()["KILIX_CONTENT_ROOT"])
         self.assertEqual(argv[0], executable)
         self.assertIn("--broker-session", argv)
         self.assertIn(session, argv)
