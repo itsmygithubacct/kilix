@@ -1541,13 +1541,27 @@ with `serve --audio-source COMMAND`; the command writes raw signed-16-bit PCM,
 and an attaching Kilix plays it through `pacat`, `aplay`, or an explicit
 `--audio-output`.
 
+Use `--audio-codec auto|encodec|pcm` and `--audio-bitrate 3|6|12` on either
+side to select the existing audio transport policy (defaults: `auto`, `6`).
+Automatic selection retains PCM when model admission is unavailable; explicit
+EnCodec selection refuses. Model acquisition remains a separate setup action.
+
 A non-loopback `--socket ADDRESS:PORT --lan` is direct TLS: the server prints
 both a token and a certificate fingerprint, and the client requires both. An
 SSH tunnel to loopback remains the smaller exposure surface.
 
 Kilix pins and builds the multiplexer, broker-v2 observer, and presenter tap
-from their submodules. `KILIX_MULTIPLEXER_HOME` selects a development checkout
-such as `~/.local/gpu_terminal/sources/kilix-apps/kilix-multiplexer` without changing the
+from their submodules. The multiplexer build requires the source-bound shared
+`libkilix-encodec` package built with ONNX and Content, ORT API21,
+`libsamplerate0-dev`, and `libssl-dev`. Install these through explicit system
+setup before launching remote audio. The build records the native package and
+embedded Content identity, compiler, flags, source commit, and output digests;
+missing dependencies or a source without the enabled backend produce a setup
+error. Amp and the multiplexer use the same installed native library.
+
+`KILIX_MULTIPLEXER_HOME` selects a clean development checkout such as
+`~/.local/gpu_terminal/sources/kilix-apps/kilix-multiplexer`; also set
+`KILIX_MULTIPLEXER_COMMIT` to its full commit hash. This does not change the
 release pin.
 
 ### 3. A GUI app — view + control from a browser or VNC client

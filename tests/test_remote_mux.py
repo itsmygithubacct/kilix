@@ -90,6 +90,25 @@ class RemoteMultiplexerTests(unittest.TestCase):
         self.assertEqual(argv[argv.index("--rows") + 1], "31")
         self.assertEqual(argv[argv.index("--cols") + 1], "92")
 
+    def test_audio_selectors_relay_for_attach_and_view_without_changing_root(self):
+        for verb in ('attach','view'):
+            for codec in ('auto','encodec','pcm'):
+                for bitrate in (3,6,12):
+                    ns=REMOTE_MUX.parser().parse_args([verb,'--socket','/tmp/example.sock',
+                        '--audio-codec',codec,'--audio-bitrate',str(bitrate)])
+                    with mock.patch.object(REMOTE_MUX,'build_binary',return_value='/bin/kmx-attach'), \
+                         mock.patch.object(REMOTE_MUX.os,'execve') as execute:
+                        REMOTE_MUX.cmd_attach(ns,view=verb=='view')
+                    _,argv,environment=execute.call_args.args
+                    self.assertEqual(argv[argv.index('--audio-codec')+1],codec)
+                    self.assertEqual(argv[argv.index('--audio-bitrate')+1],str(bitrate))
+                    self.assertEqual(environment['KILIX_CONTENT_ROOT'],REMOTE_MUX.launch_environment()['KILIX_CONTENT_ROOT'])
+
+    def test_invalid_audio_selectors_refuse_before_launch(self):
+        for option,value in (('--audio-codec','other'),('--audio-bitrate','9')):
+            with self.assertRaises(SystemExit):
+                REMOTE_MUX.parser().parse_args(['attach','--socket','x',option,value])
+
 
 if __name__ == "__main__":
     unittest.main()
