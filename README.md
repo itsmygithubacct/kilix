@@ -1336,6 +1336,17 @@ Kilix clones its immutable pinned `kilix-tui-utils` commit into
 and opens its text-native desktop. The same interface renders as terminal cells
 everywhere and as a graphical Tango desktop when Kitty graphics are available.
 
+Ordinary TUI launches pass the actual host application root and ignore inherited
+`KILIX_CONTENT_ROOT`. An embedding desktop with a separate store uses
+`kilix tui --content-root /absolute/apps` (also `kilix kilix-tui`). Put this option
+immediately after the alias, at most once; subsequent arguments go to the TUI.
+The existing root helper validates and lexically normalizes the path before
+desktop setup. The TUI receives it as `KILIX_CONTENT_ROOT` for catalog lookup,
+explicit Amp setup and owned playback. For a directly installed `kilix-tui`
+executable, the embedding caller instead sets that environment variable itself.
+The host fallback's argv must carry `--content-root`; setting the environment
+alone selects the ordinary host root when the fallback runs.
+
 Override `KILIX_TUI_UTILS_DIR`, `KILIX_TUI_UTILS_REPO`, or
 `KILIX_TUI_UTILS_REF` for reviewed source. Set
 `KILIX_TUI_UTILS_AUTO_INSTALL=0` to forbid a first-use clone; mutable refs and
@@ -1438,6 +1449,14 @@ right-click menu everywhere. Built in:
   Private XDG application state remains separate from model/receipt storage.
   Catalog app and remote multiplexer launches also pass the host's normalized
   content root, including relocated Kilix storage paths.
+  Music can query `scripts/install-kilix-amp.py --resolve` for read-only JSON
+  carrying the actual catalog executable and root. Embedding consumers pass
+  `--content-root /absolute/apps` explicitly to both that query and `--json`
+  setup; ordinary `kilix amp` commands continue to derive their own host root
+  and ignore stale inherited `KILIX_CONTENT_ROOT`. The query does not create a
+  root or build an app. Owned query/setup supervision reaps separate build
+  sessions on cancellation, deadline or caller loss. This supplies no model
+  receipt, license acceptance or implicit system/native dependency setup.
 - **PDF Viewer** — `kilix pdf-view DOCUMENT.pdf` installs the catalog-pinned
   [kilix-pdf](https://github.com/itsmygithubacct/kilix-pdf) viewer and opens the
   document in the current terminal. Poppler/Cairo provides complete CPU

@@ -1580,6 +1580,9 @@ _kilix_desktop_entry_record() {
   fi
 }
 
+# Only an explicit TUI alias argument can select an embedding store. Neither
+# inherited KILIX_CONTENT_ROOT nor an inherited private variable redirects it.
+_kilix_tui_explicit_root=
 case "${1:-}" in
   # build.sh is invoked from the checkout root everywhere: it is cwd-independent
   # today, but running it from the caller's directory would let any future
@@ -1604,6 +1607,23 @@ case "${1:-}" in
     set -- desktop "$@" ;;
   tui|kilix-tui)
     shift
+    if [ "${1:-}" = --content-root ]; then
+      if [ "$#" -lt 2 ]; then
+        echo "kilix tui: --content-root requires an absolute path" >&2
+        exit 2
+      fi
+      # Validate before desktop setup. The sentinel preserves trailing newlines
+      # in a legal path while removing only the helper's output newline.
+      _kilix_tui_explicit_root="$(python3 "$KILIX_HOME/scripts/install-kilix-amp.py" \
+        --print-root --content-root "$2" && printf .)" || exit 2
+      _kilix_tui_explicit_root="${_kilix_tui_explicit_root%.}"
+      _kilix_tui_explicit_root="${_kilix_tui_explicit_root%$'\n'}"
+      shift 2
+      if [ "${1:-}" = --content-root ]; then
+        echo "kilix tui: --content-root may be supplied only once" >&2
+        exit 2
+      fi
+    fi
     export KILIX_DESKTOP_PROVIDER=tui
     export KILIX_DESKTOP_NAME="${KILIX_DESKTOP_NAME:-Kilix TUI}"
     set -- desktop "$@" ;;
@@ -4275,8 +4295,16 @@ print(ids[0] if ids else "")' 2>/dev/null)"
       # KILIX_HOME joins PATH so the desktop's launch registry resolves the
       # `kilix` subcommand fallbacks without guessing at checkout paths.
       _cap_home="$KILIX_HOME"
+      _tui_content_root="${_kilix_tui_explicit_root:-}"
+      if [ -z "$_tui_content_root" ]; then
+        _tui_content_root="$(python3 "$KILIX_HOME/scripts/install-kilix-amp.py" --print-root \
+          && printf .)" || _kilix_desktop_die "could not resolve the TUI content root"
+        _tui_content_root="${_tui_content_root%.}"
+        _tui_content_root="${_tui_content_root%$'\n'}"
+      fi
       PATH="$_cap_home:${PATH:-/usr/local/bin:/usr/bin:/bin}" \
         KILIX_HOME="$_cap_home" KILIX_KITTEN="$KITTEN" \
+        KILIX_CONTENT_ROOT="$_tui_content_root" \
         "$_KILIX_DESKTOP_MAIN" "$@" || rc=$? ;;
     *)
       _kilix_desktop_die "internal error: no desktop mode selected" ;;
