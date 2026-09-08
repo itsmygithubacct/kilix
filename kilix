@@ -70,6 +70,39 @@ umask 077
 # Resolve symlinks so `ln -s .../kilix ~/.local/bin/kilix` still finds the project.
 _self="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 KILIX_HOME="$(cd "$(dirname "$_self")" && pwd)"
+# BEGIN TUI ROOT ARGUMENTS
+# Validate before writable setup; scratch state stays in this subshell.
+# The alias dispatch below resets inherited selection and normalizes argv again.
+case "${1:-}" in
+  tui|kilix-tui|desktop)
+    (
+      case "$1" in
+        tui|kilix-tui) shift ;;
+        desktop)
+          case "${2:-}" in tui|kilix-tui) ;; *) exit 0 ;; esac ;;
+      esac
+      selected=0 root=
+      if [ "${1:-}" = --content-root ]; then
+        if [ "$#" -lt 2 ]; then
+          echo "kilix tui: --content-root requires an absolute path" >&2
+          exit 2
+        fi
+        selected=1; root="$2"; shift 2
+      fi
+      for argument in "$@"; do
+        case "$argument" in
+          --content-root|--content-root=*)
+            echo "kilix tui: --content-root is allowed once, immediately after tui or kilix-tui" >&2
+            exit 2 ;;
+        esac
+      done
+      if [ "$selected" = 1 ]; then
+        env KILIX_HOME="$KILIX_HOME" python3 "$KILIX_HOME/scripts/install-kilix-amp.py" \
+          --print-root --content-root "$root" >/dev/null || exit 2
+      fi
+    ) || exit 2 ;;
+esac
+# END TUI ROOT ARGUMENTS
 GPU_TERMINAL_SOURCE_HOME="${GPU_TERMINAL_SOURCE_HOME:-$HOME/.local/gpu_terminal/sources}"
 GPU_TERMINAL_HOME="${GPU_TERMINAL_HOME:-$HOME/.local/gpu_terminal}"
 GPU_TERMINAL_SETTINGS_FILE="${GPU_TERMINAL_SETTINGS_FILE:-$GPU_TERMINAL_HOME/settings.conf}"
@@ -1580,8 +1613,7 @@ _kilix_desktop_entry_record() {
   fi
 }
 
-# Only an explicit TUI alias argument can select an embedding store. Neither
-# inherited KILIX_CONTENT_ROOT nor an inherited private variable redirects it.
+# Only explicit argv selects an embedding store, including at tab reentry.
 _kilix_tui_explicit_root=
 case "${1:-}" in
   # build.sh is invoked from the checkout root everywhere: it is cwd-independent
@@ -1608,21 +1640,12 @@ case "${1:-}" in
   tui|kilix-tui)
     shift
     if [ "${1:-}" = --content-root ]; then
-      if [ "$#" -lt 2 ]; then
-        echo "kilix tui: --content-root requires an absolute path" >&2
-        exit 2
-      fi
-      # Validate before desktop setup. The sentinel preserves trailing newlines
-      # in a legal path while removing only the helper's output newline.
+      # Preserve legal trailing newlines; remove only the helper's output newline.
       _kilix_tui_explicit_root="$(python3 "$KILIX_HOME/scripts/install-kilix-amp.py" \
         --print-root --content-root "$2" && printf .)" || exit 2
       _kilix_tui_explicit_root="${_kilix_tui_explicit_root%.}"
       _kilix_tui_explicit_root="${_kilix_tui_explicit_root%$'\n'}"
       shift 2
-      if [ "${1:-}" = --content-root ]; then
-        echo "kilix tui: --content-root may be supplied only once" >&2
-        exit 2
-      fi
     fi
     export KILIX_DESKTOP_PROVIDER=tui
     export KILIX_DESKTOP_NAME="${KILIX_DESKTOP_NAME:-Kilix TUI}"
@@ -4209,6 +4232,12 @@ print(ids[0] if ids else "")' 2>/dev/null)"
       "$KITTEN" @ --password-file "$KILIX_RC_PASSWORD_FILE" focus-window --match "id:$_dwid" >/dev/null 2>&1
       exit 0
     fi
+    # Reenter the public explicit selector: the new tab's inherited environment
+    # belongs to the terminal server and cannot carry caller root authority.
+    case "$_KILIX_DESKTOP_MODE:$_kilix_tui_explicit_root" in
+      tui:/*) set -- tui --content-root "$_kilix_tui_explicit_root" "$@" ;;
+      *) set -- desktop "$@" ;;
+    esac
     exec "$KITTEN" @ --password-file "$KILIX_RC_PASSWORD_FILE" \
       launch --type=tab --cwd=current --self --tab-title "${KILIX_DESKTOP_NAME:-desktop}" \
       --env KILIX_IN_OVERLAY=1 --env "KILIX_STREAM=${KILIX_STREAM:-}" \
@@ -4265,7 +4294,7 @@ print(ids[0] if ids else "")' 2>/dev/null)"
       --env "KILIX_LAND_DESKTOP_CONFIG_HOME=${KILIX_LAND_DESKTOP_CONFIG_HOME:-}" \
       --env "KILIX_LAND_DESKTOP_EXTERNAL_APPS=${KILIX_LAND_DESKTOP_EXTERNAL_APPS:-}" \
       --env "KILIX_LAND_DESKTOP_AUDIO=${KILIX_LAND_DESKTOP_AUDIO:-}" \
-      -- "$_self" desktop "$@"
+      -- "$_self" "$@"
   fi
   rc=0
   case "$_KILIX_DESKTOP_MODE" in

@@ -1341,7 +1341,10 @@ Ordinary TUI launches pass the actual host application root and ignore inherited
 `kilix tui --content-root /absolute/apps` (also `kilix kilix-tui`). Put this option
 immediately after the alias, at most once; subsequent arguments go to the TUI.
 The existing root helper validates and lexically normalizes the path before
-desktop setup. The TUI receives it as `KILIX_CONTENT_ROOT` for catalog lookup,
+any writable setup. Invalid, repeated or misplaced selectors refuse. A remote
+tab relaunch carries the explicit selector in argv again, preserving the same
+authority even when the terminal server has a different environment. The TUI
+receives it as `KILIX_CONTENT_ROOT` for catalog lookup,
 explicit Amp setup and owned playback. For a directly installed `kilix-tui`
 executable, the embedding caller instead sets that environment variable itself.
 The host fallback's argv must carry `--content-root`; setting the environment

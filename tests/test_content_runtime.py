@@ -156,6 +156,8 @@ class ContentRuntimeTests(unittest.TestCase):
         block = '    tui)\n      # KILIX_HOME joins PATH' + block
         alias = launcher.split('  tui|kilix-tui)\n', 1)[1].split(
             '  land|kilix-land|kilix-land-desktop)\n', 1)[0]
+        preflight = launcher.split('# BEGIN TUI ROOT ARGUMENTS\n', 1)[1].split(
+            '# END TUI ROOT ARGUMENTS\n', 1)[0]
         reset = '_kilix_tui_explicit_root=\n'
         self.assertIn(reset + 'case "${1:-}" in\n', launcher)
         desktop = fixture / 'desktop'
@@ -163,7 +165,7 @@ class ContentRuntimeTests(unittest.TestCase):
             'print(json.dumps({"root":os.environ["KILIX_CONTENT_ROOT"],'
             '"argv":sys.argv[1:]}))\n')
         desktop.chmod(0o700)
-        script = ('set -eu\n_kilix_desktop_die() { exit 1; }\n' + reset
+        script = ('set -eu\n_kilix_desktop_die() { exit 1; }\n' + preflight + reset
             + 'case "${1:-}" in\n  tui|kilix-tui)\n' + alias + 'esac\n'
             + '[ "$1" = desktop ]\nshift\ncase tui in\n' + block + 'esac\n')
         return subprocess.run(['bash', '-c', script, 'fixture', *arguments], env={
