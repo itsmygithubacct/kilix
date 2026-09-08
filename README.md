@@ -1347,6 +1347,9 @@ authority even when the terminal server has a different environment. The TUI
 receives it as `KILIX_CONTENT_ROOT` for catalog lookup,
 explicit Amp setup and owned playback. For a directly installed `kilix-tui`
 executable, the embedding caller instead sets that environment variable itself.
+An explicit root request opens a fresh TUI tab so that the selected root and
+arguments are delivered. An existing window's foreground pathname cannot prove
+that it belongs to that request. Ordinary launches retain existing-window focus.
 The host fallback's argv must carry `--content-root`; setting the environment
 alone selects the ordinary host root when the fallback runs.
 
