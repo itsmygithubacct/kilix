@@ -40,6 +40,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from kilix_sdk import content, paths  # noqa: E402
 import content_app  # noqa: E402
 import techno_soundbanks  # noqa: E402
+import agent_skills  # noqa: E402
+# The same PATH/prefix resolver serves installation and pane launching.
+from agent_programs import (  # noqa: E402
+    resolve_agent_command as _resolve_agent_command,
+    AGENT_PREFIX_BINDIRS as _AGENT_PREFIX_BINDIRS,
+)
 
 # The desktop's games module already owns catalog installation: which root a
 # kind installs under, the recorded install directory, the readiness check and
@@ -139,28 +145,6 @@ _FALLBACK_AGENTS = (
 )
 
 AGENTS = _providers_from_rollout() or _FALLBACK_AGENTS
-
-# Where the vendors' installers land their binaries when PATH cannot say:
-# claude's install.sh links into ~/.local/bin, kimi's into ~/.kimi-code/bin
-# (codex uses /usr/local/bin, which every PATH already carries). The same
-# resolution contract as kilix_rollout.config.resolve_program — the rollout
-# tool is authoritative about the agents, so this list must not drift from
-# its. PATH alone is not enough here: desktop launch contexts routinely run
-# without ~/.local/bin, and an agent that is installed but off-PATH must
-# read as installed, not as absent.
-_AGENT_PREFIX_BINDIRS = ("~/.local/bin", "~/.kimi-code/bin")
-
-
-def _resolve_agent_command(command: str) -> str | None:
-    """The agent's executable: PATH first, then the known landing spots."""
-    found = shutil.which(command)
-    if found:
-        return found
-    for bindir in _AGENT_PREFIX_BINDIRS:
-        candidate = os.path.join(os.path.expanduser(bindir), command)
-        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
-            return candidate
-    return None
 
 # Hardware drivers that are a deliberate opt-in rather than part of the image.
 # The install itself belongs to Plebian-OS — its helper preflights the machine,
@@ -638,6 +622,7 @@ def _print_table(entries: list[dict]) -> None:
             print(f"  {row['id']:<{width}}  {row['label']:<34} {detail}")
     print("\ninstall one with:  kilix install <id>")
     print("update one with:   kilix install --update <id>")
+    print("include bundled skills:  kilix install <codex|claude|kimi> --skills")
 
 
 def main(argv: list[str]) -> int:
@@ -645,8 +630,13 @@ def main(argv: list[str]) -> int:
     as_json = "--json" in args
     assume_yes = "--yes" in args or "-y" in args
     do_update = "--update" in args
+    with_skills = "--skills" in args
     args = [a for a in args if a not in ("--json", "--yes", "-y", "--update",
-                                         "--list")]
+                                         "--list", "--skills")]
+    if with_skills and (len(args) != 1 or args[0] not in agent_skills.AGENTS):
+        print("kilix install: --skills requires exactly one coding agent",
+              file=sys.stderr)
+        return 2
     entries = rows()
     failure = next((r for r in entries if "error" in r), None)
     if failure is not None:
@@ -664,8 +654,13 @@ def main(argv: list[str]) -> int:
         print(f"kilix install: unknown item: {identifier}", file=sys.stderr)
         print("run `kilix install` for the list", file=sys.stderr)
         return 2
-    return update(identifier) if do_update else install(identifier,
-                                                        assume_yes=assume_yes)
+    result = update(identifier) if do_update else install(identifier,
+                                                         assume_yes=assume_yes)
+    if result == 0 and with_skills:
+        # An explicit second setup step, also available without a vendor install
+        # via `kilix skills install`. Failure leaves the installed agent intact.
+        return agent_skills.main(["install", "--agent", identifier])
+    return result
 
 
 if __name__ == "__main__":

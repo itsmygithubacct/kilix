@@ -24,6 +24,8 @@
 #   ./kilix games ...         # list, play, enable, or disable stack games
 #   ./kilix power ...         # logout|reboot|poweroff, no confirmation here
 #   ./kilix launcher          # catalog TUI: stack programs, apps, launchers
+#   ./kilix skills ...        # explicitly install/list/remove bundled agent skills
+#   ./kilix agent-control ... # bounded coding-session inspection and control
 #   ./kilix app run ID        # install/run one pinned catalog application
 #   ./kilix app window ID     # render a terminal app in a desktop window
 #   ./kilix laptop ...        # list/open/status/close laptop session profiles
@@ -93,6 +95,17 @@ export KILIX_TELEMETRY_RUNTIME KILIX_DATA_HOME
 export KILIX_BUILD_DIRECTORY KILIX_PREBUILT_HOME
 export KILIX95_STORAGE_HOME KILIX95_CONFIG_HOME KILIX95_STATE_HOME
 export KILIX95_CACHE_HOME KILIX95_SESSION_HOME KILIX95_DATA_HOME
+
+# These source-only commands also work before engine/storage setup or submodule
+# initialization. Listing skills must not initialize the user's shared settings.
+case "${1:-}" in
+  skills)
+    shift
+    exec python3 "$KILIX_HOME/config/agent_skills.py" "$@" ;;
+  agent-control)
+    shift
+    exec python3 "$KILIX_HOME/config/agent_control.py" "$@" ;;
+esac
 
 _kilix_validate_private_storage_layout() {
   local storage private home source

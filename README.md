@@ -719,6 +719,88 @@ To get the buttons, install the build deps and build the fork:
 
 (`scripts/install-build-deps.sh --verify` re-checks without installing.)
 
+### Optional coding-agent skills
+
+Kilix ships three separate skills as one versioned bundle: `kilix`,
+`kilix-model-switch`, and `kilix-session-launch`. They cover pane/session
+administration, changing a model within an existing coding session, and
+creating a tab of initialized coding sessions. Installation is explicit:
+
+```bash
+kilix skills list --json
+kilix skills status --agent codex
+kilix skills install --agent codex
+kilix skills install --agent claude
+kilix skills install --agent kimi
+kilix skills remove --agent codex
+
+# Alternatively, opt in after a successful vendor install or update:
+kilix install codex --skills
+kilix install --update codex --skills
+```
+
+Both mutation commands require `--agent codex|claude|kimi`; `list` and `status`
+also accept `--json`. `status` without `--agent` reports each agent separately.
+An ordinary agent install, vendor update, or `kilix update` does not register
+or refresh these skills. Repeat the explicit skill install after updating the
+Kilix source to adopt its new bundle. Bundle identity includes `VERSION` and
+every instruction/support file's name, bytes and executable status. A failed
+skill setup reports failure while leaving a successful vendor installation intact.
+
+| Agent | Current user discovery root | Custom-root behavior |
+|---|---|---|
+| Codex | `$HOME/.agents/skills` | `CODEX_HOME` does not redirect this shared root; an existing same-name skill under its `skills` directory is a conflict. |
+| Claude Code | `$HOME/.claude/skills` | An explicit absolute `CLAUDE_CONFIG_DIR` selects `$CLAUDE_CONFIG_DIR/skills`. |
+| Kimi Code | `$HOME/.agents/skills` | An explicit absolute `KIMI_CODE_HOME` selects `$KIMI_CODE_HOME/skills`; the generic root is still checked for duplicates. |
+
+These are the current documented discovery conventions, recorded as
+`documented-user-roots-2026-09`, rather than a numeric CLI-version guess.
+The installer does not launch agents to detect their versions. Older builds
+may use different roots or precedence: update them before relying on this
+profile. In particular, it preserves and reports same-name legacy Codex/Kimi
+registrations instead of guessing a fallback root or copying a second set.
+Kimi's generic root belongs to the user's home, independently of its custom
+data root. Use your normal user `HOME` when invoking these commands.
+See the current [Codex skill discovery documentation](https://learn.chatgpt.com/docs/build-skills),
+[Claude configuration directory contract](https://code.claude.com/docs/en/claude-directory),
+and [Kimi skill locations](https://moonshotai.github.io/kimi-code/en/customization/skills).
+
+Codex and Kimi share the default three registrations. Installing for the second
+agent records another owner without adding duplicate directories. Removing
+one owner keeps the set available for the other. Because the directory is
+shared, either agent can discover an installed set even before it is recorded
+as an additional owner; `status` reports this as `shared`.
+The `--agent` choice tracks registration/removal ownership, not isolation from
+the other client; both automatically discover the shared `.agents` root.
+
+The installer creates three symlinks to a private version snapshot through one
+atomic version pointer in the sibling `.kilix-skill-bundles` directory. It checks
+recorded file bytes, modes and registration inodes before changing an existing
+set. Existing user-owned agent directories may retain their normal `0775` mode;
+only the new snapshot store requires `0700`. User files, foreign or replaced
+symlinks, edited skills, extra files in an installed skill and world-writable
+or foreign unsafe directory ancestors cause refusal. It does not
+chmod existing directories, edit agent configuration, or enable remote control.
+Conflicts require the user to preserve/reconcile their own entries before retrying;
+there is no force-overwrite option. Checks cover the named skills in the selected
+and documented alternate user roots, not arbitrary project or plugin registries.
+
+Removal unregisters the last owner's three links. Private version snapshots
+and interrupted-operation recovery data remain outside discovery; automatic
+recursive deletion could erase later user additions. No background cleanup runs.
+An interrupted partial first install/removal is reported as a conflict for
+manual reconciliation. A concurrent update switches the common version pointer
+once the complete new set is ready; readers already opening old files can finish
+against the retained snapshot. Installation status describes files and ownership,
+not proof that a running agent has reloaded them. Refresh/restart that agent if
+its skill list has not changed.
+
+The tracked `skills/` files travel with the full source clone, Git source archive
+and normal source update. The Kitty fallback binary download is separate;
+it is not a Kilix source installation. `kilix agent-control` dispatches to the
+bundled control helper and the new source-only commands work before submodule
+or terminal-engine initialization.
+
 Then, optionally:
 
 ```bash
