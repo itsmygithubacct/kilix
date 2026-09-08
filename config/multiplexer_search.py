@@ -231,7 +231,17 @@ class SearchAdmission:
             if name in self.logs:
                 raise BuildBoundaryChanged('duplicate compiler search invocation')
             path = self.diagnostics / name
-            found = path.lstat()
+            try:
+                found = path.lstat()
+            except OSError as error:
+                # The requester chose this name, so name it back and give the
+                # reason. An escaping errno string would instead carry the
+                # private generation path, and would not be the typed refusal
+                # every other rejection on this untrusted request path raises.
+                reason = os.strerror(error.errno) if error.errno else type(error).__name__
+                raise BuildBoundaryChanged(
+                    'compiler diagnostic ' + name[:64] + ' is unavailable at admission: ' + reason
+                ) from error
             if not stat.S_ISREG(found.st_mode) or found.st_uid != uid or found.st_mode & 0o077 or found.st_nlink != 1 or found.st_size:
                 raise BuildBoundaryChanged('compiler diagnostic identity differs at admission')
             # Link-only GCC invocations have no preprocessing search. The

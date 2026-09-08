@@ -175,6 +175,104 @@ class SearchTests(fixture.InstalledBuildTests):
                             self.assertEqual(json.loads(output), 'READY')
         self.assertEqual(len(os.listdir('/proc/self/fd')), before)
 
+    def test_named_diagnostic_that_cannot_be_examined_refuses_typed_before_ready(self):
+        """The requester names the log; an absent or unreadable one must refuse.
+
+        Every other rejection on this untrusted request path raises the module's
+        typed BuildBoundaryChanged. An escaping OSError would carry the private
+        generation path in its errno string and would not be classified as a
+        boundary change by a caller that discriminates on the typed refusal.
+        """
+        module = self.module()
+        before = len(os.listdir('/proc/self/fd'))
+        arms = ('valid', 'absent', 'disappearing', 'nonempty', 'unreadable')
+        for mode in arms:
+            with self.subTest(mode=mode):
+                root = self.root / ('diagnostic-' + mode)
+                root.mkdir()
+                diagnostics = root / 'logs'
+                diagnostics.mkdir(mode=0o700)
+                name = 'gcc-' + mode.replace('-', '_') + '.log'
+                if mode != 'absent':
+                    log = diagnostics / name
+                    log.touch(mode=0o600)
+                    if mode == 'nonempty':
+                        log.write_bytes(b'diagnostic bytes')
+                directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+                endpoint = '/proc/self/fd/' + str(directory) + '/s'
+                admission = module.SearchAdmission(endpoint, self.source, diagnostics, lambda: None)
+                marker = root / 'sent'
+                child = None
+                try:
+                    packet = os.fsencode(name) + b'\0#include <...> search starts here:\n ' + os.fsencode(self.headers) + b'\nEnd of search list.\n'
+                    script = ('import json,socket,sys\n'
+                        's=socket.socket(socket.AF_UNIX,socket.SOCK_SEQPACKET);s.connect(sys.argv[1])\n'
+                        's.send(bytes.fromhex(sys.argv[2]));s.shutdown(socket.SHUT_WR)\n'
+                        'open(sys.argv[3],"w").close()\n'
+                        'try: print(json.dumps(s.recv(32).decode()),flush=True)\n'
+                        'except ConnectionResetError:pass\n')
+                    child = subprocess.Popen(['/usr/bin/python3', '-B', '-c', script, endpoint, packet.hex(), str(marker)],
+                                             pass_fds=(directory,), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                    # The record is already in flight before the named log stops
+                    # being examinable, so this is the actual request path.
+                    self.wait(marker.exists)
+                    if mode == 'disappearing':
+                        (diagnostics / name).unlink()
+                    elif mode == 'unreadable':
+                        diagnostics.chmod(0o600)
+                        self.addCleanup(diagnostics.chmod, 0o700)
+                    deadline = time.monotonic() + 3
+                    error = None
+                    while child.poll() is None:
+                        self.assertLess(time.monotonic(), deadline)
+                        try:
+                            admission.check()
+                        except module.BuildBoundaryChanged as exc:
+                            error = exc
+                            break
+                        time.sleep(.005)
+                    if mode == 'valid':
+                        self.assertIsNone(error)
+                        self.assertEqual(sorted(admission.logs), [name])
+                        self.assertTrue(admission.history.paths)
+                    else:
+                        self.assertIsInstance(error, module.BuildBoundaryChanged)
+                        # Typed like every other admission refusal, and still a
+                        # ValueError, so the operator path keeps classifying it.
+                        self.assertNotIsInstance(error, OSError)
+                        self.assertIsInstance(error, ValueError)
+                        # Refused before READY: no invocation is recorded and no
+                        # search watch is retained for an unadmitted request.
+                        self.assertEqual(admission.logs, {})
+                        self.assertEqual(admission.history.paths, set())
+                        self.assertEqual(admission.history.roots, set())
+                        if mode == 'nonempty':
+                            # The original identity refusal is unchanged.
+                            self.assertEqual(str(error), 'compiler diagnostic identity differs at admission')
+                        else:
+                            self.assertIn(name, str(error))
+                            self.assertIn('unavailable at admission', str(error))
+                            # The private generation path stays out of the message.
+                            self.assertNotIn(str(diagnostics), str(error))
+                            self.assertNotIn(str(self.root), str(error))
+                finally:
+                    admission.close()
+                    os.close(directory)
+                    if child is not None:
+                        try:
+                            output, errors = child.communicate(timeout=2)
+                        except subprocess.TimeoutExpired:
+                            child.kill();child.communicate();raise
+                        self.assertEqual(child.returncode, 0, errors)
+                        if mode == 'valid':
+                            self.assertEqual(json.loads(output), 'READY')
+                        else:
+                            # A refused request is never acknowledged: the peer
+                            # reads an ended channel or is reset, never READY.
+                            self.assertNotIn('READY', output)
+                self.assertFalse((root / 's').exists())
+        self.assertEqual(len(os.listdir('/proc/self/fd')), before)
+
     def test_history_missing_overflow_and_same_tick_restoration_refuse(self):
         module = self.module()
         before = len(os.listdir('/proc/self/fd'))
