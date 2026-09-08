@@ -67,7 +67,11 @@ ensure_private_directory() {
     echo "kilix remote: $label directory is not owned by this user: $path" >&2
     return 1
   fi
-  chmod 0700 -- "$path"
+  # Do not mutate the directory history of another current build owner when
+  # the required mode is already in place.
+  if [ "$(stat -c '%a' -- "$path")" != 700 ]; then
+    chmod 0700 -- "$path"
+  fi
 }
 
 if [ ! -f "$source_path/Makefile" ] \

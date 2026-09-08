@@ -1576,11 +1576,22 @@ precompiled headers, linker scripts and dependency-output overrides
 are refused. No model setup occurs in this build path.
 
 Reuse checks the compiler/tool bytes, actual GCC header dependencies and linker
-inputs, native/Content package identity and all output digests. Changed inputs
+inputs, native/Content package identity and all output digests. GCC's reported
+include search directories, including absent and earlier directories, are also
+recorded. Adding an earlier or nested header invalidates reuse even if the
+previously consumed header is unchanged. Changed inputs
 force a fresh generation; a dependency changed during compilation refuses the
 build. Unprovable ancestor stability disables reuse. Failed or interrupted
 compilation preserves previous published outputs, and the dedicated owner
-retains the build lock through descendant cleanup. The private build command
+retains both the directory flock and named build lock through descendant cleanup.
+Held directory descriptors and kernel mutation events protect the generated
+source hierarchy, including a directory swap followed by restoration. Lock name
+or directory changes refuse; a replacement lock cannot create two publishers
+in the same directory. Detected boundary loss during publication restores this
+transaction's replaced outputs while the directory remains locked. Replacement
+of the two binaries and stamp is not crash atomic: a crash or filesystem error
+can leave a partial pair, which the next identity validation rejects.
+The private build command
 has one 240-second budget including lock wait and raw Git capture.
 
 ### 3. A GUI app — view + control from a browser or VNC client

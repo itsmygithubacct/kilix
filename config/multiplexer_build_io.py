@@ -46,6 +46,7 @@ class BuildIO:
         self.deadline = time.monotonic() + timeout
         self.stopped = False
         self.guard = ()
+        self.boundary_check = lambda: None
 
     def stop(self, _signal, _frame):
         self.stopped = True
@@ -55,6 +56,7 @@ class BuildIO:
             raise InterruptedError('multiplexer build interrupted')
         if time.monotonic() >= self.deadline:
             raise TimeoutError('multiplexer build deadline exceeded')
+        self.boundary_check()
 
     @staticmethod
     def reap():

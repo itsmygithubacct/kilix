@@ -15,9 +15,11 @@ import tempfile
 import time
 
 from multiplexer_build_io import BuildIO, check_source, read_file, source_files
+from multiplexer_build_guards import (BuildBoundaryChanged, DirectoryEvents, DirectoryHistory, NamedLock,
+                                     search_identity, search_roots)
 
 FLAGS = ('CFLAGS', 'CPPFLAGS', 'LDFLAGS', 'LDLIBS')
-SCHEMA = 'kilix.multiplexer.build/v2'
+SCHEMA = 'kilix.multiplexer.build/v3'
 
 
 def linker_flags(token):
@@ -108,7 +110,8 @@ def tool_plan(io, env):
     version = text([str(compiler), '--version'])
     if 'Free Software Foundation' not in version:
         raise ValueError('this build identity requires the provisioned GCC toolchain')
-    tools = {str(compiler), '/usr/bin/ar', '/usr/bin/make', '/usr/bin/pkg-config', '/usr/bin/readelf', '/usr/bin/ldd'}
+    tools = {str(compiler), '/usr/bin/ar', '/usr/bin/make', '/usr/bin/pkg-config', '/usr/bin/readelf', '/usr/bin/ldd',
+             str(Path('/usr/bin/python3').resolve(strict=True))}
     for role in ('cc1', 'as', 'ld'):
         candidate = text([str(compiler), '-print-prog-name=' + role])
         found = candidate if candidate.startswith('/') else shutil.which(candidate, path=env['PATH'])
@@ -210,6 +213,78 @@ def remove_generation(path):
         shutil.rmtree(path)
 
 
+def publish(generation, base, directory, record, io):
+    """Restore a live boundary refusal while retaining the directory flock.
+
+    This is not a crash-atomic three-file transaction. An I/O failure or process
+    crash can still interrupt replacement; reuse independently checks the pair
+    against its stamp. A detected name/history loss, cancellation or deadline
+    restores only this transaction's replaced entries, never a foreign inode.
+    """
+    names = ('kmx-serve', 'kmx-attach', 'build-identity')
+    backups = {}
+    for name in names:
+        destination = base / name
+        backup = generation / ('previous-' + name)
+        if os.path.lexists(destination):
+            value = read_file(destination, check=io.check)
+            mode = destination.stat().st_mode & 0o777
+            backup.write_bytes(value)
+            backup.chmod(mode)
+            backups[name] = backup
+        else:
+            backups[name] = None
+        temp = generation / name
+        temp.write_bytes(canonical(record) if name == 'build-identity' else
+                         read_file(generation / 'out' / name, check=io.check))
+        temp.chmod(0o600 if name == 'build-identity' else 0o700)
+    replaced = []
+    try:
+        for name in names:
+            io.check()
+            temp = generation / name
+            info = temp.stat()
+            os.replace(temp, name, dst_dir_fd=directory)
+            replaced.append((name, (info.st_dev, info.st_ino)))
+        io.check()
+    except (BuildBoundaryChanged, InterruptedError, TimeoutError):
+        # No other conforming publisher can acquire this directory's flock,
+        # including after .build.lock replacement. Cleanup does not call the
+        # now-failed boundary/deadline check and never releases either guard.
+        for name, expected in reversed(replaced):
+            visible = os.stat(name, dir_fd=directory, follow_symlinks=False)
+            if (visible.st_dev, visible.st_ino) != expected:
+                raise BuildBoundaryChanged('publication entry changed; refusing to overwrite foreign output')
+            if backups[name] is None:
+                os.unlink(name, dir_fd=directory)
+            else:
+                os.replace(backups[name], name, dst_dir_fd=directory)
+        raise
+    finally:
+        for backup in backups.values():
+            if backup is not None:
+                backup.unlink(missing_ok=True)
+
+
+def compiler_logs(root, *, read=False):
+    """Bound the independent stderr population during execution and inspection."""
+    files = sorted(root.iterdir())
+    if len(files) > 512:
+        raise ValueError('compiler diagnostic population exceeds bound')
+    total = 0
+    blocks = []
+    for path in files:
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+            raise ValueError('unsafe compiler diagnostic file')
+        total += info.st_size
+        if total > 4 * 1024**2:
+            raise ValueError('compiler diagnostics exceed bound')
+        if read:
+            blocks.append(read_file(path, 4 * 1024**2))
+    return b'\n'.join(blocks)
+
+
 def build(args, package_plan):
     io = BuildIO(args.timeout)
     io.supervise()
@@ -219,23 +294,59 @@ def build(args, package_plan):
     info = base.stat()
     if info.st_uid != os.geteuid() or info.st_mode & 0o077:
         raise ValueError('build directory must be private and owned')
-    lock = os.open(base / '.build.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK, 0o600)
+    directory = os.open(base, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    lock = None
+    owner = None
+    history = None
+    driver_history = None
     generation = None
+    generation_identity = None
+    generation_fd = None
+    stage_events = None
     published = False
     try:
+        lock = os.open('.build.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK,
+                       0o600, dir_fd=directory)
         info = os.fstat(lock)
         if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_nlink != 1 or info.st_mode & 0o077:
             raise ValueError('unsafe build lock')
-        io.guard = (lock,)
-        while True:
-            io.check()
-            try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except BlockingIOError:
-                time.sleep(.025)
+        owner = NamedLock(base, directory, lock)
+        io.boundary_check = owner.check
+        io.guard = (directory, lock)
+        for guard in io.guard:
+            while True:
+                io.check()
+                try:
+                    fcntl.flock(guard, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    time.sleep(.025)
+        io.check()
         generation = Path(tempfile.mkdtemp(prefix='generation-', dir=base))
+        found = generation.stat()
+        generation_identity = (found.st_dev, found.st_ino)
+        generation_fd = os.open(generation, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        held = os.fstat(generation_fd)
+        if (held.st_dev, held.st_ino) != generation_identity:
+            raise BuildBoundaryChanged('private build generation changed during allocation')
+        stage_events = DirectoryEvents(os.fsencode(generation.name))
+        stage_events.watch(base)
         (generation / 'tmp').mkdir()
+        diagnostics = generation / 'tmp/compiler'
+        diagnostics.mkdir(mode=0o700)
+        def compiler_boundary():
+            owner.check()
+            try:
+                stage_events.check()
+                current = generation.lstat()
+                if (current.st_dev, current.st_ino) != generation_identity:
+                    raise BuildBoundaryChanged('private build generation identity changed')
+            except (OSError, BuildBoundaryChanged) as exc:
+                raise BuildBoundaryChanged('private build generation changed') from exc
+            compiler_logs(diagnostics)
+            if driver_history is not None:
+                driver_history.check()
+        io.boundary_check = compiler_boundary
         env = environment(generation)
         source = Path(args.source).resolve(strict=True)
         tree, files = source_files(source, args.commit, io, env)
@@ -249,7 +360,17 @@ def build(args, package_plan):
             libs = query('--define-prefix', '--libs', 'kilix-encodec')
             return package_plan(prefix, cflags, libs)
         native = package()
+        diagnostic_helper = Path(__file__).with_name('multiplexer_compiler_exec.py').resolve(strict=True)
+        helper_bytes = read_file(diagnostic_helper, check=io.check)
+        driver = generation / 'compiler'
+        driver.mkdir(mode=0o700)
+        diagnostic_helper = driver / 'exec.py'
+        diagnostic_helper.write_bytes(helper_bytes)
+        diagnostic_helper.chmod(0o400)
+        driver.chmod(0o500)
+        driver_history = DirectoryHistory(driver, io.check)
         inputs = dict(source_commit=args.commit, source_tree=tree, tools=tools, package=native,
+                      compiler_diagnostic_helper=sha(helper_bytes),
                       flags={key: env.get(key) for key in FLAGS}, compiler=str(compiler),
                       pkg_config={key: env.get(key) for key in ('PKG_CONFIG_PATH', 'PKG_CONFIG_LIBDIR')}, ENCODEC=1)
         signature = sha(canonical(inputs))
@@ -264,7 +385,8 @@ def build(args, package_plan):
         def make(root):
             return ['/usr/bin/make', '--silent', '--no-print-directory', '-C', str(root / 'source'),
                     'BUILD_DIR=' + str(root / 'out'), 'ENCODEC=1',
-                    'CC=' + str(compiler) + ' -MD -Wl,-t', 'AR=/usr/bin/ar',
+                    'CC=' + shlex.join(['/usr/bin/python3', str(diagnostic_helper), str(compiler),
+                                       str(diagnostics), '-MD', '-Wp,-v', '-Wl,-t']), 'AR=/usr/bin/ar',
                     'ENCODEC_CFLAGS=' + native['cflags'], 'ENCODEC_LIBS=' + native['libs']]
         def binaries(root):
             for name in ('kmx-serve', 'kmx-attach'):
@@ -285,6 +407,7 @@ def build(args, package_plan):
                     for name, (_mode, value) in files.items():
                         assert read_file(previous / 'source' / name, check=io.check) == value
                     assert artifact_files(previous / 'out', io) == old['artifacts']
+                    assert search_identity(old['search_roots'], io.check) == old['search_directories']
                     assert all(file_identity(path, io) == row for path, row in old['dependencies'].items())
                     assert all(sha(read_file(base / name, check=io.check)) == old['artifacts'][name]['sha256'] for name in ('kmx-serve', 'kmx-attach'))
                     code, _trace = io.run(make(previous) + ['--question', 'all'], env, allowed=(0, 1, 2))
@@ -298,20 +421,40 @@ def build(args, package_plan):
                 raise ValueError('build inputs changed during reuse')
             if any(file_identity(path, io) != row for path, row in old['dependencies'].items()):
                 raise ValueError('external compiler dependency changed during reuse')
+            if search_identity(old['search_roots'], io.check) != old['search_directories']:
+                raise ValueError('compiler include search changed during reuse')
+            io.check()
             return str(base / ('kmx-' + args.print_kind)) if args.print_kind else ''
         snapshot = generation / 'source'
         source_snapshot(snapshot, files)
+        history = DirectoryHistory(snapshot, io.check)
+        def check_boundaries():
+            compiler_boundary()
+            history.check()
         (generation / 'out').mkdir()
         started = time.time_ns()
         # A failed freshness check cannot select a default/disabled recipe.
         io.run(make(generation) + ['--question', 'all'], env, allowed=(0, 1, 2))
+        check_boundaries()
         print('kilix: building kilix-multiplexer with shared EnCodec', file=sys.stderr)
-        _code, trace = io.run(make(generation) + ['-j2', '-B', 'all'], env)
+        code, trace = io.run(make(generation) + ['-j2', '-B', 'all'], env, allowed=(0, 1, 2))
+        trace += b'\n' + compiler_logs(diagnostics, read=True)
+        if len(trace) > 4 * 1024**2:
+            raise ValueError('combined build command output exceeds its bound')
+        if code:
+            raise ValueError('build command failed: ' + trace[-4000:].decode('utf-8', 'replace'))
+        io.boundary_check = check_boundaries
+        io.check()
         binaries(generation / 'out')
         deps = {str(path): file_identity(path, io) for path in dependency_names(generation / 'out', snapshot, trace, io)}
         if any(max(row['ctime_ns'], row['entry_ctime_ns']) > started for row in deps.values()):
             raise ValueError('external compiler dependency changed during compilation')
         cacheable = all(parent[3] <= started for row in deps.values() for parent in row['parents'])
+        roots = search_roots(trace, snapshot)
+        search = search_identity(roots, io.check)
+        if any(row is not None and max(row['entry'][-1], row.get('target', [0])[-1]) > started
+               for row in search.values()):
+            cacheable = False
         check_source(source, args.commit, files, io, env)
         for name, (_mode, value) in files.items():
             path = snapshot / name
@@ -332,24 +475,43 @@ def build(args, package_plan):
             if current['parents'] != row['parents']:
                 cacheable = False
         artifacts = artifact_files(generation / 'out', io)
+        if search_identity(roots, io.check) != search:
+            raise ValueError('compiler include search changed before publication')
         record = dict(schema=SCHEMA, signature=signature, inputs=inputs, generation=generation.name,
-                      artifacts=artifacts, dependencies=deps, cacheable=cacheable)
+                      artifacts=artifacts, dependencies=deps, cacheable=cacheable,
+                      search_roots=roots, search_directories=search)
         io.check()
         # Complete generations never consume previously compiled mutable objects.
-        for name in ('kmx-serve', 'kmx-attach'):
-            temp = generation / name
-            temp.write_bytes(read_file(generation / 'out' / name, check=io.check))
-            temp.chmod(0o700)
-            os.replace(temp, base / name)
-        temporary = generation / 'identity.json'
-        temporary.write_bytes(canonical(record))
-        os.replace(temporary, stamp)
+        publish(Path('/proc/self/fd') / str(generation_fd), base, directory, record, io)
         published = True
         if isinstance(old, dict) and re.fullmatch(r'generation-[a-zA-Z0-9_-]+', old.get('generation', '')):
             remove_generation(base / old['generation'])
         return str(base / ('kmx-' + args.print_kind)) if args.print_kind else ''
     finally:
         io.reap()
+        io.boundary_check = lambda: None
+        if history is not None:
+            history.close()
+        if driver_history is not None:
+            driver_history.close()
+        if owner is not None:
+            owner.close()
+        if stage_events is not None:
+            stage_events.close()
         if not published:
-            remove_generation(generation)
-        os.close(lock)
+            # Use the held directory even after a visible base-name change;
+            # never clean a replacement generation belonging to another inode.
+            if generation is not None:
+                owned = Path('/proc/self/fd') / str(directory) / generation.name
+                try:
+                    found = owned.lstat()
+                except FileNotFoundError:
+                    pass
+                else:
+                    if (found.st_dev, found.st_ino) == generation_identity:
+                        remove_generation(owned)
+        if lock is not None:
+            os.close(lock)
+        if generation_fd is not None:
+            os.close(generation_fd)
+        os.close(directory)
