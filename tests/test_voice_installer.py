@@ -84,6 +84,9 @@ PUBLISHED_VOSK_VERSION = "0.3.45"
 PUBLISHED_VOSK_SHA256 = (
     "25e025093c4399d7278f543568ed8cc5460ac3a4bf48c23673ace1e25d26619f"
 )
+PUBLISHED_VOSK_AARCH64_SHA256 = (
+    "54efb47dd890e544e9e20f0316413acec7f8680d04ec095c6140ab4e70262704"
+)
 PUBLISHED_MODEL_SHA256 = (
     "30f26242c4eb449f948e42cb302dd7a686cb29a3423a8367f99ff41780942498"
 )
@@ -281,8 +284,23 @@ class KilixVoiceInstallerTests(unittest.TestCase):
                 archive.read_bytes()).hexdigest(),
         }
 
+    def machine_path(self, machine: str) -> str:
+        """A PATH on which `uname -m` reports `machine`."""
+        bindir = self.root / f"uname-{machine}"
+        bindir.mkdir(exist_ok=True)
+        uname = bindir / "uname"
+        uname.write_text(
+            '#!/bin/sh\n'
+            f'[ "${{1:-}}" = -m ] && {{ echo {machine}; exit 0; }}\n'
+            f'exec {shutil.which("uname")} "$@"\n'
+        )
+        uname.chmod(0o755)
+        return str(bindir) + os.pathsep + os.environ["PATH"]
+
     def test_default_ref_is_immutable_and_reported(self):
-        listed = self.run_installer("--print-refs", KILIX_VOICE_REF=None)
+        listed = self.run_installer(
+            "--print-refs", KILIX_VOICE_REF=None,
+            PATH=self.machine_path("x86_64"))
         self.assertIn(f"kilix-voice={PINNED_VOICE_REF}", listed.stdout)
         self.assertIn(f"libvosk={PUBLISHED_VOSK_VERSION}", listed.stdout)
         self.assertIn(f"libvosk-sha256={PUBLISHED_VOSK_SHA256}", listed.stdout)
@@ -291,6 +309,37 @@ class KilixVoiceInstallerTests(unittest.TestCase):
             f"model-lgraph-en-us={PUBLISHED_LGRAPH_MODEL_SHA256}",
             listed.stdout,
         )
+
+    def test_default_library_pin_follows_the_host_architecture(self):
+        listed = self.run_installer(
+            "--print-refs", PATH=self.machine_path("aarch64"))
+        self.assertIn(f"libvosk={PUBLISHED_VOSK_VERSION}", listed.stdout)
+        self.assertIn(
+            f"libvosk-sha256={PUBLISHED_VOSK_AARCH64_SHA256}", listed.stdout)
+
+    def test_dictation_on_an_unpinned_architecture_is_refused_first(self):
+        refused = self.run_installer(
+            check=False, PATH=self.machine_path("riscv64"))
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("x86_64 and aarch64", refused.stderr)
+        self.assertIn("--without-dictation", refused.stderr)
+        self.assertFalse((self.data / "voice" / "lib").exists())
+
+    @unittest.skipUnless(
+        all(shutil.which(tool) for tool in DOWNLOAD_TOOLS),
+        "needs download and C fixture tools")
+    def test_wheel_library_must_match_the_host_architecture(self):
+        pins = self.publish_downloads()
+        native = os.uname().machine
+        foreign = "aarch64" if native in ("x86_64", "amd64") else "x86_64"
+
+        refused = self.run_installer(
+            check=False, PATH=self.machine_path(foreign), **pins)
+
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn(f"is not an {foreign} shared library", refused.stderr)
+        self.assertFalse(
+            (self.data / "voice" / "lib" / "current" / "libvosk.so").exists())
 
     def test_model_option_rejects_unknown_and_read_aloud_combinations(self):
         unknown = self.run_installer(

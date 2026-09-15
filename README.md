@@ -820,7 +820,8 @@ report that distinction instead of calling the weights runnable.
 
 `kilix voice install` installs the immutable `kilix-voice` 0.1.3 source at
 commit `f501409a82bf73b738b14986e12441bce23ec1c6`, the official Vosk 0.3.45
-x86_64 wheel, and either the default `vosk-model-small-en-us-0.15` or the
+wheel for the host (x86_64 or aarch64, each pinned by its own digest), and
+either the default `vosk-model-small-en-us-0.15` or the
 `--model lgraph-en-us` dynamic-graph model. Downloads are SHA-256 verified.
 The installer extracts only the wheel's fixed `vosk/libvosk.so` member, checks
 its ELF architecture and complete required Vosk API, loads the pinned acoustic
