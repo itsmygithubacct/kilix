@@ -278,6 +278,35 @@ class VoiceCliTests(unittest.TestCase):
         self.assertIn(str(Path(self.environment["KILIX_VOICE_PREFIX"]) / "bin"),
                       stt[0])
 
+    def fake_pactl(self, default_source: str):
+        pactl = self.bin / "pactl"
+        pactl.write_text(
+            "#!/bin/sh\n"
+            "[ \"${1:-}\" = info ] || exit 1\n"
+            "printf '%s\\n' 'Server Name: pulseaudio' 'Server Version: 17.0' "
+            "'Default Sink: alsa_output.board.stereo' "
+            f"'Default Source: {default_source}'\n"
+        )
+        pactl.chmod(0o755)
+
+    def test_voice_doctor_warns_when_dictation_would_hear_a_monitor(self):
+        # A board with no microphone defaults to its output's monitor source.
+        # Doctor printed "dictate on" and named that source without a word.
+        self.hermetic_path()
+        self.fake_pactl("alsa_output.board.stereo.monitor")
+
+        result = self.run_kilix("voice", "doctor")
+
+        warnings = [line for line in result.stdout.splitlines()
+                    if line.startswith("warning:")]
+        self.assertEqual(len(warnings), 1, result.stdout)
+        self.assertIn("alsa_output.board.stereo.monitor", warnings[0])
+        self.assertIn("not a microphone", warnings[0])
+
+        self.fake_pactl("alsa_input.usb-microphone.mono-fallback")
+        result = self.run_kilix("voice", "doctor")
+        self.assertNotIn("warning:", result.stdout)
+
     def test_voice_daemon_rejects_arguments_and_is_documented_in_help(self):
         self.install_fake_daemon()
         refused = self.run_kilix("voice", "daemon", "unexpected", check=False)

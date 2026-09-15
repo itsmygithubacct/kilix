@@ -1392,6 +1392,17 @@ _kilix_voice_doctor() {
     "audio server: ${server:-unreachable}" \
     "input device: $_KILIX_VOICE_DEVICE_IN${default_source:+ ($default_source)}" \
     "output device: $_KILIX_VOICE_DEVICE_OUT${default_sink:+ ($default_sink)}"
+  # A machine with no microphone defaults its source to an output's monitor.
+  # Dictation would then hear playback, never speech, so say so plainly.
+  local input_source="$_KILIX_VOICE_DEVICE_IN"
+  [ "$input_source" != default ] || input_source="$default_source"
+  if [ "$(_kilix_voice_onoff "$_KILIX_VOICE_DICTATE")" = on ]; then
+    case "$input_source" in
+      *.monitor)
+        printf 'warning: input device %s replays an output, not a microphone; dictation cannot hear speech until a microphone is connected or another input device is set\n' \
+          "$input_source" ;;
+    esac
+  fi
   if [ -f "$library" ]; then
     printf 'speech library: %s\n' "$library"
   else
