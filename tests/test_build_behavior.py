@@ -260,18 +260,31 @@ class BuildPreparationTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("refusing mutable kitty CI", result.stderr)
 
-    def test_unsupported_arch_fails_before_download(self):
+    def _machine_env(self, machine):
         bindir = self.base / "bin"
-        bindir.mkdir()
+        bindir.mkdir(exist_ok=True)
         uname = bindir / "uname"
         uname.write_text(
-            "#!/bin/sh\ncase \"$1\" in -s) echo Linux;; -m) echo aarch64;; esac\n")
+            "#!/bin/sh\ncase \"$1\" in -s) echo Linux;; -m) echo "
+            + machine + ";; esac\n")
         uname.chmod(0o755)
         env = dict(self.env)
         env["PATH"] = str(bindir) + os.pathsep + env["PATH"]
-        result = self.run_build(env)
+        return env
+
+    def test_unsupported_arch_fails_before_download(self):
+        result = self.run_build(self._machine_env("riscv64"))
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("support Linux x86_64 only", result.stderr)
+        self.assertIn("support Linux x86_64 and ARM64", result.stderr)
+
+    def test_arm64_bundle_mode_is_refused_before_download(self):
+        # The pinned kitty dependency bundle is an x86_64 tree; ARM64 builds
+        # link against the system's development packages instead.
+        result = self.run_build(self._machine_env("aarch64"))
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("KILIX_BUILD_MODE=system", result.stderr)
+        self.assertEqual(
+            list((self.base / "storage").rglob("kitty-dependencies-*")), [])
 
     def test_state_outside_storage_is_rejected_before_writes(self):
         escaped = self.base / "escaped-state"

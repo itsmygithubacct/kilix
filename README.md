@@ -625,7 +625,8 @@ explicitly confirmed termination action.
 ## Requirements
 
 - **Linux only**, x86_64 or arm64 for the prebuilt engine. The clickable-chrome
-  fork build currently supports x86_64. (No macOS/Windows.)
+  fork build supports x86_64 and arm64; arm64 builds use the system's
+  development packages (`KILIX_BUILD_MODE=system`). (No macOS/Windows.)
 - A running graphical session — **X11 or Wayland** (`$DISPLAY` or `$WAYLAND_DISPLAY`).
 - NetworkManager's **`nmtui`** for the clickable network/Wi-Fi item. Pleb and
   Plebian-OS install it; standalone Kilix shows an explanatory error if it is
