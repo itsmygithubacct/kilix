@@ -177,7 +177,7 @@ ensure_go_toolchain() {
 
 # ---- per-distro installs -----------------------------------------------------
 fedora_install() {
-  local pc pkgs="gcc make pkgconf-pkg-config git curl zstd golang python3 python3-devel python3-pillow simde-devel wayland-devel wayland-protocols-devel SDL2-devel SDL2_image-devel libsndfile-devel zlib-devel fluidsynth fluidsynth-devel fluid-soundfont-gm libssh2-devel brotli-devel"
+  local pc pkgs="gcc make pkgconf-pkg-config git curl zstd golang python3 python3-devel python3-pillow simde-devel wayland-devel wayland-protocols-devel SDL2-devel SDL2_image-devel libsndfile-devel zlib-devel fluidsynth-devel fluid-soundfont-gm libssh2-devel brotli-devel"
   local -a packages
   for pc in $PC_DEPS; do pkgs="$pkgs pkgconfig($pc)"; done
   echo "==> Fedora/RHEL detected — installing system-wide via dnf"
@@ -191,7 +191,7 @@ debian_install() {
     libxkbcommon-x11-dev libx11-xcb-dev libdbus-1-dev libgl1-mesa-dev libfontconfig-dev \
     libpng-dev liblcms2-dev libcairo2-dev libharfbuzz-dev libssl-dev libxxhash-dev \
     libsimde-dev libwayland-dev wayland-protocols \
-    libsdl2-dev libsdl2-image-dev libsndfile1-dev zlib1g-dev libfluidsynth-dev fluidsynth fluid-soundfont-gm \
+    libsdl2-dev libsdl2-image-dev libsndfile1-dev zlib1g-dev libfluidsynth-dev fluid-soundfont-gm \
     libssh2-1-dev libbrotli-dev"
   local -a packages
   echo "==> Debian/Ubuntu detected — installing system-wide via apt-get"
@@ -218,7 +218,7 @@ suse_install() {
     libxkbcommon-devel libxkbcommon-x11-devel dbus-1-devel Mesa-libGL-devel fontconfig-devel \
     libpng16-devel liblcms2-devel cairo-devel harfbuzz-devel libopenssl-devel libxxhash-devel \
     simde-devel wayland-devel wayland-protocols-devel \
-    libSDL2-devel libSDL2_image-devel libsndfile-devel zlib-devel fluidsynth-devel fluidsynth fluid-soundfont-gm \
+    libSDL2-devel libSDL2_image-devel libsndfile-devel zlib-devel fluidsynth-devel fluid-soundfont-gm \
     libssh2-devel libbrotli-devel"
   local -a packages
   echo "==> openSUSE detected — installing system-wide via zypper"
