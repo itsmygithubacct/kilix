@@ -3,21 +3,32 @@ import os
 from pathlib import Path
 import select
 import shutil
+import socket
 import subprocess
 import sys
+import time
 import unittest
 
 from Xlib import X, display
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "config"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import x11_sandbox  # noqa: E402
 import xinject  # noqa: E402
+
+
+def load_tests(loader, tests, pattern):
+    # Injecting synthetic input into whatever server owns /tmp/.X11-unix/X<n>
+    # can reach a foreign display; run inside a private mount namespace.
+    return x11_sandbox.sandbox_load_tests(loader, tests, __name__)
 
 
 @unittest.skipUnless(shutil.which("Xvfb"), "needs Xvfb")
 class MouseModifierTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        before = x11_sandbox.require_private_x11()
         read_fd, write_fd = os.pipe()
         try:
             server = subprocess.Popen(
@@ -46,8 +57,33 @@ class MouseModifierTests(unittest.TestCase):
             number = int(os.read(read_fd, 32).strip())
         finally:
             os.close(read_fd)
-        cls.xd = display.Display(f":{number}")
+        socket_path = x11_sandbox.confirm_our_socket(number, before)
+        # -displayfd can report before the listener accepts on a loaded host,
+        # and python-xlib does not retry: hold a short-lived readiness client
+        # open across the handshake, as test_xcapture and test_run_resize
+        # already do. Without it this file errors on a refused connection
+        # roughly one run in seven when the machine is busy.
+        deadline = time.monotonic() + 5
+        while True:
+            if server.poll() is not None:
+                raise RuntimeError("private Xvfb exited before accepting")
+            probe = socket.socket(socket.AF_UNIX)
+            try:
+                probe.connect(socket_path)
+                break
+            except OSError as error:
+                probe.close()
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(
+                        "private Xvfb did not accept connections within 5 "
+                        "seconds") from error
+                time.sleep(0.02)
+        try:
+            cls.xd = display.Display(f":{number}")
+        finally:
+            probe.close()
         cls.addClassCleanup(cls.xd.close)
+        x11_sandbox.claim_display(cls.xd)
         screen = cls.xd.screen()
         cls.window = screen.root.create_window(
             0, 0, 640, 480, 0, screen.root_depth, X.InputOutput, X.CopyFromParent,

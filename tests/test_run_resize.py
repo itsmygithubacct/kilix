@@ -8,8 +8,11 @@ Skipped when Xvfb, ffmpeg, or python-xlib are unavailable (the unpacked
 Kilix-private dependency copy counts, same as apprun's find_xvfb).
 
 The display number is chosen by Xvfb itself (-displayfd), so the test never
-collides with kilix's own supervisor range (60-119) or a stale server, and
-the spawned Xvfb is guaranteed to be the server the test talks to.
+collides with kilix's own supervisor range (60-119) or a stale server. The
+number alone is no proof of ownership, though -- /tmp/.X11-unix is shared
+with the whole machine -- so the run happens inside the private mount
+namespace of tests/x11_sandbox.py, where the only X socket that exists is
+the one this test started.
 """
 import os
 import select
@@ -23,6 +26,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "config"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import x11_sandbox  # noqa: E402
+
+
+def load_tests(loader, tests, pattern):
+    return x11_sandbox.sandbox_load_tests(loader, tests, __name__)
 
 
 def _find_xvfb():
@@ -52,6 +61,7 @@ SIZES = [(1000, 640), (1440, 900), (820, 520)]     # down, up, arbitrary
 class RunResizeE2E(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        before = x11_sandbox.require_private_x11()
         # -displayfd: Xvfb picks a free display itself and writes the number
         # to the fd — no fixed number, no race with other X servers.
         rfd, wfd = os.pipe()
@@ -107,10 +117,12 @@ class RunResizeE2E(unittest.TestCase):
                     ) from error
                 time.sleep(0.02)
                 continue
+            x11_sandbox.confirm_our_socket(cls.disp_n, before)
             try:
                 cls.xd = xdisplay.Display(cls.disp)
             finally:
                 probe.close()
+            x11_sandbox.claim_display(cls.xd)
             break
 
     @classmethod
