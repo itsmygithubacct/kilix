@@ -1,12 +1,20 @@
 import hashlib
 import os
+import pathlib
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
 from io import BytesIO
 from pathlib import Path
+
+# The suite runs both as `discover -s tests` (bare module names) and as
+# `-m unittest tests.<module>` (package), so name this directory explicitly.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from _env_support import sandbox_env  # noqa: E402
+
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -15,13 +23,9 @@ ROOT = Path(__file__).resolve().parents[1]
 class BootstrapBehaviorTests(unittest.TestCase):
     @staticmethod
     def _clean_env(root, bindir):
-        env = dict(os.environ)
-        for name in tuple(env):
-            if name.startswith("KILIX_") or name == "GPU_TERMINAL_HOME":
-                env.pop(name)
-        env.update({
+        env = sandbox_env(**{
             "HOME": str(root / "home"),
-            "PATH": str(bindir) + os.pathsep + env["PATH"],
+            "PATH": str(bindir) + os.pathsep + os.environ["PATH"],
         })
         return env
 

@@ -1,8 +1,16 @@
 import os
+import pathlib
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+# The suite runs both as `discover -s tests` (bare module names) and as
+# `-m unittest tests.<module>` (package), so name this directory explicitly.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from _env_support import sandbox_env  # noqa: E402
+
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,8 +36,7 @@ class BrowserPolicyTests(unittest.TestCase):
             '_browser="$(_kilix_find_real_browser)" || exit 90\n'
             '_kilix_exec_real_browser "$_browser" "$@"\n'
         )
-        environment = os.environ.copy()
-        environment["PATH"] = str(directory)
+        environment = sandbox_env(PATH=str(directory))
         return subprocess.run(
             ["/bin/bash", "-c", script, "browser-policy-test", *arguments],
             env=environment, text=True, capture_output=True, check=True,
@@ -62,8 +69,7 @@ class BrowserPolicyTests(unittest.TestCase):
                 f'. "{POLICY}"\n'
                 'if _kilix_find_real_browser >/dev/null; then exit 1; fi\n'
             )
-            environment = os.environ.copy()
-            environment["PATH"] = directory
+            environment = sandbox_env(PATH=directory)
             subprocess.run(
                 ["/bin/bash", "-c", script],
                 env=environment, check=True,

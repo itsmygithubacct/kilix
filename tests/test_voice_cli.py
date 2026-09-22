@@ -5,11 +5,20 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import pathlib
 import socket
 import subprocess
+import sys
 import tempfile
 import threading
 import unittest
+
+# The suite runs both as `discover -s tests` (bare module names) and as
+# `-m unittest tests.<module>` (package), so name this directory explicitly
+# rather than relying on either style's import roots.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from _env_support import sandbox_env  # noqa: E402
+
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,11 +36,7 @@ class VoiceCliTests(unittest.TestCase):
         self.bin = self.root / "bin"
         self.bin.mkdir()
         storage = self.root / "gpu-terminal" / "kilix"
-        self.environment = {
-            key: value for key, value in os.environ.items()
-            if not key.startswith(("KILIX", "GPU_TERMINAL_", "PLEB_"))
-        }
-        self.environment.update({
+        self.environment = sandbox_env(**{
             "HOME": str(self.home),
             "PATH": f"{self.bin}{os.pathsep}{os.environ.get('PATH', '')}",
             "GPU_TERMINAL_HOME": str(self.root / "gpu-terminal"),

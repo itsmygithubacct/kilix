@@ -2,11 +2,19 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import pathlib
 import re
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
+
+# The suite runs both as `discover -s tests` (bare module names) and as
+# `-m unittest tests.<module>` (package), so name this directory explicitly.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from _env_support import sandbox_env  # noqa: E402
+
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -95,8 +103,7 @@ class TmuxTuiInstallerTests(unittest.TestCase):
 
     def run_installer(self, *args: str, check: bool = True,
                       cli_ref: str | None = None):
-        env = dict(os.environ)
-        env.update({
+        env = sandbox_env(**{
             "GPU_TERMINAL_SOURCE_HOME": str(self.source),
             "KILIX_STATE_DIRECTORY": str(self.state),
             "TMUX_TUI_PREFIX": str(self.prefix),
@@ -139,8 +146,7 @@ class TmuxTuiInstallerTests(unittest.TestCase):
         self.assertTrue((self.prefix / "bin" / "tmux-tui").is_symlink())
 
     def test_ref_must_be_immutable(self):
-        env = dict(os.environ)
-        env.update({
+        env = sandbox_env(**{
             "GPU_TERMINAL_SOURCE_HOME": str(self.source),
             "KILIX_STATE_DIRECTORY": str(self.state),
             "TMUX_TUI_PREFIX": str(self.prefix),

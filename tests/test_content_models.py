@@ -18,6 +18,8 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "config"))
+sys.path.insert(0, str(ROOT / "tests"))
+from _env_support import sandbox_env  # noqa: E402
 import content_models as ui
 
 
@@ -241,7 +243,7 @@ class ModelSetupTests(unittest.TestCase):
     def test_list_and_show_are_read_only_on_real_packaged_authority(self):
         source_root = str(Path(self.api.__file__).resolve().parent.parent)
         for command in (["list"], ["show", "encodec-24khz-stateful"]):
-            env = dict(os.environ, HOME=str(self.root), GPU_TERMINAL_HOME=str(self.root / "private"),
+            env = sandbox_env(HOME=str(self.root), GPU_TERMINAL_HOME=str(self.root / "private"),
                        PYTHONPATH=source_root, KILIX_CONTENT_ROOT=str(self.root / "stale"),
                        KILIX_DATA_HOME=str(self.root / "data"),
                        XDG_STATE_HOME=str(self.root / "receipts"), PYTHONDONTWRITEBYTECODE="1")
@@ -304,7 +306,7 @@ raise SystemExit(result)
                 root.mkdir(mode=0o700)
                 (root / "input.bin").write_bytes(b"abc")
                 (root / "notice.txt").write_bytes(self.text)
-                env = dict(os.environ, PYTHONPATH=os.pathsep.join((str(ROOT / "tests"), package)),
+                env = sandbox_env(PYTHONPATH=os.pathsep.join((str(ROOT / "tests"), package)),
                            XDG_STATE_HOME=str(root / "state"), PYTHONDONTWRITEBYTECODE="1")
                 master, slave = pty.openpty()
                 process = None

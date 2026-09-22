@@ -13,10 +13,18 @@ decision, so no path through the launcher may start a transfer.
 """
 import os
 from pathlib import Path
+import pathlib
 import re
 import subprocess
+import sys
 import tempfile
 import unittest
+
+# The suite runs both as `discover -s tests` (bare module names) and as
+# `-m unittest tests.<module>` (package), so name this directory explicitly.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from _env_support import sandbox_env  # noqa: E402
+
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,17 +33,7 @@ LAUNCHER = ROOT / "kilix"
 
 
 def run(argv, **environment):
-    env = dict(os.environ)
-    if "GPU_TERMINAL_HOME" in environment or "KILIX_STORAGE_HOME" in environment:
-        # CI exports build/storage roots. A test's new parent must derive its
-        # own writable children instead of inheriting paths under CI's parent.
-        for key in ("GPU_TERMINAL_SETTINGS_FILE", "KILIX_STORAGE_HOME",
-                    "KILIX_CONFIG_HOME", "KILIX_STATE_DIRECTORY",
-                    "KILIX_CACHE_HOME", "KILIX_SESSION_HOME",
-                    "KILIX_TELEMETRY_RUNTIME", "KILIX_DATA_HOME",
-                    "KILIX_BUILD_DIRECTORY", "KILIX_PREBUILT_HOME"):
-            env.pop(key, None)
-    env.update(environment)
+    env = sandbox_env(**environment)
     return subprocess.run(argv, capture_output=True, text=True, env=env,
                           timeout=120)
 

@@ -1,9 +1,17 @@
 """The retired Memory installer delegates to the unified utility checkout."""
 import os
 from pathlib import Path
+import pathlib
 import subprocess
+import sys
 import tempfile
 import unittest
+
+# The suite runs both as `discover -s tests` (bare module names) and as
+# `-m unittest tests.<module>` (package), so name this directory explicitly.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from _env_support import sandbox_env  # noqa: E402
+
 
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = ROOT / "scripts" / "install-kilix-memory.sh"
@@ -40,8 +48,7 @@ class MemoryCompatibilityInstallerTests(unittest.TestCase):
             "esac\n"
         )
         provider.chmod(0o755)
-        self.env = dict(os.environ)
-        self.env.update({
+        self.env = sandbox_env(**{
             "HOME": str(self.home),
             "KILIX_HOME": str(self.kilix),
             "KILIX_TUI_UTILS_PREFIX": str(self.prefix),

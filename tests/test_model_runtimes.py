@@ -16,9 +16,17 @@ three joins that close that gap:
 import json
 import os
 from pathlib import Path
+import pathlib
 import subprocess
+import sys
 import tempfile
 import unittest
+
+# The suite runs both as `discover -s tests` (bare module names) and as
+# `-m unittest tests.<module>` (package), so name this directory explicitly.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from _env_support import sandbox_env  # noqa: E402
+
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -74,8 +82,8 @@ class Installer(unittest.TestCase):
 
     def test_check_reports_a_machine_it_has_never_run_on(self):
         with tempfile.TemporaryDirectory() as scratch:
-            environment = dict(os.environ,
-                               KILIX_YOLO_DIR=os.path.join(scratch, "yolo"))
+            environment = sandbox_env(
+                KILIX_YOLO_DIR=os.path.join(scratch, "yolo"))
             result = subprocess.run([str(INSTALLER), "--check"], env=environment,
                                     capture_output=True, text=True, check=False,
                                     timeout=120)
@@ -86,7 +94,7 @@ class Installer(unittest.TestCase):
 
     def test_it_refuses_a_broad_runtime_directory(self):
         for directory in (os.path.expanduser("~"), "/"):
-            environment = dict(os.environ, KILIX_YOLO_DIR=directory)
+            environment = sandbox_env(KILIX_YOLO_DIR=directory)
             result = subprocess.run([str(INSTALLER), "--check"], env=environment,
                                     capture_output=True, text=True, check=False,
                                     timeout=120)
@@ -94,7 +102,7 @@ class Installer(unittest.TestCase):
             self.assertIn("refusing broad runtime path", result.stderr)
 
     def test_a_relative_directory_is_refused(self):
-        environment = dict(os.environ, KILIX_YOLO_DIR="runtimes/yolo")
+        environment = sandbox_env(KILIX_YOLO_DIR="runtimes/yolo")
         result = subprocess.run([str(INSTALLER), "--check"], env=environment,
                                 capture_output=True, text=True, check=False,
                                 timeout=120)
@@ -103,8 +111,8 @@ class Installer(unittest.TestCase):
 
     def test_remove_on_a_missing_runtime_is_not_an_error(self):
         with tempfile.TemporaryDirectory() as scratch:
-            environment = dict(os.environ,
-                               KILIX_YOLO_DIR=os.path.join(scratch, "yolo"))
+            environment = sandbox_env(
+                KILIX_YOLO_DIR=os.path.join(scratch, "yolo"))
             result = subprocess.run([str(INSTALLER), "--remove"],
                                     env=environment, capture_output=True,
                                     text=True, check=False, timeout=120)
@@ -125,8 +133,8 @@ class Installer(unittest.TestCase):
         self.assertIn("-m pip install", installer)
 
         with tempfile.TemporaryDirectory() as scratch:
-            environment = dict(os.environ,
-                               KILIX_YOLO_DIR=os.path.join(scratch, "yolo"))
+            environment = sandbox_env(
+                KILIX_YOLO_DIR=os.path.join(scratch, "yolo"))
             result = subprocess.run([str(INSTALLER), "--check"], env=environment,
                                     capture_output=True, text=True, check=False,
                                     timeout=120)
@@ -134,8 +142,8 @@ class Installer(unittest.TestCase):
 
     def test_upgrade_before_install_says_so(self):
         with tempfile.TemporaryDirectory() as scratch:
-            environment = dict(os.environ,
-                               KILIX_YOLO_DIR=os.path.join(scratch, "yolo"))
+            environment = sandbox_env(
+                KILIX_YOLO_DIR=os.path.join(scratch, "yolo"))
             result = subprocess.run([str(INSTALLER), "--upgrade"],
                                     env=environment, capture_output=True,
                                     text=True, check=False, timeout=120)
@@ -206,8 +214,8 @@ class YamnetRuntime(unittest.TestCase):
 
     def test_check_reports_a_machine_it_has_never_run_on(self):
         with tempfile.TemporaryDirectory() as scratch:
-            environment = dict(os.environ,
-                               KILIX_YAMNET_DIR=os.path.join(scratch, "yamnet"))
+            environment = sandbox_env(
+                KILIX_YAMNET_DIR=os.path.join(scratch, "yamnet"))
             result = subprocess.run([str(YAMNET), "--check"], env=environment,
                                     capture_output=True, text=True,
                                     check=False, timeout=120)
@@ -216,7 +224,7 @@ class YamnetRuntime(unittest.TestCase):
 
     def test_it_refuses_a_broad_runtime_directory(self):
         for directory in (os.path.expanduser("~"), "/"):
-            environment = dict(os.environ, KILIX_YAMNET_DIR=directory)
+            environment = sandbox_env(KILIX_YAMNET_DIR=directory)
             result = subprocess.run([str(YAMNET), "--check"], env=environment,
                                     capture_output=True, text=True,
                                     check=False, timeout=120)

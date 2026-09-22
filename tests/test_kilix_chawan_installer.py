@@ -18,10 +18,18 @@ a build without SFTP — and the middle step never happens unattended.
 """
 import os
 from pathlib import Path
+import pathlib
 import re
 import subprocess
+import sys
 import tempfile
 import unittest
+
+# The suite runs both as `discover -s tests` (bare module names) and as
+# `-m unittest tests.<module>` (package), so name this directory explicitly.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from _env_support import sandbox_env  # noqa: E402
+
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,7 +39,7 @@ SEED_CONFIG = ROOT / "config" / "chawan" / "config.toml"
 
 
 def run(argv, **environment):
-    env = dict(os.environ, **environment)
+    env = sandbox_env(**environment)
     return subprocess.run(argv, capture_output=True, text=True, env=env,
                           timeout=120)
 

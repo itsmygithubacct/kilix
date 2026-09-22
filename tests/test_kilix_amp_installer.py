@@ -8,9 +8,17 @@ ref written down here.
 import json
 import os
 from pathlib import Path
+import pathlib
 import subprocess
+import sys
 import tempfile
 import unittest
+
+# The suite runs both as `discover -s tests` (bare module names) and as
+# `-m unittest tests.<module>` (package), so name this directory explicitly.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from _env_support import sandbox_env  # noqa: E402
+
 
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = ROOT / "scripts" / "install-kilix-amp.py"
@@ -30,13 +38,10 @@ class AmpInstallerTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
-        self.env = dict(os.environ)
-        self.env.update({
+        self.env = sandbox_env(**{
             "HOME": str(self.root / "home"),
             "GPU_TERMINAL_HOME": str(self.root / "gpu_terminal"),
         })
-        self.env.pop("KILIX_STORAGE_HOME", None)
-        self.env.pop("KILIX_DATA_HOME", None)
 
     def tearDown(self):
         self.temp.cleanup()
