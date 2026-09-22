@@ -19,8 +19,9 @@ import xinject  # noqa: E402
 
 
 def load_tests(loader, tests, pattern):
-    # Injecting synthetic input into whatever server owns /tmp/.X11-unix/X<n>
-    # can reach a foreign display; run inside a private mount namespace.
+    # Injecting synthetic input into whatever server answers to :<n> can
+    # reach a foreign display; run inside private mount and network
+    # namespaces, with DISPLAY and XAUTHORITY scrubbed (tests/x11_sandbox.py).
     return x11_sandbox.sandbox_load_tests(loader, tests, __name__)
 
 

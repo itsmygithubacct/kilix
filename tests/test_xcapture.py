@@ -26,8 +26,9 @@ XVFB = shutil.which("Xvfb")
 
 
 def load_tests(loader, tests, pattern):
-    # A display number is not proof of ownership: run inside a private mount
-    # namespace so no foreign X server is reachable at all.
+    # A display number is not proof of ownership: run inside private mount
+    # and network namespaces, with DISPLAY and XAUTHORITY scrubbed, so no
+    # foreign X server can be named by path, abstract socket, TCP or $DISPLAY.
     return x11_sandbox.sandbox_load_tests(loader, tests, __name__)
 
 

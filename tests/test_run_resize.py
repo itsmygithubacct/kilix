@@ -10,9 +10,10 @@ Kilix-private dependency copy counts, same as apprun's find_xvfb).
 The display number is chosen by Xvfb itself (-displayfd), so the test never
 collides with kilix's own supervisor range (60-119) or a stale server. The
 number alone is no proof of ownership, though -- /tmp/.X11-unix is shared
-with the whole machine -- so the run happens inside the private mount
-namespace of tests/x11_sandbox.py, where the only X socket that exists is
-the one this test started.
+with the whole machine, and abstract X sockets with its whole network
+namespace -- so the run happens inside the private mount and network
+namespaces of tests/x11_sandbox.py, with DISPLAY and XAUTHORITY scrubbed,
+where the only X server that can be named is the one this test started.
 """
 import os
 import select

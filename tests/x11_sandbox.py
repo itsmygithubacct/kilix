@@ -1,41 +1,59 @@
-"""Run the X-server tests inside a private mount namespace.
+"""Run the X-server tests in private mount and network namespaces.
 
-python-xlib resolves the display name ``:N`` to the filesystem socket
-``/tmp/.X11-unix/XN`` and only falls back to the abstract socket when that
-path is absent::
+A client can name an X server three ways, and ``/tmp/.X11-unix`` is only one
+of them.  python-xlib resolves ``:N`` to the filesystem socket
+``/tmp/.X11-unix/XN`` and falls back to the *abstract* socket of the same name
+when that path is absent::
 
     address = '/tmp/.X11-unix/X%d' % dno
     if not os.path.exists(address):
         address = '\\0' + address
 
-``/tmp/.X11-unix`` is shared with every other process on the machine, and the
+libX11/xcb (which ``config/xcapture.py`` reaches through ``XOpenDisplay``)
+tries the abstract name *first*.  A ``host:N`` name goes over TCP.  And a
+client that reads ``$DISPLAY`` connects to whatever the invoking shell pointed
+it at, with the cookie ``$XAUTHORITY`` names.
+
+``/tmp/.X11-unix`` is shared with every other process on the machine, abstract
+sockets are shared with every process in the same *network* namespace, and the
 display number an ``Xvfb -displayfd`` hands back says nothing about who owns
-that path.  A test that starts its own server can therefore connect to -- and
-inject synthetic key and button events into -- a *foreign* X server, silently
-and with no error.  That is not hypothetical: it was caught happening on this
-machine, with a live server belonging to someone else sitting on the number
-our own server had just been given.
+either name.  A test that starts its own server can therefore connect to --
+and inject synthetic key and button events into -- a *foreign* X server,
+silently and with no error.  That is not hypothetical: it was caught happening
+on this machine, with a live server belonging to someone else sitting on the
+number our own server had just been given.
 
 The remedy here is structural rather than a check the next test author can
-forget.  The X tests run in a child process that first enters a private
-user+mount namespace and mounts a fresh tmpfs over ``/tmp/.X11-unix``.  Inside
-that namespace the directory starts *empty*: not one foreign socket is
-reachable through it, because the host directory is no longer part of this
-process's view of the filesystem at all.  The only socket that can ever appear
-there is the one the test's own server creates.
+forget.  The X tests run in a child process that, before the test module is
+even imported:
 
-Entering the namespace needs no privilege, no setuid helper and no
+* enters a private **user + mount + network** namespace in one ``unshare(2)``;
+* mounts a fresh tmpfs over ``/tmp/.X11-unix``, so the directory starts
+  *empty* -- the host directory is no longer part of this process's view of
+  the filesystem, so no foreign socket can be named *by path*;
+* is now in a network namespace of its own, which has no abstract X11
+  listener at all until the test's own server binds one, so no foreign socket
+  can be named *by abstract name* either; the namespace's only interface is a
+  loopback that stays down, so no foreign server can be reached *over TCP*,
+  whatever the host's server configuration;
+* has ``DISPLAY`` and ``XAUTHORITY`` removed from its environment, so nothing
+  it runs inherits a pointer to, or a cookie for, the invoking session's
+  display.  :func:`confirm_our_socket` sets ``DISPLAY`` again, and only to the
+  number it has just proved is the private server.
+
+If any of that cannot be built the child refuses to run the tests at all,
+and the parent reports them as skipped.
+
+Entering the namespaces needs no privilege, no setuid helper and no
 ``newuidmap``: ``unshare(2)`` with ``CLONE_NEWUSER`` gives the caller a full
-capability set *inside the new user namespace*, which is what makes the
-subsequent mount legal, and a single-entry identity uid map keeps every uid
-the tests observe exactly what it was outside.
+capability set *inside the new user namespace*, which is what makes the mount
+and the network namespace legal, and a single-entry identity uid map keeps
+every uid the tests observe exactly what it was outside.
 
-Two consequences worth knowing:
-
-* The server can now create a real filesystem listener, because the tmpfs is
-  owned by us and mode 1777, so the abstract-socket fallback is never taken.
-* Nothing the tests do is visible in the host's ``/tmp/.X11-unix``, and
-  nothing in the host's ``/tmp/.X11-unix`` is visible to the tests.
+What this does *not* cover, named so it is not mistaken for covered: a client
+that connects to an explicit filesystem path *outside* ``/tmp/.X11-unix``
+(an X proxy's socket somewhere else) is not stopped by any of the above, and
+the server's ``/tmp/.X<n>-lock`` file is still created in the shared ``/tmp``.
 
 How a module opts in
 --------------------
@@ -54,7 +72,7 @@ The harness of each module then calls :func:`require_private_x11` before it
 starts a server and :func:`confirm_our_socket` / :func:`claim_display`
 afterwards, so a run proves which server it is talking to instead of assuming
 it.  Those calls are assertions, not the isolation; the isolation is the
-namespace, and they fail loudly if it is ever missing.
+namespaces, and the assertions fail loudly if any of them is ever missing.
 """
 
 from __future__ import annotations
@@ -71,21 +89,26 @@ import unittest
 import uuid
 
 SANDBOX_ENV = "KILIX_X11_SANDBOX"
+#: the network namespace the child was started in, recorded before leaving it
+OUTER_NETNS_ENV = "KILIX_X11_SANDBOX_OUTER_NETNS"
+#: never inherited by the child; DISPLAY is set again only to our own server
+SCRUBBED_ENV = ("DISPLAY", "XAUTHORITY")
 X11_DIR = "/tmp/.X11-unix"
 TOKEN_PROPERTY = "_KILIX_X11_SANDBOX"
 
 _CLONE_NEWNS = 0x00020000
 _CLONE_NEWUSER = 0x10000000
+_CLONE_NEWNET = 0x40000000
 _MS_REC = 0x4000
 _MS_PRIVATE = 1 << 18
 
-#: the child could not build the namespace; the parent turns this into skips
+#: the child could not build the namespaces; the parent turns this into skips
 _UNAVAILABLE_EXIT = 78
 _CHILD_TIMEOUT = 900
 
 
 class SandboxUnavailable(Exception):
-    """The private mount namespace could not be created on this machine."""
+    """The private namespaces could not be created on this machine."""
 
 
 class ChildProtocolError(Exception):
@@ -119,8 +142,32 @@ def _thread_count() -> int:
     return 1
 
 
+def _netns_id() -> int:
+    return os.stat("/proc/self/ns/net").st_ino
+
+
+def x11_listeners() -> list[str]:
+    """Every listening X11 socket visible in this network namespace.
+
+    ``/proc/net/unix`` lists the unix sockets of the *reading* process's
+    network namespace; abstract names are shown with a leading ``@``.
+    Reading it opens no connection to anything.
+    """
+    found = set()
+    with open("/proc/net/unix", encoding="utf-8", errors="replace") as handle:
+        next(handle, None)
+        for line in handle:
+            fields = line.split()
+            # Num RefCount Protocol Flags Type St Inode Path; the
+            # __SO_ACCEPTCON flag (0x10000) marks a listening socket
+            if len(fields) >= 8 and int(fields[3], 16) & 0x10000 and \
+                    "/tmp/.X11-unix/" in fields[7]:
+                found.add(fields[7])
+    return sorted(found)
+
+
 def enter_private_x11_namespace() -> None:
-    """Put this process in a user+mount namespace with a private X11 dir.
+    """Put this process in user+mount+network namespaces with a private X11 dir.
 
     Irreversible for the calling process, so it is only ever called at the
     top of the sandboxed child, before the test module is imported and before
@@ -136,7 +183,18 @@ def enter_private_x11_namespace() -> None:
     # Read the ids BEFORE the unshare: afterwards, and until the map below is
     # written, every id in this process reads back as the overflow uid.
     uid, gid = os.getuid(), os.getgid()
-    _check(libc.unshare(_CLONE_NEWUSER | _CLONE_NEWNS), "unshare")
+    outer_netns = _netns_id()
+    # One call, all three: there is no state in which the mount is private
+    # and the abstract socket namespace is still the host's.
+    _check(libc.unshare(_CLONE_NEWUSER | _CLONE_NEWNS | _CLONE_NEWNET),
+           "unshare(CLONE_NEWUSER|CLONE_NEWNS|CLONE_NEWNET)")
+    if _netns_id() == outer_netns:
+        raise SandboxUnavailable("the network namespace did not change")
+    visible = x11_listeners()
+    if visible:
+        raise SandboxUnavailable(
+            f"X11 listeners still visible in the new network namespace: "
+            f"{visible}")
     try:
         with open("/proc/self/setgroups", "w", encoding="ascii") as handle:
             handle.write("deny")
@@ -164,6 +222,9 @@ def enter_private_x11_namespace() -> None:
         raise SandboxUnavailable(f"{X11_DIR}: {error}") from error
     _check(libc.mount(b"tmpfs", X11_DIR.encode(), b"tmpfs", 0, b"mode=1777"),
            f"mount tmpfs on {X11_DIR}")
+    for name in SCRUBBED_ENV:
+        os.environ.pop(name, None)
+    os.environ[OUTER_NETNS_ENV] = str(outer_netns)
     os.environ[SANDBOX_ENV] = "1"
 
 
@@ -186,8 +247,17 @@ def _x11_dir_mount() -> str | None:
         return found
 
 
+#: the display number confirm_our_socket last pointed DISPLAY at
+_POINTED_DISPLAY: str | None = None
+
+
 def require_private_x11() -> list[str]:
-    """Refuse to start a server unless /tmp/.X11-unix is private and empty.
+    """Refuse to start a server unless every route to a foreign one is shut.
+
+    ``/tmp/.X11-unix`` must be a private, empty tmpfs; the network namespace
+    must be a private one with no X11 listener in it; and the environment
+    must carry no ``XAUTHORITY`` and no ``DISPLAY`` other than one this module
+    itself pointed at a server it proved was its own.
 
     Returns the (empty) directory listing, to be handed back to
     :func:`confirm_our_socket` as the "before" state.
@@ -206,6 +276,22 @@ def require_private_x11() -> list[str]:
     if listing:
         raise RuntimeError(
             f"{X11_DIR} should be empty inside the sandbox, found {listing}")
+    outer = os.environ.get(OUTER_NETNS_ENV)
+    if not outer or str(_netns_id()) == outer:
+        raise RuntimeError(
+            "not in a private network namespace: a foreign display's "
+            "abstract socket would be reachable by number")
+    listeners = x11_listeners()
+    if listeners:
+        raise RuntimeError(
+            f"X11 listeners are visible in this network namespace before "
+            f"any server was started: {listeners}")
+    if "XAUTHORITY" in os.environ:
+        raise RuntimeError("XAUTHORITY was inherited into the sandbox")
+    display = os.environ.get("DISPLAY")
+    if display is not None and display != _POINTED_DISPLAY:
+        raise RuntimeError(
+            f"DISPLAY={display!r} was inherited into the sandbox")
     return listing
 
 
@@ -216,8 +302,13 @@ def confirm_our_socket(number: int, before: list[str]) -> str:
     empty by construction: the directory is a tmpfs this process mounted.  So
     any socket in it now was created by a server this process started, and the
     one we are about to connect to exists as a *filesystem* socket, which is
-    the path python-xlib prefers -- the abstract fallback cannot be taken.
+    the path python-xlib prefers.  The network namespace is private too, so
+    every X11 listener visible in it -- abstract names included, which is
+    what libX11/xcb try first -- must be this server's own.
+
+    On success ``DISPLAY`` is pointed at this server, and only this one.
     """
+    global _POINTED_DISPLAY
     if before:
         raise RuntimeError(f"{X11_DIR} was not empty before the server started")
     if _x11_dir_mount() != "tmpfs":
@@ -230,6 +321,13 @@ def confirm_our_socket(number: int, before: list[str]) -> str:
             f"abstract socket. {X11_DIR} holds {listing}")
     if not stat.S_ISSOCK(os.stat(path).st_mode):
         raise RuntimeError(f"{path} is not a socket")
+    ours = {path, "@" + path}
+    strangers = [name for name in x11_listeners() if name not in ours]
+    if strangers:
+        raise RuntimeError(
+            f"X11 listeners other than our own are visible: {strangers}")
+    _POINTED_DISPLAY = f":{int(number)}"
+    os.environ["DISPLAY"] = _POINTED_DISPLAY
     return path
 
 
@@ -346,6 +444,9 @@ def _run_module_in_child(module_name: str) -> dict:
     root = os.path.dirname(here)
     env = dict(os.environ)
     env.pop(SANDBOX_ENV, None)
+    env.pop(OUTER_NETNS_ENV, None)
+    for name in SCRUBBED_ENV:
+        env.pop(name, None)
     env["PYTHONPATH"] = os.pathsep.join(
         [here, root] + ([env["PYTHONPATH"]] if env.get("PYTHONPATH") else []))
     with tempfile.TemporaryDirectory(prefix="x11-sandbox-") as work:
@@ -398,7 +499,7 @@ def _module_results(module_name: str) -> dict:
     results = _RESULTS[module_name]
     if isinstance(results, SandboxUnavailable):
         raise unittest.SkipTest(
-            f"private X11 mount namespace unavailable: {results}")
+            f"private X11 namespaces unavailable: {results}")
     if isinstance(results, ChildProtocolError):
         raise results
     return results
