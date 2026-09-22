@@ -4,6 +4,9 @@ This guide describes the Kilix source selected for the coordinated 0.2.2
 candidate. Image, upgrade and final human acceptance remain pending.
 Commands assume `kilix` is on PATH. Pane commands run inside a live Kilix.
 
+Start with [Operating Kilix](operations/README.md) for task-oriented help on
+creating, finding, reading and controlling pages and panes, logs and sessions.
+
 - [Release status and versions](release.md)
 - [Start menu and settings](settings.md)
 - [Pages and panes](panes.md)

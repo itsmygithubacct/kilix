@@ -1788,6 +1788,13 @@ talks to the terminal directly.
 
 ### Pane Center — `F12` or `kilix panes`
 
+**Version boundary:** this host's default toolkit installer and Content package
+select `af7e848`, which provides the interactive switcher. The richer CLI and
+activity features described below require a later compatible toolkit. They
+are not established merely by this host accepting the `panes` verb. For the
+selected 0.2.2 source, use the [operation guide](docs/help/operations/README.md),
+basic `kilix ls`, `focus` and `watch`, and authenticated `kitten @` commands.
+
 `F12` opens the **Pane Center** (`kilix-panes`, with `kilix-switch` retained as
 the compatible command), from
 [kilix-tui-utils](https://github.com/itsmygithubacct/kilix-tui-utils), over the

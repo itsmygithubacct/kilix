@@ -1,5 +1,14 @@
 # Driving Kilix from an agent
 
+**0.2.2 source-selection note:** the host's default toolkit installer and
+Content package pin `af7e848` provides the interactive switcher. The richer
+`kilix panes list/dump/wait/send` and JSON interfaces described in this guide
+require a later compatible toolkit; the wrapper verb alone does not establish
+that they are installed. Use the [version-specific operation guide](help/operations/README.md)
+and the basic `ls`, `focus`, `watch` and authenticated `kitten @` paths with the
+default pin. The same-OS-window uncredentialed send-text policy is separate
+from the narrower authenticated broker-session byte-input checker below.
+
 How a program associated with a Kilix pane can find the other panes, open new
 ones, read what is on them, and type into them. The ordinary path is a process
 running directly inside a pane. Section 1 also covers agent tool runners that
@@ -214,7 +223,7 @@ Scripts should always qualify the kind. Bare IDs are for humans typing quickly.
 ```sh
 kilix new-pane                              # a shell to the right
 kilix new-pane down                         # below
-kilix new-pane right --cwd /some/dir
+kilix new-pane --cwd /some/dir right
 kilix new-pane right -- ./run-tests.sh --verbose
 kilix new-tab --title "build" -- make all
 ```
