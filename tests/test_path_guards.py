@@ -367,6 +367,18 @@ class MultiplexerPackageFileTests(GuardTestCase):
                     walk_ownership(self.package, self.caller,
                                    (self.package, owner, 0o600 | writable))))
 
+    def test_a_package_path_that_is_not_a_regular_file_is_refused(self):
+        # The owner and mode of a named pipe say nothing about who is on the
+        # other end of it, so the guard refuses anything that is not a plain
+        # file before it reads a byte. Opened non-blocking with no writer, a
+        # pipe reads as empty rather than hanging, so a guard that stopped
+        # checking would return bytes here instead of refusing.
+        pipe = self.base / "native-package.json.pipe"
+        os.mkfifo(pipe, 0o600)
+        self.addCleanup(pipe.unlink)
+        with self.assertRaises(ValueError):
+            multiplexer_build.data(str(pipe))
+
     def test_the_read_closes_every_descriptor_it_opened(self):
         self.assert_no_descriptors_leaked(
             lambda: self.accepts_package_owned_by(unmapped_owner()))
