@@ -57,26 +57,45 @@ required_go(){ pinned_go; }
 # Compare dotted versions: ver_ge A B  -> true if A >= B.
 ver_ge(){ [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" = "$2" ]; }
 
+# The header an interpreter's extensions compile against. The fork's first
+# compilation unit is `#include <Python.h>`, so an interpreter without it cannot
+# build the engine, however new it is.
+python_header() {
+  local include
+  include="$("$1" -c 'import sysconfig; print(sysconfig.get_paths()["include"])' 2>/dev/null || true)"
+  [ -n "$include" ] && [ -f "$include/Python.h" ] || return 1
+  printf '%s\n' "$include/Python.h"
+}
+
+# Which interpreter builds the fork. build.sh's select_system_python makes the
+# same choice by the same rule -- two passes over one ordered list, the first
+# accepting only an interpreter whose headers are present -- and
+# tests/test_build_behavior.py runs both over one fixture and requires them to
+# agree, because an installer that verifies one interpreter while the build
+# picks another is the defect this replaced: the newest interpreter was chosen
+# while only the distro default's headers were installed, and verify() said OK.
 build_python() {
-  local candidate version
+  local candidate version pass
   local -a candidates
   if [ -n "${KILIX_PYTHON:-}" ]; then
     candidates=("$KILIX_PYTHON")
   else
     candidates=(python3.14 python3.13 python3.12 python3)
   fi
-  for candidate in "${candidates[@]}"; do
-    if [[ "$candidate" == */* ]]; then
-      [ -x "$candidate" ] || continue
-    else
-      candidate="$(command -v "$candidate" 2>/dev/null || true)"
-      [ -n "$candidate" ] || continue
-    fi
-    version="$("$candidate" -c 'import sys; print(".".join(map(str, sys.version_info[:3])))' 2>/dev/null || true)"
-    if [ -n "$version" ] && ver_ge "$version" 3.12; then
+  for pass in headers any; do
+    for candidate in "${candidates[@]}"; do
+      if [[ "$candidate" == */* ]]; then
+        [ -x "$candidate" ] || continue
+      else
+        candidate="$(command -v "$candidate" 2>/dev/null || true)"
+        [ -n "$candidate" ] || continue
+      fi
+      version="$("$candidate" -c 'import sys; print(".".join(map(str, sys.version_info[:3])))' 2>/dev/null || true)"
+      [ -n "$version" ] && ver_ge "$version" 3.12 || continue
+      [ "$pass" = any ] || python_header "$candidate" >/dev/null || continue
       printf '%s\t%s\n' "$candidate" "$version"
       return 0
-    fi
+    done
   done
   return 1
 }
@@ -113,7 +132,19 @@ verify() {
     echo "   SIMDe headers: MISSING"; ok=0
   fi
   if py_info="$(build_python)"; then
-    echo "   build Python: ${py_info#*$'\t'} (${py_info%%$'\t'*})"
+    local py_path="${py_info%%$'\t'*}" py_version="${py_info#*$'\t'}" header
+    echo "   build Python: $py_version ($py_path)"
+    # Reporting the interpreter is not reporting that the build can use it:
+    # this line used to be the whole check, and it printed OK over a build
+    # that died on its first `#include <Python.h>`.
+    if header="$(python_header "$py_path")"; then
+      echo "   build Python headers: yes ($header)"
+    else
+      echo "   build Python headers: MISSING — $py_path has no Python.h"
+      echo "                 (on Debian/Ubuntu: apt install python${py_version%.*}-dev,"
+      echo "                 or set KILIX_PYTHON to an interpreter that has its headers)"
+      ok=0
+    fi
   else
     echo "   build Python: MISSING (need >= 3.12; set KILIX_PYTHON if installed elsewhere)"
     ok=0

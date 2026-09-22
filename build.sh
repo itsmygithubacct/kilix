@@ -427,26 +427,44 @@ case "$mode" in
   *) echo "kilix: invalid KILIX_BUILD_MODE=$mode (use system or bundle)" >&2; exit 2 ;;
 esac
 
+# Two passes over one ordered list: first only an interpreter whose Python.h is
+# present (the first compilation unit includes it), then any. The newest
+# interpreter on a machine is often not the one whose -dev package is
+# installed, and choosing it anyway fails fifteen seconds into the build.
+# scripts/install-build-deps.sh's build_python makes the same choice by the same
+# rule; tests/test_build_behavior.py requires the two to agree.
+python_has_headers() {
+  local include
+  include="$("$1" -c 'import sysconfig; print(sysconfig.get_paths()["include"])' 2>/dev/null || true)"
+  [ -n "$include" ] && [ -f "$include/Python.h" ]
+}
+
 select_system_python() {
-  local candidate version
+  local candidate version pass
   local -a candidates
   if [ -n "${KILIX_PYTHON:-}" ]; then
     candidates=("$KILIX_PYTHON")
   else
     candidates=(python3.14 python3.13 python3.12 python3)
   fi
-  for candidate in "${candidates[@]}"; do
-    if [[ "$candidate" == */* ]]; then
-      [ -x "$candidate" ] || continue
-    else
-      candidate="$(command -v "$candidate" 2>/dev/null || true)"
-      [ -n "$candidate" ] || continue
-    fi
-    version="$("$candidate" -c 'import sys; print(".".join(map(str, sys.version_info[:3])))' 2>/dev/null || true)"
-    if [ -n "$version" ] && [ "$(printf '%s\n%s\n' "$version" 3.12 | sort -V | head -1)" = 3.12 ]; then
+  for pass in headers any; do
+    for candidate in "${candidates[@]}"; do
+      if [[ "$candidate" == */* ]]; then
+        [ -x "$candidate" ] || continue
+      else
+        candidate="$(command -v "$candidate" 2>/dev/null || true)"
+        [ -n "$candidate" ] || continue
+      fi
+      version="$("$candidate" -c 'import sys; print(".".join(map(str, sys.version_info[:3])))' 2>/dev/null || true)"
+      [ -n "$version" ] \
+        && [ "$(printf '%s\n%s\n' "$version" 3.12 | sort -V | head -1)" = 3.12 ] \
+        || continue
+      [ "$pass" = any ] || python_has_headers "$candidate" || continue
+      [ "$pass" = headers ] \
+        || echo "kilix: WARNING: $candidate has no Python.h; the build will fail unless its -dev package is installed" >&2
       printf '%s\n' "$candidate"
       return 0
-    fi
+    done
   done
   echo "kilix: current kitty source requires Python >= 3.12 to build" >&2
   echo "kilix: install a newer Python or set KILIX_PYTHON=/path/to/python3.12+" >&2

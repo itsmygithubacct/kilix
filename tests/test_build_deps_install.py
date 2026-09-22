@@ -208,5 +208,119 @@ class DebianInstallRemovesNothingTests(unittest.TestCase):
         self.assert_removes_nothing([])
 
 
+class VerifyReportsWhatTheBuildNeedsTests(unittest.TestCase):
+    """`--verify` against a machine assembled from stubs, so its verdict is
+    decided by the one thing each test varies.
+
+    Everything verify() checks other than the build interpreter is stubbed to
+    pass, and the PATH holds nothing else, so the host's own interpreters cannot
+    leak in. The control arm (`test_..._passes_...`) is what makes the failing
+    arms mean something: with the same stubs and headers present, the verdict
+    is OK, so a failure below is the interpreter's headers and nothing else.
+    """
+
+    _TOOLS = ("bash", "env", "dirname", "mkdir", "chmod", "awk", "sort",
+              "head", "sed", "grep", "cat", "sh")
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.base = Path(self.temp.name)
+        self.bindir = self.base / "bin"
+        self.bindir.mkdir()
+        for tool in self._TOOLS:
+            real = shutil.which(tool)
+            self.assertIsNotNone(real, f"the fixture needs {tool}")
+            (self.bindir / tool).symlink_to(real)
+        stubs = {
+            "pkg-config": "exit 0\n",
+            "gcc": "cat >/dev/null; exit 0\n",
+            "make": "exit 0\n", "git": "exit 0\n", "curl": "exit 0\n",
+            "zstd": "exit 0\n",
+            "go": 'echo "go version go1.99.0 linux/amd64"\n',
+            # The desktop's own checks run `python3`; it is too old to be a
+            # build interpreter, so it can never be the one selected.
+            "python3": self._interpreter_body("3.11.9", None),
+        }
+        for name, body in stubs.items():
+            self._write(name, body)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def _write(self, name, body):
+        path = self.bindir / name
+        path.write_text("#!/bin/sh\n" + body)
+        path.chmod(0o755)
+        return path
+
+    def _interpreter_body(self, version, include):
+        include_line = (f'  *get_paths*) echo {shlex.quote(str(include))}; exit 0 ;;\n'
+                        if include is not None else
+                        '  *get_paths*) exit 1 ;;\n')
+        return (
+            'case "$2" in\n'
+            '  *ensurepip*) exit 0 ;;\n'
+            '  *PIL*) echo "   Pillow: 0.0-fixture"; exit 0 ;;\n'
+            f'  *version_info*) echo {version}; exit 0 ;;\n'
+            + include_line +
+            'esac\n'
+            'exit 3\n')
+
+    def interpreter(self, name, version, headers):
+        """A build interpreter whose include directory does or does not hold
+        Python.h."""
+        include = self.base / f"include-{name}"
+        include.mkdir()
+        if headers:
+            (include / "Python.h").write_text("/* fixture */\n")
+        return self._write(name, self._interpreter_body(version, include))
+
+    def verify(self, **extra):
+        env = {"PATH": str(self.bindir), "HOME": str(self.base / "home"),
+               "LC_ALL": "C.UTF-8", "LANG": "C.UTF-8", **extra}
+        return subprocess.run([str(SCRIPT), "--verify"], env=env,
+                              capture_output=True, text=True, timeout=120)
+
+    def selected(self, result):
+        line, = [line for line in result.stdout.splitlines()
+                 if line.startswith("   build Python: ")]
+        return line.rsplit("(", 1)[1].rstrip(")")
+
+    def test_verify_passes_when_the_interpreter_has_its_headers(self):
+        self.interpreter("python3.13", "3.13.5", headers=True)
+        result = self.verify()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("==> OK", result.stdout)
+        self.assertIn("build Python headers: yes", result.stdout)
+
+    def test_verify_fails_when_the_build_would_not_find_python_h(self):
+        # The measured failure: an interpreter new enough to be chosen, and no
+        # Python.h for it. verify() used to report `build Python: 3.13.x` and
+        # `==> OK`; the build then died on its first `#include <Python.h>`.
+        self.interpreter("python3.13", "3.13.5", headers=False)
+        result = self.verify()
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertNotIn("==> OK", result.stdout)
+        self.assertIn("==> INCOMPLETE", result.stdout)
+        self.assertIn("build Python headers: MISSING", result.stdout)
+
+    def test_an_interpreter_that_can_build_is_preferred_to_a_newer_one(self):
+        # The machine the defect was found on: the newest interpreter came from
+        # elsewhere and had no headers; the distro default had them.
+        self.interpreter("python3.14", "3.14.0", headers=False)
+        buildable = self.interpreter("python3.13", "3.13.5", headers=True)
+        result = self.verify()
+        self.assertEqual(self.selected(result), str(buildable))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_an_explicit_interpreter_without_headers_is_reported_not_trusted(self):
+        self.interpreter("python3.13", "3.13.5", headers=True)
+        chosen = self.interpreter("python3.14", "3.14.0", headers=False)
+        result = self.verify(KILIX_PYTHON=str(chosen))
+        self.assertEqual(self.selected(result), str(chosen))
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("build Python headers: MISSING", result.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

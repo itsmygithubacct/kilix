@@ -818,6 +818,55 @@ class BuildPreparationTests(unittest.TestCase):
                          f"{build_only}{os.pathsep}{inherited}")
         self.assertEqual(at_promotion, str(inherited))
 
+    def test_the_build_and_the_installer_choose_the_same_interpreter(self):
+        # The installer verifies one interpreter and the build compiles with
+        # whatever select_system_python picks; if those differ, `--verify` can
+        # say OK about a build that cannot start. The machine this was found
+        # on had a newer interpreter with no headers beside the distro default
+        # with them, so that is the fixture, and both sides must choose the
+        # one the fork can be compiled against.
+        fixture = self.base / "interpreters"
+        fixture.mkdir()
+        ran_setup = self.base / "setup-ran-under"
+
+        def interpreter(name, version, headers):
+            include = self.base / f"include-{name}"
+            include.mkdir()
+            if headers:
+                (include / "Python.h").write_text("/* fixture */\n")
+            path = fixture / name
+            path.write_text(
+                "#!/bin/sh\n"
+                'case "${1:-}:${2:-}" in\n'
+                f"  *sys.version_info*) echo {version}; exit 0;;\n"
+                f"  *get_paths*) echo {shlex.quote(str(include))}; exit 0;;\n"
+                "esac\n"
+                '[ "${1:-}" = setup.py ] && echo "$0" >> '
+                f"{shlex.quote(str(ran_setup))}\n"
+                f'exec {shlex.quote(sys.executable)} "$@"\n')
+            path.chmod(0o755)
+            return path
+
+        interpreter("python3.14", "3.14.0", headers=False)
+        buildable = interpreter("python3.13", "3.13.5", headers=True)
+        (self.src / "setup.py").write_text(self._WORKING_SETUP)
+        env = self._system_env()
+        env.pop("KILIX_PYTHON")
+        env["PATH"] = str(fixture) + os.pathsep + env["PATH"]
+
+        result = self.run_build(env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(ran_setup.read_text().splitlines(), [str(buildable)])
+
+        # The installer's own report, not its exit status: verify() also
+        # checks pkg-config modules a test runner need not have.
+        verify = subprocess.run(
+            [str(ROOT / "scripts" / "install-build-deps.sh"), "--verify"],
+            env=env, capture_output=True, text=True, timeout=120)
+        reported, = [line for line in verify.stdout.splitlines()
+                     if line.startswith("   build Python: ")]
+        self.assertEqual(reported, f"   build Python: 3.13.5 ({buildable})")
+
     def test_missing_kitten_is_rejected_before_promotion(self):
         (self.src / "setup.py").write_text(
             "from pathlib import Path\n"
