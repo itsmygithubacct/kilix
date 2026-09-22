@@ -185,13 +185,44 @@ fedora_install() {
   sudo dnf install -y "${packages[@]}"
 }
 
+# Which JACK development package to name, decided by the JACK runtime that is
+# already installed.
+#
+# libfluidsynth-dev depends on `libjack-dev | libjack-jackd2-dev`, and the two
+# runtimes behind them (jack1's libjack0, jack2's libjack-jackd2-0) conflict.
+# Left to itself apt takes the first alternative, so on a jack2 machine the
+# install REMOVES libjack-jackd2-0 and breaks everything linked to it (mpv,
+# libavdevice, libasound2-plugins, ...). Naming jack2's package unconditionally
+# only moves the damage: on a jack1 machine that removes libjack0 instead. So
+# follow what is there, and only choose when nothing is. Whatever this prints,
+# the invariant is that installing build dependencies removes nothing, and
+# that is what tests/test_build_deps_install.py asserts.
+debian_jack_dev_package() {
+  local runtime state
+  for runtime in libjack-jackd2-0 libjack0; do
+    while IFS= read -r state; do
+      case "$state" in
+        installed|unpacked|half-configured|half-installed|triggers-awaited|triggers-pending)
+          case "$runtime" in
+            libjack0) echo libjack-dev ;;
+            *) echo libjack-jackd2-dev ;;
+          esac
+          return 0 ;;
+      esac
+    done < <(dpkg-query -W -f='${db:Status-Status}\n' "$runtime" 2>/dev/null || true)
+  done
+  # No JACK runtime at all: nothing can conflict, so either removes nothing.
+  echo libjack-jackd2-dev
+}
+
 debian_install() {
+  local jack_dev; jack_dev="$(debian_jack_dev_package)"
   local pkgs="build-essential cmake pkg-config git curl zstd golang-go python3 python3-dev python3-pil python3-venv \
     libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxkbcommon-dev \
     libxkbcommon-x11-dev libx11-xcb-dev libdbus-1-dev libgl1-mesa-dev libfontconfig-dev \
     libpng-dev liblcms2-dev libcairo2-dev libharfbuzz-dev libssl-dev libxxhash-dev \
     libsimde-dev libwayland-dev wayland-protocols \
-    libsdl2-dev libsdl2-image-dev libsndfile1-dev zlib1g-dev libfluidsynth-dev fluid-soundfont-gm \
+    libsdl2-dev libsdl2-image-dev libsndfile1-dev zlib1g-dev libfluidsynth-dev $jack_dev fluid-soundfont-gm \
     libssh2-1-dev libbrotli-dev"
   local -a packages
   echo "==> Debian/Ubuntu detected — installing system-wide via apt-get"
@@ -227,6 +258,12 @@ suse_install() {
 }
 
 # ---- dispatch ----------------------------------------------------------------
+# Sourced (the tests do this to drive one backend against fixture roots): stop
+# here, having defined the functions and changed nothing. This keys on how the
+# file was entered, not on a variable, so no environment setting can make an
+# executed run skip its work and still exit 0.
+if [ "${BASH_SOURCE[0]}" != "$0" ]; then return 0; fi
+
 if [ "${1:-}" = "--verify" ]; then verify; exit 0; fi
 
 if command -v dnf >/dev/null 2>&1 && command -v rpm >/dev/null 2>&1; then
