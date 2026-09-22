@@ -17,15 +17,25 @@ KILIX_VOICE_PREFIX="${KILIX_VOICE_PREFIX:-$HOME/.local}"
 #
 # The repository commit is pinned below; the coordinated release gate separately
 # requires that exact object to be reachable from the configured public remote.
-# Dictation uses the official Vosk 0.3.45 x86_64 wheel from PyPI: the wheel
-# itself is verified, then only its fixed vosk/libvosk.so member is extracted.
-# The release image is x86_64; other architectures can still install the
-# read-aloud-only closure.
+# Dictation uses the official Vosk 0.3.45 wheel from PyPI for this machine's
+# architecture, x86_64 or aarch64: the wheel itself is verified, then only its
+# fixed vosk/libvosk.so member is extracted and must match the host. Other
+# architectures can still install the read-aloud-only closure.
+case "$(uname -m)" in
+  x86_64|amd64) voice_host_arch=x86_64 voice_elf_machine=62 ;;
+  aarch64|arm64) voice_host_arch=aarch64 voice_elf_machine=183 ;;
+  *) voice_host_arch="" voice_elf_machine="" ;;
+esac
 KILIX_VOICE_REPO="${KILIX_VOICE_REPO:-https://github.com/itsmygithubacct/kilix-voice.git}"
 KILIX_VOICE_REF="${KILIX_VOICE_REF:-f501409a82bf73b738b14986e12441bce23ec1c6}"
 KILIX_VOICE_LIB_VERSION="${KILIX_VOICE_LIB_VERSION:-0.3.45}"
-KILIX_VOICE_LIB_SHA256="${KILIX_VOICE_LIB_SHA256:-25e025093c4399d7278f543568ed8cc5460ac3a4bf48c23673ace1e25d26619f}"
-KILIX_VOICE_LIB_URL="${KILIX_VOICE_LIB_URL:-https://files.pythonhosted.org/packages/fc/ca/83398cfcd557360a3d7b2d732aee1c5f6999f68618d1645f38d53e14c9ff/vosk-0.3.45-py3-none-manylinux_2_12_x86_64.manylinux2010_x86_64.whl}"
+if [ "$voice_host_arch" = aarch64 ]; then
+  KILIX_VOICE_LIB_SHA256="${KILIX_VOICE_LIB_SHA256:-54efb47dd890e544e9e20f0316413acec7f8680d04ec095c6140ab4e70262704}"
+  KILIX_VOICE_LIB_URL="${KILIX_VOICE_LIB_URL:-https://files.pythonhosted.org/packages/a4/23/3130a69fa0bf4f5566a52e415c18cd854bf561547bb6505666a6eb1bb625/vosk-0.3.45-py3-none-manylinux2014_aarch64.whl}"
+else
+  KILIX_VOICE_LIB_SHA256="${KILIX_VOICE_LIB_SHA256:-25e025093c4399d7278f543568ed8cc5460ac3a4bf48c23673ace1e25d26619f}"
+  KILIX_VOICE_LIB_URL="${KILIX_VOICE_LIB_URL:-https://files.pythonhosted.org/packages/fc/ca/83398cfcd557360a3d7b2d732aee1c5f6999f68618d1645f38d53e14c9ff/vosk-0.3.45-py3-none-manylinux_2_12_x86_64.manylinux2010_x86_64.whl}"
+fi
 KILIX_VOICE_LIB_MEMBER=vosk/libvosk.so
 KILIX_VOICE_APACHE_LICENSE_FILE="${KILIX_VOICE_APACHE_LICENSE_FILE:-/usr/share/common-licenses/Apache-2.0}"
 # The acoustic models are upstream's, published with no signature and no
@@ -126,10 +136,8 @@ if [ "$without_dictation" = 0 ]; then
     || die "KILIX_VOICE_MODEL_SHA256 must be a full SHA-256 digest"
   [ -f "$KILIX_VOICE_APACHE_LICENSE_FILE" ] \
     || die "Apache-2.0 license text is required at $KILIX_VOICE_APACHE_LICENSE_FILE"
-  case "$(uname -m)" in
-    x86_64|amd64) ;;
-    *) die "the pinned Vosk wheel supports x86_64 only (--without-dictation still installs read-aloud)" ;;
-  esac
+  [ -n "$voice_host_arch" ] \
+    || die "Vosk dictation wheels are pinned for x86_64 and aarch64 only (this is $(uname -m); --without-dictation still installs read-aloud)"
 fi
 
 normalize_absolute() {
@@ -494,14 +502,15 @@ fetch_verified() {
 # encrypted, symlink, oversized, and wrong-architecture members are rejected.
 extract_vosk_library() {
   local archive="$1" destination="$2"
-  python3 - "$archive" "$destination" "$KILIX_VOICE_LIB_MEMBER" <<'PY'
+  python3 - "$archive" "$destination" "$KILIX_VOICE_LIB_MEMBER" \
+    "$voice_elf_machine" "$voice_host_arch" <<'PY'
 import os
 import stat
 import struct
 import sys
 import zipfile
 
-archive, destination, member = sys.argv[1:]
+archive, destination, member, elf_machine, host_arch = sys.argv[1:]
 maximum_bytes = 128 * 1024 * 1024
 
 try:
@@ -537,8 +546,9 @@ try:
     if header[:6] != b"\x7fELF\x02\x01":
         raise ValueError("wheel member %s is not a little-endian ELF64 library" % member)
     elf_type, machine = struct.unpack_from("<HH", header, 16)
-    if elf_type != 3 or machine != 62:
-        raise ValueError("wheel member %s is not an x86_64 shared library" % member)
+    if elf_type != 3 or machine != int(elf_machine):
+        raise ValueError(
+            "wheel member %s is not an %s shared library" % (member, host_arch))
     os.chmod(destination, 0o600)
 except (OSError, ValueError, zipfile.BadZipFile) as error:
     try:
@@ -829,7 +839,7 @@ if [ "$without_dictation" = 0 ]; then
   if ! library_generation_works "$library_generation"; then
     library_archive="$library_generation/.vosk-$KILIX_VOICE_LIB_VERSION.whl"
     fetch_verified "$KILIX_VOICE_LIB_URL" "$library_archive" \
-      "$KILIX_VOICE_LIB_SHA256" "Vosk $KILIX_VOICE_LIB_VERSION x86_64 wheel"
+      "$KILIX_VOICE_LIB_SHA256" "Vosk $KILIX_VOICE_LIB_VERSION $voice_host_arch wheel"
     library_extract_tmp="$(mktemp "$library_generation/.libvosk.so.XXXXXX")" \
       || die "could not allocate Vosk library extraction staging"
     rm -f -- "$library_extract_tmp"

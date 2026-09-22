@@ -87,7 +87,11 @@ ensure_private_directory "$KILIX_BUILD_DIRECTORY" build
 ensure_private_directory "$(dirname "$KILIX_SYSDEPS_HOME")" dependencies
 validate_private_storage_layout
 if [ -d "$KILIX_SYSDEPS_HOME/usr" ]; then
-  _sysdeps_lib="$KILIX_SYSDEPS_HOME/usr/lib/x86_64-linux-gnu"
+  # Extracted Debian packages keep libraries in the multiarch directory.
+  case "$(uname -m)" in
+    aarch64|arm64) _sysdeps_lib="$KILIX_SYSDEPS_HOME/usr/lib/aarch64-linux-gnu" ;;
+    *) _sysdeps_lib="$KILIX_SYSDEPS_HOME/usr/lib/x86_64-linux-gnu" ;;
+  esac
   export PATH="$KILIX_SYSDEPS_HOME/usr/bin:$PATH"
   export PKG_CONFIG_PATH="$_sysdeps_lib/pkgconfig:$KILIX_SYSDEPS_HOME/usr/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
   export LIBRARY_PATH="$_sysdeps_lib:$KILIX_SYSDEPS_HOME/usr/lib:${LIBRARY_PATH:-}"
@@ -156,12 +160,12 @@ command -v timeout >/dev/null 2>&1 \
   || { echo "kilix: timeout not found; cannot verify built launchers" >&2; exit 1; }
 
 case "$(uname -s):$(uname -m)" in
-  Linux:x86_64|Linux:amd64) ;;
+  Linux:x86_64|Linux:amd64|Linux:aarch64|Linux:arm64) ;;
   Linux:*)
-    echo "kilix: fork builds currently support Linux x86_64 only (this is $(uname -m))" >&2
+    echo "kilix: fork builds support Linux x86_64 and ARM64 only (this is $(uname -m))" >&2
     exit 1 ;;
   *)
-    echo "kilix: fork builds currently support Linux x86_64 only" >&2
+    echo "kilix: fork builds support Linux x86_64 and ARM64 only" >&2
     exit 1 ;;
 esac
 
@@ -414,6 +418,10 @@ case "$mode" in
     [ -z "${KILIX_KITTY_DEPS_URL:-}${KILIX_KITTY_DEPS_SHA256:-}" ] \
       || { echo "kilix: dependency bundle variables require KILIX_BUILD_MODE=bundle" >&2; exit 2; } ;;
   bundle)
+    case "$(uname -m)" in
+      x86_64|amd64) ;;
+      *) echo "kilix: the kitty dependency bundle is x86_64; build ARM64 with KILIX_BUILD_MODE=system" >&2; exit 2 ;;
+    esac
     [ -n "${KILIX_KITTY_DEPS_URL:-}" ] \
       || { echo "kilix: bundle mode requires KILIX_KITTY_DEPS_URL" >&2; exit 2; } ;;
   *) echo "kilix: invalid KILIX_BUILD_MODE=$mode (use system or bundle)" >&2; exit 2 ;;

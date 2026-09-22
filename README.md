@@ -645,7 +645,8 @@ explicitly confirmed termination action.
 ## Requirements
 
 - **Linux only**, x86_64 or arm64 for the prebuilt engine. The clickable-chrome
-  fork build currently supports x86_64. (No macOS/Windows.)
+  fork build supports x86_64 and arm64; arm64 builds use the system's
+  development packages (`KILIX_BUILD_MODE=system`). (No macOS/Windows.)
 - A running graphical session — **X11 or Wayland** (`$DISPLAY` or `$WAYLAND_DISPLAY`).
 - NetworkManager's **`nmtui`** for the clickable network/Wi-Fi item. Pleb and
   Plebian-OS install it; standalone Kilix shows an explanatory error if it is
@@ -921,7 +922,8 @@ report that distinction instead of calling the weights runnable.
 
 `kilix voice install` installs the immutable `kilix-voice` 0.1.3 source at
 commit `f501409a82bf73b738b14986e12441bce23ec1c6`, the official Vosk 0.3.45
-x86_64 wheel, and either the default `vosk-model-small-en-us-0.15` or the
+wheel for the host (x86_64 or aarch64, each pinned by its own digest), and
+either the default `vosk-model-small-en-us-0.15` or the
 `--model lgraph-en-us` dynamic-graph model. Downloads are SHA-256 verified.
 The installer extracts only the wheel's fixed `vosk/libvosk.so` member, checks
 its ELF architecture and complete required Vosk API, loads the pinned acoustic
