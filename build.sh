@@ -777,6 +777,18 @@ if [ "${KILIX_BUILD_PREPARE_ONLY:-0}" = 1 ]; then
   exit 0
 fi
 
+# Remember the dynamic linker's search path as it stands before the build adds
+# to it. The promotion probe below has to see the environment the *user* will
+# start the engine in, not the one the build gave itself: a generation whose
+# extension loads only because of this build's own LD_LIBRARY_PATH is a
+# generation that does not start.
+_probe_ld_library_path_set=0
+_probe_ld_library_path=""
+if [ -n "${LD_LIBRARY_PATH+x}" ]; then
+  _probe_ld_library_path_set=1
+  _probe_ld_library_path="$LD_LIBRARY_PATH"
+fi
+
 cd "$BUILD_SRC"
 echo "kilix: building forked kitty in $BUILD_SRC ($mode dependencies, $GOMAXPROCS Go package job(s)) ..."
 if [ "$mode" = bundle ]; then
@@ -799,6 +811,35 @@ probe_launcher() {
   timeout --kill-after=2 15 "$1" --version >/dev/null 2>&1
 }
 
+# `--version` is answered by the launcher itself and never loads the engine's
+# compiled extension, so it is answered with rc 0 by a generation that cannot
+# start at all. That is not a hypothesis: on an ARM64 board whose vendor EGL
+# library defines neither `eglCreateImage` nor `eglCreateImageKHR`, a build
+# whose `kitty/fast_data_types.so` could not resolve that symbol answered
+# `--version` with rc 0, was promoted to `current`, and was reported as
+# `kilix: built -> ...`; the first thing the user then saw was an ImportError
+# naming a symbol. A gate that passes when the build is broken is not a gate,
+# and nothing about that is architecture-specific.
+#
+# So promotion also has to exercise something that cannot be answered without
+# the extension loaded. `+runpy` runs the given code under the engine's own
+# embedded Python, which is how a real start reaches the extension.
+#
+# It runs with this build's own additions to LD_LIBRARY_PATH removed. Those
+# additions are not present when the user starts the engine -- the launcher and
+# the extension carry the same directory in their RUNPATH instead -- and on
+# that board the build-time LD_LIBRARY_PATH was itself enough to make the
+# extension load, so a probe inheriting it could report success on a generation
+# that fails for everyone else.
+probe_engine_extension() {
+  local -a runner=(env -u LD_LIBRARY_PATH)
+  [ "$_probe_ld_library_path_set" = 0 ] \
+    || runner=(env "LD_LIBRARY_PATH=$_probe_ld_library_path")
+  "${runner[@]}" timeout --kill-after=2 60 "$1" +runpy \
+    'import kitty.fast_data_types as fdt; raise SystemExit(0 if fdt.wcswidth("a") > 0 else 1)' \
+    >/dev/null 2>&1
+}
+
 launcher="$BUILD_SRC/kitty/launcher/kitty"
 kitten="$BUILD_SRC/kitty/launcher/kitten"
 for built_launcher in "$launcher" "$kitten"; do
@@ -812,6 +853,13 @@ for built_launcher in "$launcher" "$kitten"; do
     exit 1
   fi
 done
+if ! probe_engine_extension "$launcher"; then
+  echo "kilix: the built engine cannot load its compiled extension; not promoting this build" >&2
+  echo "kilix: reproduce with: $launcher +runpy 'import kitty.fast_data_types'" >&2
+  echo "kilix: on ARM64 boards with a vendor GL driver this is usually a libEGL" >&2
+  echo "kilix: ahead of libglvnd in /etc/ld.so.conf.d that defines no eglCreateImage" >&2
+  exit 1
+fi
 assert_font_notices_installed
 
 assert_display_backends_built() {
