@@ -159,6 +159,203 @@ class MouseModifierTests(unittest.TestCase):
         self.assertEqual(self.inj._mod_holds, {})
         self.assertEqual(self.inj._btns_down, set())
 
+    # ---- right and middle buttons -----------------------------------------
+    # Everything above asserts Button1Mask. The owner's report was about
+    # modified input inside a `kilix run` app pane, so the buttons that pane
+    # can also receive get the same treatment: the X button number in the
+    # event, its mask in the press/motion/release state, and nothing held
+    # afterwards. SGR's low two bits are the button index (kitty's
+    # encode_button in src/kitty/mouse.c): 0 left, 1 middle, 2 right.
+
+    def test_modified_right_and_middle_click_drag_release(self):
+        for bits, button, bmask in ((2, 3, X.Button3Mask), (1, 2, X.Button2Mask)):
+            for mod, expected in ((16, X.ControlMask), (4, X.ShiftMask),
+                                  (8, X.Mod1Mask)):
+                with self.subTest(button=button, mod=mod):
+                    self.inj.release_all()
+                    self.events()
+                    self.mouse(mod | bits)
+                    pressed = [e for e in self.events() if e.type == X.ButtonPress]
+                    self.assertEqual([(e.detail, e.state) for e in pressed],
+                                     [(button, expected)])
+                    self.assertEqual(self.state(), expected | bmask)
+                    self.mouse(mod | bits | 32, x=60)
+                    moved = [e for e in self.events() if e.type == X.MotionNotify]
+                    self.assertEqual([e.state for e in moved], [expected | bmask])
+                    self.mouse(mod | bits, press=False, x=60)
+                    released = [e for e in self.events()
+                                if e.type == X.ButtonRelease]
+                    self.assertEqual([(e.detail, e.state) for e in released],
+                                     [(button, expected | bmask)])
+                    self.assertEqual(self.state(), 0)
+                    self.assertEqual(self.inj._btns_down, set())
+
+    def test_modifier_pressed_and_released_during_a_right_drag(self):
+        self.mouse(2)
+        self.assertEqual(self.state(), X.Button3Mask)
+        self.inj.chord(chr(57443), xinject.MOD_ALT, 1)
+        self.assertEqual(self.state(), X.Mod1Mask | X.Button3Mask)
+        self.events()
+        self.mouse(8 | 2 | 32, x=70)     # the drag report now carries Alt
+        moved = [e for e in self.events() if e.type == X.MotionNotify]
+        self.assertEqual([e.state for e in moved], [X.Mod1Mask | X.Button3Mask])
+        self.inj.chord(chr(57443), 0, 3)
+        self.assertEqual(self.state(), X.Button3Mask)
+        self.mouse(2, press=False, x=70)
+        self.assertEqual(self.state(), 0)
+        self.assertFalse(any(self.xd.query_keymap()))
+
+    def test_modifiers_stay_owned_until_the_last_of_two_buttons_releases(self):
+        # The left-button case above releases the FIRST button first. Release
+        # the second one first instead, which is where a per-button bug hides.
+        self.mouse(16)                   # ctrl + left press
+        self.mouse(16 | 2)               # ctrl + right press, left still down
+        self.assertEqual(self.state(),
+                         X.ControlMask | X.Button1Mask | X.Button3Mask)
+        self.mouse(16 | 2, press=False)
+        self.assertEqual(self.state(), X.ControlMask | X.Button1Mask)
+        self.assertEqual(self.inj._btns_down, {1})
+        self.mouse(16, press=False)
+        self.assertEqual(self.state(), 0)
+        self.assertEqual(self.inj._btns_down, set())
+        self.mouse(16 | 2)               # and the middle button in that role
+        self.mouse(16 | 1)
+        self.mouse(16 | 2, press=False)
+        self.assertEqual(self.state(), X.ControlMask | X.Button2Mask)
+        self.mouse(16 | 1, press=False)
+        self.assertEqual(self.state(), 0)
+
+    def test_right_release_with_no_modifier_bits_does_not_leave_a_modifier(self):
+        self.mouse(8 | 2)
+        self.assertEqual(self.state(), X.Mod1Mask | X.Button3Mask)
+        self.mouse(2, press=False)
+        self.assertEqual(self.state(), 0)
+        self.events()
+        self.inj.chord("a", 0, 1)
+        self.assertEqual([e.state for e in self.events()
+                          if e.type == X.KeyPress], [0])
+
+    def test_focus_cleanup_releases_right_and_middle_button_ownership(self):
+        self.inj.chord("a", xinject.MOD_SHIFT, 1)
+        self.mouse(4 | 2)
+        self.mouse(4 | 1)
+        self.assertEqual(self.inj._btns_down, {2, 3})
+        self.assertEqual(self.state(),
+                         X.ShiftMask | X.Button2Mask | X.Button3Mask)
+        self.inj.release_all()
+        self.assertEqual(self.state(), 0)
+        self.assertFalse(any(self.xd.query_keymap()))
+        self.assertEqual(self.inj._mod_holds, {})
+        self.assertEqual(self.inj._btns_down, set())
+
+    def test_wheel_notches_are_paired_and_leave_a_held_drag_alone(self):
+        self.mouse(64 | 1 | 16, x=80)    # wheel down + ctrl
+        wheel = [e for e in self.events()
+                 if e.type in (X.ButtonPress, X.ButtonRelease)]
+        self.assertEqual([(e.detail, e.state) for e in wheel],
+                         [(5, X.ControlMask),
+                          (5, X.ControlMask | X.Button5Mask)])
+        self.assertEqual(self.state(), 0)
+        self.assertEqual(self.inj._btns_down, set())
+        self.mouse(2)                    # a wheel notch mid right-drag
+        self.events()
+        self.mouse(64, x=85)
+        self.assertEqual(self.inj._btns_down, {3})
+        self.assertEqual(self.state(), X.Button3Mask)
+        self.mouse(2, press=False, x=85)
+        self.assertEqual(self.state(), 0)
+
+    def test_horizontal_wheel_does_not_scroll_vertically(self):
+        # kitty sends horizontal scroll as SGR 66/67 -- encode_button's
+        # (button - 4) | SCROLL_BUTTON_INDICATOR for X buttons 6 and 7
+        # (src/kitty/mouse.c, encode_mouse_scroll(w, s > 0 ? 6 : 7, mods)).
+        # X has no mask bit above Button5Mask, so the button number is the
+        # whole assertion.
+        for bits, button in ((66, 6), (67, 7)):
+            with self.subTest(bits=bits):
+                self.inj.release_all()
+                self.events()
+                self.mouse(bits | 16, x=80)
+                wheel = [e for e in self.events()
+                         if e.type in (X.ButtonPress, X.ButtonRelease)]
+                self.assertEqual([e.detail for e in wheel], [button, button])
+                self.assertEqual([e.state for e in wheel][0], X.ControlMask)
+                self.assertEqual(self.state(), 0)
+                self.assertEqual(self.inj._btns_down, set())
+
+    def test_extra_mouse_buttons_are_not_aliased_onto_the_first_four(self):
+        # kitty encodes physical buttons 4-7 as SGR 128-131 --
+        # (button - 8) | EXTRA_BUTTON_INDICATOR over button_map's `button + 5`
+        # (src/kitty/mouse.c) -- and glfw's X11 backend derives those from
+        # X buttons 8-11 with `event->xbutton.button - Button1 - 4`
+        # (src/glfw/x11_window.c). The round trip is exact, so 128 is X 8.
+        # SGR 131 is left out: X 11 is past Xvfb's ten-button pointer, and the
+        # server's error reply for it reaches this suite as X protocol noise.
+        for bits, button in ((128, 8), (129, 9), (130, 10)):
+            with self.subTest(bits=bits):
+                self.inj.release_all()
+                self.events()
+                self.mouse(bits)
+                pressed = [e for e in self.events() if e.type == X.ButtonPress]
+                self.assertEqual([e.detail for e in pressed], [button])
+                self.assertEqual(self.inj._btns_down, {button})
+                self.mouse(bits, press=False)
+                released = [e for e in self.events()
+                            if e.type == X.ButtonRelease]
+                self.assertEqual([e.detail for e in released], [button])
+                self.assertEqual(self.inj._btns_down, set())
+
+    def test_an_extra_button_click_does_not_end_a_drag_it_aliases_onto(self):
+        # A side button clicked mid-drag must not be decoded as the button
+        # that is already held: its release would end the real drag and drop
+        # the modifier the gesture still owns.
+        for drag, button, bmask, extra in ((2, 3, X.Button3Mask, 130),
+                                           (1, 2, X.Button2Mask, 129),
+                                           (0, 1, X.Button1Mask, 128)):
+            with self.subTest(button=button, extra=extra):
+                self.inj.release_all()
+                self.events()
+                self.mouse(16 | drag)
+                self.assertEqual(self.state(), X.ControlMask | bmask)
+                self.mouse(16 | extra)
+                self.mouse(16 | extra, press=False)
+                self.assertEqual(self.inj._btns_down, {button})
+                self.assertEqual(self.state(), X.ControlMask | bmask)
+                self.mouse(16 | drag, press=False)
+                self.assertEqual(self.state(), 0)
+                self.assertEqual(self.inj._btns_down, set())
+
+    def test_move_click_tracks_every_real_button_and_pairs_only_wheel_notches(self):
+        # move_click is the `kilix share` path: a viewer's press/release
+        # carries a press flag, a wheel notch does not. A flagged button is a
+        # held button whatever its number, or release_all cannot free it.
+        for button, bmask in ((1, X.Button1Mask), (2, X.Button2Mask),
+                              (3, X.Button3Mask)):
+            with self.subTest(button=button):
+                self.inj.move_click(100, 100, button=button, press=True)
+                self.assertEqual(self.state(), bmask)
+                self.assertEqual(self.inj._btns_down, {button})
+                self.inj.move_click(100, 100, button=button, press=False)
+                self.assertEqual(self.state(), 0)
+                self.assertEqual(self.inj._btns_down, set())
+        for button in (4, 5):
+            with self.subTest(wheel=button):
+                self.events()
+                self.inj.move_click(100, 100, button=button)
+                notch = [e for e in self.events()
+                         if e.type in (X.ButtonPress, X.ButtonRelease)]
+                self.assertEqual([e.detail for e in notch], [button, button])
+                self.assertEqual(self.inj._btns_down, set())
+        for button in (4, 5, 8):
+            with self.subTest(held=button):
+                self.events()
+                self.inj.move_click(100, 100, button=button, press=True)
+                pressed = [e for e in self.events() if e.type == X.ButtonPress]
+                self.assertEqual([e.detail for e in pressed], [button])
+                self.assertEqual(self.inj._btns_down, {button})
+                self.inj.move_click(100, 100, button=button, press=False)
+                self.assertEqual(self.inj._btns_down, set())
+
 
 if __name__ == "__main__":
     unittest.main()
