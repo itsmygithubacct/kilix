@@ -44,6 +44,32 @@ read as a pass.
 
 Nothing here relaxes a guard, and no test here passes or fails differently
 inside and outside the namespace.
+
+*What else this pins, measured by planting each change.*  The guards differ
+from one another in four ways beyond the owner clause (B1-B4).  Only one of
+those differences is held by a test, and only B1 was changed here:
+
+* B1 -- ``agent_skills.directory`` never inspects the filesystem root, while
+  the profile walk does.  **Not pinned.**  Making the agent walk refuse a
+  foreign-owned or group/other-writable ``/`` leaves this module and every
+  other module that uses ``agent_skills`` passing, and the suite's failure
+  set inside ``unshare -c`` unchanged.  It used to be
+  pinned by accident: the real-kernel agent-root control accepted only
+  because the foreign ``/`` above it went unchecked.  That control now stands
+  on a caller-owned root after ``chroot``, as the profile control does.
+* B2 -- the agent walk tolerates a group-writable ancestor the caller owns,
+  while the profile walk refuses group-writable ancestors outright.
+  **Pinned**, deliberately, by
+  ``test_a_group_writable_ancestor_is_tolerated_for_the_caller_alone``, and
+  already before this module by two ``test_agent_skills`` tests
+  (``..._0775_brand_root_preserves_modes...`` and
+  ``..._accepts_ordinary_shared_unrelated_directories``).  Tightening B2 is
+  an owner decision and breaks those three assertions by design.
+* B3 -- the profile walk applies no write clause to the profile directory
+  itself.  **Not pinned**: adding one leaves every test here passing.
+* B4 -- the package read inspects the opened file only, no ancestor.
+  **Not tested**: there is no ancestor walk to tighten without new product
+  code.
 """
 import contextlib
 import ctypes
@@ -625,16 +651,25 @@ class RealForeignOwnerTests(unittest.TestCase):
 
     def test_the_agent_root_walk_refuses_a_really_foreign_ancestor(self):
         def body(sandbox):
-            verdicts = {}
-            for key, parent in (("below_a_foreign_ancestor", sandbox["under_foreign"]),
-                                ("below_no_foreign_ancestor", sandbox["beside_foreign"])):
-                target = os.path.join(parent, "skills")
+            def verdict(target):
                 os.mkdir(target, PRIVATE)
                 try:
                     with agent_skills.directory(target):
-                        verdicts[key] = "accepted"
+                        return "accepted"
                 except agent_skills.Conflict:
-                    verdicts[key] = "refused"
+                    return "refused"
+
+            verdicts = {"below_a_foreign_ancestor": verdict(
+                os.path.join(sandbox["under_foreign"], "skills"))}
+            # Every absolute path in this namespace has a foreign filesystem
+            # root above it. This walk does not inspect that root today
+            # (asymmetry B1), but the control must not depend on it, or a
+            # later decision to close B1 would break this test and invite
+            # reopening B1 to fix it. So, as for the profile walk, the
+            # control stands on a root of the caller's own.
+            os.chroot(sandbox["beside_foreign"])
+            os.chdir(os.sep)
+            verdicts["below_no_foreign_ancestor"] = verdict("/skills")
             return {"sandbox": sandbox, "verdicts": verdicts}
 
         result = in_a_namespace_of_our_own(body)
