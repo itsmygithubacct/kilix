@@ -41,8 +41,13 @@ even imported:
   display.  :func:`confirm_our_socket` sets ``DISPLAY`` again, and only to the
   number it has just proved is the private server.
 
-If any of that cannot be built the child refuses to run the tests at all,
-and the parent reports them as skipped.
+If any of that cannot be built the child refuses to run the tests at all.
+The parent then reports every test of the module as an **error** naming
+:class:`SandboxUnavailable`, not a skip: a module reaches the child only when
+its own skip conditions (Xvfb and friends) were satisfied, so an unbuildable
+sandbox means coverage that would otherwise have run has been lost.  Set
+``KILIX_X11_SANDBOX_OPTIONAL=1`` to turn that into skips, each reason starting
+``X11 SANDBOX UNAVAILABLE``; nothing in this repository sets it.
 
 Entering the namespaces needs no privilege, no setuid helper and no
 ``newuidmap``: ``unshare(2)`` with ``CLONE_NEWUSER`` gives the caller a full
@@ -91,6 +96,8 @@ import uuid
 SANDBOX_ENV = "KILIX_X11_SANDBOX"
 #: the network namespace the child was started in, recorded before leaving it
 OUTER_NETNS_ENV = "KILIX_X11_SANDBOX_OUTER_NETNS"
+#: explicit opt-out: an unbuildable sandbox skips instead of erroring
+OPTIONAL_ENV = "KILIX_X11_SANDBOX_OPTIONAL"
 #: never inherited by the child; DISPLAY is set again only to our own server
 SCRUBBED_ENV = ("DISPLAY", "XAUTHORITY")
 X11_DIR = "/tmp/.X11-unix"
@@ -102,7 +109,7 @@ _CLONE_NEWNET = 0x40000000
 _MS_REC = 0x4000
 _MS_PRIVATE = 1 << 18
 
-#: the child could not build the namespaces; the parent turns this into skips
+#: the child could not build the namespaces; the parent reports it loudly
 _UNAVAILABLE_EXIT = 78
 _CHILD_TIMEOUT = 900
 
@@ -498,8 +505,19 @@ def _module_results(module_name: str) -> dict:
             _RESULTS[module_name] = error
     results = _RESULTS[module_name]
     if isinstance(results, SandboxUnavailable):
-        raise unittest.SkipTest(
-            f"private X11 namespaces unavailable: {results}")
+        # This module's own skip conditions held (the proxy class would
+        # otherwise have carried a skip across and never got here), so these
+        # tests would have run.  Losing them silently is how a CI job stays
+        # green while its X coverage vanishes; say so, per test.
+        message = (
+            f"X11 SANDBOX UNAVAILABLE for {module_name}: the private "
+            f"user+mount+network namespaces could not be built, so this "
+            f"test was not run: {results}")
+        if os.environ.get(OPTIONAL_ENV) == "1":
+            raise unittest.SkipTest(f"{message} ({OPTIONAL_ENV}=1)")
+        raise SandboxUnavailable(
+            f"{message}. Allow unprivileged user namespaces on this host, "
+            f"or set {OPTIONAL_ENV}=1 to record these as skips instead")
     if isinstance(results, ChildProtocolError):
         raise results
     return results
