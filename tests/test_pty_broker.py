@@ -2,9 +2,14 @@ import importlib.util
 import os
 from pathlib import Path
 import stat
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _env_support import sandbox_env  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,6 +40,49 @@ class PtyBrokerIntegrationTests(unittest.TestCase):
         self.assertIn("kitty-pty-broker", builder)
         self.assertIn("third_party/kitty-pty-broker", builder)
         self.assertIn("BUILD_DIR=", builder)
+
+    def test_launcher_uses_short_per_user_runtime_for_long_login_names(self):
+        launcher = (ROOT / "kilix").read_text()
+        self.assertIn('"$runtime/kilix-pty-broker"', launcher)
+        self.assertIn('projected="$runtime/sessions/0123456789abcdef/control.sock"',
+                      launcher)
+        self.assertIn('[ "${#projected}" -ge 108 ]', launcher)
+        self.assertIn('runtime="$(_kilix_resolve_pty_broker_runtime)"', launcher)
+        self.assertNotIn(
+            '"$broker" --runtime-dir "$KILIX_SESSION_HOME/pty-broker"',
+            launcher)
+
+        username = "rc1biosuserabcdefghijklmnopqrstu"
+        old_runtime = (
+            f"/home/{username}/.local/gpu_terminal/kilix/session/pty-broker")
+        short_runtime = "/run/user/1000/kilix-pty-broker"
+        suffix = "/sessions/0123456789abcdef/control.sock"
+        self.assertGreaterEqual(len(old_runtime + suffix), 108)
+        self.assertLess(len(short_runtime + suffix), 108)
+
+        begin = launcher.index("_kilix_default_pty_broker_runtime()")
+        end = launcher.index("# Read the session-logging values", begin)
+        functions = launcher[begin:end]
+        with tempfile.TemporaryDirectory() as temporary:
+            runtime = Path(temporary) / "run"
+            runtime.mkdir(mode=0o700)
+            env = sandbox_env(
+                XDG_RUNTIME_DIR=str(runtime),
+                KILIX_SESSION_HOME=old_runtime)
+            resolved = subprocess.run(
+                ["bash", "-c", functions +
+                 "\n_kilix_resolve_pty_broker_runtime"],
+                env=env, text=True, capture_output=True, check=True)
+            self.assertEqual(
+                resolved.stdout.strip(), str(runtime / "kilix-pty-broker"))
+
+            env["KITTY_PTY_BROKER_RUNTIME"] = "relative/runtime"
+            rejected = subprocess.run(
+                ["bash", "-c", functions +
+                 "\n_kilix_resolve_pty_broker_runtime"],
+                env=env, text=True, capture_output=True)
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn("must be an absolute path", rejected.stderr)
 
     def test_fork_wraps_only_managed_windows(self):
         child = (ROOT / "src" / "kitty" / "child.py").read_text()
