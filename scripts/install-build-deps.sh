@@ -262,6 +262,60 @@ debian_jack_dev_package() {
   echo libjack-jackd2-dev
 }
 
+# Where machine-wide user-unit enablement lives. Assigned, never read from the
+# environment; the tests source this file and point it at a fixture root.
+SYSTEMD_USER_CONF=/etc/systemd/user
+
+# User units that a package this backend installs can enable for every login,
+# and that hold the default sound card, which dictation records from.
+#
+# fluidsynth.service: Kilix Amp links libfluidsynth and never runs the player,
+# but on Debian the only package with fluidsynth.pc is libfluidsynth-dev, and it
+# depends on `fluidsynth (= <same version>)`, the player. So leaving `fluidsynth`
+# out of the list does not keep the player off: it arrives anyway, and its
+# postinst enables fluidsynth.service machine-wide on first install.
+DEBIAN_AUDIO_HOLDOFF_UNITS="fluidsynth.service"
+
+# Every machine-wide enablement link of those units, one per line.
+debian_audio_enablements() {
+  local unit link
+  for unit in $DEBIAN_AUDIO_HOLDOFF_UNITS; do
+    for link in "$SYSTEMD_USER_CONF"/*.wants/"$unit" "$SYSTEMD_USER_CONF"/*.requires/"$unit"; do
+      if [ -L "$link" ]; then printf '%s\n' "$link"; fi
+    done
+  done
+}
+
+# Remove the enablement links this install created, and say so loudly. $1 is
+# debian_audio_enablements from before the install: any link in it existed
+# already, whoever made it, and is never touched. Only the machine-wide
+# directory is read, so a user's own `systemctl --user enable` is out of reach.
+# The package's record of the link is left in place, and Debian's postinst
+# re-enables a unit on upgrade only while every recorded link still exists.
+debian_audio_holdoff() {
+  local before="$1" link unit
+  while IFS= read -r link; do
+    [ -n "$link" ] || continue
+    if printf '%s\n' "$before" | grep -qxF -- "$link"; then continue; fi
+    unit="${link##*/}"
+    if ! sudo rm -f -- "$link"; then
+      log "WARNING: could not remove $link: $unit will start at every login"
+      log "and hold the default sound card; remove it with: sudo rm $link"
+      return 1
+    fi
+    log "=================================================================="
+    log "WARNING: the FluidSynth development package Kilix Amp builds against"
+    log "pulled in the fluidsynth player, whose package enabled $unit"
+    log "for every login ($link)."
+    log "That daemon holds the default sound card, which dictation records"
+    log "from. Kilix Amp never runs it, so this installer removed that link."
+    log "The player stays installed. To have the daemon anyway:"
+    log "    sudo systemctl --global enable $unit"
+    log "or, for one account only:  systemctl --user enable $unit"
+    log "=================================================================="
+  done < <(debian_audio_enablements)
+}
+
 debian_install() {
   local jack_dev; jack_dev="$(debian_jack_dev_package)"
   local pkgs="build-essential cmake pkg-config git curl zstd golang-go python3 python3-dev python3-pil python3-venv \
@@ -275,7 +329,9 @@ debian_install() {
   echo "==> Debian/Ubuntu detected — installing system-wide via apt-get"
   sudo apt-get update
   read -r -a packages <<<"$pkgs"
+  local audio_before; audio_before="$(debian_audio_enablements)"
   sudo apt-get install -y "${packages[@]}"
+  debian_audio_holdoff "$audio_before"
 }
 
 arch_install() {

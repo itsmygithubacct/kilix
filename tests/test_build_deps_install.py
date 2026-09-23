@@ -106,8 +106,10 @@ def summary(output):
 
 @unittest.skipUnless(APT_GET and APT_CACHE and DPKG_QUERY,
                      "needs apt-get, apt-cache and dpkg-query")
-class DebianInstallRemovesNothingTests(unittest.TestCase):
-    """The Debian backend, run for real against fixture roots, in simulation."""
+class _DebianBackendSimulation(unittest.TestCase):
+    """The Debian backend, run for real against fixture roots, in simulation.
+
+    Holds no tests of its own; the classes below share it."""
 
     @classmethod
     def setUpClass(cls):
@@ -123,7 +125,8 @@ class DebianInstallRemovesNothingTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def simulate(self, installed, *install_args):
+    def simulate(self, installed, *install_args, user_conf=None,
+                 after_install=""):
         """Run `debian_install` on a machine where only *installed* is present.
 
         `sudo` is replaced by a pass-through, `apt-get install` by apt's own
@@ -152,6 +155,7 @@ class DebianInstallRemovesNothingTests(unittest.TestCase):
                       -o Dir::State::extended_states={shlex.quote(str(extended))} \\
                       "$@" > {shlex.quote(str(record))} 2>&1
                     rc=$?
+                    {after_install}
                     cat {shlex.quote(str(record))}
                     exit $rc ;;
                 esac
@@ -178,18 +182,28 @@ class DebianInstallRemovesNothingTests(unittest.TestCase):
         env = sandbox_env(
             HOME=str(self.base / "home"),
             PATH=str(bindir) + os.pathsep + os.environ.get("PATH", ""),
-            LC_ALL="C.UTF-8", LANG="C.UTF-8")
+            LC_ALL="C.UTF-8", LANG="C.UTF-8",
+            **({"FIXTURE_USER_CONF": str(user_conf)} if user_conf else {}))
         result = subprocess.run(
-            ["bash", "-c", 'source "$1"; shift; debian_install "$@"', "_",
+            ["bash", "-c",
+             'source "$1"; shift; '
+             '[ -z "${FIXTURE_USER_CONF:-}" ] '
+             '|| SYSTEMD_USER_CONF=$FIXTURE_USER_CONF; '
+             'debian_install "$@"', "_",
              str(SCRIPT), *install_args],
             env=env, capture_output=True, text=True, timeout=600)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.script_output = result.stdout + result.stderr
         output = record.read_text()
         counts = summary(output)
         self.assertIsNotNone(counts, "apt printed no summary line:\n" + output)
         self.assertGreater(counts[1], 0,
                            "the simulation resolved nothing:\n" + output)
         return counts, output
+
+
+class DebianInstallRemovesNothingTests(_DebianBackendSimulation):
+    """Installing build dependencies never removes a working package."""
 
     def assert_removes_nothing(self, installed, *install_args):
         (upgraded, new, removed), output = self.simulate(installed,
@@ -206,6 +220,103 @@ class DebianInstallRemovesNothingTests(unittest.TestCase):
 
     def test_a_machine_without_jack_loses_nothing(self):
         self.assert_removes_nothing([])
+
+
+# What the fluidsynth package's postinst does, modelled from its own text on
+# Debian 13 (dh_installsystemduser): `deb-systemd-helper --user was-enabled`
+# is true when the package has no record yet or every recorded link exists,
+# and then `enable` links the unit into default.target.wants machine-wide and
+# records the link; otherwise it only updates the record. apt's simulation
+# decides WHETHER the player arrives, from the real archive; this models only
+# what its package does on arrival.
+_FLUIDSYNTH_POSTINST_MODEL = r"""
+record=$1 conf=$2 state=$3
+grep -q '^Inst fluidsynth ' "$record" || exit 0
+enabled=1
+if [ -f "$state/fluidsynth.service.dsh-also" ]; then
+  while IFS= read -r link; do [ -L "$link" ] || enabled=0; done \
+    < "$state/fluidsynth.service.dsh-also"
+fi
+[ "$enabled" = 1 ] || exit 0
+mkdir -p "$conf/default.target.wants" "$state"
+ln -sfn /usr/lib/systemd/user/fluidsynth.service \
+  "$conf/default.target.wants/fluidsynth.service"
+echo "$conf/default.target.wants/fluidsynth.service" \
+  > "$state/fluidsynth.service.dsh-also"
+"""
+
+PLAYER = "fluidsynth"
+PLAYER_UNIT = "fluidsynth.service"
+
+
+class DebianInstallLeavesTheSoundCardFreeTests(_DebianBackendSimulation):
+    """After the Debian backend runs, no user unit that it caused to be enabled
+    for every login holds the default sound card.
+
+    libfluidsynth-dev, the only package with fluidsynth.pc, depends on the
+    fluidsynth player, so the player arrives whatever the list says, and its
+    package enables fluidsynth.service machine-wide; that daemon holds the
+    default sound card that dictation records from. The backend may leave the
+    player installed; it must not leave it enabled when it was this install
+    that enabled it, and it must never touch an enablement that was already
+    there.
+    """
+
+    def run_install(self, installed, before=()):
+        conf = self.base / "etc-systemd-user"
+        state = self.base / "deb-systemd-user-helper-enabled"
+        for link in before:
+            # As the package leaves it: the link, and its record of the link.
+            path = conf / link
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.symlink_to(f"/usr/lib/systemd/user/{path.name}")
+            state.mkdir(exist_ok=True)
+            with open(state / f"{path.name}.dsh-also", "a") as recorded:
+                recorded.write(f"{path}\n")
+        model = self.base / "postinst-model.sh"
+        model.write_text(_FLUIDSYNTH_POSTINST_MODEL)
+        record = self.base / "apt-get.out"
+        _, output = self.simulate(
+            installed, user_conf=conf,
+            after_install=(f"sh {shlex.quote(str(model))} "
+                           f"{shlex.quote(str(record))} "
+                           f"{shlex.quote(str(conf))} "
+                           f"{shlex.quote(str(state))}"))
+        enabled = sorted(str(path.relative_to(conf))
+                         for pattern in ("*.wants/*", "*.requires/*")
+                         for path in conf.glob(pattern) if path.is_symlink())
+        return output, enabled, state
+
+    def test_a_player_this_install_brought_in_is_not_left_enabled(self):
+        # A per-account enablement is the user's own choice, made where this
+        # backend never looks; it must survive.
+        own = (self.base / "home" / ".config" / "systemd" / "user" /
+               "default.target.wants" / PLAYER_UNIT)
+        own.parent.mkdir(parents=True)
+        own.symlink_to(f"/usr/lib/systemd/user/{PLAYER_UNIT}")
+
+        output, enabled, state = self.run_install([])
+        if not re.search(rf"^Inst {PLAYER} ", output, re.M):
+            self.skipTest("this archive's closure does not bring in the "
+                          "player, so there is nothing to hold off")
+        # The model fired: the player's package did enable its unit, so an
+        # empty result below is the backend's doing, not the fixture's.
+        self.assertTrue((state / f"{PLAYER_UNIT}.dsh-also").is_file())
+        self.assertEqual(enabled, [], self.script_output)
+        self.assertIn("holds the default sound card", self.script_output)
+        self.assertIn(f"systemctl --global enable {PLAYER_UNIT}",
+                      self.script_output)
+        self.assertTrue(own.is_symlink(), "a per-account enablement was touched")
+
+    def test_an_enablement_that_was_already_there_is_left_alone(self):
+        # The player installed and enabled before Kilix ran. (apt may still
+        # reconfigure it here, because the fixture's stanza carries no
+        # Depends; the modelled postinst then re-links over the same link,
+        # which is what the real one does.)
+        already = f"default.target.wants/{PLAYER_UNIT}"
+        _, enabled, _ = self.run_install([PLAYER], before=[already])
+        self.assertEqual(enabled, [already])
+        self.assertNotIn("holds the default sound card", self.script_output)
 
 
 class VerifyReportsWhatTheBuildNeedsTests(unittest.TestCase):

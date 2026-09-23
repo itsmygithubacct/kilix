@@ -682,7 +682,14 @@ explicitly confirmed termination action.
   FluidSynth packages, so the desktop Media Player can build and play MIDI.
   The fork build links none of them, so `--verify` reports them as the Media
   Player's and does not fail without them; the desktop builds kilix-amp on
-  first use and needs them then.
+  first use and needs them then. Kilix Amp needs only the FluidSynth library
+  and a SoundFont, but on Debian the package with FluidSynth's development
+  files depends on the `fluidsynth` player, so the player is installed too,
+  and its package enables a daemon for every login that holds the default
+  sound card, which dictation records from. When it was this installer's run
+  that enabled it, the installer removes that enablement and says so; the
+  player stays installed, and an enablement that was already there is left
+  alone.
 - **For read aloud:** `espeak-ng` plus `pacat`, `paplay`, or `aplay`. **For
   dictation:** x86_64, `parec` or `arecord`, and the pinned local Vosk closure
   installed by `kilix voice install`. Run `kilix voice doctor` to see the exact
