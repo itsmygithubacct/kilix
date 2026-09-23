@@ -27,6 +27,25 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def setup_that_writes_launchers(kitty: str,
+                                kitten: str = "#!/bin/sh\nexit 0\n") -> str:
+    """A stand-in `setup.py` that produces the two launchers a build must yield.
+
+    The bodies are parameters because what promotion asks a launcher, and how
+    the launcher answers, is the subject of more than one test here.
+    """
+    return (
+        "from pathlib import Path\n"
+        "p = Path('kitty/launcher/kitty')\n"
+        "p.parent.mkdir(parents=True, exist_ok=True)\n"
+        f"p.write_text({kitty!r})\n"
+        "p.chmod(0o755)\n"
+        "k = p.with_name('kitten')\n"
+        f"k.write_text({kitten!r})\n"
+        "k.chmod(0o755)\n"
+    )
+
+
 class BuildPreparationTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -76,16 +95,22 @@ class BuildPreparationTests(unittest.TestCase):
             f'exec {shlex.quote(sys.executable)} "$@"\n')
         self.build_python.chmod(0o755)
 
+        # The default fixture is system mode, stopping after preparation: the
+        # font, its notices, the storage layout, the transaction lock and
+        # generation collection all run there, on either architecture. The
+        # x86_64 dependency bundle is opt-in (`bundle_env`): build.sh refuses
+        # it on ARM64 before any of those subjects is reached, so tests of the
+        # lock or the collector that inherited it were red by 14 on real
+        # aarch64 hardware for no reason of their own.
+        #
         # GOMAXPROCS is not part of the stack family, so it is dropped
         # explicitly rather than by prefix.
         self.env = sandbox_env(**{
             "HOME": str(self.base / "home"),
             "KILIX_STORAGE_HOME": str(self.base / "storage"),
-            "KILIX_BUILD_MODE": "bundle",
+            "KILIX_BUILD_MODE": "system",
             "KILIX_PYTHON": str(self.build_python),
             "KILIX_BUILD_PREPARE_ONLY": "1",
-            "KILIX_KITTY_DEPS_URL": self.deps.as_uri(),
-            "KILIX_KITTY_DEPS_SHA256": sha256(self.deps),
             "KILIX_NERD_FONT_URL": self.font.as_uri(),
             "KILIX_NERD_FONT_SHA256": sha256(self.font),
             "KILIX_NERD_FONT_FILE_SHA256": hashlib.sha256(
@@ -115,7 +140,7 @@ class BuildPreparationTests(unittest.TestCase):
             capture_output=True, text=True).stdout.strip()
 
     def test_bundle_is_relocated_and_fontconfig_removed(self):
-        result = self.run_build()
+        result = self.run_build(self.bundle_env())
         self.assertEqual(result.returncode, 0, result.stderr)
         root = (self.base / "storage" / "build" / "prepared" / "src" /
                 "dependencies" / "linux-amd64")
@@ -144,7 +169,8 @@ class BuildPreparationTests(unittest.TestCase):
         self.assertEqual(list(self.src.rglob("*.so")), [])
 
     def test_corrupt_cache_and_extracted_font_self_heal(self):
-        self.assertEqual(self.run_build().returncode, 0)
+        env = self.bundle_env()
+        self.assertEqual(self.run_build(env).returncode, 0)
         cached = (self.base / "storage" / "cache" / "build" /
                   f"kitty-dependencies-{sha256(self.deps)}.tar.xz")
         cached.write_bytes(b"corrupt")
@@ -157,7 +183,7 @@ class BuildPreparationTests(unittest.TestCase):
         installed_font.write_bytes(b"partial")
         installed_license.write_bytes(b"stale")
         installed_provenance.write_bytes(b"stale")
-        result = self.run_build()
+        result = self.run_build(env)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(sha256(cached), sha256(self.deps))
         self.assertEqual(installed_font.read_bytes(), self.font_bytes)
@@ -258,14 +284,14 @@ class BuildPreparationTests(unittest.TestCase):
             (self.base / "storage" / "build" / "current").exists())
 
     def test_mutable_ci_bundle_url_is_rejected(self):
-        env = dict(self.env)
+        env = self.bundle_env()
         env["KILIX_KITTY_DEPS_URL"] = (
             "https://download.calibre-ebook.com/ci/kitty/linux-64.tar.xz")
         result = self.run_build(env)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("refusing mutable kitty CI", result.stderr)
 
-    def _machine_env(self, machine):
+    def _machine_env(self, machine, env=None):
         bindir = self.base / "bin"
         bindir.mkdir(exist_ok=True)
         uname = bindir / "uname"
@@ -273,19 +299,41 @@ class BuildPreparationTests(unittest.TestCase):
             "#!/bin/sh\ncase \"$1\" in -s) echo Linux;; -m) echo "
             + machine + ";; esac\n")
         uname.chmod(0o755)
-        env = dict(self.env)
+        env = dict(self.env if env is None else env)
         env["PATH"] = str(bindir) + os.pathsep + env["PATH"]
         return env
 
+    def bundle_env(self, machine="x86_64"):
+        """Bundle mode, with the machine it runs on pinned, not inherited.
+
+        The pinned kitty dependency bundle is an x86_64 tree by construction
+        and build.sh refuses it on ARM64, so a test whose subject *is* the
+        bundle states the architecture that makes it meaningful -- the way
+        the ARM64 refusal test below states the other one.
+
+        What the pin does not do, and must not be read as doing: the fixture
+        bundle carries no real x86_64 payload (a shell script stands in for
+        its Python), so these tests exercise relocation, caching and URL
+        policy, and would notice no genuine architecture mismatch inside a
+        bundle on either architecture.
+        """
+        env = dict(self.env)
+        env.update({
+            "KILIX_BUILD_MODE": "bundle",
+            "KILIX_KITTY_DEPS_URL": self.deps.as_uri(),
+            "KILIX_KITTY_DEPS_SHA256": sha256(self.deps),
+        })
+        return self._machine_env(machine, env)
+
     def test_unsupported_arch_fails_before_download(self):
-        result = self.run_build(self._machine_env("riscv64"))
+        result = self.run_build(self.bundle_env("riscv64"))
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("support Linux x86_64 and ARM64", result.stderr)
 
     def test_arm64_bundle_mode_is_refused_before_download(self):
         # The pinned kitty dependency bundle is an x86_64 tree; ARM64 builds
         # link against the system's development packages instead.
-        result = self.run_build(self._machine_env("aarch64"))
+        result = self.run_build(self.bundle_env("aarch64"))
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertIn("KILIX_BUILD_MODE=system", result.stderr)
         self.assertEqual(
@@ -336,7 +384,15 @@ class BuildPreparationTests(unittest.TestCase):
                 env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=True,
             )
-            time.sleep(0.2)
+            # Long enough that an unserialised build would have finished --
+            # it takes well under a second here -- while the held lock keeps a
+            # serialised one waiting indefinitely. The 0.2 s this replaced was
+            # shorter than the build itself, so a build.sh that never took the
+            # lock still passed: measured, with `flock -x` removed.
+            try:
+                blocked.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
             self.assertIsNone(blocked.poll(), "second build bypassed the lock")
             fcntl.flock(lock_fd, fcntl.LOCK_UN)
             _, blocked_stderr = blocked.communicate(timeout=20)
@@ -389,11 +445,7 @@ class BuildPreparationTests(unittest.TestCase):
             "k = p.with_name('kitten')\n"
             "k.write_text('#!/bin/sh\\nexit 0\\n')\n"
             "k.chmod(0o755)\n")
-        env = dict(self.env)
-        env["KILIX_BUILD_MODE"] = "system"
-        env.pop("KILIX_BUILD_PREPARE_ONLY")
-        env.pop("KILIX_KITTY_DEPS_URL")
-        env.pop("KILIX_KITTY_DEPS_SHA256")
+        env = self._system_env()
         result = self.run_build(env)
         self.assertEqual(result.returncode, 0, result.stderr)
         current = self.base / "storage" / "build" / "current"
@@ -419,11 +471,7 @@ class BuildPreparationTests(unittest.TestCase):
             "k = p.with_name('kitten')\n"
             "k.write_text('#!/bin/sh\\nexit 0\\n')\n"
             "k.chmod(0o755)\n")
-        env = dict(self.env)
-        env["KILIX_BUILD_MODE"] = "system"
-        env.pop("KILIX_BUILD_PREPARE_ONLY")
-        env.pop("KILIX_KITTY_DEPS_URL")
-        env.pop("KILIX_KITTY_DEPS_SHA256")
+        env = self._system_env()
 
         build = self.base / "storage" / "build"
         generations = build / "generations"
@@ -558,12 +606,8 @@ class BuildPreparationTests(unittest.TestCase):
         old_python = self.base / "python3.11"
         old_python.write_text("#!/bin/sh\necho 3.11.0\n")
         old_python.chmod(0o755)
-        env = dict(self.env)
-        env["KILIX_BUILD_MODE"] = "system"
+        env = self._system_env()
         env["KILIX_PYTHON"] = str(old_python)
-        env.pop("KILIX_BUILD_PREPARE_ONLY")
-        env.pop("KILIX_KITTY_DEPS_URL")
-        env.pop("KILIX_KITTY_DEPS_SHA256")
         result = self.run_build(env)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("requires Python >= 3.12", result.stderr)
@@ -587,11 +631,7 @@ class BuildPreparationTests(unittest.TestCase):
             "k.write_text('#!/bin/sh\\nexit 0\\n')\n"
             "k.chmod(0o755)\n")
         head = self.init_src_git()
-        env = dict(self.env)
-        env["KILIX_BUILD_MODE"] = "system"
-        env.pop("KILIX_BUILD_PREPARE_ONLY")
-        env.pop("KILIX_KITTY_DEPS_URL")
-        env.pop("KILIX_KITTY_DEPS_SHA256")
+        env = self._system_env()
         result = self.run_build(env)
         self.assertEqual(result.returncode, 0, result.stderr)
         source_id = (self.base / "storage" / "build" / "current" /
@@ -606,22 +646,35 @@ class BuildPreparationTests(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(info.st_mode), 0o600)
         self.assertEqual(info.st_nlink, 1)
 
-    _WORKING_SETUP = (
-        "from pathlib import Path\n"
-        "p = Path('kitty/launcher/kitty')\n"
-        "p.parent.mkdir(parents=True, exist_ok=True)\n"
-        "p.write_text('#!/bin/sh\\nexit 0\\n')\n"
-        "p.chmod(0o755)\n"
-        "k = p.with_name('kitten')\n"
-        "k.write_text('#!/bin/sh\\nexit 0\\n')\n"
-        "k.chmod(0o755)\n")
+    # Every probe the launcher is asked is appended to `<generation>/probe-log`,
+    # which promotion carries into `current`. A launcher that answers
+    # everything with rc 0 cannot tell a test whether the gate it is meant to
+    # exercise ran at all, so this one keeps the receipt.
+    _RECORD_PROBE = (
+        'printf "%s\\n" "$*" >> "$(dirname "$0")/../../../probe-log"\n')
+
+    # What a healthy generation does: the launcher answers `--version` itself,
+    # and `+runpy` runs code under the engine's embedded Python.
+    _HEALTHY_KITTY = "#!/bin/sh\n" + _RECORD_PROBE + "exit 0\n"
+
+    # What the ARM64 board produced: `--version` answered by the launcher with
+    # rc 0, and anything that loads the compiled extension dying on an
+    # unresolved symbol. This generation could not start, and the pre-fix gate
+    # promoted it and reported it as built.
+    _BROKEN_EXTENSION_KITTY = (
+        "#!/bin/sh\n"
+        + _RECORD_PROBE
+        + 'case "$1" in --version) echo "kitty 0.0.0"; exit 0;; esac\n'
+        "echo 'ImportError: kitty/fast_data_types.so: undefined symbol:"
+        " eglCreateImage' >&2\n"
+        "exit 1\n")
+
+    _WORKING_SETUP = setup_that_writes_launchers(_HEALTHY_KITTY)
 
     def _system_env(self):
+        """System mode, carried through to a promoted generation."""
         env = dict(self.env)
-        env["KILIX_BUILD_MODE"] = "system"
         env.pop("KILIX_BUILD_PREPARE_ONLY")
-        env.pop("KILIX_KITTY_DEPS_URL")
-        env.pop("KILIX_KITTY_DEPS_SHA256")
         return env
 
     def test_promotion_installs_the_engines_compiled_terminfo(self):
@@ -684,6 +737,155 @@ class BuildPreparationTests(unittest.TestCase):
         self.assertFalse(
             (self.base / "storage" / "build" / "current").exists())
 
+    def test_a_generation_that_cannot_load_its_extension_is_not_promoted(self):
+        # The defect this guards was found by building on real ARM64 hardware.
+        # `--version` is answered by the launcher itself and never loads the
+        # compiled extension, so the generation below -- whose extension dies
+        # on an unresolved `eglCreateImage` -- passed the version probe, was
+        # promoted to `current`, and was reported as `kilix: built -> ...`.
+        # The first thing the user saw was an ImportError. Nothing about that
+        # is architecture-specific: the same launcher passes the same probe on
+        # x86_64.
+        (self.src / "setup.py").write_text(
+            setup_that_writes_launchers(self._BROKEN_EXTENSION_KITTY))
+
+        result = self.run_build(self._system_env())
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("cannot load its compiled extension", result.stderr)
+        self.assertFalse(
+            (self.base / "storage" / "build" / "current").exists())
+
+    def test_promotion_asks_the_launcher_to_load_the_extension(self):
+        # The other direction, so the refusal above cannot be satisfied by a
+        # gate that refuses everything: a healthy generation is promoted, and
+        # the launcher's own receipt says which probes promotion ran. Asserting
+        # the probe was *asked* is what stops the check being quietly removed
+        # while every other test still passes.
+        (self.src / "setup.py").write_text(self._WORKING_SETUP)
+
+        result = self.run_build(self._system_env())
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        probes = (self.base / "storage" / "build" / "current" /
+                  "probe-log").read_text().splitlines()
+        self.assertIn("--version", probes)
+        extension = [line for line in probes if line.startswith("+runpy ")]
+        self.assertEqual(len(extension), 1, probes)
+        self.assertIn("import kitty.fast_data_types", extension[0])
+
+    def test_the_extension_probe_does_not_inherit_the_builds_library_path(self):
+        # The build adds the selected interpreter's library directory to
+        # LD_LIBRARY_PATH so freshly linked binaries run during code
+        # generation, and records the same directory in the binaries' RUNPATH
+        # for afterwards. On the ARM64 board that build-time addition was
+        # itself the difference between the extension loading and not loading,
+        # so a probe that inherited it would have reported success on a
+        # generation that fails for everyone else. The extension probe has to
+        # see what the user will have.
+        inherited = self.base / "ld-inherited"
+        inherited.mkdir()
+        build_only = self.base / "ld-build-only"
+        build_only.mkdir()
+        # A build Python whose LIBDIR is a directory this test owns, so the
+        # addition the build makes is a known value rather than whatever
+        # interpreter the runner happens to have.
+        python = self.base / "python3.12-with-libdir"
+        python.write_text(
+            "#!/bin/sh\n"
+            "case \"${1:-}:${2:-}\" in\n"
+            "  *sys.version_info*) echo 3.12.0; exit 0;;\n"
+            f"  *LIBDIR*) echo {build_only}; exit 0;;\n"
+            "esac\n"
+            f'exec {shlex.quote(sys.executable)} "$@"\n')
+        python.chmod(0o755)
+        recording_kitty = (
+            "#!/bin/sh\n"
+            'printf "%s\\t%s\\n" "$*" "${LD_LIBRARY_PATH-<unset>}"'
+            ' >> "$(dirname "$0")/../../../ld-seen"\n'
+            "exit 0\n")
+        (self.src / "setup.py").write_text(
+            setup_that_writes_launchers(recording_kitty))
+        env = self._system_env()
+        env["KILIX_PYTHON"] = str(python)
+
+        def probed_paths(caller_value):
+            env.pop("LD_LIBRARY_PATH", None)
+            if caller_value is not None:
+                env["LD_LIBRARY_PATH"] = caller_value
+            result = self.run_build(env)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            seen = dict(
+                line.split("\t", 1) for line in
+                (self.base / "storage" / "build" / "current" /
+                 "ld-seen").read_text().splitlines())
+            version, = [k for k in seen if k == "--version"]
+            extension, = [k for k in seen if k.startswith("+runpy ")]
+            return seen[version], seen[extension]
+
+        # The board this was found on had no LD_LIBRARY_PATH of its own, so the
+        # build's addition was the whole value -- and was enough to make an
+        # extension load that does not load for the user.
+        during_build, at_promotion = probed_paths(None)
+        self.assertEqual(during_build, str(build_only))
+        self.assertEqual(at_promotion, "<unset>")
+
+        # And when the caller does have one, the probe gets that one back,
+        # not that one plus the build's addition.
+        during_build, at_promotion = probed_paths(str(inherited))
+        self.assertEqual(during_build,
+                         f"{build_only}{os.pathsep}{inherited}")
+        self.assertEqual(at_promotion, str(inherited))
+
+    def test_the_build_and_the_installer_choose_the_same_interpreter(self):
+        # The installer verifies one interpreter and the build compiles with
+        # whatever select_system_python picks; if those differ, `--verify` can
+        # say OK about a build that cannot start. The machine this was found
+        # on had a newer interpreter with no headers beside the distro default
+        # with them, so that is the fixture, and both sides must choose the
+        # one the fork can be compiled against.
+        fixture = self.base / "interpreters"
+        fixture.mkdir()
+        ran_setup = self.base / "setup-ran-under"
+
+        def interpreter(name, version, headers):
+            include = self.base / f"include-{name}"
+            include.mkdir()
+            if headers:
+                (include / "Python.h").write_text("/* fixture */\n")
+            path = fixture / name
+            path.write_text(
+                "#!/bin/sh\n"
+                'case "${1:-}:${2:-}" in\n'
+                f"  *sys.version_info*) echo {version}; exit 0;;\n"
+                f"  *get_paths*) echo {shlex.quote(str(include))}; exit 0;;\n"
+                "esac\n"
+                '[ "${1:-}" = setup.py ] && echo "$0" >> '
+                f"{shlex.quote(str(ran_setup))}\n"
+                f'exec {shlex.quote(sys.executable)} "$@"\n')
+            path.chmod(0o755)
+            return path
+
+        interpreter("python3.14", "3.14.0", headers=False)
+        buildable = interpreter("python3.13", "3.13.5", headers=True)
+        (self.src / "setup.py").write_text(self._WORKING_SETUP)
+        env = self._system_env()
+        env.pop("KILIX_PYTHON")
+        env["PATH"] = str(fixture) + os.pathsep + env["PATH"]
+
+        result = self.run_build(env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(ran_setup.read_text().splitlines(), [str(buildable)])
+
+        # The installer's own report, not its exit status: verify() also
+        # checks pkg-config modules a test runner need not have.
+        verify = subprocess.run(
+            [str(ROOT / "scripts" / "install-build-deps.sh"), "--verify"],
+            env=env, capture_output=True, text=True, timeout=120)
+        reported, = [line for line in verify.stdout.splitlines()
+                     if line.startswith("   build Python: ")]
+        self.assertEqual(reported, f"   build Python: 3.13.5 ({buildable})")
+
     def test_missing_kitten_is_rejected_before_promotion(self):
         (self.src / "setup.py").write_text(
             "from pathlib import Path\n"
@@ -691,11 +893,7 @@ class BuildPreparationTests(unittest.TestCase):
             "p.parent.mkdir(parents=True, exist_ok=True)\n"
             "p.write_text('#!/bin/sh\\nexit 0\\n')\n"
             "p.chmod(0o755)\n")
-        env = dict(self.env)
-        env["KILIX_BUILD_MODE"] = "system"
-        env.pop("KILIX_BUILD_PREPARE_ONLY")
-        env.pop("KILIX_KITTY_DEPS_URL")
-        env.pop("KILIX_KITTY_DEPS_SHA256")
+        env = self._system_env()
         result = self.run_build(env)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("launcher is missing or unsafe", result.stderr)
@@ -744,12 +942,8 @@ class BuildPreparationTests(unittest.TestCase):
             "case \"$*\" in *fork-built-ref*) exit 31;; esac\n"
             f"exec {shlex.quote(real_mv)} \"$@\"\n")
         mv.chmod(0o755)
-        env = dict(self.env)
-        env["KILIX_BUILD_MODE"] = "system"
+        env = self._system_env()
         env["PATH"] = str(bindir) + os.pathsep + env["PATH"]
-        env.pop("KILIX_BUILD_PREPARE_ONLY")
-        env.pop("KILIX_KITTY_DEPS_URL")
-        env.pop("KILIX_KITTY_DEPS_SHA256")
         result = self.run_build(env)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(

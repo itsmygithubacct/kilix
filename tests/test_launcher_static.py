@@ -741,8 +741,17 @@ class KilixLauncherTests(unittest.TestCase):
         text = (ROOT / "scripts" / "install-build-deps.sh").read_text()
         for package in ("libsimde-dev", "libwayland-dev", "wayland-protocols"):
             self.assertIn(package, text)
-        self.assertIn("wayland-client wayland-cursor wayland-egl wayland-protocols",
-                      text)
+        # The modules verify() requires, read from the variable it iterates
+        # rather than from the file's layout.
+        with tempfile.TemporaryDirectory() as home:
+            required = subprocess.run(
+                ["bash", "-c", 'source "$1"; printf "%s\\n" $PC_DEPS', "_",
+                 str(ROOT / "scripts" / "install-build-deps.sh")],
+                env=sandbox_env(HOME=home, KILIX_STORAGE_HOME=home + "/kilix"),
+                capture_output=True, text=True, check=True).stdout.split()
+        for module in ("wayland-client", "wayland-cursor", "wayland-egl",
+                       "wayland-protocols"):
+            self.assertIn(module, required)
         self.assertIn("#include <simde/x86/avx2.h>", text)
         self.assertIn("KILIX_PYTHON", text)
         self.assertIn("need >= 3.12", text)

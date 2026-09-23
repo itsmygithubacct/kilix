@@ -427,26 +427,44 @@ case "$mode" in
   *) echo "kilix: invalid KILIX_BUILD_MODE=$mode (use system or bundle)" >&2; exit 2 ;;
 esac
 
+# Two passes over one ordered list: first only an interpreter whose Python.h is
+# present (the first compilation unit includes it), then any. The newest
+# interpreter on a machine is often not the one whose -dev package is
+# installed, and choosing it anyway fails fifteen seconds into the build.
+# scripts/install-build-deps.sh's build_python makes the same choice by the same
+# rule; tests/test_build_behavior.py requires the two to agree.
+python_has_headers() {
+  local include
+  include="$("$1" -c 'import sysconfig; print(sysconfig.get_paths()["include"])' 2>/dev/null || true)"
+  [ -n "$include" ] && [ -f "$include/Python.h" ]
+}
+
 select_system_python() {
-  local candidate version
+  local candidate version pass
   local -a candidates
   if [ -n "${KILIX_PYTHON:-}" ]; then
     candidates=("$KILIX_PYTHON")
   else
     candidates=(python3.14 python3.13 python3.12 python3)
   fi
-  for candidate in "${candidates[@]}"; do
-    if [[ "$candidate" == */* ]]; then
-      [ -x "$candidate" ] || continue
-    else
-      candidate="$(command -v "$candidate" 2>/dev/null || true)"
-      [ -n "$candidate" ] || continue
-    fi
-    version="$("$candidate" -c 'import sys; print(".".join(map(str, sys.version_info[:3])))' 2>/dev/null || true)"
-    if [ -n "$version" ] && [ "$(printf '%s\n%s\n' "$version" 3.12 | sort -V | head -1)" = 3.12 ]; then
+  for pass in headers any; do
+    for candidate in "${candidates[@]}"; do
+      if [[ "$candidate" == */* ]]; then
+        [ -x "$candidate" ] || continue
+      else
+        candidate="$(command -v "$candidate" 2>/dev/null || true)"
+        [ -n "$candidate" ] || continue
+      fi
+      version="$("$candidate" -c 'import sys; print(".".join(map(str, sys.version_info[:3])))' 2>/dev/null || true)"
+      [ -n "$version" ] \
+        && [ "$(printf '%s\n%s\n' "$version" 3.12 | sort -V | head -1)" = 3.12 ] \
+        || continue
+      [ "$pass" = any ] || python_has_headers "$candidate" || continue
+      [ "$pass" = headers ] \
+        || echo "kilix: WARNING: $candidate has no Python.h; the build will fail unless its -dev package is installed" >&2
       printf '%s\n' "$candidate"
       return 0
-    fi
+    done
   done
   echo "kilix: current kitty source requires Python >= 3.12 to build" >&2
   echo "kilix: install a newer Python or set KILIX_PYTHON=/path/to/python3.12+" >&2
@@ -777,6 +795,18 @@ if [ "${KILIX_BUILD_PREPARE_ONLY:-0}" = 1 ]; then
   exit 0
 fi
 
+# Remember the dynamic linker's search path as it stands before the build adds
+# to it. The promotion probe below has to see the environment the *user* will
+# start the engine in, not the one the build gave itself: a generation whose
+# extension loads only because of this build's own LD_LIBRARY_PATH is a
+# generation that does not start.
+_probe_ld_library_path_set=0
+_probe_ld_library_path=""
+if [ -n "${LD_LIBRARY_PATH+x}" ]; then
+  _probe_ld_library_path_set=1
+  _probe_ld_library_path="$LD_LIBRARY_PATH"
+fi
+
 cd "$BUILD_SRC"
 echo "kilix: building forked kitty in $BUILD_SRC ($mode dependencies, $GOMAXPROCS Go package job(s)) ..."
 if [ "$mode" = bundle ]; then
@@ -799,6 +829,35 @@ probe_launcher() {
   timeout --kill-after=2 15 "$1" --version >/dev/null 2>&1
 }
 
+# `--version` is answered by the launcher itself and never loads the engine's
+# compiled extension, so it is answered with rc 0 by a generation that cannot
+# start at all. That is not a hypothesis: on an ARM64 board whose vendor EGL
+# library defines neither `eglCreateImage` nor `eglCreateImageKHR`, a build
+# whose `kitty/fast_data_types.so` could not resolve that symbol answered
+# `--version` with rc 0, was promoted to `current`, and was reported as
+# `kilix: built -> ...`; the first thing the user then saw was an ImportError
+# naming a symbol. A gate that passes when the build is broken is not a gate,
+# and nothing about that is architecture-specific.
+#
+# So promotion also has to exercise something that cannot be answered without
+# the extension loaded. `+runpy` runs the given code under the engine's own
+# embedded Python, which is how a real start reaches the extension.
+#
+# It runs with this build's own additions to LD_LIBRARY_PATH removed. Those
+# additions are not present when the user starts the engine -- the launcher and
+# the extension carry the same directory in their RUNPATH instead -- and on
+# that board the build-time LD_LIBRARY_PATH was itself enough to make the
+# extension load, so a probe inheriting it could report success on a generation
+# that fails for everyone else.
+probe_engine_extension() {
+  local -a runner=(env -u LD_LIBRARY_PATH)
+  [ "$_probe_ld_library_path_set" = 0 ] \
+    || runner=(env "LD_LIBRARY_PATH=$_probe_ld_library_path")
+  "${runner[@]}" timeout --kill-after=2 60 "$1" +runpy \
+    'import kitty.fast_data_types as fdt; raise SystemExit(0 if fdt.wcswidth("a") > 0 else 1)' \
+    >/dev/null 2>&1
+}
+
 launcher="$BUILD_SRC/kitty/launcher/kitty"
 kitten="$BUILD_SRC/kitty/launcher/kitten"
 for built_launcher in "$launcher" "$kitten"; do
@@ -812,6 +871,13 @@ for built_launcher in "$launcher" "$kitten"; do
     exit 1
   fi
 done
+if ! probe_engine_extension "$launcher"; then
+  echo "kilix: the built engine cannot load its compiled extension; not promoting this build" >&2
+  echo "kilix: reproduce with: $launcher +runpy 'import kitty.fast_data_types'" >&2
+  echo "kilix: on ARM64 boards with a vendor GL driver this is usually a libEGL" >&2
+  echo "kilix: ahead of libglvnd in /etc/ld.so.conf.d that defines no eglCreateImage" >&2
+  exit 1
+fi
 assert_font_notices_installed
 
 assert_display_backends_built() {

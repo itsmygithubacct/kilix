@@ -674,12 +674,37 @@ explicitly confirmed termination action.
   ships 1.25), it configures the exact `toolchain` version from `go.mod` so Go
   can fetch that checksum-verified toolchain on demand. `build.sh` forces that
   exact version even if the host has a newer Go — no open-ended latest lookup
-  and no manual Go install. Current kitty source also uses Python 3.12 syntax;
-  `build.sh` selects `python3.14`, `python3.13`, or `python3.12` in that order.
+  and no manual Go install. Current kitty source also uses Python 3.12 syntax:
+  of `python3.14`, `python3.13`, `python3.12` and `python3`, `build.sh` takes
+  the first that is 3.12 or newer and has its `Python.h`, and only when none
+  has the headers the first that is new enough, with a warning. `--verify`
+  reports the same interpreter and fails when its headers are missing.
   Set `KILIX_PYTHON=/path/to/python3.12+` when the desired interpreter is not
   on `PATH`.
 - The same dependency installer also includes kilix-amp's SDL/libsndfile/
   FluidSynth packages, so the desktop Media Player can build and play MIDI.
+  The fork build links none of them, so `--verify` reports them as the Media
+  Player's and does not fail without them; the desktop builds kilix-amp on
+  first use and needs them then. Kilix Amp needs only the FluidSynth library
+  and a SoundFont, but on Debian the package with FluidSynth's development
+  files depends on the `fluidsynth` player, so the player is installed too,
+  and its package enables a daemon for every login that holds the default
+  sound card, which dictation records from. When that enablement appeared
+  during this installer's own apt run, the installer removes it, says so,
+  and records it in `/var/lib/kilix/audio-holdoff.log` (time, link, and
+  why); the player stays installed. That includes the case where the run
+  completed an install of the player that you had started and left
+  unfinished, since apt finishes those whatever it is asked for; the
+  warning then says so, and how to re-enable the daemon. It holds even when
+  apt fails part-way or the installer is killed, because the next run
+  finishes the check against what the interrupted one recorded. An
+  enablement that was already there is left alone. One consequence: a
+  player you removed without purging leaves its enablement behind, and
+  when this installer brings the player back, the daemon starts at every
+  login again. The installer warns when that happens; turn it off with
+  `sudo systemctl --global disable fluidsynth.service`. This hold-off runs
+  on every host with apt, Debian, Ubuntu and Plebian OS alike: there is no
+  host detection.
 - **For read aloud:** `espeak-ng` plus `pacat`, `paplay`, or `aplay`. **For
   dictation:** x86_64, `parec` or `arecord`, and the pinned local Vosk closure
   installed by `kilix voice install`. Run `kilix voice doctor` to see the exact
