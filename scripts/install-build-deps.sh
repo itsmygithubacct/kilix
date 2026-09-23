@@ -21,6 +21,12 @@
 # exact toolchain named by go.mod (and verifies it through Go's module checksum
 # mechanism) rather than resolving an open-ended "latest" toolchain.
 #
+# FluidSynth hold-off: on every host with apt -- Debian, Ubuntu and Plebian OS
+# alike, with no host detection -- the Debian backend removes the machine-wide
+# login enablement of the fluidsynth player's daemon when it appeared during
+# this installer's own apt run, warns, and records what it removed in
+# /var/lib/kilix/audio-holdoff.log (see debian_audio_holdoff).
+#
 # Usage:  scripts/install-build-deps.sh            # install
 #         scripts/install-build-deps.sh --verify   # re-check + print status
 set -euo pipefail
@@ -279,6 +285,22 @@ debian_jack_dev_package() {
 # environment; the tests source this file and point it at a fixture root.
 SYSTEMD_USER_CONF=/etc/systemd/user
 
+# Where this installer keeps its own record of the FluidSynth hold-off below.
+# Assigned, never read from the environment, like SYSTEMD_USER_CONF.
+#   audio-holdoff.log      appended, one tab-separated line per action: the
+#                          UTC time, `removed` or `left`, the link, and why.
+#                          The warning scrolls past in a transaction of some
+#                          600 packages; this is what outlives it.
+#   audio-holdoff.pending  the machine as it was before this installer's
+#                          `apt-get install`: the player's dpkg state and
+#                          every enablement link. Written before the install
+#                          and deleted only after an install that succeeded,
+#                          so a run that failed or was killed part-way is
+#                          finished by the next run, which compares against
+#                          this record instead of against a machine the
+#                          earlier run had already changed.
+KILIX_SYSTEM_STATE=/var/lib/kilix
+
 # User units that a package this backend installs can enable for every login,
 # and that hold the default sound card, which dictation records from.
 #
@@ -287,7 +309,13 @@ SYSTEMD_USER_CONF=/etc/systemd/user
 # depends on `fluidsynth (= <same version>)`, the player. So leaving `fluidsynth`
 # out of the list does not keep the player off: it arrives anyway, and its
 # postinst enables fluidsynth.service machine-wide on first install.
+#
+# This runs on every host with apt -- Debian, Ubuntu and Plebian OS alike.
+# There is no host detection: debian_install is chosen by the presence of
+# apt-get alone.
 DEBIAN_AUDIO_HOLDOFF_UNITS="fluidsynth.service"
+# The package whose postinst enables those units.
+DEBIAN_AUDIO_HOLDOFF_PLAYER=fluidsynth
 
 # Every machine-wide enablement link of those units, one per line.
 debian_audio_enablements() {
@@ -299,34 +327,133 @@ debian_audio_enablements() {
   done
 }
 
-# Remove the enablement links this install created, and say so loudly. $1 is
-# debian_audio_enablements from before the install: any link in it existed
-# already, whoever made it, and is never touched. Only the machine-wide
-# directory is read, so a user's own `systemctl --user enable` is out of reach.
-# The package's record of the link is left in place, and Debian's postinst
-# re-enables a unit on upgrade only while every recorded link still exists.
+# The player's dpkg state (installed, unpacked, config-files, ...), or
+# not-installed when dpkg has never heard of it.
+debian_player_state() {
+  local state
+  state="$(dpkg-query -W -f='${db:Status-Status}' "$DEBIAN_AUDIO_HOLDOFF_PLAYER" 2>/dev/null || true)"
+  printf '%s\n' "${state:-not-installed}"
+}
+
+# What the hold-off compares against: the player's state and every
+# enablement link, as tab-separated lines.
+debian_audio_snapshot() {
+  local link
+  printf 'player\t%s\n' "$(debian_player_state)"
+  printf 'taken\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  while IFS= read -r link; do
+    printf 'link\t%s\n' "$link"
+  done < <(debian_audio_enablements)
+}
+
+# debian_audio_record ACTION LINK WHY: one line in audio-holdoff.log.
+debian_audio_record() {
+  local log_file="$KILIX_SYSTEM_STATE/audio-holdoff.log"
+  printf '%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "$3" \
+    | sudo tee -a "$log_file" >/dev/null
+  sudo chmod 0644 "$log_file"
+}
+
+# Remove the enablement links that appeared during this installer's apt run,
+# and say so loudly and truly. $1 is debian_audio_snapshot from before the
+# install, $2 apt-get's exit status, $3 1 when $1 was recorded by an earlier
+# run that stopped before getting here.
+#
+# Any link in $1 existed already, whoever made it, and is never touched; if
+# the player arrives now and makes such a link live again, that is said
+# instead. Only the machine-wide directory is read, so a user's own
+# `systemctl --user enable` is out of reach. The package's record of the link
+# is left in place, and Debian's postinst re-enables a unit on upgrade only
+# while every recorded link still exists.
+#
+# What this can tell apart is "appeared during this run", not "caused by
+# Kilix's packages": apt completes an unfinished install of the player
+# whatever it is asked for, and the warning says which of the two happened.
 debian_audio_holdoff() {
-  local before="$1" link unit
+  local snapshot="$1" apt_rc="$2" resumed="$3"
+  local before player_before player_now link unit why note
+  before="$(printf '%s\n' "$snapshot" | awk -F'\t' '$1 == "link" {print $2}')"
+  player_before="$(printf '%s\n' "$snapshot" | awk -F'\t' '$1 == "player" {print $2; exit}')"
+  player_before="${player_before:-not-installed}"
+  player_now="$(debian_player_state)"
+  note="apt-get-exit=$apt_rc"
+  if [ "$resumed" = 1 ]; then note="$note;finishing-an-earlier-interrupted-run"; fi
   while IFS= read -r link; do
     [ -n "$link" ] || continue
-    if printf '%s\n' "$before" | grep -qxF -- "$link"; then continue; fi
     unit="${link##*/}"
+    if printf '%s\n' "$before" | grep -qxF -- "$link"; then
+      debian_audio_revived "$link" "$unit" "$player_before" "$player_now" "$note"
+      continue
+    fi
     if ! sudo rm -f -- "$link"; then
       log "WARNING: could not remove $link: $unit will start at every login"
       log "and hold the default sound card; remove it with: sudo rm $link"
       return 1
     fi
     log "=================================================================="
-    log "WARNING: the FluidSynth development package Kilix Amp builds against"
-    log "pulled in the fluidsynth player, whose package enabled $unit"
-    log "for every login ($link)."
+    case "$player_before" in
+      not-installed|config-files)
+        why="player-installed-by-this-run(state-before=$player_before)"
+        log "WARNING: this installer's apt run installed the fluidsynth player:"
+        log "libfluidsynth-dev, the FluidSynth development package Kilix Amp"
+        log "builds against, depends on it. The player's package then enabled"
+        log "$unit for every login ($link)." ;;
+      unpacked|half-installed|half-configured)
+        why="unfinished-player-install-completed-by-this-run(state-before=$player_before)"
+        log "WARNING: the fluidsynth player's own install was unfinished before"
+        log "this run (dpkg state: $player_before). apt finishes an unfinished"
+        log "install whatever it is asked for, so this installer's apt run"
+        log "completed it, and the player's package then enabled $unit"
+        log "for every login ($link). This installer did not ask for the"
+        log "player; if you installed it yourself and want its daemon, re-enable"
+        log "it as shown below." ;;
+      *)
+        why="enabled-during-this-run(player-state-before=$player_before)"
+        log "WARNING: $unit was enabled for every login ($link)"
+        log "during this installer's apt run. The fluidsynth player was already"
+        log "on this machine before it (dpkg state: $player_before)." ;;
+    esac
+    if [ "$resumed" = 1 ]; then
+      log "That happened in an earlier run of this installer, which stopped"
+      log "before it could check; this run finished the check."
+    fi
+    debian_audio_record removed "$link" "$why;$note"
     log "That daemon holds the default sound card, which dictation records"
-    log "from. Kilix Amp never runs it, so this installer removed that link."
+    log "from. Kilix Amp never runs it, so this installer removed that link"
+    log "and recorded it in $KILIX_SYSTEM_STATE/audio-holdoff.log."
     log "The player stays installed. To have the daemon anyway:"
     log "    sudo systemctl --global enable $unit"
     log "or, for one account only:  systemctl --user enable $unit"
     log "=================================================================="
   done < <(debian_audio_enablements)
+}
+
+# A link that was there before the run is left alone -- but when the player
+# was not installed before and is now, that link has just come back to life:
+# a player removed without being purged leaves its link behind, and
+# reinstalling it starts the daemon at the next login. Say so.
+debian_audio_revived() {
+  local link="$1" unit="$2" player_before="$3" player_now="$4" note="$5"
+  case "$player_before" in not-installed|config-files) ;; *) return 0 ;; esac
+  case "$player_now" in installed|triggers-awaited|triggers-pending) ;; *) return 0 ;; esac
+  log "=================================================================="
+  if [ "$player_before" = config-files ]; then
+    log "WARNING: the fluidsynth player had been removed from this machine but"
+    log "not purged (dpkg state before this run: config-files), and this"
+    log "installer's apt run installed it again. Its enablement for every"
+    log "login ($link) was left behind by that earlier install,"
+  else
+    log "WARNING: the fluidsynth player was not installed before this run, and"
+    log "this installer's apt run installed it. An enablement for every login"
+    log "($link) was already in place,"
+  fi
+  log "so $unit will start at every login again and hold the default"
+  log "sound card, which dictation records from. This installer leaves that"
+  log "link alone because it was there before the run. To turn it off:"
+  log "    sudo systemctl --global disable $unit"
+  log "=================================================================="
+  debian_audio_record left "$link" \
+    "enabled-before-this-run-and-live-again(player-state-before=$player_before);$note"
 }
 
 debian_install() {
@@ -339,12 +466,34 @@ debian_install() {
     libsdl2-dev libsdl2-image-dev libsndfile1-dev zlib1g-dev libfluidsynth-dev $jack_dev fluid-soundfont-gm \
     libssh2-1-dev libbrotli-dev"
   local -a packages
+  local pending="$KILIX_SYSTEM_STATE/audio-holdoff.pending" snapshot resumed=0 rc=0
   echo "==> Debian/Ubuntu detected — installing system-wide via apt-get"
   sudo apt-get update
   read -r -a packages <<<"$pkgs"
-  local audio_before; audio_before="$(debian_audio_enablements)"
-  sudo apt-get install -y "${packages[@]}"
-  debian_audio_holdoff "$audio_before"
+  sudo install -d -m 0755 "$KILIX_SYSTEM_STATE"
+  if sudo test -f "$pending"; then
+    # An earlier run stopped between its install and its check: killed, or
+    # its apt-get failed after the player's package had already enabled the
+    # daemon. Compare against what that run recorded, or the link it left
+    # would be counted as already there, and kept for good.
+    snapshot="$(sudo cat "$pending")"
+    resumed=1
+    log "an earlier run of this installer stopped before its FluidSynth check;"
+    log "this run compares against what that run recorded ($pending)"
+  else
+    snapshot="$(debian_audio_snapshot)"
+    printf '%s\n' "$snapshot" | sudo tee "$pending" >/dev/null
+  fi
+  sudo apt-get install -y "${packages[@]}" || rc=$?
+  if [ "$rc" != 0 ]; then
+    log "apt-get install failed (exit $rc); checking the FluidSynth player's"
+    log "enablement anyway, since apt may have configured it before failing"
+  fi
+  debian_audio_holdoff "$snapshot" "$rc" "$resumed"
+  # After a failed install the player can still be half-installed, to be
+  # completed by the next apt run; keep the record until an install succeeds.
+  if [ "$rc" = 0 ]; then sudo rm -f -- "$pending"; fi
+  return "$rc"
 }
 
 arch_install() {

@@ -689,10 +689,22 @@ explicitly confirmed termination action.
   and a SoundFont, but on Debian the package with FluidSynth's development
   files depends on the `fluidsynth` player, so the player is installed too,
   and its package enables a daemon for every login that holds the default
-  sound card, which dictation records from. When it was this installer's run
-  that enabled it, the installer removes that enablement and says so; the
-  player stays installed, and an enablement that was already there is left
-  alone.
+  sound card, which dictation records from. When that enablement appeared
+  during this installer's own apt run, the installer removes it, says so,
+  and records it in `/var/lib/kilix/audio-holdoff.log` (time, link, and
+  why); the player stays installed. That includes the case where the run
+  completed an install of the player that you had started and left
+  unfinished, since apt finishes those whatever it is asked for; the
+  warning then says so, and how to re-enable the daemon. It holds even when
+  apt fails part-way or the installer is killed, because the next run
+  finishes the check against what the interrupted one recorded. An
+  enablement that was already there is left alone. One consequence: a
+  player you removed without purging leaves its enablement behind, and
+  when this installer brings the player back, the daemon starts at every
+  login again. The installer warns when that happens; turn it off with
+  `sudo systemctl --global disable fluidsynth.service`. This hold-off runs
+  on every host with apt, Debian, Ubuntu and Plebian OS alike: there is no
+  host detection.
 - **For read aloud:** `espeak-ng` plus `pacat`, `paplay`, or `aplay`. **For
   dictation:** x86_64, `parec` or `arecord`, and the pinned local Vosk closure
   installed by `kilix voice install`. Run `kilix voice doctor` to see the exact

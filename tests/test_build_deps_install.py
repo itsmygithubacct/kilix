@@ -83,11 +83,18 @@ def archive_stanza(package):
 
 
 def installed_status(packages):
-    """A dpkg status file in which exactly *packages* are installed."""
+    """A dpkg status file in which exactly *packages* are present.
+
+    Each entry is a package name, installed, or a ``(name, status)`` pair for
+    any other dpkg state -- ``install ok unpacked`` for an install left
+    unfinished, ``deinstall ok config-files`` for one removed but not
+    purged."""
     stanzas = []
-    for package in packages:
+    for entry in packages:
+        package, status = ((entry, "install ok installed")
+                           if isinstance(entry, str) else entry)
         fields = archive_stanza(package)
-        lines = [f"Package: {package}", "Status: install ok installed",
+        lines = [f"Package: {package}", f"Status: {status}",
                  "Maintainer: fixture <fixture@example.invalid>"]
         lines += [f"{key}: {fields[key]}" for key in _RELATION_FIELDS
                   if key in fields]
@@ -121,27 +128,38 @@ class _DebianBackendSimulation(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.base = Path(self.temp.name)
+        # The two machine-wide places the backend writes besides apt's own:
+        # enablement links, and its record of what it did with them. Both are
+        # always fixture roots, so no test can reach the host's.
+        self.conf = self.base / "etc-systemd-user"
+        self.system_state = self.base / "var-lib-kilix"
+        self.admin = self.base / "dpkg"
 
     def tearDown(self):
         self.temp.cleanup()
 
-    def simulate(self, installed, *install_args, user_conf=None,
-                 after_install=""):
+    def simulate(self, installed, *install_args, after_install="",
+                 apt_rc=None, expect_rc=0):
         """Run `debian_install` on a machine where only *installed* is present.
 
         `sudo` is replaced by a pass-through, `apt-get install` by apt's own
         simulation over the fixture's dpkg database, and `dpkg-query` reads that
         same database -- so the script decides what to ask for from the
-        fixture, exactly as it would from a real machine.
+        fixture, exactly as it would from a real machine. *after_install* runs
+        once apt has resolved, as a package's maintainer scripts would, and
+        *apt_rc*, when given, is the exit status apt-get then reports. Called
+        again in one test, it runs again on the same machine, as a second run
+        of the installer would.
         """
-        admin = self.base / "dpkg"
-        admin.mkdir()
-        (admin / "updates").mkdir()
-        (admin / "status").write_text(installed_status(installed))
+        admin = self.admin
         extended = self.base / "extended_states"
-        extended.write_text("")
+        if not admin.exists():
+            admin.mkdir()
+            (admin / "updates").mkdir()
+            (admin / "status").write_text(installed_status(installed))
+            extended.write_text("")
         bindir = self.base / "bin"
-        bindir.mkdir()
+        bindir.mkdir(exist_ok=True)
         record = self.base / "apt-get.out"
         stubs = {
             "sudo": 'exec "$@"\n',
@@ -157,7 +175,7 @@ class _DebianBackendSimulation(unittest.TestCase):
                     rc=$?
                     {after_install}
                     cat {shlex.quote(str(record))}
-                    exit $rc ;;
+                    exit {apt_rc if apt_rc is not None else "$rc"} ;;
                 esac
                 echo "unexpected apt-get $*" >&2
                 exit 97
@@ -170,30 +188,39 @@ class _DebianBackendSimulation(unittest.TestCase):
             path.write_text("#!/bin/sh\n" + body)
             path.chmod(0o755)
 
-        # Absent is not invisible: prove apt reads the fixture before
-        # believing anything it says about it.
-        for package in installed:
-            policy = subprocess.run(
-                [APT_CACHE, "-o", f"Dir::State::status={admin / 'status'}",
-                 "policy", package], capture_output=True, text=True)
-            self.assertRegex(policy.stdout, r"Installed: (?!\(none\))\S",
-                             f"apt does not see the fixture's {package}")
+        # Absent is not invisible: prove apt and dpkg read the fixture before
+        # believing anything they say about it.
+        for entry in installed:
+            package, status = ((entry, "install ok installed")
+                               if isinstance(entry, str) else entry)
+            seen = subprocess.run(
+                [DPKG_QUERY, f"--admindir={admin}", "-W",
+                 "-f=${Status}", package], capture_output=True, text=True)
+            self.assertEqual(seen.stdout, status,
+                             f"dpkg does not see the fixture's {package}")
+            if status.endswith(" installed"):
+                policy = subprocess.run(
+                    [APT_CACHE, "-o", f"Dir::State::status={admin / 'status'}",
+                     "policy", package], capture_output=True, text=True)
+                self.assertRegex(policy.stdout, r"Installed: (?!\(none\))\S",
+                                 f"apt does not see the fixture's {package}")
 
         env = sandbox_env(
             HOME=str(self.base / "home"),
             PATH=str(bindir) + os.pathsep + os.environ.get("PATH", ""),
             LC_ALL="C.UTF-8", LANG="C.UTF-8",
-            **({"FIXTURE_USER_CONF": str(user_conf)} if user_conf else {}))
+            FIXTURE_USER_CONF=str(self.conf),
+            FIXTURE_SYSTEM_STATE=str(self.system_state))
         result = subprocess.run(
             ["bash", "-c",
              'source "$1"; shift; '
-             '[ -z "${FIXTURE_USER_CONF:-}" ] '
-             '|| SYSTEMD_USER_CONF=$FIXTURE_USER_CONF; '
+             'SYSTEMD_USER_CONF=$FIXTURE_USER_CONF; '
+             'KILIX_SYSTEM_STATE=$FIXTURE_SYSTEM_STATE; '
              'debian_install "$@"', "_",
              str(SCRIPT), *install_args],
             env=env, capture_output=True, text=True, timeout=600)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.script_output = result.stdout + result.stderr
+        self.assertEqual(result.returncode, expect_rc, self.script_output)
         output = record.read_text()
         counts = summary(output)
         self.assertIsNotNone(counts, "apt printed no summary line:\n" + output)
@@ -227,11 +254,14 @@ class DebianInstallRemovesNothingTests(_DebianBackendSimulation):
 # is true when the package has no record yet or every recorded link exists,
 # and then `enable` links the unit into default.target.wants machine-wide and
 # records the link; otherwise it only updates the record. apt's simulation
-# decides WHETHER the player arrives, from the real archive; this models only
-# what its package does on arrival.
+# decides WHETHER the player is configured in this run -- a `Conf` line, which
+# it prints for a fresh install and for completing an unfinished one -- from
+# the real archive; this models only what the package does then, and that dpkg
+# now records the player as installed.
 _FLUIDSYNTH_POSTINST_MODEL = r"""
-record=$1 conf=$2 state=$3
-grep -q '^Inst fluidsynth ' "$record" || exit 0
+record=$1 conf=$2 state=$3 status=$4 status_after=$5
+grep -q '^Conf fluidsynth ' "$record" || exit 0
+cp "$status_after" "$status"
 enabled=1
 if [ -f "$state/fluidsynth.service.dsh-also" ]; then
   while IFS= read -r link; do [ -L "$link" ] || enabled=0; done \
@@ -247,27 +277,31 @@ echo "$conf/default.target.wants/fluidsynth.service" \
 
 PLAYER = "fluidsynth"
 PLAYER_UNIT = "fluidsynth.service"
+DEFAULT_LINK = f"default.target.wants/{PLAYER_UNIT}"
 
 
 class DebianInstallLeavesTheSoundCardFreeTests(_DebianBackendSimulation):
-    """After the Debian backend runs, no user unit that it caused to be enabled
-    for every login holds the default sound card.
+    """After the Debian backend runs, no user unit that became enabled for
+    every login during its apt run holds the default sound card -- whether
+    that run succeeded, failed, or was killed and run again -- and what it
+    removed, and why, is written down.
 
     libfluidsynth-dev, the only package with fluidsynth.pc, depends on the
     fluidsynth player, so the player arrives whatever the list says, and its
     package enables fluidsynth.service machine-wide; that daemon holds the
     default sound card that dictation records from. The backend may leave the
-    player installed; it must not leave it enabled when it was this install
-    that enabled it, and it must never touch an enablement that was already
-    there.
+    player installed; it must not leave it enabled when the enablement
+    appeared during its own run, it must never touch an enablement that was
+    already there, and what it says must be what happened.
     """
 
-    def run_install(self, installed, before=()):
-        conf = self.base / "etc-systemd-user"
+    def run_install(self, installed, before=(), **simulate):
+        """Run the backend with the player's postinst modelled. *before* are
+        enablement links present beforehand, each with the package's record
+        of it, as the package leaves them."""
         state = self.base / "deb-systemd-user-helper-enabled"
         for link in before:
-            # As the package leaves it: the link, and its record of the link.
-            path = conf / link
+            path = self.conf / link
             path.parent.mkdir(parents=True, exist_ok=True)
             path.symlink_to(f"/usr/lib/systemd/user/{path.name}")
             state.mkdir(exist_ok=True)
@@ -275,48 +309,158 @@ class DebianInstallLeavesTheSoundCardFreeTests(_DebianBackendSimulation):
                 recorded.write(f"{path}\n")
         model = self.base / "postinst-model.sh"
         model.write_text(_FLUIDSYNTH_POSTINST_MODEL)
+        # dpkg's record once the player is configured: the same machine, with
+        # the player installed.
+        others = [entry for entry in installed
+                  if (entry if isinstance(entry, str) else entry[0]) != PLAYER]
+        status_after = self.base / "status-after-player"
+        status_after.write_text(installed_status(others + [PLAYER]))
         record = self.base / "apt-get.out"
         _, output = self.simulate(
-            installed, user_conf=conf,
-            after_install=(f"sh {shlex.quote(str(model))} "
+            installed,
+            after_install=(simulate.pop("after_install", "")
+                           + f"\nsh {shlex.quote(str(model))} "
                            f"{shlex.quote(str(record))} "
-                           f"{shlex.quote(str(conf))} "
-                           f"{shlex.quote(str(state))}"))
-        enabled = sorted(str(path.relative_to(conf))
-                         for pattern in ("*.wants/*", "*.requires/*")
-                         for path in conf.glob(pattern) if path.is_symlink())
-        return output, enabled, state
+                           f"{shlex.quote(str(self.conf))} "
+                           f"{shlex.quote(str(state))} "
+                           f"{shlex.quote(str(self.admin / 'status'))} "
+                           f"{shlex.quote(str(status_after))}"
+                           + simulate.pop("after_model", "")),
+            **simulate)
+        return output, self.enabled(), state
+
+    def enabled(self):
+        return sorted(str(path.relative_to(self.conf))
+                      for pattern in ("*.wants/*", "*.requires/*")
+                      for path in self.conf.glob(pattern) if path.is_symlink())
+
+    def recorded(self):
+        """audio-holdoff.log as (action, link, why) rows."""
+        log_file = self.system_state / "audio-holdoff.log"
+        if not log_file.exists():
+            return []
+        return [tuple(line.split("\t")[1:]) for line in
+                log_file.read_text().splitlines()]
+
+    @property
+    def pending(self):
+        return self.system_state / "audio-holdoff.pending"
+
+    def require_player_arrives(self, output):
+        if not re.search(rf"^Conf {PLAYER} ", output, re.M):
+            self.skipTest("this archive's closure does not bring in the "
+                          "player, so there is nothing to hold off")
 
     def test_a_player_this_install_brought_in_is_not_left_enabled(self):
         # A per-account enablement is the user's own choice, made where this
         # backend never looks; it must survive.
         own = (self.base / "home" / ".config" / "systemd" / "user" /
-               "default.target.wants" / PLAYER_UNIT)
+               DEFAULT_LINK)
         own.parent.mkdir(parents=True)
         own.symlink_to(f"/usr/lib/systemd/user/{PLAYER_UNIT}")
 
         output, enabled, state = self.run_install([])
-        if not re.search(rf"^Inst {PLAYER} ", output, re.M):
-            self.skipTest("this archive's closure does not bring in the "
-                          "player, so there is nothing to hold off")
+        self.require_player_arrives(output)
         # The model fired: the player's package did enable its unit, so an
         # empty result below is the backend's doing, not the fixture's.
         self.assertTrue((state / f"{PLAYER_UNIT}.dsh-also").is_file())
         self.assertEqual(enabled, [], self.script_output)
         self.assertIn("holds the default sound card", self.script_output)
+        self.assertIn("apt run installed the fluidsynth player",
+                      self.script_output)
         self.assertIn(f"systemctl --global enable {PLAYER_UNIT}",
                       self.script_output)
         self.assertTrue(own.is_symlink(), "a per-account enablement was touched")
+        (action, link, why), = self.recorded()
+        self.assertEqual((action, link), ("removed",
+                                          str(self.conf / DEFAULT_LINK)))
+        self.assertIn("player-installed-by-this-run", why)
+        self.assertFalse(self.pending.exists(),
+                         "a finished run left its pending record behind")
 
     def test_an_enablement_that_was_already_there_is_left_alone(self):
         # The player installed and enabled before Kilix ran. (apt may still
         # reconfigure it here, because the fixture's stanza carries no
         # Depends; the modelled postinst then re-links over the same link,
         # which is what the real one does.)
-        already = f"default.target.wants/{PLAYER_UNIT}"
-        _, enabled, _ = self.run_install([PLAYER], before=[already])
-        self.assertEqual(enabled, [already])
+        _, enabled, _ = self.run_install([PLAYER], before=[DEFAULT_LINK])
+        self.assertEqual(enabled, [DEFAULT_LINK])
         self.assertNotIn("holds the default sound card", self.script_output)
+        self.assertEqual(self.recorded(), [])
+
+    def test_an_apt_failure_after_the_player_is_set_up_still_holds_it_off(self):
+        # apt configured the player, whose package enabled the daemon, and
+        # then failed on something else. The hold-off used to run only after
+        # a successful apt-get, so the link stayed, silently, and every later
+        # run counted it as already there.
+        output, enabled, _ = self.run_install([], apt_rc=100, expect_rc=100)
+        self.require_player_arrives(output)
+        self.assertEqual(enabled, [], self.script_output)
+        self.assertIn("apt-get install failed (exit 100)", self.script_output)
+        self.assertIn("holds the default sound card", self.script_output)
+        (action, _, why), = self.recorded()
+        self.assertEqual(action, "removed")
+        self.assertIn("apt-get-exit=100", why)
+        # The player may still be half-installed after a failure, so the
+        # record stays until an install succeeds.
+        self.assertTrue(self.pending.exists())
+
+    def test_a_run_killed_after_the_player_is_set_up_is_finished_by_the_next(self):
+        # Killed between apt-get and the check: no trap can run. The next run
+        # must compare against what this one recorded before its install,
+        # not against the machine this one changed.
+        output, enabled, _ = self.run_install(
+            [], after_model="\nkill -9 $PPID", expect_rc=-9)
+        self.require_player_arrives(output)
+        # Control: the kill landed before the check could run.
+        self.assertEqual(enabled, [DEFAULT_LINK])
+        self.assertEqual(self.recorded(), [])
+        self.assertTrue(self.pending.exists())
+
+        _, enabled, _ = self.run_install([])
+        self.assertEqual(enabled, [], self.script_output)
+        self.assertIn("stopped before its FluidSynth check", self.script_output)
+        self.assertIn("apt run installed the fluidsynth player",
+                      self.script_output)
+        (action, _, why), = self.recorded()
+        self.assertEqual(action, "removed")
+        self.assertIn("finishing-an-earlier-interrupted-run", why)
+        self.assertFalse(self.pending.exists())
+
+    def test_completing_the_users_own_unfinished_player_install_is_said_so(self):
+        # The user's own `apt install fluidsynth` stopped after unpacking. apt
+        # completes it whatever it is asked for, so this run configures the
+        # player and its package enables the daemon. The warning used to say
+        # Kilix Amp's package had pulled the player in.
+        output, enabled, _ = self.run_install(
+            [(PLAYER, "install ok unpacked")])
+        self.require_player_arrives(output)
+        self.assertEqual(enabled, [], self.script_output)
+        self.assertIn("own install was unfinished", self.script_output)
+        self.assertIn("dpkg state: unpacked", self.script_output)
+        self.assertNotIn("apt run installed the fluidsynth player",
+                         self.script_output)
+        self.assertNotIn("depends on it", self.script_output)
+        (action, _, why), = self.recorded()
+        self.assertEqual(action, "removed")
+        self.assertIn("unfinished-player-install-completed-by-this-run", why)
+
+    def test_a_dormant_enablement_brought_back_to_life_is_said_so(self):
+        # The player was removed but not purged: its link and record stay
+        # behind. Reinstalling it makes that link live again. It was there
+        # before, so it is left alone -- but no longer silently.
+        output, enabled, _ = self.run_install(
+            [(PLAYER, "deinstall ok config-files")], before=[DEFAULT_LINK])
+        self.require_player_arrives(output)
+        self.assertEqual(enabled, [DEFAULT_LINK])
+        self.assertIn("removed from this machine but", self.script_output)
+        self.assertIn("will start at every login again", self.script_output)
+        self.assertIn(f"sudo systemctl --global disable {PLAYER_UNIT}",
+                      self.script_output)
+        (action, link, why), = self.recorded()
+        self.assertEqual((action, link), ("left",
+                                          str(self.conf / DEFAULT_LINK)))
+        self.assertIn("player-state-before=config-files", why)
 
 
 class _StubMachine(unittest.TestCase):
