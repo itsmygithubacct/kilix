@@ -16,6 +16,9 @@ class PocketCpuRuntimeTests(unittest.TestCase):
     def test_host_routes_explicit_pocket_session_through_lazy_runtime(self):
         host = (ROOT / "kilix").read_text(encoding="utf-8")
         self.assertIn("--download-pocket", host)
+        self.assertIn("--tier=pocket-cpu", host)
+        self.assertIn('row["tier"] == "pocket-cpu"', host)
+        self.assertIn('rows[0]["verdict"] == "estimated-fit"', host)
         self.assertIn("install-kilix-pocket-tts-cpu.sh", host)
         self.assertIn("Pocket CPU audition needs an interactive terminal", host)
 

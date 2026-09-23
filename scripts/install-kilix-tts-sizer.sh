@@ -3,7 +3,7 @@
 set -euo pipefail
 umask 077
 
-KILIX_SYSTEM_MONITOR_REF=9ad28c3a34f8b42c49b116ceaa57184bafaffeda
+KILIX_SYSTEM_MONITOR_REF=01aa6b7a93341ada225606e7a6d96e8ed9daccbf
 KILIX_SYSTEM_MONITOR_REPO=https://github.com/itsmygithubacct/kilix-system-monitor.git
 GPU_TERMINAL_HOME="${GPU_TERMINAL_HOME:-$HOME/.local/gpu_terminal}"
 GPU_TERMINAL_SOURCE_HOME="${GPU_TERMINAL_SOURCE_HOME:-$GPU_TERMINAL_HOME/sources}"

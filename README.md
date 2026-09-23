@@ -899,6 +899,7 @@ kilix stt --models --json         # versioned machine-readable catalog contract
 kilix stt --install lgraph-en-us --default lgraph-en-us
 kilix tts --tiers                 # hardware-aware read-aloud choices
 kilix tts --interactive --tier neural   # first-use Piper setup and session
+kilix tts --interactive --tier pocket-cpu # measured Pocket/Alba CPU audition
 kilix tts --interactive --tier qwen-cpu # locked CPU runtime, then first-use Qwen model
 kilix tts --interactive --tier qwen-gpu # locked CUDA/FlashAttention runtime on an eligible GPU
 kilix tts --interactive --tier qwen-base-gpu # 0.6B Base with a fixed synthetic reference

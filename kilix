@@ -2455,13 +2455,32 @@ sys.exit(0 if ready else 1)
       fi
       _tts_previous="$_tts_argument"
     done
+    _tts_previous=""
     for _tts_argument in "$@"; do
       if [ "$_tts_argument" = --download-pocket ] \
           || [ "$_tts_argument" = --pocket-model-dir ] \
-          || [[ "$_tts_argument" = --pocket-model-dir=* ]]; then
+          || [[ "$_tts_argument" = --pocket-model-dir=* ]] \
+          || [ "$_tts_argument" = --tier=pocket-cpu ] \
+          || { [ "$_tts_previous" = --tier ] && [ "$_tts_argument" = pocket-cpu ]; }; then
         if [ "$_tts_interactive" != 1 ] || [ ! -t 0 ] || [ ! -t 1 ]; then
           echo "kilix tts: Pocket CPU audition needs an interactive terminal" >&2
           exit 2
+        fi
+        if [ "$_tts_argument" = --tier=pocket-cpu ] \
+            || [ "$_tts_argument" = pocket-cpu ]; then
+          if ! "$_tts_installed" --tiers --json | /usr/bin/python3 -c '
+import json, sys
+try:
+    report = json.load(sys.stdin)
+    rows = [row for row in report["candidates"] if row["tier"] == "pocket-cpu"]
+    ready = len(rows) == 1 and rows[0]["verdict"] == "estimated-fit"
+except (KeyError, TypeError, ValueError):
+    ready = False
+sys.exit(0 if ready else 1)
+'; then
+            echo "kilix tts: Pocket CPU does not fit the current hardware estimate; no runtime installed" >&2
+            exit 1
+          fi
         fi
         _pocket_installer="$KILIX_HOME/scripts/install-kilix-pocket-tts-cpu.sh"
         if [ ! -f "$_pocket_installer" ] || [ -L "$_pocket_installer" ] \
@@ -2472,6 +2491,7 @@ sys.exit(0 if ready else 1)
         _tts_python="$("$_pocket_installer")" || exit 1
         break
       fi
+      _tts_previous="$_tts_argument"
     done
     if [ -n "$_tts_python" ]; then
       exec "$_tts_python" "$_tts_installed" "$@"
