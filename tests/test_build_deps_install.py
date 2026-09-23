@@ -319,16 +319,13 @@ class DebianInstallLeavesTheSoundCardFreeTests(_DebianBackendSimulation):
         self.assertNotIn("holds the default sound card", self.script_output)
 
 
-class VerifyReportsWhatTheBuildNeedsTests(unittest.TestCase):
+class _StubMachine(unittest.TestCase):
     """`--verify` against a machine assembled from stubs, so its verdict is
     decided by the one thing each test varies.
 
-    Everything verify() checks other than the build interpreter is stubbed to
-    pass, and the PATH holds nothing else, so the host's own interpreters cannot
-    leak in. The control arm (`test_..._passes_...`) is what makes the failing
-    arms mean something: with the same stubs and headers present, the verdict
-    is OK, so a failure below is the interpreter's headers and nothing else.
-    """
+    Everything verify() checks is stubbed to pass, and the PATH holds nothing
+    else, so the host's own interpreters and libraries cannot leak in. Holds no
+    tests of its own; the classes below share it."""
 
     _TOOLS = ("bash", "env", "dirname", "mkdir", "chmod", "awk", "sort",
               "head", "sed", "grep", "cat", "sh")
@@ -405,6 +402,15 @@ class VerifyReportsWhatTheBuildNeedsTests(unittest.TestCase):
                  if line.startswith("   build Python: ")]
         return line.rsplit("(", 1)[1].rstrip(")")
 
+
+class VerifyReportsWhatTheBuildNeedsTests(_StubMachine):
+    """The build interpreter, and the Media Player's packages.
+
+    The control arm (`test_..._passes_...`) is what makes the failing arms mean
+    something: with the same stubs and headers present, the verdict is OK, so
+    a failure below is the interpreter's headers and nothing else.
+    """
+
     def test_verify_passes_when_the_interpreter_has_its_headers(self):
         self.interpreter("python3.13", "3.13.5", headers=True)
         result = self.verify()
@@ -471,6 +477,208 @@ class VerifyReportsWhatTheBuildNeedsTests(unittest.TestCase):
                 self.missing_pc.write_text(module + "\n")
                 result = self.verify()
                 self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("==> INCOMPLETE", result.stdout)
+                self.assertIn(f"   pkg-config {module}: MISSING", result.stdout)
+
+
+# ---- what the fork's build asks pkg-config for --------------------------------
+FORK = ROOT / "src"
+
+# The helpers through which the fork's setup.py asks pkg-config for a module,
+# each taking the module name first; setup.py hands pkg_config itself on to
+# glfw/glfw.py. Their own bodies run pkg-config for whatever name they are
+# given, so a call to one of them is a request and their bodies are not.
+_PKG_CONFIG_HELPERS = frozenset({"pkg_config", "pkg_version",
+                                 "at_least_version"})
+
+
+def _fork_build_files(fork):
+    """setup.py and every module of the fork it imports, transitively --
+    the files that decide what the build asks for, found by following the
+    build's own imports rather than named here."""
+    import ast
+    seen, todo = [], [fork / "setup.py"]
+    while todo:
+        path = todo.pop()
+        if path in seen or not path.is_file():
+            continue
+        seen.append(path)
+        for node in ast.walk(ast.parse(path.read_text(), str(path))):
+            if isinstance(node, ast.Import):
+                targets = [(fork, alias.name) for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                anchor = fork
+                if node.level:
+                    anchor = path.parent
+                    for _ in range(node.level - 1):
+                        anchor = anchor.parent
+                module = node.module or ""
+                targets = [(anchor, module)] + [
+                    (anchor, f"{module}.{alias.name}".strip("."))
+                    for alias in node.names]
+            else:
+                continue
+            for anchor, dotted in targets:
+                if not dotted:
+                    continue
+                stem = anchor.joinpath(*dotted.split("."))
+                todo += [stem.with_suffix(".py"), stem / "__init__.py"]
+    return seen
+
+
+def fork_pkg_config_requests(fork=FORK):
+    """What the fork's build asks pkg-config for, read from its build files.
+
+    Returns ``(required, optional, unresolved, per_file)``. A module is
+    *required* when at least one request for it stops the build if it is
+    missing -- every ``pkg_version`` and ``at_least_version`` request, and
+    every ``pkg_config`` request not made with ``fatal=False`` or inside a
+    ``suppress(SystemExit, ...)`` block. *unresolved* lists every request whose
+    module name this reading could not work out, and every use of the
+    pkg-config command outside the helpers: a request that cannot be read is a
+    failure, never a module silently left out. Every platform's branch is read,
+    so a module asked for only on another platform would be demanded here too,
+    which fails safe.
+    """
+    import ast
+    required, optional, unresolved, per_file = set(), set(), [], {}
+
+    def names_in(node):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return [node.value]
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "split" and not node.args
+                and isinstance(node.func.value, ast.Constant)
+                and isinstance(node.func.value.value, str)):
+            return node.func.value.value.split()
+        if isinstance(node, (ast.Tuple, ast.List)):
+            found = [names_in(element) for element in node.elts]
+            if all(item is not None and len(item) == 1 for item in found):
+                return [item[0] for item in found]
+        return None
+
+    def suppresses_exit(with_node):
+        for item in with_node.items:
+            call = item.context_expr
+            if (isinstance(call, ast.Call) and getattr(call.func, "id",
+                                                       getattr(call.func, "attr", None)) == "suppress"
+                    and any(getattr(arg, "id", None) == "SystemExit"
+                            for arg in call.args)):
+                return True
+        return False
+
+    def visit(node, where, loops, suppressed):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) \
+                and node.name in _PKG_CONFIG_HELPERS:
+            return
+        if isinstance(node, ast.Name) and node.id == "PKGCONFIG" \
+                and isinstance(node.ctx, ast.Load):
+            unresolved.append(f"{where}:{node.lineno}: pkg-config run "
+                              "directly, not through a helper")
+        if isinstance(node, ast.Constant) and node.value in ("pkg-config",
+                                                             "pkgconf"):
+            unresolved.append(f"{where}:{node.lineno}: pkg-config named "
+                              "outside the helpers")
+        if isinstance(node, (ast.For, ast.AsyncFor)) \
+                and isinstance(node.target, ast.Name):
+            values = names_in(node.iter)
+            if values is not None:
+                loops = {**loops, node.target.id: values}
+        if isinstance(node, (ast.With, ast.AsyncWith)) and suppresses_exit(node):
+            suppressed = True
+        if isinstance(node, ast.Call):
+            helper = getattr(node.func, "id", getattr(node.func, "attr", None))
+            if helper in _PKG_CONFIG_HELPERS:
+                first = node.args[0] if node.args else None
+                modules = None
+                if isinstance(first, ast.Name):
+                    modules = loops.get(first.id)
+                elif first is not None:
+                    modules = names_in(first)
+                    modules = modules if modules and len(modules) == 1 else None
+                if modules is None:
+                    unresolved.append(f"{where}:{node.lineno}: {helper}() with "
+                                      "a module name this reading cannot resolve")
+                else:
+                    fatal = not suppressed
+                    for keyword in node.keywords:
+                        if (helper == "pkg_config" and keyword.arg == "fatal"
+                                and isinstance(keyword.value, ast.Constant)
+                                and keyword.value.value is False):
+                            fatal = False
+                    (required if fatal else optional).update(modules)
+                    per_file.setdefault(where, set()).update(modules)
+        for child in ast.iter_child_nodes(node):
+            visit(child, where, loops, suppressed)
+
+    for path in _fork_build_files(fork):
+        where = str(path.relative_to(fork))
+        tree = ast.parse(path.read_text(), where)
+        for statement in tree.body:
+            # The one place pkg-config is named on purpose: which command the
+            # helpers run.
+            if (isinstance(statement, ast.Assign)
+                    and [getattr(t, "id", None) for t in statement.targets]
+                    == ["PKGCONFIG"]):
+                continue
+            visit(statement, where, {}, False)
+    return required, optional - required, unresolved, per_file
+
+
+class VerifyChecksWhatTheForkBuildAsksForTests(_StubMachine):
+    """`--verify` fails whenever the fork's build would stop for a missing
+    pkg-config module.
+
+    The modules are not named here: they are read from the pinned fork's own
+    build files (``fork_pkg_config_requests``), so this fails the day the build
+    asks for a module verify() does not check, as well as the day verify()
+    stops checking one the build asks for. It is behavioural: each module is
+    made missing on its own and verify() must say INCOMPLETE, so a name that is
+    listed but never checked does not count. egl and libdrm were unchecked for
+    as long as the list existed, covered only because the Media Player's sdl2
+    package depended on both; when that requirement went, --verify said OK
+    over a build that stopped at `Package egl was not found`.
+    """
+
+    def setUp(self):
+        super().setUp()
+        if not (FORK / "setup.py").is_file():
+            self.fail(f"the fork is not checked out at {FORK}; this check "
+                      "cannot run without it (git submodule update --init src)")
+        self.required, self.optional, self.unresolved, self.per_file = \
+            fork_pkg_config_requests()
+
+    def test_every_request_the_build_makes_is_read(self):
+        self.assertEqual(self.unresolved, [],
+                         "requests this test cannot read; resolve them before "
+                         "trusting the set it derives")
+        # A build file that calls a helper and yielded no request would mean
+        # the reading went blind there, not that the file asks for nothing.
+        for path in _fork_build_files(FORK):
+            where = str(path.relative_to(FORK))
+            text = path.read_text()
+            calls = any(f"{helper}(" in text for helper in _PKG_CONFIG_HELPERS)
+            if calls:
+                with self.subTest(file=where):
+                    self.assertTrue(self.per_file.get(where),
+                                    f"{where} calls a pkg-config helper and "
+                                    "no request was read from it")
+        self.assertTrue(self.required)
+
+    def test_verify_fails_without_any_module_the_build_asks_for(self):
+        self.interpreter("python3.13", "3.13.5", headers=True)
+        # Control: nothing missing, so a failure below is the missing module.
+        control = self.verify()
+        self.assertEqual(control.returncode, 0,
+                         control.stdout + control.stderr)
+        for module in sorted(self.required):
+            with self.subTest(module=module):
+                self.missing_pc.write_text(module + "\n")
+                result = self.verify()
+                self.assertNotEqual(
+                    result.returncode, 0,
+                    f"the fork's build stops without {module}, and --verify "
+                    f"passed without it:\n{result.stdout}")
                 self.assertIn("==> INCOMPLETE", result.stdout)
                 self.assertIn(f"   pkg-config {module}: MISSING", result.stdout)
 

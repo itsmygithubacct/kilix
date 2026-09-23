@@ -34,9 +34,22 @@ BUILDENV="${KILIX_BUILD_ENV:-$KILIX_CONFIG_HOME/build.env}"
 mkdir -p "$KILIX_CONFIG_HOME"
 chmod 0700 "$KILIX_STORAGE_HOME" "$KILIX_CONFIG_HOME" 2>/dev/null || true
 
-# pkg-config modules the fork links against (see build.sh). zlib is here
-# because the fork's setup.py links -lz.
-PC_DEPS="x11 xrandr xinerama xcursor xi xkbcommon xkbcommon-x11 x11-xcb dbus-1 gl fontconfig libpng lcms2 cairo-fc harfbuzz libcrypto libxxhash wayland-client wayland-cursor wayland-egl wayland-protocols zlib"
+# Every pkg-config module the fork's build asks for and stops without: the
+# fatal pkg_config / pkg_version / at_least_version requests in src/setup.py
+# and src/glfw/glfw.py. This list is not trusted, it is checked: egl and libdrm
+# were missing from it for as long as it existed, covered only because sdl2's
+# -dev package happened to depend on both, and the build failed without either
+# while --verify said OK. tests/test_build_deps_install.py reads the requests
+# from the pinned fork's own build files and fails if verify() passes with any
+# one of them missing, so a module the build starts asking for fails the suite
+# until it is added here.
+FORK_PC_DEPS="cairo-fc dbus-1 egl gl harfbuzz lcms2 libcrypto libdrm libpng libxxhash wayland-client wayland-cursor wayland-protocols wayland-scanner x11 x11-xcb xcursor xinerama xkbcommon xkbcommon-x11 xrandr"
+# Also required, though the build never asks pkg-config for them, so no
+# derivation can find them: it links -lz directly, includes
+# <X11/extensions/XInput2.h> and <fontconfig/fontconfig.h>, and loads
+# libwayland-egl at run time.
+FORK_UNASKED_PC_DEPS="zlib xi fontconfig wayland-egl"
+PC_DEPS="$FORK_PC_DEPS $FORK_UNASKED_PC_DEPS"
 # Installed, reported, and never required. These are kilix-amp's, the desktop
 # Media Player, which the desktop clones and builds on first use; build.sh
 # links none of them. Requiring them made a machine that can build the fork
@@ -320,7 +333,7 @@ debian_install() {
   local jack_dev; jack_dev="$(debian_jack_dev_package)"
   local pkgs="build-essential cmake pkg-config git curl zstd golang-go python3 python3-dev python3-pil python3-venv \
     libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxkbcommon-dev \
-    libxkbcommon-x11-dev libx11-xcb-dev libdbus-1-dev libgl1-mesa-dev libfontconfig-dev \
+    libxkbcommon-x11-dev libx11-xcb-dev libdbus-1-dev libgl1-mesa-dev libegl-dev libdrm-dev libfontconfig-dev \
     libpng-dev liblcms2-dev libcairo2-dev libharfbuzz-dev libssl-dev libxxhash-dev \
     libsimde-dev libwayland-dev wayland-protocols \
     libsdl2-dev libsdl2-image-dev libsndfile1-dev zlib1g-dev libfluidsynth-dev $jack_dev fluid-soundfont-gm \
