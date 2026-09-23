@@ -196,8 +196,14 @@ def _sha256(path):
 
 def _fetch(urls, dest, report, sha256=None):
     """Compatibility wrapper around the shared checksum-bound downloader."""
-    return kilix_content.download(
-        urls, dest, report=report, expected_sha256=sha256 or "")
+    try:
+        return kilix_content.download(
+            urls, dest, report=report, expected_sha256=sha256 or "")
+    except kilix_content.InstallError:
+        # Catalog and local URLs may contain private paths or credentials.
+        # Content includes the last URL in its mirror error, so keep that out
+        # of the desktop error shown to the user.
+        raise kilix_content.InstallError("content download failed") from None
 
 
 def _inside(root, path):
