@@ -212,7 +212,7 @@ def checkout_files(checkout: Path) -> dict[str, bytes]:
 MODEL_DIRECTORY = "vosk-model-small-en-us-0.15"
 LGRAPH_MODEL_DIRECTORY = "vosk-model-en-us-0.22-lgraph"
 DOWNLOAD_TOOLS = ("curl", "sha256sum", "unzip", "cc")
-PINNED_VOICE_REF = "94ab92bdc8c0315dce39f7b175838b444395b2fc"
+PINNED_VOICE_REF = "af9398e3e644886f1ef3f269637e70272a0a9944"
 PUBLISHED_VOSK_VERSION = "0.3.45"
 PUBLISHED_VOSK_SHA256 = (
     "25e025093c4399d7278f543568ed8cc5460ac3a4bf48c23673ace1e25d26619f"

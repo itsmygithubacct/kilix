@@ -7,7 +7,7 @@ KILIX_HOME="${KILIX_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 GPU_TERMINAL_HOME="${GPU_TERMINAL_HOME:-$HOME/.local/gpu_terminal}"
 GPU_TERMINAL_SOURCE_HOME="${GPU_TERMINAL_SOURCE_HOME:-$GPU_TERMINAL_HOME/sources}"
 KILIX_DATA_HOME="${KILIX_DATA_HOME:-$GPU_TERMINAL_HOME/kilix/data}"
-KILIX_QWEN_CLIENT_REF=64a377cbab729e58f2877817bc0708b79e12a899
+KILIX_QWEN_CLIENT_REF=3f1031263b4369761d77a90fec8e480fcb87f3d0
 KILIX_QWEN_CLIENT_REPO=https://github.com/itsmygithubacct/kilix-qwen-tts.git
 
 fail() { printf 'kilix qwen client: %s\n' "$*" >&2; exit 1; }
@@ -43,8 +43,17 @@ mkdir -p -- "$GPU_TERMINAL_SOURCE_HOME" "$root/generations"
   || fail 'the managed client current path is not a symlink'
 exec 9<"$root"
 flock 9
-[ ! -L "$current" ] || [ "$(readlink -- "$current")" = "$generation" ] \
-  || fail 'the managed client current link points outside this generation'
+# An upgrade finds current on the previously pinned generation; anything that
+# is not a managed generation directory is still refused.
+if [ -L "$current" ]; then
+  previous="$(readlink -- "$current")"
+  case "$previous" in
+    "$root/generations/"*) previous="${previous#"$root/generations/"}" ;;
+    *) previous="" ;;
+  esac
+  [ "${#previous}" = 40 ] && [ -z "${previous//[0-9a-f]/}" ] \
+    || fail 'the managed client current link points outside its generations'
+fi
 
 if [ -L "$current" ] && [ -f "$generation/.kilix-verified" ] \
     && [ "$(<"$generation/.kilix-verified")" = "$KILIX_QWEN_CLIENT_REF" ] \
