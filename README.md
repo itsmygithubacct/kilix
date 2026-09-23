@@ -901,6 +901,7 @@ kilix tts --tiers                 # hardware-aware read-aloud choices
 kilix tts --interactive --tier neural   # first-use Piper setup and session
 kilix tts --interactive --tier qwen-cpu # locked CPU runtime, then first-use Qwen model
 kilix tts --interactive --tier qwen-gpu # locked CUDA/FlashAttention runtime on an eligible GPU
+kilix tts --interactive --tier qwen-base-gpu # 0.6B Base with a fixed synthetic reference
 kilix voice doctor                # dependency and audio-device diagnostics
 kilix tts                         # read-aloud settings and test-phrase TUI
 kilix stt                         # dictation settings and microphone-level TUI
@@ -917,6 +918,8 @@ hardware fit check; model weights still require the first-use licence notice.
 The GPU tier requires an unmasked Ampere-or-newer NVIDIA GPU 0 and uses locked
 CUDA PyTorch and FlashAttention 2. For an existing verified GPU environment,
 `KILIX_QWEN_GPU_PYTHON` may instead name its absolute Python path.
+The Base tier uses that GPU runtime and its own measured fit profile; no
+person's voice is cloned, and its weights require a separate first-use notice.
 
 ## Read aloud and dictation
 
@@ -956,7 +959,7 @@ version of the live voice runtime cannot dictate with them; the UI and CLI
 report that distinction instead of calling the weights runnable.
 
 `kilix voice install` installs the immutable `kilix-voice` 0.1.6 source at
-commit `25ec09179f2ddae48ea435271d13226794919e42`, the official Vosk 0.3.45
+commit `ae18f4d079e9d32d6a3f471b1969a6bda8af668d`, the official Vosk 0.3.45
 wheel for the host (x86_64 or aarch64, each pinned by its own digest), and
 either the default `vosk-model-small-en-us-0.15` or the
 `--model lgraph-en-us` dynamic-graph model. Downloads are SHA-256 verified.

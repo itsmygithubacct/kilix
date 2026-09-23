@@ -2403,7 +2403,21 @@ sys.exit(0 if ready else 1)
     _tts_previous=""
     for _tts_argument in "$@"; do
       if [ "$_tts_argument" = --tier=qwen-gpu ] \
-          || { [ "$_tts_previous" = --tier ] && [ "$_tts_argument" = qwen-gpu ]; }; then
+          || [ "$_tts_argument" = --tier=qwen-base-gpu ] \
+          || { [ "$_tts_previous" = --tier ] \
+               && { [ "$_tts_argument" = qwen-gpu ] \
+                    || [ "$_tts_argument" = qwen-base-gpu ]; }; }; then
+        _qwen_gpu_tier=qwen-gpu
+        if [ "$_tts_argument" = --tier=qwen-base-gpu ] \
+            || [ "$_tts_argument" = qwen-base-gpu ]; then
+          _qwen_gpu_tier=qwen-base-gpu
+        fi
+        if [ "$_qwen_gpu_tier" = qwen-base-gpu ] \
+            && ! command -v espeak-ng >/dev/null \
+            && ! command -v espeak >/dev/null; then
+          echo "kilix tts: Qwen Base needs eSpeak for its fixed synthetic reference" >&2
+          exit 1
+        fi
         if [ "$_tts_interactive" != 1 ] || [ ! -t 0 ] || [ ! -t 1 ]; then
           echo "kilix tts: the Qwen GPU tier needs an interactive terminal" >&2
           exit 2
@@ -2420,12 +2434,12 @@ sys.exit(0 if ready else 1)
 import json, sys
 try:
     report = json.load(sys.stdin)
-    rows = [row for row in report["candidates"] if row["tier"] == "qwen-gpu"]
+    rows = [row for row in report["candidates"] if row["tier"] == sys.argv[1]]
     ready = len(rows) == 1 and rows[0]["verdict"] == "estimated-fit"
 except (KeyError, TypeError, ValueError):
     ready = False
 sys.exit(0 if ready else 1)
-'; then
+' "$_qwen_gpu_tier"; then
             echo "kilix tts: Qwen GPU does not fit the current hardware estimate; no runtime installed" >&2
             exit 1
           fi
