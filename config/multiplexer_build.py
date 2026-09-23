@@ -7,19 +7,8 @@ import json
 import os
 from pathlib import Path
 import re
-import shlex
-import shutil
 import stat
-import subprocess
 import sys
-
-
-def command(argv):
-    environment = {k: v for k, v in os.environ.items() if not k.startswith('GIT_')}
-    environment.update(GIT_NO_REPLACE_OBJECTS='1', GIT_NO_LAZY_FETCH='1',
-                       GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL='/dev/null')
-    return subprocess.check_output(argv, env=environment, stderr=subprocess.PIPE,
-                                   timeout=15, text=True).strip()
 
 
 def data(path, maximum=32*1024**2):
@@ -87,46 +76,23 @@ def package_plan(prefix, cflags, libs):
             'cflags':cflags,'libs':libs}
 
 
-def plan(source, expected):
-    if not re.fullmatch('[0-9a-f]{40}', expected):
-        raise ValueError('set an exact KILIX_MULTIPLEXER_COMMIT with an explicit source override')
-    head = command(['/usr/bin/git','-C',source,'rev-parse','HEAD'])
-    if head != expected or command(['/usr/bin/git','-C',source,'status','--porcelain','--untracked-files=all']):
-        raise ValueError('multiplexer source must be clean at its selected commit')
-    pc = '/usr/bin/pkg-config'
-    command([pc,'--exists','samplerate','openssl','kilix-encodec'])
-    prefix = command([pc,'--define-prefix','--variable=prefix','kilix-encodec'])
-    cflags = command([pc,'--define-prefix','--cflags','kilix-encodec'])
-    libs = command([pc,'--define-prefix','--libs','kilix-encodec'])
-    result = package_plan(prefix,cflags,libs)
-    cc = os.environ.get('CC','cc')
-    if len(shlex.split(cc)) != 1:
-        raise ValueError('CC must name one provisioned compiler executable')
-    compiler = shutil.which(cc)
-    if compiler is None:
-        raise ValueError('C compiler is absent')
-    result.update(multiplexer_commit=head,compiler_sha256=hashlib.sha256(data(Path(compiler).resolve())).hexdigest(),
-                  flags={key:os.environ.get(key,'') for key in ('CC','CFLAGS','CPPFLAGS','LDFLAGS','LDLIBS')},
-                  ENCODEC=1)
-    return hashlib.sha256(json.dumps(result,sort_keys=True).encode()).hexdigest(),cflags,libs
-
-
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source',required=True)
     parser.add_argument('--commit',required=True)
-    parser.add_argument('--binary',action='append',default=[])
+    parser.add_argument('--build-dir',required=True)
+    parser.add_argument('--print-kind',choices=('serve','attach'))
+    parser.add_argument('--timeout',type=int,default=240)
     args=parser.parse_args()
     try:
-        selected=plan(args.source,args.commit)
-        for binary in args.binary:
-            dynamic=command(['/usr/bin/readelf','-d',binary])
-            symbols=command(['/usr/bin/readelf','--dyn-syms','--wide',binary])
-            if 'Shared library: [libkilix-encodec.so.0]' not in dynamic or 'kenc_installed_assets_open' not in symbols:
-                raise ValueError('selected multiplexer source did not link installed EnCodec admission; update the host-selected source closure')
-        print('\n'.join(selected))
+        if not re.fullmatch('[0-9a-f]{40}',args.commit) or not 1 <= args.timeout <= 240:
+            raise ValueError('exact source commit and timeout 1..240 are required')
+        from multiplexer_compile import build
+        value=build(args,package_plan)
+        if value:
+            print(value)
         return 0
-    except (OSError,ValueError,KeyError,TypeError,subprocess.SubprocessError) as error:
+    except (OSError,ValueError,KeyError,TypeError) as error:
         print('kilix remote: shared EnCodec build prerequisites are unavailable: '+str(error),file=sys.stderr)
         print('Install the source-bound libkilix-encodec package with ORT API21, libsamplerate0-dev and libssl-dev through explicit system setup; then retry.',file=sys.stderr)
         return 1

@@ -19,6 +19,7 @@ class MultiplexerBuildTests(unittest.TestCase):
         self.temporary=tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root=Path(self.temporary.name)
+        self.trace=self.root/'trace';self.trace.touch()
         self.source=self.root/'source';self.source.mkdir()
         (self.source/'include').mkdir()
         (self.source/'include/kilix_mux.h').write_text('fixture header\n')
@@ -27,7 +28,7 @@ class MultiplexerBuildTests(unittest.TestCase):
             '$(BUILD_DIR)/kmx-%: Makefile\n'
             '\ttest "$(ENCODEC)" = 1\n'
             '\t$(CC) $(CFLAGS) $(ENCODEC_CFLAGS) main.c -o $@ $(ENCODEC_LIBS)\n'
-            '\tprintf "enabled\\n" >> "$(TRACE)"\n')
+            '\tprintf "enabled\\n" >> "'+str(self.trace)+'"\n')
         for args in (('init','-q'),('config','user.name','Kilix Test'),
                      ('config','user.email','test@example.invalid'),('add','.'),('commit','-qm','fixture')):
             self.git(*args)
