@@ -176,6 +176,43 @@ _kilix_ensure_private_directory() {
   }
 }
 
+_kilix_default_pty_broker_runtime() {
+  local runtime="${XDG_RUNTIME_DIR:-}" owner mode
+  if [ -n "$runtime" ] && [[ "$runtime" = /* ]] \
+       && [ -d "$runtime" ] && [ ! -L "$runtime" ]; then
+    owner="$(stat -c '%u' -- "$runtime" 2>/dev/null || true)"
+    mode="$(stat -c '%a' -- "$runtime" 2>/dev/null || true)"
+    if [ "$owner" = "$(id -u)" ] && [ "$mode" = 700 ]; then
+      printf '%s\n' "$runtime/kilix-pty-broker"
+      return 0
+    fi
+  fi
+  printf '%s\n' "$KILIX_SESSION_HOME/pty-broker"
+}
+
+_kilix_validate_pty_broker_runtime() {
+  local LC_ALL=C runtime="$1" projected
+  case "$runtime" in
+    /*) ;;
+    *)
+      echo "kilix: PTY broker runtime must be an absolute path: $runtime" >&2
+      return 1 ;;
+  esac
+  projected="$runtime/sessions/0123456789abcdef/control.sock"
+  if [ "${#projected}" -ge 108 ]; then
+    echo "kilix: PTY broker socket path is too long (${#projected} bytes): $projected" >&2
+    echo "kilix: set XDG_RUNTIME_DIR to a private short per-user runtime directory" >&2
+    return 1
+  fi
+}
+
+_kilix_resolve_pty_broker_runtime() {
+  local runtime
+  runtime="${KITTY_PTY_BROKER_RUNTIME:-$(_kilix_default_pty_broker_runtime)}"
+  _kilix_validate_pty_broker_runtime "$runtime" || return 1
+  printf '%s\n' "$runtime"
+}
+
 # Read the session-logging values in one interpreter start rather than one per
 # value, so an ordinary launch pays for Python only once.
 _KILIX_TRANSCRIPT_ENABLED=0
@@ -209,7 +246,7 @@ print('archive=%d' % settings.transcript_archive_total())
 # removed, because the broker holds the descriptor and would keep writing to a
 # file that no longer has a name.
 _kilix_transcript_live_ids() {
-  local broker
+  local broker runtime
   if [ -n "${KITTY_PTY_BROKER_EXECUTABLE:-}" ] \
        && [ -x "$KITTY_PTY_BROKER_EXECUTABLE" ]; then
     broker="$KITTY_PTY_BROKER_EXECUTABLE"
@@ -217,7 +254,8 @@ _kilix_transcript_live_ids() {
     broker="$("$KILIX_HOME/scripts/build-pty-broker.sh" --print-path 2>/dev/null)" \
       && [ -x "$broker" ] || return 1
   fi
-  "$broker" --runtime-dir "$KILIX_SESSION_HOME/pty-broker" list --json 2>/dev/null \
+  runtime="$(_kilix_resolve_pty_broker_runtime)" || return 1
+  "$broker" --runtime-dir "$runtime" list --json 2>/dev/null \
     | python3 -c 'import json,sys
 try:
     print("\n".join(str(i.get("id", "")) for i in json.load(sys.stdin)))
@@ -2014,7 +2052,7 @@ case "${1:-}" in
       exit 1
     }
     [ "$_pty_install_only" = 0 ] || exit 0
-    KITTY_PTY_BROKER_RUNTIME="$KILIX_SESSION_HOME/pty-broker"
+    KITTY_PTY_BROKER_RUNTIME="$(_kilix_resolve_pty_broker_runtime)" || exit 1
     _kilix_ensure_private_directory \
       "$KITTY_PTY_BROKER_RUNTIME" "pty broker runtime" || exit 1
     export KITTY_PTY_BROKER_EXECUTABLE KITTY_PTY_BROKER_RUNTIME
@@ -4516,7 +4554,7 @@ if [ "${KILIX_PTY_BROKER:-1}" != 0 ]; then
   KITTY_PTY_BROKER_EXECUTABLE="$(
     "$KILIX_HOME/scripts/build-pty-broker.sh" --print-path
   )" || exit 1
-  KITTY_PTY_BROKER_RUNTIME="$KILIX_SESSION_HOME/pty-broker"
+  KITTY_PTY_BROKER_RUNTIME="$(_kilix_resolve_pty_broker_runtime)" || exit 1
   _kilix_ensure_private_directory "$KITTY_PTY_BROKER_RUNTIME" "pty broker runtime" || exit 1
   export KITTY_PTY_BROKER_EXECUTABLE KITTY_PTY_BROKER_RUNTIME
   export KITTY_PTY_BROKER_AUTO_RECOVER="${KILIX_PTY_BROKER_AUTO_RECOVER:-1}"
