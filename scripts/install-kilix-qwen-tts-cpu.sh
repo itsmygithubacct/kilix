@@ -33,7 +33,11 @@ esac
 [ "$(id -u)" -ne 0 ] || fail 'run this as the desktop user'
 [ "$(uname -m)" = x86_64 ] || fail 'this locked CPU runtime supports x86_64 only'
 [ -x /usr/bin/python3.13 ] || fail 'the Debian Python 3.13 interpreter is required'
-command -v uv >/dev/null || fail 'uv is required for the locked CPU runtime'
+uv_cmd="$(command -v uv || true)"
+if [ -z "$uv_cmd" ] && [ -x "$HOME/.local/bin/uv" ]; then
+  uv_cmd="$HOME/.local/bin/uv"
+fi
+[ -n "$uv_cmd" ] || fail 'uv is required for the locked CPU runtime'
 case "$root" in /|"$HOME") fail 'refusing a broad runtime directory' ;; esac
 mkdir -p -- "$root/generations" "$root/tmp"
 [ ! -e "$current" ] || [ -L "$current" ] \
@@ -53,7 +57,7 @@ if [ -L "$current" ] && [ "$(readlink -- "$current")" = "$generation" ] \
 fi
 
 TMPDIR="$root/tmp" UV_PROJECT_ENVIRONMENT="$generation" \
-  uv sync --locked --no-dev --project "$project" --python /usr/bin/python3.13 \
+  "$uv_cmd" sync --locked --no-dev --project "$project" --python /usr/bin/python3.13 \
   || fail 'the locked Qwen CPU runtime could not be installed'
 [ -x "$python" ] \
   && "$python" -c 'import qwen_tts, torch, torchaudio, transformers; assert torch.__version__ == "2.6.0+cpu"' \

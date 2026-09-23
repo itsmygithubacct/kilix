@@ -900,6 +900,7 @@ kilix stt --install lgraph-en-us --default lgraph-en-us
 kilix tts --tiers                 # hardware-aware read-aloud choices
 kilix tts --interactive --tier neural   # first-use Piper setup and session
 kilix tts --interactive --tier qwen-cpu # locked CPU runtime, then first-use Qwen model
+kilix tts --interactive --tier qwen-gpu # locked CUDA/FlashAttention runtime on an eligible GPU
 kilix voice doctor                # dependency and audio-device diagnostics
 kilix tts                         # read-aloud settings and test-phrase TUI
 kilix stt                         # dictation settings and microphone-level TUI
@@ -910,10 +911,12 @@ kilix status                      # version/commit, engine, writable config, pro
 
 Put `~/.local/gpu_terminal/sources/kilix` on your `PATH` (or
 `ln -s ~/.local/gpu_terminal/sources/kilix/kilix ~/.local/bin/kilix`) to just type `kilix`.
-The Qwen CPU tier is an explicit multi-GiB download on x86_64 Debian, not a
-base-image dependency. The GPU tier instead uses an existing verified CUDA and
-FlashAttention environment: set `KILIX_QWEN_GPU_PYTHON` to its absolute Python
-path before running `kilix tts --interactive --tier qwen-gpu`.
+The Qwen CPU and GPU tiers are explicit multi-GiB downloads on x86_64 Debian,
+not base-image dependencies. Each is installed only after selection and a
+hardware fit check; model weights still require the first-use licence notice.
+The GPU tier requires an unmasked Ampere-or-newer NVIDIA GPU 0 and uses locked
+CUDA PyTorch and FlashAttention 2. For an existing verified GPU environment,
+`KILIX_QWEN_GPU_PYTHON` may instead name its absolute Python path.
 
 ## Read aloud and dictation
 
@@ -953,7 +956,7 @@ version of the live voice runtime cannot dictate with them; the UI and CLI
 report that distinction instead of calling the weights runnable.
 
 `kilix voice install` installs the immutable `kilix-voice` 0.1.6 source at
-commit `542a56c483d2ac3861d70ef5e8ec8147b41aeeea`, the official Vosk 0.3.45
+commit `25ec09179f2ddae48ea435271d13226794919e42`, the official Vosk 0.3.45
 wheel for the host (x86_64 or aarch64, each pinned by its own digest), and
 either the default `vosk-model-small-en-us-0.15` or the
 `--model lgraph-en-us` dynamic-graph model. Downloads are SHA-256 verified.

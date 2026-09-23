@@ -2404,6 +2404,10 @@ sys.exit(0 if ready else 1)
     for _tts_argument in "$@"; do
       if [ "$_tts_argument" = --tier=qwen-gpu ] \
           || { [ "$_tts_previous" = --tier ] && [ "$_tts_argument" = qwen-gpu ]; }; then
+        if [ "$_tts_interactive" != 1 ] || [ ! -t 0 ] || [ ! -t 1 ]; then
+          echo "kilix tts: the Qwen GPU tier needs an interactive terminal" >&2
+          exit 2
+        fi
         if [ -n "${KILIX_QWEN_GPU_PYTHON:-}" ]; then
           case "$KILIX_QWEN_GPU_PYTHON" in
             /*) [ -x "$KILIX_QWEN_GPU_PYTHON" ] || {
@@ -2411,6 +2415,27 @@ sys.exit(0 if ready else 1)
             *) echo "kilix tts: KILIX_QWEN_GPU_PYTHON must be an absolute path" >&2; exit 2 ;;
           esac
           _tts_python="$KILIX_QWEN_GPU_PYTHON"
+        else
+          if ! "$_tts_installed" --tiers --json | /usr/bin/python3 -c '
+import json, sys
+try:
+    report = json.load(sys.stdin)
+    rows = [row for row in report["candidates"] if row["tier"] == "qwen-gpu"]
+    ready = len(rows) == 1 and rows[0]["verdict"] == "estimated-fit"
+except (KeyError, TypeError, ValueError):
+    ready = False
+sys.exit(0 if ready else 1)
+'; then
+            echo "kilix tts: Qwen GPU does not fit the current hardware estimate; no runtime installed" >&2
+            exit 1
+          fi
+          _qwen_installer="$KILIX_HOME/scripts/install-kilix-qwen-tts-gpu.sh"
+          if [ ! -f "$_qwen_installer" ] || [ -L "$_qwen_installer" ] \
+              || [ ! -x "$_qwen_installer" ]; then
+            echo "kilix tts: locked Qwen GPU installer missing or unsafe" >&2
+            exit 1
+          fi
+          _tts_python="$("$_qwen_installer")" || exit 1
         fi
         break
       fi
