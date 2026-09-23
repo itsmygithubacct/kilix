@@ -22,6 +22,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import x11_sandbox  # noqa: E402
+from _env_support import sandbox_env  # noqa: E402
 
 SELFCHECK = "x11_sandbox_selfcheck"
 
@@ -30,7 +31,9 @@ SELFCHECK = "x11_sandbox_selfcheck"
                      "the X tests that need the sandbox are skipped too")
 class SandboxedChildTests(unittest.TestCase):
     def test_the_child_is_cut_off_from_the_invoking_session(self):
-        planted = {"DISPLAY": ":47", "XAUTHORITY": "/nonexistent/cookie"}
+        planted = {"DISPLAY": ":47", "XAUTHORITY": "/nonexistent/cookie",
+                   "KILIX_DATA_HOME": "/nonexistent/live/kilix/data",
+                   "GPU_TERMINAL_HOME": "/nonexistent/live"}
         with mock.patch.dict(os.environ, planted):
             results = x11_sandbox._run_module_in_child(SELFCHECK)
         prefix = f"{SELFCHECK}.InsideTheSandbox."
@@ -59,8 +62,7 @@ class UnavailableSandboxTests(unittest.TestCase):
             loader, loader.loadTestsFromTestCase(Stand), module)
         result = unittest.TestResult()
         planted = x11_sandbox.SandboxUnavailable("planted: no namespaces")
-        env = {k: v for k, v in os.environ.items()
-               if k != x11_sandbox.OPTIONAL_ENV}
+        env = sandbox_env()
         env.update(extra_env)
         with mock.patch.object(x11_sandbox, "_run_module_in_child",
                                side_effect=planted), \

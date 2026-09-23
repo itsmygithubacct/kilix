@@ -93,6 +93,8 @@ import tempfile
 import unittest
 import uuid
 
+from _env_support import sandbox_env
+
 SANDBOX_ENV = "KILIX_X11_SANDBOX"
 #: the network namespace the child was started in, recorded before leaving it
 OUTER_NETNS_ENV = "KILIX_X11_SANDBOX_OUTER_NETNS"
@@ -449,7 +451,7 @@ class _RecordingResult(unittest.TestResult):
 def _run_module_in_child(module_name: str) -> dict:
     here = os.path.dirname(os.path.abspath(__file__))
     root = os.path.dirname(here)
-    env = dict(os.environ)
+    env = sandbox_env()
     env.pop(SANDBOX_ENV, None)
     env.pop(OUTER_NETNS_ENV, None)
     for name in SCRUBBED_ENV:

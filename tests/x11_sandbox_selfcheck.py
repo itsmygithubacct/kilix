@@ -13,8 +13,10 @@ import x11_sandbox
 
 class InsideTheSandbox(unittest.TestCase):
     def test_no_display_or_cookie_was_inherited(self):
-        self.assertNotIn("DISPLAY", os.environ)
-        self.assertNotIn("XAUTHORITY", os.environ)
+        self.assertFalse("DISPLAY" in os.environ)
+        self.assertFalse("XAUTHORITY" in os.environ)
+        self.assertFalse("KILIX_DATA_HOME" in os.environ)
+        self.assertFalse("GPU_TERMINAL_HOME" in os.environ)
 
     def test_the_network_namespace_is_private_and_holds_no_x11_listener(self):
         self.assertNotEqual(
