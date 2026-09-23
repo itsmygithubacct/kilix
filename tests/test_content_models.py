@@ -16,7 +16,9 @@ import json
 import os
 import pty
 from pathlib import Path
+import re
 import select
+import shutil
 import signal
 import socket
 import socketserver
@@ -449,14 +451,30 @@ class ModelSetupTests(unittest.TestCase):
 
     # ---- the packaged authority -----------------------------------------
 
-    def test_the_packaged_catalog_is_verified_against_its_pinned_digest(self):
+    def test_the_consumer_takes_the_public_verified_entry_point(self):
+        """OD-BU(a): assert the path the consumer actually takes.
+
+        The selected component publishes ``verified_packaged_catalog()``, which
+        parses exactly the bytes it verified (C-V3-FIX F2). The consumer must
+        call that and nothing else: not the private verifier this test used to
+        spy on, which the consumer no longer reaches, and not the unverified,
+        cached ``default_catalog()``. Both are made to fail loudly here, so a
+        consumer that fell back to either could not pass.
+        """
+        public = self.api.verified_packaged_catalog
         receipt = importlib.import_module("kilix_content.receipt")
+        with mock.patch.object(self.api, "verified_packaged_catalog", wraps=public) as spy, \
+                mock.patch.object(self.api, "default_catalog",
+                                  side_effect=AssertionError("unverified parse")), \
+                mock.patch.object(receipt, "_verify_frozen_schema", create=True,
+                                  side_effect=AssertionError("private verifier")):
+            catalog = ui._verified_catalog(self.api)
+        spy.assert_called_once_with()
+        self.assertEqual(len(catalog.assets), 27)
         self.assertEqual(receipt.catalog_sha256(), receipt._CATALOG_SHA256)
-        with mock.patch.object(receipt, "_verify_frozen_schema") as verify:
-            ui._verified_catalog(self.api)
-        verify.assert_called_once_with()
+        # The refusal reaches the operator as a refusal, and creates nothing.
         errors = io.StringIO()
-        with mock.patch.object(receipt, "_verify_frozen_schema",
+        with mock.patch.object(self.api, "verified_packaged_catalog",
                                side_effect=RuntimeError("packaged catalog bytes")), \
                 mock.patch.object(sys, "stderr", errors):
             self.assertEqual(ui.main(["--root", str(self.root / "apps"), "list"]), 1)
@@ -565,7 +583,9 @@ os.environ['GPU_TERMINAL_HOME'] = str(root / 'stack')
 case.weights = (root / 'weights.bin').read_bytes()
 case.origin()
 spec = case.spec()
-with mock.patch.object(case.api, 'default_catalog', return_value=case.catalog(spec)):
+catalog = case.catalog(spec)
+with mock.patch.object(case.api, 'verified_packaged_catalog', return_value=catalog), \\
+        mock.patch.object(case.api, 'default_catalog', return_value=catalog):
     result = tests.ui.main(['--root', str(root / 'apps'), 'install', spec.asset_id])
 (root / 'requests').write_text(repr(case.origin().requests()))
 raise SystemExit(result)
@@ -645,6 +665,136 @@ raise SystemExit(result)
                         self.assertRaises(SystemExit) as error:
                     ui.main(argv)
                 self.assertEqual(error.exception.code, 2)
+
+
+class CatalogVerificationPathTests(unittest.TestCase):
+    """OD-BU(a): the catalogue guard, tested on the path the consumer takes.
+
+    These need no asset/v3 surface, so they run against whichever Content
+    component the host selects -- including today's pin -- rather than skip.
+    """
+
+    def test_public_preferred_private_fallback_and_neither_refused(self):
+        catalog = object()
+        public = SimpleNamespace(
+            verified_packaged_catalog=mock.Mock(return_value=catalog),
+            default_catalog=mock.Mock(side_effect=AssertionError("unverified parse")))
+        private = SimpleNamespace(_verify_frozen_schema=mock.Mock(
+            side_effect=AssertionError("private verifier reached")))
+        with mock.patch.dict(sys.modules, {"kilix_content.receipt": private}):
+            self.assertIs(ui._verified_catalog(public), catalog)
+        public.verified_packaged_catalog.assert_called_once_with()
+        private._verify_frozen_schema.assert_not_called()
+        # No public name: the private verifier runs BEFORE the parse, and a
+        # verifier that refuses stops the parse.
+        order = []
+        fallback = SimpleNamespace(default_catalog=mock.Mock(
+            side_effect=lambda: order.append("parse") or catalog))
+        verifier = SimpleNamespace(_verify_frozen_schema=mock.Mock(
+            side_effect=lambda: order.append("verify")))
+        with mock.patch.dict(sys.modules, {"kilix_content.receipt": verifier}):
+            self.assertIs(ui._verified_catalog(fallback), catalog)
+        self.assertEqual(order, ["verify", "parse"])
+        order.clear()
+        verifier._verify_frozen_schema.side_effect = RuntimeError("digest moved")
+        with mock.patch.dict(sys.modules, {"kilix_content.receipt": verifier}), \
+                self.assertRaisesRegex(RuntimeError, "digest moved"):
+            ui._verified_catalog(fallback)
+        self.assertEqual(order, [])
+        # Neither: refused by name, and nothing is parsed.
+        with mock.patch.dict(sys.modules, {"kilix_content.receipt": SimpleNamespace()}), \
+                self.assertRaisesRegex(ui.SetupError, "cannot verify its packaged catalog"):
+            ui._verified_catalog(fallback)
+        self.assertEqual(order, [])
+
+    def _host_copy(self, base, tamper):
+        """A host tree whose in-tree Content component is a copy of the selected one.
+
+        ``load_pinned_package()`` prefers the in-tree root, so the copy -- and
+        only the copy -- is what the consumer in it selects. The child reports
+        the origin it loaded, and the caller checks it: a tamper applied to a
+        component nobody selected would prove nothing.
+        """
+        from kilix_sdk import content  # noqa: F401  (performs the selection)
+        import kilix_content
+        component = Path(kilix_content.__file__).resolve().parents[2]
+        host = base / "host"
+        shutil.copytree(ROOT / "config", host / "config",
+                        ignore=shutil.ignore_patterns("__pycache__"))
+        shutil.copytree(component, host / "third_party" / "kilix-content",
+                        ignore=shutil.ignore_patterns(".git", "__pycache__"))
+        path = (host / "third_party" / "kilix-content" / "src" / "kilix_content"
+                / "catalog" / "plebian.json")
+        if tamper:
+            payload = path.read_bytes()
+            # The first label's first letter, in either serialisation the
+            # component has shipped (compact or indented).
+            at = re.search(rb'"label": ?"[A-Za-z]', payload).end() - 1
+            flipped = payload[:at] + payload[at:at + 1].swapcase() + payload[at + 1:]
+            self.assertNotEqual(flipped, payload)
+            self.assertEqual(len(flipped), len(payload))
+            # The tamper still parses, so a refusal is the digest and nothing else.
+            kilix_content.Catalog.loads(flipped.decode("utf-8"), label="tampered copy")
+            path.write_bytes(flipped)
+        return host
+
+    def _select(self, host, base):
+        code = (
+            "import json, sys\n"
+            "sys.path.insert(0, sys.argv[1])\n"
+            "import content_models as ui\n"
+            "from kilix_sdk import content\n"
+            "import kilix_content\n"
+            "result = {'origin': kilix_content.__file__}\n"
+            "try:\n"
+            "    result['assets'] = len(ui._verified_catalog(kilix_content).assets)\n"
+            "except Exception as error:\n"
+            "    result['refused'] = f'{type(error).__name__}: {error}'\n"
+            "print(json.dumps(result))\n")
+        env = sandbox_env(HOME=str(base / "home"), GPU_TERMINAL_HOME=str(base / "stack"),
+                          PYTHONPATH=str(base / "nonexistent-pythonpath"),
+                          PYTHONDONTWRITEBYTECODE="1")
+        result = subprocess.run([sys.executable, "-B", "-c", code, str(host / "config")],
+                                env=env, capture_output=True, text=True, timeout=120)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(Path(payload["origin"]).resolve().is_relative_to(host.resolve()),
+                        payload["origin"])
+        return payload
+
+    def test_a_tampered_packaged_catalog_is_refused_on_the_consumer_path(self):
+        from kilix_sdk import content  # noqa: F401
+        import kilix_content
+        expected = len(ui._verified_catalog(kilix_content).assets)
+        with tempfile.TemporaryDirectory(prefix="kx-catalog-") as name:
+            pristine = Path(name) / "pristine"
+            tampered = Path(name) / "tampered"
+            clean = self._select(self._host_copy(pristine, tamper=False), pristine)
+            self.assertEqual(clean, {"origin": clean["origin"], "assets": expected})
+            refused = self._select(self._host_copy(tampered, tamper=True), tampered)
+            self.assertNotIn("assets", refused)
+            self.assertRegex(refused["refused"], "(?i)catalog.*(digest|_CATALOG_SHA256)")
+            if not _V3:
+                return
+            # The whole command, too: exit 1, a typed error, and nothing created.
+            for host, base, code in ((pristine / "host", pristine, 0),
+                                     (tampered / "host", tampered, 1)):
+                env = sandbox_env(HOME=str(base / "home"),
+                                  GPU_TERMINAL_HOME=str(base / "stack"),
+                                  PYTHONPATH=str(base / "nonexistent-pythonpath"),
+                                  PYTHONDONTWRITEBYTECODE="1")
+                run = subprocess.run(
+                    [sys.executable, "-B", str(host / "config" / "content_models.py"),
+                     "--root", str(base / "apps"), "list"],
+                    env=env, capture_output=True, text=True, timeout=120)
+                self.assertEqual(run.returncode, code, run.stderr)
+                if code:
+                    self.assertIn("packaged catalog bytes do not match", run.stderr)
+                    self.assertNotIn("Traceback", run.stderr)
+                else:
+                    self.assertEqual(len(json.loads(run.stdout)["models"]), expected)
+                for path in ("apps", "stack", "home"):
+                    self.assertFalse((base / path).exists(), path)
 
 
 if __name__ == "__main__":
