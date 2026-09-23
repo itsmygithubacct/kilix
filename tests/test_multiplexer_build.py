@@ -6,6 +6,10 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _env_support import sandbox_env  # noqa: E402
 
 ROOT=Path(__file__).resolve().parents[1]
 
@@ -47,7 +51,7 @@ class MultiplexerBuildTests(unittest.TestCase):
         self.write_package()
         (self.prefix/'lib/libkilix-encodec.so').symlink_to('libkilix-encodec.so.0')
         self.trace=self.root/'trace'
-        self.env={k:v for k,v in os.environ.items() if not k.startswith(('KILIX','GPU_TERMINAL_','GIT_'))}
+        self.env={k:v for k,v in sandbox_env().items() if not k.startswith('GIT_')}
         self.env.update(HOME=str(self.root),KILIX_STORAGE_HOME=str(self.root/'storage'),
                         KILIX_MULTIPLEXER_HOME=str(self.source),KILIX_MULTIPLEXER_COMMIT=self.commit,
                         PKG_CONFIG_PATH=str(self.prefix/'lib/pkgconfig'),TRACE=str(self.trace),

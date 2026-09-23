@@ -9,13 +9,15 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'config'))
+sys.path.insert(0, str(ROOT/'tests'))
 from kilix_sdk import content
+from _env_support import sandbox_env  # noqa: E402
 
 
 class ConsumerSelectionTests(unittest.TestCase):
     def run_command(self, *args):
-        env = {key: value for key, value in os.environ.items()
-               if not key.startswith(('KILIX', 'GPU_TERMINAL', 'PLEB', 'PYTHON'))}
+        env = {key: value for key, value in sandbox_env().items()
+               if not key.startswith('PYTHON')}
         env['PYTHONDONTWRITEBYTECODE'] = '1'
         result = subprocess.run(args, cwd=ROOT, env=env, capture_output=True,
                                 text=True, timeout=10)
