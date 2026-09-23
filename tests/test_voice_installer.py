@@ -84,6 +84,127 @@ BROKEN_RUNTIME_FIXTURE = textwrap.dedent(
         executable.chmod(0o755)
     """
 )
+# The voice runtime's licence authority is the kilix-license copy the pinned
+# Content component vendors, checked by that component's own
+# tools/vendored_kilix_license.py. The fixture stands in for both: a tiny
+# package exposing the names the gate calls, and a checker that fails on
+# request.
+LICENSE_API = (
+    "AssetRef", "CoverageRefused", "ReceiptStore", "RecordIndex",
+    "covers", "load_determined_records", "require", "receipt_store_root",
+)
+FIXTURE_LICENSE_PIN = "7104ea5cb2670a9d52c14fcb324c86710e4c2681"
+FIXTURE_VENDOR_CHECK = textwrap.dedent(
+    """\
+    import pathlib
+    import sys
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    if sys.argv[1:] != ["--check"]:
+        raise SystemExit(2)
+    if (root / "tools" / "FAIL").exists():
+        print("vendored kilix-license: fixture mismatch", file=sys.stderr)
+        raise SystemExit(1)
+    """
+)
+# Mirrors kilix-voice's installed layout: an executable in bin/ that puts
+# bin/../lib/kilix-voice first on sys.path, and a gate that refuses in the
+# words voicelib.licensing uses when kilix_license cannot be imported.
+PYTHON_TOOL = textwrap.dedent(
+    """\
+    #!/usr/bin/env python3
+    import os
+    import sys
+
+    here = os.path.dirname(os.path.realpath(os.path.abspath(__file__)))
+    sys.path.insert(
+        0, os.path.normpath(os.path.join(here, os.pardir, "lib", "kilix-voice")))
+    if sys.argv[1:] == ["--version"]:
+        print("python fixture")
+        raise SystemExit(0)
+    if sys.argv[1:2] == ["--check-licence"]:
+        try:
+            import kilix_license
+        except ImportError:
+            print("kilix-stt: the kilix-license authority is not installed",
+                  file=sys.stderr)
+            raise SystemExit(3)
+        print(os.path.realpath(kilix_license.__file__))
+        print(kilix_license.MARKER)
+        raise SystemExit(3)
+    print("python fixture")
+    """
+)
+BUILD_PYTHON_FIXTURE = textwrap.dedent(
+    """\
+    from pathlib import Path
+    import sys
+
+    binaries = Path(sys.argv[1]) / "bin"
+    binaries.mkdir(parents=True, exist_ok=True)
+    tool = Path(__file__).with_name("tool.py").read_text()
+    for name in ("kilix-tts", "kilix-stt", "kilix-voiced"):
+        executable = binaries / name
+        executable.write_text(tool)
+        executable.chmod(0o755)
+    if Path(__file__).with_name("SHIP_AUTHORITY").exists():
+        own = Path(sys.argv[1]) / "lib" / "kilix-voice" / "kilix_license"
+        own.mkdir(parents=True)
+        (own / "__init__.py").write_text("MARKER = 'shipped'\\n")
+    """
+)
+NO_AUTHORITY_GATE_FIXTURE = textwrap.dedent(
+    """\
+    from pathlib import Path
+    import sys
+
+    binaries = Path(sys.argv[1]) / "bin"
+    binaries.mkdir(parents=True, exist_ok=True)
+    for tool in ("kilix-tts", "kilix-stt", "kilix-voiced"):
+        executable = binaries / tool
+        executable.write_text(
+            '#!/bin/sh\\n'
+            '[ "${1:-}" != --check-licence ] || {\\n'
+            '  echo "kilix-stt: the kilix-license authority is not installed" >&2\\n'
+            '  exit 3\\n'
+            '}\\n'
+            "printf '%s\\\\n' gate-without-authority\\n"
+        )
+        executable.chmod(0o755)
+    """
+)
+
+
+def write_vendored_authority(
+    checkout: Path, pin: str = FIXTURE_LICENSE_PIN, marker: str = "first",
+    api: tuple[str, ...] = LICENSE_API,
+) -> Path:
+    """Vendor a fixture kilix-license into checkout's Content component."""
+    content = checkout / "third_party" / "kilix-content"
+    vendored = content / "third_party" / "kilix-license"
+    if vendored.exists():
+        shutil.rmtree(vendored)
+    package = vendored / "src" / "kilix_license"
+    (package / "data" / "records").mkdir(parents=True)
+    (package / "__init__.py").write_text(
+        f"MARKER = {marker!r}\n"
+        + "".join(f"{name} = object()\n" for name in api))
+    (package / "data" / "records" / "small-en-us.json").write_text(
+        f'{{"marker": "{marker}"}}\n')
+    (content / "third_party" / "kilix-license.pin").write_text(pin + "\n")
+    tools = content / "tools"
+    tools.mkdir(parents=True, exist_ok=True)
+    (tools / "vendored_kilix_license.py").write_text(FIXTURE_VENDOR_CHECK)
+    return package
+
+
+def checkout_files(checkout: Path) -> dict[str, bytes]:
+    return {
+        str(path.relative_to(checkout)): path.read_bytes()
+        for path in sorted(checkout.rglob("*")) if path.is_file()
+    }
+
+
 MODEL_DIRECTORY = "vosk-model-small-en-us-0.15"
 LGRAPH_MODEL_DIRECTORY = "vosk-model-en-us-0.22-lgraph"
 DOWNLOAD_TOOLS = ("curl", "sha256sum", "unzip", "cc")
@@ -127,10 +248,13 @@ class KilixVoiceInstallerTests(unittest.TestCase):
         self.source = self.root / "source"
         self.state = self.root / "data" / "kilix" / "state"
         self.data = self.root / "data" / "kilix" / "data"
-        # The Kilix checkout the installer is run from, kept empty so anything
-        # landing in it is visible.
+        # The Kilix checkout the installer is run from. It holds only the
+        # Content component's vendored licence authority, recorded here so
+        # anything landing in the checkout is visible.
         self.checkout = self.root / "checkout"
         self.checkout.mkdir()
+        self.vendored_authority = write_vendored_authority(self.checkout)
+        self.checkout_before = checkout_files(self.checkout)
         self.repo, self.ref = self.make_repo(
             "voice-origin",
             {
@@ -316,6 +440,15 @@ class KilixVoiceInstallerTests(unittest.TestCase):
             f"model-lgraph-en-us={PUBLISHED_LGRAPH_MODEL_SHA256}",
             listed.stdout,
         )
+        self.assertEqual(
+            listed.stdout.splitlines()[-1],
+            f"kilix-license={FIXTURE_LICENSE_PIN}")
+
+    def test_refs_say_so_when_content_vendors_no_authority(self):
+        shutil.rmtree(self.checkout / "third_party")
+        listed = self.run_installer("--print-refs")
+        self.assertEqual(
+            listed.stdout.splitlines()[-1], "kilix-license=unavailable")
 
     def test_default_library_pin_follows_the_host_architecture(self):
         listed = self.run_installer(
@@ -626,7 +759,7 @@ class KilixVoiceInstallerTests(unittest.TestCase):
             self.assertIn("License: Apache-2.0", provenance)
         # Generated inputs never join the source tree, which is why the Kilix
         # checkout can stay a clean `git status` after an install.
-        self.assertEqual(list(self.checkout.iterdir()), [])
+        self.assertEqual(checkout_files(self.checkout), self.checkout_before)
 
         refs = (self.state / "kilix-voice-install.refs").read_text()
         self.assertIn(
@@ -926,6 +1059,154 @@ class KilixVoiceInstallerTests(unittest.TestCase):
         self.assertNotEqual(refused.returncode, 0)
         self.assertIn("must not be a symlink", refused.stderr)
         self.assertEqual(stat.S_IMODE(outside.stat().st_mode), 0o755)
+
+    def current_generation(self) -> Path:
+        return (self.data / "voice" / "runtime" / "current").resolve()
+
+    def use_python_tools(self, *extra: str) -> None:
+        files = {
+            "Makefile": "install:\n\tpython3 build_fixture.py $(PREFIX)\n",
+            "build_fixture.py": BUILD_PYTHON_FIXTURE,
+            "tool.py": PYTHON_TOOL,
+        }
+        for name in extra:
+            files[name] = "\n"
+        self.repo, self.ref = self.make_repo(f"python-voice-{len(extra)}", files)
+
+    def assert_nothing_published(self):
+        self.assertFalse((self.prefix / "bin" / "kilix-stt").exists())
+        self.assertFalse(
+            (self.data / "voice" / "runtime" / "current").is_symlink())
+        self.assertFalse((self.state / "kilix-voice-install.refs").exists())
+
+    def test_the_content_vendored_authority_is_staged_into_the_runtime(self):
+        self.run_installer("--without-dictation")
+
+        library = self.current_generation() / "lib" / "kilix-voice"
+        staged = library / "kilix_license"
+        self.assertEqual(
+            (library / "kilix-license.pin").read_text(),
+            FIXTURE_LICENSE_PIN + "\n")
+        self.assertEqual(
+            sorted(str(p.relative_to(staged)) for p in staged.rglob("*")),
+            sorted(str(p.relative_to(self.vendored_authority))
+                   for p in self.vendored_authority.rglob("*")))
+        for source in self.vendored_authority.rglob("*.json"):
+            self.assertEqual(
+                (staged / source.relative_to(self.vendored_authority))
+                .read_bytes(), source.read_bytes())
+        # The stamp keeps the three-line shape plebian-os compares byte for
+        # byte; the authority's pin is carried by the generation.
+        refs = (self.state / "kilix-voice-install.refs").read_text()
+        self.assertEqual(len(refs.splitlines()), 3)
+        self.assertNotIn("kilix-license", refs)
+
+    def test_an_installed_tool_imports_the_staged_authority(self):
+        self.use_python_tools()
+        self.run_installer("--without-dictation")
+
+        gate = subprocess.run(
+            [self.prefix / "bin" / "kilix-stt", "--check-licence",
+             "small-en-us"],
+            env=self.environment(), text=True, capture_output=True)
+
+        self.assertEqual(gate.returncode, 3, gate.stderr)
+        origin, marker = gate.stdout.splitlines()
+        self.assertEqual(
+            Path(origin),
+            self.current_generation() / "lib" / "kilix-voice"
+            / "kilix_license" / "__init__.py")
+        self.assertEqual(marker, "first")
+
+    def test_content_without_a_vendored_authority_is_refused_first(self):
+        shutil.rmtree(self.checkout / "third_party")
+        refused = self.run_installer("--without-dictation", check=False)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("vendors no kilix-license authority", refused.stderr)
+        self.assertFalse(self.data.exists())
+        self.assertFalse(self.prefix.exists())
+
+    def test_a_vendored_authority_that_fails_its_pin_check_is_refused(self):
+        (self.checkout / "third_party" / "kilix-content" / "tools"
+         / "FAIL").write_text("\n")
+        refused = self.run_installer("--without-dictation", check=False)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("does not hash up to its pin", refused.stderr)
+        self.assertIn("fixture mismatch", refused.stderr)
+        self.assertFalse(self.data.exists())
+
+    def test_an_authority_without_the_gate_api_is_not_published(self):
+        write_vendored_authority(
+            self.checkout, api=tuple(
+                name for name in LICENSE_API if name != "receipt_store_root"))
+        refused = self.run_installer("--without-dictation", check=False)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("cannot import its kilix-license authority",
+                      refused.stderr)
+        self.assert_nothing_published()
+
+    def test_a_voice_engine_shipping_its_own_authority_is_refused(self):
+        self.use_python_tools("SHIP_AUTHORITY")
+        refused = self.run_installer("--without-dictation", check=False)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("ships its own kilix_license", refused.stderr)
+        self.assert_nothing_published()
+
+    def test_a_gate_that_cannot_reach_the_authority_fails_the_install(self):
+        self.repo, self.ref = self.make_repo("gate-origin", {
+            "Makefile": MAKEFILE,
+            "build_fixture.py": NO_AUTHORITY_GATE_FIXTURE,
+        })
+        refused = self.run_installer("--without-dictation", check=False)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("authority is not installed", refused.stderr)
+        self.assertIn("gate cannot reach its kilix-license authority",
+                      refused.stderr)
+        self.assert_nothing_published()
+
+    def test_a_content_advance_restages_the_authority_in_a_new_generation(self):
+        self.use_python_tools()
+        self.run_installer("--without-dictation")
+        first = self.current_generation()
+
+        advanced = "a" * 40
+        write_vendored_authority(self.checkout, pin=advanced, marker="second")
+        second_run = self.run_installer("--without-dictation")
+
+        self.assertNotIn("already installed", second_run.stderr)
+        second = self.current_generation()
+        self.assertNotEqual(first, second)
+        self.assertEqual(
+            (second / "lib" / "kilix-voice" / "kilix-license.pin").read_text(),
+            advanced + "\n")
+        gate = subprocess.run(
+            [self.prefix / "bin" / "kilix-stt", "--check-licence",
+             "small-en-us"],
+            env=self.environment(), text=True, capture_output=True)
+        self.assertEqual(gate.stdout.splitlines()[1], "second")
+        # The generation it replaced keeps the authority it was staged with,
+        # so a rollback to it is a rollback of the gate's authority too.
+        self.assertEqual(
+            (first / "lib" / "kilix-voice" / "kilix-license.pin").read_text(),
+            FIXTURE_LICENSE_PIN + "\n")
+        self.assertIn(
+            "MARKER = 'first'",
+            (first / "lib" / "kilix-voice" / "kilix_license"
+             / "__init__.py").read_text())
+
+    def test_a_staged_authority_that_drifted_is_restaged(self):
+        self.run_installer("--without-dictation")
+        drifted = (self.current_generation() / "lib" / "kilix-voice"
+                   / "kilix_license" / "data" / "records" / "small-en-us.json")
+        drifted.write_text('{"marker": "edited"}\n')
+
+        repaired = self.run_installer("--without-dictation")
+
+        self.assertNotIn("already installed", repaired.stderr)
+        self.assertEqual(
+            (self.current_generation() / "lib" / "kilix-voice"
+             / "kilix_license" / "data" / "records" / "small-en-us.json")
+            .read_text(), '{"marker": "first"}\n')
 
     def test_existing_non_checkout_is_never_executed(self):
         project = self.source / ".kilix-voice-sources" / f"kilix-voice-{self.ref}"

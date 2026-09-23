@@ -766,8 +766,9 @@ _kilix_voice_onoff() {
 # install, and default actions. The install stamp is published only after the
 # runtime generation and its prefix links pass the installer's checks.
 _kilix_voice_tool() {
-  local name="$1" force="$2" resolved installer refs expected_line
+  local name="$1" force="$2" resolved installer refs expected_line refs_line
   local expected_ref="" installed_line="" installed_ref=""
+  local expected_license="" installed_license="" license_pin
   local stamp="$KILIX_STATE_DIRECTORY/kilix-voice-install.refs"
   local -a voice_installer
   shift 2
@@ -788,6 +789,17 @@ _kilix_voice_tool() {
     return 1
   }
 
+  # The licence authority the runtime's gate imports is staged from the pinned
+  # Content component, so a Content advance changes it without changing the
+  # Voice ref. The generation records the pin it was staged from.
+  while IFS= read -r refs_line; do
+    case "$refs_line" in kilix-license=*) expected_license="${refs_line#*=}" ;; esac
+  done <<<"$refs"
+  license_pin="$_KILIX_VOICE_DATA/runtime/current/lib/kilix-voice/kilix-license.pin"
+  if [ -f "$license_pin" ] && [ ! -L "$license_pin" ]; then
+    IFS= read -r installed_license <"$license_pin" || true
+  fi
+
   if [ -f "$stamp" ] && [ ! -L "$stamp" ]; then
     IFS= read -r installed_line <"$stamp" || true
     case "$installed_line" in
@@ -798,6 +810,8 @@ _kilix_voice_tool() {
   if [ "$force" = 0 ] \
       && [[ "$installed_ref" =~ ^[0-9a-fA-F]{40}$ ]] \
       && [ "${installed_ref,,}" = "${expected_ref,,}" ] \
+      && [ -n "$expected_license" ] \
+      && [ "$installed_license" = "$expected_license" ] \
       && [ -L "$resolved" ] \
       && [ "$(readlink -- "$resolved" 2>/dev/null || true)" \
            = "$_KILIX_VOICE_DATA/runtime/current/bin/$name" ] \

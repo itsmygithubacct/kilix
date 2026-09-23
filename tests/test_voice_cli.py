@@ -22,6 +22,12 @@ from _env_support import sandbox_env  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
+# The licence authority the voice runtime's gate imports is staged from the
+# kilix-license copy the pinned Content component vendors. Content pins that
+# predate the vendored copy have no authority to stage, and the installer then
+# refuses before it changes anything.
+VENDORED_LICENSE_PIN = (
+    ROOT / "third_party" / "kilix-content" / "third_party" / "kilix-license.pin")
 KILIX = ROOT / "kilix"
 VOICE_INSTALLER = ROOT / "scripts" / "install-kilix-voice.sh"
 
@@ -74,6 +80,17 @@ class VoiceCliTests(unittest.TestCase):
         self.assertTrue(line.startswith("kilix-voice="), line)
         return line.removeprefix("kilix-voice=")
 
+    def pinned_license_line(self):
+        refs = subprocess.check_output(
+            [VOICE_INSTALLER, "--print-refs"],
+            env=self.environment,
+            text=True,
+        )
+        lines = [line for line in refs.splitlines()
+                 if line.startswith("kilix-license=")]
+        self.assertEqual(len(lines), 1, refs)
+        return lines[0]
+
     def install_voice_stamp(self, voice_ref: str | None = None):
         state = Path(self.environment["KILIX_STATE_DIRECTORY"])
         state.mkdir(parents=True, exist_ok=True)
@@ -94,6 +111,10 @@ class VoiceCliTests(unittest.TestCase):
         tool = generation_bin / name
         tool.write_text(script)
         tool.chmod(0o755)
+        library = generation / "lib" / "kilix-voice"
+        library.mkdir(parents=True, exist_ok=True)
+        (library / "kilix-license.pin").write_text(
+            self.pinned_license_line().removeprefix("kilix-license=") + "\n")
 
         current = data / "runtime" / "current"
         if not current.exists() and not current.is_symlink():
@@ -200,12 +221,22 @@ class VoiceCliTests(unittest.TestCase):
         for name in ("kilix-tts", "kilix-stt", "kilix-voiced"):
             self.install_runtime_tool(name, stale_script)
         stamp = self.install_voice_stamp("0" * 40)
+        stale_stamp = stamp.read_text()
 
         result = self.run_kilix(
             "stt", "--install", "lgraph-en-us",
             "--default", "lgraph-en-us",
+            check=VENDORED_LICENSE_PIN.is_file(),
         )
 
+        if not VENDORED_LICENSE_PIN.is_file():
+            # A Content pin with no vendored authority: the refresh is refused
+            # before anything changes, and the stale runtime is not run either.
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("vendors no kilix-license authority", result.stderr)
+            self.assertNotIn("runtime=stale", result.stdout)
+            self.assertEqual(stamp.read_text(), stale_stamp)
+            return
         self.assertEqual(result.stdout.splitlines(), [
             "runtime=fresh",
             "arg=--install",
@@ -216,6 +247,27 @@ class VoiceCliTests(unittest.TestCase):
         self.assertIn("installing the pinned voice engine", result.stderr)
         self.assertEqual(
             stamp.read_text().splitlines()[0], f"kilix-voice={voice_ref}")
+
+    def test_a_runtime_staged_from_another_licence_authority_is_not_reused(self):
+        # The Voice ref matches, so only the staged authority's pin can tell
+        # this runtime is stale. The repository does not exist, so whatever
+        # the installer then does, it cannot clone or run anything.
+        self.environment["KILIX_VOICE_REPO"] = str(self.root / "no-such-repo")
+        self.install_fake_stt()
+        pin = (Path(self.environment["KILIX_DATA_HOME"]) / "voice" / "runtime"
+               / "generations" / "fixture" / "lib" / "kilix-voice"
+               / "kilix-license.pin")
+        pin.write_text("f" * 40 + "\n")
+
+        result = self.run_kilix("stt", "--models", check=False)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("arg=--models", result.stdout)
+
+        pin.write_text(
+            self.pinned_license_line().removeprefix("kilix-license=") + "\n")
+        reused = self.run_kilix("stt", "--models")
+        self.assertEqual(reused.stdout.splitlines(), ["arg=--models"])
 
     def test_opening_stt_only_bootstraps_the_download_free_runtime(self):
         launcher = KILIX.read_text()

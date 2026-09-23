@@ -37,6 +37,24 @@ else
   KILIX_VOICE_LIB_URL="${KILIX_VOICE_LIB_URL:-https://files.pythonhosted.org/packages/fc/ca/83398cfcd557360a3d7b2d732aee1c5f6999f68618d1645f38d53e14c9ff/vosk-0.3.45-py3-none-manylinux_2_12_x86_64.manylinux2010_x86_64.whl}"
 fi
 KILIX_VOICE_LIB_MEMBER=vosk/libvosk.so
+# The voice licence gate (kilix-voice's voicelib/licensing.py) imports the
+# kilix-license authority by plain import, and no weight is fetched unless that
+# authority finds a receipt. Receipts are written by kilix-content's first-use
+# flow (`kilix models install`), which imports the kilix-license copy the pinned
+# Content component vendors. The runtime gets that same copy, so the writer and
+# the gate are one authority release by construction and stay so when the
+# Content pin moves. It is deliberately neither pinned separately nor
+# overridable: a gate on one release and a writer on another can disagree about
+# where receipts live, and every acceptance would then be refused.
+voice_license_content="$KILIX_HOME/third_party/kilix-content"
+voice_license_source="$voice_license_content/third_party/kilix-license/src/kilix_license"
+voice_license_pin_file="$voice_license_content/third_party/kilix-license.pin"
+voice_license_verifier="$voice_license_content/tools/vendored_kilix_license.py"
+voice_license_pin=""
+if [ -f "$voice_license_pin_file" ] && [ ! -L "$voice_license_pin_file" ]; then
+  voice_license_pin="$(cat -- "$voice_license_pin_file" 2>/dev/null || true)"
+  [[ "$voice_license_pin" =~ ^[0-9a-f]{40}$ ]] || voice_license_pin=""
+fi
 KILIX_VOICE_APACHE_LICENSE_FILE="${KILIX_VOICE_APACHE_LICENSE_FILE:-/usr/share/common-licenses/Apache-2.0}"
 # The acoustic models are upstream's, published with no signature and no
 # checksum file. The small-model digest comes from two independent fetches a
@@ -118,7 +136,8 @@ if [ "${print_refs:-0}" = 1 ]; then
     "libvosk=$KILIX_VOICE_LIB_VERSION" \
     "libvosk-sha256=$KILIX_VOICE_LIB_SHA256" \
     "model-small-en-us=$KILIX_VOICE_SMALL_MODEL_SHA256" \
-    "model-lgraph-en-us=$KILIX_VOICE_LGRAPH_MODEL_SHA256"
+    "model-lgraph-en-us=$KILIX_VOICE_LGRAPH_MODEL_SHA256" \
+    "kilix-license=${voice_license_pin:-unavailable}"
   exit 0
 fi
 [ "$(id -u)" -ne 0 ] || die "run this installer as the desktop user, not root"
@@ -139,6 +158,21 @@ if [ "$without_dictation" = 0 ]; then
   [ -n "$voice_host_arch" ] \
     || die "Vosk dictation wheels are pinned for x86_64 and aarch64 only (this is $(uname -m); --without-dictation still installs read-aloud)"
 fi
+
+# Before anything is created: a runtime whose gate cannot load its authority
+# refuses every gated model, so installing one would only defer the failure
+# to the first user who asks for weights.
+command -v python3 >/dev/null 2>&1 \
+  || die "python3 is required (install build-essential, git, and python3)"
+[ -n "$voice_license_pin" ] \
+  || die "the pinned Content component vendors no kilix-license authority (expected $voice_license_pin_file), so the voice licence gate could verify no receipt; update the pinned Content component"
+[ -f "$voice_license_source/__init__.py" ] && [ ! -L "$voice_license_source" ] \
+  && [ -d "$voice_license_source/data" ] \
+  || die "the pinned Content component's kilix-license $voice_license_pin is incomplete: $voice_license_source"
+[ -f "$voice_license_verifier" ] && [ ! -L "$voice_license_verifier" ] \
+  || die "the pinned Content component has no vendored-authority check: $voice_license_verifier"
+python3 -I -B -- "$voice_license_verifier" --check >/dev/null \
+  || die "the vendored kilix-license does not hash up to its pin $voice_license_pin; refusing to stage it"
 
 normalize_absolute() {
   local value="$1" normalized
@@ -387,6 +421,97 @@ model_generation_works() {
     && cmp -s -- "$KILIX_VOICE_APACHE_LICENSE_FILE" "$license"
 }
 
+# The staged authority is the vendored one, byte for byte (bytecode aside), and
+# it is what an installed tool's own import resolves: bin/../lib/kilix-voice is
+# first on each tool's sys.path. The recorded pin makes a Content advance a new
+# generation rather than a relabelled old one.
+license_authority_works() {
+  local library="$1/lib/kilix-voice" recorded
+  [ -f "$library/kilix-license.pin" ] && [ ! -L "$library/kilix-license.pin" ] \
+    || return 1
+  recorded="$(cat -- "$library/kilix-license.pin")" || return 1
+  [ "$recorded" = "$voice_license_pin" ] || return 1
+  python3 -I -B - "$library" "$voice_license_source" <<'PY' >/dev/null 2>&1
+import filecmp
+import os
+import sys
+
+library, source = (os.path.realpath(path) for path in sys.argv[1:3])
+staged = os.path.join(library, "kilix_license")
+
+
+def tree(root):
+    found = {}
+    for directory, directories, files in os.walk(root):
+        directories[:] = [name for name in directories if name != "__pycache__"]
+        for name in directories + files:
+            path = os.path.join(directory, name)
+            if os.path.islink(path):
+                raise SystemExit(1)
+        for name in files:
+            path = os.path.join(directory, name)
+            found[os.path.relpath(path, root)] = path
+    return found
+
+
+if os.path.islink(staged) or not os.path.isdir(staged):
+    raise SystemExit(1)
+want, have = tree(source), tree(staged)
+if sorted(want) != sorted(have) or not want:
+    raise SystemExit(1)
+for relative, path in want.items():
+    if not filecmp.cmp(path, have[relative], shallow=False):
+        raise SystemExit(1)
+sys.path.insert(0, library)
+try:
+    import kilix_license
+except Exception:
+    raise SystemExit(1)
+origin = os.path.realpath(getattr(kilix_license, "__file__", None) or "")
+if not origin.startswith(staged + os.sep):
+    raise SystemExit(1)
+for name in ("AssetRef", "CoverageRefused", "ReceiptStore", "RecordIndex",
+             "covers", "load_determined_records", "require",
+             "receipt_store_root"):
+    if not hasattr(kilix_license, name):
+        raise SystemExit(1)
+PY
+}
+
+stage_license_authority() {
+  local library="$1/lib/kilix-voice" copy
+  [ ! -L "$1/lib" ] && [ ! -L "$library" ] \
+    || die "the voice engine staged a symlinked library directory"
+  mkdir -p -- "$library" || die "could not create the voice runtime library directory"
+  [ ! -e "$library/kilix_license" ] && [ ! -L "$library/kilix_license" ] \
+    && [ ! -e "$library/kilix-license.pin" ] && [ ! -L "$library/kilix-license.pin" ] \
+    || die "the voice engine ships its own kilix_license; refusing to stage a second licence authority beside it"
+  copy="$(mktemp -d "$library/.kilix-license.XXXXXX")" \
+    || die "could not allocate licence authority staging"
+  cp -R -- "$voice_license_source" "$copy/kilix_license" \
+    || die "could not stage the kilix-license authority"
+  find "$copy/kilix_license" -name __pycache__ -prune -exec rm -rf -- {} + \
+    || die "could not clean the staged kilix-license authority"
+  mv -- "$copy/kilix_license" "$library/kilix_license" && rmdir -- "$copy" \
+    || die "could not publish the staged kilix-license authority"
+  printf '%s\n' "$voice_license_pin" >"$library/kilix-license.pin" \
+    || die "could not record the staged kilix-license pin"
+}
+
+# What a user would hit first: the staged gate itself, asked about a model no
+# receipt need cover yet. 0 (a receipt covers it) and 3 (none does) both mean
+# the gate reached its authority; anything else, or a refusal that names the
+# authority rather than a receipt, means it did not.
+licence_gate_answers() {
+  local output status=0
+  output="$("$1/bin/kilix-stt" --check-licence small-en-us 2>&1)" || status=$?
+  case "$status" in 0|3) ;; *) printf '%s\n' "$output" >&2; return 1 ;; esac
+  case "$output" in
+    *"authority is not installed"*|*"authority could not be loaded"*|*"does not expose the licence"*)
+      printf '%s\n' "$output" >&2; return 1 ;;
+  esac
+}
+
 voice_runtime_works() {
   local tool entry expected library_generation model_directory notice license asset
   [ -L "$runtime_current" ] || return 1
@@ -397,6 +522,7 @@ voice_runtime_works() {
       && [ -x "$entry" ] \
       && "$entry" --version >/dev/null 2>&1 || return 1
   done
+  license_authority_works "$runtime_current" || return 1
   [ "$without_dictation" = 0 ] || return 0
 
   library_generation="$library_root/$library_generation_name"
@@ -643,6 +769,7 @@ stage_runtime_generation() {
     || die "could not allocate voice runtime staging"
   log "installing the pinned voice engine into a private generation"
   make -B -C "$voice_dir" install PREFIX="$runtime_stage"
+  stage_license_authority "$runtime_stage"
   for tool in kilix-tts kilix-stt kilix-voiced; do
     if [ ! -f "$runtime_stage/bin/$tool" ] \
         || [ -L "$runtime_stage/bin/$tool" ] \
@@ -652,6 +779,10 @@ stage_runtime_generation() {
     "$runtime_stage/bin/$tool" --version >/dev/null 2>&1 \
       || die "the staged voice tool could not start: $tool --version"
   done
+  license_authority_works "$runtime_stage" \
+    || die "the staged voice runtime cannot import its kilix-license authority $voice_license_pin"
+  licence_gate_answers "$runtime_stage" \
+    || die "the staged voice licence gate cannot reach its kilix-license authority (kilix-stt --check-licence small-en-us)"
   suffix="${runtime_stage##*.}"
   generation="$runtime_generations/kilix-voice-${KILIX_VOICE_REF,,}-$suffix"
   mv -- "$runtime_stage" "$generation" \
