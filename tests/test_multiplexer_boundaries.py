@@ -9,11 +9,14 @@ import os
 from pathlib import Path
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _env_support import sandbox_env  # noqa: E402
 
 
 class InstalledBuildTests(unittest.TestCase):
@@ -39,7 +42,7 @@ class InstalledBuildTests(unittest.TestCase):
         self.git('init','-q');self.git('config','user.name','itsmygithubacct')
         self.git('config','user.email','itsmygithubacct@users.noreply.github.com')
         self.commit()
-        self.env=dict(os.environ,KILIX_STORAGE_HOME=str(self.root/'storage'),
+        self.env=sandbox_env(KILIX_STORAGE_HOME=str(self.root/'storage'),
                       KILIX_MULTIPLEXER_HOME=str(self.source),KILIX_MULTIPLEXER_COMMIT=self.head,
                       PKG_CONFIG_PATH=str(self.prefix/'lib/pkgconfig'),CFLAGS='-I'+str(self.headers))
         ort=os.environ.get('KILIX_TEST_ORT_LIB','')
