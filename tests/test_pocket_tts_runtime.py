@@ -13,6 +13,12 @@ INSTALLER = ROOT / "scripts" / "install-kilix-pocket-tts-cpu.sh"
 
 
 class PocketCpuRuntimeTests(unittest.TestCase):
+    def test_host_routes_explicit_pocket_session_through_lazy_runtime(self):
+        host = (ROOT / "kilix").read_text(encoding="utf-8")
+        self.assertIn("--download-pocket", host)
+        self.assertIn("install-kilix-pocket-tts-cpu.sh", host)
+        self.assertIn("Pocket CPU audition needs an interactive terminal", host)
+
     def test_lock_selects_cpu_pytorch_and_pocket(self):
         project = tomllib.loads((PROJECT / "pyproject.toml").read_text())
         lock = tomllib.loads((PROJECT / "uv.lock").read_text())

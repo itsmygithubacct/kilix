@@ -2455,6 +2455,24 @@ sys.exit(0 if ready else 1)
       fi
       _tts_previous="$_tts_argument"
     done
+    for _tts_argument in "$@"; do
+      if [ "$_tts_argument" = --download-pocket ] \
+          || [ "$_tts_argument" = --pocket-model-dir ] \
+          || [[ "$_tts_argument" = --pocket-model-dir=* ]]; then
+        if [ "$_tts_interactive" != 1 ] || [ ! -t 0 ] || [ ! -t 1 ]; then
+          echo "kilix tts: Pocket CPU audition needs an interactive terminal" >&2
+          exit 2
+        fi
+        _pocket_installer="$KILIX_HOME/scripts/install-kilix-pocket-tts-cpu.sh"
+        if [ ! -f "$_pocket_installer" ] || [ -L "$_pocket_installer" ] \
+            || [ ! -x "$_pocket_installer" ]; then
+          echo "kilix tts: locked Pocket CPU installer missing or unsafe" >&2
+          exit 1
+        fi
+        _tts_python="$("$_pocket_installer")" || exit 1
+        break
+      fi
+    done
     if [ -n "$_tts_python" ]; then
       exec "$_tts_python" "$_tts_installed" "$@"
     fi
