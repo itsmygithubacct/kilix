@@ -587,7 +587,145 @@ printf 'bash /tmp/job.sh\n' | kitten @ --password-file "$KILIX_RC_PASSWORD_FILE"
 ```
 
 
-## 10. Failure reference
+## 10. Driving agent panes (Codex, Claude Code)
+
+Other panes often run coding agents rather than shells. Everything in §6 still
+applies, but an agent's input box is a full-screen program with its own rules,
+and a send that "worked" at the terminal can still reach the agent mangled,
+merged into another message, or not at all. These rules come from driving many
+agent sessions at once; each one exists because breaking it lost a message or
+delivered a wrong one.
+
+### Identify the target by what runs in it
+
+Titles go stale: a pane titled after one project may now be running something
+else. Pick targets from the `ls` JSON by `foreground_processes[].cmdline` and
+`cwd`, then use the broker session from that same record. Compare it with your
+own `$KITTY_PTY_BROKER_SESSION` before sending, so you never type into
+yourself. Pane IDs and broker sessions change when a pane restarts; read them
+fresh each time, never from a cache.
+
+### Wait for a ready input box, and answer menus explicitly
+
+A freshly started agent can open with a menu instead of an input box. Codex
+asks whether to trust a new working directory (`1. Yes`, `2. No, quit`).
+Claude Code can show a permissions warning. Menus act on single keypresses, so
+a brief sent on a timer can choose an option: a path containing the digit `2`
+has answered "No, quit" and closed the session. Poll the screen (§6) until a
+ready marker is visible (Codex shows `Ask Codex to do anything` above its
+model/status line; Claude Code shows its input prompt and shortcut hint).
+Answer any menu with the exact key you intend, then check the screen again.
+
+### Put text in, check it, then submit
+
+Send the text and the submit key as two separate operations, and read the pane
+back between them. The read is what stops a malformed prompt reaching a live
+agent.
+
+- **Check for the end of the message, not the start.** End every message with
+  a short, distinctive token (for example `END-OF-BRIEF-7Q`) and look for that
+  token. It matches only if the whole message arrived.
+- **Strip whitespace before comparing.** The pane wraps text at its own width,
+  so a token can be split across two lines. Compare with spaces and newlines
+  removed (`tr -d ' \n\r'` on the captured screen), or a message that did
+  arrive looks as if it did not. Sending it again then doubles it.
+- **Long text is shown as a placeholder.** Agents collapse a large paste into
+  a marker such as `[Pasted Content 1018 chars]` or `[Pasted text #3]`, so your
+  words are not on screen. A placeholder alone does not prove the whole text
+  arrived, because a truncated paste looks the same.
+- **One missed match is not proof of failure.** The screen redraws
+  constantly. Read it again a moment later before concluding anything.
+
+### Keep messages short; put briefs in files
+
+Budget about 900 bytes per message, below the 1024-byte policy in §6. An
+over-size send has been observed to arrive cut off, leaving a fragment in the
+agent's input box, rather than being cleanly refused. Anything longer belongs
+in a file: write the brief to disk and send one sentence with its path.
+
+### Busy agents, queued messages and clearing the input box
+
+- A working agent shows markers such as `esc to interrupt` or `Working (…)`.
+  Typing still works, but think about when the message will be read.
+- While a Codex turn is running, its input box offers **Tab to queue** the
+  message. Send the text, check it, then send a Tab character (`\t`) instead
+  of the submit byte. The message then waits for the current step to finish
+  rather than interrupting it, and appears under "Queued follow-up inputs".
+- Ctrl-U does not clear the Codex input box. Repeated DEL (`\177`) does; check
+  that the idle placeholder is back before sending anything new.
+- If someone else's text is already in an agent's input box, it is theirs. Do
+  not append to it; ask, or leave the pane alone.
+
+### Completion tokens and stalled sessions
+
+An agent usually echoes its brief, and with it any "done" token the brief
+mentions. A watcher that greps for the bare token can therefore fire while the
+work has barely started. Look for the token together with its result (a hash,
+a file on disk) and a stopped busy marker.
+
+A session that has stopped is often correct: it reached a real gate and
+recorded it. Read the pane or its log (§11) before resuming it, and resume
+only when you can say what changed. Put that in the message.
+
+### Working alongside other agents
+
+- Do not edit a checkout another pane is working in. Use your own branch in a
+  separate `git worktree`, and tell the other session what changed and what it
+  should do with it.
+- Say in the message who is sending it and why, so the receiving agent does
+  not treat an automated message as its user typing.
+- Experiment in a scratch tab, never in a live pane. Open one with
+  `launch --type=tab --keep-focus`, compare the set of pane IDs before and
+  after, and close only the exact ID you created. A `launch` issued from
+  outside a pane opens in whatever tab the user has active.
+
+
+## 11. Transcripts and complete logs
+
+A pane's screen and scrollback are not the only record, and they are not
+complete.
+
+**Kilix transcripts.** Kilix records each session's output on disk, named by
+broker session, so a closed pane can still be read. See the
+[transcripts help page](help/operations/transcripts.md) for `kilix transcript
+list`, `show` and `path`. The transcript is what the pane *displayed*, wrapped
+at the pane's width: search it for single words, commit hashes or file names,
+never for phrases that may span a line break.
+
+**An agent's own session log.** For an agent pane, the full conversation,
+including tool calls and output that scrolled away or was never drawn, lives in
+the agent's session log, not in the terminal. Find it from the pane's
+foreground process:
+
+```sh
+# PID from foreground_processes in the ls JSON for that pane
+ls -l /proc/$PID/fd | grep -E 'rollout-.*\.jsonl'     # Codex
+```
+
+Codex writes `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`. Claude Code writes
+`~/.claude/projects/<working-directory-slug>/<session-id>.jsonl`, where the
+slug is the pane's working directory with `/` replaced by `-`. Claude Code does
+not hold the file open, so the `/proc` check finds only Codex logs; for Claude
+Code, take the newest file in the directory matching the pane's `cwd`. Both are one
+JSON object per line; the user and assistant messages are the fastest way to
+recover what a session was asked and what it reported.
+
+
+## 12. Safety notes for automated callers
+
+- **Tests can write the live store.** Pane shells export `KILIX_DATA_HOME` and
+  `KILIX_STORAGE_HOME` pointing at the user's real Kilix data. A test suite run
+  with the inherited environment can overwrite installed models or settings.
+  Run tests with those variables (and `XDG_*`) pointed at a temporary directory.
+- **Some verbs install things.** A `kilix` subcommand can lazily install the
+  component it needs, even when you only asked for `--help`. Read the verb's
+  documentation instead of probing it.
+- **Waiting on a process.** `pgrep -f PATTERN` also matches the shell running
+  your wait loop, so `until ! pgrep -f job` never ends. Wait on a recorded PID
+  (have the job write `$$` to a file) or check that its output is still growing.
+
+
+## 13. Failure reference
 
 | Symptom | Cause |
 |---|---|
@@ -602,3 +740,8 @@ printf 'bash /tmp/job.sh\n' | kitten @ --password-file "$KILIX_RC_PASSWORD_FILE"
 | pane vanishes immediately | its command exited; use `--hold` |
 | new pane appears on the wrong side | engine predates `left`/`up`; restart Kilix |
 | `No matching windows for expression` | the pane already closed |
+| an agent pane quit right after your brief | it opened with a menu and a character in your text chose an option; wait for the ready marker (§10) |
+| your check says the text is missing, but it arrived | the pane wrapped your end token across lines, or the screen was mid-redraw; strip whitespace and read again (§10) |
+| an agent received half a message | the send exceeded the size budget and was cut off; put long text in a file (§10) |
+| a "done" watcher fired immediately | the agent echoed the brief, including the token; require the token plus its result (§10) |
+| a closed pane's output is needed | read its transcript, or the agent's session log (§11) |
