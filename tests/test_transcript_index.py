@@ -13,6 +13,10 @@ import stat
 import subprocess
 import tempfile
 import unittest
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _env_support import sandbox_env  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,10 +44,7 @@ def run_launcher(*args, storage, transcript_dir=None, extra_env=None):
     the real installation trips the launcher's "writable roots must be strict
     descendants of Kilix storage" check before it reaches the subcommand.
     """
-    env = {
-        key: value for key, value in os.environ.items()
-        if not key.startswith(("KILIX", "KITTY")) and key != "COLUMNS"
-    }
+    env = {key: value for key, value in sandbox_env().items() if key != "COLUMNS"}
     env["KILIX_STORAGE_HOME"] = str(storage)
     if transcript_dir is not None:
         env["KILIX_TRANSCRIPT_DIR"] = str(transcript_dir)

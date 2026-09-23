@@ -936,10 +936,7 @@ class TranscriptArchiveIntegrationTests(unittest.TestCase):
             source.write_bytes(payload)
             source.chmod(0o600)
 
-            env = {
-                key: value for key, value in os.environ.items()
-                if not key.startswith(("KILIX", "GPU_TERMINAL"))
-            }
+            env = sandbox_env()
             env["GPU_TERMINAL_HOME"] = str(gpu_home)
             env["GPU_TERMINAL_SOURCE_HOME"] = str(ROOT.parent)
             command = [str(ROOT / "kilix"), "transcript"]

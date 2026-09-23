@@ -297,6 +297,51 @@ class CatalogPinTests(unittest.TestCase):
         self.assertIsNotNone(match)
         self.assertEqual(match.group(1), package["source"]["ref"])
 
+    def test_amp_build_carries_the_encodec_flag(self):
+        """OD-BN: the Amp build Kilix executes carries ``ENCODEC=1``.
+
+        Amp is catalog content, not a component with a pin of its own, so no
+        installer here spells its ref or its build flags, and removing the
+        flag from the pinned catalog left this suite's failure set
+        byte-identical (C-REPIN-PREP section 4.3). The flag is asserted on every
+        route Kilix takes to that build: the shipped catalog bytes, the spec
+        the host SDK selects from them, and the selection
+        ``install-kilix-amp.py --resolve`` relays to every caller -- so a
+        catalog that drops it, a parser that loses it and a relay that
+        filters it each fail here.
+        """
+        catalog_path = (
+            ROOT / "third_party" / "kilix-content" / "src" /
+            "kilix_content" / "catalog" / "plebian.json"
+        )
+        catalog = json.loads(catalog_path.read_text())
+        shipped = next(
+            entry for entry in catalog["content"] if entry["id"] == "kilix-amp"
+        )
+        sys.path.insert(0, str(ROOT / "config"))
+        from kilix_sdk import content
+
+        selected = content.default_catalog().require("kilix-amp")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "absent apps"
+            result = subprocess.run(
+                [sys.executable, "-B", str(SCRIPTS / "install-kilix-amp.py"),
+                 "--resolve", "--content-root", str(root)],
+                env=sandbox_env(PYTHONDONTWRITEBYTECODE="1"),
+                capture_output=True, text=True, timeout=60,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            relayed = json.loads(result.stdout)
+            self.assertFalse(root.exists())
+        for route, build in (("shipped catalog", shipped["build"]),
+                             ("selected spec", list(selected.build)),
+                             ("install-kilix-amp.py --resolve", relayed["build"])):
+            with self.subTest(route=route):
+                self.assertIn("ENCODEC=1", build)
+                self.assertEqual(build[0], "make")
+        self.assertEqual(shipped["build"], list(selected.build))
+        self.assertEqual(relayed["build"], list(selected.build))
+
     def test_camera_component_pins_match_the_shared_catalog(self):
         catalog_path = (
             ROOT / "third_party" / "kilix-content" / "src" /
