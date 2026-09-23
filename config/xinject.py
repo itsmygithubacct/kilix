@@ -191,7 +191,13 @@ class Injector:
         x = max(0, min(self.app_w - 1, int(x)))
         y = max(0, min(self.app_h - 1, int(y)))
         xtest.fake_input(self.xd, X.MotionNotify, x=x, y=y)
-        if button in (4, 5):             # wheel
+        # A wheel notch arrives with no press flag and is one click; anything
+        # carrying a flag is a real button being held, whatever its number.
+        # Keyed on the number alone, a viewer's back/forward button -- which
+        # kilix share's client reports as 4 and 5 -- was injected as a wheel
+        # notch on the press AND again on the release, and never tracked, so
+        # release_all could not free it.
+        if button in (4, 5) and press is None:
             xtest.fake_input(self.xd, X.ButtonPress, button)
             xtest.fake_input(self.xd, X.ButtonRelease, button)
         elif button and press is not None:
@@ -230,15 +236,24 @@ class Injector:
         mods = ((MOD_SHIFT if b & 4 else 0) | (MOD_ALT if b & 8 else 0)
                 | (MOD_CTRL if b & 16 else 0))
         self._set_mouse_modifiers(mods)
-        if b & 64:                       # wheel -> X buttons 4/5
-            btn = 4 if (b & 3) == 0 else 5
+        if b & 64:                       # scroll -> X buttons 4-7
+            # (b & 3) + 4, not "4 or 5": the engine encodes a scroll button as
+            # (button - 4) | 64, so 66/67 are the HORIZONTAL wheel (X 6/7).
+            # Collapsing them to 5 scrolled the app down for both directions.
+            btn = (b & 3) + 4
             xtest.fake_input(self.xd, X.MotionNotify, x=ax, y=ay)
             xtest.fake_input(self.xd, X.ButtonPress, btn)
             xtest.fake_input(self.xd, X.ButtonRelease, btn)
         elif b & 32:                     # motion (with or without drag)
             xtest.fake_input(self.xd, X.MotionNotify, x=ax, y=ay)
         else:
-            btn = (b & 3) + 1            # 0/1/2 -> left/middle/right
+            # 0/1/2 -> left/middle/right, and bit 7 -> the side buttons the
+            # engine encodes as (button - 8) | 128, i.e. X buttons 8-11.
+            # Without that arm a side button decoded as (b & 3) + 1: a thumb
+            # click became a left/middle/RIGHT click, and pressed mid-drag its
+            # release ended the real drag of the button it aliased onto and
+            # dropped the modifier that gesture still owned.
+            btn = (b & 3) + (8 if b & 128 else 1)
             xtest.fake_input(self.xd, X.MotionNotify, x=ax, y=ay)
             if ev["press"]:
                 xtest.fake_input(self.xd, X.ButtonPress, btn)

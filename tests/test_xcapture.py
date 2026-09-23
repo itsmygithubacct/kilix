@@ -12,6 +12,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "config"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import x11_sandbox  # noqa: E402
 
 try:
     from Xlib import X, display as xdisplay, error as xerror
@@ -21,6 +23,13 @@ except ImportError:
     HAVE_DEPS = False
 
 XVFB = shutil.which("Xvfb")
+
+
+def load_tests(loader, tests, pattern):
+    # A display number is not proof of ownership: run inside private mount
+    # and network namespaces, with DISPLAY and XAUTHORITY scrubbed, so no
+    # foreign X server can be named by path, abstract socket, TCP or $DISPLAY.
+    return x11_sandbox.sandbox_load_tests(loader, tests, __name__)
 
 
 @unittest.skipUnless(XVFB and HAVE_DEPS, "needs Xvfb + PIL + python-xlib")
@@ -39,6 +48,7 @@ class XDamageCaptureE2E(unittest.TestCase):
     def setUpClass(cls):
         cls.xd = None
         cls.xvfb = None
+        cls.x11_before = x11_sandbox.require_private_x11()
         failures = []
         for _attempt in range(3):
             try:
@@ -50,6 +60,7 @@ class XDamageCaptureE2E(unittest.TestCase):
                     cls.xd = xdisplay.Display(cls.display_name)
                 finally:
                     probe.close()
+                x11_sandbox.claim_display(cls.xd)
                 cls.addClassCleanup(cls._stop_xvfb)
                 return
             except (OSError, RuntimeError, ValueError,
@@ -104,6 +115,7 @@ class XDamageCaptureE2E(unittest.TestCase):
             probe = socket.socket(socket.AF_UNIX)
             try:
                 probe.connect(socket_path)
+                x11_sandbox.confirm_our_socket(int(number), cls.x11_before)
                 return probe
             except OSError as error:
                 probe.close()
