@@ -407,7 +407,7 @@ class ModelSetupTests(unittest.TestCase):
 
     def test_every_packaged_model_licence_text_is_available_without_acquisition(self):
         catalog = ui._verified_catalog(self.api)
-        self.assertEqual(len(catalog.assets), 27)
+        self.assertEqual(len(catalog.assets), 28)
         digests = set()
         for spec in catalog.assets:
             self.assertTrue(spec.licenses)
@@ -784,7 +784,7 @@ raise SystemExit(result)
                                   side_effect=AssertionError("private verifier")):
             catalog = ui._verified_catalog(self.api)
         spy.assert_called_once_with()
-        self.assertEqual(len(catalog.assets), 27)
+        self.assertEqual(len(catalog.assets), 28)
         self.assertEqual(receipt.catalog_sha256(), receipt._CATALOG_SHA256)
         # The refusal reaches the operator as a refusal, and creates nothing.
         errors = io.StringIO()
@@ -820,7 +820,7 @@ raise SystemExit(result)
             self.assertEqual(ui.main(["--root", str(self.root / "space dir/../models"), "list"]), 0)
         payload = json.loads(result.getvalue())
         self.assertEqual(payload["root"], str(self.root / "models"))
-        self.assertEqual(len(payload["models"]), 27)
+        self.assertEqual(len(payload["models"]), 28)
         self.assertFalse((self.root / "models").exists())
 
     # ---- the real authority, end to end ---------------------------------
