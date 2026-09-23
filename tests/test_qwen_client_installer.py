@@ -5,6 +5,12 @@ import os
 import subprocess
 import tempfile
 import unittest
+import sys
+
+# The suite runs both as `discover -s tests` (bare module names) and as
+# `-m unittest tests.<module>` (package), so name this directory explicitly.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _env_support import sandbox_env  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,7 +39,7 @@ class QwenClientInstallerTests(unittest.TestCase):
             clone = sources / f".kilix-qwen-tts-{REF}"
             subprocess.run(["git", "clone", "-q", "--no-checkout", source, clone], check=True)
             subprocess.run(["git", "-C", clone, "checkout", "-q", "--detach", REF], check=True)
-            environment = dict(os.environ, KILIX_HOME=str(ROOT),
+            environment = sandbox_env(KILIX_HOME=str(ROOT),
                                GPU_TERMINAL_SOURCE_HOME=str(sources),
                                KILIX_DATA_HOME=str(root / "data"))
             command = [INSTALLER]
@@ -46,7 +52,7 @@ class QwenClientInstallerTests(unittest.TestCase):
     def environment(self, root):
         sources = root / "sources"
         sources.mkdir(exist_ok=True)
-        return sources, dict(os.environ, KILIX_HOME=str(ROOT), GPU_TERMINAL_SOURCE_HOME=str(sources),
+        return sources, sandbox_env(KILIX_HOME=str(ROOT), GPU_TERMINAL_SOURCE_HOME=str(sources),
                              KILIX_DATA_HOME=str(root / "data"))
 
     def test_current_link_outside_managed_generations_refuses(self):

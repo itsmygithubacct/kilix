@@ -5,6 +5,12 @@ import subprocess
 import tomllib
 import unittest
 from uuid import uuid4
+import sys
+
+# The suite runs both as `discover -s tests` (bare module names) and as
+# `-m unittest tests.<module>` (package), so name this directory explicitly.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _env_support import sandbox_env  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,7 +41,7 @@ class QwenCpuRuntimeTests(unittest.TestCase):
         self.assertTrue(os.access(INSTALLER, os.X_OK))
         root = Path("/tmp") / f"kilix-qwen-print-only-{uuid4().hex}"
         self.assertFalse(root.exists())
-        environment = dict(os.environ, KILIX_DATA_HOME=str(root))
+        environment = sandbox_env(KILIX_DATA_HOME=str(root))
         result = subprocess.run([str(INSTALLER), "--print-path"], env=environment,
                                 text=True, capture_output=True, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -73,7 +79,7 @@ class QwenGpuRuntimeTests(unittest.TestCase):
         self.assertTrue(os.access(installer, os.X_OK))
         root = Path("/tmp") / f"kilix-qwen-gpu-print-only-{uuid4().hex}"
         self.assertFalse(root.exists())
-        environment = dict(os.environ, KILIX_DATA_HOME=str(root))
+        environment = sandbox_env(KILIX_DATA_HOME=str(root))
         result = subprocess.run([str(installer), "--print-path"], env=environment,
                                 text=True, capture_output=True, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
