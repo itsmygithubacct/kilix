@@ -70,6 +70,12 @@ def asset_v3_available():
 _V3, _ORIGIN = asset_v3_available()
 
 
+# Assets in the packaged catalog at the third_party/kilix-content gitlink.
+# One place, so a catalog move changes one line: ee1ac43e added needle2,
+# needle2-runtime and needle2-train (OD-BV) to rc1's 27.
+PACKAGED_ASSETS = 30
+
+
 class _Handler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -407,7 +413,7 @@ class ModelSetupTests(unittest.TestCase):
 
     def test_every_packaged_model_licence_text_is_available_without_acquisition(self):
         catalog = ui._verified_catalog(self.api)
-        self.assertEqual(len(catalog.assets), 27)
+        self.assertEqual(len(catalog.assets), PACKAGED_ASSETS)
         digests = set()
         for spec in catalog.assets:
             self.assertTrue(spec.licenses)
@@ -784,7 +790,7 @@ raise SystemExit(result)
                                   side_effect=AssertionError("private verifier")):
             catalog = ui._verified_catalog(self.api)
         spy.assert_called_once_with()
-        self.assertEqual(len(catalog.assets), 27)
+        self.assertEqual(len(catalog.assets), PACKAGED_ASSETS)
         self.assertEqual(receipt.catalog_sha256(), receipt._CATALOG_SHA256)
         # The refusal reaches the operator as a refusal, and creates nothing.
         errors = io.StringIO()
@@ -820,7 +826,7 @@ raise SystemExit(result)
             self.assertEqual(ui.main(["--root", str(self.root / "space dir/../models"), "list"]), 0)
         payload = json.loads(result.getvalue())
         self.assertEqual(payload["root"], str(self.root / "models"))
-        self.assertEqual(len(payload["models"]), 27)
+        self.assertEqual(len(payload["models"]), PACKAGED_ASSETS)
         self.assertFalse((self.root / "models").exists())
 
     # ---- the real authority, end to end ---------------------------------
