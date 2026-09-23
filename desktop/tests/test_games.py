@@ -70,11 +70,12 @@ write("")                                        # empty conf, no [terminal-land
 assert games.lander_ready(games.load()) is None
 assert games.game_ready("terminal-lander") is None
 
-# Kilix Lights is a pinned native game whose executable lives under bin/.
+# Kilix Lights is a pinned native game in the kilix-games monorepo whose
+# executable lives under its directory's bin/.
 assert "kilix-lights" in games.GAMES
 assert games.GAMES["kilix-lights"]["label"] == "Kilix Lights"
 assert games.GAMES["kilix-lights"]["icon"] == "lights"
-assert games.CONTENT_CATALOG.require("kilix-lights").binary == "bin/kilix-lights"
+assert games.CONTENT_CATALOG.require("kilix-lights").binary == "kilix-lights/bin/kilix-lights"
 write("")
 assert games.game_ready("kilix-lights") is None
 assert "lights" in icons.ICONS

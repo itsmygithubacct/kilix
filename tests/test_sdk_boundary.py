@@ -305,11 +305,11 @@ else:
         self.assertEqual(lander.source_type, "git")
         self.assertEqual(len(lander.ref), 40)
         self.assertEqual(catalog.require("kilix-rancher").binary,
-                         "kilix-rancher")
+                         "kilix-rancher/kilix-rancher")
         self.assertEqual(catalog.require("kilix-pong").launch_mode,
                          "terminal")
         self.assertEqual(catalog.require("kilix-lights").binary,
-                         "bin/kilix-lights")
+                         "kilix-lights/bin/kilix-lights")
         self.assertEqual(catalog.require("super-kilix").binary,
                          "super-kilix")
         self.assertIs(content.InstallError, __import__(
