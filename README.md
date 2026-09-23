@@ -920,8 +920,8 @@ second copy. They can be selected as a future-compatible default, but this
 version of the live voice runtime cannot dictate with them; the UI and CLI
 report that distinction instead of calling the weights runnable.
 
-`kilix voice install` installs the immutable `kilix-voice` 0.1.3 source at
-commit `f501409a82bf73b738b14986e12441bce23ec1c6`, the official Vosk 0.3.45
+`kilix voice install` installs the immutable `kilix-voice` 0.1.6 source at
+commit `06d1f672d811e55e4b2b5f34bdb86a969824d34e`, the official Vosk 0.3.45
 wheel for the host (x86_64 or aarch64, each pinned by its own digest), and
 either the default `vosk-model-small-en-us-0.15` or the
 `--model lgraph-en-us` dynamic-graph model. Downloads are SHA-256 verified.
