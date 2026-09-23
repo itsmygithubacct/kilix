@@ -8,7 +8,7 @@ it again focuses the existing window); everything else opens fresh.
 import wm
 
 
-GAME_APPS = {"mines": "minesweeper", "sol": "solitaire"}
+GAME_APPS = {"mines": "minesweeper"}
 
 
 def open(desk, name, arg=None):
@@ -50,9 +50,6 @@ def open(desk, name, arg=None):
     elif name == "mines":
         from . import mines
         desk.wm.add(mines.Mines(desk, arg))
-    elif name == "sol":
-        from . import sol
-        desk.wm.add(sol.Solitaire(desk, arg))
     elif name == "paint":
         from . import paint
         desk.wm.add(paint.Paint(desk, arg))

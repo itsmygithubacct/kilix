@@ -818,7 +818,7 @@ def main():
     ap.add_argument("--dir", help="desktop folder override")
     ap.add_argument("--app", metavar="NAME",
                     help="boot with this built-in app already open "
-                         "(mines, sol, calc, ... — what `kilix games play` "
+                         "(mines, calc, ... — what `kilix games play` "
                          "uses for the desktop's own games)")
     ap.add_argument("--screenshot", metavar="PNG",
                     help="render offscreen to PNG and exit (no terminal)")

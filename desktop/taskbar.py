@@ -441,10 +441,6 @@ class Taskbar:
                 builtin.append(MI(
                     "Minesweeper", icon="mines",
                     action=lambda: shell.open_app("mines")))
-            if availability["solitaire"]:
-                builtin.append(MI(
-                    "Solitaire", icon="cards",
-                    action=lambda: shell.open_app("sol")))
             items = builtin + shell.game_menu_items(availability)
             disc = app_items("Games")
             if disc:
