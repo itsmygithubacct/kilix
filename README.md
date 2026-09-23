@@ -897,6 +897,8 @@ kilix voice install               # pinned Kilix Voice + default Vosk model
 kilix stt --models                # all speech models, sizes, install/runtime state
 kilix stt --models --json         # versioned machine-readable catalog contract
 kilix stt --install lgraph-en-us --default lgraph-en-us
+kilix tts --tiers                 # hardware-aware read-aloud choices
+kilix tts --interactive --tier neural   # first-use Piper setup and session
 kilix voice doctor                # dependency and audio-device diagnostics
 kilix tts                         # read-aloud settings and test-phrase TUI
 kilix stt                         # dictation settings and microphone-level TUI
@@ -946,7 +948,7 @@ version of the live voice runtime cannot dictate with them; the UI and CLI
 report that distinction instead of calling the weights runnable.
 
 `kilix voice install` installs the immutable `kilix-voice` 0.1.6 source at
-commit `06d1f672d811e55e4b2b5f34bdb86a969824d34e`, the official Vosk 0.3.45
+commit `53819f5e87bfbd4f90e563c0d7e4c30ca73285d5`, the official Vosk 0.3.45
 wheel for the host (x86_64 or aarch64, each pinned by its own digest), and
 either the default `vosk-model-small-en-us-0.15` or the
 `--model lgraph-en-us` dynamic-graph model. Downloads are SHA-256 verified.

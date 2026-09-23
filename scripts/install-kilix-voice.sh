@@ -27,7 +27,7 @@ case "$(uname -m)" in
   *) voice_host_arch="" voice_elf_machine="" ;;
 esac
 KILIX_VOICE_REPO="${KILIX_VOICE_REPO:-https://github.com/itsmygithubacct/kilix-voice.git}"
-KILIX_VOICE_REF="${KILIX_VOICE_REF:-06d1f672d811e55e4b2b5f34bdb86a969824d34e}"
+KILIX_VOICE_REF="${KILIX_VOICE_REF:-53819f5e87bfbd4f90e563c0d7e4c30ca73285d5}"
 KILIX_VOICE_LIB_VERSION="${KILIX_VOICE_LIB_VERSION:-0.3.45}"
 if [ "$voice_host_arch" = aarch64 ]; then
   KILIX_VOICE_LIB_SHA256="${KILIX_VOICE_LIB_SHA256:-54efb47dd890e544e9e20f0316413acec7f8680d04ec095c6140ab4e70262704}"
@@ -498,6 +498,23 @@ stage_license_authority() {
     || die "could not record the staged kilix-license pin"
 }
 
+stage_content_first_use() {
+  local library="$1/lib/kilix-voice" source copy
+  source="$voice_license_content/src/kilix_content"
+  [ -f "$source/first_use.py" ] && [ ! -L "$source" ] \
+    || die "the pinned Content component has no first-use implementation"
+  [ ! -e "$library/kilix_content" ] && [ ! -L "$library/kilix_content" ] \
+    || die "the voice engine ships its own Content package"
+  copy="$(mktemp -d "$library/.kilix-content.XXXXXX")" \
+    || die "could not stage the first-use package"
+  cp -R -- "$source" "$copy/kilix_content" \
+    || die "could not copy the pinned first-use package"
+  find "$copy/kilix_content" -name __pycache__ -prune -exec rm -rf -- {} + \
+    || die "could not clean the staged first-use package"
+  mv -- "$copy/kilix_content" "$library/kilix_content" && rmdir -- "$copy" \
+    || die "could not publish the staged first-use package"
+}
+
 # What a user would hit first: the staged gate itself, asked about a model no
 # receipt need cover yet. 0 (a receipt covers it) and 3 (none does) both mean
 # the gate reached its authority; anything else, or a refusal that names the
@@ -770,6 +787,7 @@ stage_runtime_generation() {
   log "installing the pinned voice engine into a private generation"
   make -B -C "$voice_dir" install PREFIX="$runtime_stage"
   stage_license_authority "$runtime_stage"
+  stage_content_first_use "$runtime_stage"
   for tool in kilix-tts kilix-stt kilix-voiced; do
     if [ ! -f "$runtime_stage/bin/$tool" ] \
         || [ -L "$runtime_stage/bin/$tool" ] \

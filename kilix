@@ -2328,6 +2328,41 @@ case "${1:-}" in
       _kilix_voice_tool kilix-tts "$_tts_force" --without-dictation
     )" || exit 1
     [ "$_tts_install_only" = 0 ] || exit 0
+    _tts_previous=""
+    for _tts_argument in "$@"; do
+      if [ "$_tts_argument" = --tiers ] \
+          || [ "$_tts_argument" = --tier ] \
+          || [[ "$_tts_argument" = --tier=* ]]; then
+        _sizer_installer="$KILIX_HOME/scripts/install-kilix-tts-sizer.sh"
+        if [ ! -f "$_sizer_installer" ] || [ -L "$_sizer_installer" ] \
+            || [ ! -x "$_sizer_installer" ]; then
+          echo "kilix tts: pinned model sizer installer missing or unsafe" >&2
+          exit 1
+        fi
+        PLEBIAN_MODEL_SIZER="$("$_sizer_installer")" || exit 1
+        export PLEBIAN_MODEL_SIZER
+        break
+      fi
+      _tts_previous="$_tts_argument"
+    done
+    _tts_previous=""
+    for _tts_argument in "$@"; do
+      if [ "$_tts_argument" = --tier=neural ] \
+          || [ "$_tts_argument" = --install=piper-en-us-kristin-medium ] \
+          || { [ "$_tts_previous" = --tier ] && [ "$_tts_argument" = neural ]; } \
+          || { [ "$_tts_previous" = --install ] \
+               && [ "$_tts_argument" = piper-en-us-kristin-medium ]; }; then
+        _piper_installer="$KILIX_HOME/scripts/install-kilix-piper-tts.sh"
+        if [ ! -f "$_piper_installer" ] || [ -L "$_piper_installer" ] \
+            || [ ! -x "$_piper_installer" ]; then
+          echo "kilix tts: pinned Piper installer missing or unsafe" >&2
+          exit 1
+        fi
+        "$_piper_installer" || exit $?
+        break
+      fi
+      _tts_previous="$_tts_argument"
+    done
     exec "$_tts_installed" "$@" ;;
   stt|kilix-stt)
     shift

@@ -192,6 +192,10 @@ def write_vendored_authority(
     (package / "data" / "records" / "small-en-us.json").write_text(
         f'{{"marker": "{marker}"}}\n')
     (content / "third_party" / "kilix-license.pin").write_text(pin + "\n")
+    first_use = content / "src" / "kilix_content"
+    first_use.mkdir(parents=True, exist_ok=True)
+    (first_use / "__init__.py").write_text("\n")
+    (first_use / "first_use.py").write_text("# pinned Content first-use fixture\n")
     tools = content / "tools"
     tools.mkdir(parents=True, exist_ok=True)
     (tools / "vendored_kilix_license.py").write_text(FIXTURE_VENDOR_CHECK)
@@ -208,7 +212,7 @@ def checkout_files(checkout: Path) -> dict[str, bytes]:
 MODEL_DIRECTORY = "vosk-model-small-en-us-0.15"
 LGRAPH_MODEL_DIRECTORY = "vosk-model-en-us-0.22-lgraph"
 DOWNLOAD_TOOLS = ("curl", "sha256sum", "unzip", "cc")
-PINNED_VOICE_REF = "06d1f672d811e55e4b2b5f34bdb86a969824d34e"
+PINNED_VOICE_REF = "53819f5e87bfbd4f90e563c0d7e4c30ca73285d5"
 PUBLISHED_VOSK_VERSION = "0.3.45"
 PUBLISHED_VOSK_SHA256 = (
     "25e025093c4399d7278f543568ed8cc5460ac3a4bf48c23673ace1e25d26619f"
