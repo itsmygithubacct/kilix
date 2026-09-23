@@ -64,6 +64,16 @@ def _spawn(desk, exe, path=None):
     _seed_sample(d)
     cmd = [exe] + ([os.path.abspath(os.path.expanduser(path))] if path
                    else [])
+    # The model licence authority resolves its shared receipt store from
+    # these values. Keep them aligned with the host's `kilix models install`
+    # process while Amp retains its private XDG application state.
+    shared = {name: os.environ[name] for name in (
+        "HOME", "GPU_TERMINAL_HOME", "KILIX_LICENSE_RECEIPTS")
+        if name in os.environ}
+    shared.update({
+        "XDG_CONFIG_HOME": storage.config_dir("app-state"),
+        "XDG_DATA_HOME": storage.data_dir("app-state"),
+    })
     try:
         desk.wm.add(xpane.XPane(
             desk, cmd, "Media Player", icon="amp",
@@ -72,10 +82,7 @@ def _spawn(desk, exe, path=None):
             # (EQ / playlist) are never clipped
             # private, persistent config: window layout survives sessions and
             # never collides with a user-level kilix-amp install
-            env=launch_environment(root=games.APPS_DIR, base={
-                "XDG_CONFIG_HOME": storage.config_dir("app-state"),
-                "XDG_DATA_HOME": storage.data_dir("app-state"),
-            }),
+            env=launch_environment(root=games.APPS_DIR, base=shared),
             cwd=d))
     except Exception as e:
         wm.msgbox(desk, "Media Player",

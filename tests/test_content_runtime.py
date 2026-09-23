@@ -119,7 +119,10 @@ class ContentRuntimeTests(unittest.TestCase):
                    "wm": SimpleNamespace(msgbox=mock.Mock()), "storage": storage,
                    "games": SimpleNamespace(APPS_DIR="/real apps/../catalog")}
         with mock.patch.dict(sys.modules, modules), mock.patch.dict(
-            os.environ, {"KILIX_CONTENT_ROOT": "/wrong"}, clear=True,
+            os.environ, {"KILIX_CONTENT_ROOT": "/wrong",
+                         "HOME": "/session-home",
+                         "GPU_TERMINAL_HOME": "/shared-stack",
+                         "KILIX_LICENSE_RECEIPTS": "/shared-receipts"}, clear=True,
         ):
             spec = importlib.util.spec_from_file_location(
                 "fixture_apps.amp", ROOT / "desktop/apps/amp.py")
@@ -132,6 +135,8 @@ class ContentRuntimeTests(unittest.TestCase):
             self.assertEqual(environment, {
                 "XDG_CONFIG_HOME": "/private-config", "XDG_DATA_HOME": "/private-data",
                 "KILIX_CONTENT_ROOT": "/catalog",
+                "HOME": "/session-home", "GPU_TERMINAL_HOME": "/shared-stack",
+                "KILIX_LICENSE_RECEIPTS": "/shared-receipts",
             })
             desk.wm.add.assert_called_once_with("window")
 
