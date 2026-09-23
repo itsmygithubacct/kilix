@@ -34,9 +34,17 @@ BUILDENV="${KILIX_BUILD_ENV:-$KILIX_CONFIG_HOME/build.env}"
 mkdir -p "$KILIX_CONFIG_HOME"
 chmod 0700 "$KILIX_STORAGE_HOME" "$KILIX_CONFIG_HOME" 2>/dev/null || true
 
-# pkg-config modules the fork links against (see build.sh).
-PC_DEPS="x11 xrandr xinerama xcursor xi xkbcommon xkbcommon-x11 x11-xcb dbus-1 gl fontconfig libpng lcms2 cairo-fc harfbuzz libcrypto libxxhash wayland-client wayland-cursor wayland-egl wayland-protocols"
-AMP_PC_DEPS="sdl2 SDL2_image sndfile zlib fluidsynth"
+# pkg-config modules the fork links against (see build.sh). zlib is here
+# because the fork's setup.py links -lz.
+PC_DEPS="x11 xrandr xinerama xcursor xi xkbcommon xkbcommon-x11 x11-xcb dbus-1 gl fontconfig libpng lcms2 cairo-fc harfbuzz libcrypto libxxhash wayland-client wayland-cursor wayland-egl wayland-protocols zlib"
+# Installed, reported, and never required. These are kilix-amp's, the desktop
+# Media Player, which the desktop clones and builds on first use; build.sh
+# links none of them. Requiring them made a machine that can build the fork
+# fail --verify, and pleb installs whenever --verify fails, so the terminal's
+# own gate pulled in Amp's packages -- on Debian that means libfluidsynth-dev,
+# the only package with fluidsynth.pc, which hard-depends on the fluidsynth
+# player.
+AMP_PC_DEPS="sdl2 SDL2_image sndfile fluidsynth"
 # Wanted, but never required. These belong to the text browser (`kilix chawan`),
 # which is built on first use rather than with the fork, and which can build
 # libssh2 for itself or drop SFTP entirely when it is absent. Verifying them
@@ -104,11 +112,19 @@ build_python() {
 verify() {
   local ok=1 m py_info
   echo "==> verifying build prerequisites:"
-  for m in $PC_DEPS $AMP_PC_DEPS; do
+  for m in $PC_DEPS; do
     if pkg-config --exists "$m" 2>/dev/null; then
       echo "   pkg-config $m: yes"
     else
       echo "   pkg-config $m: MISSING"; ok=0
+    fi
+  done
+  for m in $AMP_PC_DEPS; do
+    if pkg-config --exists "$m" 2>/dev/null; then
+      echo "   pkg-config $m: yes (Media Player)"
+    else
+      echo "   pkg-config $m: missing (Media Player only — the desktop builds kilix-amp"
+      echo "                 on first use and needs it then; run this installer to add it)"
     fi
   done
   for m in $OPTIONAL_PC_DEPS; do

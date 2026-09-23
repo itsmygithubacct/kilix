@@ -680,6 +680,9 @@ explicitly confirmed termination action.
   on `PATH`.
 - The same dependency installer also includes kilix-amp's SDL/libsndfile/
   FluidSynth packages, so the desktop Media Player can build and play MIDI.
+  The fork build links none of them, so `--verify` reports them as the Media
+  Player's and does not fail without them; the desktop builds kilix-amp on
+  first use and needs them then.
 - **For read aloud:** `espeak-ng` plus `pacat`, `paplay`, or `aplay`. **For
   dictation:** x86_64, `parec` or `arecord`, and the pinned local Vosk closure
   installed by `kilix voice install`. Run `kilix voice doctor` to see the exact

@@ -227,12 +227,20 @@ class VerifyReportsWhatTheBuildNeedsTests(unittest.TestCase):
         self.base = Path(self.temp.name)
         self.bindir = self.base / "bin"
         self.bindir.mkdir()
+        self.missing_pc = self.base / "pc-missing"
+        self.missing_pc.write_text("")
         for tool in self._TOOLS:
             real = shutil.which(tool)
             self.assertIsNotNone(real, f"the fixture needs {tool}")
             (self.bindir / tool).symlink_to(real)
         stubs = {
-            "pkg-config": "exit 0\n",
+            # Every module is present except those named in pc-missing.
+            "pkg-config": (
+                '[ "${1:-}" = --exists ] && shift\n'
+                'for m in "$@"; do\n'
+                f'  grep -qxF -- "$m" {shlex.quote(str(self.missing_pc))} && exit 1\n'
+                'done\n'
+                'exit 0\n'),
             "gcc": "cat >/dev/null; exit 0\n",
             "make": "exit 0\n", "git": "exit 0\n", "curl": "exit 0\n",
             "zstd": "exit 0\n",
@@ -320,6 +328,40 @@ class VerifyReportsWhatTheBuildNeedsTests(unittest.TestCase):
         self.assertEqual(self.selected(result), str(chosen))
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertIn("build Python headers: MISSING", result.stdout)
+
+    # The Media Player's packages. build.sh links none of them; the desktop
+    # builds kilix-amp on first use. Named here rather than read from the
+    # script, so moving one back into the required set fails a test.
+    MEDIA_PLAYER_MODULES = ("sdl2", "SDL2_image", "sndfile", "fluidsynth")
+
+    def test_the_media_players_packages_do_not_gate_the_fork_build(self):
+        # pleb runs the installer whenever --verify fails, and on Debian the
+        # only package with fluidsynth.pc hard-depends on the fluidsynth player.
+        # So while these gated the terminal's verification, a machine that could
+        # build the fork was sent to install the Media Player's packages, and
+        # the player with them.
+        self.interpreter("python3.13", "3.13.5", headers=True)
+        self.missing_pc.write_text("\n".join(self.MEDIA_PLAYER_MODULES) + "\n")
+        result = self.verify()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("==> OK", result.stdout)
+        for module in self.MEDIA_PLAYER_MODULES:
+            self.assertIn(f"   pkg-config {module}: missing (Media Player only",
+                          result.stdout)
+
+    def test_a_module_the_fork_links_still_gates_the_build(self):
+        # The other direction, so the change cannot be satisfied by a verify
+        # that stopped checking modules: zlib moved out of the Media Player's
+        # set because the fork links -lz, and libxxhash is one pleb's own
+        # messages name.
+        self.interpreter("python3.13", "3.13.5", headers=True)
+        for module in ("zlib", "libxxhash"):
+            with self.subTest(module=module):
+                self.missing_pc.write_text(module + "\n")
+                result = self.verify()
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("==> INCOMPLETE", result.stdout)
+                self.assertIn(f"   pkg-config {module}: MISSING", result.stdout)
 
 
 if __name__ == "__main__":
