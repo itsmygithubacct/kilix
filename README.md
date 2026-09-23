@@ -903,6 +903,7 @@ kilix tts --interactive --tier pocket-cpu # measured Pocket/Alba CPU audition
 kilix tts --interactive --tier qwen-cpu # locked CPU runtime, then first-use Qwen model
 kilix tts --interactive --tier qwen-gpu # locked CUDA/FlashAttention runtime on an eligible GPU
 kilix tts --interactive --tier qwen-base-gpu # 0.6B Base with a fixed synthetic reference
+kilix tts --speak 'Hello' --model qwen3-tts-0.6b-customvoice # explicit provider path
 kilix voice doctor                # dependency and audio-device diagnostics
 kilix tts                         # read-aloud settings and test-phrase TUI
 kilix stt                         # dictation settings and microphone-level TUI
@@ -921,6 +922,10 @@ CUDA PyTorch and FlashAttention 2. For an existing verified GPU environment,
 `KILIX_QWEN_GPU_PYTHON` may instead name its absolute Python path.
 The Base tier uses that GPU runtime and its own measured fit profile; no
 person's voice is cloned, and its weights require a separate first-use notice.
+The explicit `--model qwen3-tts-0.6b-customvoice` read-aloud path lazily
+installs only the pinned Qwen socket client. Synthesis additionally requires a
+separately running, receipt-backed Qwen provider; the audition runtime and its
+model files do not satisfy that requirement, and neither is started implicitly.
 
 ## Read aloud and dictation
 

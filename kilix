@@ -2363,6 +2363,23 @@ case "${1:-}" in
       fi
       _tts_previous="$_tts_argument"
     done
+    _tts_previous=""
+    for _tts_argument in "$@"; do
+      if [ "$_tts_argument" = --model=qwen3-tts-0.6b-customvoice ] \
+          || { [ "$_tts_previous" = --model ] \
+               && [ "$_tts_argument" = qwen3-tts-0.6b-customvoice ]; }; then
+        _qwen_client_installer="$KILIX_HOME/scripts/install-kilix-qwen-client.sh"
+        if [ ! -f "$_qwen_client_installer" ] || [ -L "$_qwen_client_installer" ] \
+            || [ ! -x "$_qwen_client_installer" ]; then
+          echo "kilix tts: pinned Qwen client installer missing or unsafe" >&2
+          exit 1
+        fi
+        KILIX_QWEN_TTS="$("$_qwen_client_installer")" || exit 1
+        export KILIX_QWEN_TTS
+        break
+      fi
+      _tts_previous="$_tts_argument"
+    done
     _tts_python=""
     _tts_interactive=0
     for _tts_argument in "$@"; do
