@@ -1041,6 +1041,7 @@ that root, and neither command creates any of those directories.
 kilix models list
 kilix models show encodec-24khz-stateful
 kilix models install whisper-tiny-ggml
+kilix models install whisper-tiny-ggml --from /media/usb/whisper-tiny-ggml
 ```
 
 Installation requires an interactive terminal and explicit confirmation; there
@@ -1058,11 +1059,30 @@ Acceptance is recorded as one receipt bound to the model's manifest and to the
 licence record behind its first licence. A model whose catalog record names a
 second licence has that licence's text printed in full and labelled as bound
 by nothing. Receipts are read and written at the one root
-`kilix_license.receipt_store_root()` reports — `$GPU_TERMINAL_HOME/license-receipts`,
-or `$KILIX_LICENSE_RECEIPTS` — so this command and the gates that consume
+`kilix_license.receipt_store_root()` reports — `$KILIX_LICENSE_RECEIPTS` if set,
+otherwise `$GPU_TERMINAL_HOME/license-receipts`, otherwise
+`$HOME/.local/gpu_terminal/license-receipts` — so this command and the gates that consume
 receipts cannot file and look in different places. Re-running `install` for a
 model an existing receipt already covers installs it without asking again, and
 a receipt written for a different manifest does not cover the new one.
+
+`kilix models install ID --from DIR` installs from files you already hold
+instead of downloading them, for an air-gapped or metered machine. `DIR` holds
+the model's files at their manifest paths, which is the layout an installed
+copy has, so a tree copied from another machine can be given unchanged. It is
+the same install, not a second one: the same licence screen, which adds the
+directory it reads and `download: none`, the same typed agreement and the same
+receipt, and the pinned component verifies every file against the manifest
+before anything is published; licence notices are written from the licence
+authority, never taken from `DIR`. Nothing is downloaded on any path under
+`--from`, including a model an existing receipt already covers. A missing or
+unreadable directory is refused, naming it, before anything is shown or
+recorded; a directory whose files do not match is refused after the typed
+agreement and installs nothing, and the acceptance typed by then stays
+recorded, as it does when a download fails. The receipt records that you
+accepted the licence, exactly as for a download. It does not record that you
+supplied the files. A pinned component without the supply surface refuses
+`--from` by name.
 
 Explicit `--root /absolute/installer/root` before the subcommand targets
 another actual installer root, for example Kilix 95's separate apps root; it

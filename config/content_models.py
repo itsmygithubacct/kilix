@@ -13,14 +13,24 @@ agreement line the authority demands, and hands the decision back to it. It
 writes no receipt of its own and spells no receipt path: the store root is
 whatever ``kilix_license.receipt_store_root()`` reports, so this command and
 the gates that read receipts cannot disagree about where consent was filed.
+
+``install --from DIR`` (OD-BS) reads the model's files from a directory the
+user already holds instead of downloading them. It is the same install, not a
+third path: the same screen, the same typed agreement and the same receipt,
+and the Content component verifies every file against the manifest. The only
+difference is where the bytes come from, and under ``--from`` no route in this
+file can reach a download. A receipt records acceptance of the licence, as a
+download's does; it does not record that the files were supplied.
 """
 from __future__ import annotations
 
 import argparse
 from contextlib import ExitStack
 import importlib
+import inspect
 import json
 import math
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -116,6 +126,77 @@ def _verified_catalog(api):
     return api.default_catalog()
 
 
+_NO_SUPPLY = ("the pinned Content component cannot install from a supplied "
+              "directory; update it, or install without --from")
+
+
+def _require_supply(api) -> None:
+    """Refuse ``--from`` by name on a component without the supply surface.
+
+    The asset/v3 line gained ``first_use`` before it gained supply, so a real,
+    reachable component has the one and not the other. Probed on the ``--from``
+    path only: a component that cannot supply still serves every other command.
+    """
+    first_use = api.first_use
+    for function in (first_use.install_with_agreement, first_use.present_asset):
+        try:
+            parameters = inspect.signature(function).parameters
+        except (TypeError, ValueError):
+            parameters = {}
+        if "supplied" not in parameters:
+            raise SetupError(_NO_SUPPLY)
+    if not callable(getattr(api.Installer, "ensure_supplied_asset", None)):
+        raise SetupError(_NO_SUPPLY)
+
+
+def _supplied_directory(value: str) -> str:
+    """The ``--from`` directory as an absolute path, or a refusal naming it.
+
+    Only existence, type and access are judged here, before anything is shown
+    or recorded, so an operator gets a message about the directory rather than
+    a generic installation failure after the receipt. Whether its files are the
+    model is the manifest's question, and the Content component answers it:
+    checking them here too would be a second verifier to drift.
+    """
+    if not value:
+        raise SetupError("--from needs the directory that holds this model's files")
+    path = os.path.abspath(value)
+    if not os.path.lexists(path):
+        raise SetupError(f"--from {path!r}: no such directory; give the directory "
+                         "that holds this model's files at their manifest paths")
+    if not os.path.isdir(path):
+        raise SetupError(f"--from {path!r} is not a directory")
+    if not os.access(path, os.R_OK | os.X_OK):
+        raise SetupError(f"--from {path!r} cannot be read by this user; "
+                         "check its permissions")
+    return path
+
+
+class _SupplyOnlyInstaller:
+    """The installer ``--from`` hands out: it can supply and it cannot fetch.
+
+    Every install under ``--from`` goes through this object, and it has no
+    method that downloads. The routing below picks the supplying method on
+    both the uncovered and the covered path, but a routing mistake here is
+    one line -- the covered path used to call the downloading method
+    unconditionally -- so the guarantee does not rest on the routing.
+    """
+
+    def __init__(self, installer, supplied: str):
+        self._installer = installer
+        self._supplied = supplied
+
+    def ensure_supplied_asset(self, spec, *, supplied, **options):
+        if os.path.abspath(os.fspath(supplied)) != self._supplied:
+            raise SetupError("refusing to read a directory other than the one given to --from")
+        return self._installer.ensure_supplied_asset(spec, supplied=supplied, **options)
+
+    def _refuse(self, *_args, **_options):
+        raise SetupError("--from never downloads; refusing an acquisition that would fetch")
+
+    ensure_upstream_asset = ensure_asset = ensure = _refuse
+
+
 def _json(value, output) -> None:
     print(json.dumps(value, ensure_ascii=True, sort_keys=True), file=output, flush=True)
 
@@ -185,9 +266,9 @@ def _answer(prompt: str, expected: str, source, output) -> bool:
     return _read_line(prompt, _MAX_ANSWER, source, output).casefold() == expected
 
 
-def _plan(lic, spec, root: str) -> dict:
+def _plan(lic, spec, root: str, supplied: str | None = None) -> dict:
     receipt = importlib.import_module("kilix_content.receipt")
-    return {
+    plan = {
         "asset": spec.to_mapping(),
         "root": root,
         "authority": {"catalog_sha256": receipt.catalog_sha256(),
@@ -203,9 +284,15 @@ def _plan(lic, spec, root: str) -> dict:
         "binding_note": "One receipt is written and it binds the first licence only. "
                         "Any further licence this record names is shown and not bound.",
     }
+    if supplied is not None:
+        plan["supplied"] = supplied
+        plan["supplied_note"] = ("Files are read from this directory and verified against "
+                                 "the manifest; nothing is downloaded. The receipt records "
+                                 "acceptance of the licence, not that the files were supplied.")
+    return plan
 
 
-def _present(api, spec, record, texts, store, records, output) -> None:
+def _present(api, spec, record, texts, store, records, output, supplied=None) -> None:
     """Print the authority's screen, then every further licence text verbatim.
 
     Only ``licenses[0]`` has a determined record and a receipt. A further row
@@ -214,7 +301,11 @@ def _present(api, spec, record, texts, store, records, output) -> None:
     licence again under the second one's name. Its text is printed instead,
     labelled as bound by nothing.
     """
-    _emit(api.first_use.present_asset(spec, record, texts, receipts=store, records=records),
+    # ``supplied`` is passed only when given, so a component without the
+    # parameter is never handed one (``_require_supply`` refuses first).
+    extra = {} if supplied is None else {"supplied": supplied}
+    _emit(api.first_use.present_asset(spec, record, texts, receipts=store, records=records,
+                                      **extra),
           "first-use screen", output)
     for item in spec.licenses[1:]:
         output.write(f"=== additional licence {item.license_id} "
@@ -224,6 +315,11 @@ def _present(api, spec, record, texts, store, records, output) -> None:
 
 
 def _install(api, lic, spec, args, source, output, errors) -> int:
+    supplied = getattr(args, "supplied", None)
+    if supplied is not None:
+        # Before anything is shown, opened or recorded.
+        _require_supply(api)
+        supplied = _supplied_directory(supplied)
     if not source.isatty() or not output.isatty() or not hasattr(output, "buffer"):
         raise SetupError("install requires an interactive terminal; there is no --yes or piped consent")
     with ExitStack() as stack:
@@ -232,14 +328,21 @@ def _install(api, lic, spec, args, source, output, errors) -> int:
         scratch = stack.enter_context(tempfile.TemporaryDirectory(prefix="kilix-models-texts-"))
         texts = lic.load_determined_texts(Path(scratch) / "texts")
         record = _record(records, spec.licenses[0].record_digest)
-        _json(_plan(lic, spec, args.root), output)
-        _present(api, spec, record, texts, store, records, output)
+        _json(_plan(lic, spec, args.root, supplied), output)
+        _present(api, spec, record, texts, store, records, output, supplied)
         covered = not api.first_use.needs_agreement(spec, records=records, store=store)
         if covered:
             output.write("A stored receipt already covers this exact model, licence "
                          "record and manifest. Nothing further is recorded.\n")
-        output.write("Setup may download the pinned model files and run the declared "
-                     "local conversion.\n")
+        if supplied is None:
+            output.write("Setup may download the pinned model files and run the declared "
+                         "local conversion.\n")
+        else:
+            output.write("Setup reads the model files from the directory given to --from "
+                         "and downloads nothing; every file is verified against the pinned "
+                         "manifest before anything is installed.\n"
+                         "The receipt records that you accepted the licence, exactly as for "
+                         "a download. It does not record that you supplied the files.\n")
         if not _answer("Install this exact model in the shown root? [y/N] ", "y", source, output):
             return 1
         typed = None
@@ -256,14 +359,21 @@ def _install(api, lic, spec, args, source, output, errors) -> int:
         # Nothing has been written yet: the installer root is not created and
         # no receipt exists until every required choice above has succeeded.
         installer = api.Installer(args.root, command_timeout=args.timeout)
+        if supplied is not None:
+            installer = _SupplyOnlyInstaller(installer, supplied)
         report = lambda message: _json({"progress": str(message)[:4096]}, errors)
-        if covered:
+        if covered and supplied is not None:
+            paths = installer.ensure_supplied_asset(
+                spec, supplied=supplied, store=store, records=records, notices=texts,
+                report=report)
+        elif covered:
             paths = installer.ensure_upstream_asset(
                 spec, store=store, records=records, notices=texts, report=report)
         else:
+            extra = {} if supplied is None else {"supplied": supplied}
             paths = api.first_use.install_with_agreement(
                 spec, installer=installer, store=store, records=records, texts=texts,
-                typed_text=typed, screen=None, report=report)
+                typed_text=typed, screen=None, report=report, **extra)
         if paths is None:
             return 1
         _json({"installed": spec.asset_id, "version": spec.version, "root": args.root,
@@ -273,7 +383,16 @@ def _install(api, lic, spec, args, source, output, errors) -> int:
         return 0
 
 
-def main(argv=None) -> int:
+_FROM_HELP = (
+    "install from files you already hold instead of downloading them: DIR holds "
+    "this model's files at their manifest paths, the layout an installed copy has. "
+    "Nothing is downloaded, and every file is verified against the pinned manifest. "
+    "The licence screen and the typed agreement are unchanged, and the receipt "
+    "records your acceptance of the licence exactly as for a download; it does not "
+    "record that you supplied the files.")
+
+
+def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="kilix models", description=__doc__)
     parser.add_argument("--root", help="explicit absolute installer root; defaults to the host application root")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -284,7 +403,12 @@ def main(argv=None) -> int:
     install.add_argument("asset")
     install.add_argument("--timeout", type=_timeout, default=900.0,
                          help="per ordinary acquisition/build command ceiling, 1..3600 seconds (default 900)")
-    args = parser.parse_args(argv)
+    install.add_argument("--from", dest="supplied", metavar="DIR", help=_FROM_HELP)
+    return parser
+
+
+def main(argv=None) -> int:
+    args = _parser().parse_args(argv)
     try:
         args.root = normalized_root(args.root) if args.root is not None else apps_root()
         api = _api()
