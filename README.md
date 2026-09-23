@@ -674,8 +674,11 @@ explicitly confirmed termination action.
   ships 1.25), it configures the exact `toolchain` version from `go.mod` so Go
   can fetch that checksum-verified toolchain on demand. `build.sh` forces that
   exact version even if the host has a newer Go — no open-ended latest lookup
-  and no manual Go install. Current kitty source also uses Python 3.12 syntax;
-  `build.sh` selects `python3.14`, `python3.13`, or `python3.12` in that order.
+  and no manual Go install. Current kitty source also uses Python 3.12 syntax:
+  of `python3.14`, `python3.13`, `python3.12` and `python3`, `build.sh` takes
+  the first that is 3.12 or newer and has its `Python.h`, and only when none
+  has the headers the first that is new enough, with a warning. `--verify`
+  reports the same interpreter and fails when its headers are missing.
   Set `KILIX_PYTHON=/path/to/python3.12+` when the desired interpreter is not
   on `PATH`.
 - The same dependency installer also includes kilix-amp's SDL/libsndfile/
