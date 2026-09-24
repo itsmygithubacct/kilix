@@ -84,15 +84,16 @@ GAMES = {
     if spec.kind == "game" or spec.content_id == "dosbox"
 }
 
-# The two desktop-window games in the shared vocabulary (kilix_sdk.settings
-# GAME_TOGGLE_IDS): not catalog content, nothing to install — each is an app
+# The desktop-window game in the shared vocabulary (kilix_sdk.settings
+# GAME_TOGGLE_IDS): not catalog content, nothing to install — it is an app
 # inside the bundled desktop. `kilix games play` boots that desktop with the
 # window already open, so every surface that builds its menu from the shared
 # toggle list gets a working launch for ALL the ids it shows. Before this
-# map, these two ids fell into ensure()'s "unknown game" and the tab died.
+# map, such ids fell into ensure()'s "unknown game" and the tab died.
+# Solitaire used to be one; it is now the catalog's terminal game
+# (kilix-games solitaire-tui) under the same `solitaire` id.
 DESKTOP_APP_GAMES = {
     "minesweeper": ("mines", "Minesweeper"),
-    "solitaire": ("sol", "Solitaire"),
 }
 
 
@@ -582,8 +583,8 @@ def _launch_native(exe):
 def _launch_desktop_app(game):
     """Boot the bundled desktop with this game's window already open.
 
-    Minesweeper and Solitaire are desktop windows, not programs: the desktop
-    is their runtime. The bundled desktop sits at the same pinned version as
+    Minesweeper is a desktop window, not a program: the desktop is its
+    runtime. The bundled desktop sits at the same pinned version as
     this backend, so `kilix games play minesweeper` from any other desktop's
     menu opens the same build the built-in provider would."""
     app, _label = DESKTOP_APP_GAMES[game]

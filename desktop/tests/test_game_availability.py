@@ -41,7 +41,7 @@ d = H.make_desk()
 labels = game_labels(d)
 assert "Minesweeper" not in labels
 assert "Doom" not in labels
-assert "Solitaire" in labels
+assert "Solitaire TUI" in labels
 assert "DOSBox" in labels
 assert "Kilix Lights" in labels
 assert "Super Kilix" in labels

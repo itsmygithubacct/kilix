@@ -194,7 +194,7 @@ class SharedSettingsTests(unittest.TestCase):
         }
         configured_games = set(settings.GAME_KEY_BY_ID)
         self.assertEqual(
-            configured_games - {"minesweeper", "solitaire"}, catalog_games)
+            configured_games - {"minesweeper"}, catalog_games)
         self.assertTrue(all(
             settings.defaults()[key] == "1"
             for key in settings.GAME_KEY_BY_ID.values()))

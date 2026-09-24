@@ -71,11 +71,12 @@ write("")                                        # empty conf, no [terminal-land
 assert games.lander_ready(games.load()) is None
 assert games.game_ready("terminal-lander") is None
 
-# Kilix Lights is a pinned native game whose executable lives under bin/.
+# Kilix Lights is a pinned native game in the kilix-games monorepo whose
+# executable lives under its directory's bin/.
 assert "kilix-lights" in games.GAMES
 assert games.GAMES["kilix-lights"]["label"] == "Kilix Lights"
 assert games.GAMES["kilix-lights"]["icon"] == "lights"
-assert games.CONTENT_CATALOG.require("kilix-lights").binary == "bin/kilix-lights"
+assert games.CONTENT_CATALOG.require("kilix-lights").binary == "kilix-lights/bin/kilix-lights"
 write("")
 assert games.game_ready("kilix-lights") is None
 assert "lights" in icons.ICONS
@@ -242,12 +243,13 @@ except zipfile.BadZipFile:
 games.ensure = _real_ensure
 
 
-# Entry 13: minesweeper and solitaire are windows of the bundled desktop, not
-# catalog content. They must be always-ready (no "isn't set up yet" prompt),
+# Entry 13: minesweeper is a window of the bundled desktop, not catalog
+# content (solitaire is catalog content now: kilix-games solitaire-tui). They must be always-ready (no "isn't set up yet" prompt),
 # ensure() must treat them as nothing-to-install, and an unknown id must be a
 # caught SystemExit with the id list named — not an uncaught exit that takes
 # the tab.
-for _game in ("minesweeper", "solitaire"):
+assert "solitaire" in games.GAMES and "solitaire" not in games.DESKTOP_APP_GAMES
+for _game in ("minesweeper",):
     ready = games.game_ready(_game)
     assert ready and ready.endswith("main.py"), (_game, ready)
     lines = []

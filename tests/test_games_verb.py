@@ -2,10 +2,11 @@
 
 The shared vocabulary (kilix_sdk.settings.GAME_TOGGLE_IDS) is what every
 desktop builds its games menu from, and the play verb is what those menus
-delegate to. Two of its ids — minesweeper and solitaire — are windows of the
-bundled desktop rather than catalog content; before DESKTOP_APP_GAMES they
-fell into ensure()'s "unknown game" SystemExit, which flew out of main() and
-took the tab with it. These tests run the real launcher in a sandboxed HOME,
+delegate to. One of its ids — minesweeper — is a window of the bundled
+desktop rather than catalog content; before DESKTOP_APP_GAMES such ids fell
+into ensure()'s "unknown game" SystemExit, which flew out of main() and took
+the tab with it. Solitaire was the other; it is now catalog content (the
+kilix-games terminal game) under the same id. These tests run the real launcher in a sandboxed HOME,
 the way the review box hit it.
 """
 import os
@@ -40,14 +41,14 @@ class DesktopGamesPlayTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def test_list_offers_the_two_desktop_games(self):
+    def test_list_offers_minesweeper_and_solitaire(self):
         result = _play(self.home, "list")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("minesweeper=", result.stdout)
         self.assertIn("solitaire=", result.stdout)
 
     def test_setup_only_succeeds_with_nothing_to_install(self):
-        for game in ("minesweeper", "solitaire"):
+        for game in ("minesweeper",):
             result = _play(self.home, "play", game, "--setup-only")
             self.assertEqual(result.returncode, 0,
                              f"{game}: {result.stderr!r}")
@@ -73,7 +74,8 @@ class DesktopGamesPlayTests(unittest.TestCase):
         code = ("import sys; sys.path.insert(0, %r); sys.path.insert(0, %r);"
                 "import games;"
                 "assert games.game_ready('minesweeper');"
-                "assert games.game_ready('solitaire');"
+                "assert 'solitaire' in games.GAMES;"
+                "assert 'solitaire' not in games.DESKTOP_APP_GAMES;"
                 "print('ready')") % (os.path.join(ROOT, "desktop"),
                                      os.path.join(ROOT, "config"))
         env = {"HOME": self.home, "PATH": "/usr/bin:/bin",
@@ -92,7 +94,7 @@ class DesktopGamesPlayTests(unittest.TestCase):
             encoding="utf-8")
         self.assertIn("DESKTOP_APP_GAMES", games)
         self.assertIn('"minesweeper": ("mines", "Minesweeper")', games)
-        self.assertIn('"solitaire": ("sol", "Solitaire")', games)
+        self.assertNotIn('"solitaire": ("sol"', games)
         self.assertIn('"--app", app', games)
         main = (Path(ROOT) / "desktop" / "main.py").read_text(
             encoding="utf-8")
