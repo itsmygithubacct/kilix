@@ -165,17 +165,40 @@ ensure_checkout() {
     || die "tmux-cli version probe failed"
 }
 
+managed_sources_real="$(realpath -- "$managed_sources")" \
+  || die "could not resolve $managed_sources"
+
+# True when <path> (already resolved) is <entry> inside a checkout this
+# installer created, in this or another source home: a developer layout with
+# GPU_TERMINAL_SOURCE_HOME=~/gpu_terminal leaves its links in
+# ~/gpu_terminal/.tmux-tui-sources, and the standard layout must be able to
+# take them over. Only that exact shape, owned by this user, qualifies.
+is_managed_checkout_entry() {
+  local path="$1" entry="$2" checkout sources
+  case "$path" in
+    "$managed_sources"/*|"$managed_sources_real"/*) return 0 ;;
+    */.tmux-tui-sources/tmux-tui-*/"$entry") ;;
+    *) return 1 ;;
+  esac
+  checkout="${path%/"$entry"}"
+  sources="${checkout%/*}"
+  [[ "${checkout##*/}" =~ ^tmux-tui-[0-9a-fA-F]{40}$ ]] || return 1
+  [ "${sources##*/}" = .tmux-tui-sources ] || return 1
+  [ -d "$sources" ] && [ ! -L "$sources" ] && [ -d "$checkout" ] \
+    && [ "$(stat -c '%u' -- "$sources" 2>/dev/null)" = "$(id -u)" ] \
+    && [ "$(stat -c '%u' -- "$checkout" 2>/dev/null)" = "$(id -u)" ]
+}
+
 managed_link() {
-  local target="$1" link="$2" label="$3" current temporary
+  local target="$1" link="$2" label="$3" entry="$4" current temporary
   if [ -e "$link" ] || [ -L "$link" ]; then
     [ -L "$link" ] \
       || die "refusing to replace non-symlink $label command: $link"
     current="$(readlink -f -- "$link" 2>/dev/null || true)"
-    case "$current" in
-      "$managed_sources"/*) ;;
-      "$target") ;;
-      *) die "refusing to replace unmanaged $label link: $link -> ${current:-broken}" ;;
-    esac
+    if [ "$current" != "$target" ] \
+        && ! is_managed_checkout_entry "$current" "$entry"; then
+      die "refusing to replace unmanaged $label link: $link -> ${current:-broken}"
+    fi
   fi
   temporary="$prefix/bin/.$label.$$.tmp"
   [ ! -e "$temporary" ] && [ ! -L "$temporary" ] \
@@ -190,11 +213,11 @@ remove_managed_tb_link() {
   [ -L "$tb_link" ] || die "refusing to remove non-symlink tb command: $tb_link"
   current="$(readlink -f -- "$tb_link" 2>/dev/null || true)"
   case "$current" in
-    "$managed_sources"/*/tmux-cli/tb.py)
-      rm -f -- "$tb_link"
-      log "removed managed tb command alias" ;;
-    *) die "refusing to remove unmanaged tb link: $tb_link -> ${current:-broken}" ;;
-  esac
+    */tmux-cli/tb.py) is_managed_checkout_entry "$current" tmux-cli/tb.py ;;
+    *) false ;;
+  esac || die "refusing to remove unmanaged tb link: $tb_link -> ${current:-broken}"
+  rm -f -- "$tb_link"
+  log "removed managed tb command alias"
 }
 
 if [ "$force" = 0 ] && [ -f "$stamp" ] \
@@ -205,9 +228,9 @@ else
   ensure_checkout
 fi
 
-managed_link "$tmux_tui_bin" "$tmux_tui_link" tmux-tui
+managed_link "$tmux_tui_bin" "$tmux_tui_link" tmux-tui tmux_tui.py
 case "$tb_mode" in
-  install) managed_link "$tb_bin" "$tb_link" tb ;;
+  install) managed_link "$tb_bin" "$tb_link" tb tmux-cli/tb.py ;;
   remove) remove_managed_tb_link ;;
 esac
 

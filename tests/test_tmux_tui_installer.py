@@ -145,6 +145,52 @@ class TmuxTuiInstallerTests(unittest.TestCase):
         self.assertFalse((self.prefix / "bin" / "tb").exists())
         self.assertTrue((self.prefix / "bin" / "tmux-tui").is_symlink())
 
+    def _other_home_checkout(self, name: str) -> Path:
+        # What a developer layout (GPU_TERMINAL_SOURCE_HOME=~/gpu_terminal)
+        # leaves behind: the same installer's checkout below another home.
+        checkout = self.root / "dev-home" / ".tmux-tui-sources" / name
+        (checkout / "tmux-cli").mkdir(parents=True)
+        (checkout / "tmux_tui.py").write_text("#!/bin/sh\n")
+        (checkout / "tmux-cli" / "tb.py").write_text("#!/bin/sh\n")
+        return checkout
+
+    def test_links_into_another_homes_managed_checkout_are_taken_over(self):
+        old = self._other_home_checkout("tmux-tui-" + "a" * 40)
+        bin_dir = self.prefix / "bin"
+        bin_dir.mkdir(parents=True)
+        (bin_dir / "tmux-tui").symlink_to(old / "tmux_tui.py")
+        (bin_dir / "tb").symlink_to(old / "tmux-cli" / "tb.py")
+        self.run_installer("--with-tb")
+        for name in ("tmux-tui", "tb"):
+            self.assertTrue(
+                str((bin_dir / name).resolve()).startswith(
+                    str(self.source.resolve() / ".tmux-tui-sources")),
+                name,
+            )
+
+    def test_another_homes_tb_link_can_be_removed(self):
+        old = self._other_home_checkout("tmux-tui-" + "b" * 40)
+        bin_dir = self.prefix / "bin"
+        bin_dir.mkdir(parents=True)
+        (bin_dir / "tb").symlink_to(old / "tmux-cli" / "tb.py")
+        self.run_installer("--without-tb")
+        self.assertFalse((bin_dir / "tb").is_symlink())
+
+    def test_lookalike_links_outside_a_managed_checkout_are_still_refused(self):
+        for name in ("tmux-tui-not-a-commit", "tmux-tui-" + "c" * 39):
+            with self.subTest(name=name):
+                old = self._other_home_checkout(name)
+                bin_dir = self.prefix / "bin"
+                bin_dir.mkdir(parents=True, exist_ok=True)
+                link = bin_dir / "tmux-tui"
+                link.unlink(missing_ok=True)
+                link.symlink_to(old / "tmux_tui.py")
+                result = self.run_installer(check=False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("refusing to replace unmanaged tmux-tui link",
+                              result.stderr)
+                self.assertEqual(link.resolve(), (old / "tmux_tui.py").resolve())
+
     def test_ref_must_be_immutable(self):
         env = sandbox_env(**{
             "GPU_TERMINAL_SOURCE_HOME": str(self.source),
