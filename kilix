@@ -245,8 +245,17 @@ print('archive=%d' % settings.transcript_archive_total())
 # Session IDs the broker still owns. A live pane's log is never compressed or
 # removed, because the broker holds the descriptor and would keep writing to a
 # file that no longer has a name.
+#
+# `list` alone is not proof of death: it omits any session whose status query
+# fails for a reason other than "nobody is listening", and one it cannot prove
+# stale, and still exits 0. Trusting that omission unlinked the logs of live,
+# idle panes, which then wrote on into files with no name. A broker keeps its
+# sessions/<id> directory for exactly its own lifetime (it removes it on exit,
+# and `list` reaps the directory of one that was killed), so an ID with a
+# directory is live whether or not `list` could reach it. `list` still runs
+# first, for that reaping.
 _kilix_transcript_live_ids() {
-  local broker runtime
+  local broker runtime ids session
   if [ -n "${KITTY_PTY_BROKER_EXECUTABLE:-}" ] \
        && [ -x "$KITTY_PTY_BROKER_EXECUTABLE" ]; then
     broker="$KITTY_PTY_BROKER_EXECUTABLE"
@@ -255,12 +264,20 @@ _kilix_transcript_live_ids() {
       && [ -x "$broker" ] || return 1
   fi
   runtime="$(_kilix_resolve_pty_broker_runtime)" || return 1
-  "$broker" --runtime-dir "$runtime" list --json 2>/dev/null \
+  ids="$("$broker" --runtime-dir "$runtime" list --json 2>/dev/null \
     | python3 -c 'import json,sys
 try:
     print("\n".join(str(i.get("id", "")) for i in json.load(sys.stdin)))
 except Exception:
-    raise SystemExit(1)' 2>/dev/null
+    raise SystemExit(1)' 2>/dev/null)" || return 1
+  printf '%s\n' "$ids"
+  if [ -d "$runtime/sessions" ]; then
+    for session in "$runtime/sessions"/*/; do
+      [ -d "$session" ] || continue
+      session="${session%/}"
+      printf '%s\n' "${session##*/}"
+    done
+  fi
 }
 
 # Describe one transcript from the sidecar the fork writes when the pane is

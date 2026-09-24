@@ -978,6 +978,54 @@ class TranscriptArchiveIntegrationTests(unittest.TestCase):
                 command, env=env, text=True, capture_output=True, check=True)
             self.assertIn("dead-session.log.zst [older]", listing.stdout)
 
+    @unittest.skipUnless(shutil.which("zstd"), "zstd is required")
+    def test_a_live_pane_list_cannot_reach_keeps_its_log(self):
+        # `list` omits a session whose broker is alive but did not answer, and
+        # still exits 0. The reaper used to read that omission as death and
+        # unlink the log of a live pane, which then wrote into a nameless
+        # file. The session directory is the broker's own proof of life.
+        with tempfile.TemporaryDirectory(prefix="kx") as tmp:
+            gpu_home = Path(tmp) / "gpu"
+            transcript_dir = gpu_home / "kilix" / "state" / "transcripts"
+            transcript_dir.mkdir(parents=True, mode=0o700)
+            runtime = Path(tmp) / "rt"
+            sessions = runtime / "sessions"
+            sessions.mkdir(parents=True, mode=0o700)
+            runtime.chmod(0o700)
+            alive = subprocess.Popen(["sleep", "60"])
+            gone = subprocess.Popen(["true"])
+            gone.wait()
+            try:
+                for name, pid in (("0123456789abcdef", alive.pid),
+                                  ("fedcba9876543210", gone.pid)):
+                    session = sessions / name
+                    session.mkdir(mode=0o700)
+                    (session / "metadata").write_text(
+                        f"version=1\nid={name}\nbroker_pid={pid}\n")
+                    log = transcript_dir / f"{name}.log"
+                    log.write_bytes(b"pane output\n")
+                    log.chmod(0o600)
+                env = sandbox_env()
+                env["GPU_TERMINAL_HOME"] = str(gpu_home)
+                env["GPU_TERMINAL_SOURCE_HOME"] = str(ROOT.parent)
+                env["KITTY_PTY_BROKER_RUNTIME"] = str(runtime)
+                subprocess.run(
+                    [str(ROOT / "kilix"), "transcript", "prune"],
+                    env=env, capture_output=True, check=True)
+                self.assertTrue(
+                    (transcript_dir / "0123456789abcdef.log").is_file(),
+                    "a live broker's log was archived")
+                self.assertFalse(
+                    (transcript_dir / "recent" / "0123456789abcdef.log.zst").exists())
+                self.assertFalse((transcript_dir / "fedcba9876543210.log").exists())
+                self.assertTrue(
+                    (transcript_dir / "recent" / "fedcba9876543210.log.zst").is_file(),
+                    "a dead broker's log was not archived")
+                self.assertFalse((sessions / "fedcba9876543210").exists())
+            finally:
+                alive.kill()
+                alive.wait()
+
 
 if __name__ == "__main__":
     unittest.main()
