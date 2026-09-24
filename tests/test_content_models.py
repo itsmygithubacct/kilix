@@ -72,8 +72,9 @@ _V3, _ORIGIN = asset_v3_available()
 
 # Assets in the packaged catalog at the third_party/kilix-content gitlink.
 # One place, so a catalog move changes one line: the rc2 content adds
-# pocket-tts-english-python-alba to rc1's 27.
-PACKAGED_ASSETS = 28
+# pocket-tts-english-python-alba, needle2, needle2-runtime and needle2-train
+# (OD-BV) to rc1's 27.
+PACKAGED_ASSETS = 31
 
 
 class _Handler(http.server.BaseHTTPRequestHandler):
