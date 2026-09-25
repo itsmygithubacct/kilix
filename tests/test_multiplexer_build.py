@@ -12,11 +12,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _env_support import sandbox_env  # noqa: E402
 
 ROOT=Path(__file__).resolve().parents[1]
+FIXTURE_PARENT=ROOT/'.test-tmp'
 
 
 class MultiplexerBuildTests(unittest.TestCase):
     def setUp(self):
-        self.temporary=tempfile.TemporaryDirectory()
+        # The build identity binds every parent directory of its inputs, and
+        # /tmp changes whenever any process on the host adds or removes an
+        # entry there, which forces a correct rebuild and hides freshness.
+        # The checkout's own parents are quiet; keep the fixture below them.
+        FIXTURE_PARENT.mkdir(mode=0o700,exist_ok=True)
+        self.temporary=tempfile.TemporaryDirectory(dir=FIXTURE_PARENT)
         self.addCleanup(self.temporary.cleanup)
         self.root=Path(self.temporary.name)
         self.trace=self.root/'trace';self.trace.touch()
@@ -82,19 +88,45 @@ class MultiplexerBuildTests(unittest.TestCase):
 
     def count(self):return len(self.trace.read_text().splitlines()) if self.trace.exists() else 0
 
+    def parents(self):
+        return [(str(path),path.lstat().st_ctime_ns) for path in (self.root,*self.root.parents)]
+
+    def build_expecting(self,rebuild):
+        """Run the build and assert whether it rebuilt.
+
+        The build identity binds every parent directory of its inputs, so when
+        another process adds or removes an entry in any fixture parent the
+        next build rightly rebuilds. That is an input change, not
+        a freshness failure: a step that must not rebuild is repeated until it
+        runs with every parent unchanged, and a step that must rebuild accepts
+        any extra rebuild caused by such a change.
+        """
+        for _ in range(10):
+            before=self.count();settled=self._settled
+            result=self.run_build();built=self.count()-before
+            self._settled=self.parents()
+            if rebuild:
+                self.assertGreaterEqual(built,2)
+                if built!=2:self.assertNotEqual(self._settled,settled)
+                return result
+            if built==0:return result
+            self.assertNotEqual(self._settled,settled,'rebuilt with no input change')
+        self.fail('fixture parent directories kept changing between builds')
+
     def test_source_flags_content_and_output_bytes_control_freshness(self):
-        first=self.run_build();self.assertEqual(self.count(),2)
-        self.run_build();self.assertEqual(self.count(),2)
+        self._settled=self.parents()
+        first=self.build_expecting(True)
+        self.build_expecting(False)
         self.env['CFLAGS']='-O1'
-        self.run_build();self.assertEqual(self.count(),4)
+        self.build_expecting(True)
         self.content='d'*40;self.write_package()
-        self.run_build();self.assertEqual(self.count(),6)
+        self.build_expecting(True)
         binary=Path(first.stdout.strip());binary.write_text('#!/bin/sh\nexit 7\n')
-        self.run_build();self.assertEqual(self.count(),8)
+        self.build_expecting(True)
         self.assertEqual(subprocess.run([str(binary)],env=self.env).returncode,0)
         self.git('commit','--allow-empty','-qm','new source identity')
         self.env['KILIX_MULTIPLEXER_COMMIT']=self.git('rev-parse','HEAD').strip()
-        self.run_build();self.assertEqual(self.count(),10)
+        self.build_expecting(True)
 
     def test_missing_or_mutated_package_refuses_without_disabled_build(self):
         self.run_build();before=self.count()

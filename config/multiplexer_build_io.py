@@ -104,7 +104,11 @@ class BuildIO:
             self.reap()
             self.check()
             if child.returncode not in allowed:
-                raise ValueError('build command failed: ' + output[-4000:].decode('utf-8', 'replace'))
+                # Name the command and its status: a tool that fails silently
+                # otherwise leaves nothing to diagnose.
+                raise ValueError(f'build command failed ({os.path.basename(argv[0])} '
+                                 f'{" ".join(argv[1:3])}, exit {child.returncode}): '
+                                 + output[-4000:].decode('utf-8', 'replace'))
             return child.returncode, bytes(output)
         finally:
             if child is not None:

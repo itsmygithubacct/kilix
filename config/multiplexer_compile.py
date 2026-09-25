@@ -478,7 +478,8 @@ def build(args, package_plan):
         if len(trace) > 4 * 1024**2:
             raise ValueError('combined build command output exceeds its bound')
         if code:
-            raise ValueError('build command failed: ' + trace[-4000:].decode('utf-8', 'replace'))
+            raise ValueError(f'build command failed (make all, exit {code}): '
+                             + trace[-4000:].decode('utf-8', 'replace'))
         search_admission.finish(trace)
         io.boundary_check = check_boundaries
         io.check()

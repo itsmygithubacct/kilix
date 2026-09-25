@@ -7,6 +7,10 @@
 /.last-update-check
 /.kilix-fork-built-ref
 
+# Private test fixtures that must sit below the checkout's quiet parents
+# (tests/test_multiplexer_build.py); removed by the tests themselves.
+/.test-tmp/
+
 # Python bytecode, anywhere
 __pycache__/
 
