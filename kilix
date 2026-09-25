@@ -46,6 +46,7 @@
 #   ./kilix nvr [args]        # record cameras, detect, review what happened
 #   ./kilix look [args]       # what is in a picture, a clip, or a camera
 #   ./kilix yolo [install]    # the detection runtime both of them use
+#   ./kilix yolox [install]   # the same slot, Apache-2.0 (onnxruntime)
 #   ./kilix mask [args]       # paint region maps over an image (camera masks,
 #                             #   walkable space); --render/--selftest headless
 #   ./kilix open-url [URL]    # real browser first; in-pane fallback
@@ -663,6 +664,7 @@ _kilix_load_env_file() {
       KILIX_LOOK_ALLOW_MUTABLE_REF|KILIX_LOOK_KEEP_EXISTING_CHECKOUT|\
       KILIX_LOOK_HOME|KILIX_SOUND_HOME|\
       KILIX_YOLO_DIR|KILIX_YOLO_MODEL|KILIX_YOLO_CUDA|\
+      KILIX_YOLOX_DIR|KILIX_YOLOX_SRC|KILIX_YOLOX_MODEL|KILIX_YOLOX_SIZE|\
       KILIX_NERD_FONT_URL|KILIX_NERD_FONT_SHA256|KILIX_NERD_FONT_FILE_SHA256|KILIX_GO_TOOLCHAIN|KILIX_PYTHON)
         # An explicit process environment wins over persisted settings. Storage
         # roots are intentionally absent from this allowlist: they determine
@@ -988,6 +990,44 @@ _kilix_yolo_installer() {
     return 1
   fi
   printf '%s\n' "$yolo_installer"
+}
+
+_kilix_yolox_installer() {
+  local yolox_installer="$KILIX_HOME/scripts/install-yolox.sh"
+  if [ ! -f "$yolox_installer" ] || [ -L "$yolox_installer" ] || [ ! -x "$yolox_installer" ]; then
+    echo "kilix yolox: missing or unsafe installer: $yolox_installer" >&2
+    return 1
+  fi
+  printf '%s\n' "$yolox_installer"
+}
+
+# `kilix look` cannot detect anything without a detector, and a fresh machine
+# has none.  Offer the licence-clean one rather than failing later inside the
+# analyzer.  Only when there is nothing configured and nothing installed, only
+# on a terminal, and only for the subcommands that run a model; declining
+# changes nothing, so the analyzer behaves exactly as it did.
+_kilix_look_offer_detector() {
+  [ -z "${KILIX_OBJECT_DETECTOR:-}" ] || return 0
+  case "${1:-}" in image|watch|scan) ;; *) return 0 ;; esac
+  [ -t 0 ] && [ -t 2 ] || return 0
+  local data="${GPU_TERMINAL_DATA_HOME:-$HOME/.local/gpu_terminal}" answer="" detector
+  [ ! -x "$data/runtimes/yolo/bin/kilix-look-detect" ] || return 0
+  [ ! -x "$data/runtimes/yolox/bin/kilix-yolox-detect" ] || return 0
+  echo "kilix look: no object detector is installed." >&2
+  echo "  YOLOX (Apache-2.0, onnxruntime, about 300 MB plus the model) can be set up now;" >&2
+  echo "  its licence screen and typed agreement follow. \`$_self yolo\` is the AGPL alternative." >&2
+  printf 'install YOLOX now? [y/N] ' >&2
+  read -r answer || true
+  case "${answer,,}" in y|yes) ;; *) return 0 ;; esac
+  local yolox_installer
+  yolox_installer="$(_kilix_yolox_installer)" || return 0
+  # The user has just said yes to the runtime; the licence is still asked for
+  # by the installer itself and is never answered here.
+  detector="$("$yolox_installer" --install --yes)" || {
+    echo "kilix look: the detector was not installed; continuing without one" >&2
+    return 0
+  }
+  export KILIX_OBJECT_DETECTOR="$detector"
 }
 
 # The analyzer: one picture, one recording or one camera, with what a
@@ -2688,6 +2728,35 @@ sys.exit(0 if ready else 1)
     done
     _yolo_installer="$(_kilix_yolo_installer)" || exit 1
     exec "$_yolo_installer" "$_yolo_action" "$@" ;;
+  yolox)
+    shift
+    _yolox_action=--print-path
+    while :; do
+      case "${1:-}" in
+        install) _yolox_action=--install; shift ;;
+        check|status) _yolox_action=--check; shift ;;
+        update|upgrade) _yolox_action=--upgrade; shift ;;
+        remove|uninstall) _yolox_action=--remove; shift ;;
+        -h|--help|help)
+          echo "usage: $_self yolox [install|check|update|remove] [--yes]"
+          echo "the Apache-2.0 object-detection runtime"
+          echo
+          echo "  $_self yolox             install if needed, print the command"
+          echo "  $_self yolox check       what is present, without changing it"
+          echo "  $_self yolox install     build the virtualenv, fetch and cut weights"
+          echo "  $_self yolox update      bring its packages forward"
+          echo "  $_self yolox remove      delete the runtime directory"
+          echo
+          echo "The same detector slot as '$_self yolo', under a licence that"
+          echo "lets you ship it: installing one replaces the other as"
+          echo "KILIX_OBJECT_DETECTOR. Nothing installs system-wide or as root."
+          exit 0 ;;
+        --) shift; break ;;
+        *) break ;;
+      esac
+    done
+    _yolox_installer="$(_kilix_yolox_installer)" || exit 1
+    exec "$_yolox_installer" "$_yolox_action" "$@" ;;
   look|analyze|analyse)
     shift
     _look_install_only=0
@@ -2717,6 +2786,7 @@ sys.exit(0 if ready else 1)
     done
     _kilix_look_resolve "$_look_force" || exit 1
     [ "$_look_install_only" = 0 ] || exit 0
+    _kilix_look_offer_detector "$@"
     exec "${_KILIX_LOOK_COMMAND[@]}" "$@" ;;
   nvr|record|recorder)
     shift

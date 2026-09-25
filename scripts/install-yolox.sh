@@ -1,0 +1,333 @@
+#!/usr/bin/env bash
+# Prepare the YOLOX object-detection runtime kilix-look and kilix-nvr can detect
+# with instead of Ultralytics YOLO.
+#
+# The same shape as install-yolo.sh - a virtualenv the detector subprocess runs
+# in, weights, and a wrapper - with three differences that are the reason it is
+# a separate runtime rather than a model option of that one:
+#
+#   * The licence.  Ultralytics and its weights are AGPL-3.0; YOLOX is
+#     Apache-2.0 with weights included.  This is the detector to use in
+#     anything redistributed.
+#   * The size.  onnxruntime and numpy are tens of megabytes; torch is a
+#     gigabyte or more.  There is no CUDA/cpu choice to make.
+#   * The source.  The detector script, the checksum list and the cut tool
+#     belong to the kilix-yolox module, which this installer only locates.  It
+#     never clones: the module has no published revision to pin yet, and a
+#     mutable ref would be a second opinion about what ships.
+#   * The weights.  They are a kilix-content asset, so they arrive by
+#     `kilix models install`: the pinned download, the verbatim licence screen
+#     and the typed agreement all belong to kilix-license, which writes the
+#     receipt.  This script accepts nothing on the user's behalf, so there is
+#     no way to pass a licence with --yes.
+#
+# Nothing is installed system-wide and nothing is installed as root. Removing
+# the runtime directory removes the runtime.
+set -euo pipefail
+umask 077
+
+KILIX_HOME="${KILIX_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+GPU_TERMINAL_DATA_HOME="${GPU_TERMINAL_DATA_HOME:-$HOME/.local/gpu_terminal}"
+GPU_TERMINAL_SOURCE_HOME="${GPU_TERMINAL_SOURCE_HOME:-$GPU_TERMINAL_DATA_HOME/sources}"
+KILIX_YOLOX_DIR="${KILIX_YOLOX_DIR:-$GPU_TERMINAL_DATA_HOME/runtimes/yolox}"
+KILIX_YOLOX_SRC="${KILIX_YOLOX_SRC:-$GPU_TERMINAL_SOURCE_HOME/kilix-modules/kilix-yolox}"
+KILIX_YOLOX_MODEL="${KILIX_YOLOX_MODEL:-yolox_s}"
+# kilix-look sends a 320-pixel square. The detector prefers the cut that matches
+# the frame (0.89 on the test image against 0.52 for the 640 export fed the same
+# square), so the cut is made at install time rather than left as a manual step.
+KILIX_YOLOX_SIZE="${KILIX_YOLOX_SIZE:-320}"
+KILIX_YOLOX_ASSUME_YES="${KILIX_YOLOX_ASSUME_YES:-0}"
+KILIX_PYTHON="${KILIX_PYTHON:-python3}"
+KILIX_UV="${KILIX_UV:-uv}"
+
+die() { printf 'kilix yolox: %s\n' "$*" >&2; exit 1; }
+log() { printf 'kilix yolox: %s\n' "$*" >&2; }
+
+have_uv() { command -v "$KILIX_UV" >/dev/null 2>&1; }
+
+python_install() {
+  if have_uv; then
+    "$KILIX_UV" pip install --python "$python" "$@" >&2
+  else
+    "$python" -m pip install --quiet "$@" >&2
+  fi
+}
+
+usage() {
+  cat <<'EOF'
+usage: install-yolox.sh [--print-path|--check|--install|--upgrade|--remove] [--yes]
+
+  --print-path  install if needed, then print the detector command path
+  --check       report what is present without changing anything
+  --install     install, asking first unless --yes (the licence is never
+                skipped: it needs a terminal and the typed agreement)
+  --upgrade     bring the installed packages forward
+  --remove      delete the runtime directory
+
+Environment:
+  KILIX_YOLOX_DIR    where the virtualenv and weights live
+  KILIX_YOLOX_SRC    the kilix-yolox checkout that owns the detector script
+  KILIX_YOLOX_MODEL  yolox_s (default), yolox_tiny or yolox_nano
+  KILIX_YOLOX_SIZE   the square the model is cut for, default 320
+  KILIX_UV           the uv to use; venv + pip when it is not found
+EOF
+}
+
+action="--print-path"
+assume_yes=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --print-path|--check|--install|--upgrade|--remove) action="$1" ;;
+    --yes|-y) assume_yes=1 ;;
+    -h|--help) usage; exit 0 ;;
+    *) usage >&2; exit 2 ;;
+  esac
+  shift
+done
+case "$KILIX_YOLOX_ASSUME_YES" in 1|yes|true|on) assume_yes=1 ;; esac
+[ "$(id -u)" -ne 0 ] || die "run this as the desktop user, not root"
+
+case "$KILIX_YOLOX_DIR" in
+  /*) ;;
+  *) die "KILIX_YOLOX_DIR must be an absolute path: $KILIX_YOLOX_DIR" ;;
+esac
+yolox_dir="$(realpath -m -- "$KILIX_YOLOX_DIR" 2>/dev/null)" \
+  || die "could not normalize KILIX_YOLOX_DIR=$KILIX_YOLOX_DIR"
+case "$yolox_dir" in
+  /|"$HOME"|"$GPU_TERMINAL_DATA_HOME")
+    die "refusing broad runtime path: $yolox_dir" ;;
+esac
+# The model name reaches a path and a python argument; only the three the
+# checksum list knows are accepted, so it can carry neither.
+case "$KILIX_YOLOX_MODEL" in
+  yolox_s|yolox_tiny|yolox_nano) ;;
+  *) die "KILIX_YOLOX_MODEL must be yolox_s, yolox_tiny or yolox_nano: $KILIX_YOLOX_MODEL" ;;
+esac
+case "$KILIX_YOLOX_SIZE" in
+  ''|*[!0-9]*|0*) die "KILIX_YOLOX_SIZE must be a positive integer: $KILIX_YOLOX_SIZE" ;;
+esac
+
+venv="$yolox_dir/venv"
+python="$venv/bin/python"
+models="$yolox_dir/models"
+weights="$models/${KILIX_YOLOX_MODEL}_${KILIX_YOLOX_SIZE}.onnx"
+wrapper="$yolox_dir/bin/kilix-yolox-detect"
+
+# ---------------------------------------------------------------- state ----
+
+runtime_ready() {
+  [ -x "$python" ] && [ -f "$weights" ] && [ -x "$wrapper" ] \
+    && "$python" -c 'import onnxruntime, numpy' >/dev/null 2>&1
+}
+
+module_tool() {
+  local tool="$KILIX_YOLOX_SRC/tools/$1"
+  [ -f "$tool" ] && [ ! -L "$tool" ] \
+    || die "no $1 in $KILIX_YOLOX_SRC; set KILIX_YOLOX_SRC to a kilix-yolox checkout (the module has no published revision to fetch yet)"
+  printf '%s\n' "$tool"
+}
+
+# Where kilix-content puts the exported weights.  Asked of the authority that
+# owns the layout rather than spelled here; `show` changes nothing.
+content_asset() {
+  local root
+  root="$("$KILIX_HOME/kilix" models show "$KILIX_YOLOX_MODEL" 2>/dev/null \
+    | "$KILIX_PYTHON" -c 'import json,sys; print(json.load(sys.stdin)["root"])')" \
+    || die "kilix models could not describe $KILIX_YOLOX_MODEL"
+  [ -n "$root" ] || die "kilix models reported no installer root"
+  printf '%s\n' "$root/assets/$KILIX_YOLOX_MODEL"
+}
+
+report() {
+  printf 'runtime:   %s\n' "$yolox_dir"
+  printf 'source:    %s\n' "$KILIX_YOLOX_SRC"
+  if have_uv; then
+    printf 'installer: %s\n' "$("$KILIX_UV" --version 2>/dev/null || echo uv)"
+  else
+    printf 'installer: venv + pip (uv is not installed)\n'
+  fi
+  if [ -x "$python" ]; then
+    printf 'python:    %s\n' "$("$python" --version 2>&1)"
+  else
+    printf 'python:    not installed\n'
+  fi
+  if [ -x "$python" ] && "$python" -c 'import onnxruntime' >/dev/null 2>&1; then
+    printf 'onnxruntime: %s\n' \
+      "$("$python" -c 'import onnxruntime; print(onnxruntime.__version__)' 2>/dev/null)"
+  else
+    printf 'onnxruntime: not installed\n'
+  fi
+  if [ -f "$weights" ]; then
+    printf 'weights:   %s (%s bytes)\n' "$weights" "$(stat -c %s "$weights")"
+  else
+    printf 'weights:   %s missing\n' "$weights"
+  fi
+  if [ -x "$wrapper" ]; then
+    printf 'detector:  %s\n' "$wrapper"
+  else
+    printf 'detector:  not written\n'
+  fi
+}
+
+# -------------------------------------------------------------- install ----
+
+confirm() {
+  cat >&2 <<EOF
+kilix yolox installs the object detector's runtime into
+    $yolox_dir
+It creates a virtualenv, installs onnxruntime, numpy and onnx into it (about
+300 MB), gets $KILIX_YOLOX_MODEL through \`kilix models install\` (pinned download, the
+Apache-2.0 licence screen and your typed agreement, recorded by kilix-license),
+and cuts it for a ${KILIX_YOLOX_SIZE}-pixel square. Nothing is installed
+system-wide and nothing runs as root; deleting that directory removes all of it.
+EOF
+  [ "$assume_yes" = 1 ] && return 0
+  printf 'continue? [y/N] ' >&2
+  local answer=""
+  read -r answer || true
+  case "${answer,,}" in y|yes) return 0 ;; esac
+  log "cancelled"
+  return 1
+}
+
+install_runtime() {
+  local tool cut
+  tool="$(module_tool kilix-yolox-detect)"
+  cut="$(module_tool kilix-yolox-cut)"
+
+  # The licence comes first: declining it leaves no virtualenv behind.
+  mkdir -p "$models" "$yolox_dir/bin"
+  if [ ! -f "$models/${KILIX_YOLOX_MODEL}.onnx" ]; then
+    local asset
+    asset="$(content_asset)"
+    if [ ! -f "$asset/${KILIX_YOLOX_MODEL}.onnx" ]; then
+      # Interactive by design: the authority refuses piped or --yes consent.
+      { [ -t 0 ] && [ -t 2 ]; } \
+        || die "the YOLOX licence needs your typed agreement: run \`kilix models install $KILIX_YOLOX_MODEL\` in a terminal, then re-run this"
+      log "the weights come from kilix-content; its licence screen follows"
+      "$KILIX_HOME/kilix" models install "$KILIX_YOLOX_MODEL" >&2 \
+        || die "the model was not installed (declined, or the download failed)"
+    fi
+    [ -f "$asset/${KILIX_YOLOX_MODEL}.onnx" ] \
+      || die "kilix models did not leave $KILIX_YOLOX_MODEL at $asset"
+    # Content verified every byte against the pinned manifest; the module's own
+    # list is a second witness for the same file.
+    local want got
+    want="$(awk -v f="${KILIX_YOLOX_MODEL}.onnx" '$2==f {print $1}' "$KILIX_YOLOX_SRC/models/SHA256SUMS")"
+    got="$(sha256sum -- "$asset/${KILIX_YOLOX_MODEL}.onnx" | cut -d' ' -f1)"
+    [ -n "$want" ] && [ "$want" = "$got" ] \
+      || die "$KILIX_YOLOX_MODEL does not match the kilix-yolox checksum list"
+    cp -- "$asset/${KILIX_YOLOX_MODEL}.onnx" "$models/${KILIX_YOLOX_MODEL}.onnx"
+    [ ! -f "$asset/notices/LICENSE-apache-2.0.txt" ] \
+      || cp -- "$asset/notices/LICENSE-apache-2.0.txt" "$models/LICENSE.yolox"
+    printf 'YOLOX weights, Megvii-BaseDetection/YOLOX.\nLicensed under the Apache License, Version 2.0; see LICENSE.yolox.\n' \
+      > "$models/NOTICE"
+  fi
+  if [ ! -x "$python" ]; then
+    if have_uv; then
+      local interpreter
+      # Resolved to a path first: `uv venv --python python3` may be satisfied
+      # by an interpreter uv downloads itself, which is not the one asked for.
+      interpreter="$(command -v "$KILIX_PYTHON" 2>/dev/null || true)"
+      [ -n "$interpreter" ] || die "no interpreter called $KILIX_PYTHON"
+      log "creating the virtualenv with uv on $interpreter"
+      "$KILIX_UV" venv --python "$interpreter" "$venv" >&2 \
+        || die "uv could not create a virtualenv"
+    else
+      log "creating the virtualenv (uv is not installed; using venv)"
+      "$KILIX_PYTHON" -m venv "$venv" \
+        || die "could not create a virtualenv (install python3-venv)"
+    fi
+  fi
+  have_uv || "$python" -m pip install --quiet --upgrade pip >&2 || true
+  python_install onnxruntime numpy onnx \
+    || die "could not install onnxruntime"
+
+  if [ ! -f "$weights" ]; then
+    log "cutting $KILIX_YOLOX_MODEL for a ${KILIX_YOLOX_SIZE}-pixel square"
+    "$python" "$cut" "$models/${KILIX_YOLOX_MODEL}.onnx" \
+      --size "$KILIX_YOLOX_SIZE" >&2 \
+      || die "could not cut $KILIX_YOLOX_MODEL"
+  fi
+  [ -f "$weights" ] || die "the cut did not produce $weights"
+
+  # A wrapper rather than an environment variable holding a command line:
+  # KILIX_OBJECT_DETECTOR is split on spaces with no quoting. It exports the
+  # runtime directory so a relocated runtime finds its own weights, and names
+  # the model bare so the detector can still choose the cut that matches the
+  # frame it is sent.
+  cat > "$wrapper" <<EOF
+#!/bin/sh
+# Written by kilix install yolox. Re-run it to repoint this at a moved
+# checkout; delete $yolox_dir to remove the runtime entirely.
+KILIX_YOLOX_DIR="$yolox_dir"
+export KILIX_YOLOX_DIR
+exec "$python" "$tool" --model "$KILIX_YOLOX_MODEL" "\$@"
+EOF
+  chmod 700 "$wrapper"
+  record_setting
+  log "installed"
+}
+
+# The launcher exports allowlisted KILIX_* keys from this file into every pane.
+# KILIX_OBJECT_DETECTOR is one slot: recording this runtime replaces a YOLO
+# one, which is the point - running `kilix install yolo` again switches back.
+record_setting() {
+  local config="${KILIX_USER_CONFIG_DIRECTORY:-$GPU_TERMINAL_DATA_HOME/kilix/config}"
+  local env_file="$config/kilix.env"
+  mkdir -p "$config"
+  [ -f "$env_file" ] || : > "$env_file"
+  local temporary
+  temporary="$(mktemp "$config/.kilix.env.XXXXXX")"
+  grep -v -e '^KILIX_OBJECT_DETECTOR=' -e '^KILIX_NVR_DETECT=' "$env_file" \
+    > "$temporary" || true
+  printf 'KILIX_OBJECT_DETECTOR=%s\n' "$wrapper" >> "$temporary"
+  mv -- "$temporary" "$env_file"
+  chmod 600 "$env_file"
+  log "recorded KILIX_OBJECT_DETECTOR in $env_file"
+}
+
+remove_runtime() {
+  [ -d "$yolox_dir" ] || { log "nothing to remove at $yolox_dir"; return 0; }
+  rm -rf -- "$yolox_dir"
+  log "removed $yolox_dir"
+  log "KILIX_OBJECT_DETECTOR in the kilix.env is left as it is; run kilix install yolo to point it elsewhere"
+}
+
+upgrade_runtime() {
+  runtime_ready || die "nothing installed at $yolox_dir yet"
+  log "upgrading onnxruntime, numpy and onnx"
+  python_install --upgrade onnxruntime numpy onnx \
+    || die "the upgrade failed; the previous runtime is still in place"
+  log "upgraded"
+}
+
+case "$action" in
+  --check)
+    report
+    runtime_ready && exit 0 || exit 1 ;;
+  --upgrade)
+    upgrade_runtime
+    exit 0 ;;
+  --remove)
+    remove_runtime
+    exit 0 ;;
+  --install)
+    if runtime_ready; then
+      log "already installed at $yolox_dir"
+      record_setting
+      printf '%s\n' "$wrapper"
+      exit 0
+    fi
+    confirm || exit 1
+    install_runtime
+    printf '%s\n' "$wrapper"
+    exit 0 ;;
+  --print-path)
+    if ! runtime_ready; then
+      confirm || die "the YOLOX runtime is not installed"
+      install_runtime
+    fi
+    printf '%s\n' "$wrapper"
+    exit 0 ;;
+esac

@@ -32,6 +32,7 @@ from _env_support import sandbox_env  # noqa: E402
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = ROOT / "scripts" / "install-yolo.sh"
 YAMNET = ROOT / "scripts" / "install-yamnet.sh"
+YOLOX = ROOT / "scripts" / "install-yolox.sh"
 
 
 def _install_rows() -> list[dict]:
@@ -265,3 +266,159 @@ class YamnetRuntime(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class YoloxInstaller(unittest.TestCase):
+    def _run(self, *args, **extra):
+        with tempfile.TemporaryDirectory() as scratch:
+            environment = sandbox_env(
+                KILIX_YOLOX_DIR=os.path.join(scratch, "yolox"),
+                KILIX_YOLOX_SRC=os.path.join(scratch, "no-such-module"),
+                **extra)
+            return subprocess.run([str(YOLOX), *args], env=environment,
+                                  capture_output=True, text=True,
+                                  check=False, timeout=120)
+
+    def test_the_list_offers_the_runtime(self):
+        row = next((r for r in _install_rows() if r.get("id") == "yolox"), None)
+        self.assertIsNotNone(row, "no yolox runtime row")
+        self.assertEqual(row["kind"], "runtime")
+        self.assertIsInstance(row["installed"], bool)
+
+    def test_it_is_executable(self):
+        self.assertTrue(os.access(YOLOX, os.X_OK))
+
+    def test_check_reports_a_machine_it_has_never_run_on(self):
+        result = self._run("--check")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("not installed", result.stdout)
+        self.assertIn("missing", result.stdout)
+
+    def test_it_refuses_a_broad_or_relative_directory(self):
+        for directory, message in ((os.path.expanduser("~"), "broad"),
+                                   ("/", "broad"),
+                                   ("runtimes/yolox", "absolute path")):
+            environment = sandbox_env(KILIX_YOLOX_DIR=directory)
+            result = subprocess.run([str(YOLOX), "--check"], env=environment,
+                                    capture_output=True, text=True,
+                                    check=False, timeout=120)
+            self.assertEqual(result.returncode, 1, directory)
+            self.assertIn(message, result.stderr)
+
+    def test_the_model_name_is_restricted_to_the_checksummed_three(self):
+        result = self._run("--check", KILIX_YOLOX_MODEL="../evil")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("KILIX_YOLOX_MODEL must be", result.stderr)
+
+    def test_a_missing_module_is_refused_before_anything_is_built(self):
+        result = self._run("--install", "--yes")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("kilix-yolox checkout", result.stderr)
+
+    def test_remove_on_a_missing_runtime_is_not_an_error(self):
+        self.assertEqual(self._run("--remove").returncode, 0)
+
+    def test_upgrade_before_install_says_so(self):
+        result = self._run("--upgrade")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("nothing installed", result.stderr)
+
+    def test_the_verb_documents_itself(self):
+        result = subprocess.run([str(ROOT / "kilix"), "yolox", "--help"],
+                                capture_output=True, text=True, check=False,
+                                timeout=120)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for word in ("install", "check", "update", "remove", "Apache-2.0"):
+            self.assertIn(word, result.stdout)
+
+
+def _fake_yolox_module(scratch: str) -> str:
+    """A kilix-yolox tree with just the files the installer looks for."""
+    module = os.path.join(scratch, "kilix-yolox")
+    os.makedirs(os.path.join(module, "tools"))
+    os.makedirs(os.path.join(module, "models"))
+    for tool in ("kilix-yolox-detect", "kilix-yolox-cut"):
+        with open(os.path.join(module, "tools", tool), "w") as handle:
+            handle.write("#!/bin/sh\nexit 0\n")
+    return module
+
+
+class YoloxLicence(unittest.TestCase):
+    """The weights are a kilix-content asset; consent is the authority's."""
+
+    def test_the_licence_cannot_be_passed_with_yes(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            environment = sandbox_env(
+                HOME=os.path.join(scratch, "home"),
+                KILIX_YOLOX_DIR=os.path.join(scratch, "yolox"),
+                KILIX_YOLOX_SRC=_fake_yolox_module(scratch))
+            result = subprocess.run(
+                [str(YOLOX), "--install", "--yes"], env=environment,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                check=False, timeout=120)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertIn("the YOLOX licence needs your typed agreement", result.stderr)
+            # Refused before anything was built: no virtualenv exists.
+            self.assertFalse(
+                os.path.exists(os.path.join(scratch, "yolox", "venv")))
+
+    def test_it_no_longer_fetches_weights_itself(self):
+        installer = YOLOX.read_text(encoding="utf-8")
+        self.assertNotIn("kilix-yolox-fetch", installer)
+        self.assertIn('models install "$KILIX_YOLOX_MODEL"', installer)
+
+
+class LookOffersTheDetector(unittest.TestCase):
+    def _look(self, *args, detector=None):
+        """Run `kilix look` on a pty, answering the offer with 'n'."""
+        import pty
+        import select
+        with tempfile.TemporaryDirectory() as scratch:
+            bin_dir = os.path.join(scratch, "bin")
+            os.makedirs(bin_dir)
+            fake = os.path.join(bin_dir, "kilix-look")
+            with open(fake, "w") as handle:
+                handle.write("#!/bin/sh\necho FAKE-LOOK-RAN\n")
+            os.chmod(fake, 0o755)
+            extra = {} if detector is None else {"KILIX_OBJECT_DETECTOR": detector}
+            environment = sandbox_env(
+                HOME=os.path.join(scratch, "home"),
+                PATH=bin_dir + os.pathsep + os.environ["PATH"], **extra)
+            os.makedirs(environment["HOME"])
+            pid, master = pty.fork()
+            if pid == 0:
+                os.execve(str(ROOT / "kilix"),
+                          [str(ROOT / "kilix"), "look", *args], environment)
+            output = b""
+            answered = False
+            while True:
+                ready, _, _ = select.select([master], [], [], 30)
+                if not ready:
+                    break
+                try:
+                    chunk = os.read(master, 4096)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                output += chunk
+                if b"[y/N]" in output and not answered:
+                    os.write(master, b"n\n")
+                    answered = True
+            os.waitpid(pid, 0)
+            return output.decode("utf-8", "replace")
+
+    def test_a_bare_machine_is_offered_yolox(self):
+        output = self._look("image", "photo.jpg")
+        self.assertIn("install YOLOX now?", output)
+        # Declining changes nothing: the analyzer still runs.
+        self.assertIn("FAKE-LOOK-RAN", output)
+
+    def test_a_configured_detector_is_not_second_guessed(self):
+        output = self._look("image", "photo.jpg", detector="/bin/true")
+        self.assertNotIn("install YOLOX now?", output)
+        self.assertIn("FAKE-LOOK-RAN", output)
+
+    def test_subcommands_that_run_no_model_are_not_offered_it(self):
+        output = self._look("classes")
+        self.assertNotIn("install YOLOX now?", output)

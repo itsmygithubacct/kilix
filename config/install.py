@@ -179,6 +179,16 @@ RUNTIMES = (
                        "kilix-nvr detects people and vehicles with",
     },
     {
+        "id": "yolox",
+        "label": "YOLOX object detection",
+        "helper": "install-yolox.sh",
+        "directory": os.path.join("runtimes", "yolox"),
+        "directory_env": "KILIX_YOLOX_DIR",
+        "command": "kilix-yolox-detect",
+        "description": "Apache-2.0 YOLOX on onnxruntime in its own virtualenv — "
+                       "the detector to use in anything redistributed",
+    },
+    {
         "id": "yamnet",
         "label": "YAMNet sound events",
         "helper": "install-yamnet.sh",
