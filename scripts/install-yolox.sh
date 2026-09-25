@@ -12,9 +12,9 @@
 #   * The size.  onnxruntime and numpy are tens of megabytes; torch is a
 #     gigabyte or more.  There is no CUDA/cpu choice to make.
 #   * The source.  The detector script, the checksum list and the cut tool
-#     belong to the kilix-yolox module, which this installer only locates.  It
-#     never clones: the module has no published revision to pin yet, and a
-#     mutable ref would be a second opinion about what ships.
+#     belong to the kilix-yolox module, which this installer clones at an
+#     immutable pinned commit (and moves an existing clean checkout to), the
+#     same way the other component installers do.  Nothing in it is built.
 #   * The weights.  They are a kilix-content asset, so they arrive by
 #     `kilix models install`: the pinned download, the verbatim licence screen
 #     and the typed agreement all belong to kilix-license, which writes the
@@ -31,6 +31,17 @@ GPU_TERMINAL_DATA_HOME="${GPU_TERMINAL_DATA_HOME:-$HOME/.local/gpu_terminal}"
 GPU_TERMINAL_SOURCE_HOME="${GPU_TERMINAL_SOURCE_HOME:-$GPU_TERMINAL_DATA_HOME/sources}"
 KILIX_YOLOX_DIR="${KILIX_YOLOX_DIR:-$GPU_TERMINAL_DATA_HOME/runtimes/yolox}"
 KILIX_YOLOX_SRC="${KILIX_YOLOX_SRC:-$GPU_TERMINAL_SOURCE_HOME/kilix-modules/kilix-yolox}"
+KILIX_YOLOX_REPO="${KILIX_YOLOX_REPO:-https://github.com/itsmygithubacct/kilix-yolox.git}"
+KILIX_YOLOX_AUTO_INSTALL="${KILIX_YOLOX_AUTO_INSTALL:-1}"
+KILIX_YOLOX_TRUST_EXISTING_CHECKOUT="${KILIX_YOLOX_TRUST_EXISTING_CHECKOUT:-0}"
+KILIX_YOLOX_KEEP_EXISTING_CHECKOUT="${KILIX_YOLOX_KEEP_EXISTING_CHECKOUT:-0}"
+KILIX_YOLOX_ALLOW_MUTABLE_REF="${KILIX_YOLOX_ALLOW_MUTABLE_REF:-0}"
+
+# This full commit is part of Kilix's transitive source closure. Every run
+# resolves it - a first-use clone and an existing checkout alike - so a moved
+# pin reaches machines that already have the module. Set
+# KILIX_YOLOX_KEEP_EXISTING_CHECKOUT=1 to work from a checkout as it is.
+KILIX_YOLOX_DEFAULT_REF=3b921c732bf87b98c98c265509b7f2e0628d6101
 KILIX_YOLOX_MODEL="${KILIX_YOLOX_MODEL:-yolox_s}"
 # kilix-look sends a 320-pixel square. The detector prefers the cut that matches
 # the frame (0.89 on the test image against 0.52 for the 640 export fed the same
@@ -55,9 +66,10 @@ python_install() {
 
 usage() {
   cat <<'EOF'
-usage: install-yolox.sh [--print-path|--check|--install|--upgrade|--remove] [--yes]
+usage: install-yolox.sh [--print-path|--print-ref|--check|--install|--upgrade|--remove] [--yes]
 
   --print-path  install if needed, then print the detector command path
+  --print-ref   print the immutable pinned kilix-yolox commit, changing nothing
   --check       report what is present without changing anything
   --install     install, asking first unless --yes (the licence is never
                 skipped: it needs a terminal and the typed agreement)
@@ -67,6 +79,12 @@ usage: install-yolox.sh [--print-path|--check|--install|--upgrade|--remove] [--y
 Environment:
   KILIX_YOLOX_DIR    where the virtualenv and weights live
   KILIX_YOLOX_SRC    the kilix-yolox checkout that owns the detector script
+  KILIX_YOLOX_REF    use this commit instead of the pin
+  KILIX_YOLOX_KEEP_EXISTING_CHECKOUT=1
+                     work from an existing checkout as it is; the pin is not
+                     installed
+  KILIX_YOLOX_TRUST_EXISTING_CHECKOUT=1
+                     accept a checkout whose origin is not KILIX_YOLOX_REPO
   KILIX_YOLOX_MODEL  yolox_s (default), yolox_tiny or yolox_nano
   KILIX_YOLOX_SIZE   the square the model is cut for, default 320
   KILIX_UV           the uv to use; venv + pip when it is not found
@@ -77,7 +95,7 @@ action="--print-path"
 assume_yes=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --print-path|--check|--install|--upgrade|--remove) action="$1" ;;
+    --print-path|--print-ref|--check|--install|--upgrade|--remove) action="$1" ;;
     --yes|-y) assume_yes=1 ;;
     -h|--help) usage; exit 0 ;;
     *) usage >&2; exit 2 ;;
@@ -120,10 +138,121 @@ runtime_ready() {
     && "$python" -c 'import onnxruntime, numpy' >/dev/null 2>&1
 }
 
+# ------------------------------------------------------------- source ----
+
+install_ref="${KILIX_YOLOX_REF:-$KILIX_YOLOX_DEFAULT_REF}"
+if ! [[ "$install_ref" =~ ^[0-9a-fA-F]{40}$ ]] \
+     && [ "$KILIX_YOLOX_ALLOW_MUTABLE_REF" != 1 ]; then
+  die "KILIX_YOLOX_REF must be a full 40-character commit SHA (set KILIX_YOLOX_ALLOW_MUTABLE_REF=1 only to trust a mutable tag/branch)"
+fi
+
+checkout_ref() {
+  local directory="$1" ref="$2" require_clean="${3:-1}" target
+  if [ "$require_clean" = 1 ] \
+       && [ -n "$(git -C "$directory" status --porcelain --untracked-files=normal 2>/dev/null)" ]; then
+    die "ref checkout refused because $directory has local modifications"
+  fi
+  git -C "$directory" fetch --no-tags origin "$ref" >&2 \
+    || die "could not fetch KILIX_YOLOX_REF=$ref"
+  target="$(git -C "$directory" rev-parse --verify 'FETCH_HEAD^{commit}' 2>/dev/null)" \
+    || die "KILIX_YOLOX_REF did not resolve to a commit"
+  git -C "$directory" checkout --detach "$target" >&2 \
+    || die "could not check out KILIX_YOLOX_REF=$ref"
+  [ "$(git -C "$directory" rev-parse --verify HEAD 2>/dev/null)" = "$target" ] \
+    || die "kilix-yolox checkout verification failed"
+}
+
+# An existing checkout is not exempt from the pin: reinstalling from whatever
+# it happens to hold would let a moved default reach every fresh install and no
+# update.
+advance_existing_checkout() {
+  local directory="$1" head
+  head="$(git -C "$directory" rev-parse HEAD 2>/dev/null || true)"
+  case "$KILIX_YOLOX_KEEP_EXISTING_CHECKOUT" in
+    1|yes|true|on)
+      log "keeping the existing checkout at ${head:0:12} as asked (KILIX_YOLOX_KEEP_EXISTING_CHECKOUT=1)"
+      log "the resolved ref ${install_ref:0:12} was NOT installed"
+      return 0 ;;
+  esac
+  if [ "${head,,}" = "${install_ref,,}" ]; then
+    return 0
+  fi
+  if [ -n "$(git -C "$directory" status --porcelain --untracked-files=normal 2>/dev/null)" ]; then
+    # A tree someone is working in is kept, loudly, rather than thrown away.
+    log "keeping the existing checkout at ${head:0:12}: it has local modifications"
+    log "the resolved ref ${install_ref:0:12} was NOT installed; commit, stash or remove them"
+    return 0
+  fi
+  checkout_ref "$directory" "$install_ref"
+  if [ -n "$head" ] \
+       && git -C "$directory" merge-base --is-ancestor "$install_ref" "$head" >/dev/null 2>&1; then
+    log "existing checkout REWOUND ${head:0:12} -> ${install_ref:0:12} (the pinned ref is older)"
+  else
+    log "existing checkout advanced ${head:0:12} -> ${install_ref:0:12}"
+  fi
+}
+
+resolve_source() {
+  local src origin parent clone_tmp checkout
+  case "$KILIX_YOLOX_SRC" in
+    /*) ;;
+    *) die "KILIX_YOLOX_SRC must be a normalized absolute path: $KILIX_YOLOX_SRC" ;;
+  esac
+  src="$(realpath -m -- "$KILIX_YOLOX_SRC" 2>/dev/null)" \
+    || die "could not normalize KILIX_YOLOX_SRC=$KILIX_YOLOX_SRC"
+  [ "$src" = "$KILIX_YOLOX_SRC" ] \
+    || die "KILIX_YOLOX_SRC must be normalized and contain no symlink components: $KILIX_YOLOX_SRC"
+  case "$src" in
+    /|"$HOME"|"$GPU_TERMINAL_SOURCE_HOME")
+      die "refusing broad kilix-yolox checkout path: $src" ;;
+  esac
+  command -v git >/dev/null 2>&1 || die "git is required"
+
+  if git -C "$src" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    [ "$(realpath -m -- "$(git -C "$src" rev-parse --show-toplevel)")" = "$src" ] \
+      || die "$src is nested inside a different Git checkout"
+    origin="$(git -C "$src" remote get-url origin 2>/dev/null || true)"
+    if [ "$origin" != "$KILIX_YOLOX_REPO" ] \
+         && [ "$KILIX_YOLOX_TRUST_EXISTING_CHECKOUT" != 1 ]; then
+      die "$src has origin '${origin:-missing}', expected '$KILIX_YOLOX_REPO' (set KILIX_YOLOX_TRUST_EXISTING_CHECKOUT=1 only for a trusted checkout)"
+    fi
+    advance_existing_checkout "$src"
+    return 0
+  fi
+  if [ -e "$src" ] || [ -L "$src" ]; then
+    [ "$KILIX_YOLOX_TRUST_EXISTING_CHECKOUT" = 1 ] \
+      || die "$src exists but is not a Git checkout"
+    log "using trusted packaged source at $src"
+    return 0
+  fi
+  case "$KILIX_YOLOX_AUTO_INSTALL" in
+    1|yes|true|on) ;;
+    *) die "kilix-yolox is not installed at $src; set KILIX_YOLOX_AUTO_INSTALL=1 to download it" ;;
+  esac
+  parent="$(dirname "$src")"
+  mkdir -p -- "$parent" || die "could not create checkout parent: $parent"
+  [ -d "$parent" ] && [ ! -L "$parent" ] \
+    || die "checkout parent must be a real directory: $parent"
+  clone_tmp="$(mktemp -d "$parent/.kilix-yolox.clone.XXXXXX")" \
+    || die "could not allocate a temporary clone directory"
+  checkout="$clone_tmp/checkout"
+  log "downloading pinned kilix-yolox $install_ref -> $src"
+  if git clone --no-checkout -- "$KILIX_YOLOX_REPO" "$checkout" >&2 \
+       && ( checkout_ref "$checkout" "$install_ref" 0 ); then
+    [ ! -e "$src" ] && [ ! -L "$src" ] \
+      || { rm -rf -- "$clone_tmp"; die "checkout path appeared while kilix-yolox was being prepared: $src"; }
+    mv -- "$checkout" "$src" || { rm -rf -- "$clone_tmp"; die "could not publish the prepared checkout"; }
+    rm -rf -- "$clone_tmp"
+  else
+    rm -rf -- "$clone_tmp"
+    die "could not prepare kilix-yolox at $install_ref from $KILIX_YOLOX_REPO"
+  fi
+}
+
 module_tool() {
   local tool="$KILIX_YOLOX_SRC/tools/$1"
   [ -f "$tool" ] && [ ! -L "$tool" ] \
-    || die "no $1 in $KILIX_YOLOX_SRC; set KILIX_YOLOX_SRC to a kilix-yolox checkout (the module has no published revision to fetch yet)"
+    || die "no $1 in $KILIX_YOLOX_SRC; is it a kilix-yolox checkout?"
   printf '%s\n' "$tool"
 }
 
@@ -192,6 +321,7 @@ EOF
 
 install_runtime() {
   local tool cut
+  resolve_source
   tool="$(module_tool kilix-yolox-detect)"
   cut="$(module_tool kilix-yolox-cut)"
 
@@ -303,6 +433,9 @@ upgrade_runtime() {
 }
 
 case "$action" in
+  --print-ref)
+    printf '%s\n' "$install_ref"
+    exit 0 ;;
   --check)
     report
     runtime_ready && exit 0 || exit 1 ;;
@@ -315,6 +448,7 @@ case "$action" in
   --install)
     if runtime_ready; then
       log "already installed at $yolox_dir"
+      resolve_source
       record_setting
       printf '%s\n' "$wrapper"
       exit 0

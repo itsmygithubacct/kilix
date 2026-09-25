@@ -274,6 +274,7 @@ class YoloxInstaller(unittest.TestCase):
             environment = sandbox_env(
                 KILIX_YOLOX_DIR=os.path.join(scratch, "yolox"),
                 KILIX_YOLOX_SRC=os.path.join(scratch, "no-such-module"),
+                KILIX_YOLOX_AUTO_INSTALL="0",
                 **extra)
             return subprocess.run([str(YOLOX), *args], env=environment,
                                   capture_output=True, text=True,
@@ -313,7 +314,7 @@ class YoloxInstaller(unittest.TestCase):
     def test_a_missing_module_is_refused_before_anything_is_built(self):
         result = self._run("--install", "--yes")
         self.assertEqual(result.returncode, 1)
-        self.assertIn("kilix-yolox checkout", result.stderr)
+        self.assertIn("is not installed", result.stderr)
 
     def test_remove_on_a_missing_runtime_is_not_an_error(self):
         self.assertEqual(self._run("--remove").returncode, 0)
@@ -351,7 +352,8 @@ class YoloxLicence(unittest.TestCase):
             environment = sandbox_env(
                 HOME=os.path.join(scratch, "home"),
                 KILIX_YOLOX_DIR=os.path.join(scratch, "yolox"),
-                KILIX_YOLOX_SRC=_fake_yolox_module(scratch))
+                KILIX_YOLOX_SRC=_fake_yolox_module(scratch),
+                KILIX_YOLOX_TRUST_EXISTING_CHECKOUT="1")
             result = subprocess.run(
                 [str(YOLOX), "--install", "--yes"], env=environment,
                 stdin=subprocess.DEVNULL, capture_output=True, text=True,
@@ -422,3 +424,92 @@ class LookOffersTheDetector(unittest.TestCase):
     def test_subcommands_that_run_no_model_are_not_offered_it(self):
         output = self._look("classes")
         self.assertNotIn("install YOLOX now?", output)
+
+
+class YoloxPin(unittest.TestCase):
+    """The module is delivered at an immutable commit, first use and update."""
+
+    def _git(self, *argv, cwd=None):
+        environment = sandbox_env(
+            GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid",
+            GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.invalid")
+        return subprocess.run(["git", *argv], cwd=cwd, env=environment,
+                              check=True, capture_output=True,
+                              text=True).stdout.strip()
+
+    def _origin(self, scratch):
+        origin = os.path.join(scratch, "origin")
+        self._git("init", "-q", "-b", "main", origin)
+        refs = []
+        for name in ("old", "new"):
+            with open(os.path.join(origin, "marker"), "w") as handle:
+                handle.write(name)
+            self._git("add", "-A", cwd=origin)
+            self._git("commit", "-qm", name, cwd=origin)
+            refs.append(self._git("rev-parse", "HEAD", cwd=origin))
+        return origin, refs
+
+    def _run(self, scratch, origin, ref, **extra):
+        environment = sandbox_env(
+            HOME=os.path.join(scratch, "home"),
+            KILIX_YOLOX_DIR=os.path.join(scratch, "yolox"),
+            KILIX_YOLOX_SRC=os.path.join(scratch, "sources", "kilix-yolox"),
+            GPU_TERMINAL_SOURCE_HOME=os.path.join(scratch, "sources"),
+            KILIX_YOLOX_REPO=origin, KILIX_YOLOX_REF=ref, **extra)
+        # --check never resolves the source; --install would go on to the
+        # licence.  A non-terminal --install stops there, after resolving.
+        return subprocess.run(
+            [str(YOLOX), "--install", "--yes"], env=environment,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True,
+            check=False, timeout=120)
+
+    def test_the_default_is_a_full_commit_sha(self):
+        result = subprocess.run([str(YOLOX), "--print-ref"],
+                                capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertRegex(result.stdout.strip(), r"^[0-9a-f]{40}$")
+        self.assertRegex(YOLOX.read_text(encoding="utf-8"),
+                         r"(?m)^KILIX_YOLOX_DEFAULT_REF=[0-9a-f]{40}$")
+
+    def test_a_mutable_ref_is_refused(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            result = self._run(scratch, scratch, "main")
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("full 40-character commit SHA", result.stderr)
+
+    def test_first_use_lands_on_the_pinned_commit(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            origin, (old, new) = self._origin(scratch)
+            result = self._run(scratch, origin, old)
+            # Stops at the licence, which is after the source was prepared.
+            self.assertIn("typed agreement", result.stderr, result.stderr)
+            checkout = os.path.join(scratch, "sources", "kilix-yolox")
+            self.assertEqual(self._git("rev-parse", "HEAD", cwd=checkout), old)
+
+    def test_an_existing_clean_checkout_is_moved_to_the_pin(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            origin, (old, new) = self._origin(scratch)
+            self._run(scratch, origin, old)
+            result = self._run(scratch, origin, new)
+            checkout = os.path.join(scratch, "sources", "kilix-yolox")
+            self.assertEqual(self._git("rev-parse", "HEAD", cwd=checkout), new)
+            self.assertIn("advanced", result.stderr)
+
+    def test_a_dirty_checkout_is_kept_and_says_so(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            origin, (old, new) = self._origin(scratch)
+            self._run(scratch, origin, old)
+            checkout = os.path.join(scratch, "sources", "kilix-yolox")
+            with open(os.path.join(checkout, "marker"), "w") as handle:
+                handle.write("edited")
+            result = self._run(scratch, origin, new)
+            self.assertEqual(self._git("rev-parse", "HEAD", cwd=checkout), old)
+            self.assertIn("was NOT installed", result.stderr)
+
+    def test_a_foreign_origin_is_refused(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            origin, (old, new) = self._origin(scratch)
+            self._run(scratch, origin, old)
+            result = self._run(scratch, os.path.join(scratch, "elsewhere"), old)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("expected", result.stderr)
