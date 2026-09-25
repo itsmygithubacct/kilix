@@ -206,7 +206,15 @@ class VoiceSegmentTests(unittest.TestCase):
             self.voice._AVAILABILITY_UNTIL = float("inf")
             self.assertIsNone(self.voice.dictation_install_offer())
             self.assertEqual(self.voice._AVAILABILITY_UNTIL, 0.0)
-            self.assertTrue(self.voice._stt_available("vosk", "small-en-us"))
+            # Dictation also needs a capture tool; supply one rather than
+            # depend on the host having PulseAudio or ALSA utilities.
+            real_which = self.voice.which
+            with mock.patch.object(
+                    self.voice, "which",
+                    lambda name: f"/usr/bin/{name}" if name == "parec"
+                    else real_which(name)):
+                self.assertTrue(
+                    self.voice._stt_available("vosk", "small-en-us"))
 
     def test_vibevoice_can_be_installed_but_is_not_claimed_runnable(self):
         data = Path(self.tmp.name) / "data"
