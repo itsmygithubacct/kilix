@@ -25,7 +25,16 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            ffmpeg python3-pil python3-xlib shellcheck xvfb
+            ffmpeg python3-pil python3-xlib shellcheck xvfb \
+            libsamplerate0-dev libssl-dev
+
+      - name: Allow unprivileged user namespaces for the X11 sandbox tests
+        # tests/x11_sandbox.py and the path-guard tests enter a private
+        # user/mount/network namespace. Ubuntu 24.04 runners restrict that
+        # through AppArmor, which surfaces as EACCES on /proc/self/ns/net and
+        # /proc/self/setgroups; Debian, the platform these tests target,
+        # does not restrict it.
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       - name: Check shell and Python syntax
         run: |
