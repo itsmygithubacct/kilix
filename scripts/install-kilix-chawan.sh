@@ -105,15 +105,6 @@ if [ "$action" = --print-installed ]; then
   exit 0
 fi
 
-for command in git make cc pkg-config tar xz sha256sum; do
-  command -v "$command" >/dev/null 2>&1 \
-    || die "$command is required (install git, make, a C compiler, pkg-config, xz-utils, and coreutils)"
-done
-for module in libssl libcrypto libbrotlidec libbrotlicommon; do
-  pkg-config --exists "$module" \
-    || die "$module development files are required (on Debian: apt install libssl-dev libbrotli-dev)"
-done
-
 explicit_ref="${KILIX_CHAWAN_REF:-}"
 install_ref="${explicit_ref:-$KILIX_CHAWAN_DEFAULT_REF}"
 if ! [[ "$install_ref" =~ ^[0-9a-fA-F]{40}$ ]] \
@@ -127,6 +118,21 @@ download_allowed() {
     *) return 1 ;;
   esac
 }
+
+# Refusals that need no toolchain come first, so they do not depend on which
+# build packages this host happens to have.
+if [ ! -e "$chawan_dir" ] && [ ! -L "$chawan_dir" ] && ! download_allowed; then
+  die "kilix-chawan is not installed at $chawan_dir; set KILIX_CHAWAN_AUTO_INSTALL=1 to download it"
+fi
+
+for command in git make cc pkg-config tar xz sha256sum; do
+  command -v "$command" >/dev/null 2>&1 \
+    || die "$command is required (install git, make, a C compiler, pkg-config, xz-utils, and coreutils)"
+done
+for module in libssl libcrypto libbrotlidec libbrotlicommon; do
+  pkg-config --exists "$module" \
+    || die "$module development files are required (on Debian: apt install libssl-dev libbrotli-dev)"
+done
 
 fetch_verified() {
   # fetch_verified URL SHA256 DESTINATION — download to a private temporary
