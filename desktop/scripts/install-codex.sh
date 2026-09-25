@@ -2,6 +2,8 @@
 set -euo pipefail
 
 INSTALL_URL="https://chatgpt.com/codex/install.sh"
+# Bootstrap fetched 2026-09-25. The script may still download a moving release.
+INSTALL_SHA256="150e3cf675682efeaac115aa3747add3f27887896d04ce6d0b56478d8b428bf6"
 
 ensure_curl() {
   if command -v curl >/dev/null 2>&1; then
@@ -36,7 +38,11 @@ ensure_curl
 ensure_local_bin_path
 
 echo "Installing Codex..."
-curl -fsSL "$INSTALL_URL" | sh
+stage="$(mktemp)"
+trap 'rm -f "$stage"' EXIT
+curl -fsSL "$INSTALL_URL" -o "$stage"
+echo "${INSTALL_SHA256}  ${stage}" | sha256sum -c -
+sh "$stage"
 
 echo
 if command -v codex >/dev/null 2>&1; then

@@ -9,8 +9,9 @@ machine" should not have to know which of those a thing belongs to.
 Nothing is installed here that is not already installed somewhere else in the
 stack. The catalog half calls the same `Installer` the Kilix 95 Start menu
 calls, so a launch and a typed command cannot end up running different builds.
-The agent half runs the vendor command the rollout-resume tool already uses,
-and prints it first — an install is never an opaque pipe to a shell.
+The agent half downloads the vendor script the rollout tool already pins,
+checks its sha256, and only then executes that file. The URL and the pin are
+printed first.
 
 Drivers are the third kind, and the same rule holds: `kilix install
 nvidia-driver` runs the Plebian-OS helper that owns that install rather than
@@ -29,11 +30,15 @@ are installed.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
+import urllib.error
+import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -105,6 +110,9 @@ def _providers_from_rollout():
             "kind": "agent",
             "command": item.command,
             "install": item.install_shell,
+            "install_url": getattr(item, "install_url", ""),
+            "install_sha256": getattr(item, "install_sha256", ""),
+            "install_interpreter": getattr(item, "install_interpreter", ""),
             "update": tuple(item.update_argv),
             "source": item.install_source,
         } for item in providers.PROVIDERS)
@@ -114,13 +122,19 @@ def _providers_from_rollout():
 # Fallback definitions, used only when the utilities are not installed. They
 # drifted from the authoritative copy once already — Kimi updates with
 # `upgrade`, not `update` — which is why the import above is tried first.
+# Digests of the vendor bootstrap scripts fetched 2026-09-25. The same pins
+# live on kilix_rollout.Provider. A script that still downloads a moving
+# "latest" payload is a narrower hole than piping an unpinned bootstrap.
 _FALLBACK_AGENTS = (
     {
         "id": "claude",
         "label": "Claude Code",
         "kind": "agent",
         "command": "claude",
-        "install": "curl -fsSL https://claude.ai/install.sh | bash",
+        "install_url": "https://claude.ai/install.sh",
+        "install_sha256": "3a68d3406cf674e17bed1733a4dcf37805e2e47d87417700007d7e1aa766a944",
+        "install_interpreter": "bash",
+        "install": "bash https://claude.ai/install.sh (sha256 3a68d3406cf674e17bed1733a4dcf37805e2e47d87417700007d7e1aa766a944)",
         "update": ("claude", "update"),
         "source": "https://code.claude.com/docs/en/quickstart",
     },
@@ -129,7 +143,10 @@ _FALLBACK_AGENTS = (
         "label": "Codex",
         "kind": "agent",
         "command": "codex",
-        "install": "curl -fsSL https://chatgpt.com/codex/install.sh | sh",
+        "install_url": "https://chatgpt.com/codex/install.sh",
+        "install_sha256": "150e3cf675682efeaac115aa3747add3f27887896d04ce6d0b56478d8b428bf6",
+        "install_interpreter": "sh",
+        "install": "sh https://chatgpt.com/codex/install.sh (sha256 150e3cf675682efeaac115aa3747add3f27887896d04ce6d0b56478d8b428bf6)",
         "update": ("codex", "update"),
         "source": "https://developers.openai.com/codex/cli/",
     },
@@ -138,7 +155,10 @@ _FALLBACK_AGENTS = (
         "label": "Kimi Code",
         "kind": "agent",
         "command": "kimi",
-        "install": "curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash",
+        "install_url": "https://code.kimi.com/kimi-code/install.sh",
+        "install_sha256": "270a86f2d2304529b6d8a3783fca9534874ebaeecb6cfcc1aebcdb6ce20ae1d7",
+        "install_interpreter": "bash",
+        "install": "bash https://code.kimi.com/kimi-code/install.sh (sha256 270a86f2d2304529b6d8a3783fca9534874ebaeecb6cfcc1aebcdb6ce20ae1d7)",
         "update": ("kimi", "upgrade"),
         "source": "https://moonshotai.github.io/kimi-code/",
     },
@@ -507,13 +527,37 @@ def _install_driver(driver: dict, *, assume_yes: bool) -> int:
     return subprocess.run(argv, check=False).returncode
 
 
+def _fetch_pinned(url: str, digest: str, *, timeout: float = 60) -> bytes:
+    """Download an installer and refuse it unless it matches digest."""
+    expected = digest.lower()
+    request = urllib.request.Request(url, headers={"User-Agent": "kilix-install"})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            payload = response.read()
+    except (OSError, urllib.error.URLError) as error:
+        raise RuntimeError(f"could not download {url}: {error}") from error
+    actual = hashlib.sha256(payload).hexdigest()
+    if actual != expected:
+        raise RuntimeError(
+            f"installer from {url} sha256 {actual} does not match pin {expected}")
+    return payload
+
+
 def _install_agent(agent: dict, *, assume_yes: bool) -> int:
-    # The command is shown before it runs. A vendor install script fetched over
-    # the network and piped into a shell is worth reading first, and the user
-    # cannot read what they were never shown.
+    # The URL and the pin are shown before anything is fetched. The script is
+    # then written to a file and executed. It is never handed to a shell as
+    # text from the network.
+    url = agent.get("install_url") or ""
+    digest = agent.get("install_sha256") or ""
+    interpreter = agent.get("install_interpreter") or ""
     print(f"{agent['label']} installs with the vendor's own script:")
-    print(f"    {agent['install']}")
+    print(f"    {url}")
+    print(f"    sha256 {digest}")
     print(f"    documented at {agent['source']}")
+    if interpreter not in {"bash", "sh"} or len(digest) != 64 or not url:
+        print(f"kilix install: {agent['label']} has no pinned installer.",
+              file=sys.stderr)
+        return 2
     if not assume_yes:
         try:
             answer = input("run it? [y/N] ").strip().lower()
@@ -522,9 +566,24 @@ def _install_agent(agent: dict, *, assume_yes: bool) -> int:
         if answer not in ("y", "yes"):
             print("cancelled.")
             return 1
-    shell = os.environ.get("SHELL") or "/bin/sh"
-    status = subprocess.run([shell, "-c", agent["install"]],
-                            check=False).returncode
+    try:
+        payload = _fetch_pinned(url, digest)
+    except RuntimeError as error:
+        print(f"kilix install: {error}", file=sys.stderr)
+        return 1
+    handle = tempfile.NamedTemporaryFile(
+        prefix=f"kilix-{agent['id']}-install-", suffix=".sh", delete=False)
+    path = handle.name
+    try:
+        handle.write(payload)
+        handle.close()
+        os.chmod(path, 0o700)
+        status = subprocess.run([interpreter, path], check=False).returncode
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
     if status != 0:
         return status
     # The vendor script exiting 0 is its claim; whether the command actually

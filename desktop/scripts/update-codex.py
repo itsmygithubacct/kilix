@@ -3,11 +3,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -15,6 +18,8 @@ from pathlib import Path
 VERSION_RE = re.compile(r"(\d+(?:\.\d+){0,3})")
 PACKAGE_NAME = "@openai/codex"
 INSTALLER_URL = "https://chatgpt.com/codex/install.sh"
+# Bootstrap fetched 2026-09-25. The script may still download a moving release.
+INSTALLER_SHA256 = "150e3cf675682efeaac115aa3747add3f27887896d04ce6d0b56478d8b428bf6"
 
 
 @dataclass(frozen=True)
@@ -178,10 +183,28 @@ def update_with_installer() -> int:
               file=sys.stderr)
         return 1
     print(f"Running standalone Codex updater from {INSTALLER_URL}")
-    return subprocess.run(
-        ["sh", "-c", f"curl -fsSL {INSTALLER_URL} | sh"],
-        check=False,
-    ).returncode
+    request = urllib.request.Request(
+        INSTALLER_URL, headers={"User-Agent": "kilix-install"})
+    with urllib.request.urlopen(request, timeout=60) as response:
+        payload = response.read()
+    actual = hashlib.sha256(payload).hexdigest()
+    if actual != INSTALLER_SHA256:
+        print(f"codex update: installer sha256 {actual} does not match "
+              f"{INSTALLER_SHA256}", file=sys.stderr)
+        return 1
+    handle = tempfile.NamedTemporaryFile(
+        prefix="codex-install-", suffix=".sh", delete=False)
+    path = handle.name
+    try:
+        handle.write(payload)
+        handle.close()
+        os.chmod(path, 0o700)
+        return subprocess.run(["sh", path], check=False).returncode
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
 
 
 def main(argv: list[str]) -> int:

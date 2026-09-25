@@ -216,8 +216,9 @@ class ResolutionTests(unittest.TestCase):
         self.assertEqual(calls[0][0], os.path.join(tmp, ".local/bin/claude"))
 
     def test_a_vendor_install_that_leaves_nothing_is_not_success(self):
-        agent = installer.AGENTS[0]
-        with mock.patch.object(installer.subprocess, "run",
+        agent = installer._FALLBACK_AGENTS[0]
+        with mock.patch.object(installer, "_fetch_pinned", return_value=b"echo\n"), \
+             mock.patch.object(installer.subprocess, "run",
                                return_value=mock.Mock(returncode=0)), \
              mock.patch.object(installer, "_resolve_agent_command",
                                return_value=None):
@@ -228,10 +229,11 @@ class ResolutionTests(unittest.TestCase):
     def test_an_off_path_landing_is_reported_by_its_path(self):
         import contextlib
         import io
-        agent = installer.AGENTS[0]
+        agent = installer._FALLBACK_AGENTS[0]
         landing = "/somewhere/.local/bin/" + agent["command"]
         out = io.StringIO()
-        with mock.patch.object(installer.subprocess, "run",
+        with mock.patch.object(installer, "_fetch_pinned", return_value=b"echo\n"), \
+             mock.patch.object(installer.subprocess, "run",
                                return_value=mock.Mock(returncode=0)), \
              mock.patch.object(installer, "_resolve_agent_command",
                                return_value=landing), \
@@ -415,7 +417,7 @@ class SafetyTests(unittest.TestCase):
         """A vendor script piped into a shell must be readable, and refusable."""
         import builtins
         calls = []
-        agent = installer.AGENTS[0]
+        agent = installer._FALLBACK_AGENTS[0]
         real_input, real_run = builtins.input, installer.subprocess.run
         builtins.input = lambda *a: "n"
         installer.subprocess.run = lambda *a, **k: calls.append(a)
@@ -425,6 +427,23 @@ class SafetyTests(unittest.TestCase):
             builtins.input, installer.subprocess.run = real_input, real_run
         self.assertEqual(code, 1, "declining must cancel")
         self.assertEqual(calls, [], "nothing may run before consent")
+
+    def test_an_unpinned_agent_is_not_fetched_or_run(self):
+        calls = []
+        agent = {
+            "id": "loose",
+            "label": "Loose",
+            "command": "loose",
+            "install": "curl -fsSL https://example.invalid/install.sh | bash",
+            "source": "https://example.invalid",
+        }
+        with mock.patch.object(installer, "_fetch_pinned",
+                               side_effect=lambda *a, **k: calls.append("fetch")), \
+             mock.patch.object(installer.subprocess, "run",
+                               side_effect=lambda *a, **k: calls.append("run")):
+            code = installer._install_agent(agent, assume_yes=True)
+        self.assertEqual(code, 2)
+        self.assertEqual(calls, [])
 
     def test_the_launcher_exposes_the_subcommand(self):
         source = (Path(ROOT) / "kilix").read_text(encoding="utf-8")
@@ -484,7 +503,8 @@ class ContractTests(unittest.TestCase):
         for fallback in installer._FALLBACK_AGENTS:
             real = by_id.get(fallback["id"])
             self.assertIsNotNone(real, fallback["id"])
-            for field in ("command", "install", "update", "source"):
+            for field in ("command", "install", "install_url", "install_sha256",
+                          "install_interpreter", "update", "source"):
                 self.assertEqual(fallback[field], real[field],
                                  f"{fallback['id']}.{field} has drifted")
 

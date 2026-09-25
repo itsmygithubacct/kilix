@@ -16,6 +16,7 @@
  * Build: cc -O2 -o matrix matrix.c
  * Run:   ./matrix            (press q or Ctrl-C to quit; resizes live)
  */
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,6 +28,9 @@
 
 #define NLEVELS 16          /* colour quantization: head + green gradient */
 #define FPS     30
+/* A 2000x1000 screen is already far past a useful rain. The cap also keeps
+ * rows*cols inside a signed int, which the cell index arithmetic requires. */
+#define MAX_CELLS 2000000
 
 /* glyph set: half-width katakana (each width 1) + digits + a few symbols */
 static const char *GLYPHS[] = {
@@ -63,23 +67,52 @@ static void spawn(int c){                  /* (re)start a column's drop above th
     dtick[c] = rand() % dspd[c];
 }
 
+static int cells_ok(int rows, int cols, size_t *count){
+    if (rows < 1 || cols < 1) return 0;
+    if ((size_t)rows > (size_t)MAX_CELLS / (size_t)cols) return 0;
+    if ((size_t)rows > (size_t)INT_MAX / (size_t)cols) return 0;
+    *count = (size_t)rows * (size_t)cols;
+    return 1;
+}
+
 static void resize(void){
     struct winsize ws;
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_row) { R = ws.ws_row; C = ws.ws_col; }
-    else { R = 24; C = 80; }
+    int rows = 24, cols = 80;
+    size_t count = 0;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_row && ws.ws_col) {
+        rows = (int)ws.ws_row;
+        cols = (int)ws.ws_col;
+    }
+    if (!cells_ok(rows, cols, &count)) {
+        if (bri) return;                   /* keep the grid already on screen */
+        rows = 24; cols = 80;
+        if (!cells_ok(rows, cols, &count)) { g_stop = 1; return; }
+    }
+    int n = (int)count;
+    int *nbri = calloc(count, sizeof(int));
+    int *ngl = calloc(count, sizeof(int));
+    int *nplvl = malloc(count * sizeof(int));
+    int *npgl = malloc(count * sizeof(int));
+    int *ndhead = malloc((size_t)cols * sizeof(int));
+    int *ndfade = malloc((size_t)cols * sizeof(int));
+    int *ndspd = malloc((size_t)cols * sizeof(int));
+    int *ndtick = malloc((size_t)cols * sizeof(int));
+    size_t ncap = count * 40 + 64;         /* worst case: every cell redrawn */
+    char *nob = malloc(ncap);
+    if (!nbri || !ngl || !nplvl || !npgl || !ndhead || !ndfade || !ndspd || !ndtick || !nob) {
+        free(nbri); free(ngl); free(nplvl); free(npgl);
+        free(ndhead); free(ndfade); free(ndspd); free(ndtick); free(nob);
+        if (!bri) g_stop = 1;
+        return;
+    }
+    for (int i = 0; i < n; i++) { nplvl[i] = -1; npgl[i] = -1; }   /* -1 = cell is off */
     free(bri); free(gl); free(plvl); free(pgl);
     free(dhead); free(dfade); free(dspd); free(dtick); free(ob);
-    int n = R * C;
-    bri  = calloc(n, sizeof(int));
-    gl   = calloc(n, sizeof(int));
-    plvl = malloc(n * sizeof(int));
-    pgl  = malloc(n * sizeof(int));
-    for (int i = 0; i < n; i++) { plvl[i] = -1; pgl[i] = -1; }   /* -1 = cell is off */
-    dhead = malloc(C*sizeof(int)); dfade = malloc(C*sizeof(int));
-    dspd  = malloc(C*sizeof(int)); dtick = malloc(C*sizeof(int));
+    R = rows; C = cols;
+    bri = nbri; gl = ngl; plvl = nplvl; pgl = npgl;
+    dhead = ndhead; dfade = ndfade; dspd = ndspd; dtick = ndtick;
+    ob = nob; obcap = ncap;
     for (int c = 0; c < C; c++) spawn(c);
-    obcap = (size_t)n * 40 + 64;           /* worst case: every cell redrawn */
-    ob = malloc(obcap);
     fputs("\x1b[2J", stdout); fflush(stdout);
 }
 

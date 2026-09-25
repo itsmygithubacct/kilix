@@ -2,6 +2,8 @@
 set -euo pipefail
 
 INSTALL_URL="https://claude.ai/install.sh"
+# Bootstrap fetched 2026-09-25. The script may still download a moving release.
+INSTALL_SHA256="3a68d3406cf674e17bed1733a4dcf37805e2e47d87417700007d7e1aa766a944"
 
 ensure_curl() {
   if command -v curl >/dev/null 2>&1; then
@@ -36,7 +38,11 @@ ensure_curl
 ensure_local_bin_path
 
 echo "Installing Claude Code..."
-curl -fsSL "$INSTALL_URL" | bash
+stage="$(mktemp)"
+trap 'rm -f "$stage"' EXIT
+curl -fsSL "$INSTALL_URL" -o "$stage"
+echo "${INSTALL_SHA256}  ${stage}" | sha256sum -c -
+bash "$stage"
 
 echo
 if command -v claude >/dev/null 2>&1; then
