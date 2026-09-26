@@ -40,10 +40,17 @@ BUILD_FIXTURE = textwrap.dedent(
     binaries = Path(sys.argv[1]) / "bin"
     binaries.mkdir(parents=True, exist_ok=True)
     marker = Path(__file__).with_name("RUNTIME").read_text().strip()
+    # With REFUSE_LICENCE beside this file the gate answers like
+    # voicelib.licensing when no receipt covers a model: exit 3, fetch nothing.
+    refuse = Path(__file__).with_name("REFUSE_LICENCE").exists()
+    gate = (
+        '[ "${1:-}" != --check-licence ] || { echo "no receipt covers $2;'
+        ' Run: kilix models install $2" >&2; exit 3; }\\n' if refuse else "")
     for tool in ("kilix-tts", "kilix-stt", "kilix-voiced"):
         executable = binaries / tool
         executable.write_text(
-            "#!/bin/sh\\nprintf '%s\\\\n' " + shlex.quote(marker) + "\\n"
+            "#!/bin/sh\\n" + gate
+            + "printf '%s\\\\n' " + shlex.quote(marker) + "\\n"
         )
         executable.chmod(0o755)
     """
@@ -504,6 +511,42 @@ class KilixVoiceInstallerTests(unittest.TestCase):
             refused = self.run_installer(check=False, KILIX_VOICE_REF=ref)
             self.assertNotEqual(refused.returncode, 0)
             self.assertIn("full 40-character commit SHA", refused.stderr)
+
+    @unittest.skipUnless(
+        all(shutil.which(tool) for tool in DOWNLOAD_TOOLS),
+        "needs download and C fixture tools")
+    def test_dictation_without_a_licence_receipt_downloads_no_model(self):
+        # OD-S / OD-BB: `kilix voice install` fetches no dictation weights
+        # until a receipt covers that exact model. The gate is asked exactly
+        # when the model would be downloaded; the model URLs here are
+        # unreachable, so reaching either download would fail with status 1.
+        pins = self.publish_downloads()
+        self.advance_repo({"REFUSE_LICENCE": "1\n"})
+        for args in ((), ("--model", "lgraph-en-us")):
+            with self.subTest(args=args):
+                refused = self.run_installer(
+                    *args, check=False,
+                    **dict(pins, KILIX_VOICE_MODEL_URL="file:///nonexistent/model.zip",
+                           KILIX_VOICE_LGRAPH_MODEL_URL="file:///nonexistent/lgraph.zip"))
+                self.assertEqual(refused.returncode, 3, refused.stderr)
+                self.assertIn("Run: kilix models install", refused.stderr)
+                self.assertIn("the model was not downloaded", refused.stderr)
+                models = self.data / "voice" / "models"
+                self.assertFalse(any(models.rglob("*.zip")) if models.exists() else False)
+                self.assertFalse(any(models.rglob("model.conf")) if models.exists() else False)
+
+    @unittest.skipUnless(
+        all(shutil.which(tool) for tool in DOWNLOAD_TOOLS),
+        "needs download and C fixture tools")
+    def test_an_installed_model_needs_no_new_receipt(self):
+        # A model already installed and verified may predate receipts (0.2.1
+        # fetched one at firstboot); repairing the runtime must not remove it.
+        pins = self.publish_downloads()
+        self.run_installer(**pins)
+        self.advance_repo({"REFUSE_LICENCE": "1\n"})
+        repaired = self.run_installer(**pins)
+        self.assertEqual(repaired.returncode, 0, repaired.stderr)
+        self.assertNotIn("the model was not downloaded", repaired.stderr)
 
     def test_read_aloud_can_still_explicitly_skip_the_pinned_dictation_assets(self):
         self.run_installer("--without-dictation")

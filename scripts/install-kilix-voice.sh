@@ -529,6 +529,27 @@ licence_gate_answers() {
   esac
 }
 
+# OD-S / OD-BB: no dictation weights are downloaded until the user has seen
+# and accepted this exact model's licence. The voice engine's own gate answers
+# that and fetches nothing either way: exit 0 when a receipt covers the model,
+# exit 3 (with the command that shows the licence) when none does. It is asked
+# only when the model is actually about to be downloaded: a model already
+# installed and verified is left alone, since it may predate receipts.
+require_dictation_receipt() {
+  local output status=0
+  output="$("$1/bin/kilix-stt" --check-licence "$model_id" 2>&1)" || status=$?
+  case "$status" in
+    0) return 0 ;;
+    3)
+      printf '%s\n' "$output" >&2
+      log "no licence receipt covers the $model_id speech model; the model was not downloaded"
+      exit 3 ;;
+    *)
+      printf '%s\n' "$output" >&2
+      die "could not ask the voice licence gate about $model_id (kilix-stt --check-licence)" ;;
+  esac
+}
+
 voice_runtime_works() {
   local tool entry expected library_generation model_directory notice license asset
   [ -L "$runtime_current" ] || return 1
@@ -1014,6 +1035,8 @@ if [ "$without_dictation" = 0 ]; then
   fi
   if ! model_generation_works "$model_generation" \
       || ! vosk_model_works "$library_generation/libvosk.so" "$model_generation"; then
+    # Exactly when the model would be downloaded, and not before.
+    require_dictation_receipt "${uncommitted_generation:-$runtime_current}"
     archive="$models_root/.$model_generation_name.zip"
     fetch_verified "$KILIX_VOICE_MODEL_URL" "$archive" \
       "$KILIX_VOICE_MODEL_SHA256" "the $model_id speech model"
