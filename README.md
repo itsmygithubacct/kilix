@@ -520,7 +520,7 @@ lives on `plebian-os` and plays at [plebian-os.com](https://plebian-os.com/#watc
 - **Network/Wi-Fi-in-chrome** — a network item immediately left of the calendar
   opens NetworkManager's `nmtui` in an overlay pane.
 - **Battery-in-chrome** — on laptops, a green/yellow/red battery item appears at the
-  far right of the page strip while the battery is discharging, with the percentage
+  far right of the page strip below full charge, including while charging, with the percentage
   shown to the left of the battery icon; click it to hide/show the percentage.
 - **Date/time-in-chrome** — the page strip shows a high-contrast local date and
   time immediately to the left of the battery item. Click its calendar icon for
@@ -584,6 +584,7 @@ as `<session-id>.log`, mode `0600`, one per pane.
 ```bash
 kilix transcript                  # newest-first index, live and archived
 kilix transcript show <session>   # write one transcript to stdout
+kilix transcript view <session>   # search all retained output in a pager
 kilix transcript path             # print the directory
 kilix transcript prune            # apply the size budgets now
 kilix transcript archive          # move dead logs into the denser older tier
@@ -591,6 +592,14 @@ kilix transcript archive          # move dead logs into the denser older tier
 
 Each log is bounded (8 MiB by default); on overflow the newest three quarters
 are kept and the oldest bytes are dropped, so a busy pane cannot fill the disk.
+
+Click the document button in a pane's title bar to open that pane's saved log in
+a new tab. The viewer opens at the newest output: `g` goes to the first retained
+line, `G` to the last, `/` searches, and `q` closes the log tab. It shows a snapshot
+of all retained output at opening time, including output beyond the terminal's
+scrollback. Terminal control sequences are removed for readable text. Logging
+must already have been enabled; output removed by retention limits cannot be
+recovered. The button is configurable as **Open pane session log** in Settings.
 
 That cap bounds one file, so the **directory** has its own two budgets. A log is
 plain only while its pane is live. Within a minute after the pane exits, the log
@@ -1051,7 +1060,9 @@ live Mute checkbox on right-click. It sits to the left of the network/Wi-Fi
 icon, which shows compact connection status on one click and opens `nmtui` on
 a double-click. Click the calendar icon for a navigable month widget, or click
 the date/time text for a live local-date, clock, and timezone widget.
-When Linux reports a laptop battery is **discharging**, a battery status item appears to its right.
+On laptops, a battery status item appears to its right below full charge,
+including while charging or connected to AC. It hides when all present laptop
+batteries have valid 100% readings; unreadable charge remains visible as `?%`.
 It is green above 50%, yellow at 50% and below, red at 20% and below, and
 shows the percentage to the left of the battery icon. One click shows battery
 details and a double-click toggles the percentage on/off. Right-clicking the

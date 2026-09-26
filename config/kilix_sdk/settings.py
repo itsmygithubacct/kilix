@@ -51,6 +51,7 @@ TOP_BAR_TOGGLES = (
 )
 
 PANE_BUTTON_TOGGLES = (
+    ToggleSpec("KILIX_CHROME_BUTTON_LOG", "Open pane session log", "Pane buttons"),
     ToggleSpec("KILIX_CHROME_BUTTON_SYNCHRONIZE_INPUT", "Synchronize keyboard input", "Pane buttons"),
     ToggleSpec("KILIX_CHROME_BUTTON_FONT_INCREASE", "Increase text size", "Pane buttons"),
     ToggleSpec("KILIX_CHROME_BUTTON_FONT_DECREASE", "Decrease text size", "Pane buttons"),

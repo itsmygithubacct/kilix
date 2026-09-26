@@ -130,6 +130,7 @@ SETTING_PAGES = [
             shared_settings.PANE_MEMORY_MODE_DEFAULT,
             list(shared_settings.PANE_MEMORY_MODE_CHOICES),
         ),
+        S("KILIX_CHROME_BUTTON_LOG", "Open pane session log"),
         S("KILIX_CHROME_BUTTON_SYNCHRONIZE_INPUT", "Synchronize keyboard input"),
         S("KILIX_CHROME_BUTTON_FONT_INCREASE", "Increase text size"),
         S("KILIX_CHROME_BUTTON_FONT_DECREASE", "Decrease text size"),

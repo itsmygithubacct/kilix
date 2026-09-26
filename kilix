@@ -2035,6 +2035,9 @@ case "${1:-}" in
           else echo "$_tr_dir/$_tr_name.log"; fi
         else echo "$_tr_dir"; fi
         exit 0 ;;
+      view)
+        [ $# -eq 1 ] || { echo "usage: $_self transcript view SESSION" >&2; exit 2; }
+        exec python3 "$KILIX_HOME/scripts/transcript-view.py" "$_tr_dir" "$1" ;;
       show|cat)
         [ $# -eq 1 ] || { echo "usage: $_self transcript show SESSION" >&2; exit 2; }
         _tr_name="${1%.log}"; _tr_name="${_tr_name%.log.zst}"
@@ -2073,6 +2076,7 @@ case "${1:-}" in
         echo "usage: $_self transcript [list|show SESSION|path [SESSION]|prune|archive]"
         echo "  list     newest-first index of recorded pane logs, live and archived"
         echo "  show     write one transcript to stdout, decompressing if archived"
+        echo "  view     browse all retained output as searchable text"
         echo "  path     print the transcript directory, or one session's file"
         echo "  prune    apply the configured size budgets now"
         echo "  archive  recompress everything into the denser older tier"
