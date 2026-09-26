@@ -885,7 +885,7 @@ kilix tui                          # install/verify the text-native desktop, the
 kilix land                         # install/build the walkable desktop, then open it
 kilix bonsai                       # the BitNet model store: browse, download, verify
 kilix bonsai list                  # one line per model, with size and state
-kilix bonsai pull vibevoice-asr-bitnet   # download one — this one is the dictation model
+kilix bonsai pull vibevoice-asr-bitnet   # the dictation model, once `kilix models install` took its licence
 kilix rtsp list                    # cameras this machine is configured for
 kilix rtsp view poolcam --tab      # one camera filling a new page
 kilix rtsp mosaic yard             # several in a grid
@@ -977,6 +977,12 @@ digest. Their active links, the runtime link, command entrypoints, and install
 stamp are promoted as one rollback-safe transaction, so a pin change can never
 relabel an old payload. `--without-dictation` retains a smaller read-aloud-only
 path for non-x86_64 machines.
+
+Speech weights are downloaded only after their licence was shown and
+accepted. `kilix models install small-en-us` (or `lgraph-en-us`, or
+`vibevoice-asr-bitnet`) does that and records the receipt. Without one,
+`kilix voice install`, `kilix stt --install` and `kilix bonsai pull` stop
+with exit 3 before fetching the model and name that command.
 
 The native library and acoustic model each carry an adjacent
 `README.kilix-provenance` recording their upstream URL and checksum, plus a

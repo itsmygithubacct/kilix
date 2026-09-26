@@ -2661,6 +2661,8 @@ sys.exit(0 if ready else 1)
           echo "The dictation model is one of these: downloading"
           echo "vibevoice-asr-bitnet here is what makes it available to"
           echo "'$_self stt', and both read the one copy."
+          echo "It downloads only after '$_self models install MODEL' has"
+          echo "shown its licence and recorded that you accepted it."
           exit 0 ;;
         --) shift; break ;;
         *) break ;;
