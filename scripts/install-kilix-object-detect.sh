@@ -17,7 +17,7 @@ KILIX_LOOK_ALLOW_MUTABLE_REF="${KILIX_LOOK_ALLOW_MUTABLE_REF:-0}"
 # resolves it — a first-use download and an existing checkout alike — so a moved
 # pin reaches machines that already have the component. Set
 # KILIX_LOOK_KEEP_EXISTING_CHECKOUT=1 to work from a checkout as it is.
-KILIX_LOOK_DEFAULT_REF=63b6234b7a30936f8afd4958b450babef6fff6db
+KILIX_LOOK_DEFAULT_REF=096dd5a8ec265376c090a35456d13f49226c77a1
 
 die() { printf 'kilix look: %s\n' "$*" >&2; exit 1; }
 log() { printf 'kilix look: %s\n' "$*" >&2; }
