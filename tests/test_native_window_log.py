@@ -8,6 +8,8 @@ import tempfile
 import time
 import unittest
 
+from _env_support import sandbox_env
+
 SCRIPT = Path(__file__).resolve().parents[1] / 'scripts/native-window-log.py'
 spec = importlib.util.spec_from_file_location('native_window_log', SCRIPT)
 module = importlib.util.module_from_spec(spec)
@@ -66,7 +68,10 @@ class NativeWindowIntegration(unittest.TestCase):
                 os.close(w)
                 with os.fdopen(r) as stream:
                     number = stream.readline().strip()
-                env = dict(os.environ, DISPLAY=':' + number)
+                env = sandbox_env(DISPLAY=':' + number, HOME=tmp,
+                                  XDG_CONFIG_HOME=str(Path(tmp) / 'config'),
+                                  XDG_CACHE_HOME=str(Path(tmp) / 'cache'),
+                                  XDG_DATA_HOME=str(Path(tmp) / 'data'))
                 d = display.Display(env['DISPLAY'])
                 root = d.screen().root
                 atom = d.intern_atom

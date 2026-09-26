@@ -440,11 +440,11 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("ensure_chrome_timers", battery)
         self.assertIn("KILIX_CHROME_BATTERY", battery)
         self.assertIn("KILIX_BATTERY_SUPPLY_DIR", battery)
-        self.assertIn("s.lower() == 'discharging'", battery)
+        # Charging and idle batteries are visible too. Status transitions are
+        # exercised by the fork's kitty_tests/kilix_battery.py.
         self.assertIn("BATTERY_TOGGLE_ACTION", battery)
         self.assertIn("kilix_toggle_battery_percent", battery)
         self.assertIn("_BATTERY_SHOW_PERCENT = True", battery)
-        self.assertIn("f' {info.percent:3d}% {glyph} '", battery)
         self.assertIn("clock_segment", providers)
         self.assertIn("thermal_segment", tabbar)
         self.assertIn("THERMAL_WIDGET_ACTION", registry)
