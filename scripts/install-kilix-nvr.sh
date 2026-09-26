@@ -16,7 +16,7 @@ KILIX_NVR_ALLOW_MUTABLE_REF="${KILIX_NVR_ALLOW_MUTABLE_REF:-0}"
 # resolves it — a first-use download and an existing checkout alike — so a moved
 # pin reaches machines that already have the component. Set
 # KILIX_NVR_KEEP_EXISTING_CHECKOUT=1 to work from a checkout as it is.
-KILIX_NVR_DEFAULT_REF=f61337589bb130e796ead18fd9fca4a8850fae25
+KILIX_NVR_DEFAULT_REF=25497a6c7cf9722b34beb11bc1d5fd5221118693
 
 die() { printf 'kilix nvr: %s\n' "$*" >&2; exit 1; }
 log() { printf 'kilix nvr: %s\n' "$*" >&2; }
