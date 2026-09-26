@@ -14,6 +14,62 @@ daemon to start. In-pane callers receive the socket and credential paths
 directly; an out-of-pane tool runner must use the bounded discovery procedure
 below rather than guessing.
 
+## Start with kilix-needle for routine pane management
+
+**Prefer kilix-needle's `panes` job for short, routine pane/tab requests.** It
+uses a small local CPU model to translate requests into checked Kilix actions,
+making it a low-cost option for splitting, focusing, arranging, renaming, and
+resizing panes. Let Needle handle these requests instead of spending repeated
+large-model tool calls reconstructing the layout and remote-control arguments.
+Keep the supervising agent responsible for the task, target, and outcome.
+
+`panes` is the **default job**, not a CLI subcommand. Use `kilix-needle ...`,
+not `kilix-needle panes ...`. The separate `apps` job is for apps/settings.
+
+If the harness exposes Needle MCP tools, use `kilix_act` for a clear routine
+request and `kilix_plan` when you need to inspect its proposed target/actions:
+
+```json
+{"request":"split right"}
+```
+
+Pass that object to `kilix_act`. For a preview, pass the same object to
+`kilix_plan`; a plan makes no changes. The registered server/tool prefix varies
+by harness (for example, `kilix_needle.kilix_act`).
+
+From an agent's shell, the equivalents are:
+
+```sh
+kilix-needle --agent --json 'split right'
+kilix-needle --agent --json 'go to the left pane'
+kilix-needle --agent --json 'rename this tab to build'
+kilix-needle --agent --json --dry-run 'make it a grid'
+```
+
+Use one short request at a time. "This pane" means the calling pane; identify
+that source correctly (§1), especially when a harness strips pane variables.
+Read the result and verify the intended target/effect with `kilix panes list`
+or a bounded `kilix panes dump PANE --lines 20`. Use `kilix panes --json` when
+you need structured state. A successful tool invocation alone does not prove
+the requested action ran: check reported refusals and executed actions.
+
+Closing, typing, and starting a program require `confirm_risky: true` on
+`kilix_act`, or `--yes` together with `--agent` on the CLI. Set these only for
+actions already authorized by the user/task and a verified target. Existing
+authorization does not need another confirmation. These flags never override
+a refusal, and agent mode never closes its own pane/tab. Read a pane before
+sending input so you know whether it is at a shell, a password prompt, or an
+interactive program.
+
+Use direct `kilix` verbs for exact scripted operations, bulk listings, and
+output reads. If Needle is unavailable, refuses, or selects the wrong target,
+inspect the state and use an explicit supported command from the sections
+below when authorized; do not repeatedly rephrase a request to bypass a guard.
+Long commands, scripts, and precise control bytes belong in the direct path
+(§6). Use `kitten @` only where the higher-level interfaces lack the operation.
+Do not install/download a model or change licence acceptance just to make a
+routine pane action possible; the direct interface remains available.
+
 
 ## 1. Are you inside Kilix?
 
@@ -104,10 +160,11 @@ then set `SOURCE_PANE` explicitly. Do not infer it from whichever pane happens
 to be focused.
 
 
-## 2. Two interfaces
+## 2. Choosing an interface
 
-**Prefer the `kilix` verbs.** They are stable, they handle credential and
-binary resolution for you, and they print human-readable tables:
+**Use Needle for routine natural-language requests; prefer the `kilix` verbs
+for direct control and inspection.** The verbs are stable, handle credential
+and binary resolution for you, and print human-readable tables:
 
 ```
 kilix ls              kilix new-pane        kilix watch
