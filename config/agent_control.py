@@ -38,8 +38,11 @@ YOLO_FLAGS = {"claude": ["--dangerously-skip-permissions"],
 # parent's approval mode.  Keep the omp 18.3.2 tools loaded under the default
 # configuration except `task` when Kilix coding-yolo is off.  Optional tools
 # cannot appear here: omp rejects requested tools which its config disabled.
-OMP_NON_YOLO_TOOLS = ("read", "bash", "edit", "ast_grep", "ast_edit", "ask", "debug",
-                      "ida", "eval", "glob", "grep", "find", "lsp", "wait", "todo",
+# Not here: `ast_grep` (astGrep.enabled defaults to false) and `find`
+# (find.enabled defaults to "auto", on only for some models), both of which
+# omp would reject as unknown (review R13 round 4, KX-R13-38).
+OMP_NON_YOLO_TOOLS = ("read", "bash", "edit", "ast_edit", "ask", "debug",
+                      "ida", "eval", "glob", "grep", "lsp", "wait", "todo",
                       "web_search", "write")
 ASK_FLAGS = {"qwen-omp": ["--approval-mode=always-ask",
                            "--tools=" + ",".join(OMP_NON_YOLO_TOOLS)]}
@@ -118,10 +121,16 @@ def _git_marker_above(directory):
 
 def grok_trust_is_exact(cwd):
     """Refuse Grok trust when its repository-scoped grant would exceed cwd."""
+    # A jj workspace above cwd may be the root grok trusts: only its root.
+    if any((parent / ".jj").is_dir() for parent in cwd.resolve().parents):
+        raise ControlError("grok --trust-folder inside a jj workspace needs --cwd to be its root")
     try:
+        # The caller's GIT_DIR/GIT_WORK_TREE must not redefine the repository
+        # (KX-R13-39).
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
         done = subprocess.run(
             ["git", "-C", os.fspath(cwd), "rev-parse", "--show-toplevel"],
-            stdin=subprocess.DEVNULL, capture_output=True, timeout=10, check=False)
+            stdin=subprocess.DEVNULL, capture_output=True, timeout=10, check=False, env=env)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise ControlError("cannot determine the Git repository root for grok --trust-folder") from exc
     if done.returncode:
@@ -523,8 +532,8 @@ def main(argv=None):
                     value = args.text
                 value = plain_text(value, "input")
                 stripped = value.lstrip()
-                if stripped and stripped[0] in "/!" and not args.allow_command:
-                    raise ControlError("input beginning with '/' or '!' is a client command; "
+                if stripped and stripped[0] in "/!#" and not args.allow_command:
+                    raise ControlError("input beginning with '/', '!' or '#' is a client command; "
                                        "pass --allow-command only when that command is intended")
                 payload = value.encode("utf-8")
             client.input(args.pane, args.expect_broker, payload)
