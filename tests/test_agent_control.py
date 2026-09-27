@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from unittest import mock
 
@@ -165,12 +167,12 @@ class LaunchTests(unittest.TestCase):
 
     def test_new_tab_is_anchored_argv_and_startup_remains_unverified(self):
         result = control.launch(self.client, self.args("new-tab", "--model", "model-name",
-                                                       "--agent-arg=--config", "--agent-arg=key=value"))
+                                                       "--agent-arg=--effort=high"))
         argv = self.client.calls[-1][0]
         self.assertEqual(argv[argv.index("--match") + 1], "window_id:1")
         self.assertEqual(argv[argv.index("--next-to") + 1], "id:1")
         self.assertEqual(argv[argv.index("--cwd") + 1], self.directory.name)
-        self.assertEqual(argv[argv.index("--") + 1:], ["/opt/bin/codex", "--model", "model-name", "--config", "key=value"])
+        self.assertEqual(argv[argv.index("--") + 1:], ["/opt/bin/codex", "--model", "model-name", "--effort=high"])
         self.assertIn("--keep-focus", argv)
         self.assertNotIn("--allow-remote-control", argv)
         self.assertEqual(result["pane"]["tab_id"], 22)
@@ -257,6 +259,7 @@ class AgentArgvTests(unittest.TestCase):
                  "codex": ["/bin/codex", "resume", "abc-123", "review the diff"],  # options would sit before the id
                  "grok": ["/bin/grok", "--resume", "abc-123", "review the diff"],
                  "qwen-omp": ["/bin/omp", "--model", "qwen3.8-max", "--approval-mode=always-ask",
+                              "--tools=" + ",".join(control.OMP_NON_YOLO_TOOLS),
                               "--resume=abc-123", "review the diff"]}
         for agent, want in cases.items():
             argv, _ = self.argv(agent, "--resume", "abc-123", "--prompt", "review the diff")
@@ -269,9 +272,11 @@ class AgentArgvTests(unittest.TestCase):
 
     def test_qwen_omp_runs_omp_with_qwen_unless_a_model_is_given(self):
         self.assertEqual(self.argv("qwen-omp")[0], ["/bin/omp", "--model", "qwen3.8-max",
-                                                    "--approval-mode=always-ask"])
+                                                    "--approval-mode=always-ask",
+                                                    "--tools=" + ",".join(control.OMP_NON_YOLO_TOOLS)])
         self.assertEqual(self.argv("qwen-omp", "--model", "qwen3.7-max")[0],
-                         ["/bin/omp", "--model", "qwen3.7-max", "--approval-mode=always-ask"])
+                         ["/bin/omp", "--model", "qwen3.7-max", "--approval-mode=always-ask",
+                          "--tools=" + ",".join(control.OMP_NON_YOLO_TOOLS)])
 
     def test_coding_yolo_follows_the_setting_and_only_when_asked(self):
         for agent, flag in (("claude", "--dangerously-skip-permissions"),
@@ -288,6 +293,10 @@ class AgentArgvTests(unittest.TestCase):
                              ("claude", ["--resume", "a b"]),
                              ("kimi", ["--prompt", "hello"]),
                              ("qwen-omp", ["--prompt", "stats"]),
+                             ("claude", ["--prompt", "rc"]),
+                             ("codex", ["--prompt", "cloud-tasks"]),
+                             ("grok", ["--prompt", "share"]),
+                             ("claude", ["--prompt", "   "]),
                              ("claude", ["--prompt", "update now please"]),              # KX-R13-01
                              ("codex", ["--prompt", "Update the readme"]),
                              ("qwen-omp", ["--prompt", "read @secrets.txt please"]),    # KX-R13-09
@@ -295,6 +304,15 @@ class AgentArgvTests(unittest.TestCase):
                              ("claude", ["--agent-arg=--dangerously-skip-permissions"]),  # KX-R13-03
                              ("claude", ["--agent-arg=--permission-mode=bypassPermissions"]),
                              ("codex", ["--agent-arg=-c", "--agent-arg=approval_policy=never"]),
+                             ("codex", ["--agent-arg=-a", "--agent-arg=never"]),
+                             ("codex", ["--agent-arg=-anever"]),
+                             ("codex", ["--agent-arg=-p", "--agent-arg=PROFILE"]),
+                             ("claude", ["--agent-arg=--allowedTools", "--agent-arg=Bash"]),
+                             ("claude", ["--agent-arg=--settings", "--agent-arg=FILE"]),
+                             ("grok", ["--agent-arg=--allow", "--agent-arg=Bash(*)"]),
+                             ("grok", ["--agent-arg=--agent", "--agent-arg=FILE"]),
+                             ("qwen-omp", ["--agent-arg=--config=FILE"]),
+                             ("qwen-omp", ["--agent-arg=--profile"]),
                              ("grok", ["--agent-arg=--trust"])):
             client = FakeClient()
             args = control.parser().parse_args(["new-tab", "1", "--expect-broker", SOURCE_BROKER,
@@ -309,10 +327,21 @@ class AgentArgvTests(unittest.TestCase):
                                  for c in client.calls), extra)
 
     def test_omp_asks_unless_the_yolo_setting_applies(self):                     # KX-R13-02
-        self.assertIn("--approval-mode=always-ask", self.argv("qwen-omp")[0])
+        safe = self.argv("qwen-omp")[0]
+        self.assertIn("--approval-mode=always-ask", safe)
+        tools = next(arg for arg in safe if arg.startswith("--tools="))
+        self.assertNotIn("task", tools.split("=", 1)[1].split(","))
         yolo = self.argv("qwen-omp", "--coding-yolo", yolo_setting=True)[0]
         self.assertIn("--auto-approve", yolo)
         self.assertNotIn("--approval-mode=always-ask", yolo)
+        self.assertFalse(any(arg.startswith("--tools=") for arg in yolo))
+
+    def test_only_each_clients_documented_extra_arguments_are_allowed(self):
+        cases = (("claude", "--add-dir=/tmp/also"),
+                 ("codex", "--add-dir=/tmp/also"), ("codex", "--effort=high"),
+                 ("grok", "--effort=high"), ("qwen-omp", "--thinking=high"))
+        for agent, item in cases:
+            self.assertIn(item, self.argv(agent, f"--agent-arg={item}")[0])
 
     def test_grok_trusts_its_own_folder_when_asked(self):                         # KX-R13-11
         self.assertIn("--trust", self.argv("grok", "--trust-folder")[0])
@@ -425,6 +454,38 @@ class TrustTests(unittest.TestCase):
         agent_trust.trust("claude", d, self.home)
         self.assertEqual(oct(config.stat().st_mode & 0o777), "0o640")
         self.assertFalse((self.home / ".claude.json.lock").exists())
+
+    def test_claude_waits_for_a_live_lock_then_succeeds(self):
+        lock = self.home / ".claude.json.lock"
+        lock.mkdir()
+        releaser = threading.Thread(target=lambda: (time.sleep(0.25), lock.rmdir()))
+        releaser.start()
+        try:
+            self.assertEqual(agent_trust.trust("claude", str(self.project), self.home), "trusted")
+        finally:
+            releaser.join()
+
+    def test_replace_itself_refuses_a_symlink(self):
+        real = self.home / "real"
+        real.write_text("old")
+        link = self.home / "link"
+        link.symlink_to(real)
+        with self.assertRaises(agent_trust.TrustError):
+            agent_trust._replace(link, "new")
+        self.assertEqual(real.read_text(), "old")
+
+    def test_codex_home_is_used_instead_of_the_default(self):
+        alternate = self.home / "alternate-codex"
+        with mock.patch.dict(os.environ, {"CODEX_HOME": str(alternate)}):
+            agent_trust.trust("codex", str(self.project), self.home)
+        self.assertTrue((alternate / "config.toml").is_file())
+        self.assertFalse((self.home / ".codex" / "config.toml").exists())
+
+    def test_non_utf8_directory_name_is_a_trust_error(self):
+        raw = os.path.join(os.fsencode(self.home), b"bad-\xff")
+        os.mkdir(raw)
+        with self.assertRaisesRegex(agent_trust.TrustError, "UTF-8"):
+            agent_trust.trust("codex", os.fsdecode(raw), self.home)
 
     def test_the_resolved_path_is_recorded_and_config_homes_honoured(self):       # KX-R13-08
         odd = str(self.project) + "/./"

@@ -34,13 +34,26 @@ DEFAULT_MODELS = {"qwen-omp": "qwen3.8-max"}
 YOLO_FLAGS = {"claude": ["--dangerously-skip-permissions"],
               "codex": ["--dangerously-bypass-approvals-and-sandbox"],
               "grok": ["--always-approve"], "qwen-omp": ["--auto-approve"]}
-# omp approves every tool unless told otherwise (review R13: its built-in
-# tools.approvalMode default is "yolo"), so without the yolo setting it is
-# told to ask.
-ASK_FLAGS = {"qwen-omp": ["--approval-mode=always-ask"]}
-# An --agent-arg may never carry an approval, permission, sandbox or trust
-# change: those come only from Kilix's coding-yolo setting and --trust-folder.
-GUARDED_ARG = re.compile(r"yolo|danger|bypass|approv|permission|sandbox|trust", re.I)
+# omp's task executor forces its child agents to yolo independently of the
+# parent's approval mode.  Keep all of omp 18.3.2's built-ins except `task`
+# when Kilix coding-yolo is off.
+OMP_NON_YOLO_TOOLS = ("read", "bash", "edit", "ast_grep", "ast_edit", "ask", "debug",
+                      "ida", "eval", "github", "glob", "grep", "find", "lsp",
+                      "checkpoint", "rewind", "context_notes", "new_context",
+                      "security_scan", "wait", "todo", "web_search", "write",
+                      "memory_edit", "retain", "recall", "reflect", "learn",
+                      "manage_skill")
+ASK_FLAGS = {"qwen-omp": ["--approval-mode=always-ask",
+                           "--tools=" + ",".join(OMP_NON_YOLO_TOOLS)]}
+# Every accepted extra is one self-contained argv item.  Values are inline so
+# a following item can never be reinterpreted as an unrestricted option value.
+AGENT_ARG_PATTERNS = {
+    "claude": (re.compile(r"--add-dir=.+\Z"),),
+    "codex": (re.compile(r"--add-dir=.+\Z"), re.compile(r"--effort=[A-Za-z0-9_-]+\Z")),
+    "grok": (re.compile(r"--effort=[A-Za-z0-9_-]+\Z"),),
+    "qwen-omp": (re.compile(r"--thinking=[A-Za-z0-9_-]+\Z"),),
+    "kimi": (),
+}
 _SUBCOMMANDS = {}
 
 
@@ -375,9 +388,8 @@ def agent_argv(args, executable, cwd):
     if agent == "qwen-omp" and cwd == Path.home():
         argv.append("--allow-home")
     for item in args.agent_arg:
-        if GUARDED_ARG.search(item):
-            raise ControlError("--agent-arg cannot change approvals, permissions, sandboxing or "
-                               "trust; those follow Kilix's coding-yolo setting and --trust-folder")
+        if not any(pattern.fullmatch(item) for pattern in AGENT_ARG_PATTERNS[agent]):
+            raise ControlError(f"--agent-arg {item!r} is not allowed for {agent}")
     argv.extend(args.agent_arg)
     if resume and agent == "codex":
         argv.append(resume)
@@ -385,17 +397,21 @@ def agent_argv(args, executable, cwd):
         argv.extend(["--resume", resume])
     elif resume and agent == "qwen-omp":
         argv.append(f"--resume={resume}")
-    if args.prompt:
+    if args.prompt is not None:
         prompt = plain_text(args.prompt, "prompt")
         if prompt.startswith("-"):
             raise ControlError("a prompt may not begin with '-'")
-        first = prompt.split()[0].casefold()
+        words = prompt.split()
+        if not words:
+            raise ControlError("prompt must contain non-whitespace text")
+        if len(words) == 1:
+            raise ControlError("a one-word prompt could select a client subcommand")
+        first = words[0].casefold()
         if first in client_subcommands(executable):
             # "codex logout", "claude update": the first word would run a command.
             raise ControlError(f"a prompt may not begin with {first!r}, one of "
                                f"{Path(executable).name}'s own commands")
-        if agent == "qwen-omp" and (len(prompt.split()) < 2
-                                    or any(w.startswith("@") for w in prompt.split())):
+        if agent == "qwen-omp" and any(w.startswith("@") for w in words):
             # omp: the first word can name a command, and @word includes a file.
             raise ControlError("an omp prompt must be more than one word, with no @file words")
         argv.append(prompt)
