@@ -448,8 +448,11 @@ class AgentArgvTests(unittest.TestCase):
             args = control.parser().parse_args([
                 "new-tab", "1", "--expect-broker", SOURCE_BROKER, "--agent", "claude",
                 "--title", "t", "--cwd", self.directory.name, "--prompt", prompt])
-            with mock.patch.object(agent_programs, "resolve_agent_command", return_value="/bin/x"):
-                with self.assertRaises(control.ControlError, msg=prompt):
+            # The --help lookup is stubbed so the prompt guard itself decides
+            # (review R13 round 5, KX-R13-44).
+            with mock.patch.object(agent_programs, "resolve_agent_command", return_value="/bin/x"), \
+                    mock.patch.object(control, "client_subcommands", return_value=frozenset()):
+                with self.assertRaisesRegex(control.ControlError, "may not begin", msg=prompt):
                     control.launch(client, args)
 
     def test_omp_tools_are_only_ones_on_by_default(self):                        # KX-R13-38

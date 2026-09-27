@@ -2,14 +2,13 @@
 # the source defaults (github/security/checkpoint/context/autolearn/memory off).
 # `task` is default-enabled but intentionally omitted because its executor is yolo.
 # `ast_grep` (astGrep.enabled: false) and `find` (find.enabled: "auto") are not
-# on by default everywhere, so they are omitted too (review R13 round 4).
+# on by default everywhere, so they are omitted too (review R13 round 4); `ask`
+# and `ida` are rejected by omp 18.3.2 itself outside a UI / without IDA (round 5).
 read
 bash
 edit
 ast_edit
-ask
 debug
-ida
 eval
 glob
 grep
