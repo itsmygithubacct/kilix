@@ -41,9 +41,12 @@ YOLO_FLAGS = {"claude": ["--dangerously-skip-permissions"],
 # Not here: `ast_grep` (astGrep.enabled defaults to false) and `find`
 # (find.enabled defaults to "auto", on only for some models), both of which
 # omp would reject as unknown (review R13 round 4, KX-R13-38).
-OMP_NON_YOLO_TOOLS = ("read", "bash", "edit", "ast_edit", "ask", "debug",
-                      "ida", "eval", "glob", "grep", "lsp", "wait", "todo",
-                      "web_search", "write")
+# Proven against omp 18.3.2 itself (review R13 round 5, KX-R13-42): with a
+# scratch HOME, `omp -p --tools=<one>` gets past tool validation for each of
+# these, and rejects `ask` and `ida` (loaded only with a UI / an IDA install)
+# as well as `ast_grep` and `find`.
+OMP_NON_YOLO_TOOLS = ("read", "bash", "edit", "ast_edit", "debug", "eval", "glob",
+                      "grep", "lsp", "wait", "todo", "web_search", "write")
 ASK_FLAGS = {"qwen-omp": ["--approval-mode=always-ask",
                            "--tools=" + ",".join(OMP_NON_YOLO_TOOLS)]}
 # Every accepted extra is one self-contained argv item.  Values are inline so
