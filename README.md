@@ -29,6 +29,10 @@ it wrote in `state/` so `--uninstall-desktop` can take exactly that back out.
 Prepared for the coordinated Plebian-OS 0.2.2 candidate. The supported upgrade
 source is 0.2.1; image, upgrade and final human acceptance remain pending.
 
+See the [0.2.2 help guide](docs/help/README.md) for current commands, storage,
+model setup, speech and troubleshooting. Older release sections below describe
+their named versions; they are not a current component inventory.
+
 - The three-line Start button and status widgets open floating drop-downs above
   the panes. Panes keep their size and continue updating behind the popup.
 - Popups follow the page-strip position, fit the window when resized, and
@@ -1169,7 +1173,7 @@ page. The 0.2.0 candidate can place it at the top or bottom as described in
 You can
 **drag a tab to reorder** it, press **`F12`** for a visual page chooser (kilix's
 stand-in for Tilix's session sidebar), and **`F2`** to rename the current page.
-In 0.2.0, the optional flame badge at the far left toggles the hierarchical
+In 0.2.2, the optional three-line Start button at the far left toggles the hierarchical
 Kilix Start menu; `Ctrl+Alt+M` provides the same action without a mouse.
 Run `kilix ls` from inside kilix to list the live pages, their tab IDs, pane
 counts, titles, and current working directories. The page
@@ -1363,9 +1367,11 @@ app exits it and drops you back to the shell underneath. `run` opens in a
 its own tab and closing the app's tab exits the app. Either way the shell
 session is never taken over. This uses kitty remote control, which kilix's
 config enables in password-policy mode with a per-instance `listen_on` socket.
-The bundled policy permits only reload, font-size, and self-fullscreen without
-a password. Launch/list/focus/watch use a private, locally generated credential;
-uncredentialed launch/read/send/close requests remain denied. Override those
+The bundled policy permits reload, font-size, self-fullscreen, and bounded
+same-OS-window `send-text` without a password. Broadcast, windowless and
+cross-window send requests are refused. Launch/list/focus/watch use a private,
+locally generated credential; uncredentialed launch/read/close requests remain
+denied. Override those
 settings in your XDG `kilix/kitty.conf` and the app runs in-place in the current
 pane instead.
 
@@ -1914,6 +1920,13 @@ Scripts should not assume `xclip`/`xsel`; use `kitty +kitten clipboard`, which
 talks to the terminal directly.
 
 ### Pane Center — `F12` or `kilix panes`
+
+**Version boundary:** this host's default toolkit installer and Content package
+select `af7e848`, which provides the interactive switcher. The richer CLI and
+activity features described below require a later compatible toolkit. They
+are not established merely by this host accepting the `panes` verb. For the
+selected 0.2.2 source, use the [operation guide](docs/help/operations/README.md),
+basic `kilix ls`, `focus` and `watch`, and authenticated `kitten @` commands.
 
 `F12` opens the **Pane Center** (`kilix-panes`, with `kilix-switch` retained as
 the compatible command), from
