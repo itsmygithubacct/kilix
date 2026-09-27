@@ -22,7 +22,7 @@ KILIX_TUI_UTILS_PREFIX="${KILIX_TUI_UTILS_PREFIX:-$HOME/.local}"
 # resolves it — a first-use download and an existing checkout alike — so a moved
 # pin reaches machines that already have the component. Set
 # KILIX_TUI_UTILS_KEEP_EXISTING_CHECKOUT=1 to work from a checkout as it is.
-KILIX_TUI_UTILS_DEFAULT_REF=b74c21f193eb379e38932f5ad21839f6f2752a39
+KILIX_TUI_UTILS_DEFAULT_REF=03ffa1f2fbdad39257bb6ca51b9e03bf45ede95d
 
 die() { printf 'kilix tui: %s\n' "$*" >&2; exit 1; }
 log() { printf 'kilix tui: %s\n' "$*" >&2; }
