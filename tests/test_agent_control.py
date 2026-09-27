@@ -100,7 +100,7 @@ class InputTests(unittest.TestCase):
                 self.assertEqual(self.client.calls, [])
 
     def test_send_refuses_client_commands_without_explicit_override(self):
-        for value in ("/model", "  /logout now", "!pwd", "   ! git status"):
+        for value in ("/model", "  /logout now", "!pwd", "   ! git status", "# remember x"):
             with self.subTest(value=value):
                 result, _, error = self.invoke(
                     ["send", "2", "--expect-broker", TARGET_BROKER, "--text", value])
@@ -417,6 +417,26 @@ class AgentArgvTests(unittest.TestCase):
                 [item for item in base if item != "--trust-folder"] +
                 ["--cwd", str(nested)]))
             self.assertNotIn("--trust", unasked["launch_argv"])
+
+    def test_grok_trust_ignores_git_env_and_refuses_inside_jj(self):             # KX-R13-39
+        root = Path(self.directory.name) / "repo"
+        nested = root / "sub"
+        nested.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        with mock.patch.dict(os.environ, {"GIT_DIR": str(root / ".git"),
+                                          "GIT_WORK_TREE": str(nested)}):
+            with self.assertRaisesRegex(control.ControlError, "repository root"):
+                control.grok_trust_is_exact(nested)
+        workspace = Path(self.directory.name) / "jjws"
+        (workspace / ".jj").mkdir(parents=True)
+        (workspace / "inner").mkdir()
+        with self.assertRaisesRegex(control.ControlError, "jj workspace"):
+            control.grok_trust_is_exact(workspace / "inner")
+        control.grok_trust_is_exact(workspace)          # its root is fine
+
+    def test_omp_tools_are_only_ones_on_by_default(self):                        # KX-R13-38
+        for off in ("ast_grep", "find", "task"):
+            self.assertNotIn(off, control.OMP_NON_YOLO_TOOLS)
 
     def test_client_subcommands_are_read_from_help(self):                         # KX-R13-01
         help_text = ("Usage: x\n\nCommands:\n  exec    Run [aliases: e]\n  plugin|plugins  Manage\n"

@@ -26,7 +26,7 @@ with an optional `--model MODEL` (never starting with `-`).
   worktree/repository root when launched inside a repository (and covers its
   subdirectories, but not a nested checkout); outside Git it records the
   launch directory. Consequently Grok trust is refused when `--cwd` is below
-  a Git repository root; use the repository root itself, or a directory outside
+  a Git repository root (the caller's `GIT_*` environment is ignored for this check, and a directory inside a jj workspace must be the workspace root); use the repository root itself, or a directory outside
   every repository.
 
 It changes no other global setting. `--agent-arg` is a per-client allow-list,
@@ -42,7 +42,7 @@ All other values are refused.
 | Claude Code | `--model` is launch-scoped. Avoid `-p`/`--print`, which exits after a response. Don't replace user prompts with `--system-prompt`. |
 | Kimi Code | `--model` takes a configured alias. Current `-p`/`--prompt` is non-interactive, so start the TUI first and submit initialization after it is ready. Legacy kimi-cli flags differ. The helper refuses `--prompt` and `--resume` for kimi. |
 | Grok Build | `--model`/`-m`; `--resume ID`; a positional launch prompt; `--always-approve` is its approval skip; `--trust` records its own folder trust. |
-| qwen-omp | `omp --model qwen3.8-max`; `--resume=ID`; positional messages; `--auto-approve` is its approval skip. Without yolo, `--approval-mode=always-ask` and an explicit default-enabled tool list without `task` prevent its always-yolo task subagents. Optional-by-default `github`, `security_scan`, checkpoint/context-management, autolearn/skill, and memory tools are omitted because omp removes them from its registry and rejects them in `--tools`. `--allow-home` when started in `~`; no folder-trust prompt. |
+| qwen-omp | `omp --model qwen3.8-max`; `--resume=ID`; positional messages; `--auto-approve` is its approval skip. Without yolo, `--approval-mode=always-ask` and an explicit default-enabled tool list without `task` prevent its always-yolo task subagents. Optional-by-default `github`, `security_scan`, checkpoint/context-management, autolearn/skill, and memory tools are omitted because omp removes them from its registry and rejects them in `--tools`; so are `ast_grep` (`astGrep.enabled` defaults to false) and `find` (`find.enabled` defaults to `auto`, on only for some models). `--allow-home` when started in `~`; no folder-trust prompt. |
 
 Use the same post-startup initialization sequence for all three: inspect the
 foreground client and UI, resolve any user-owned login/trust choices, submit
