@@ -143,6 +143,10 @@ def trust(agent: str, directory: str, home: Path | None = None) -> str:
         raise TrustError("only an existing absolute directory, not a link, can be trusted")
     path = path.resolve()
     recorded = str(path)
+    try:
+        recorded.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise TrustError("the directory name is not valid UTF-8") from exc
     if UNSAFE.search(recorded):
         raise TrustError("the directory name has quotes, backslashes or control characters")
     if path == home.resolve() or path == Path("/"):

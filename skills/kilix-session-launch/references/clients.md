@@ -6,21 +6,30 @@ with an optional `--model MODEL` (never starting with `-`).
 - Approvals: a client's approval-skip flag is added only with
   `--coding-yolo`, and then only when Kilix's coding-yolo setting is on.
   Otherwise omp, which approves every tool by default, is started with
-  `--approval-mode=always-ask`. `--agent-arg` can never carry an approval,
-  permission, sandbox or trust change.
+  `--approval-mode=always-ask` and a `--tools` allow-list that omits `task`.
+  Omp 18.3.2's task executor forces `tools.approvalMode: yolo` for its child
+  agents, irrespective of the parent's approval mode; removing `task` is the
+  supported command-line restriction that closes that path.
 - A launch prompt is passed only with `--prompt`: one line, never starting
-  with `-`, and never starting with one of the client's own subcommands
-  (read from its `--help`: "codex logout", "claude update"). An omp prompt
-  must be more than one word, with no `@file` words.
+  with `-`. Every one-word prompt is refused for every client, because the
+  whole positional argv item could be a listed or hidden subcommand (`claude
+  rc`, `codex cloud-tasks`, `grok share`). Multi-word prompts are additionally
+  checked against subcommands read from `--help`. An omp prompt has no
+  `@file` words.
 - `--resume ID` resumes that session id.
 - `--trust-folder` records the client's own trust for exactly `--cwd`
   first: claude's config under its own lock, codex's `config.toml` (checked
   before it is replaced), grok's own `--trust`; a symlinked or malformed file
-  is left alone.
+  is left alone. Grok's installed folder-trust implementation records the git
+  worktree/repository root when launched inside a repository (and covers its
+  subdirectories, but not a nested checkout); outside Git it records the
+  launch directory.
 
-It changes no other global setting. Inspect the installed client's
-`--help` before adding flags with repeated `--agent-arg=VALUE`; every value is
-one literal argv item, not a shell expression.
+It changes no other global setting. `--agent-arg` is a per-client allow-list,
+and every value is one literal, self-contained argv item (not a shell
+expression): Claude accepts `--add-dir=PATH`; Codex accepts `--add-dir=PATH`
+and `--effort=LEVEL`; Grok accepts `--effort=LEVEL`; qwen-omp accepts
+`--thinking=LEVEL`; Kimi accepts none. All other values are refused.
 
 | Client | Startup detail |
 | --- | --- |
@@ -28,7 +37,7 @@ one literal argv item, not a shell expression.
 | Claude Code | `--model` is launch-scoped. Avoid `-p`/`--print`, which exits after a response. Don't replace user prompts with `--system-prompt`. |
 | Kimi Code | `--model` takes a configured alias. Current `-p`/`--prompt` is non-interactive, so start the TUI first and submit initialization after it is ready. Legacy kimi-cli flags differ. The helper refuses `--prompt` and `--resume` for kimi. |
 | Grok Build | `--model`/`-m`; `--resume ID`; a positional launch prompt; `--always-approve` is its approval skip; `--trust` records its own folder trust. |
-| qwen-omp | `omp --model qwen3.8-max`; `--resume=ID`; positional messages (its first word can name an omp command, so one-word prompts are refused); `--auto-approve` is its approval skip, and it approves everything by default, so `--approval-mode=always-ask` is passed otherwise; `--allow-home` when started in `~`; no folder-trust prompt. |
+| qwen-omp | `omp --model qwen3.8-max`; `--resume=ID`; positional messages; `--auto-approve` is its approval skip. Without yolo, `--approval-mode=always-ask` and an explicit built-in tool list without `task` prevent its always-yolo task subagents; `--allow-home` when started in `~`; no folder-trust prompt. |
 
 Use the same post-startup initialization sequence for all three: inspect the
 foreground client and UI, resolve any user-owned login/trust choices, submit
