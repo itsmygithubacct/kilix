@@ -25,6 +25,18 @@ KEYS = {"enter": b"\r", "escape": b"\x1b", "up": b"\x1b[A",
         "tab": b"\t", "ctrl-c": b"\x03"}
 LOCATIONS = {"right": "vsplit", "left": "vsplit-before",
              "down": "hsplit", "up": "hsplit-before"}
+AGENTS = ("codex", "claude", "kimi", "grok", "qwen-omp")
+# The executable each agent name runs, and the argv it starts with.
+PROGRAMS = {"qwen-omp": "omp"}
+DEFAULT_MODELS = {"qwen-omp": "qwen3.8-max"}
+# Each client's own "skip my approval prompts" flag, used only when Kilix's
+# coding-yolo setting is on and the launch asks to follow it.
+YOLO_FLAGS = {"claude": ["--dangerously-skip-permissions"],
+              "codex": ["--dangerously-bypass-approvals-and-sandbox"],
+              "grok": ["--always-approve"], "qwen-omp": ["--auto-approve"]}
+SESSION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
+PROCESS_AGENTS = {"codex": "codex", "codex.js": "codex", "claude": "claude", "kimi": "kimi",
+                  "grok": "grok", "omp": "qwen-omp"}
 
 
 class ControlError(RuntimeError):
@@ -218,8 +230,8 @@ def describe(pane):
             processes.append({"pid": process.get("pid"), "program": program})
             for arg in argv[:2]:
                 name = Path(arg).name
-                if name in ("codex", "codex.js", "claude", "kimi"):
-                    agents.add(name.removesuffix(".js"))
+                if name in PROCESS_AGENTS:
+                    agents.add(PROCESS_AGENTS[name])
     return {"pane_id": pane["id"], "tab_id": pane["tab_id"],
             "os_window_id": pane["os_window_id"], "title": pane.get("title", ""),
             "tab_title": pane["tab_title"], "cwd": pane.get("cwd", ""),
@@ -244,13 +256,17 @@ def launch(client, args):
     # Share the coding-agent installer's executable resolution, including
     # vendor locations that desktop PATH values may omit.
     from agent_programs import resolve_agent_command
-    executable = resolve_agent_command(args.agent)
+    executable = resolve_agent_command(PROGRAMS.get(args.agent, args.agent))
     if not executable:
         raise ControlError(f"{args.agent} is not installed; use kilix install explicitly")
-    argv = [executable]
-    if args.model:
-        argv.extend(["--model", plain_text(args.model, "model", 200)])
-    argv.extend(args.agent_arg)
+    argv = agent_argv(args, executable, cwd)
+    trusted = None
+    if args.trust_folder and not args.dry_run:
+        from agent_trust import TrustError, trust
+        try:
+            trusted = trust(args.agent, str(cwd))
+        except TrustError as exc:
+            raise ControlError(f"folder not trusted: {exc}") from exc
     options = ["launch", "--match", f"window_id:{args.pane}",
                "--next-to", f"id:{args.pane}", "--source-window", f"id:{args.pane}",
                "--keep-focus", "--hold", "--cwd", str(cwd), "--title", title]
@@ -284,7 +300,50 @@ def launch(client, args):
             or pane["os_window_id"] != target["os_window_id"]):
         raise ControlError(f"created pane {raw_id} in unexpected geometry; retained for inspection")
     return {"schema": SCHEMA, "status": "created", "pane": describe(pane),
-            "agent_startup_verified": False, "prompt_submitted": False}
+            "agent_startup_verified": False, "prompt_submitted": False,
+            "prompt_passed": bool(args.prompt), "resumed": args.resume or None,
+            "folder_trust": trusted}
+
+
+def agent_argv(args, executable, cwd):
+    """The client's argv: its own flags, then resume, then a prompt, each one
+    literal item. Nothing here comes from a shell string."""
+    agent = args.agent
+    if (args.prompt or args.resume) and agent == "kimi":
+        raise ControlError("kimi takes no launch prompt or resume here; start it, then send")
+    argv = [executable]
+    resume = None
+    if args.resume:
+        if not SESSION_ID.fullmatch(args.resume):
+            raise ControlError("--resume takes one session id")
+        resume = args.resume
+        if agent == "codex":
+            argv.append("resume")      # `codex resume [OPTIONS] [SESSION_ID] [PROMPT]`
+    model = args.model or DEFAULT_MODELS.get(agent)
+    if model:
+        argv.extend(["--model", plain_text(model, "model", 200)])
+    if args.coding_yolo:
+        from kilix_sdk import settings
+        if settings.coding_yolo():
+            argv.extend(YOLO_FLAGS.get(agent, []))
+    if agent == "qwen-omp" and cwd == Path.home():
+        argv.append("--allow-home")
+    argv.extend(args.agent_arg)
+    if resume and agent == "codex":
+        argv.append(resume)
+    elif resume and agent in ("claude", "grok"):
+        argv.extend(["--resume", resume])
+    elif resume and agent == "qwen-omp":
+        argv.append(f"--resume={resume}")
+    if args.prompt:
+        prompt = plain_text(args.prompt, "prompt")
+        if prompt.startswith("-"):
+            raise ControlError("a prompt may not begin with '-'")
+        if agent == "qwen-omp" and len(prompt.split()) < 2:
+            # omp's first positional word can name one of its own commands.
+            raise ControlError("an omp prompt must be more than one word")
+        argv.append(prompt)
+    return argv
 
 
 def parser():
@@ -312,12 +371,20 @@ def parser():
         elif name == "key":
             command.add_argument("key", choices=KEYS)
         else:
-            command.add_argument("--agent", required=True, choices=("codex", "claude", "kimi"))
+            command.add_argument("--agent", required=True, choices=AGENTS)
             command.add_argument("--cwd", required=True)
             command.add_argument("--title", required=True)
             command.add_argument("--model")
             command.add_argument("--agent-arg", action="append", default=[],
                                  help="one explicit agent argv item; use --agent-arg=--flag")
+            command.add_argument("--prompt", help="one line of initial task text, passed as "
+                                 "the client's own launch prompt")
+            command.add_argument("--resume", help="resume this session id of the client")
+            command.add_argument("--coding-yolo", action="store_true",
+                                 help="add the client's approval-skip flag when Kilix's "
+                                      "coding-yolo setting is on (never otherwise)")
+            command.add_argument("--trust-folder", action="store_true",
+                                 help="record the client's trust for exactly --cwd first")
             command.add_argument("--dry-run", action="store_true")
             if name == "split":
                 command.add_argument("--direction", choices=LOCATIONS, default="right")
