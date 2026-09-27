@@ -25,6 +25,75 @@ KEYS = {"enter": b"\r", "escape": b"\x1b", "up": b"\x1b[A",
         "tab": b"\t", "ctrl-c": b"\x03"}
 LOCATIONS = {"right": "vsplit", "left": "vsplit-before",
              "down": "hsplit", "up": "hsplit-before"}
+AGENTS = ("codex", "claude", "kimi", "grok", "qwen-omp")
+# The executable each agent name runs, and the argv it starts with.
+PROGRAMS = {"qwen-omp": "omp"}
+DEFAULT_MODELS = {"qwen-omp": "qwen3.8-max"}
+# Each client's own "skip my approval prompts" flag, used only when Kilix's
+# coding-yolo setting is on and the launch asks to follow it.
+YOLO_FLAGS = {"claude": ["--dangerously-skip-permissions"],
+              "codex": ["--dangerously-bypass-approvals-and-sandbox"],
+              "grok": ["--always-approve"], "qwen-omp": ["--auto-approve"]}
+# omp's task executor forces its child agents to yolo independently of the
+# parent's approval mode.  Keep the omp 18.3.2 tools loaded under the default
+# configuration except `task` when Kilix coding-yolo is off.  Optional tools
+# cannot appear here: omp rejects requested tools which its config disabled.
+# Not here: `ast_grep` (astGrep.enabled defaults to false) and `find`
+# (find.enabled defaults to "auto", on only for some models), both of which
+# omp would reject as unknown (review R13 round 4, KX-R13-38).
+# Proven against omp 18.3.2 itself (review R13 round 5, KX-R13-42): with a
+# scratch HOME, `omp -p --tools=<one>` gets past tool validation for each of
+# these, and rejects `ask` and `ida` (loaded only with a UI / an IDA install)
+# as well as `ast_grep` and `find`.
+OMP_NON_YOLO_TOOLS = ("read", "bash", "edit", "ast_edit", "debug", "eval", "glob",
+                      "grep", "lsp", "wait", "todo", "web_search", "write")
+ASK_FLAGS = {"qwen-omp": ["--approval-mode=always-ask",
+                           "--tools=" + ",".join(OMP_NON_YOLO_TOOLS)]}
+# Every accepted extra is one self-contained argv item.  Values are inline so
+# a following item can never be reinterpreted as an unrestricted option value.
+AGENT_ARG_PATTERNS = {
+    "claude": (),
+    "codex": (),
+    "grok": (re.compile(r"--effort=[A-Za-z0-9_-]+\Z"),),
+    "qwen-omp": (re.compile(r"--thinking=[A-Za-z0-9_-]+\Z"),),
+    "kimi": (),
+}
+_SUBCOMMANDS = {}
+
+
+def client_subcommands(executable):
+    """The client's own subcommand names and aliases, read from its --help.
+    A prompt whose first word is one of them would run that command instead."""
+    if executable in _SUBCOMMANDS:
+        return _SUBCOMMANDS[executable]
+    try:
+        done = subprocess.run([executable, "--help"], stdin=subprocess.DEVNULL,
+                              capture_output=True, text=True, timeout=30, check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ControlError(f"cannot read {Path(executable).name} --help to check the prompt") from exc
+    names, inside = set(), False
+    for line in (done.stdout + "\n" + done.stderr).splitlines():
+        if re.fullmatch(r"(?i)commands:?\s*", line.strip()) and not line.startswith(" "):
+            inside = True
+            continue
+        if inside and line and not line.startswith(" "):
+            inside = False
+        if inside:
+            match = re.match(r"\s{1,4}([a-z][\w|-]*)", line)
+            if match:
+                names.update(match[1].split("|"))
+            names.update(re.findall(r"\[alias(?:es)?: ([^\]]+)\]", line) and
+                         [a.strip() for group in re.findall(r"\[alias(?:es)?: ([^\]]+)\]", line)
+                          for a in group.split(",")] or [])
+    if not names:
+        raise ControlError(f"cannot read {Path(executable).name}'s commands to check the prompt")
+    _SUBCOMMANDS[executable] = frozenset(n.casefold() for n in names)
+    return _SUBCOMMANDS[executable]
+
+
+SESSION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
+PROCESS_AGENTS = {"codex": "codex", "codex.js": "codex", "claude": "claude", "kimi": "kimi",
+                  "grok": "grok", "omp": "qwen-omp"}
 
 
 class ControlError(RuntimeError):
@@ -44,6 +113,37 @@ def plain_text(value, label, limit=1024):
     if any(ord(c) < 32 or 127 <= ord(c) <= 159 for c in value):
         raise ControlError(f"{label} must be a single line without control characters")
     return value
+
+
+def _git_marker_above(directory):
+    """Whether a path is visibly within a Git worktree, even if git refuses it."""
+    current = directory.resolve()
+    return any((parent / ".git").exists() or (parent / ".git").is_symlink()
+               for parent in (current, *current.parents))
+
+
+def grok_trust_is_exact(cwd):
+    """Refuse Grok trust when its repository-scoped grant would exceed cwd."""
+    # A jj workspace above cwd may be the root grok trusts: only its root.
+    if any((parent / ".jj").is_dir() for parent in cwd.resolve().parents):
+        raise ControlError("grok --trust-folder inside a jj workspace needs --cwd to be its root")
+    try:
+        # The caller's GIT_DIR/GIT_WORK_TREE must not redefine the repository
+        # (KX-R13-39).
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        done = subprocess.run(
+            ["git", "-C", os.fspath(cwd), "rev-parse", "--show-toplevel"],
+            stdin=subprocess.DEVNULL, capture_output=True, timeout=10, check=False, env=env)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ControlError("cannot determine the Git repository root for grok --trust-folder") from exc
+    if done.returncode:
+        if _git_marker_above(cwd):
+            raise ControlError("cannot determine the Git repository root for grok --trust-folder")
+        return
+    top = Path(os.fsdecode(done.stdout.strip())).resolve()
+    if cwd.resolve() != top:
+        raise ControlError("grok --trust-folder requires --cwd to be the Git repository root; "
+                           f"refusing repository-wide trust from {cwd}")
 
 
 def connection_values():
@@ -218,8 +318,8 @@ def describe(pane):
             processes.append({"pid": process.get("pid"), "program": program})
             for arg in argv[:2]:
                 name = Path(arg).name
-                if name in ("codex", "codex.js", "claude", "kimi"):
-                    agents.add(name.removesuffix(".js"))
+                if name in PROCESS_AGENTS:
+                    agents.add(PROCESS_AGENTS[name])
     return {"pane_id": pane["id"], "tab_id": pane["tab_id"],
             "os_window_id": pane["os_window_id"], "title": pane.get("title", ""),
             "tab_title": pane["tab_title"], "cwd": pane.get("cwd", ""),
@@ -244,13 +344,17 @@ def launch(client, args):
     # Share the coding-agent installer's executable resolution, including
     # vendor locations that desktop PATH values may omit.
     from agent_programs import resolve_agent_command
-    executable = resolve_agent_command(args.agent)
+    executable = resolve_agent_command(PROGRAMS.get(args.agent, args.agent))
     if not executable:
         raise ControlError(f"{args.agent} is not installed; use kilix install explicitly")
-    argv = [executable]
-    if args.model:
-        argv.extend(["--model", plain_text(args.model, "model", 200)])
-    argv.extend(args.agent_arg)
+    argv = agent_argv(args, executable, cwd)
+    trusted = None
+    if args.trust_folder and not args.dry_run:
+        from agent_trust import TrustError, trust
+        try:
+            trusted = trust(args.agent, str(cwd))
+        except TrustError as exc:
+            raise ControlError(f"folder not trusted: {exc}") from exc
     options = ["launch", "--match", f"window_id:{args.pane}",
                "--next-to", f"id:{args.pane}", "--source-window", f"id:{args.pane}",
                "--keep-focus", "--hold", "--cwd", str(cwd), "--title", title]
@@ -284,7 +388,71 @@ def launch(client, args):
             or pane["os_window_id"] != target["os_window_id"]):
         raise ControlError(f"created pane {raw_id} in unexpected geometry; retained for inspection")
     return {"schema": SCHEMA, "status": "created", "pane": describe(pane),
-            "agent_startup_verified": False, "prompt_submitted": False}
+            "agent_startup_verified": False, "prompt_submitted": False,
+            "prompt_passed": bool(args.prompt), "resumed": args.resume or None,
+            "folder_trust": trusted}
+
+
+def agent_argv(args, executable, cwd):
+    """The client's argv: its own flags, then resume, then a prompt, each one
+    literal item. Nothing here comes from a shell string."""
+    agent = args.agent
+    if (args.prompt or args.resume) and agent == "kimi":
+        raise ControlError("kimi takes no launch prompt or resume here; start it, then send")
+    argv = [executable]
+    resume = None
+    if args.resume:
+        if not SESSION_ID.fullmatch(args.resume):
+            raise ControlError("--resume takes one session id")
+        resume = args.resume
+        if agent == "codex":
+            argv.append("resume")      # `codex resume [OPTIONS] [SESSION_ID] [PROMPT]`
+    model = args.model or DEFAULT_MODELS.get(agent)
+    if model:
+        model = plain_text(model, "model", 200)
+        if model.startswith("-"):
+            raise ControlError("a model name may not begin with '-'")
+        argv.extend(["--model", model])
+    yolo = False
+    if args.coding_yolo:
+        from kilix_sdk import settings
+        yolo = settings.coding_yolo()
+    argv.extend(YOLO_FLAGS.get(agent, []) if yolo else ASK_FLAGS.get(agent, []))
+    if getattr(args, "trust_folder", False) and agent == "grok":
+        grok_trust_is_exact(cwd)
+        argv.append("--trust")         # grok records its own folder trust
+    if agent == "qwen-omp" and cwd == Path.home():
+        argv.append("--allow-home")
+    for item in args.agent_arg:
+        if not any(pattern.fullmatch(item) for pattern in AGENT_ARG_PATTERNS[agent]):
+            raise ControlError(f"--agent-arg {item!r} is not allowed for {agent}")
+    argv.extend(args.agent_arg)
+    if resume and agent == "codex":
+        argv.append(resume)
+    elif resume and agent in ("claude", "grok"):
+        argv.extend(["--resume", resume])
+    elif resume and agent == "qwen-omp":
+        argv.append(f"--resume={resume}")
+    if args.prompt is not None:
+        prompt = plain_text(args.prompt, "prompt")
+        stripped = prompt.lstrip()
+        if stripped and stripped[0] in "/!#@-":
+            raise ControlError("a prompt may not begin with '/', '!', '#', '@', or '-'")
+        words = prompt.split()
+        if not words:
+            raise ControlError("prompt must contain non-whitespace text")
+        if len(words) == 1:
+            raise ControlError("a one-word prompt could select a client subcommand")
+        first = words[0].casefold()
+        if first in client_subcommands(executable):
+            # "codex logout", "claude update": the first word would run a command.
+            raise ControlError(f"a prompt may not begin with {first!r}, one of "
+                               f"{Path(executable).name}'s own commands")
+        if agent == "qwen-omp" and any(w.startswith("@") for w in words):
+            # omp: the first word can name a command, and @word includes a file.
+            raise ControlError("an omp prompt must be more than one word, with no @file words")
+        argv.append(prompt)
+    return argv
 
 
 def parser():
@@ -309,15 +477,25 @@ def parser():
                               help="single-line UTF-8 input, at most 1024 bytes")
             command.add_argument("--submit", action="store_true",
                                  help="send a separate Enter after text; verify the result")
+            command.add_argument("--allow-command", action="store_true",
+                                 help="explicitly allow leading / or ! client commands")
         elif name == "key":
             command.add_argument("key", choices=KEYS)
         else:
-            command.add_argument("--agent", required=True, choices=("codex", "claude", "kimi"))
+            command.add_argument("--agent", required=True, choices=AGENTS)
             command.add_argument("--cwd", required=True)
             command.add_argument("--title", required=True)
             command.add_argument("--model")
             command.add_argument("--agent-arg", action="append", default=[],
                                  help="one explicit agent argv item; use --agent-arg=--flag")
+            command.add_argument("--prompt", help="one line of initial task text, passed as "
+                                 "the client's own launch prompt")
+            command.add_argument("--resume", help="resume this session id of the client")
+            command.add_argument("--coding-yolo", action="store_true",
+                                 help="add the client's approval-skip flag when Kilix's "
+                                      "coding-yolo setting is on (never otherwise)")
+            command.add_argument("--trust-folder", action="store_true",
+                                 help="record the client's trust for exactly --cwd first")
             command.add_argument("--dry-run", action="store_true")
             if name == "split":
                 command.add_argument("--direction", choices=LOCATIONS, default="right")
@@ -355,7 +533,12 @@ def main(argv=None):
                     value = data.decode("utf-8")
                 else:
                     value = args.text
-                payload = plain_text(value, "input").encode("utf-8")
+                value = plain_text(value, "input")
+                stripped = value.lstrip()
+                if stripped and stripped[0] in "/!#" and not args.allow_command:
+                    raise ControlError("input beginning with '/', '!' or '#' is a client command; "
+                                       "pass --allow-command only when that command is intended")
+                payload = value.encode("utf-8")
             client.input(args.pane, args.expect_broker, payload)
             if args.action == "send" and args.submit:
                 time.sleep(0.3)

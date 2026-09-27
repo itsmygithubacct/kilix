@@ -41,7 +41,7 @@ Open the model control in the target TUI:
 
 ```sh
 kilix agent-control send "$PANE" --expect-broker "$BROKER" \
-  --text '/model' --submit
+  --text '/model' --submit --allow-command
 kilix agent-control dump "$PANE" --lines 80
 ```
 

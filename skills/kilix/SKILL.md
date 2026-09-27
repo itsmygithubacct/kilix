@@ -55,11 +55,14 @@ kilix agent-control dump "$PANE" --lines 60
 ```
 
 `send` accepts a single line of at most 1024 UTF-8 bytes and rejects control
-characters. `--submit` sends carriage return separately after the text. For
-long or multiline instructions, save a private UTF-8 file accessible to the
-target, then send a short instruction naming that file. Preserve its contents
-until the target confirms reading it; do not type multiline shell fragments
-or silently truncate the user's prompt.
+characters. Text whose first non-space character is `/` or `!` is refused as
+a client command or shell escape. Use `--allow-command` only for a command the
+user explicitly requested and whose target UI you verified; routine Needle
+requests never add it. `--submit` sends carriage return separately after the
+text. For long or multiline instructions, save a private UTF-8 file accessible
+to the target, then send a short instruction naming that file. Preserve its
+contents until the target confirms reading it; do not type multiline shell
+fragments or silently truncate the user's prompt.
 
 The returned `request_sent` means only that the client sent the request. Read
 back and distinguish text placement, submission, acknowledgement, and task
