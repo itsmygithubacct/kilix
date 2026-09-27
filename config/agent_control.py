@@ -34,6 +34,46 @@ DEFAULT_MODELS = {"qwen-omp": "qwen3.8-max"}
 YOLO_FLAGS = {"claude": ["--dangerously-skip-permissions"],
               "codex": ["--dangerously-bypass-approvals-and-sandbox"],
               "grok": ["--always-approve"], "qwen-omp": ["--auto-approve"]}
+# omp approves every tool unless told otherwise (review R13: its built-in
+# tools.approvalMode default is "yolo"), so without the yolo setting it is
+# told to ask.
+ASK_FLAGS = {"qwen-omp": ["--approval-mode=always-ask"]}
+# An --agent-arg may never carry an approval, permission, sandbox or trust
+# change: those come only from Kilix's coding-yolo setting and --trust-folder.
+GUARDED_ARG = re.compile(r"yolo|danger|bypass|approv|permission|sandbox|trust", re.I)
+_SUBCOMMANDS = {}
+
+
+def client_subcommands(executable):
+    """The client's own subcommand names and aliases, read from its --help.
+    A prompt whose first word is one of them would run that command instead."""
+    if executable in _SUBCOMMANDS:
+        return _SUBCOMMANDS[executable]
+    try:
+        done = subprocess.run([executable, "--help"], stdin=subprocess.DEVNULL,
+                              capture_output=True, text=True, timeout=30, check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ControlError(f"cannot read {Path(executable).name} --help to check the prompt") from exc
+    names, inside = set(), False
+    for line in (done.stdout + "\n" + done.stderr).splitlines():
+        if re.fullmatch(r"(?i)commands:?\s*", line.strip()) and not line.startswith(" "):
+            inside = True
+            continue
+        if inside and line and not line.startswith(" "):
+            inside = False
+        if inside:
+            match = re.match(r"\s{1,4}([a-z][\w|-]*)", line)
+            if match:
+                names.update(match[1].split("|"))
+            names.update(re.findall(r"\[alias(?:es)?: ([^\]]+)\]", line) and
+                         [a.strip() for group in re.findall(r"\[alias(?:es)?: ([^\]]+)\]", line)
+                          for a in group.split(",")] or [])
+    if not names:
+        raise ControlError(f"cannot read {Path(executable).name}'s commands to check the prompt")
+    _SUBCOMMANDS[executable] = frozenset(n.casefold() for n in names)
+    return _SUBCOMMANDS[executable]
+
+
 SESSION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 PROCESS_AGENTS = {"codex": "codex", "codex.js": "codex", "claude": "claude", "kimi": "kimi",
                   "grok": "grok", "omp": "qwen-omp"}
@@ -321,13 +361,23 @@ def agent_argv(args, executable, cwd):
             argv.append("resume")      # `codex resume [OPTIONS] [SESSION_ID] [PROMPT]`
     model = args.model or DEFAULT_MODELS.get(agent)
     if model:
-        argv.extend(["--model", plain_text(model, "model", 200)])
+        model = plain_text(model, "model", 200)
+        if model.startswith("-"):
+            raise ControlError("a model name may not begin with '-'")
+        argv.extend(["--model", model])
+    yolo = False
     if args.coding_yolo:
         from kilix_sdk import settings
-        if settings.coding_yolo():
-            argv.extend(YOLO_FLAGS.get(agent, []))
+        yolo = settings.coding_yolo()
+    argv.extend(YOLO_FLAGS.get(agent, []) if yolo else ASK_FLAGS.get(agent, []))
+    if getattr(args, "trust_folder", False) and agent == "grok":
+        argv.append("--trust")         # grok records its own folder trust
     if agent == "qwen-omp" and cwd == Path.home():
         argv.append("--allow-home")
+    for item in args.agent_arg:
+        if GUARDED_ARG.search(item):
+            raise ControlError("--agent-arg cannot change approvals, permissions, sandboxing or "
+                               "trust; those follow Kilix's coding-yolo setting and --trust-folder")
     argv.extend(args.agent_arg)
     if resume and agent == "codex":
         argv.append(resume)
@@ -339,9 +389,15 @@ def agent_argv(args, executable, cwd):
         prompt = plain_text(args.prompt, "prompt")
         if prompt.startswith("-"):
             raise ControlError("a prompt may not begin with '-'")
-        if agent == "qwen-omp" and len(prompt.split()) < 2:
-            # omp's first positional word can name one of its own commands.
-            raise ControlError("an omp prompt must be more than one word")
+        first = prompt.split()[0].casefold()
+        if first in client_subcommands(executable):
+            # "codex logout", "claude update": the first word would run a command.
+            raise ControlError(f"a prompt may not begin with {first!r}, one of "
+                               f"{Path(executable).name}'s own commands")
+        if agent == "qwen-omp" and (len(prompt.split()) < 2
+                                    or any(w.startswith("@") for w in prompt.split())):
+            # omp: the first word can name a command, and @word includes a file.
+            raise ControlError("an omp prompt must be more than one word, with no @file words")
         argv.append(prompt)
     return argv
 
