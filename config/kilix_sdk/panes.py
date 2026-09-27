@@ -535,7 +535,9 @@ def quad(*, anchor: int | None = None,
     if origin is None:
         raise PaneError("quad: cannot find the calling pane; pass anchor=")
 
-    if origin.columns and origin.lines:
+    if origin.columns <= 0 or origin.lines <= 0:
+        raise PaneError("quad: cannot determine the calling pane size")
+    else:
         per_columns, per_lines = origin.columns // 2, origin.lines // 2
         if per_columns < QUAD_MIN_COLUMNS or per_lines < QUAD_MIN_LINES:
             raise PaneError(
@@ -557,14 +559,14 @@ def quad(*, anchor: int | None = None,
         below_right = split("down", anchor=right, take_focus=False,
                             command=command_for(2))
         made.append(below_right)
-    except PaneError:
+        focus(origin.id)
+    except BaseException:
         for pane_id in reversed(made):
             try:
                 close(pane_id, force=True)
-            except PaneError:
+            except Exception:
                 pass
         raise
-    focus(origin.id)
     return made[0], made[1], made[2]
 
 

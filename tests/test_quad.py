@@ -159,16 +159,21 @@ class Transactional(unittest.TestCase):
             with self.assertRaises(real_panes.PaneError):
                 real_panes.quad()
 
-    @unittest.expectedFailure
-    def test_a_non_PaneError_also_cleans_up(self):
-        """GAP in config/kilix_sdk/panes.py:439 -- `except PaneError` only.
+    def test_focus_transport_failure_rolls_back_all_created_panes(self):
+        rec = Recorder().install(self)
+        with unittest.mock.patch.object(real_panes, "focus", side_effect=OSError("socket died")):
+            with self.assertRaises(OSError):
+                real_panes.quad()
+        self.assertEqual(len(rec.closed), 3)
 
-        The design says "on any failure close the ones this call made and
-        re-raise". An OSError from the transport leaves a half-built quad and
-        the caller cannot tell which panes are theirs. Widening the clause to
-        `except BaseException` (or at least Exception) closes it. Task A owns
-        that file; this test flips to an unexpected success when it is fixed.
-        """
+    def test_cleanup_transport_error_preserves_original_failure(self):
+        Recorder(fail_on=3).install(self)
+        with unittest.mock.patch.object(real_panes, "close", side_effect=OSError("socket died")):
+            with self.assertRaises(real_panes.PaneError):
+                real_panes.quad()
+
+    def test_a_non_PaneError_also_cleans_up(self):
+        """A transport failure rolls back the panes created by this call."""
         rec = Recorder(fail_on=3, exception=OSError("socket died")).install(self)
         with self.assertRaises(OSError):
             real_panes.quad()
@@ -204,16 +209,8 @@ class SizeGuard(unittest.TestCase):
         self.assertEqual(
             (real_panes.QUAD_MIN_COLUMNS, real_panes.QUAD_MIN_LINES), (40, 12))
 
-    @unittest.expectedFailure
     def test_unknown_size_refuses_rather_than_skipping_the_guard(self):
-        """GAP in config/kilix_sdk/panes.py:419 -- `if origin.columns and ...`.
-
-        When the engine does not report a size the fields parse to 0, the
-        condition is falsy and the guard is skipped in silence: quad proceeds
-        on a pane it never measured. A control that cannot fire is the defect
-        class this release keeps finding. Refusing when the size is unknown is
-        the safe direction. Task A owns that file.
-        """
+        """Unknown dimensions must not bypass the minimum-size check."""
         state = json.loads(FIXTURE.read_text())
         for os_window in state:
             for tab in os_window["tabs"]:
