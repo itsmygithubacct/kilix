@@ -13,6 +13,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "config"))
 import agent_control as control
 import agent_programs
+import agent_trust
 
 SOURCE_BROKER = "a" * 16
 TARGET_BROKER = "b" * 16
@@ -227,6 +228,141 @@ class LaunchTests(unittest.TestCase):
         with self.assertRaisesRegex(control.ControlError, "geometry changed"):
             control.launch(self.client, self.args())
         self.assertEqual(self.client.calls, [(["launch", "--help"], None)])
+
+
+class AgentArgvTests(unittest.TestCase):
+    """grok and qwen-omp, a launch prompt, resume, coding-yolo (2026-09-27)."""
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory(prefix="kilix-agents-")
+        self.addCleanup(self.directory.cleanup)
+
+    def argv(self, agent, *extra, yolo_setting=False):
+        client = FakeClient()
+        args = control.parser().parse_args(["new-tab", "1", "--expect-broker", SOURCE_BROKER,
+                                            "--agent", agent, "--title", "t",
+                                            "--cwd", self.directory.name, *extra])
+        exe = {"qwen-omp": "/bin/omp"}.get(agent, f"/bin/{agent}")
+        with mock.patch.object(agent_programs, "resolve_agent_command",
+                               side_effect=lambda name: f"/bin/{name}"), \
+                mock.patch("kilix_sdk.settings.coding_yolo", return_value=yolo_setting):
+            control.launch(client, args)
+        argv = client.calls[-1][0]
+        return argv[argv.index("--") + 1:], exe
+
+    def test_each_client_resumes_and_takes_a_prompt_its_own_way(self):
+        cases = {"claude": ["/bin/claude", "--resume", "abc-123", "review the diff"],
+                 "codex": ["/bin/codex", "resume", "abc-123", "review the diff"],  # options would sit before the id
+                 "grok": ["/bin/grok", "--resume", "abc-123", "review the diff"],
+                 "qwen-omp": ["/bin/omp", "--model", "qwen3.8-max", "--resume=abc-123",
+                              "review the diff"]}
+        for agent, want in cases.items():
+            argv, _ = self.argv(agent, "--resume", "abc-123", "--prompt", "review the diff")
+            self.assertEqual(argv, want, agent)
+
+    def test_codex_options_come_between_resume_and_its_session_id(self):
+        self.assertEqual(self.argv("codex", "--resume", "abc-123", "--model", "m",
+                                   "--prompt", "go on")[0],
+                         ["/bin/codex", "resume", "--model", "m", "abc-123", "go on"])
+
+    def test_qwen_omp_runs_omp_with_qwen_unless_a_model_is_given(self):
+        self.assertEqual(self.argv("qwen-omp")[0], ["/bin/omp", "--model", "qwen3.8-max"])
+        self.assertEqual(self.argv("qwen-omp", "--model", "qwen3.7-max")[0],
+                         ["/bin/omp", "--model", "qwen3.7-max"])
+
+    def test_coding_yolo_follows_the_setting_and_only_when_asked(self):
+        for agent, flag in (("claude", "--dangerously-skip-permissions"),
+                            ("codex", "--dangerously-bypass-approvals-and-sandbox"),
+                            ("grok", "--always-approve"), ("qwen-omp", "--auto-approve")):
+            self.assertIn(flag, self.argv(agent, "--coding-yolo", yolo_setting=True)[0], agent)
+            self.assertNotIn(flag, self.argv(agent, "--coding-yolo", yolo_setting=False)[0], agent)
+            self.assertNotIn(flag, self.argv(agent, yolo_setting=True)[0], agent)
+
+    def test_bad_prompts_resumes_and_kimi_refuse_without_launching(self):
+        for agent, extra in (("claude", ["--prompt=--dangerously-skip-permissions"]),
+                             ("claude", ["--prompt", "two\nlines"]),
+                             ("claude", ["--resume", "../../etc"]),
+                             ("claude", ["--resume", "a b"]),
+                             ("kimi", ["--prompt", "hello"]),
+                             ("qwen-omp", ["--prompt", "stats"])):
+            client = FakeClient()
+            args = control.parser().parse_args(["new-tab", "1", "--expect-broker", SOURCE_BROKER,
+                                                "--agent", agent, "--title", "t",
+                                                "--cwd", self.directory.name, *extra])
+            with mock.patch.object(agent_programs, "resolve_agent_command", return_value="/bin/x"):
+                with self.assertRaises(control.ControlError, msg=extra):
+                    control.launch(client, args)
+            self.assertFalse(any(c[0][0] == "launch" and c[0] != ["launch", "--help"]
+                                 for c in client.calls), extra)
+
+    def test_grok_and_omp_are_recognised_in_a_snapshot(self):
+        for program, agent in (("/home/u/.local/bin/grok", "grok"), ("/bin/omp", "qwen-omp")):
+            p = pane(5, "d" * 16)
+            p["foreground_processes"] = [{"pid": 9, "cmdline": [program]}]
+            p.update(tab_id=11, tab_title="t", layout="splits", os_window_id=1)
+            self.assertEqual(control.describe(p)["agent"], agent)
+
+
+class TrustTests(unittest.TestCase):
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp(prefix="kilix-home-"))
+        self.addCleanup(__import__("shutil").rmtree, self.home)
+        self.project = self.home / "work" / "repo"
+        self.project.mkdir(parents=True)
+
+    def test_each_client_records_exactly_that_directory(self):
+        (self.home / ".claude.json").write_text(json.dumps(
+            {"projects": {"/elsewhere": {"hasTrustDialogAccepted": False}}, "other": 1}))
+        (self.home / ".codex").mkdir()
+        (self.home / ".codex" / "config.toml").write_text('model = "m"\n')
+        d = str(self.project)
+        for agent in ("claude", "codex", "grok"):
+            self.assertEqual(agent_trust.trust(agent, d, self.home), "trusted", agent)
+            self.assertEqual(agent_trust.trust(agent, d, self.home), "already trusted", agent)
+        claude = json.loads((self.home / ".claude.json").read_text())
+        self.assertTrue(claude["projects"][d]["hasTrustDialogAccepted"])
+        self.assertFalse(claude["projects"]["/elsewhere"]["hasTrustDialogAccepted"])
+        self.assertEqual(claude["other"], 1)
+        import tomllib
+        codex = tomllib.loads((self.home / ".codex" / "config.toml").read_text())
+        self.assertEqual(codex["projects"][d]["trust_level"], "trusted")
+        self.assertEqual(codex["model"], "m")
+        grok = tomllib.loads((self.home / ".grok" / "trusted_folders.toml").read_text())
+        self.assertIs(grok["folders"][d]["trusted"], True)
+        self.assertEqual(agent_trust.trust("qwen-omp", d, self.home), "no trust prompt")
+
+    def test_a_decision_already_made_is_left_alone(self):
+        (self.home / ".codex").mkdir()
+        d = str(self.project)
+        (self.home / ".codex" / "config.toml").write_text(
+            f'[projects."{d}"]\ntrust_level = "untrusted"\n')
+        with self.assertRaises(agent_trust.TrustError):
+            agent_trust.trust("codex", d, self.home)
+        self.assertIn("untrusted", (self.home / ".codex" / "config.toml").read_text())
+
+    def test_only_an_owned_real_directory_below_home(self):
+        link = self.home / "link"
+        link.symlink_to(self.project)
+        quoted = self.home / 'we"ird'
+        quoted.mkdir()
+        for bad in ("relative/dir", str(self.home / "missing"), str(link), str(quoted),
+                    str(self.home), "/"):
+            with self.assertRaises(agent_trust.TrustError, msg=bad):
+                agent_trust.trust("claude", bad, self.home)
+        self.assertFalse((self.home / ".claude.json").exists())
+
+    def test_a_launch_trusts_only_when_asked_and_never_on_a_dry_run(self):
+        client = FakeClient()
+        base = ["new-tab", "1", "--expect-broker", SOURCE_BROKER, "--agent", "claude",
+                "--title", "t", "--cwd", str(self.project)]
+        with mock.patch.object(agent_programs, "resolve_agent_command", return_value="/bin/claude"), \
+                mock.patch.object(agent_trust, "trust", return_value="trusted") as trust:
+            control.launch(client, control.parser().parse_args(base))
+            control.launch(FakeClient(), control.parser().parse_args(base + ["--trust-folder", "--dry-run"]))
+            self.assertEqual(trust.call_count, 0)
+            result = control.launch(FakeClient(), control.parser().parse_args(base + ["--trust-folder"]))
+        trust.assert_called_once_with("claude", str(self.project))
+        self.assertEqual(result["folder_trust"], "trusted")
 
 
 class ConnectionTests(unittest.TestCase):

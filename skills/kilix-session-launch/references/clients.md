@@ -1,8 +1,13 @@
 # Client startup and initialization
 
-The helper starts interactive `codex`, `claude`, or `kimi` directly with an
-optional `--model MODEL`. It does not add permission bypasses, change global
-settings, or submit a prompt automatically. Inspect the installed client's
+The helper starts interactive `codex`, `claude`, `kimi`, `grok` or
+`qwen-omp` (`omp --model qwen3.8-max` unless `--model` is given) directly,
+with an optional `--model MODEL`. It adds a client's approval-skip flag only
+with `--coding-yolo`, and then only when Kilix's coding-yolo setting is on. A
+launch prompt is passed only with `--prompt` (one line, never starting with
+`-`; omp's must be more than one word). `--resume ID` resumes that session
+id, and `--trust-folder` records the client's own trust for exactly `--cwd`
+first. It changes no other global setting. Inspect the installed client's
 `--help` before adding flags with repeated `--agent-arg=VALUE`; every value is
 one literal argv item, not a shell expression.
 
@@ -10,7 +15,9 @@ one literal argv item, not a shell expression.
 | --- | --- |
 | Codex | `--model` selects this launch's model; the working directory comes from the pane launch. Do not use `codex exec` when an interactive coding session was requested. |
 | Claude Code | `--model` is launch-scoped. Avoid `-p`/`--print`, which exits after a response. Don't replace user prompts with `--system-prompt`. |
-| Kimi Code | `--model` takes a configured alias. Current `-p`/`--prompt` is non-interactive, so start the TUI first and submit initialization after it is ready. Legacy kimi-cli flags differ. |
+| Kimi Code | `--model` takes a configured alias. Current `-p`/`--prompt` is non-interactive, so start the TUI first and submit initialization after it is ready. Legacy kimi-cli flags differ. The helper refuses `--prompt` and `--resume` for kimi. |
+| Grok Build | `--model`/`-m`; `--resume ID`; a positional launch prompt; `--always-approve` is its approval skip; folder trust lives in `~/.grok/trusted_folders.toml`. |
+| qwen-omp | `omp --model qwen3.8-max`; `--resume=ID`; positional messages (its first word can name an omp command, so one-word prompts are refused); `--auto-approve` is its approval skip; `--allow-home` when started in `~`; no folder-trust prompt. |
 
 Use the same post-startup initialization sequence for all three: inspect the
 foreground client and UI, resolve any user-owned login/trust choices, submit
