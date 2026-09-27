@@ -245,7 +245,9 @@ class AgentArgvTests(unittest.TestCase):
         exe = {"qwen-omp": "/bin/omp"}.get(agent, f"/bin/{agent}")
         with mock.patch.object(agent_programs, "resolve_agent_command",
                                side_effect=lambda name: f"/bin/{name}"), \
-                mock.patch("kilix_sdk.settings.coding_yolo", return_value=yolo_setting):
+                mock.patch("kilix_sdk.settings.coding_yolo", return_value=yolo_setting), \
+                mock.patch.object(control, "client_subcommands",
+                                  return_value=frozenset({"update", "logout", "mcp", "a"})):
             control.launch(client, args)
         argv = client.calls[-1][0]
         return argv[argv.index("--") + 1:], exe
@@ -254,8 +256,8 @@ class AgentArgvTests(unittest.TestCase):
         cases = {"claude": ["/bin/claude", "--resume", "abc-123", "review the diff"],
                  "codex": ["/bin/codex", "resume", "abc-123", "review the diff"],  # options would sit before the id
                  "grok": ["/bin/grok", "--resume", "abc-123", "review the diff"],
-                 "qwen-omp": ["/bin/omp", "--model", "qwen3.8-max", "--resume=abc-123",
-                              "review the diff"]}
+                 "qwen-omp": ["/bin/omp", "--model", "qwen3.8-max", "--approval-mode=always-ask",
+                              "--resume=abc-123", "review the diff"]}
         for agent, want in cases.items():
             argv, _ = self.argv(agent, "--resume", "abc-123", "--prompt", "review the diff")
             self.assertEqual(argv, want, agent)
@@ -266,9 +268,10 @@ class AgentArgvTests(unittest.TestCase):
                          ["/bin/codex", "resume", "--model", "m", "abc-123", "go on"])
 
     def test_qwen_omp_runs_omp_with_qwen_unless_a_model_is_given(self):
-        self.assertEqual(self.argv("qwen-omp")[0], ["/bin/omp", "--model", "qwen3.8-max"])
+        self.assertEqual(self.argv("qwen-omp")[0], ["/bin/omp", "--model", "qwen3.8-max",
+                                                    "--approval-mode=always-ask"])
         self.assertEqual(self.argv("qwen-omp", "--model", "qwen3.7-max")[0],
-                         ["/bin/omp", "--model", "qwen3.7-max"])
+                         ["/bin/omp", "--model", "qwen3.7-max", "--approval-mode=always-ask"])
 
     def test_coding_yolo_follows_the_setting_and_only_when_asked(self):
         for agent, flag in (("claude", "--dangerously-skip-permissions"),
@@ -284,16 +287,51 @@ class AgentArgvTests(unittest.TestCase):
                              ("claude", ["--resume", "../../etc"]),
                              ("claude", ["--resume", "a b"]),
                              ("kimi", ["--prompt", "hello"]),
-                             ("qwen-omp", ["--prompt", "stats"])):
+                             ("qwen-omp", ["--prompt", "stats"]),
+                             ("claude", ["--prompt", "update now please"]),              # KX-R13-01
+                             ("codex", ["--prompt", "Update the readme"]),
+                             ("qwen-omp", ["--prompt", "read @secrets.txt please"]),    # KX-R13-09
+                             ("claude", ["--model=--dangerously-skip-permissions"]),    # KX-R13-10
+                             ("claude", ["--agent-arg=--dangerously-skip-permissions"]),  # KX-R13-03
+                             ("claude", ["--agent-arg=--permission-mode=bypassPermissions"]),
+                             ("codex", ["--agent-arg=-c", "--agent-arg=approval_policy=never"]),
+                             ("grok", ["--agent-arg=--trust"])):
             client = FakeClient()
             args = control.parser().parse_args(["new-tab", "1", "--expect-broker", SOURCE_BROKER,
                                                 "--agent", agent, "--title", "t",
                                                 "--cwd", self.directory.name, *extra])
-            with mock.patch.object(agent_programs, "resolve_agent_command", return_value="/bin/x"):
+            with mock.patch.object(agent_programs, "resolve_agent_command", return_value="/bin/x"), \
+                    mock.patch.object(control, "client_subcommands",
+                                      return_value=frozenset({"update"})):
                 with self.assertRaises(control.ControlError, msg=extra):
                     control.launch(client, args)
             self.assertFalse(any(c[0][0] == "launch" and c[0] != ["launch", "--help"]
                                  for c in client.calls), extra)
+
+    def test_omp_asks_unless_the_yolo_setting_applies(self):                     # KX-R13-02
+        self.assertIn("--approval-mode=always-ask", self.argv("qwen-omp")[0])
+        yolo = self.argv("qwen-omp", "--coding-yolo", yolo_setting=True)[0]
+        self.assertIn("--auto-approve", yolo)
+        self.assertNotIn("--approval-mode=always-ask", yolo)
+
+    def test_grok_trusts_its_own_folder_when_asked(self):                         # KX-R13-11
+        self.assertIn("--trust", self.argv("grok", "--trust-folder")[0])
+        self.assertNotIn("--trust", self.argv("grok")[0])
+
+    def test_client_subcommands_are_read_from_help(self):                         # KX-R13-01
+        help_text = ("Usage: x\n\nCommands:\n  exec    Run [aliases: e]\n  plugin|plugins  Manage\n"
+                     "  logout  Sign out\n\nOptions:\n  -h  help\n")
+        with mock.patch.object(control.subprocess, "run",
+                               return_value=mock.Mock(stdout=help_text, stderr="")):
+            control._SUBCOMMANDS.clear()
+            self.assertEqual(control.client_subcommands("/bin/fake"),
+                             {"exec", "e", "plugin", "plugins", "logout"})
+        with mock.patch.object(control.subprocess, "run",
+                               return_value=mock.Mock(stdout="no commands here", stderr="")):
+            control._SUBCOMMANDS.clear()
+            with self.assertRaises(control.ControlError):
+                control.client_subcommands("/bin/other")
+        control._SUBCOMMANDS.clear()
 
     def test_grok_and_omp_are_recognised_in_a_snapshot(self):
         for program, agent in (("/home/u/.local/bin/grok", "grok"), ("/bin/omp", "qwen-omp")):
@@ -316,9 +354,11 @@ class TrustTests(unittest.TestCase):
         (self.home / ".codex").mkdir()
         (self.home / ".codex" / "config.toml").write_text('model = "m"\n')
         d = str(self.project)
-        for agent in ("claude", "codex", "grok"):
+        for agent in ("claude", "codex"):
             self.assertEqual(agent_trust.trust(agent, d, self.home), "trusted", agent)
             self.assertEqual(agent_trust.trust(agent, d, self.home), "already trusted", agent)
+        self.assertEqual(agent_trust.trust("grok", d, self.home), "trusted by grok --trust")
+        self.assertFalse((self.home / ".grok").exists())
         claude = json.loads((self.home / ".claude.json").read_text())
         self.assertTrue(claude["projects"][d]["hasTrustDialogAccepted"])
         self.assertFalse(claude["projects"]["/elsewhere"]["hasTrustDialogAccepted"])
@@ -327,8 +367,6 @@ class TrustTests(unittest.TestCase):
         codex = tomllib.loads((self.home / ".codex" / "config.toml").read_text())
         self.assertEqual(codex["projects"][d]["trust_level"], "trusted")
         self.assertEqual(codex["model"], "m")
-        grok = tomllib.loads((self.home / ".grok" / "trusted_folders.toml").read_text())
-        self.assertIs(grok["folders"][d]["trusted"], True)
         self.assertEqual(agent_trust.trust("qwen-omp", d, self.home), "no trust prompt")
 
     def test_a_decision_already_made_is_left_alone(self):
@@ -350,6 +388,60 @@ class TrustTests(unittest.TestCase):
             with self.assertRaises(agent_trust.TrustError, msg=bad):
                 agent_trust.trust("claude", bad, self.home)
         self.assertFalse((self.home / ".claude.json").exists())
+
+    def test_files_that_cannot_take_the_entry_are_left_alone(self):              # KX-R13-04, -06, -07
+        d = str(self.project)
+        codex = self.home / ".codex" / "config.toml"
+        codex.parent.mkdir()
+        for text in ('projects = { "/elsewhere" = { trust_level = "trusted" } }\n', "not = [toml\n"):
+            codex.write_text(text)
+            with self.assertRaises(agent_trust.TrustError):
+                agent_trust.trust("codex", d, self.home)
+            self.assertEqual(codex.read_text(), text)
+        (self.home / ".claude.json").write_text("{not json")
+        with self.assertRaises(agent_trust.TrustError):
+            agent_trust.trust("claude", d, self.home)
+        real = self.home / "real.json"
+        real.write_text("{}")
+        (self.home / ".claude.json").unlink()
+        (self.home / ".claude.json").symlink_to(real)
+        with self.assertRaises(agent_trust.TrustError):
+            agent_trust.trust("claude", d, self.home)
+        self.assertTrue((self.home / ".claude.json").is_symlink())
+
+    def test_claudes_own_lock_is_honoured_and_the_mode_kept(self):                # KX-R13-05
+        d = str(self.project)
+        config = self.home / ".claude.json"
+        config.write_text("{}")
+        config.chmod(0o640)
+        (self.home / ".claude.json.lock").mkdir()
+        with mock.patch.object(agent_trust._ClaudeLock, "__init__",
+                               lambda lock, path, wait=5.0: (setattr(lock, "lock", path.with_name(
+                                   path.name + ".lock")), setattr(lock, "wait", 0.2))[0]):
+            with self.assertRaisesRegex(agent_trust.TrustError, "held"):
+                agent_trust.trust("claude", d, self.home)
+        self.assertEqual(json.loads(config.read_text()), {})
+        (self.home / ".claude.json.lock").rmdir()
+        agent_trust.trust("claude", d, self.home)
+        self.assertEqual(oct(config.stat().st_mode & 0o777), "0o640")
+        self.assertFalse((self.home / ".claude.json.lock").exists())
+
+    def test_the_resolved_path_is_recorded_and_config_homes_honoured(self):       # KX-R13-08
+        odd = str(self.project) + "/./"
+        other = self.home / "claude-config"
+        other.mkdir()
+        with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(other)}):
+            agent_trust.trust("claude", odd, self.home)
+        data = json.loads((other / ".claude.json").read_text())
+        self.assertEqual(list(data["projects"]), [str(self.project.resolve())])
+        self.assertFalse((self.home / ".claude.json").exists())
+
+    def test_ownership_and_root_are_checked(self):                               # KX-R13-20
+        with mock.patch.object(agent_trust.os, "getuid", return_value=os.getuid() + 1):
+            with self.assertRaisesRegex(agent_trust.TrustError, "own"):
+                agent_trust.trust("claude", str(self.project), self.home)
+        with self.assertRaisesRegex(agent_trust.TrustError, "never trusted"):
+            agent_trust.trust("claude", "/", Path("/nonexistent-home"))
 
     def test_a_launch_trusts_only_when_asked_and_never_on_a_dry_run(self):
         client = FakeClient()
