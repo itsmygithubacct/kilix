@@ -328,14 +328,38 @@ class KilixLauncherTests(unittest.TestCase):
     def test_ls_lists_live_tabs_via_kitty_remote_control(self):
         launcher = (ROOT / "kilix").read_text()
         remote = (ROOT / "config" / "remote.py").read_text()
-        self.assertIn("ls|focus|watch|fullscreen|new-pane|split|new-tab|new-page)",
-                      launcher)
+        # Assert each verb dispatches, not the exact alternation. Written as one
+        # literal, this broke the day `pane` and `tab` were added between
+        # `fullscreen` and `new-pane` -- which is a legitimate change the test
+        # should not have opposed. The verbs that must keep working are the
+        # point; their order in the case statement is not.
+        dispatch = next(
+            line for line in launcher.splitlines()
+            if line.strip().startswith("ls|focus|watch|fullscreen|")
+            and line.rstrip().endswith(")")
+        )
+        cases = [tok.strip() for tok in dispatch.strip().rstrip(")").split("|")]
+        for verb in ("ls", "focus", "watch", "fullscreen",
+                     "new-pane", "split", "new-tab", "new-page"):
+            self.assertIn(verb, cases,
+                          f"{verb} must keep dispatching; AGENTS.md has taught it")
+        for verb in ("pane", "tab"):
+            self.assertIn(verb, cases,
+                          f"{verb} is the 0.2.1 verb and must dispatch")
         self.assertIn('KILIX_KITTEN="$KITTEN" exec python3 "$KILIX_HOME/config/remote.py"', launcher)
-        self.assertIn('run_kitten(["ls"], authenticated=True)', remote)
+        # The verb keeps the surface -- the flag and the column headings --
+        # and the library keeps the engine query.  Asserting each marker where
+        # it now lives is what pins the split; asserting the query against
+        # remote.py would pass again the moment a transport crept back in.
         self.assertIn('"--panes"', remote)
         self.assertIn('"TAB_ID"', remote)
         self.assertIn('"PANE_ID"', remote)
-        self.assertIn('"foreground_processes"', remote)
+        panes = (ROOT / "config" / "kilix_sdk" / "panes.py").read_text()
+        self.assertIn('_run(["ls"]', panes)
+        self.assertIn('"foreground_processes"', panes)
+        # And the rule itself: the verbs hold no transport of their own.
+        self.assertNotIn("subprocess", remote)
+        self.assertNotIn("run_kitten", remote)
 
     def test_screen_size_command_is_wired(self):
         launcher = (ROOT / "kilix").read_text()
@@ -685,11 +709,13 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn('-- "$_self" serve "$_mux_name"', launcher)
         self.assertIn('exec "$_self" serve "$_mux_name"', launcher)
         self.assertIn('new-session -A -s "$_session"', launcher)
-        self.assertIn('"focus-tab"', remote)
-        self.assertIn('"focus-window"', remote)
-        self.assertIn('"get-text"', remote)
+        # The verb keeps its surface; the engine words moved to the library.
+        panes = (ROOT / "config" / "kilix_sdk" / "panes.py").read_text()
+        self.assertIn('"focus-tab"', panes)
+        self.assertIn('"focus-window"', panes)
+        self.assertIn('"get-text"', panes)
+        self.assertIn('"resize-os-window", "--self", "--action", "toggle-fullscreen"', panes)
         self.assertIn('def cmd_fullscreen', remote)
-        self.assertIn('"resize-os-window", "--self", "--action", "toggle-fullscreen"', remote)
         self.assertIn('"--interval"', remote)
         self.assertIn("refusing to watch the current pane", remote)
         self.assertIn('"Mux Terminal"', shell)
@@ -705,7 +731,11 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn('payload.get("self") is True', policy)
         self.assertIn('payload.get("action") == "toggle-fullscreen"', policy)
         self.assertIn("not from_socket", policy)
-        self.assertIn("via_tty=True", remote)
+        # Fullscreen still goes over the tty rather than the socket, because
+        # --self over the socket is the socket peer.  That now lives with the
+        # rest of the transport, in the library.
+        self.assertIn("via_tty=True",
+                      (ROOT / "config" / "kilix_sdk" / "panes.py").read_text())
         self.assertIn("_kilix_init_rc_password", (ROOT / "kilix").read_text())
         self.assertIn('"%s" launch ls focus-window focus-tab get-text',
                       (ROOT / "kilix").read_text())

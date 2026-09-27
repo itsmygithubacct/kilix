@@ -172,3 +172,43 @@ if [[ $- == *i* ]]; then
     unset _kilix_tb_storage _kilix_tb_stamp _kilix_tb_ref _kilix_tb_key \
         _kilix_tb_value _kilix_tb_py _kilix_tb_kind
 fi
+
+# 7. Pane and tab verbs. Thin wrappers over `kilix pane` / `kilix tab`;
+#    everything real lives in kilix_sdk.panes, and no front end calls
+#    `kitten @` directly. Defined only inside a live Kilix (KITTY_LISTEN_ON is
+#    set), so `pane` and `tab` stay free names in an ordinary terminal, over
+#    ssh, and in scripts. KILIX_PANE_VERBS=0 opts out, matching the
+#    KILIX_RUN_ALIASES convention in section 4.
+#
+#    Functions, not aliases: an alias cannot take positional arguments, and
+#    `pane below -- make test` needs them.
+#
+#    Do-not-clobber: this requires the name to be unset *entirely*, which is a
+#    deliberate divergence from section 4's `type -t ... = file` test, not a
+#    misreading of it. Section 4 wraps PATH commands, so a `file` is exactly
+#    what it may replace. Here `pane` and `tab` are ordinary words a user may
+#    reasonably have bound to their own function or alias, so anything already
+#    defined under either name wins and Kilix stays out of the way.
+case "${KILIX_PANE_VERBS:-}" in
+    0|no|false|off) _kilix_pane_verbs=0 ;;
+    *)              _kilix_pane_verbs=1 ;;
+esac
+if [ -n "${KITTY_LISTEN_ON:-}" ] && [ "$_kilix_pane_verbs" = 1 ]; then
+    for _kilix_verb in pane tab; do
+        if [ -n "$(type -t "$_kilix_verb" 2>/dev/null)" ]; then
+            continue
+        fi
+        eval "$_kilix_verb() { command kilix $_kilix_verb \"\$@\"; }"
+    done
+    # Completion lives beside this file so it is found wherever the checkout
+    # is, and is sourced from this section rather than installed globally.
+    _kilix_rc_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd -P)"
+    _kilix_pane_completions="$_kilix_rc_dir/completions/kilix-pane.bash"
+    [ -z "$_kilix_rc_dir" ] && _kilix_pane_completions=""
+    if [ -n "$_kilix_pane_completions" ] && [ -r "$_kilix_pane_completions" ]; then
+        # shellcheck source=/dev/null
+        . "$_kilix_pane_completions"
+    fi
+    unset _kilix_verb _kilix_rc_dir _kilix_pane_completions
+fi
+unset _kilix_pane_verbs

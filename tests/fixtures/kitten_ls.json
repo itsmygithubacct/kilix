@@ -1,0 +1,1497 @@
+[
+ {
+  "active_tab_history": [
+   23,
+   27,
+   30,
+   32,
+   35,
+   40,
+   48,
+   53,
+   74,
+   51,
+   2,
+   77
+  ],
+  "background_opacity": 1.0,
+  "id": 1,
+  "is_active": true,
+  "is_focused": true,
+  "last_focused": true,
+  "platform_window_id": 8388622,
+  "tabs": [
+   {
+    "active_window_history": [
+     153,
+     49,
+     4
+    ],
+    "enabled_layouts": [
+     "splits",
+     "stack",
+     "tall",
+     "grid"
+    ],
+    "groups": [
+     {
+      "id": 2,
+      "windows": [
+       4
+      ]
+     },
+     {
+      "id": 96,
+      "windows": [
+       153
+      ]
+     },
+     {
+      "id": 13,
+      "windows": [
+       49
+      ]
+     }
+    ],
+    "id": 2,
+    "is_active": true,
+    "is_focused": true,
+    "layout": "splits",
+    "layout_opts": {
+     "equalize_on_window_close": "n",
+     "split_axis": "horizontal"
+    },
+    "layout_state": {
+     "all_windows": {
+      "active_group_history": [
+       12,
+       8,
+       5,
+       3,
+       11,
+       9,
+       6,
+       7,
+       10,
+       4,
+       96,
+       13,
+       2
+      ],
+      "active_group_idx": 2,
+      "window_groups": [
+       {
+        "id": 2,
+        "window_ids": [
+         4
+        ]
+       },
+       {
+        "id": 96,
+        "window_ids": [
+         153
+        ]
+       },
+       {
+        "id": 13,
+        "window_ids": [
+         49
+        ]
+       }
+      ]
+     },
+     "class": "Splits",
+     "opts": {
+      "equalize_on_window_close": "n",
+      "split_axis": "horizontal"
+     },
+     "pairs": {
+      "one": 13,
+      "two": {
+       "bias": 0.6967984934086625,
+       "horizontal": false,
+       "one": 2,
+       "two": 96
+      }
+     }
+    },
+    "title": "orchestrator",
+    "title_overridden": false,
+    "windows": [
+     {
+      "at_prompt": false,
+      "cmdline": [
+       "/home/pleb/.local/gpu_terminal/kilix/build/generations/build.pOcV0a/src/kitty/launcher/kitten",
+       "run-shell",
+       "--shell=/bin/bash --rcfile /home/pleb/gpu_terminal/kilix/config/kilix.bashrc",
+       "--shell-integration=enabled",
+       "--env=KITTY_HOLD=1",
+       "/usr/local/bin/kilix",
+       "serve"
+      ],
+      "columns": 105,
+      "created_at": 1787950608376597162,
+      "cwd": "/home/pleb",
+      "env": {
+       "KITTY_PTY_BROKER_SESSION": "REDACTED",
+       "KITTY_WINDOW_ID": "4"
+      },
+      "foreground_processes": [
+       {
+        "cmdline": [
+         "/home/pleb/.local/gpu_terminal/kilix/build/generations/build.pOcV0a/src/kitty/launcher/kitten",
+         "run-shell",
+         "--shell=/bin/bash --rcfile /home/pleb/gpu_terminal/kilix/config/kilix.bashrc",
+         "--shell-integration=enabled",
+         "--env=KITTY_HOLD=1",
+         "/usr/local/bin/kilix",
+         "serve"
+        ],
+        "cwd": "/home/pleb",
+        "pid": 2406
+       },
+       {
+        "cmdline": [
+         "tmux",
+         "-S",
+         "/home/pleb/.local/gpu_terminal/kilix/session/tmux/tmux.sock",
+         "-f",
+         "/home/pleb/gpu_terminal/kilix/config/tmux.conf",
+         "new-session",
+         "-A",
+         "-s",
+         "kilix-main",
+         "-e",
+         "KILIX_STREAM=1",
+         "-e",
+         "KILIX_HOME=/home/pleb/gpu_terminal/kilix",
+         "-e",
+         "KITTY_CONFIG_DIRECTORY=/home/pleb/.local/gpu_terminal/kilix/config",
+         "/bin/bash --rcfile /home/pleb/gpu_terminal/kilix/config/kilix.bashrc"
+        ],
+        "cwd": "/home/pleb",
+        "pid": 2419
+       }
+      ],
+      "has_activity_since_last_focus": true,
+      "id": 4,
+      "in_alternate_screen": true,
+      "is_active": false,
+      "is_focused": false,
+      "is_self": false,
+      "last_cmd_exit_status": 0,
+      "last_focused_at": 279709.619131433,
+      "last_reported_cmdline": "",
+      "lines": 39,
+      "needs_attention": false,
+      "neighbors": {
+       "bottom": [
+        96
+       ],
+       "left": [
+        13
+       ]
+      },
+      "pid": 2406,
+      "session_name": "",
+      "title": "0.2.1",
+      "title_overridden": true,
+      "user_vars": {}
+     },
+     {
+      "at_prompt": false,
+      "cmdline": [
+       "/bin/bash",
+       "--posix"
+      ],
+      "columns": 105,
+      "created_at": 1787954463444781385,
+      "cwd": "/home/pleb/gpu_terminal",
+      "env": {
+       "KITTY_PTY_BROKER_SESSION": "REDACTED",
+       "KITTY_WINDOW_ID": "49"
+      },
+      "foreground_processes": [
+       {
+        "cmdline": [
+         "agent-a",
+         "--dangerously-skip-permissions"
+        ],
+        "cwd": "/home/pleb/gpu_terminal",
+        "pid": 58446
+       }
+      ],
+      "has_activity_since_last_focus": false,
+      "id": 49,
+      "in_alternate_screen": true,
+      "is_active": true,
+      "is_focused": true,
+      "is_self": true,
+      "last_cmd_exit_status": 0,
+      "last_focused_at": 284370.548184811,
+      "last_reported_cmdline": "agent-a --dangerously-skip-permissions",
+      "lines": 57,
+      "needs_attention": false,
+      "neighbors": {
+       "right": [
+        2,
+        96
+       ]
+      },
+      "pid": 57891,
+      "session_name": "",
+      "title": "orchestrator",
+      "title_overridden": true,
+      "user_vars": {}
+     },
+     {
+      "at_prompt": false,
+      "cmdline": [
+       "/bin/bash",
+       "--posix"
+      ],
+      "columns": 105,
+      "created_at": 1788213841253192976,
+      "cwd": "/home/pleb",
+      "env": {
+       "KITTY_PTY_BROKER_SESSION": "REDACTED",
+       "KITTY_WINDOW_ID": "153"
+      },
+      "foreground_processes": [
+       {
+        "cmdline": [
+         "agent-a",
+         "--dangerously-skip-permissions"
+        ],
+        "cwd": "/home/pleb",
+        "pid": 1341263
+       }
+      ],
+      "has_activity_since_last_focus": true,
+      "id": 153,
+      "in_alternate_screen": true,
+      "is_active": false,
+      "is_focused": false,
+      "is_self": false,
+      "last_cmd_exit_status": 0,
+      "last_focused_at": 278870.273145624,
+      "last_reported_cmdline": "agent-a --dangerously-skip-permissions",
+      "lines": 16,
+      "needs_attention": false,
+      "neighbors": {
+       "left": [
+        13
+       ],
+       "top": [
+        2
+       ]
+      },
+      "pid": 1340867,
+      "session_name": "",
+      "title": "\u2733 0.2.1 named kilix session",
+      "title_overridden": false,
+      "user_vars": {}
+     }
+    ]
+   },
+   {
+    "active_window_history": [
+     95
+    ],
+    "enabled_layouts": [
+     "splits",
+     "stack",
+     "tall",
+     "grid"
+    ],
+    "groups": [
+     {
+      "id": 41,
+      "windows": [
+       95
+      ]
+     }
+    ],
+    "id": 23,
+    "is_active": false,
+    "is_focused": false,
+    "layout": "splits",
+    "layout_opts": {
+     "equalize_on_window_close": "n",
+     "split_axis": "horizontal"
+    },
+    "layout_state": {
+     "all_windows": {
+      "active_group_history": [
+       41
+      ],
+      "active_group_idx": 0,
+      "window_groups": [
+       {
+        "id": 41,
+        "window_ids": [
+         95
+        ]
+       }
+      ]
+     },
+     "class": "Splits",
+     "opts": {
+      "equalize_on_window_close": "n",
+      "split_axis": "horizontal"
+     },
+     "pairs": {
+      "one": 41
+     }
+    },
+    "title": "w-f112",
+    "title_overridden": false,
+    "windows": [
+     {
+      "at_prompt": false,
+      "cmdline": [
+       "/bin/bash",
+       "--posix"
+      ],
+      "columns": 212,
+      "created_at": 1788082716199982528,
+      "cwd": "/home/pleb/research/gpu_terminal",
+      "env": {
+       "KITTY_PTY_BROKER_SESSION": "REDACTED",
+       "KITTY_WINDOW_ID": "95"
+      },
+      "foreground_processes": [
+       {
+        "cmdline": [
+         "agent-a",
+         "--dangerously-skip-permissions"
+        ],
+        "cwd": "/home/pleb/research/gpu_terminal",
+        "pid": 784602
+       }
+      ],
+      "has_activity_since_last_focus": true,
+      "id": 95,
+      "in_alternate_screen": true,
+      "is_active": true,
+      "is_focused": true,
+      "is_self": false,
+      "last_cmd_exit_status": 0,
+      "last_focused_at": 278805.940228886,
+      "last_reported_cmdline": "agent-a --dangerously-skip-permissions",
+      "lines": 57,
+      "needs_attention": false,
+      "neighbors": {},
+      "pid": 776651,
+      "session_name": "",
+      "title": "w-f112",
+      "title_overridden": true,
+      "user_vars": {}
+     }
+    ]
+   },
+   {
+    "active_window_history": [
+     99
+    ],
+    "enabled_layouts": [
+     "splits",
+     "stack",
+     "tall",
+     "grid"
+    ],
+    "groups": [
+     {
+      "id": 45,
+      "windows": [
+       99
+      ]
+     }
+    ],
+    "id": 27,
+    "is_active": false,
+    "is_focused": false,
+    "layout": "splits",
+    "layout_opts": {
+     "equalize_on_window_close": "n",
+     "split_axis": "horizontal"
+    },
+    "layout_state": {
+     "all_windows": {
+      "active_group_history": [
+       45
+      ],
+      "active_group_idx": 0,
+      "window_groups": [
+       {
+        "id": 45,
+        "window_ids": [
+         99
+        ]
+       }
+      ]
+     },
+     "class": "Splits",
+     "opts": {
+      "equalize_on_window_close": "n",
+      "split_axis": "horizontal"
+     },
+     "pairs": {
+      "one": 45
+     }
+    },
+    "title": "rev-3",
+    "title_overridden": false,
+    "windows": [
+     {
+      "at_prompt": false,
+      "cmdline": [
+       "/bin/bash",
+       "--posix"
+      ],
+      "columns": 212,
+      "created_at": 1788121600335768110,
+      "cwd": "/home/pleb/research/gpu_terminal",
+      "env": {
+       "KITTY_PTY_BROKER_SESSION": "REDACTED",
+       "KITTY_WINDOW_ID": "99"
+      },
+      "foreground_processes": [
+       {
+        "cmdline": [
+         "agent-a",
+         "--dangerously-skip-permissions"
+        ],
+        "cwd": "/home/pleb/research/gpu_terminal",
+        "pid": 341926
+       }
+      ],
+      "has_activity_since_last_focus": true,
+      "id": 99,
+      "in_alternate_screen": true,
+      "is_active": true,
+      "is_focused": true,
+      "is_self": false,
+      "last_cmd_exit_status": 0,
+      "last_focused_at": 278814.114305067,
+      "last_reported_cmdline": "agent-a --dangerously-skip-permissions",
+      "lines": 57,
+      "needs_attention": false,
+      "neighbors": {},
+      "pid": 340732,
+      "session_name": "",
+      "title": "rev-3",
+      "title_overridden": true,
+      "user_vars": {}
+     }
+    ]
+   },
+   {
+    "active_window_history": [
+     102
+    ],
+    "enabled_layouts": [
+     "splits",
+     "stack",
+     "tall",
+     "grid"
+    ],
+    "groups": [
+     {
+      "id": 48,
+      "windows": [
+       102
+      ]
+     }
+    ],
+    "id": 30,
+    "is_active": false,
+    "is_focused": false,
+    "layout": "splits",
+    "layout_opts": {
+     "equalize_on_window_close": "n",
+     "split_axis": "horizontal"
+    },
+    "layout_state": {
+     "all_windows": {
+      "active_group_history": [
+       48
+      ],
+      "active_group_idx": 0,
+      "window_groups": [
+       {
+        "id": 48,
+        "window_ids": [
+         102
+        ]
+       }
+      ]
+     },
+     "class": "Splits",
+     "opts": {
+      "equalize_on_window_close": "n",
+      "split_axis": "horizontal"
+     },
+     "pairs": {
+      "one": 48
+     }
+    },
+    "title": "rev-6",
+    "title_overridden": false,
+    "windows": [
+     {
+      "at_prompt": false,
+      "cmdline": [
+       "/bin/bash",
+       "--posix"
+      ],
+      "columns": 212,
+      "created_at": 1788121976293309121,
+      "cwd": "/home/pleb/research/gpu_terminal",
+      "env": {
+       "KITTY_PTY_BROKER_SESSION": "REDACTED",
+       "KITTY_WINDOW_ID": "102"
+      },
+      "foreground_processes": [
+       {
+        "cmdline": [
+         "agent-a",
+         "--dangerously-skip-permissions"
+        ],
+        "cwd": "/home/pleb/research/gpu_terminal",
+        "pid": 533514
+       }
+      ],
+      "has_activity_since_last_focus": true,
+      "id": 102,
+      "in_alternate_screen": true,
+      "is_active": true,
+      "is_focused": true,
+      "is_self": false,
+      "last_cmd_exit_status": 0,
+      "last_focused_at": 278817.263493301,
+      "last_reported_cmdline": "agent-a --dangerously-skip-permissions",
+      "lines": 57,
+      "needs_attention": false,
+      "neighbors": {},
+      "pid": 532469,
+      "session_name": "",
+      "title": "rev-6",
+      "title_overridden": true,
+      "user_vars": {}
+     }
+    ]
+   },
+   {
+    "active_window_history": [
+     104
+    ],
+    "enabled_layouts": [
+     "splits",
+     "stack",
+     "tall",
+     "grid"
+    ],
+    "groups": [
+     {
+      "id": 50,
+      "windows": [
+       104
+      ]
+     }
+    ],
+    "id": 32,
+    "is_active": false,
+    "is_focused": false,
+    "layout": "splits",
+    "layout_opts": {
+     "equalize_on_window_close": "n",
+     "split_axis": "horizontal"
+    },
+    "layout_state": {
+     "all_windows": {
+      "active_group_history": [
+       50
+      ],
+      "active_group_idx": 0,
+      "window_groups": [
+       {
+        "id": 50,
+        "window_ids": [
+         104
+        ]
+       }
+      ]
+     },
+     "class": "Splits",
+     "opts": {
+      "equalize_on_window_close": "n",
+      "split_axis": "horizontal"
+     },
+     "pairs": {
+      "one": 50
+     }
+    },
+    "title": "w-f110",
+    "title_overridden": false,
+    "windows": [
+     {
+      "at_prompt": false,
+      "cmdline": [
+       "/bin/bash",
+       "--posix"
+      ],
+      "columns": 212,
+      "created_at": 1788122268232090960,
+      "cwd": "/home/pleb/research/gpu_terminal",
+      "env": {
+       "KITTY_PTY_BROKER_SESSION": "REDACTED",
+       "KITTY_WINDOW_ID": "104"
+      },
+      "foreground_processes": [
+       {
+        "cmdline": [
+         "agent-a",
+         "--dangerously-skip-permissions"
+        ],
+        "cwd": "/home/pleb/research/gpu_terminal",
+        "pid": 581240
+       }
+      ],
+      "has_activity_since_last_focus": true,
+      "id": 104,
+      "in_alternate_screen": true,
+      "is_active": true,
+      "is_focused": true,
+      "is_self": false,
+      "last_cmd_exit_status": 0,
+      "last_focused_at": 278823.008657621,
+      "last_reported_cmdline": "agent-a --dangerously-skip-permissions",
+      "lines": 57,
+      "needs_attention": false,
+      "neighbors": {},
+      "pid": 580081,
+      "session_name": "",
+      "title": "w-f110",
+      "title_overridden": true,
+      "user_vars": {}
+     }
+    ]
+   },
+   {
+    "active_window_history": [
+     107
+    ],
+    "enabled_layouts": [
+     "splits",
+     "stack",
+     "tall",
+     "grid"
+    ],
+    "groups": [
+     {
+      "id": 53,
+      "windows": [
+       107
+      ]
+     }
+    ],
+    "id": 35,
+    "is_active": false,
+    "is_focused": false,
+    "layout": "splits",
+    "layout_opts": {
+     "equalize_on_window_close": "n",
+     "split_axis": "horizontal"
+    },
+    "layout_state": {
+     "all_windows": {
+      "active_group_history": [
+       53
+      ],
+      "active_group_idx": 0,
+      "window_groups": [
+       {
+        "id": 53,
+        "window_ids": [
+         107
+        ]
+       }
+      ]
+     },
+     "class": "Splits",
+     "opts": {
+      "equalize_on_window_close": "n",
+      "split_axis": "horizontal"
+     },
+     "pairs": {
+      "one": 53
+     }
+    },
+    "title": "w-f108",
+    "title_overridden": false,
+    "windows": [
+     {
+      "at_prompt": false,
+      "cmdline": [
+       "/bin/bash",
+       "--posix"
+      ],
+      "columns": 212,
+      "created_at": 1788122735318880597,
+      "cwd": "/home/pleb/research/gpu_terminal",
+      "env": {
+       "KITTY_PTY_BROKER_SESSION": "REDACTED",
+       "KITTY_WINDOW_ID": "107"
+      },
+      "foreground_processes": [
+       {
+        "cmdline": [
+         "agent-a",
+         "--dangerously-skip-permissions"
+        ],
+        "cwd": "/home/pleb/research/gpu_terminal",
+        "pid": 645724
+       }
+      ],
+      "has_activity_since_last_focus": true,
+      "id": 107,
+      "in_alternate_screen": true,
+      "is_active": true,
+      "is_focused": true,
+      "is_self": false,
+      "last_cmd_exit_status": 0,
+      "last_focused_at": 278828.138992719,
+      "last_reported_cmdline": "agent-a --dangerously-skip-permissions",
+      "lines": 57,
+      "needs_attention": false,
+      "neighbors": {},
+      "pid": 641580,
+      "session_name": "",
+      "title": "w-f108",
+      "title_overridden": true,
+      "user_vars": {}
+     }
+    ]
+   },
+   {
+    "active_window_history": [
+     112
+    ],
+    "enabled_layouts": [
+     "splits",
+     "stack",
+     "tall",
+     "grid"
+    ],
+    "groups": [
+     {
+      "id": 58,
+      "windows": [
+       112
+      ]
+     }
+    ],
+    "id": 40,
+    "is_active": false,
+    "is_focused": false,
+    "layout": "splits",
+    "layout_opts": {
+     "equalize_on_window_close": "n",
+     "split_axis": "horizontal"
+    },
+    "layout_state": {
+     "all_windows": {
+      "active_group_history": [
+       58
+      ],
+      "active_group_idx": 0,
+      "window_groups": [
+       {
+        "id": 58,
+        "window_ids": [
+         112
+        ]
+       }
+      ]
+     },
+     "class": "Splits",
+     "opts": {
+      "equalize_on_window_close": "n",
+      "split_axis": "horizontal"
+     },
+     "pairs": {
+      "one": 58
+     }
+    },
+    "title": "w-f107b",
+    "title_overridden": false,
+    "windows": [
+     {
+      "at_prompt": false,
+      "cmdline": [
+       "/bin/bash",
+       "--posix"
+      ],
+      "columns": 212,
+      "created_at": 1788123517631360385,
+      "cwd": "/home/pleb/research/gpu_terminal",
+      "env": {
+       "KITTY_PTY_BROKER_SESSION": "REDACTED",
+       "KITTY_WINDOW_ID": "112"
+      },
+      "foreground_processes": [
+       {
+        "cmdline": [
+         "agent-a",
+         "--dangerously-skip-permissions"
+        ],
+        "cwd": "/home/pleb/research/gpu_terminal",
+        "pid": 808300
+       }
+      ],
+      "has_activity_since_last_focus": true,
+      "id": 112,
+      "in_alternate_screen": true,
+      "is_active": true,
+      "is_focused": true,
+      "is_self": false,
+      "last_cmd_exit_status": 0,
+      "last_focused_at": 278840.918487724,
+      "last_reported_cmdline": "agent-a --dangerously-skip-permissions",
+      "lines": 57,
+      "needs_attention": false,
+      "neighbors": {},
+      "pid": 807288,
+      "session_name": "",
+      "title": "w-f107b",
+      "title_overridden": true,
+      "user_vars": {}
+     }
+    ]
+   },
+   {
+    "active_window_history": [
+     120
+    ],
+    "enabled_layouts": [
+     "splits",
+     "stack",
+     "tall",
+     "grid"
+    ],
+    "groups": [
+     {
+      "id": 66,
+      "windows": [
+       120
+      ]
+     }
+    ],
+    "id": 48,
+    "is_active": false,
+    "is_focused": false,
+    "layout": "splits",
+    "layout_opts": {
+     "equalize_on_window_close": "n",
+     "split_axis": "horizontal"
+    },
+    "layout_state": {
+     "all_windows": {
+      "active_group_history": [
+       66
+      ],
+      "active_group_idx": 0,
+      "window_groups": [
+       {
+        "id": 66,
+        "window_ids": [
+         120
+        ]
+       }
+      ]
+     },
+     "class": "Splits",
+     "opts": {
+      "equalize_on_window_close": "n",
+      "split_axis": "horizontal"
+     },
+     "pairs": {
+      "one": 66
+     }
+    },
+    "title": "w-f100u1",
+    "title_overridden": false,
+    "windows": [
+     {
+      "at_prompt": false,
+      "cmdline": [
+       "/bin/bash",
+       "--posix"
+      ],
+      "columns": 212,
+      "created_at": 1788136543371752267,
+      "cwd": "/home/pleb/research/gpu_terminal",
+      "env": {
+       "KITTY_PTY_BROKER_SESSION": "REDACTED",
+       "KITTY_WINDOW_ID": "120"
+      },
+      "foreground_processes": [
+       {
+        "cmdline": [
+         "agent-a",
+         "--dangerously-skip-permissions"
+        ],
+        "cwd": "/home/pleb/research/gpu_terminal",
+        "pid": 2536569
+       }
+      ],
+      "has_activity_since_last_focus": true,
+      "id": 120,
+      "in_alternate_screen": true,
+      "is_active": true,
+      "is_focused": true,
+      "is_self": false,
+      "last_cmd_exit_status": 0,
+      "last_focused_at": 278850.949724641,
+      "last_reported_cmdline": "agent-a --dangerously-skip-permissions",
+      "lines": 57,
+      "needs_attention": false,
+      "neighbors": {},
+      "pid": 2535986,
+      "session_name": "",
+      "title": "w-f100u1",
+      "title_overridden": true,
+      "user_vars": {}
+     }
+    ]
+   },
+   {
+    "active_window_history": [
+     123
+    ],
+    "enabled_layouts": [
+     "splits",
+     "stack",
+     "tall",
+     "grid"
+    ],
+    "groups": [
+     {
+      "id": 69,
+      "windows": [
+       123
+      ]
+     }
+    ],
+    "id": 51,
+    "is_active": false,
+    "is_focused": false,
+    "layout": "splits",
+    "layout_opts": {
+     "equalize_on_window_close": "n",
+     "split_axis": "horizontal"
+    },
+    "layout_state": {
+     "all_windows": {
+      "active_group_history": [
+       69
+      ],
+      "active_group_idx": 0,
+      "window_groups": [
+       {
+        "id": 69,
+        "window_ids": [
+         123
+        ]
+       }
+      ]
+     },
+     "class": "Splits",
+     "opts": {
+      "equalize_on_window_close": "n",
+      "split_axis": "horizontal"
+     },
+     "pairs": {
+      "one": 69
+     }
+    },
+    "title": "rx-a",
+    "title_overridden": false,
+    "windows": [
+     {
+      "at_prompt": false,
+      "cmdline": [
+       "/bin/bash",
+       "--posix"
+      ],
+      "columns": 212,
+      "created_at": 1788175027547985972,
+      "cwd": "/home/pleb/research/gpu_terminal",
+      "env": {
+       "KITTY_PTY_BROKER_SESSION": "REDACTED",
+       "KITTY_WINDOW_ID": "123"
+      },
+      "foreground_processes": [
+       {
+        "cmdline": [
+         "agent-a",
+         "--dangerously-skip-permissions"
+        ],
+        "cwd": "/home/pleb/research/gpu_terminal",
+        "pid": 3030462
+       }
+      ],
+      "has_activity_since_last_focus": true,
+      "id": 123,
+      "in_alternate_screen": true,
+      "is_active": true,
+      "is_focused": true,
+      "is_self": false,
+      "last_cmd_exit_status": 0,
+      "last_focused_at": 281700.844316768,
+      "last_reported_cmdline": "agent-a --dangerously-skip-permissions",
+      "lines": 57,
+      "needs_attention": false,
+      "neighbors": {},
+      "pid": 3029839,
+      "session_name": "",
+      "title": "rx-a",
+      "title_overridden": true,
+      "user_vars": {}
+     }
+    ]
+   },
+   {
+    "active_window_history": [
+     125
+    ],
+    "enabled_layouts": [
+     "splits",
+     "stack",
+     "tall",
+     "grid"
+    ],
+    "groups": [
+     {
+      "id": 71,
+      "windows": [
+       125
+      ]
+     }
+    ],
+    "id": 53,
+    "is_active": false,
+    "is_focused": false,
+    "layout": "splits",
+    "layout_opts": {
+     "equalize_on_window_close": "n",
+     "split_axis": "horizontal"
+    },
+    "layout_state": {
+     "all_windows": {
+      "active_group_history": [
+       71
+      ],
+      "active_group_idx": 0,
+      "window_groups": [
+       {
+        "id": 71,
+        "window_ids": [
+         125
+        ]
+       }
+      ]
+     },
+     "class": "Splits",
+     "opts": {
+      "equalize_on_window_close": "n",
+      "split_axis": "horizontal"
+     },
+     "pairs": {
+      "one": 71
+     }
+    },
+    "title": "rx-b",
+    "title_overridden": false,
+    "windows": [
+     {
+      "at_prompt": false,
+      "cmdline": [
+       "/bin/bash",
+       "--posix"
+      ],
+      "columns": 212,
+      "created_at": 1788175122161307016,
+      "cwd": "/home/pleb/research/gpu_terminal",
+      "env": {
+       "KITTY_PTY_BROKER_SESSION": "REDACTED",
+       "KITTY_WINDOW_ID": "125"
+      },
+      "foreground_processes": [
+       {
+        "cmdline": [
+         "agent-a",
+         "--dangerously-skip-permissions"
+        ],
+        "cwd": "/home/pleb/research/gpu_terminal",
+        "pid": 3039951
+       }
+      ],
+      "has_activity_since_last_focus": true,
+      "id": 125,
+      "in_alternate_screen": true,
+      "is_active": true,
+      "is_focused": true,
+      "is_self": false,
+      "last_cmd_exit_status": 0,
+      "last_focused_at": 278863.072640853,
+      "last_reported_cmdline": "agent-a --dangerously-skip-permissions",
+      "lines": 57,
+      "needs_attention": false,
+      "neighbors": {},
+      "pid": 3039204,
+      "session_name": "",
+      "title": "rx-b",
+      "title_overridden": true,
+      "user_vars": {}
+     }
+    ]
+   },
+   {
+    "active_window_history": [
+     151,
+     149
+    ],
+    "enabled_layouts": [
+     "splits",
+     "stack",
+     "tall",
+     "grid"
+    ],
+    "groups": [
+     {
+      "id": 93,
+      "windows": [
+       151
+      ]
+     },
+     {
+      "id": 95,
+      "windows": [
+       149
+      ]
+     }
+    ],
+    "id": 74,
+    "is_active": false,
+    "is_focused": false,
+    "layout": "splits",
+    "layout_opts": {
+     "equalize_on_window_close": "n",
+     "split_axis": "horizontal"
+    },
+    "layout_state": {
+     "all_windows": {
+      "active_group_history": [
+       93,
+       95
+      ],
+      "active_group_idx": 0,
+      "window_groups": [
+       {
+        "id": 93,
+        "window_ids": [
+         151
+        ]
+       },
+       {
+        "id": 95,
+        "window_ids": [
+         149
+        ]
+       }
+      ]
+     },
+     "class": "Splits",
+     "opts": {
+      "equalize_on_window_close": "n",
+      "split_axis": "horizontal"
+     },
+     "pairs": {
+      "one": 95,
+      "two": 93
+     }
+    },
+    "title": "pleb_vm",
+    "title_overridden": false,
+    "windows": [
+     {
+      "at_prompt": false,
+      "cmdline": [
+       "/bin/bash",
+       "--posix"
+      ],
+      "columns": 105,
+      "created_at": 1788212291764091513,
+      "cwd": "/home/pleb/pleb_vm",
+      "env": {
+       "KITTY_PTY_BROKER_SESSION": "REDACTED",
+       "KITTY_WINDOW_ID": "151"
+      },
+      "foreground_processes": [
+       {
+        "cmdline": [
+         "node",
+         "/usr/local/bin/agent-b",
+         "--yolo"
+        ],
+        "cwd": "/home/pleb/pleb_vm",
+        "pid": 1658647
+       },
+       {
+        "cmdline": [
+         "/usr/local/lib/node_modules/@openai/agent-b/node_modules/@openai/agent-b-linux-x64/vendor/x86_64-unknown-linux-musl/bin/agent-b",
+         "--yolo"
+        ],
+        "cwd": "/home/pleb/pleb_vm",
+        "pid": 1658674
+       }
+      ],
+      "has_activity_since_last_focus": false,
+      "id": 151,
+      "in_alternate_screen": false,
+      "is_active": true,
+      "is_focused": true,
+      "is_self": false,
+      "last_cmd_exit_status": 0,
+      "last_focused_at": 278868.065201817,
+      "last_reported_cmdline": "agent-b --yolo",
+      "lines": 57,
+      "needs_attention": false,
+      "neighbors": {
+       "left": [
+        95
+       ]
+      },
+      "pid": 1288452,
+      "session_name": "",
+      "title": "pleb_vm",
+      "title_overridden": false,
+      "user_vars": {}
+     },
+     {
+      "at_prompt": false,
+      "cmdline": [
+       "/bin/bash",
+       "--posix"
+      ],
+      "columns": 105,
+      "created_at": 1788207230402105124,
+      "cwd": "/home/pleb/research/gpu_terminal",
+      "env": {
+       "KITTY_PTY_BROKER_SESSION": "REDACTED",
+       "KITTY_WINDOW_ID": "149"
+      },
+      "foreground_processes": [
+       {
+        "cmdline": [
+         "agent-a",
+         "--dangerously-skip-permissions"
+        ],
+        "cwd": "/home/pleb/research/gpu_terminal",
+        "pid": 4101531
+       }
+      ],
+      "has_activity_since_last_focus": true,
+      "id": 149,
+      "in_alternate_screen": true,
+      "is_active": false,
+      "is_focused": false,
+      "is_self": false,
+      "last_cmd_exit_status": 0,
+      "last_focused_at": 262819.098333576,
+      "last_reported_cmdline": "agent-a --dangerously-skip-permissions",
+      "lines": 57,
+      "needs_attention": false,
+      "neighbors": {
+       "right": [
+        93
+       ]
+      },
+      "pid": 4097688,
+      "session_name": "",
+      "title": "w-x01fix",
+      "title_overridden": true,
+      "user_vars": {}
+     }
+    ]
+   },
+   {
+    "active_window_history": [
+     155,
+     154
+    ],
+    "enabled_layouts": [
+     "splits",
+     "stack",
+     "tall",
+     "grid"
+    ],
+    "groups": [
+     {
+      "id": 97,
+      "windows": [
+       154
+      ]
+     },
+     {
+      "id": 98,
+      "windows": [
+       155
+      ]
+     }
+    ],
+    "id": 77,
+    "is_active": false,
+    "is_focused": false,
+    "layout": "splits",
+    "layout_opts": {
+     "equalize_on_window_close": "n",
+     "split_axis": "horizontal"
+    },
+    "layout_state": {
+     "all_windows": {
+      "active_group_history": [
+       99,
+       100,
+       98,
+       97
+      ],
+      "active_group_idx": 1,
+      "window_groups": [
+       {
+        "id": 97,
+        "window_ids": [
+         154
+        ]
+       },
+       {
+        "id": 98,
+        "window_ids": [
+         155
+        ]
+       }
+      ]
+     },
+     "class": "Splits",
+     "opts": {
+      "equalize_on_window_close": "n",
+      "split_axis": "horizontal"
+     },
+     "pairs": {
+      "bias": 0.541666666666667,
+      "one": 97,
+      "two": 98
+     }
+    },
+    "title": "esp32",
+    "title_overridden": false,
+    "windows": [
+     {
+      "at_prompt": false,
+      "cmdline": [
+       "/bin/bash",
+       "--posix"
+      ],
+      "columns": 114,
+      "created_at": 1788230891570332591,
+      "cwd": "/home/pleb/esp32",
+      "env": {
+       "KITTY_PTY_BROKER_SESSION": "REDACTED",
+       "KITTY_WINDOW_ID": "154"
+      },
+      "foreground_processes": [
+       {
+        "cmdline": [
+         "agent-a",
+         "--dangerously-skip-permissions"
+        ],
+        "cwd": "/home/pleb/esp32",
+        "pid": 1777553
+       }
+      ],
+      "has_activity_since_last_focus": true,
+      "id": 154,
+      "in_alternate_screen": true,
+      "is_active": false,
+      "is_focused": false,
+      "is_self": false,
+      "last_cmd_exit_status": 0,
+      "last_focused_at": 284306.993126502,
+      "last_reported_cmdline": "agent-a --dangerously-skip-permissions",
+      "lines": 57,
+      "needs_attention": false,
+      "neighbors": {
+       "right": [
+        98
+       ]
+      },
+      "pid": 1776496,
+      "session_name": "",
+      "title": "\u2733 ESP32 device detection",
+      "title_overridden": false,
+      "user_vars": {}
+     },
+     {
+      "at_prompt": true,
+      "cmdline": [
+       "/bin/bash",
+       "--posix"
+      ],
+      "columns": 96,
+      "created_at": 1788232270558564537,
+      "cwd": "/home/pleb/esp32",
+      "env": {
+       "KITTY_PTY_BROKER_SESSION": "REDACTED",
+       "KITTY_WINDOW_ID": "155"
+      },
+      "foreground_processes": [
+       {
+        "cmdline": [
+         "/bin/bash",
+         "--posix"
+        ],
+        "cwd": "/home/pleb/esp32",
+        "pid": 1801050
+       }
+      ],
+      "has_activity_since_last_focus": true,
+      "id": 155,
+      "in_alternate_screen": false,
+      "is_active": true,
+      "is_focused": true,
+      "is_self": false,
+      "last_cmd_exit_status": 1,
+      "last_focused_at": 284325.780165938,
+      "last_reported_cmdline": "ssh-copy-id nano && echo '--- key installed, connecting ---' && ssh nano",
+      "lines": 57,
+      "needs_attention": false,
+      "neighbors": {
+       "left": [
+        97
+       ]
+      },
+      "pid": 1801050,
+      "session_name": "",
+      "title": "esp32",
+      "title_overridden": true,
+      "user_vars": {}
+     }
+    ]
+   }
+  ],
+  "wm_class": "kilix",
+  "wm_name": "kilix"
+ }
+]
