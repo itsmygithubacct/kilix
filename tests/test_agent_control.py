@@ -434,6 +434,24 @@ class AgentArgvTests(unittest.TestCase):
             control.grok_trust_is_exact(workspace / "inner")
         control.grok_trust_is_exact(workspace)          # its root is fine
 
+    def test_grok_trust_refuses_where_git_refuses_a_marked_repository(self):    # KX-R13-41 K2/K4
+        root = Path(self.directory.name) / "broken"
+        (root / "sub").mkdir(parents=True)
+        (root / ".git").write_text("gitdir: /nonexistent/for/this/test\n")
+        for cwd in (root, root / "sub"):
+            with self.assertRaisesRegex(control.ControlError, "Git repository root", msg=str(cwd)):
+                control.grok_trust_is_exact(cwd)
+
+    def test_the_exact_prompts_round_4_named_are_refused(self):                 # KX-R13-41 K5/K6
+        for prompt in ("# remember this rule", "@notes.md summarize it", "  /logout now"):
+            client = FakeClient()
+            args = control.parser().parse_args([
+                "new-tab", "1", "--expect-broker", SOURCE_BROKER, "--agent", "claude",
+                "--title", "t", "--cwd", self.directory.name, "--prompt", prompt])
+            with mock.patch.object(agent_programs, "resolve_agent_command", return_value="/bin/x"):
+                with self.assertRaises(control.ControlError, msg=prompt):
+                    control.launch(client, args)
+
     def test_omp_tools_are_only_ones_on_by_default(self):                        # KX-R13-38
         for off in ("ast_grep", "find", "task"):
             self.assertNotIn(off, control.OMP_NON_YOLO_TOOLS)
