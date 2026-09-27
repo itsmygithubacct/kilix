@@ -5,6 +5,7 @@ import io
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import threading
@@ -98,6 +99,19 @@ class InputTests(unittest.TestCase):
                 self.assertEqual(result, 1)
                 self.assertEqual(self.client.calls, [])
 
+    def test_send_refuses_client_commands_without_explicit_override(self):
+        for value in ("/model", "  /logout now", "!pwd", "   ! git status"):
+            with self.subTest(value=value):
+                result, _, error = self.invoke(
+                    ["send", "2", "--expect-broker", TARGET_BROKER, "--text", value])
+                self.assertEqual(result, 1)
+                self.assertIn("client command", error)
+                self.assertEqual(self.client.calls, [])
+        result, _, _ = self.invoke(["send", "2", "--expect-broker", TARGET_BROKER,
+                                    "--text", " /model", "--allow-command", "--submit"])
+        self.assertEqual(result, 0)
+        self.assertEqual([payload for _, payload in self.client.calls], [b" /model", b"\r"])
+
     def test_stale_ambiguous_self_and_unknown_targets_refuse_without_input(self):
         for target, broker in ((2, "e" * 16), (9, TARGET_BROKER), (1, SOURCE_BROKER),
                                (2, "id:2"), (2, TARGET_BROKER + " or id:1")):
@@ -166,13 +180,12 @@ class LaunchTests(unittest.TestCase):
                                            "--cwd", self.directory.name, *extra])
 
     def test_new_tab_is_anchored_argv_and_startup_remains_unverified(self):
-        result = control.launch(self.client, self.args("new-tab", "--model", "model-name",
-                                                       "--agent-arg=--effort=high"))
+        result = control.launch(self.client, self.args("new-tab", "--model", "model-name"))
         argv = self.client.calls[-1][0]
         self.assertEqual(argv[argv.index("--match") + 1], "window_id:1")
         self.assertEqual(argv[argv.index("--next-to") + 1], "id:1")
         self.assertEqual(argv[argv.index("--cwd") + 1], self.directory.name)
-        self.assertEqual(argv[argv.index("--") + 1:], ["/opt/bin/codex", "--model", "model-name", "--effort=high"])
+        self.assertEqual(argv[argv.index("--") + 1:], ["/opt/bin/codex", "--model", "model-name"])
         self.assertIn("--keep-focus", argv)
         self.assertNotIn("--allow-remote-control", argv)
         self.assertEqual(result["pane"]["tab_id"], 22)
@@ -326,6 +339,31 @@ class AgentArgvTests(unittest.TestCase):
             self.assertFalse(any(c[0][0] == "launch" and c[0] != ["launch", "--help"]
                                  for c in client.calls), extra)
 
+    def test_every_client_refuses_command_like_launch_prompts(self):
+        for agent in control.AGENTS:
+            for prefix in "/!#@-":
+                client = FakeClient()
+                args = control.parser().parse_args([
+                    "new-tab", "1", "--expect-broker", SOURCE_BROKER,
+                    "--agent", agent, "--title", "t", "--cwd", self.directory.name,
+                    "--prompt", f"  {prefix}command with arguments"])
+                with mock.patch.object(agent_programs, "resolve_agent_command",
+                                       return_value="/bin/x"):
+                    with self.assertRaises(control.ControlError, msg=(agent, prefix)):
+                        control.launch(client, args)
+                self.assertFalse(any(call[0][0] == "launch" for call in client.calls),
+                                 (agent, prefix))
+
+    def test_empty_prompt_is_refused_before_launch(self):
+        client = FakeClient()
+        args = control.parser().parse_args([
+            "new-tab", "1", "--expect-broker", SOURCE_BROKER, "--agent", "claude",
+            "--title", "t", "--cwd", self.directory.name, "--prompt="])
+        with mock.patch.object(agent_programs, "resolve_agent_command", return_value="/bin/x"):
+            with self.assertRaises(control.ControlError):
+                control.launch(client, args)
+        self.assertFalse(any(call[0][0] == "launch" for call in client.calls))
+
     def test_omp_asks_unless_the_yolo_setting_applies(self):                     # KX-R13-02
         safe = self.argv("qwen-omp")[0]
         self.assertIn("--approval-mode=always-ask", safe)
@@ -336,16 +374,49 @@ class AgentArgvTests(unittest.TestCase):
         self.assertNotIn("--approval-mode=always-ask", yolo)
         self.assertFalse(any(arg.startswith("--tools=") for arg in yolo))
 
+    def test_omp_non_yolo_tools_match_the_source_fixture(self):                  # KX-R13-32
+        fixture = Path(__file__).with_name("fixtures") / "omp-18.3.2-default-tools.txt"
+        expected = tuple(line for line in fixture.read_text().splitlines()
+                         if line and not line.startswith("#"))
+        self.assertEqual(control.OMP_NON_YOLO_TOOLS, expected)
+
     def test_only_each_clients_documented_extra_arguments_are_allowed(self):
-        cases = (("claude", "--add-dir=/tmp/also"),
-                 ("codex", "--add-dir=/tmp/also"), ("codex", "--effort=high"),
-                 ("grok", "--effort=high"), ("qwen-omp", "--thinking=high"))
+        cases = (("grok", "--effort=high"), ("qwen-omp", "--thinking=high"))
         for agent, item in cases:
             self.assertIn(item, self.argv(agent, f"--agent-arg={item}")[0])
+
+    def test_directory_widening_and_unsupported_codex_effort_are_refused(self):
+        for agent, item in (("claude", "--add-dir=/tmp/also"),
+                            ("claude", "--add-dir"),
+                            ("codex", "--add-dir=/tmp/also"),
+                            ("codex", "--effort=high"),
+                            ("kimi", "--yolo")):
+            with self.subTest(agent=agent, item=item):
+                with self.assertRaises(control.ControlError):
+                    self.argv(agent, f"--agent-arg={item}")
 
     def test_grok_trusts_its_own_folder_when_asked(self):                         # KX-R13-11
         self.assertIn("--trust", self.argv("grok", "--trust-folder")[0])
         self.assertNotIn("--trust", self.argv("grok")[0])
+
+    def test_grok_trust_requires_the_repository_root(self):                      # KX-R13-31
+        root = Path(self.directory.name) / "repo"
+        nested = root / "nested"
+        nested.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        base = ["new-tab", "1", "--expect-broker", SOURCE_BROKER, "--agent", "grok",
+                "--title", "t", "--trust-folder", "--dry-run"]
+        with mock.patch.object(agent_programs, "resolve_agent_command", return_value="/bin/grok"):
+            accepted = control.launch(FakeClient(), control.parser().parse_args(
+                [*base, "--cwd", str(root)]))
+            self.assertIn("--trust", accepted["launch_argv"])
+            with self.assertRaisesRegex(control.ControlError, "repository root"):
+                control.launch(FakeClient(), control.parser().parse_args(
+                    [*base, "--cwd", str(nested)]))
+            unasked = control.launch(FakeClient(), control.parser().parse_args(
+                [item for item in base if item != "--trust-folder"] +
+                ["--cwd", str(nested)]))
+            self.assertNotIn("--trust", unasked["launch_argv"])
 
     def test_client_subcommands_are_read_from_help(self):                         # KX-R13-01
         help_text = ("Usage: x\n\nCommands:\n  exec    Run [aliases: e]\n  plugin|plugins  Manage\n"

@@ -35,21 +35,19 @@ YOLO_FLAGS = {"claude": ["--dangerously-skip-permissions"],
               "codex": ["--dangerously-bypass-approvals-and-sandbox"],
               "grok": ["--always-approve"], "qwen-omp": ["--auto-approve"]}
 # omp's task executor forces its child agents to yolo independently of the
-# parent's approval mode.  Keep all of omp 18.3.2's built-ins except `task`
-# when Kilix coding-yolo is off.
+# parent's approval mode.  Keep the omp 18.3.2 tools loaded under the default
+# configuration except `task` when Kilix coding-yolo is off.  Optional tools
+# cannot appear here: omp rejects requested tools which its config disabled.
 OMP_NON_YOLO_TOOLS = ("read", "bash", "edit", "ast_grep", "ast_edit", "ask", "debug",
-                      "ida", "eval", "github", "glob", "grep", "find", "lsp",
-                      "checkpoint", "rewind", "context_notes", "new_context",
-                      "security_scan", "wait", "todo", "web_search", "write",
-                      "memory_edit", "retain", "recall", "reflect", "learn",
-                      "manage_skill")
+                      "ida", "eval", "glob", "grep", "find", "lsp", "wait", "todo",
+                      "web_search", "write")
 ASK_FLAGS = {"qwen-omp": ["--approval-mode=always-ask",
                            "--tools=" + ",".join(OMP_NON_YOLO_TOOLS)]}
 # Every accepted extra is one self-contained argv item.  Values are inline so
 # a following item can never be reinterpreted as an unrestricted option value.
 AGENT_ARG_PATTERNS = {
-    "claude": (re.compile(r"--add-dir=.+\Z"),),
-    "codex": (re.compile(r"--add-dir=.+\Z"), re.compile(r"--effort=[A-Za-z0-9_-]+\Z")),
+    "claude": (),
+    "codex": (),
     "grok": (re.compile(r"--effort=[A-Za-z0-9_-]+\Z"),),
     "qwen-omp": (re.compile(r"--thinking=[A-Za-z0-9_-]+\Z"),),
     "kimi": (),
@@ -109,6 +107,31 @@ def plain_text(value, label, limit=1024):
     if any(ord(c) < 32 or 127 <= ord(c) <= 159 for c in value):
         raise ControlError(f"{label} must be a single line without control characters")
     return value
+
+
+def _git_marker_above(directory):
+    """Whether a path is visibly within a Git worktree, even if git refuses it."""
+    current = directory.resolve()
+    return any((parent / ".git").exists() or (parent / ".git").is_symlink()
+               for parent in (current, *current.parents))
+
+
+def grok_trust_is_exact(cwd):
+    """Refuse Grok trust when its repository-scoped grant would exceed cwd."""
+    try:
+        done = subprocess.run(
+            ["git", "-C", os.fspath(cwd), "rev-parse", "--show-toplevel"],
+            stdin=subprocess.DEVNULL, capture_output=True, timeout=10, check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ControlError("cannot determine the Git repository root for grok --trust-folder") from exc
+    if done.returncode:
+        if _git_marker_above(cwd):
+            raise ControlError("cannot determine the Git repository root for grok --trust-folder")
+        return
+    top = Path(os.fsdecode(done.stdout.strip())).resolve()
+    if cwd.resolve() != top:
+        raise ControlError("grok --trust-folder requires --cwd to be the Git repository root; "
+                           f"refusing repository-wide trust from {cwd}")
 
 
 def connection_values():
@@ -384,6 +407,7 @@ def agent_argv(args, executable, cwd):
         yolo = settings.coding_yolo()
     argv.extend(YOLO_FLAGS.get(agent, []) if yolo else ASK_FLAGS.get(agent, []))
     if getattr(args, "trust_folder", False) and agent == "grok":
+        grok_trust_is_exact(cwd)
         argv.append("--trust")         # grok records its own folder trust
     if agent == "qwen-omp" and cwd == Path.home():
         argv.append("--allow-home")
@@ -399,8 +423,9 @@ def agent_argv(args, executable, cwd):
         argv.append(f"--resume={resume}")
     if args.prompt is not None:
         prompt = plain_text(args.prompt, "prompt")
-        if prompt.startswith("-"):
-            raise ControlError("a prompt may not begin with '-'")
+        stripped = prompt.lstrip()
+        if stripped and stripped[0] in "/!#@-":
+            raise ControlError("a prompt may not begin with '/', '!', '#', '@', or '-'")
         words = prompt.split()
         if not words:
             raise ControlError("prompt must contain non-whitespace text")
@@ -440,6 +465,8 @@ def parser():
                               help="single-line UTF-8 input, at most 1024 bytes")
             command.add_argument("--submit", action="store_true",
                                  help="send a separate Enter after text; verify the result")
+            command.add_argument("--allow-command", action="store_true",
+                                 help="explicitly allow leading / or ! client commands")
         elif name == "key":
             command.add_argument("key", choices=KEYS)
         else:
@@ -494,7 +521,12 @@ def main(argv=None):
                     value = data.decode("utf-8")
                 else:
                     value = args.text
-                payload = plain_text(value, "input").encode("utf-8")
+                value = plain_text(value, "input")
+                stripped = value.lstrip()
+                if stripped and stripped[0] in "/!" and not args.allow_command:
+                    raise ControlError("input beginning with '/' or '!' is a client command; "
+                                       "pass --allow-command only when that command is intended")
+                payload = value.encode("utf-8")
             client.input(args.pane, args.expect_broker, payload)
             if args.action == "send" and args.submit:
                 time.sleep(0.3)

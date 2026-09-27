@@ -1,0 +1,20 @@
+# OMP 18.3.2 packages/coding-agent/src/index.ts tool registry, evaluated with
+# the source defaults (github/security/checkpoint/context/autolearn/memory off).
+# `task` is default-enabled but intentionally omitted because its executor is yolo.
+read
+bash
+edit
+ast_grep
+ast_edit
+ask
+debug
+ida
+eval
+glob
+grep
+find
+lsp
+wait
+todo
+web_search
+write
