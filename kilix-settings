@@ -768,6 +768,8 @@ def main(argv: list[str] | None = None) -> int:
         description="Configure Kilix chrome and game availability")
     parser.add_argument("--print", action="store_true", dest="show",
                         help="print the effective shared settings")
+    parser.add_argument("--clock", action="store_true",
+                        help="open clock-only settings")
     parser.add_argument("--print-games", action="store_true",
                         help="print Kilix game availability")
     parser.add_argument("--ensure", action="store_true",
@@ -841,6 +843,9 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(
             "the interactive TUI requires a terminal; use --print, "
             "--print-games, --install-model, --default-model, --set, or --game")
+    if args.clock:
+        from kilix_clock_settings import run
+        return curses.wrapper(run)
     result = curses.wrapper(_run_tui, args.section)
     if isinstance(result, str) and result.startswith("tool:"):
         _exec_tool(result.removeprefix("tool:"))
