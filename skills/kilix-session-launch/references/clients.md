@@ -6,12 +6,14 @@ with an optional `--model MODEL` (never starting with `-`).
 - Approvals: a client's approval-skip flag is added only with
   `--coding-yolo`, and then only when Kilix's coding-yolo setting is on.
   Otherwise omp, which approves every tool by default, is started with
-  `--approval-mode=always-ask` and a `--tools` allow-list that omits `task`.
+  `--approval-mode=always-ask` and a `--tools` allow-list containing only the
+  tools omp 18.3.2 loads under its default configuration, minus `task`.
   Omp 18.3.2's task executor forces `tools.approvalMode: yolo` for its child
   agents, irrespective of the parent's approval mode; removing `task` is the
   supported command-line restriction that closes that path.
-- A launch prompt is passed only with `--prompt`: one line, never starting
-  with `-`. Every one-word prompt is refused for every client, because the
+- A launch prompt is passed only with `--prompt`: one line whose first
+  non-space character is never `/`, `!`, `#`, `@`, or `-`. Every one-word
+  prompt is refused for every client, because the
   whole positional argv item could be a listed or hidden subcommand (`claude
   rc`, `codex cloud-tasks`, `grok share`). Multi-word prompts are additionally
   checked against subcommands read from `--help`. An omp prompt has no
@@ -23,13 +25,16 @@ with an optional `--model MODEL` (never starting with `-`).
   is left alone. Grok's installed folder-trust implementation records the git
   worktree/repository root when launched inside a repository (and covers its
   subdirectories, but not a nested checkout); outside Git it records the
-  launch directory.
+  launch directory. Consequently Grok trust is refused when `--cwd` is below
+  a Git repository root; use the repository root itself, or a directory outside
+  every repository.
 
 It changes no other global setting. `--agent-arg` is a per-client allow-list,
 and every value is one literal, self-contained argv item (not a shell
-expression): Claude accepts `--add-dir=PATH`; Codex accepts `--add-dir=PATH`
-and `--effort=LEVEL`; Grok accepts `--effort=LEVEL`; qwen-omp accepts
-`--thinking=LEVEL`; Kimi accepts none. All other values are refused.
+expression): Grok accepts `--effort=LEVEL`; qwen-omp accepts
+`--thinking=LEVEL`; Claude, Codex, and Kimi accept none. Directory-widening
+arguments are deliberately unavailable, and Codex 0.157 has no `--effort`.
+All other values are refused.
 
 | Client | Startup detail |
 | --- | --- |
@@ -37,7 +42,7 @@ and `--effort=LEVEL`; Grok accepts `--effort=LEVEL`; qwen-omp accepts
 | Claude Code | `--model` is launch-scoped. Avoid `-p`/`--print`, which exits after a response. Don't replace user prompts with `--system-prompt`. |
 | Kimi Code | `--model` takes a configured alias. Current `-p`/`--prompt` is non-interactive, so start the TUI first and submit initialization after it is ready. Legacy kimi-cli flags differ. The helper refuses `--prompt` and `--resume` for kimi. |
 | Grok Build | `--model`/`-m`; `--resume ID`; a positional launch prompt; `--always-approve` is its approval skip; `--trust` records its own folder trust. |
-| qwen-omp | `omp --model qwen3.8-max`; `--resume=ID`; positional messages; `--auto-approve` is its approval skip. Without yolo, `--approval-mode=always-ask` and an explicit built-in tool list without `task` prevent its always-yolo task subagents; `--allow-home` when started in `~`; no folder-trust prompt. |
+| qwen-omp | `omp --model qwen3.8-max`; `--resume=ID`; positional messages; `--auto-approve` is its approval skip. Without yolo, `--approval-mode=always-ask` and an explicit default-enabled tool list without `task` prevent its always-yolo task subagents. Optional-by-default `github`, `security_scan`, checkpoint/context-management, autolearn/skill, and memory tools are omitted because omp removes them from its registry and rejects them in `--tools`. `--allow-home` when started in `~`; no folder-trust prompt. |
 
 Use the same post-startup initialization sequence for all three: inspect the
 foreground client and UI, resolve any user-owned login/trust choices, submit
