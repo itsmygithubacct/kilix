@@ -11,7 +11,10 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 import os
 import re
+import shlex
 import shutil
+import sys
+import tempfile
 import time
 from pathlib import Path
 import subprocess
@@ -209,18 +212,30 @@ class XAppSession:
         root = xd.screen().root
         wm_check = xd.intern_atom("_NET_SUPPORTING_WM_CHECK")
         profile = Path(__file__).resolve().parents[1] / "openbox-pane.xml"
-        self.window_manager = self.supervisor.spawn(
-            "wm", [executable, "--config-file", str(profile), "--sm-disable"],
-            env=self.environment(), stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL)
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            if self.window_manager.poll() is not None:
-                raise RuntimeError("pane Openbox exited before becoming ready")
-            prop = root.get_full_property(wm_check, 0)
-            if prop is not None and len(prop.value):
-                return True
-            time.sleep(0.02)
+        # Openbox advertises _NET_SUPPORTING_WM_CHECK before installing its
+        # event handlers. Mapping an app at that point can lose its MapRequest
+        # and leave it invisible forever. --startup runs after WM setup, so
+        # wait for that callback as well as the X11 ownership property.
+        with tempfile.TemporaryDirectory(prefix="kilix-openbox-ready-") as ready_dir:
+            ready = Path(ready_dir) / "ready"
+            startup = shlex.join([
+                sys.executable, "-c",
+                "from pathlib import Path; import sys; Path(sys.argv[1]).touch()",
+                str(ready),
+            ])
+            self.window_manager = self.supervisor.spawn(
+                "wm", [executable, "--config-file", str(profile), "--sm-disable",
+                       "--startup", startup],
+                env=self.environment(), stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL)
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                if self.window_manager.poll() is not None:
+                    raise RuntimeError("pane Openbox exited before becoming ready")
+                prop = root.get_full_property(wm_check, 0)
+                if ready.is_file() and prop is not None and len(prop.value):
+                    return True
+                time.sleep(0.02)
         raise RuntimeError("pane Openbox did not become ready")
 
     def launch_app(self, command: Iterable[str], *,

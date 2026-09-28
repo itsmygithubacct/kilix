@@ -83,10 +83,10 @@ class RunOpenboxE2E(resize.RunResizeE2E):
         dialog.change_property(self.xd.intern_atom('_NET_WM_WINDOW_TYPE'), Xatom.ATOM,
                                32, [self.xd.intern_atom('_NET_WM_WINDOW_TYPE_DIALOG')])
         dialog.map()
-        self.wait_for(lambda: self.xd.get_input_focus().focus.id == dialog.id)
+        self.wait_for(lambda: getattr(self.xd.get_input_focus().focus, 'id', None) == dialog.id)
         self.assertEqual((dialog.get_geometry().width, dialog.get_geometry().height), (140, 90))
         dialog.unmap()
-        self.wait_for(lambda: self.xd.get_input_focus().focus.id == main.id)
+        self.wait_for(lambda: getattr(self.xd.get_input_focus().focus, 'id', None) == main.id)
         self.assertTrue(apprun.randr_prepare(self.xd))
         self.assertTrue(apprun.randr_set_screen_size(self.xd, 1000, 700))
         apprun.randr_set_monitor_mode(self.xd, 1000, 700, old_mode=mode)

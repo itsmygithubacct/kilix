@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import shlex
+import subprocess
 from pathlib import Path
 import sys
 import tempfile
@@ -254,10 +256,14 @@ class XAppSessionTests(unittest.TestCase):
         xd = mock.Mock()
         xd.screen.return_value.root.get_full_property.side_effect = [
             None, mock.Mock(value=[99])]
+        def finish_startup(_delay):
+            argv = supervisor.spawns["wm"][0]
+            callback = shlex.split(argv[argv.index("--startup") + 1])
+            subprocess.run(callback, check=True)
         with mock.patch.dict(os.environ, {"KILIX_RUN_WM": "openbox"}), \
                 mock.patch.object(xapp.shutil, "which", return_value="/usr/bin/openbox"), \
                 mock.patch.object(session, "connect", return_value=xd), \
-                mock.patch.object(xapp.time, "sleep"):
+                mock.patch.object(xapp.time, "sleep", side_effect=finish_startup):
             self.assertTrue(session.start_window_manager())
         argv, kwargs, process = supervisor.spawns["wm"]
         self.assertEqual(argv[0], "/usr/bin/openbox")
@@ -266,6 +272,18 @@ class XAppSessionTests(unittest.TestCase):
         self.assertTrue(Path(argv[2]).is_file())
         self.assertEqual(kwargs["env"]["DISPLAY"], ":77")
         self.assertIs(session.window_manager, process)
+
+    def test_private_wm_property_alone_does_not_mean_ready(self):
+        session = xapp.XAppSession("early", 640, 480, supervisor=FakeSupervisor())
+        session.start_xvfb()
+        xd = mock.Mock()
+        xd.screen.return_value.root.get_full_property.return_value = mock.Mock(value=[99])
+        with mock.patch.dict(os.environ, {"KILIX_RUN_WM": "openbox"}), \
+                mock.patch.object(xapp.shutil, "which", return_value="/usr/bin/openbox"), \
+                mock.patch.object(session, "connect", return_value=xd):
+            with self.assertRaisesRegex(RuntimeError, "did not become ready"):
+                session.start_window_manager(timeout=0.05)
+        self.assertIsNone(session.app)
 
     def test_private_wm_timeout_fails_instead_of_launching_unmanaged_app(self):
         session = xapp.XAppSession("timeout", 640, 480, supervisor=FakeSupervisor())
