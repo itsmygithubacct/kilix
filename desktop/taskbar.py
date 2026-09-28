@@ -114,7 +114,7 @@ class Taskbar:
         pass
 
     def tick(self, now):
-        m = time.strftime("%H:%M", time.localtime(now))
+        m = time.strftime("%I:%M %p", time.localtime(now))
         if m != self._minute:
             self._minute = m
             self.invalidate()
@@ -151,7 +151,7 @@ class Taskbar:
         self._draw_tray(fb, d)
         cx0, cy0, cx1, cy1 = self._clock_rect()
         T.sunken(d, cx0, cy0, cx1, cy1, fill=T.FACE)
-        clock = self._minute or time.strftime("%H:%M")
+        clock = self._minute or time.strftime("%I:%M %p")
         d.text((cx1 - 7 - T.text_w(T.FONT, clock), cy0 + 3), clock,
                font=T.FONT, fill=T.TEXT)
 
@@ -726,6 +726,6 @@ class _ClockPopup(_Popup):
                 else:
                     d.text((tx, ry), s, font=T.FONT, fill=T.TEXT)
             ry += 14
-        tstr = time.strftime("%H:%M:%S", now)
+        tstr = time.strftime("%I:%M:%S %p", now)
         d.text(((w - T.text_w(T.FONT, tstr)) // 2, h - 16), tstr,
                font=T.FONT, fill=T.TEXT)

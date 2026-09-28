@@ -98,7 +98,7 @@ SETTING_PAGES = [
         S("KILIX_CHROME_CALENDAR", "Calendar"),
         S("KILIX_CHROME_CLOCK", "Date and time"),
         S("KILIX_CHROME_CLOCK_FORMAT", "Clock format", "text",
-          "%Y-%m-%d %H:%M", None),
+          shared_settings.CLOCK_FORMAT_DEFAULT, None),
         S("KILIX_CHROME_BATTERY", "Battery"),
         S("KILIX_CHROME_WINDOWS", "Native window taskbar (Pleb)"),
         E("KILIX_BATTERY_SUPPLY_DIR", "Battery supply dir"),
