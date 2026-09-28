@@ -35,15 +35,14 @@ usage() {
   cat <<'EOF'
 usage: install-kilix-bonsai.sh [--force|--print-refs]
 
-  --force       reinstall even when the pinned closure is already current
+  --force       compatibility flag; generated launchers are always refreshed
   --print-refs  print the immutable source closure without changing anything
 EOF
 }
 
-force=0
 case "${1:-}" in
   '') ;;
-  --force) force=1; shift ;;
+  --force) shift ;;
   --print-refs) printf '%s\n' "kilix-bonsai=$KILIX_BONSAI_REF"; exit 0 ;;
   -h|--help) usage; exit 0 ;;
   *) usage >&2; exit 2 ;;
