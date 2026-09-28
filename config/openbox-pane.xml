@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Private kilix-run display only. Never install as the host WM profile.
+     No autostart, root menu, desktop switcher, or terminal launcher. -->
+<openbox_config xmlns="http://openbox.org/3.4/rc">
+  <focus>
+    <focusNew>yes</focusNew><followMouse>no</followMouse>
+    <focusLast>yes</focusLast><underMouse>no</underMouse>
+  </focus>
+  <placement><policy>Smart</policy><center>yes</center></placement>
+  <desktops><number>1</number><firstdesk>1</firstdesk><popupTime>0</popupTime></desktops>
+  <theme><name>Clearlooks</name><titleLayout>LC</titleLayout></theme>
+  <keyboard/>
+  <mouse>
+    <context name="Client">
+      <mousebind button="Left" action="Press"><action name="Focus"/><action name="Raise"/></mousebind>
+      <mousebind button="Middle" action="Press"><action name="Focus"/><action name="Raise"/></mousebind>
+      <mousebind button="Right" action="Press"><action name="Focus"/><action name="Raise"/></mousebind>
+    </context>
+    <context name="Titlebar">
+      <mousebind button="Left" action="Press"><action name="Focus"/><action name="Raise"/></mousebind>
+      <mousebind button="Left" action="Drag"><action name="Move"/></mousebind>
+    </context>
+    <context name="Close">
+      <mousebind button="Left" action="Press"><action name="Focus"/><action name="Raise"/></mousebind>
+      <mousebind button="Left" action="Click"><action name="Close"/></mousebind>
+    </context>
+  </mouse>
+  <applications>
+    <application type="normal">
+      <decor>no</decor><maximized>yes</maximized><focus>yes</focus>
+    </application>
+    <application type="dialog">
+      <decor>yes</decor><maximized>no</maximized><focus>yes</focus>
+      <position force="no"><x>center</x><y>center</y></position>
+    </application>
+  </applications>
+</openbox_config>

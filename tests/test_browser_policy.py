@@ -30,17 +30,32 @@ class BrowserPolicyTests(unittest.TestCase):
         path.chmod(0o755)
         return path
 
-    def run_policy(self, directory, *arguments):
+    def run_policy(self, directory, *arguments, **overrides):
         script = (
             f'. "{POLICY}"\n'
             '_browser="$(_kilix_find_real_browser)" || exit 90\n'
             '_kilix_exec_real_browser "$_browser" "$@"\n'
         )
-        environment = sandbox_env(PATH=str(directory))
+        environment = sandbox_env(PATH=str(directory), KILIX_RUN_ALIASES="0")
+        environment.update(overrides)
         return subprocess.run(
             ["/bin/bash", "-c", script, "browser-policy-test", *arguments],
             env=environment, text=True, capture_output=True, check=True,
         ).stdout.splitlines()
+
+    def test_pleb_browser_uses_a_pane_without_losing_arguments(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.make_browser(directory, "google-chrome")
+            self.make_browser(directory, "kilix")
+            result = self.run_policy(directory, "https://example.test/a b",
+                                     KILIX_HOME=directory, KILIX_RUN_ALIASES="1")
+            self.assertEqual(result, ["browser=kilix", "argument=run",
+                             f"argument={directory}/google-chrome",
+                             "argument=https://example.test/a b"])
+            result = self.run_policy(directory, "https://example.test",
+                                     KILIX_HOME=directory, KILIX_RUN_ALIASES="1",
+                                     KILIX_PRIVATE_XAPP="1")
+            self.assertEqual(result[0], "browser=google-chrome")
 
     def test_preference_order_is_google_then_chromium_then_firefox(self):
         with tempfile.TemporaryDirectory() as directory:

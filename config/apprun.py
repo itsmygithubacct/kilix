@@ -433,6 +433,7 @@ class AppPane:
         self._cap_fps = fps              # current pane-capture rate (QW5)
         self._last_change = time.time()
         self._fit_window_id = None
+        self._pane_wm = False
         self._last_window_fit = 0.0
         self._randr_mode = None          # active kilix-created RandR mode id
         fit_env = os.environ.get("KILIX_RUN_AUTO_FIT")
@@ -589,10 +590,12 @@ class AppPane:
                 # size, so only whole-screen size queries see the difference.
                 self.resizable = False
                 log("display resize unavailable; window-fit fallback")
+        if self.manage_windows:
+            self._pane_wm = self.xapp.start_window_manager()
         env = {}
         if self.pulse_sink:
             env["PULSE_SINK"] = self.pulse_sink   # route app audio to our sink
-        self.app = self.xapp.launch_app(self.cmd, env=env)
+        self.app = self.xapp.launch_app(self.cmd, env=env, isolate_bus=self.manage_windows)
         if self.term:
             self.inj = self.xapp.make_injector()
         self.focus_app_window()
@@ -689,6 +692,10 @@ class AppPane:
         manager has already started. With no WM on Xvfb, that late window keeps
         its default small size unless kilix keeps fitting the active top-level.
         """
+        if getattr(self, "_pane_wm", False):
+            # Openbox owns its reparenting frames, dialogs and focus. A
+            # root-child resize here would resize a frame rather than an app.
+            return bool(self._visible_app_windows())
         windows = self._visible_app_windows()
         if not windows:
             return False
@@ -763,6 +770,10 @@ class AppPane:
         second X event hook and still catches app-spawned windows within a
         fraction of a second.
         """
+        if getattr(self, "_pane_wm", False):
+            if self.xapp.window_manager.poll() is not None:
+                raise RuntimeError("pane Openbox exited")
+            return
         if (not getattr(self, "manage_windows", True) or self.xd is None
                 or getattr(self, "_fit_suspended", False)):
             return
@@ -1222,6 +1233,11 @@ def main():
             args = args[1:]
         else:
             sys.exit(f"kilix run: unknown option {args[0]}")
+    if args and manage_windows and os.path.basename(args[0]) in {
+            "kilix", "kitty", "kitten", "pleb-session", "openbox",
+            "openbox-session", "startx", "xinit", "Xephyr", "Xorg", "Xvfb"}:
+        sys.exit("kilix run: desktop/terminal hosts cannot be embedded as apps; "
+                 "use kilix pane for a terminal or --desktop-session for an intentional nested desktop")
     if audio and not (hls or mse or webrtc):
         hls = True                          # audio needs a broadcast to ride in
     if not args:

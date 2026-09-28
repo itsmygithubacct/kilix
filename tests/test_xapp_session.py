@@ -226,6 +226,57 @@ class XAppSessionTests(unittest.TestCase):
             else:
                 os.environ["XAUTHORITY"] = previous
 
+    def test_private_app_cannot_escape_to_host_display_or_remote_control(self):
+        supervisor = FakeSupervisor()
+        session = xapp.XAppSession("private", 640, 480, supervisor=supervisor)
+        session.start_xvfb()
+        inherited = {"WAYLAND_DISPLAY": "wayland-0", "KITTY_WINDOW_ID": "3",
+                     "KITTY_LISTEN_ON": "unix:@host", "KITTY_PID": "123",
+                     "KILIX_IN_OVERLAY": "1", "KILIX_RC_PASSWORD_FILE": "/host",
+                     "DBUS_SESSION_BUS_ADDRESS": "unix:path=/host/bus"}
+        with mock.patch.dict(os.environ, inherited), mock.patch.object(
+                xapp.shutil, "which", return_value="/usr/bin/dbus-run-session"):
+            session.launch_app(["fixture-app", "two words"], isolate_bus=True)
+        argv, kwargs, _ = supervisor.spawns["app"]
+        self.assertEqual(argv, ["/usr/bin/dbus-run-session", "--", "fixture-app", "two words"])
+        env = kwargs["env"]
+        for key in inherited:
+            self.assertNotIn(key, env)
+        self.assertEqual(env["DISPLAY"], ":77")
+        self.assertEqual(env["KILIX_RUN_ALIASES"], "0")
+        self.assertEqual(env["KILIX_PRIVATE_XAPP"], "1")
+        self.assertEqual(env["GDK_BACKEND"], "x11")
+
+    def test_private_wm_is_supervised_and_ready_before_app_launch(self):
+        supervisor = FakeSupervisor()
+        session = xapp.XAppSession("wm", 640, 480, supervisor=supervisor)
+        session.start_xvfb()
+        xd = mock.Mock()
+        xd.screen.return_value.root.get_full_property.side_effect = [
+            None, mock.Mock(value=[99])]
+        with mock.patch.dict(os.environ, {"KILIX_RUN_WM": "openbox"}), \
+                mock.patch.object(xapp.shutil, "which", return_value="/usr/bin/openbox"), \
+                mock.patch.object(session, "connect", return_value=xd), \
+                mock.patch.object(xapp.time, "sleep"):
+            self.assertTrue(session.start_window_manager())
+        argv, kwargs, process = supervisor.spawns["wm"]
+        self.assertEqual(argv[0], "/usr/bin/openbox")
+        self.assertIn("--sm-disable", argv)
+        self.assertNotIn("openbox-session", argv)
+        self.assertTrue(Path(argv[2]).is_file())
+        self.assertEqual(kwargs["env"]["DISPLAY"], ":77")
+        self.assertIs(session.window_manager, process)
+
+    def test_private_wm_timeout_fails_instead_of_launching_unmanaged_app(self):
+        session = xapp.XAppSession("timeout", 640, 480, supervisor=FakeSupervisor())
+        session.start_xvfb()
+        with mock.patch.dict(os.environ, {"KILIX_RUN_WM": "openbox"}), \
+                mock.patch.object(xapp.shutil, "which", return_value="/usr/bin/openbox"), \
+                mock.patch.object(session, "connect", return_value=mock.Mock()):
+            with self.assertRaisesRegex(RuntimeError, "did not become ready"):
+                session.start_window_manager(timeout=0)
+        self.assertIsNone(session.app)
+
     def test_auth_is_scoped_and_private_environment_cannot_be_overridden(self):
         supervisor = FakeSupervisor()
         seen = {}

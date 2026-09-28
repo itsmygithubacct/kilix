@@ -11,6 +11,9 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 import os
 import re
+import shutil
+import time
+from pathlib import Path
 import subprocess
 import threading
 from typing import Iterable, Mapping
@@ -105,6 +108,7 @@ class XAppSession:
         self.server = None
         self.xd = None
         self.app = None
+        self.window_manager = None
         self.injector = None
         self.capture = None
         self.capture_process = None
@@ -163,6 +167,16 @@ class XAppSession:
         # provider-supplied environment cannot redirect either X client.
         env["DISPLAY"] = self.display
         env["XAUTHORITY"] = self.xauthority
+        # These describe the containing terminal, not the app's private X
+        # desktop. Inheriting them can route children back to the host or
+        # recursively create another streamed desktop.
+        for key in ("WAYLAND_DISPLAY", "WAYLAND_SOCKET", "KITTY_WINDOW_ID",
+                    "KITTY_LISTEN_ON", "KITTY_PID", "KILIX_IN_OVERLAY",
+                    "KILIX_RC_PASSWORD_FILE", "KILIX_STREAM", "SESSION_MANAGER"):
+            env.pop(key, None)
+        env.update(GDK_BACKEND="x11", QT_QPA_PLATFORM="xcb",
+                   SDL_VIDEODRIVER="x11", MOZ_ENABLE_WAYLAND="0",
+                   KILIX_PRIVATE_XAPP="1", KILIX_RUN_ALIASES="0")
         return env
 
     def connect(self):
@@ -173,9 +187,46 @@ class XAppSession:
                 self.xd = xdisplay.Display(self.display)
         return self.xd
 
+    def start_window_manager(self, *, timeout: float = 5.0) -> bool:
+        """Run bare Openbox on this owned display, never openbox-session.
+
+        A normal app fills the pane; dialogs, menus and focus remain the WM's
+        responsibility. Explicit desktop sessions must not call this method.
+        """
+        if self.window_manager is not None:
+            return True
+        mode = os.environ.get("KILIX_RUN_WM", "auto")
+        if mode == "none":
+            return False
+        if mode not in {"auto", "openbox"}:
+            raise RuntimeError("KILIX_RUN_WM must be auto, openbox, or none")
+        executable = shutil.which("openbox")
+        if executable is None:
+            if mode == "openbox":
+                raise RuntimeError("kilix run needs Openbox: install openbox")
+            return False
+        xd = self.connect()
+        root = xd.screen().root
+        wm_check = xd.intern_atom("_NET_SUPPORTING_WM_CHECK")
+        profile = Path(__file__).resolve().parents[1] / "openbox-pane.xml"
+        self.window_manager = self.supervisor.spawn(
+            "wm", [executable, "--config-file", str(profile), "--sm-disable"],
+            env=self.environment(), stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL)
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self.window_manager.poll() is not None:
+                raise RuntimeError("pane Openbox exited before becoming ready")
+            prop = root.get_full_property(wm_check, 0)
+            if prop is not None and len(prop.value):
+                return True
+            time.sleep(0.02)
+        raise RuntimeError("pane Openbox did not become ready")
+
     def launch_app(self, command: Iterable[str], *,
                    env: Mapping[str, str] | None = None,
                    cwd: str | None = None,
+                   isolate_bus: bool = False,
                    stdout=subprocess.DEVNULL,
                    stderr=subprocess.DEVNULL):
         if self.app is not None:
@@ -183,8 +234,18 @@ class XAppSession:
         argv = list(command)
         if not argv:
             raise ValueError("X app command must not be empty")
+        app_env = self.environment(env)
+        if isolate_bus:
+            # GtkApplication and other singleton apps otherwise ask the
+            # host's existing process to open a native window over Kilix.
+            runner = shutil.which("dbus-run-session")
+            if runner is None:
+                raise RuntimeError("pane apps need dbus-run-session (install dbus-daemon)")
+            app_env.pop("DBUS_SESSION_BUS_ADDRESS", None)
+            app_env.pop("DBUS_SESSION_BUS_PID", None)
+            argv = [runner, "--", *argv]
         self.app = self.supervisor.spawn(
-            "app", argv, env=self.environment(env), cwd=cwd,
+            "app", argv, env=app_env, cwd=cwd,
             stdout=stdout, stderr=stderr)
         return self.app
 

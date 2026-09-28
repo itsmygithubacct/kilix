@@ -82,5 +82,18 @@ _kilix_exec_real_browser() {
       fi ;;
   esac
 
+  # Real browsers belong to panes in a Pleb session. Already-private app
+  # children remain on their existing display instead of nesting a stream.
+  if [ "${KILIX_PRIVATE_XAPP:-}" != 1 ]; then
+    case "${KILIX_RUN_ALIASES:-}" in
+      0|no|false|off) ;;
+      1|yes|true|on)
+        exec "${KILIX_HOME}/kilix" run "$browser" "${arguments[@]}" ;;
+      *)
+        if [ "${XDG_SESSION_DESKTOP:-}" = pleb ] || [ "${XDG_CURRENT_DESKTOP:-}" = Pleb ]; then
+          exec "${KILIX_HOME}/kilix" run "$browser" "${arguments[@]}"
+        fi ;;
+    esac
+  fi
   exec "$browser" "${arguments[@]}"
 }

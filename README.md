@@ -1299,6 +1299,27 @@ catalogue; scripts and terminal-only programs are not changed. Set
 `KILIX_RUN_ALIAS_APPS="foo bar"`, or exclude one with
 `KILIX_RUN_ALIAS_EXCLUDE_APPS="foo"`.
 
+RC2 uses bare Openbox on each app's private display when it is installed.
+Normal app windows fill the pane; dialogs retain their own size and focus.
+The private profile has no launcher or root menu, and never starts another
+Kilix. `KILIX_RUN_WM=openbox` requires this behavior; `KILIX_RUN_WM=none`
+selects the older WM-less fallback. The default `auto` uses Openbox when
+available. Install `openbox` and `dbus-daemon` for this path.
+
+App launches get a private session bus, so desktop singletons cannot send a
+request to an existing host process and open outside the pane. Apps keep their
+normal files and configuration, but host session-bus services are not shared.
+Browser links use this same pane route in Pleb. Host remote-control and Wayland
+display variables are removed from the app environment to prevent recursion
+and display escapes. A deliberate nested desktop requires
+`kilix run --desktop-session ...`; ordinary `kilix run kilix`/`kitty` is rejected.
+
+This is launch-time routing, not adoption of existing native windows. Scripts
+that directly execute an absolute app binary on the host display still create
+native windows. Use `kilix run /absolute/path/to/app` in those scripts. The
+host Openbox stays available to manage such windows without hiding them behind
+Kilix.
+
 Contained Chromium- and Firefox-family launches receive a private, disposable
 per-tab profile so an already-running native browser cannot capture the URL and
 escape Kilix. That also means every launch is a fresh login. For a persistent
