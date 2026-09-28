@@ -26,7 +26,7 @@ KILIX_BONSAI_SOURCES="${KILIX_BONSAI_SOURCES:-$KILIX_STORAGE_HOME/sources}"
 # as an explicit override for testing the refusal path; it is not the default
 # any more, because the repository is published.
 KILIX_BONSAI_REPO="${KILIX_BONSAI_REPO:-https://github.com/itsmygithubacct/kilix-bonsai.git}"
-KILIX_BONSAI_REF="${KILIX_BONSAI_REF:-000108e53f325513b40445148323bc8a677712b0}"
+KILIX_BONSAI_REF="${KILIX_BONSAI_REF:-8c4198879b9c1c6936f752e2f21e89ea1f2d2b2b}"
 
 die() { printf 'kilix bonsai: %s\n' "$*" >&2; exit 1; }
 log() { printf 'kilix bonsai: %s\n' "$*" >&2; }
@@ -74,10 +74,6 @@ if git -C "$checkout" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
       || die "commit $KILIX_BONSAI_REF is unavailable from $KILIX_BONSAI_REPO"
     git -C "$checkout" checkout --quiet --detach "$KILIX_BONSAI_REF" \
       || die "could not check out $KILIX_BONSAI_REF"
-  elif [ "$force" = 0 ] \
-       && [ -x "$KILIX_BONSAI_PREFIX/bin/kilix-bonsai" ]; then
-    log "already at $KILIX_BONSAI_REF"
-    exit 0
   fi
 else
   [ ! -e "$checkout" ] || die "path exists but is not a Git checkout: $checkout"
