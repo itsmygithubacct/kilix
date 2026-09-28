@@ -31,7 +31,9 @@ class OwnedSetupTests(unittest.TestCase):
                     +f'    subprocess.Popen([sys.executable,"-c",{engine!r}],start_new_session=True)\n'
                     +f'    while not os.path.exists({str(marker)!r}): time.sleep(.01)\n'
                     +('    return 0\n' if ending=='success' else '    time.sleep(30)\n    return 0\n')
-                    +f'raise SystemExit(run_owned(action,timeout={.2 if ending=="deadline" else 5}))\n')
+                    # The deadline must allow the nested Python interpreters
+                    # to start before it tests cleanup of their descendants.
+                    +f'raise SystemExit(run_owned(action,timeout={2 if ending=="deadline" else 5}))\n')
                 command=[sys.executable,str(driver)]
                 if ending=='owner-loss':
                     # A separate owning process dies after its supervised
@@ -45,7 +47,7 @@ class OwnedSetupTests(unittest.TestCase):
                 process=subprocess.Popen(command,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
                 unrelated=subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)'])
                 try:
-                    limit=time.monotonic()+2
+                    limit=time.monotonic()+5
                     while not marker.exists() or len(marker.read_text().split())!=2:
                         self.assertLess(time.monotonic(),limit)
                         time.sleep(.01)
@@ -57,6 +59,7 @@ class OwnedSetupTests(unittest.TestCase):
                         self.assertLess(time.monotonic(),limit,error.decode())
                         time.sleep(.01)
                     if ending=='success':self.assertEqual(process.returncode,0,error)
+                    if ending=='deadline':self.assertNotEqual(process.returncode,0,error)
                     self.assertIsNone(unrelated.poll())
                 finally:
                     if process.poll() is None:process.kill();process.wait()

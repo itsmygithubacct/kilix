@@ -9,7 +9,7 @@ import sys
 import time
 import unittest
 
-from Xlib import X, display
+from Xlib import X, display, error as xerror
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "config"))
@@ -71,18 +71,20 @@ class MouseModifierTests(unittest.TestCase):
             probe = socket.socket(socket.AF_UNIX)
             try:
                 probe.connect(socket_path)
+                # A successful probe does not guarantee the next connection
+                # is accepted immediately. Retry the actual Xlib handshake
+                # too, within the same private namespace and deadline.
+                cls.xd = display.Display(f":{number}")
                 break
-            except OSError as error:
-                probe.close()
+            except (OSError, xerror.DisplayConnectionError,
+                    xerror.ConnectionClosedError) as error:
                 if time.monotonic() >= deadline:
                     raise RuntimeError(
-                        "private Xvfb did not accept connections within 5 "
+                        "private Xvfb did not complete its handshake within 5 "
                         "seconds") from error
                 time.sleep(0.02)
-        try:
-            cls.xd = display.Display(f":{number}")
-        finally:
-            probe.close()
+            finally:
+                probe.close()
         cls.addClassCleanup(cls.xd.close)
         x11_sandbox.claim_display(cls.xd)
         screen = cls.xd.screen()
