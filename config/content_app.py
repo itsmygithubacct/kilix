@@ -22,6 +22,7 @@ import argparse
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 
 from kilix_sdk import content
@@ -119,6 +120,30 @@ def _exec(
     os.execvpe(argv[0], argv, environment)
 
 
+def _pause_failure(code: int) -> int:
+    """Keep terminal diagnostics visible until the operator dismisses them."""
+    if code and sys.stdin.isatty():
+        try:
+            input(f"\nApplication exited with status {code}. "
+                  "Review the error above; press Enter to close. ")
+        except (EOFError, KeyboardInterrupt):
+            pass
+    return code
+
+
+def _run_terminal(command: list[str], content_id: str, action: str) -> int:
+    environment = launch_environment()
+    environment["KILIX_APP_ID"] = content_id
+    environment["KILIX_APP_SURFACE"] = "current"
+    if action:
+        environment["KILIX_APP_ACTION"] = action
+    try:
+        code = subprocess.call(command, env=environment)
+    except KeyboardInterrupt:
+        return 130
+    return _pause_failure(code if code >= 0 else 128 - code)
+
+
 def _application_arguments(spec, forwarded: list[str]) -> tuple[str, list[str]]:
     """Resolve a named catalog action to trusted fixed argv plus at most one input."""
     values = list(forwarded)
@@ -194,6 +219,17 @@ def main(argv: list[str] | None = None) -> int:
             print(spec.ref)
             return 0
         action_id, application_arguments = _application_arguments(spec, forwarded)
+        if args.action == "window" and spec.launch_mode == "terminal":
+            if not os.environ.get("DISPLAY"):
+                raise RuntimeError("a DISPLAY is required for the window surface")
+            # Create the PTY before resolving/installing the application. A
+            # failed first-use build must be visible in the desktop window.
+            command = window_argv(
+                spec, sys.executable,
+                [str(Path(__file__).resolve()), "run", spec.content_id, *forwarded])
+            _exec(command, surface="window", content_id=spec.content_id,
+                  action=action_id)
+            return 0
         if spec.source_type == "system":
             command = _system_command(spec)
             ready = _command_ready(command)
@@ -213,6 +249,8 @@ def main(argv: list[str] | None = None) -> int:
                 _exec(command, surface="window", content_id=spec.content_id,
                       action=action_id)
                 return 0
+            if spec.launch_mode == "terminal":
+                return _run_terminal(command, spec.content_id, action_id)
             _exec(command, surface="current", content_id=spec.content_id,
                   action=action_id)
             return 0
@@ -237,6 +275,9 @@ def main(argv: list[str] | None = None) -> int:
             _exec(command, surface="window", content_id=spec.content_id,
                   action=action_id)
             return 0
+        if spec.launch_mode == "terminal":
+            return _run_terminal(
+                [executable, *application_arguments], spec.content_id, action_id)
         _exec(
             [executable, *application_arguments],
             surface="current",
@@ -251,7 +292,7 @@ def main(argv: list[str] | None = None) -> int:
         ValueError,
     ) as error:
         _report(args.content_id, str(error))
-        return 1
+        return _pause_failure(1) if args.action == "run" else 1
     return 0
 
 
