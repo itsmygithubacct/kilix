@@ -9,14 +9,11 @@ GPU_TERMINAL_SOURCE_HOME="${GPU_TERMINAL_SOURCE_HOME:-$GPU_TERMINAL_HOME/sources
 KILIX_DATA_HOME="${KILIX_DATA_HOME:-$GPU_TERMINAL_HOME/kilix/data}"
 KILIX_PIPER_REF=a246e281ed0190cd2c963974be934dfe51359dfb
 KILIX_PIPER_REPO=https://github.com/itsmygithubacct/kilix-piper-tts.git
-KILIX_CONTENT_REF=d9a1335db520594c6796209b0f9342000a2b34e7
 
 fail() { printf 'kilix piper: %s\n' "$*" >&2; exit 1; }
 root="$KILIX_DATA_HOME/voice/piper"
 source_dir="$GPU_TERMINAL_SOURCE_HOME/.kilix-piper-tts-$KILIX_PIPER_REF"
-generation="$root/generations/$KILIX_PIPER_REF"
 current="$root/current"
-binary="$generation/bin/kilix-piper-tts"
 
 if [ "${1:-}" = --print-ref ]; then
   [ "$#" = 1 ] || fail 'usage: install-kilix-piper-tts.sh [--print-ref|--print-path]'
@@ -29,6 +26,14 @@ if [ "${1:-}" = --print-path ]; then
   exit 0
 fi
 [ "$#" = 0 ] || fail 'usage: install-kilix-piper-tts.sh [--print-ref|--print-path]'
+content="$KILIX_HOME/third_party/kilix-content"
+# Bind the runtime's authority to the host's selected Content gitlink. An old
+# standalone pin rejected every newer RC2 catalog, even on a fresh install.
+KILIX_CONTENT_REF="$(git -C "$KILIX_HOME" rev-parse HEAD:third_party/kilix-content)" \
+  || fail 'could not identify the host Content pin'
+[[ "$KILIX_CONTENT_REF" =~ ^[0-9a-f]{40}$ ]] || fail 'invalid host Content pin'
+generation="$root/generations/$KILIX_PIPER_REF-$KILIX_CONTENT_REF"
+binary="$generation/bin/kilix-piper-tts"
 [ "$(id -u)" -ne 0 ] || fail 'run this as the desktop user'
 case "$root" in /|"$HOME") fail 'refusing a broad runtime directory' ;; esac
 case "$source_dir" in /|"$HOME") fail 'refusing a broad source directory' ;; esac
@@ -37,16 +42,19 @@ mkdir -p -- "$GPU_TERMINAL_SOURCE_HOME" "$root/generations"
   || fail 'the managed Piper current path is not a symlink'
 exec 9<"$root"
 flock 9
-[ ! -L "$current" ] || [ "$(readlink -- "$current")" = "$generation" ] \
-  || fail 'the managed Piper current link points outside this release generation'
+if [ -L "$current" ]; then
+  previous="$(readlink -- "$current")"
+  case "$previous" in "$root/generations/"*) ;; \
+    *) fail 'the managed Piper current link points outside the generation store' ;; esac
+fi
 
 # A completed generation is reusable; no package or model fetch on repeat use.
 if [ -L "$current" ] && [ "$(readlink -- "$current")" = "$generation" ] \
-    && [ -x "$binary" ] && "$binary" --version >/dev/null 2>&1; then
+    && [ -x "$binary" ] && "$binary" --version >/dev/null 2>&1 \
+    && "$generation/bin/python" -c 'import kilix_content, kilix_license' >/dev/null 2>&1; then
   exit 0
 fi
 
-content="$KILIX_HOME/third_party/kilix-content"
 [ -f "$content/pyproject.toml" ] && [ ! -L "$content" ] \
   || fail 'the pinned Kilix Content checkout is unavailable'
 command -v git >/dev/null || fail 'git is required for the pinned Piper source'
@@ -73,11 +81,22 @@ fi
   || fail 'the managed Piper source has local changes'
 
 UV_PROJECT_ENVIRONMENT="$generation" uv sync --locked --no-dev \
-  --directory "$source_dir" --project "$source_dir" \
+  --directory "$source_dir" --project "$source_dir" --python 3.12.8 \
   || fail 'the pinned Piper environment could not be installed'
-uv pip install --python "$generation/bin/python" --no-deps "$content" \
-  || fail 'the pinned Content package could not be installed for Piper'
+# Build from a disposable archive: setuptools writes build/ and egg-info,
+# which must never contaminate the host's verified vendored authority tree.
+content_stage="$(mktemp -d "$root/.content-build.XXXXXX")" \
+  || fail 'could not stage the pinned Content build'
+trap 'rm -rf -- "$content_stage"' EXIT
+git -C "$content" archive "$KILIX_CONTENT_REF" | tar -x -C "$content_stage" \
+  || fail 'could not extract the pinned Content tree'
+uv pip install --python "$generation/bin/python" --no-deps \
+  "$content_stage/third_party/kilix-license" "$content_stage" \
+  || fail 'the pinned Content and licence packages could not be installed for Piper'
+rm -rf -- "$content_stage"
+trap - EXIT
 [ -x "$binary" ] && "$binary" --version >/dev/null 2>&1 \
+  && "$generation/bin/python" -c 'import kilix_content, kilix_license' >/dev/null 2>&1 \
   || fail 'the pinned Piper command failed verification'
 link="$root/.current-$$"
 ln -s -- "$generation" "$link"
