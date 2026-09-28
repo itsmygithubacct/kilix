@@ -25,7 +25,7 @@ import shutil
 import subprocess
 import sys
 
-from kilix_sdk import content
+from kilix_sdk import content, paths
 from kilix_sdk._content_runtime import apps_root, launch_environment
 
 _INSTALLABLE_SOURCES = frozenset(("git", "archive"))
@@ -98,9 +98,31 @@ def _xterm() -> str:
     return executable
 
 
+def _kitty_terminal() -> str | None:
+    """Prefer the installed graphics-capable engine for embedded terminals."""
+    candidates = [
+        os.environ.get("KILIX_KITTY", ""),
+        os.path.join(paths.build_dir(), "current", "src", "kitty", "launcher", "kitty"),
+        os.path.join(os.environ.get("KILIX_PREBUILT_HOME") or
+                     os.path.join(paths.storage_home(), "prebuilt", "kitty.app"),
+                     "bin", "kitty"),
+        shutil.which("kitty") or "",
+    ]
+    return next((path for path in candidates
+                 if path and os.path.isfile(path) and os.access(path, os.X_OK)), None)
+
+
 def window_argv(spec, executable: str, arguments: list[str]) -> list[str]:
     """Return the native window command for an already installed app."""
     if spec.launch_mode == "terminal":
+        if engine := _kitty_terminal():
+            # A plain terminal on the caller's private display: no desktop
+            # session, restored tabs, remote socket, or user startup command.
+            return [engine, "--config", "NONE", "--title", spec.label,
+                    "-o", "shell_integration=disabled",
+                    "-o", "allow_remote_control=no",
+                    "-o", "confirm_os_window_close=0",
+                    "-e", executable, *arguments]
         return [_xterm(), "-T", spec.label, "-e", executable, *arguments]
     return [executable, *arguments]
 

@@ -54,7 +54,8 @@ class ContentAppTests(unittest.TestCase):
 
     def test_terminal_window_gets_its_own_pty_and_title(self):
         spec = SimpleNamespace(launch_mode="terminal", label="PDF Conversion")
-        with mock.patch.object(content_app, "_xterm", return_value="/usr/bin/xterm"):
+        with mock.patch.object(content_app, "_xterm", return_value="/usr/bin/xterm"), \
+                mock.patch.object(content_app, "_kitty_terminal", return_value=None):
             argv = content_app.window_argv(spec, "/apps/kilix-pdf", ["report.pdf"])
         self.assertEqual(
             argv,
@@ -68,10 +69,20 @@ class ContentAppTests(unittest.TestCase):
             ],
         )
 
+    def test_window_prefers_graphics_terminal_without_desktop_configuration(self):
+        spec = SimpleNamespace(launch_mode="terminal", label="Cameras")
+        with mock.patch.object(content_app, "_kitty_terminal", return_value="/engine/kitty"):
+            command = content_app.window_argv(spec, "/apps/cameras", ["--flag"])
+        self.assertEqual(command[:3], ["/engine/kitty", "--config", "NONE"])
+        self.assertIn("allow_remote_control=no", command)
+        self.assertIn("shell_integration=disabled", command)
+        self.assertEqual(command[-3:], ["-e", "/apps/cameras", "--flag"])
+
     def test_window_exists_before_first_use_installation(self):
         spec = content_app.application_spec("kilix-camera-manager")
         with mock.patch.dict(os.environ, {"DISPLAY": ":99"}), \
                 mock.patch.object(content_app, "_xterm", return_value="/usr/bin/xterm"), \
+                mock.patch.object(content_app, "_kitty_terminal", return_value=None), \
                 mock.patch.object(content_app, "ensure_application") as install, \
                 mock.patch.object(content_app, "_exec") as execute:
             self.assertEqual(content_app.main(["window", spec.content_id]), 0)
