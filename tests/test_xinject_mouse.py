@@ -6,6 +6,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import unittest
 
@@ -30,13 +31,15 @@ class MouseModifierTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         before = x11_sandbox.require_private_x11()
+        server_log = tempfile.TemporaryFile()
+        cls.addClassCleanup(server_log.close)
         read_fd, write_fd = os.pipe()
         try:
             server = subprocess.Popen(
                 [shutil.which("Xvfb"), "-displayfd", str(write_fd),
                  "-screen", "0", "640x480x24", "-nolisten", "tcp", "-noreset"],
                 pass_fds=(write_fd,), stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL)
+                stderr=server_log)
         except BaseException:
             os.close(read_fd)
             raise
@@ -67,7 +70,10 @@ class MouseModifierTests(unittest.TestCase):
         deadline = time.monotonic() + 5
         while True:
             if server.poll() is not None:
-                raise RuntimeError("private Xvfb exited before accepting")
+                server_log.seek(0)
+                raise RuntimeError(
+                    f"private Xvfb exited before accepting (rc={server.returncode}): "
+                    + server_log.read().decode(errors="replace")[-2000:])
             probe = socket.socket(socket.AF_UNIX)
             try:
                 probe.connect(socket_path)
