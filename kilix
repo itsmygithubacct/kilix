@@ -1718,6 +1718,9 @@ case "${1:-}" in
     # distinct flag for the launcher's own version.)
     cat "$KILIX_HOME/VERSION" 2>/dev/null || echo unknown
     exit 0 ;;
+  help-search)
+    shift
+    exec python3 "$KILIX_HOME/config/content_app.py" run kilix-help-llm -- lookup "$@" ;;
   settings|--settings)
     shift
     exec python3 "$KILIX_HOME/kilix-settings" "$@" ;;

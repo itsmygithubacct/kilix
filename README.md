@@ -2258,3 +2258,7 @@ One watcher per display/state directory is enforced with a lock. It exits when
 the session parent or X server exits. Existing windows are inventoried at
 startup; very short-lived windows that vanish before inspection may lack
 metadata. Inspect records with `tail -f` or a JSON-lines reader.
+
+### Search the documentation
+
+Run `kilix help-search "how do I split a pane"` to search the bundled Kilix, Kitty, Pleb and Plebian-OS documentation. The pinned Help Search app installs on first use, uses no model weights, and returns source passages rather than generated answers.
