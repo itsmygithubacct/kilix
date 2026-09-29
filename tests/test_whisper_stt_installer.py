@@ -63,7 +63,15 @@ class WhisperSttInstallerTests(unittest.TestCase):
                       'mkdir -p "$UV_PROJECT_ENVIRONMENT/bin"\n'
                       'printf "#!/bin/sh\\n[ \\"\\$1\\" = --version ]\\n" '
                       '> "$UV_PROJECT_ENVIRONMENT/bin/kilix-whisper-stt"\n'
-                      'chmod +x "$UV_PROJECT_ENVIRONMENT/bin/kilix-whisper-stt"\n')
+                      'chmod +x "$UV_PROJECT_ENVIRONMENT/bin/kilix-whisper-stt"\n'
+                      # faster-whisper's bundled VAD model, as the real sync delivers it.
+                      'a="$UV_PROJECT_ENVIRONMENT/lib/python3.12/site-packages/faster_whisper/assets"\n'
+                      'mkdir -p "$a" && echo w > "$a/silero_encoder_v5.onnx" && echo w > "$a/silero_decoder_v5.onnx"\n'
+                      '[ -z "${UV_EDITABLE:-}" ] || touch "$UV_PROJECT_ENVIRONMENT/lib/python3.12/site-packages/__editable__.p.pth"\n'
+                      'd="$UV_PROJECT_ENVIRONMENT/lib/python3.12/site-packages/onnxruntime/datasets"\n'
+                      'mkdir -p "$d" && echo w > "$d/sigmoid.onnx"\n'
+                      # One that deletion cannot remove, so only the final check stops it.
+                      '[ -z "${UV_STRAY_ONNX:-}" ] || mkdir -p "$UV_PROJECT_ENVIRONMENT/stray.onnx"\n')
         uv.chmod(0o755)
         env = sandbox_env(HOME=str(root), PATH=f'{bins}:/usr/bin:/bin',
                           KILIX_DATA_HOME=str(root / 'data'),
@@ -82,11 +90,13 @@ class WhisperSttInstallerTests(unittest.TestCase):
             first = self.run_installer(env)
             self.assertEqual(first.returncode, 0, first.stderr)
             calls = log.read_text()
-            self.assertIn('sync --locked --no-dev', calls)
+            self.assertIn('sync --locked --no-dev --no-editable', calls)
             self.assertIn('--python 3.12.8', calls)
             generation = store / 'generations' / ref
             self.assertEqual(os.readlink(store / 'current'), str(generation))
-            self.assertEqual((generation / 'REF').read_text(), f'kilix-whisper-stt={ref}\n')
+            self.assertEqual((generation / 'REF').read_text(),
+                             f'kilix-whisper-stt={ref} layout=copied-no-weights-1\n')
+            self.assertEqual(list(generation.rglob('*.onnx')), [])
             git_calls = Path(root, 'git.log').read_text()
             self.assertIn(f'fetch -q --depth=1 origin {ref}', git_calls)
             again = self.run_installer(env)
@@ -103,6 +113,28 @@ class WhisperSttInstallerTests(unittest.TestCase):
             result = self.run_installer(env)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(len(log.read_text().splitlines()), before + 1)
+
+    def test_an_older_layout_of_the_same_ref_is_rebuilt(self):
+        # A generation an earlier installer built at this very ref (editable,
+        # weights still bundled) carries the bare ref stamp and must not be reused.
+        with tempfile.TemporaryDirectory() as root:
+            env, log, store, ref = self._setup(root)
+            self.assertEqual(self.run_installer(env).returncode, 0)
+            (store / 'generations' / ref / 'REF').write_text(f'kilix-whisper-stt={ref}\n')
+            before = len(log.read_text().splitlines())
+            result = self.run_installer(env)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(len(log.read_text().splitlines()), before + 1)
+
+    def test_an_editable_or_weight_carrying_environment_is_never_published(self):
+        for flag, message in (('UV_EDITABLE', 'editable install'),
+                              ('UV_STRAY_ONNX', 'still carries model files')):
+            with self.subTest(flag=flag), tempfile.TemporaryDirectory() as root:
+                env, log, store, ref = self._setup(root)
+                result = self.run_installer(env, **{flag: '1'})
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stderr)
+                self.assertFalse((store / 'current').exists())
 
     def test_failures_publish_nothing(self):
         with tempfile.TemporaryDirectory() as root:

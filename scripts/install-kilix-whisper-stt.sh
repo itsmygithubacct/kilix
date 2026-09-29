@@ -15,6 +15,10 @@ GPU_TERMINAL_SOURCE_HOME="${GPU_TERMINAL_SOURCE_HOME:-$GPU_TERMINAL_HOME/sources
 KILIX_DATA_HOME="${KILIX_DATA_HOME:-$GPU_TERMINAL_HOME/kilix/data}"
 KILIX_WHISPER_REF=15ef23b32da497a41198d3028e34715801de6196
 KILIX_WHISPER_REPO=https://github.com/itsmygithubacct/kilix-whisper-stt.git
+# What a generation's REF file must say. The layout suffix changes whenever the
+# way a generation is built changes, so an older build of the same provider
+# commit (an editable install, or one still carrying model files) is rebuilt.
+KILIX_WHISPER_STAMP="kilix-whisper-stt=$KILIX_WHISPER_REF layout=copied-no-weights-1"
 
 fail() { printf 'kilix whisper: %s\n' "$*" >&2; exit 1; }
 usage='usage: install-kilix-whisper-stt.sh [--print-ref|--print-path]'
@@ -55,7 +59,7 @@ fi
 # Current only if this exact pin built it: the generation records its ref,
 # and a completed generation is reused with no package fetch.
 if [ -L "$current" ] && [ "$(readlink -- "$current")" = "$generation" ] \
-    && [ "$(cat -- "$generation/REF" 2>/dev/null)" = "kilix-whisper-stt=$KILIX_WHISPER_REF" ] \
+    && [ "$(cat -- "$generation/REF" 2>/dev/null)" = "$KILIX_WHISPER_STAMP" ] \
     && [ -x "$binary" ] && "$binary" --version >/dev/null 2>&1; then
   printf 'kilix whisper: runtime ready at %s\n' "$current/bin/kilix-whisper-stt" >&2
   exit 0
@@ -82,12 +86,26 @@ fi
 
 printf 'kilix whisper: installing the pinned runtime (about 200 MB)…\n' >&2
 rm -rf -- "$generation"
-UV_PROJECT_ENVIRONMENT="$generation" uv sync --locked --no-dev \
+# --no-editable copies the provider into the generation. An editable install
+# would run the managed source checkout itself, so a later edit there would
+# change the live runtime while this script still reported the pinned ref.
+UV_PROJECT_ENVIRONMENT="$generation" uv sync --locked --no-dev --no-editable \
   --directory "$source_dir" --project "$source_dir" --python 3.12.8 \
   || fail 'the pinned Whisper environment could not be installed'
+if find "$generation" -name '__editable__*' -print -quit | grep -q .; then
+  fail 'the pinned Whisper environment is an editable install'
+fi
+# The runtime installs code, not weights. faster-whisper bundles the Silero
+# voice-activity model for its optional vad_filter, which the provider never
+# enables, and onnxruntime ships toy example models; every ONNX model file is
+# removed and none may remain.
+find "$generation" -name '*.onnx' -type f -delete
+if find "$generation" -name '*.onnx' -print -quit | grep -q .; then
+  fail 'the pinned Whisper environment still carries model files'
+fi
 [ -x "$binary" ] && "$binary" --version >/dev/null 2>&1 \
   || fail 'the pinned Whisper command failed verification'
-printf '%s\n' "kilix-whisper-stt=$KILIX_WHISPER_REF" >"$generation/REF"
+printf '%s\n' "$KILIX_WHISPER_STAMP" >"$generation/REF"
 link="$root/.current-$$"
 ln -s -- "$generation" "$link"
 mv -fT -- "$link" "$current" || fail 'could not publish the Whisper runtime'
