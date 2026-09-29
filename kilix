@@ -2454,6 +2454,9 @@ case "${1:-}" in
     done
     _tts_previous=""
     for _tts_argument in "$@"; do
+      if [ "$_tts_argument" = --system-voice ]; then
+        export PYTHONPATH="$KILIX_HOME/config${PYTHONPATH:+:$PYTHONPATH}"
+      fi
       if [ "$_tts_argument" = --prepare-system-voice ] \
           || [ "$_tts_argument" = --system-voice ] \
           || [ "$_tts_argument" = --tier=neural ] \

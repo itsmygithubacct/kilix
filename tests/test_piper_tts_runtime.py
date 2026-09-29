@@ -21,7 +21,7 @@ class PiperRuntimeTests(unittest.TestCase):
             root = Path(tmp)
             (root / 'scripts').mkdir()
             tool = root / 'tool'
-            tool.write_text('#!/bin/bash\nprintf "%s\\n" "$@" >> "$EVENTS"\n')
+            tool.write_text('#!/bin/bash\necho "${PYTHONPATH:-}" >&2\nprintf "%s\\n" "$@" >> "$EVENTS"\n')
             tool.chmod(0o755)
             installer = root / 'scripts/install-kilix-piper-tts.sh'
             installer.write_text('#!/bin/bash\necho installed >> "$EVENTS"\n')
@@ -29,12 +29,16 @@ class PiperRuntimeTests(unittest.TestCase):
             wrapper = root / 'wrapper'
             wrapper.write_text('set -eu\n_kilix_voice_tool() { echo "$TOOL"; }\ncase "$1" in\n' + dispatch + '\nesac\n')
             events = root / 'events'
-            env = sandbox_env(KILIX_HOME=str(root), TOOL=str(tool), EVENTS=str(events))
+            env = sandbox_env(KILIX_HOME=str(root), TOOL=str(tool), EVENTS=str(events), PYTHONPATH=str(root/'existing'))
             for arguments in (['--prepare-system-voice'], ['--system-voice', '--speak', 'hello; $(false)']):
                 events.write_text('')
                 result = subprocess.run(['bash', str(wrapper), 'tts', *arguments], env=env, capture_output=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(events.read_text().splitlines(), ['installed', *arguments])
+                expected = str(root/'existing')
+                if '--system-voice' in arguments:
+                    expected = str(root/'config')+os.pathsep+expected
+                self.assertEqual(result.stderr.decode().strip(), expected)
 
     def test_catalog_pin_changes_refresh_runtime_and_repeated_use_is_offline(self):
         with tempfile.TemporaryDirectory() as tmp:
