@@ -53,6 +53,17 @@ def _symbol_map_codepoints() -> set[int]:
     return mapped
 
 
+def _dictation_toggle_source() -> str:
+    """The one dictation toggle behind the microphone click and Ctrl+Shift+D.
+
+    The click handler in tabs.py only delegates to it (asserted in
+    DictationHotkeyTests), so the guards are checked where they now live.
+    """
+    source = FORK_VOICE.read_text()
+    body = source[source.index("def toggle_dictation("):]
+    return body[:body.index("\ndef ", 10)]
+
+
 def _load_fork_voice():
     """Import the fork's voice chrome without a built kitty.
 
@@ -288,13 +299,11 @@ class VoiceSegmentTests(unittest.TestCase):
         self.assertTrue(options["hold"])
 
     def test_dictation_dispatch_confirms_lazy_install_before_listening(self):
-        source = FORK_TABS.read_text()
-        block = source.split("elif tab_action == DICTATE_ACTION:", 1)[1].split(
-            "elif tab_action == NETWORK_WIDGET_ACTION:", 1)[0]
+        block = _dictation_toggle_source()
         offer = block.index("dictation_install_offer()")
         begin = block.index("begin_dictation(target.id)")
         self.assertLess(offer, begin)
-        self.assertIn("get_boss().confirm(", block)
+        self.assertIn("boss.confirm(", block)
         self.assertIn("launch_model_install", block)
         self.assertIn("title='Install speech model?'", block)
 
@@ -368,9 +377,7 @@ class VoiceSegmentTests(unittest.TestCase):
         self.assertFalse(self.voice.is_pixel_pane(pane(0, "")))
 
     def test_dictation_dispatch_refuses_a_pixel_pane_with_visible_guidance(self):
-        source = FORK_TABS.read_text()
-        block = source.split("elif tab_action == DICTATE_ACTION:", 1)[1].split(
-            "elif tab_action == NETWORK_WIDGET_ACTION:", 1)[0]
+        block = _dictation_toggle_source()
         self.assertIn("if is_pixel_pane(target):", block)
         self.assertIn("'Dictation unavailable'", block)
         self.assertIn("Voice input works '", block)
@@ -380,9 +387,7 @@ class VoiceSegmentTests(unittest.TestCase):
         # The click-time check must stay, and must be the canonical-mode test:
         # a name drift back to a bare echo check would refuse dictation at
         # every readline prompt again.
-        source = FORK_TABS.read_text()
-        block = source.split("elif tab_action == DICTATE_ACTION:", 1)[1].split(
-            "elif tab_action == NETWORK_WIDGET_ACTION:", 1)[0]
+        block = _dictation_toggle_source()
         self.assertIn("elif pane_at_hidden_prompt(target):", block)
         self.assertIn("'Dictation refused'", block)
 
@@ -1016,6 +1021,121 @@ class VoiceSegmentTests(unittest.TestCase):
             self.voice.poll_speech_status()
         control.assert_not_called()
 
+
+
+def _normal_key(key: str) -> str:
+    """kitty_mod is ctrl+shift here; modifier order does not matter."""
+    parts = key.lower().replace("kitty_mod", "ctrl+shift").split("+")
+    return "+".join(sorted(parts[:-1]) + parts[-1:])
+
+
+class DictationHotkeyTests(unittest.TestCase):
+    """Ctrl+Shift+D toggles dictation, and nothing else claims it."""
+
+    def maps(self):
+        found = []
+        for line in KITTY_CONF.read_text().splitlines():
+            fields = line.split()
+            if fields[:1] != ["map"]:
+                continue
+            mode = None
+            rest = fields[1:]
+            while rest and rest[0].startswith("--"):
+                flag = rest.pop(0)
+                if flag in ("--mode", "--new-mode", "--on-unknown", "--on-action"):
+                    value = rest.pop(0)
+                    if flag == "--mode":
+                        mode = value
+            if rest:
+                found.append((mode, _normal_key(rest[0]), " ".join(rest[1:])))
+        return found
+
+    def test_ctrl_shift_d_toggles_dictation_and_is_mapped_once(self):
+        hotkey = _normal_key("ctrl+shift+d")
+        claims = [(mode, action) for mode, key, action in self.maps() if key == hotkey]
+        self.assertEqual(claims, [(None, "kilix_dictate")])
+
+    def test_the_tmux_mode_prefix_is_a_different_key(self):
+        prefixes = [key for mode, key, action in self.maps() if action == ""]
+        self.assertNotIn(_normal_key("ctrl+shift+d"), prefixes)
+
+    @unittest.skipUnless(FORK_VOICE.is_file(), "kitty fork submodule is not checked out")
+    def test_the_engine_has_no_default_on_the_hotkey(self):
+        definitions = (FORK / "options" / "definition.py").read_text()
+        self.assertIsNone(re.search(r"(kitty_mod|ctrl\+shift)\+d['\s]", definitions))
+
+    @unittest.skipUnless(FORK_VOICE.is_file(), "kitty fork submodule is not checked out")
+    def test_the_engine_action_and_the_click_share_one_toggle(self):
+        boss = (FORK / "boss.py").read_text()
+        body = boss[boss.index("def kilix_dictate(self)"):]
+        body = body[:body.index("\n    @ac(")]
+        self.assertIn("toggle_dictation(", body)
+        tabs = (FORK / "tabs.py").read_text()
+        self.assertIn("toggle_dictation(self.active_tab.active_window", tabs)
+        self.assertNotIn("begin_dictation(", tabs)
+
+
+@unittest.skipUnless(FORK_VOICE.is_file(), "kitty fork submodule is not checked out")
+class ToggleDictationTests(unittest.TestCase):
+    """The hotkey and the microphone click run exactly this."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.voice = _load_fork_voice()
+
+    def setUp(self):
+        self.boss = mock.Mock()
+        data = sys.modules[self.voice.__name__.rsplit(".", 1)[0] + ".fast_data_types"]
+        for patcher in (
+                mock.patch.object(data, "get_boss", lambda: self.boss, create=True),
+                mock.patch.object(self.voice, "voice_state", self.voice.VoiceState()),
+                mock.patch.object(self.voice, "is_pixel_pane", return_value=False),
+                mock.patch.object(self.voice, "pane_at_hidden_prompt", return_value=False),
+                mock.patch.object(self.voice, "dictation_install_offer", return_value=None),
+                mock.patch.object(self.voice, "begin_dictation", return_value=None),
+                mock.patch.object(self.voice, "end_dictation")):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.pane = types.SimpleNamespace(id=7)
+
+    def test_starts_dictation_into_the_pane(self):
+        self.voice.toggle_dictation(self.pane)
+        self.voice.begin_dictation.assert_called_once_with(7)
+        self.boss.show_error.assert_not_called()
+
+    def test_a_second_press_stops_and_flushes(self):
+        self.voice.voice_state.listening = True
+        self.voice.toggle_dictation(self.pane)
+        self.voice.end_dictation.assert_called_once_with(flush=True)
+        self.voice.begin_dictation.assert_not_called()
+
+    def test_no_pane_does_nothing(self):
+        self.voice.toggle_dictation(None)
+        self.voice.begin_dictation.assert_not_called()
+        self.boss.show_error.assert_not_called()
+
+    def test_refusals_are_shown_and_nothing_starts(self):
+        for check, title in (("is_pixel_pane", "Dictation unavailable"),
+                             ("pane_at_hidden_prompt", "Dictation refused")):
+            with self.subTest(check=check), \
+                    mock.patch.object(self.voice, check, return_value=True):
+                self.boss.reset_mock()
+                self.voice.toggle_dictation(self.pane)
+                self.assertEqual(self.boss.show_error.call_args.args[0], title)
+        self.voice.begin_dictation.assert_not_called()
+
+    def test_a_missing_model_is_offered_not_started(self):
+        offer = types.SimpleNamespace(message="install?", argv=("kilix",), model="m")
+        with mock.patch.object(self.voice, "dictation_install_offer", return_value=offer):
+            self.voice.toggle_dictation(self.pane)
+        self.assertEqual(self.boss.confirm.call_args.args[:5],
+                         ("install?", self.voice.launch_model_install, 7, ("kilix",), "m"))
+        self.voice.begin_dictation.assert_not_called()
+
+    def test_a_start_failure_is_shown(self):
+        with mock.patch.object(self.voice, "begin_dictation", return_value="no mic"):
+            self.voice.toggle_dictation(self.pane)
+        self.boss.show_error.assert_called_once_with("Dictation unavailable", "no mic")
 
 if __name__ == "__main__":
     unittest.main()
