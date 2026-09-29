@@ -131,21 +131,25 @@ case "${1:-}" in
     cat <<'EOF'
 usage: kilix [COMMAND] [ARGS...]    (no command: open a Kilix window)
 
-Panes and tabs (run inside a Kilix pane; directions are relative to it):
+Common tasks, complete as shown (run inside a Kilix pane):
+  kilix pane right -- bash                           open a shell pane to the right
+  kilix pane send build 'make test' --submit         type into the pane titled build + Enter
+  kilix pane close build                             close the pane titled build
+  kilix new-tab --title Codex --cwd ~/src/app codex  start a program in a new tab
+
+Panes and tabs (directions are relative to the pane you run in):
   kilix pane right|left|up|down [--title T] [--cwd DIR] [--hold] [--porcelain] [-- CMD...]
-        kilix pane right -- bash
-  kilix pane list [--json]            pane ids, titles, programs; (self) is you
-  kilix pane send TARGET 'TEXT' [--submit]   type TEXT; --submit then presses Enter
-        kilix pane send build 'make test' --submit
+  kilix pane send TARGET 'TEXT' [--submit]   --submit presses Enter after the text
+  kilix pane close [TARGET]           closes it (default: this pane) and its program
   kilix pane read TARGET [--extent all]
-  kilix pane close TARGET             closes the pane and kills its program
   kilix pane focus TARGET
+  kilix pane list [--json]            pane ids, titles, programs; (self) is you
   kilix new-tab [--title T] [--cwd DIR] [CMD...]
-        kilix new-tab --title Codex --cwd ~/src/app codex
   kilix tab list|close|rename|focus|left|right
 
-TARGET is a pane's unique title or pane:ID; a shared title is refused with its ids.
-Each line above is the complete syntax.
+TARGET is a pane's unique title or pane:ID. These lines are the complete syntax:
+no subcommand --help or pane list is needed first. A title that matches no
+pane, or several, is refused without acting, and each verb prints what it did.
 
 Typing into another coding agent's input box (verifies the target first; not
 needed to start one or for shell panes):

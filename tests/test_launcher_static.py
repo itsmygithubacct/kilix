@@ -856,7 +856,9 @@ class AgentHelpTests(unittest.TestCase):
                 self.assertLessEqual(len(text.splitlines()), 30)
                 for usage in ("kilix pane right -- bash", "kilix pane list",
                               "kilix pane send TARGET 'TEXT' [--submit]",
-                              "kilix pane close TARGET", "unique title",
+                              "kilix pane close [TARGET]", "kilix pane close build",
+                              "unique title", "no subcommand --help",
+                              "prints what it did",
                               "complete syntax", "kilix new-tab --title Codex",
                               "kilix agent-control", "kilix --help-engine"):
                     self.assertIn(usage, text)

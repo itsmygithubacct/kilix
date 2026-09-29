@@ -166,7 +166,7 @@ class Workspace:
             raise AmbiguousTarget(
                 f"title {title!r} matches {len(found)} panes ({ids}); use pane:ID")
         raise NoSuchTarget(
-            f"no live pane titled {title!r}; run 'kilix ls --panes'")
+            f"no live pane titled {title!r}; see 'kilix pane list'")
 
     def find(self, target: int | str) -> Pane | Tab:
         """Resolve ``pane:111``, ``tab:37``, a bare id, or a pane title.

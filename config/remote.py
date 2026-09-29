@@ -358,6 +358,16 @@ def emit_new_id(command: str, new_id: Any, porcelain: bool) -> int:
     return 0
 
 
+def describe(pane: Any) -> str:
+    return f"pane {pane.id} {pane.title!r}" if pane.title else f"pane {pane.id}"
+
+
+def done(command: str, what: str) -> int:
+    """Acting verbs say what they did, so a caller has nothing left to check."""
+    print(f"kilix {command}: {what}")
+    return 0
+
+
 def emit_listing(workspace: Any, as_json: bool, as_tree: bool) -> int:
     if as_json:
         print(json.dumps([pane_as_dict(pane) for pane in workspace.panes()],
@@ -367,11 +377,42 @@ def emit_listing(workspace: Any, as_json: bool, as_tree: bool) -> int:
     return 0
 
 
+PANE_HELP = """\
+usage: kilix pane COMMAND ...   (run inside a Kilix pane)
+
+  kilix pane right|left|up|down [--title T] [--cwd DIR] [--hold] [--porcelain] [-- CMD...]
+        kilix pane right -- bash            open a shell pane to the right
+  kilix pane send TARGET 'TEXT' [--submit]   --submit presses Enter after the text
+        kilix pane send build 'make test' --submit
+  kilix pane close [TARGET]         closes it (default: this pane) and kills its program
+        kilix pane close build
+  kilix pane read TARGET [--extent all]
+  kilix pane focus TARGET
+  kilix pane list [--json]          pane ids, titles, programs; (self) is you
+  kilix pane quad                   four panes where this one is
+
+TARGET is a pane's unique title or pane:ID. These lines are the complete syntax:
+no further --help or pane list is needed first. A title that matches no pane,
+or several, is refused without acting, and each verb prints what it did.
+"""
+
+
 def cmd_pane(argv: list[str]) -> int:
     subcommands = ("quad", "list", "close", "focus", "read", "send")
+    if argv[:1] in (["-h"], ["--help"], ["help"]):
+        # The whole family, not only the split's options: an agent that
+        # asked here and saw only splitting opened each verb's --help next
+        # (22 + 23 reads in the 2026-09-29 luna discovery runs).
+        sys.stdout.write(PANE_HELP)
+        return 0
     head = argv[0] if argv else "right"
     if head in subcommands:
-        return _pane_subcommand(head, argv[1:])
+        try:
+            return _pane_subcommand(head, argv[1:])
+        except RuntimeError as exc:
+            # kilix_sdk's PaneError: no such pane, or a title shared by
+            # several (named with their ids). One line, not a traceback.
+            return fail(f"pane {head}", str(exc))
     if head.startswith("-") and head not in ("-h", "--help"):
         head, argv = "right", ["right", *argv]
     return _pane_split(argv)
@@ -447,22 +488,24 @@ def _pane_subcommand(name: str, argv: list[str]) -> int:
         parser.add_argument("--force", action="store_true")
         ns = parser.parse_args(argv)
         panes = load_panes("pane close")
-        target = ns.target
-        if target is None:
-            me = panes.snapshot().me()
-            if me is None:
+        if ns.target is None:
+            pane = panes.snapshot().me()
+            if pane is None:
                 return fail("pane close", "cannot tell which pane this is; "
                                           "name one explicitly", 2)
-            target = me.id
-        panes.close(target, force=ns.force)
-        return 0
+        else:
+            pane = panes.snapshot().find_pane(ns.target)
+        panes.close(f"pane:{pane.id}", force=ns.force)
+        return done("pane close", f"closed {describe(pane)}")
 
     if name == "focus":
         parser.description = "Focus a pane"
         parser.add_argument("target", help="a pane's unique title, or pane:ID")
         ns = parser.parse_args(argv)
-        load_panes("pane focus").focus(ns.target)
-        return 0
+        panes = load_panes("pane focus")
+        pane = panes.snapshot().find_pane(ns.target)
+        panes.focus(f"pane:{pane.id}")
+        return done("pane focus", f"focused {describe(pane)}")
 
     if name == "read":
         parser.description = "Print a pane's contents"
@@ -480,8 +523,12 @@ def _pane_subcommand(name: str, argv: list[str]) -> int:
         parser.add_argument("--submit", action="store_true",
                             help="then press Enter, as a separate keystroke")
         ns = parser.parse_args(argv)
-        load_panes("pane send").send(ns.target, ns.text, submit=ns.submit)
-        return 0
+        panes = load_panes("pane send")
+        pane = panes.snapshot().find_pane(ns.target)
+        panes.send(f"pane:{pane.id}", ns.text, submit=ns.submit)
+        pressed = " and pressed Enter" if ns.submit else ""
+        return done("pane send", f"typed {len(ns.text)} characters into "
+                                 f"{describe(pane)}{pressed}")
 
     return fail("pane", f"unknown pane command '{name}'", 2)
 
