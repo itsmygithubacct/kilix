@@ -30,7 +30,7 @@ class PiperRuntimeTests(unittest.TestCase):
             wrapper.write_text('set -eu\n_kilix_voice_tool() { echo "$TOOL"; }\ncase "$1" in\n' + dispatch + '\nesac\n')
             events = root / 'events'
             env = sandbox_env(KILIX_HOME=str(root), TOOL=str(tool), EVENTS=str(events), PYTHONPATH=str(root/'existing'))
-            for arguments in (['--prepare-system-voice'], ['--system-voice', '--speak', 'hello; $(false)']):
+            for arguments in (['--enable-kristin'], ['--prepare-system-voice'], ['--system-voice', '--speak', 'hello; $(false)']):
                 events.write_text('')
                 result = subprocess.run(['bash', str(wrapper), 'tts', *arguments], env=env, capture_output=True)
                 self.assertEqual(result.returncode, 0, result.stderr)

@@ -2424,6 +2424,8 @@ case "${1:-}" in
         -h|--help|help)
           echo "usage: $_self tts [--install-only|--force-install] [ARGS...]"
           echo "opens the read-aloud settings TUI"
+          echo "--enable-kristin: opt in to Piper Kristin as the shared voice"
+          echo "For documents, use Kilix 95: Start > Programs > Document Reader"
           exit 0 ;;
         --) shift; break ;;
         *) break ;;
@@ -2458,6 +2460,7 @@ case "${1:-}" in
         export PYTHONPATH="$KILIX_HOME/config${PYTHONPATH:+:$PYTHONPATH}"
       fi
       if [ "$_tts_argument" = --prepare-system-voice ] \
+          || [ "$_tts_argument" = --enable-kristin ] \
           || [ "$_tts_argument" = --system-voice ] \
           || [ "$_tts_argument" = --tier=neural ] \
           || [ "$_tts_argument" = --install=piper-en-us-kristin-medium ] \
