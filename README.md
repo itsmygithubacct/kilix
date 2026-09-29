@@ -1005,7 +1005,7 @@ after the licence-gated weights are in place.
 
 Whisper dictation runs through `kilix-whisper-stt`, a small provider around
 faster-whisper (CTranslate2, int8 on the CPU). `kilix voice whisper` fetches
-provider commit `1338652895d74882fbf00dd262b80a2814aae0be`, installs its
+provider commit `15ef23b32da497a41198d3028e34715801de6196`, installs its
 locked environment with `uv sync --locked` under Python 3.12.8, and publishes
 it at `$KILIX_DATA_HOME/voice/whisper/current/bin/kilix-whisper-stt`. It does
 nothing when that pinned generation is already current. The provider holds no

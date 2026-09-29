@@ -13,7 +13,7 @@ umask 077
 GPU_TERMINAL_HOME="${GPU_TERMINAL_HOME:-$HOME/.local/gpu_terminal}"
 GPU_TERMINAL_SOURCE_HOME="${GPU_TERMINAL_SOURCE_HOME:-$GPU_TERMINAL_HOME/sources}"
 KILIX_DATA_HOME="${KILIX_DATA_HOME:-$GPU_TERMINAL_HOME/kilix/data}"
-KILIX_WHISPER_REF=1338652895d74882fbf00dd262b80a2814aae0be
+KILIX_WHISPER_REF=15ef23b32da497a41198d3028e34715801de6196
 KILIX_WHISPER_REPO=https://github.com/itsmygithubacct/kilix-whisper-stt.git
 
 fail() { printf 'kilix whisper: %s\n' "$*" >&2; exit 1; }
