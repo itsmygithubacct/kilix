@@ -104,3 +104,39 @@ class DesktopGamesPlayTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PlayFromAnAgentShellTests(unittest.TestCase):
+    """Outside a Kilix pane's own terminal (an agent's shell: no tty, or a pty with
+    TERM=dumb), `play` sets the game up there and boots it in a new tab, instead of
+    failing with "needs an interactive Kitty-protocol terminal" (2026-09-29 apps
+    benchmark). This sandbox has no built engine, so the new-tab step stops at once
+    with its remedy; what is asserted is that the launcher took that path, after the
+    setup, without starting a build."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.home = self.temp.name
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def _run(self, **extra):
+        env = {"HOME": self.home, "PATH": "/usr/bin:/bin", "TERM": "dumb",
+               "KILIX_HOME": ROOT, **extra}
+        return subprocess.run(
+            [os.path.join(ROOT, "kilix"), "games", "play", "minesweeper"],
+            stdin=subprocess.DEVNULL, capture_output=True, text=True,
+            timeout=120, env=env)
+
+    def test_an_agent_shell_sets_up_then_asks_for_a_new_tab(self):
+        dead = os.path.join(self.home, "no-such.sock")
+        result = self._run(KITTY_LISTEN_ON=f"unix:{dead}")
+        out = result.stdout + result.stderr
+        self.assertIn("built into the desktop", out)   # setup ran here
+        self.assertIn("cannot open a new tab", out)     # then a tab was asked for
+        self.assertNotEqual(result.returncode, 0)       # no engine in the sandbox
+
+    def test_without_a_kilix_socket_nothing_asks_for_a_tab(self):
+        result = self._run()
+        self.assertNotIn("cannot open a new tab", result.stdout + result.stderr)

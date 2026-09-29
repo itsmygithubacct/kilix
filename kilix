@@ -1950,6 +1950,25 @@ case "${1:-}" in
         # games.py resolves its own imports from its script directory; the
         # SDK (kilix_content, shared settings) needs the host config root.
         export PYTHONPATH="$KILIX_HOME/config${PYTHONPATH:+:$PYTHONPATH}"
+        if [ -z "$_games_play_setup" ] && [ -n "${KITTY_LISTEN_ON:-}" ] \
+            && ! { [ -t 0 ] && [ -t 1 ] && [ "${TERM:-}" = xterm-kitty ]; }; then
+          # Not a Kilix pane's own terminal: an agent's or a script's shell.
+          # Agents often get a pseudo-terminal with TERM=dumb, so a tty alone
+          # does not mean a game can draw here; booting in place failed with
+          # "needs an interactive Kitty-protocol terminal" (2026-09-29 apps
+          # benchmark). Set it up here, where an install error is seen, then
+          # boot it in a new tab of this Kilix.
+          python3 "$KILIX_HOME/desktop/games.py" --setup-only "$_games_play_id" || exit $?
+          # Straight to remote control, as `kilix new-tab` does once the engine
+          # exists; going through the whole launcher could start a build first.
+          _games_kitten="$KILIX_BUILD_DIRECTORY/current/src/kitty/launcher/kitten"
+          [ -x "$_games_kitten" ] || {
+            echo "kilix games: cannot open a new tab: the terminal engine is not built ($_games_kitten); run: kilix --build" >&2
+            exit 1
+          }
+          KILIX_KITTEN="$_games_kitten" exec python3 "$KILIX_HOME/config/remote.py" \
+            new-tab --title "$_games_play_id" -- "$KILIX_HOME/kilix" games play "$_games_play_id"
+        fi
         if [ -n "$_games_play_setup" ]; then
           set -- --setup-only "$_games_play_id"
         else
