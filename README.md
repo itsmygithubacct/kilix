@@ -910,6 +910,8 @@ kilix voice install               # pinned Kilix Voice + default Vosk model
 kilix stt --models                # all speech models, sizes, install/runtime state
 kilix stt --models --json         # versioned machine-readable catalog contract
 kilix stt --install lgraph-en-us --default lgraph-en-us
+kilix stt --install vibevoice-asr-bitnet --default vibevoice-asr-bitnet  # weights + VibeASR runtime
+kilix voice vibeasr               # (re)build the pinned VibeASR.cpp dictation runtime
 kilix tts --tiers                 # hardware-aware read-aloud choices
 kilix tts --interactive --tier neural   # first-use Piper setup and session
 kilix tts --interactive --tier pocket-cpu # measured Pocket/Alba CPU audition
@@ -985,9 +987,17 @@ must consume this versioned command contract instead of copying the catalog.
 The catalog contains `small-en-us` (Vosk, 39.3 MiB), `lgraph-en-us` (Vosk,
 124.5 MiB), and `vibevoice-asr-bitnet` (VibeVoice, about 1.6 GiB). VibeVoice's
 weights are shared with Kilix Bonsai, so installing them does not create a
-second copy. They can be selected as a future-compatible default, but this
-version of the live voice runtime cannot dictate with them; the UI and CLI
-report that distinction instead of calling the weights runnable.
+second copy. VibeVoice dictates once its VibeASR runtime is built (below); it
+transcribes each turn when the turn ends rather than showing live partials.
+
+VibeVoice dictation runs through VibeASR.cpp. `kilix voice vibeasr` fetches
+upstream commit `c4334009c88060f86cdbbd684b62662f710b6c20` of
+microsoft/VibeASR.cpp (MIT) with the llama.cpp revision it records, builds
+only a statically linked `asr_infer`, and publishes it at
+`$KILIX_DATA_HOME/voice/vibeasr/current/bin/asr_infer`. It needs a C/C++
+toolchain and cmake, takes about a minute, and does nothing when that pinned
+build is already current. `kilix stt --install vibevoice-asr-bitnet` runs it
+after the licence-gated weights are in place.
 
 `kilix voice install` installs the immutable `kilix-voice` 0.1.6 source at
 commit `ae18f4d079e9d32d6a3f471b1969a6bda8af668d`, the official Vosk 0.3.45

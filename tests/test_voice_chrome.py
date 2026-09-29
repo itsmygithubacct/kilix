@@ -216,7 +216,7 @@ class VoiceSegmentTests(unittest.TestCase):
                 self.assertTrue(
                     self.voice._stt_available("vosk", "small-en-us"))
 
-    def test_vibevoice_can_be_installed_but_is_not_claimed_runnable(self):
+    def test_vibevoice_dictates_once_its_runtime_is_built(self):
         data = Path(self.tmp.name) / "data"
         with self.settings(
                 KILIX_VOICE_STT_ENGINE="vibevoice",
@@ -225,18 +225,45 @@ class VoiceSegmentTests(unittest.TestCase):
                     "KILIX_DATA_HOME": str(data),
                     "KILIX_HOME": str(ROOT),
                 }, clear=False):
+            os.environ.pop("KILIX_VOICE_VIBEASR", None)
             offer = self.voice.dictation_install_offer()
             self.assertIsNotNone(offer)
             self.assertIn("vibevoice-asr-bitnet", offer.argv)
+            self.assertIn("model and VibeASR runtime", offer.message)
             model = data / "voice" / "models" / "vibevoice-asr-bitnet"
             for relative in self.voice.STT_MODEL_REQUIRED_FILES[
                     "vibevoice-asr-bitnet"]:
                 target = model / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(b"fixture")
+            # Weights alone: the offer now builds only the runtime.
+            offer = self.voice.dictation_install_offer()
+            self.assertIsNotNone(offer)
+            self.assertIn("its VibeASR runtime is not installed", offer.message)
+            self.assertIn("Build the VibeASR runtime", offer.message)
+            runtime = data / "voice" / "vibeasr" / "current" / "bin" / "asr_infer"
+            runtime.parent.mkdir(parents=True)
+            runtime.write_text("#!/bin/sh\n")
+            runtime.chmod(0o755)
             self.assertIsNone(self.voice.dictation_install_offer())
-            self.assertFalse(self.voice._stt_available(
-                "vibevoice", "vibevoice-asr-bitnet"))
+            real_which = self.voice.which
+            with mock.patch.object(
+                    self.voice, "which",
+                    lambda name: f"/usr/bin/{name}" if name == "parec"
+                    else real_which(name)):
+                self.assertTrue(self.voice._stt_available(
+                    "vibevoice", "vibevoice-asr-bitnet"))
+                runtime.chmod(0o644)       # present but not executable
+                self.assertFalse(self.voice._stt_available(
+                    "vibevoice", "vibevoice-asr-bitnet"))
+
+    def test_choosing_the_vibevoice_engine_selects_its_model(self):
+        with self.settings(KILIX_VOICE_STT_ENGINE="vibevoice",
+                           KILIX_VOICE_STT_MODEL="small-en-us"):
+            self.assertEqual(self.voice.stt_model(), "vibevoice-asr-bitnet")
+        with self.settings(KILIX_VOICE_STT_ENGINE="vosk",
+                           KILIX_VOICE_STT_MODEL="small-en-us"):
+            self.assertEqual(self.voice.stt_model(), "small-en-us")
 
     def test_confirmed_lazy_install_opens_a_held_visible_overlay(self):
         launch = mock.Mock()
