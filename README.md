@@ -2302,3 +2302,12 @@ memory-pressure telemetry and consecutive samples no more than five seconds apar
 Temperature thresholds use raw Celsius values regardless of display preferences.
 Turning system voice off stops these warnings too. Audio still depends on a
 working output device and the process being able to run under resource pressure.
+
+System voice also caches **Goodbye** for normal machine shutdown. On Plebian-OS,
+the worker listens to logind and releases its shutdown delay after playback.
+The desktop's Shut Down action waits briefly for a voice acknowledgement, with
+duplicate speech suppressed when logind also notifies the worker. Desktop-only
+restarts, owner-pipe closure and disabling voice remain silent. Generic hosts
+need system Python's `dbus` and `gi` bindings for logind notification; the desktop
+menu path works without them. Forced shutdown and power loss cannot guarantee
+audio playback.
