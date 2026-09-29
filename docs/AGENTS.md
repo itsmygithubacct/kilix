@@ -33,11 +33,16 @@ A run that uses no tools costs about 13.8k input tokens; the figures below are w
 | --- | --- | --- |
 | Open a shell pane beside yours | `kilix pane right -- bash` | 1 command, 28k tokens, 3/3 |
 | Start a coding agent in a new tab | `kilix new-tab --title T --cwd DIR codex` | 1 command, 28k, 3/3 |
-| Type a command into another pane | `kilix panes list`, then `kilix pane send pane:ID 'TEXT'`, then `kilix pane send pane:ID $'\r'` | 3 commands, 43k, 3/3 |
-| Close a pane | `kilix panes list`, then `kilix pane close pane:ID` | 2 commands, 42k, 3/3 |
+| Type a command into another pane | `kilix pane send TITLE 'TEXT' --submit` | 1 command, 28k, measured with the equivalent `kilix panes send TITLE --enter` |
+| Close a pane | `kilix pane close TITLE` | 1 command, expected ~28k (the id lookup it removes cost a 14k round trip) |
 | Find a file, search a log | `find`, `rg`, `grep` | 1 command, 28k, 3/3 |
 
-The alternatives cost more for the same tasks:
+Before title targets (0.2.2 RC2), typing and closing needed `kilix pane list` first to turn a
+title into an id: 3 and 2 commands, about 42k each. Every round trip re-sends the agent's own
+context (about 14k tokens), so the commands you avoid matter far more than their output.
+
+The alternatives cost more for the same tasks (measured before the RC3 help and skill cuts;
+the RC3 help brought `--help` discovery to about 1.9× and the skills to about 1.3×):
 
 | Route | Pane tasks succeeded | Cost against the commands above |
 | --- | :---: | :---: |
@@ -48,10 +53,11 @@ The alternatives cost more for the same tasks:
 | kilix-needle files/logs tools, against `find`/`rg` | 6/6 | 2.3–5.6× |
 
 So: **use the commands in the first table.** They are the whole cost; this guide exists so
-you do not pay for discovering them. Target panes by the `pane:ID` form from `kilix panes
-list` (a bare number or word can match a title). Send text and the submit key as two
-operations; a single send with a submit flag has left text unsubmitted in agent TUIs (§10).
-Bare `kilix pane` with no arguments opens a pane.
+you do not pay for discovering them. Target a pane by its unique title, or by `pane:ID` from
+`kilix pane list`. A title shared by several panes is refused with their ids, and a bare
+number is always an id (possibly a tab's). `--submit` sends Enter as its own keystroke after
+the text, which coding-agent input boxes need; before RC3 it went in the same write and could
+leave a prompt unsubmitted (§10). Bare `kilix pane` with no arguments opens a pane.
 
 Where the other routes still fit:
 

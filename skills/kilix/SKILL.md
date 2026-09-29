@@ -11,13 +11,14 @@ For Kilix 0.2.2. These commands are the cheapest reliable route (2026-09-29 rout
 benchmark); `kilix --help` lists them too. Run them directly, with no preflight:
 
 - Open a shell pane beside yours: `kilix pane right|left|up|down [--title T] -- bash`
-- Find a pane by title: `kilix pane list` (ids, titles, programs; `(self)` is you)
-- Type into a shell pane: `kilix pane send pane:ID 'TEXT'`, then `kilix pane send pane:ID $'\r'`
-- Close a pane: `kilix pane close pane:ID`
+- List panes: `kilix pane list` (ids, titles, programs; `(self)` is you)
+- Type into a shell pane: `kilix pane send TITLE 'TEXT' --submit`
+- Close a pane: `kilix pane close TITLE`
 - A coding agent in a new tab: `kilix new-tab --title T --cwd DIR codex`
 - Files and logs: `find`, `rg`
 
-Target `pane:ID`; a bare number may name a tab instead. Closing kills the pane's programs: close
+Target a pane by its unique title or `pane:ID`; a shared title is refused with the matching ids,
+and a bare number is an id. Closing kills the pane's programs: close
 only exact panes the user asked for, or disposable ones you made. Do not poll a live session
 with `kilix` in a loop (each call reloads its config), install upgrades, or start a second
 remote-control daemon.

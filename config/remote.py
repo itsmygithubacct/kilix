@@ -442,7 +442,8 @@ def _pane_subcommand(name: str, argv: list[str]) -> int:
 
     if name == "close":
         parser.description = "Close a pane (default: this one)"
-        parser.add_argument("target", nargs="?", default=None)
+        parser.add_argument("target", nargs="?", default=None,
+                            help="a pane's unique title, or pane:ID")
         parser.add_argument("--force", action="store_true")
         ns = parser.parse_args(argv)
         panes = load_panes("pane close")
@@ -458,14 +459,14 @@ def _pane_subcommand(name: str, argv: list[str]) -> int:
 
     if name == "focus":
         parser.description = "Focus a pane"
-        parser.add_argument("target")
+        parser.add_argument("target", help="a pane's unique title, or pane:ID")
         ns = parser.parse_args(argv)
         load_panes("pane focus").focus(ns.target)
         return 0
 
     if name == "read":
         parser.description = "Print a pane's contents"
-        parser.add_argument("target")
+        parser.add_argument("target", help="a pane's unique title, or pane:ID")
         parser.add_argument("--extent", default="screen",
                             choices=["screen", "all"])
         ns = parser.parse_args(argv)
@@ -474,10 +475,10 @@ def _pane_subcommand(name: str, argv: list[str]) -> int:
 
     if name == "send":
         parser.description = "Type text into a pane"
-        parser.add_argument("target")
+        parser.add_argument("target", help="a pane's unique title, or pane:ID")
         parser.add_argument("text")
         parser.add_argument("--submit", action="store_true",
-                            help="press Enter afterwards")
+                            help="then press Enter, as a separate keystroke")
         ns = parser.parse_args(argv)
         load_panes("pane send").send(ns.target, ns.text, submit=ns.submit)
         return 0
