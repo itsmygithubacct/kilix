@@ -27,7 +27,7 @@ case "$(uname -m)" in
   *) voice_host_arch="" voice_elf_machine="" ;;
 esac
 KILIX_VOICE_REPO="${KILIX_VOICE_REPO:-https://github.com/itsmygithubacct/kilix-voice.git}"
-KILIX_VOICE_REF="${KILIX_VOICE_REF:-e3f1d6b4c3e7d980de0acc33bad62d35b92f0255}"
+KILIX_VOICE_REF="${KILIX_VOICE_REF:-a12be47e289ca03fccd46840276add1833df5760}"
 KILIX_VOICE_LIB_VERSION="${KILIX_VOICE_LIB_VERSION:-0.3.45}"
 if [ "$voice_host_arch" = aarch64 ]; then
   KILIX_VOICE_LIB_SHA256="${KILIX_VOICE_LIB_SHA256:-54efb47dd890e544e9e20f0316413acec7f8680d04ec095c6140ab4e70262704}"

@@ -55,7 +55,8 @@ class WhisperSttInstallerTests(unittest.TestCase):
         git = bins / 'git'
         git.write_text('#!/bin/bash\necho "$*" >> "$GIT_LOG"\ncase "$*" in\n'
                        ' *"rev-parse HEAD"*) echo "$SOURCE_PIN" ;;\n'
-                       ' *status*) exit 0 ;;\n *) exit 0 ;;\nesac\n')
+                       ' *status*) [ -z "${SOURCE_DIRTY:-}" ] || echo " M cli.py" ;;\n'
+                       ' *) exit 0 ;;\nesac\n')
         git.chmod(0o755)
         uv = bins / 'uv'
         uv.write_text('#!/bin/bash\necho "$*" >> "$UV_LOG"\n'
@@ -142,6 +143,10 @@ class WhisperSttInstallerTests(unittest.TestCase):
             failed = self.run_installer(env, UV_FAIL='1')
             self.assertNotEqual(failed.returncode, 0)
             self.assertIn('could not be installed', failed.stderr)
+            self.assertFalse((store / 'current').exists())
+            dirty = self.run_installer(env, SOURCE_DIRTY='1')
+            self.assertNotEqual(dirty.returncode, 0)
+            self.assertIn('has local changes', dirty.stderr)
             self.assertFalse((store / 'current').exists())
             wrong = self.run_installer(env, SOURCE_PIN='f' * 40)
             self.assertNotEqual(wrong.returncode, 0)
