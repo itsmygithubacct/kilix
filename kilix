@@ -41,6 +41,7 @@
 #   ./kilix dictate           # recognize one spoken utterance
 #   ./kilix tts | stt [args]  # run the read-aloud / dictation TUIs
 #   ./kilix voice status      # voice status, install, doctor, stop
+#   ./kilix avatar [args]     # conversational avatar and private Codex setup
 #   ./kilix bonsai [args]     # BitNet model store: browse, download, verify
 #   ./kilix rtsp [args]       # watch RTSP cameras: view one, or a grid
 #   ./kilix nvr [args]        # record cameras, detect, review what happened
@@ -931,6 +932,33 @@ _kilix_bonsai_resolve() {
     return 1
   }
   _KILIX_BONSAI_COMMAND=("$resolved")
+}
+
+
+# Avatar uses a pinned installed build.
+_KILIX_AVATAR_PREFIX="${KILIX_AVATAR_PREFIX:-$HOME/.local}"
+declare -a _KILIX_AVATAR_COMMAND=()
+_kilix_avatar_resolve() {
+  local force="$1" resolved
+  # PATH first, then the install prefix: desktop launch contexts run without
+  # ~/.local/bin on PATH, and an installed Bonsai closure PATH cannot see must
+  # be run, not reinstalled.
+  for resolved in "$(command -v kilix-avatar 2>/dev/null || true)" \
+                  "$_KILIX_AVATAR_PREFIX/bin/kilix-avatar"; do
+    if [ "$force" = 0 ] && [ -n "$resolved" ] && [ -x "$resolved" ]; then
+      _KILIX_AVATAR_COMMAND=("$resolved")
+      return 0
+    fi
+  done
+  local -a avatar_installer=("$KILIX_HOME/scripts/install-kilix-avatar.sh")
+  [ "$force" = 0 ] || avatar_installer+=(--force)
+  "${avatar_installer[@]}" || return 1
+  resolved="$_KILIX_AVATAR_PREFIX/bin/kilix-avatar"
+  [ -x "$resolved" ] || {
+    echo "kilix avatar: installer did not create $resolved" >&2
+    return 1
+  }
+  _KILIX_AVATAR_COMMAND=("$resolved")
 }
 
 # Same shape as bonsai's, and for the same reason: an installed closure the
@@ -2440,6 +2468,7 @@ case "${1:-}" in
     _tts_previous=""
     for _tts_argument in "$@"; do
       if [ "$_tts_argument" = --tiers ] \
+          || [ "$_tts_argument" = --recommend ] \
           || [ "$_tts_argument" = --tier ] \
           || [[ "$_tts_argument" = --tier=* ]]; then
         _sizer_installer="$KILIX_HOME/scripts/install-kilix-tts-sizer.sh"
@@ -2686,6 +2715,31 @@ sys.exit(0 if ready else 1)
     )" || exit 1
     [ "$_stt_install_only" = 0 ] || exit 0
     exec "$_stt_installed" "$@" ;;
+  avatar)
+    shift
+    _avatar_install_only=0
+    _avatar_force=0
+    while :; do
+      case "${1:-}" in
+        --install-only) _avatar_install_only=1; shift ;;
+        --force-install) _avatar_force=1; shift ;;
+        -h|--help|help)
+          echo "usage: $_self avatar [--install-only|--force-install] [ARGS...]"
+          echo "Open Kilix Avatar. Select Codex, then Codex setup to sign in or add a key."
+          exit 0 ;;
+        --) shift; break ;;
+        *) break ;;
+      esac
+    done
+    _kilix_avatar_resolve "$_avatar_force" || exit 1
+    [ "$_avatar_install_only" = 0 ] || exit 0
+    if [ -z "${PLEBIAN_MODEL_SIZER:-}" ]; then
+      _avatar_sizer="$("$KILIX_HOME/scripts/install-kilix-tts-sizer.sh" --print-path)"
+      if [ -x "$_avatar_sizer" ]; then
+        export PLEBIAN_MODEL_SIZER="$_avatar_sizer"
+      fi
+    fi
+    exec "${_KILIX_AVATAR_COMMAND[@]}" --chat "$@" ;;
   bonsai|models|bitnet)
     shift
     _bonsai_install_only=0
