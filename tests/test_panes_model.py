@@ -151,6 +151,52 @@ class WorkspaceModelTests(unittest.TestCase):
         self.assertIsInstance(collided.find("tab:7"), panes.Tab)
         self.assertIsInstance(collided.find("pane:7"), panes.Pane)
 
+    # --- titles ---------------------------------------------------------
+
+    def _titled(self, *titles):
+        found = tuple(panes.Pane(
+            id=100 + i, tab_id=9, os_window_id=1, title=t, cwd="", pid=0,
+            cmdline=(), process="", is_focused=False, is_self=False)
+            for i, t in enumerate(titles))
+        tab = panes.Tab(id=9, os_window_id=1, title="work", layout="splits",
+                        is_active=True, panes=found)
+        return panes.Workspace(
+            os_windows=(panes.OSWindow(id=1, is_focused=True, tabs=(tab,)),))
+
+    def test_a_unique_title_names_a_pane(self):
+        ws = self._titled("build", "bench-target", "logs")
+        for target in ("bench-target", "title:bench-target", "name:bench-target",
+                       "Bench-Target"):
+            with self.subTest(target=target):
+                self.assertEqual(ws.find(target).id, 101)
+                self.assertEqual(ws.find_pane(target).id, 101)
+
+    def test_exact_title_wins_over_a_case_insensitive_one(self):
+        ws = self._titled("Logs", "logs")
+        self.assertEqual(ws.find("logs").id, 101)
+        self.assertEqual(ws.find("Logs").id, 100)
+
+    def test_ambiguous_and_missing_titles_refuse_with_candidates(self):
+        ws = self._titled("worker", "worker", "logs")
+        with self.assertRaises(panes.AmbiguousTarget) as caught:
+            ws.find("worker")
+        self.assertIn("pane:100", str(caught.exception))
+        self.assertIn("pane:101", str(caught.exception))
+        with self.assertRaises(panes.NoSuchTarget):
+            ws.find("nothing-called-this")
+        with self.assertRaises(panes.NoSuchTarget):
+            ws.find_pane("title:nothing")
+
+    def test_numbers_stay_ids_not_titles(self):
+        ws = self._titled("42")
+        with self.assertRaises(panes.NoSuchTarget):
+            ws.find("42")
+        self.assertEqual(ws.find("title:42").id, 100)
+
+    def test_normalize_title_target(self):
+        self.assertEqual(panes.normalize_target("title:x"), ("title", "x"))
+        self.assertEqual(panes.normalize_target("name:x"), ("title", "x"))
+
     # --- tree() ---------------------------------------------------------
 
     def test_tree_shape(self):
@@ -316,3 +362,33 @@ class PaneIdMapperTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SendSubmitTests(unittest.TestCase):
+    """Enter is its own write: in one write with the text, a coding agent's
+    input box takes it as part of a bracketed paste and never submits."""
+
+    def setUp(self):
+        self.calls = []
+        self.saved = (panes._check, panes.time.sleep)
+        panes._check = lambda argv, what: self.calls.append(argv)
+        panes.time.sleep = lambda seconds: self.calls.append(("sleep", seconds))
+
+    def tearDown(self):
+        panes._check, panes.time.sleep = self.saved
+
+    def test_submit_is_a_separate_write_after_the_text(self):
+        panes.send("pane:7", "make test", submit=True)
+        self.assertEqual(self.calls, [
+            ["send-text", "--match", "id:7", "make test"],
+            ("sleep", panes.SUBMIT_DELAY),
+            ["send-text", "--match", "id:7", "\r"],
+        ])
+
+    def test_text_alone_and_enter_alone(self):
+        panes.send("pane:7", "draft")
+        panes.send("pane:7", "", submit=True)
+        self.assertEqual(self.calls, [
+            ["send-text", "--match", "id:7", "draft"],
+            ["send-text", "--match", "id:7", "\r"],
+        ])

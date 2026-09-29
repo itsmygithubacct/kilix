@@ -23,8 +23,13 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import time
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Iterator, Mapping, Sequence
+
+#: Pause between a sent text and its separate Enter, so the target has taken
+#: the text (and closed any bracketed paste) before the key arrives.
+SUBMIT_DELAY = 0.15
 
 
 KITTEN = os.environ.get("KILIX_KITTEN", "kitten")
@@ -143,13 +148,37 @@ class Workspace:
             for pane in tab.panes:
                 yield pane
 
+    def by_title(self, title: str) -> Pane:
+        """The one pane whose title is ``title``.
+
+        Exact match first, then a case-insensitive exact match. No match and
+        more than one match both raise, naming the candidates, so a caller
+        never acts on a guess. Saves an agent the listing round trip it would
+        otherwise spend turning a title it already knows into an id.
+        """
+        panes = list(self.panes())
+        found = [p for p in panes if p.title == title] or \
+            [p for p in panes if p.title.casefold() == title.casefold()]
+        if len(found) == 1:
+            return found[0]
+        if found:
+            ids = ", ".join(f"pane:{p.id}" for p in found)
+            raise AmbiguousTarget(
+                f"title {title!r} matches {len(found)} panes ({ids}); use pane:ID")
+        raise NoSuchTarget(
+            f"no live pane titled {title!r}; run 'kilix ls --panes'")
+
     def find(self, target: int | str) -> Pane | Tab:
-        """Resolve ``pane:111``, ``tab:37`` or a bare id.
+        """Resolve ``pane:111``, ``tab:37``, a bare id, or a pane title.
 
         A bare id matching both a tab and a pane raises
-        :class:`AmbiguousTarget` rather than guessing which was meant.
+        :class:`AmbiguousTarget` rather than guessing which was meant. A bare
+        non-numeric target, or ``title:NAME``, is a pane title (see
+        :meth:`by_title`).
         """
         kind, value = normalize_target(target)
+        if kind == "title":
+            return self.by_title(value)
         tabs = {str(tab.id): tab for tab in self.tabs()}
         panes = {str(pane.id): pane for pane in self.panes()}
         if kind == "tab":
@@ -168,6 +197,8 @@ class Workspace:
             return tabs[value]
         if in_panes:
             return panes[value]
+        if not value.isdigit():
+            return self.by_title(value)
         raise NoSuchTarget(
             f"no live tab or pane with id {value}; run 'kilix ls --panes'")
 
@@ -180,6 +211,8 @@ class Workspace:
         kind, value = normalize_target(target)
         if kind == "tab":
             raise NoSuchTarget(f"{value} names a tab, not a pane")
+        if kind == "title" or (kind is None and not value.isdigit()):
+            return self.by_title(value)
         for pane in self.panes():
             if str(pane.id) == value:
                 return pane
@@ -449,7 +482,7 @@ def _check(args: Sequence[str], what: str, *, via_tty: bool = False,
 def _match(target: int | str) -> tuple[str, str]:
     """Return ``(kind, id)`` for an already-resolved or explicit target."""
     kind, value = normalize_target(target)
-    if kind is None:
+    if kind not in ("pane", "tab"):
         state = load_state()
         kind, value = resolve_target(target, state)
     return kind, value
@@ -714,9 +747,17 @@ def send(target: int | str, text: str, *, submit: bool = False) -> None:
     kind, value = _match(target)
     if kind != "pane":
         raise NoSuchTarget(f"send: {value} is a tab, not a pane")
-    payload = text + "\r" if submit else text
-    _check(["send-text", "--match", f"id:{value}", payload],
-           f"send to pane {value}")
+    # Enter goes as its own write. Sent in the same write as the text, a
+    # coding agent's input box takes it as part of a bracketed paste and the
+    # prompt stays unsubmitted; a shell treats both forms alike.
+    if text:
+        _check(["send-text", "--match", f"id:{value}", text],
+               f"send to pane {value}")
+    if submit:
+        if text:
+            time.sleep(SUBMIT_DELAY)
+        _check(["send-text", "--match", f"id:{value}", "\r"],
+               f"submit in pane {value}")
 
 
 # --- helpers absorbed from config/remote.py -------------------------------
@@ -776,6 +817,8 @@ def normalize_target(raw: int | str) -> tuple[str | None, str]:
         return "pane", value
     if kind in {"tab", "page", "session"}:
         return "tab", value
+    if kind in {"title", "name"}:
+        return "title", value
     return None, text
 
 
