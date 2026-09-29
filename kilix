@@ -145,7 +145,7 @@ Panes and tabs (run inside a Kilix pane; directions are relative to it):
         kilix new-tab --title Codex --cwd ~/src/app codex
   kilix tab list|close|rename|focus|left|right
 
-Target panes as pane:ID from `kilix pane list`; a bare number or word may match a title.
+Targets are ids: pane:ID from `kilix pane list` (a bare number may name a tab instead).
 
 Typing into another coding agent's input box (verifies the target first; not
 needed to start one or for shell panes):
