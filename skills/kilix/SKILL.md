@@ -13,6 +13,16 @@ installed agent-control documentation. Do not assume checkout documentation
 describes an older running installation, install an upgrade implicitly, or
 start a second remote-control daemon.
 
+## Choose the route by cost
+
+`agent-control` checks broker identity before typing into another agent, and that is what
+it is for. For plain shell panes it costs more and has no verb: in the 2026-09-29 route
+benchmark the direct verbs did the same pane tasks for about a third of the tokens. Open a
+shell pane with `kilix pane right -- bash`. Close a verified pane with
+`kilix pane close pane:ID`, after `kilix panes list`. Find files and search logs with
+`find`/`rg`. Details are in the installed `docs/AGENTS.md`, "Start with the cheapest reliable
+route".
+
 ## Identify before operating
 
 Run `kilix agent-control list`. Its JSON includes the caller's pane ID, tab

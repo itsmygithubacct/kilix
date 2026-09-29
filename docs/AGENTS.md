@@ -23,61 +23,58 @@ daemon to start. In-pane callers receive the socket and credential paths
 directly; an out-of-pane tool runner must use the bounded discovery procedure
 below rather than guessing.
 
-## Start with kilix-needle for routine pane management
+## Start with the cheapest reliable route
 
-**Prefer kilix-needle's `panes` job for short, routine pane/tab requests.** It
-uses a small local CPU model to translate requests into checked Kilix actions,
-making it a low-cost option for splitting, focusing, arranging, renaming, and
-resizing panes. Let Needle handle these requests instead of spending repeated
-large-model tool calls reconstructing the layout and remote-control arguments.
-Keep the supervising agent responsible for the task, target, and outcome.
+Routes were measured on 2026-09-29 with Codex (gpt-6-sol, medium effort) against a private
+Kilix: 89 runs, 3 per task and route, with success checked from the terminal's own state.
+A run that uses no tools costs about 13.8k input tokens; the figures below are whole runs.
 
-`panes` is the **default job**, not a CLI subcommand. Use `kilix-needle ...`,
-not `kilix-needle panes ...`. The separate `apps` job is for apps/settings.
+| Task | Use | Measured |
+| --- | --- | --- |
+| Open a shell pane beside yours | `kilix pane right -- bash` | 1 command, 28k tokens, 3/3 |
+| Start a coding agent in a new tab | `kilix new-tab --title T --cwd DIR codex` | 1 command, 28k, 3/3 |
+| Type a command into another pane | `kilix panes list`, then `kilix pane send pane:ID 'TEXT'`, then `kilix pane send pane:ID $'\r'` | 3 commands, 43k, 3/3 |
+| Close a pane | `kilix panes list`, then `kilix pane close pane:ID` | 2 commands, 42k, 3/3 |
+| Find a file, search a log | `find`, `rg`, `grep` | 1 command, 28k, 3/3 |
 
-If the harness exposes Needle MCP tools, use `kilix_act` for a clear routine
-request and `kilix_plan` when you need to inspect its proposed target/actions:
+The alternatives cost more for the same tasks:
 
-```json
-{"request":"split right"}
-```
+| Route | Pane tasks succeeded | Cost against the commands above |
+| --- | :---: | :---: |
+| kilix-needle MCP tools (`kilix_act`, `kilix_agents_act`, ...) | 10/13 | 3.0× |
+| The bundled Kilix skills (`kilix agent-control`) | 10/12 | 3.2× |
+| Learning the CLI from `kilix --help` | 9/9 | 3.9× |
+| `kilix-needle --agent --json` | 8/12 | 5.1× |
+| kilix-needle files/logs tools, against `find`/`rg` | 6/6 | 2.3–5.6× |
 
-Pass that object to `kilix_act`. For a preview, pass the same object to
-`kilix_plan`; a plan makes no changes. The registered server/tool prefix varies
-by harness (for example, `kilix_needle.kilix_act`).
+So: **use the commands in the first table.** They are the whole cost; this guide exists so
+you do not pay for discovering them. Target panes by the `pane:ID` form from `kilix panes
+list` (a bare number or word can match a title). Send text and the submit key as two
+operations; a single send with a submit flag has left text unsubmitted in agent TUIs (§10).
+Bare `kilix pane` with no arguments opens a pane.
 
-From an agent's shell, the equivalents are:
+Where the other routes still fit:
 
-```sh
-kilix-needle --agent --json 'split right'
-kilix-needle --agent --json 'go to the left pane'
-kilix-needle --agent --json 'rename this tab to build'
-kilix-needle --agent --json --dry-run 'make it a grid'
-```
+- **Coding-agent sessions you are supervising:** the `kilix` skill's `kilix agent-control
+  send/key/dump` verify the broker identity before typing. That check is worth its cost when
+  the target is another agent's input box (§10); it has no verb for plain shell panes or for
+  closing panes.
+- **Needle:** a short natural-language layout request ("make it a grid", "resize left") was
+  not measured and may suit it. For the measured tasks it was slower and less reliable:
+  - requests containing long paths are misread (one became a tab rename);
+  - typing into a plain `sh` pane is refused as "not at a shell prompt";
+  - its agents job only accepts directories aliased in `~/.config/kilix-needle/dirs.json`.
+  If you use it, `kilix_act` needs `confirm_risky: true` for closing, typing and starting
+  programs. The MCP server only receives the environment variables its client forwards
+  (`KITTY_LISTEN_ON`, `KITTY_WINDOW_ID`, `KILIX_DATA_HOME`, `KILIX_CONTENT_ROOT`,
+  `KILIX_CONFIG_HOME` in the default Codex entry), so a non-default Kilix storage root makes
+  its own `kilix @ ls` refuse. The `kilix-needle` CLI covers the panes job only.
+- **Do not poll the live session with `kilix` in a loop.** In 0.2.2 every `kilix` call
+  rewrites the running session's `kitty.conf`, and the terminal reloads its configuration,
+  which drops any setting changed at runtime. Read state once, act, and verify once.
 
-Use one short request at a time. "This pane" means the calling pane; identify
-that source correctly (§1), especially when a harness strips pane variables.
-Read the result and verify the intended target/effect with `kilix panes list`
-or a bounded `kilix panes dump PANE --lines 20`. Use `kilix panes --json` when
-you need structured state. A successful tool invocation alone does not prove
-the requested action ran: check reported refusals and executed actions.
-
-Closing, typing, and starting a program require `confirm_risky: true` on
-`kilix_act`, or `--yes` together with `--agent` on the CLI. Set these only for
-actions already authorized by the user/task and a verified target. Existing
-authorization does not need another confirmation. These flags never override
-a refusal, and agent mode never closes its own pane/tab. Read a pane before
-sending input so you know whether it is at a shell, a password prompt, or an
-interactive program.
-
-Use direct `kilix` verbs for exact scripted operations, bulk listings, and
-output reads. If Needle is unavailable, refuses, or selects the wrong target,
-inspect the state and use an explicit supported command from the sections
-below when authorized; do not repeatedly rephrase a request to bypass a guard.
-Long commands, scripts, and precise control bytes belong in the direct path
-(§6). Use `kitten @` only where the higher-level interfaces lack the operation.
-Do not install/download a model or change licence acceptance just to make a
-routine pane action possible; the direct interface remains available.
+The per-task tables and method are kept with the 0.2.2 RC3 release research; rerun the
+benchmark when the verbs, the skills or Needle change.
 
 
 ## 1. Are you inside Kilix?
@@ -171,8 +168,8 @@ to be focused.
 
 ## 2. Choosing an interface
 
-**Use Needle for routine natural-language requests; prefer the `kilix` verbs
-for direct control and inspection.** The verbs are stable, handle credential
+**Prefer the `kilix` verbs; they were the cheapest measured route (see above).** The verbs
+are stable, handle credential
 and binary resolution for you, and print human-readable tables:
 
 ```

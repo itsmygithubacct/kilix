@@ -13,6 +13,14 @@ instructions. Preserve explicit choices. Infer a reasonable layout when the
 user leaves it open; ask only for missing choices that materially change the
 work. Do not create extra workers merely because space is available.
 
+## One agent, no layout
+
+A single coding session in a new tab, with no initial prompt and no split layout, is one
+command: `kilix new-tab --title TITLE --cwd DIR codex`, or another supported agent in place
+of `codex` (see `kilix agent-control new-tab --help`). In the 2026-09-29 route benchmark
+that took one command and about a quarter of the tokens of the full procedure below. Use the procedure for layouts, several sessions, model choices or
+initialization prompts.
+
 ## Plan and preflight
 
 Run `kilix agent-control --help` and `kilix agent-control list`. Identify the
