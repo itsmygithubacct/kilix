@@ -2454,7 +2454,9 @@ case "${1:-}" in
     done
     _tts_previous=""
     for _tts_argument in "$@"; do
-      if [ "$_tts_argument" = --tier=neural ] \
+      if [ "$_tts_argument" = --prepare-system-voice ] \
+          || [ "$_tts_argument" = --system-voice ] \
+          || [ "$_tts_argument" = --tier=neural ] \
           || [ "$_tts_argument" = --install=piper-en-us-kristin-medium ] \
           || { [ "$_tts_previous" = --tier ] && [ "$_tts_argument" = neural ]; } \
           || { [ "$_tts_previous" = --install ] \
@@ -2492,6 +2494,34 @@ case "${1:-}" in
     for _tts_argument in "$@"; do
       [ "$_tts_argument" != --interactive ] || _tts_interactive=1
     done
+    # Direct model selection needs the same locked interpreter as a tier.
+    # Validate the complete request before fetching runtime dependencies.
+    _tts_direct_qwen=0
+    _tts_device=cpu
+    _tts_previous=""
+    for _tts_argument in "$@"; do
+      case "$_tts_argument" in
+        --download-qwen|--download-qwen=*|--qwen-model-dir|--qwen-model-dir=*)
+          _tts_direct_qwen=1 ;;
+        --device=*) _tts_device="${_tts_argument#--device=}" ;;
+      esac
+      if [ "$_tts_previous" = --device ]; then _tts_device="$_tts_argument"; fi
+      _tts_previous="$_tts_argument"
+    done
+    if [ "$_tts_direct_qwen" = 1 ] && [ "$_tts_interactive" = 1 ]; then
+      "$_tts_installed" "$@" --check-session || exit $?
+      if [ "$_tts_device" = cuda:0 ]; then
+        _qwen_installer="$KILIX_HOME/scripts/install-kilix-qwen-tts-gpu.sh"
+      else
+        _qwen_installer="$KILIX_HOME/scripts/install-kilix-qwen-tts-cpu.sh"
+      fi
+      if [ ! -f "$_qwen_installer" ] || [ -L "$_qwen_installer" ] \
+          || [ ! -x "$_qwen_installer" ]; then
+        echo "kilix tts: locked Qwen installer missing or unsafe" >&2
+        exit 1
+      fi
+      _tts_python="$("$_qwen_installer")" || exit 1
+    fi
     _tts_previous=""
     for _tts_argument in "$@"; do
       if [ "$_tts_argument" = --tier=qwen-cpu ] \

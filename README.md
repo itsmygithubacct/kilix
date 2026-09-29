@@ -916,6 +916,9 @@ kilix tts --interactive --tier pocket-cpu # measured Pocket/Alba CPU audition
 kilix tts --interactive --tier qwen-cpu # locked CPU runtime, then first-use Qwen model
 kilix tts --interactive --tier qwen-gpu # locked CUDA/FlashAttention runtime on an eligible GPU
 kilix tts --interactive --tier qwen-base-gpu # 0.6B Base with a fixed synthetic reference
+kilix tts --interactive --download-qwen qwen3-tts-0.6b-customvoice
+kilix tts --interactive --download-qwen qwen3-tts-0.6b-base --synthetic-reference
+kilix tts --interactive --download-qwen qwen3-tts-1.7b-voicedesign --description 'A warm clear voice'
 kilix tts --speak 'Hello' --model qwen3-tts-0.6b-customvoice # explicit provider path
 kilix voice doctor                # dependency and audio-device diagnostics
 kilix tts                         # read-aloud settings and test-phrase TUI
@@ -935,6 +938,15 @@ CUDA PyTorch and FlashAttention 2. For an existing verified GPU environment,
 `KILIX_QWEN_GPU_PYTHON` may instead name its absolute Python path.
 The Base tier uses that GPU runtime and its own measured fit profile; no
 person's voice is cloned, and its weights require a separate first-use notice.
+The three direct `--download-qwen` commands install the locked CPU runtime
+and selected weights on first use, then open a foreground speech session.
+Repeating the command verifies and reuses the installation. Add `--device
+cuda:0` to select the optional GPU runtime explicitly. VoiceDesign uses the
+description to create a voice; `/description TEXT` changes it in the session.
+Piper uses `--interactive --tier neural`; Pocket English/Alba uses
+`--interactive --download-pocket`. Each model presents its first-use licence
+notice before acquiring weights. `/save FILE.wav` saves the generated audio.
+The native Pocket Q8 research variant is not part of these speech paths.
 The explicit `--model qwen3-tts-0.6b-customvoice` read-aloud path lazily
 installs only the pinned Qwen socket client. Synthesis additionally requires a
 separately running, receipt-backed Qwen provider; the audition runtime and its
@@ -2262,3 +2274,9 @@ metadata. Inspect records with `tail -f` or a JSON-lines reader.
 ### Search the documentation
 
 Run `kilix help-search "how do I split a pane"` to search the bundled Kilix, Kitty, Pleb and Plebian-OS documentation. The pinned Help Search app installs on first use, uses no model weights, and returns source passages rather than generated answers.
+
+Kilix 95's optional startup voice uses the pinned Piper runtime through
+`kilix tts --prepare-system-voice` and `kilix tts --system-voice`. First-use setup
+shows the model notice in a terminal; the desktop owns the persistent session
+and its configurable greeting. No speech model is fetched during a normal
+restart of an enabled session.
