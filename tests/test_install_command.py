@@ -508,6 +508,36 @@ class ContractTests(unittest.TestCase):
                 self.assertEqual(fallback[field], real[field],
                                  f"{fallback['id']}.{field} has drifted")
 
+    def test_an_unpinned_utilities_copy_never_replaces_the_pinned_fallback(self):
+        """A utilities checkout older than the digest pins installs with
+        `curl | bash`; the pinned copy here must win over it."""
+        import os
+        import sys
+        import tempfile
+        saved = {k: v for k, v in sys.modules.items() if k.startswith("kilix_rollout")}
+        saved_path = list(sys.path)
+        for key in saved:
+            del sys.modules[key]
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                package = os.path.join(tmp, "src", "kilix_rollout")
+                os.makedirs(package)
+                open(os.path.join(package, "__init__.py"), "w").close()
+                with open(os.path.join(package, "providers.py"), "w") as out:
+                    out.write(
+                        "class P:\n"
+                        "    key = 'demo'; label = 'Demo'; command = 'demo'\n"
+                        "    install_shell = 'curl -fsSL https://example.invalid/install.sh | bash'\n"
+                        "    update_argv = ('demo', 'update'); install_source = ''\n"
+                        "PROVIDERS = (P(),)\n")
+                with mock.patch.dict(os.environ, {"KILIX_TUI_UTILS_DIR": tmp}):
+                    self.assertIsNone(installer._providers_from_rollout())
+        finally:
+            for key in [k for k in sys.modules if k.startswith("kilix_rollout")]:
+                del sys.modules[key]
+            sys.modules.update(saved)
+            sys.path[:] = saved_path
+
     def test_agents_update_through_their_own_updater(self):
         """The updater is the agent's own command — not a spelling of it.
 

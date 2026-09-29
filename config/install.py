@@ -84,13 +84,19 @@ def _providers_from_rollout():
     only the default would silently fall back to the local copy on a system
     whose checkout was relocated.
     """
-    source = os.environ.get("GPU_TERMINAL_SOURCE_HOME") or ""
+    # The default is the launcher's own GPU_TERMINAL_SOURCE_HOME default, where
+    # the installer clones. ~/gpu_terminal was searched here too; it holds
+    # development checkouts, and one with unpinned `curl | bash` installers
+    # made the fallback test fail wherever it existed (2026-09-29).
+    source = os.environ.get("GPU_TERMINAL_SOURCE_HOME") or os.path.join(
+        os.environ.get("GPU_TERMINAL_HOME")
+        or os.path.join(os.path.expanduser("~"), ".local", "gpu_terminal"),
+        "sources")
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     roots = []
     if configured := os.environ.get("KILIX_TUI_UTILS_DIR"):
         roots.append(os.path.join(configured, "src"))
-    for base in (source, os.path.join(os.path.expanduser("~"), "gpu_terminal"),
-                 os.path.dirname(os.path.dirname(here))):
+    for base in (source, os.path.dirname(os.path.dirname(here))):
         if base:
             roots.append(os.path.join(base, "kilix-desktops", "kilix-tui-utils",
                                       "src"))
@@ -103,6 +109,10 @@ def _providers_from_rollout():
         try:
             from kilix_rollout import providers
         except Exception:                        # noqa: BLE001
+            return None
+        # A copy whose installers are not digest-pinned predates the pins and
+        # must not replace the pinned fallback below.
+        if not all(getattr(item, "install_sha256", "") for item in providers.PROVIDERS):
             return None
         return tuple({
             "id": item.key,
