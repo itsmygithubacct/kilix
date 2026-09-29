@@ -2454,7 +2454,9 @@ case "${1:-}" in
     done
     _tts_previous=""
     for _tts_argument in "$@"; do
-      if [ "$_tts_argument" = --tier=neural ] \
+      if [ "$_tts_argument" = --prepare-system-voice ] \
+          || [ "$_tts_argument" = --system-voice ] \
+          || [ "$_tts_argument" = --tier=neural ] \
           || [ "$_tts_argument" = --install=piper-en-us-kristin-medium ] \
           || { [ "$_tts_previous" = --tier ] && [ "$_tts_argument" = neural ]; } \
           || { [ "$_tts_previous" = --install ] \

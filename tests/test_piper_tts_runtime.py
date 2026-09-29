@@ -14,6 +14,28 @@ INSTALLER = ROOT / 'scripts/install-kilix-piper-tts.sh'
 
 
 class PiperRuntimeTests(unittest.TestCase):
+    def test_system_voice_modes_install_piper_and_preserve_arguments(self):
+        host = (ROOT / 'kilix').read_text()
+        dispatch = host[host.index('  tts|kilix-tts)'):host.index('  stt|kilix-stt)')]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'scripts').mkdir()
+            tool = root / 'tool'
+            tool.write_text('#!/bin/bash\nprintf "%s\\n" "$@" >> "$EVENTS"\n')
+            tool.chmod(0o755)
+            installer = root / 'scripts/install-kilix-piper-tts.sh'
+            installer.write_text('#!/bin/bash\necho installed >> "$EVENTS"\n')
+            installer.chmod(0o755)
+            wrapper = root / 'wrapper'
+            wrapper.write_text('set -eu\n_kilix_voice_tool() { echo "$TOOL"; }\ncase "$1" in\n' + dispatch + '\nesac\n')
+            events = root / 'events'
+            env = sandbox_env(KILIX_HOME=str(root), TOOL=str(tool), EVENTS=str(events))
+            for arguments in (['--prepare-system-voice'], ['--system-voice', '--speak', 'hello; $(false)']):
+                events.write_text('')
+                result = subprocess.run(['bash', str(wrapper), 'tts', *arguments], env=env, capture_output=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(events.read_text().splitlines(), ['installed', *arguments])
+
     def test_catalog_pin_changes_refresh_runtime_and_repeated_use_is_offline(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

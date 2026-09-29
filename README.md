@@ -2274,3 +2274,9 @@ metadata. Inspect records with `tail -f` or a JSON-lines reader.
 ### Search the documentation
 
 Run `kilix help-search "how do I split a pane"` to search the bundled Kilix, Kitty, Pleb and Plebian-OS documentation. The pinned Help Search app installs on first use, uses no model weights, and returns source passages rather than generated answers.
+
+Kilix 95's optional startup voice uses the pinned Piper runtime through
+`kilix tts --prepare-system-voice` and `kilix tts --system-voice`. First-use setup
+shows the model notice in a terminal; the desktop owns the persistent session
+and its configurable greeting. No speech model is fetched during a normal
+restart of an enabled session.
