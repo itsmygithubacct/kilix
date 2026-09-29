@@ -563,7 +563,14 @@ _kilix_refresh_generated_include() {
     { print }
     END { if (!done) print "include .kilix-defaults.conf" }
   ' "$_target" >"$_tmp"
-  mv "$_tmp" "$_target"
+  # Replace only on a real change. The running terminal watches this file and
+  # reloads its whole configuration whenever it is replaced, which drops any
+  # setting changed at runtime; every kilix call used to trigger that.
+  if cmp -s "$_tmp" "$_target"; then
+    rm -f -- "$_tmp"
+  else
+    mv "$_tmp" "$_target"
+  fi
 }
 
 _kilix_init_user_config() {
@@ -646,7 +653,15 @@ _kilix_init_rc_password() {
   printf 'remote_control_password "%s" launch ls focus-window focus-tab get-text close-window close-tab set-tab-title "%s"\n' \
     "$password" "$KILIX_HOME/config/kilix_mux_rc_auth.py" >"$tmp"
   chmod 0600 "$tmp" || { rm -f -- "$tmp"; return 1; }
-  mv -f -- "$tmp" "$config_file"
+  # Same content, same private regular file: keep it. The running terminal
+  # watches this file too, and replacing it reloads its configuration.
+  if [ -f "$config_file" ] && [ ! -L "$config_file" ] \
+      && [ "$(stat -c '%u:%a:%h' -- "$config_file" 2>/dev/null)" = "$(id -u):600:1" ] \
+      && cmp -s "$tmp" "$config_file"; then
+    rm -f -- "$tmp"
+  else
+    mv -f -- "$tmp" "$config_file"
+  fi
   KILIX_RC_PASSWORD_FILE="$password_file"
   KILIX_RC_CONFIG_FILE="$config_file"
   export KILIX_RC_PASSWORD_FILE KILIX_RC_CONFIG_FILE

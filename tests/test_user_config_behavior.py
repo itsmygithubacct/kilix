@@ -86,6 +86,35 @@ class UserConfigBehaviorTests(unittest.TestCase):
             self.assertNotIn(password.read_text().strip(), user.read_text())
         self.assertEqual(digest(tracked), before)
 
+    def test_repeated_calls_leave_watched_config_files_untouched(self):
+        # The running terminal reloads its configuration whenever kitty.conf or
+        # rc-password.conf is replaced, dropping runtime settings. A call that
+        # changes nothing must not replace either file.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env = clean_env()
+            env.pop("KITTY_CONFIG_DIRECTORY", None)
+            storage = root / "storage"
+            env.update({"HOME": str(root / "home"),
+                        "KILIX_STORAGE_HOME": str(storage)})
+            run = lambda *a: subprocess.run(
+                [str(ROOT / "kilix"), *a], env=env, capture_output=True, text=True)
+            first = run("screen-size", "show")
+            self.assertEqual(first.returncode, 0, first.stderr)
+            watched = [storage / "config" / "kitty.conf",
+                       storage / "session" / "rc-password.conf"]
+            before = [(p.stat().st_ino, p.stat().st_mtime_ns) for p in watched]
+            for args in (("screen-size", "show"), ("status",)):
+                again = run(*args)
+                self.assertEqual(again.returncode, 0, again.stderr)
+            after = [(p.stat().st_ino, p.stat().st_mtime_ns) for p in watched]
+            self.assertEqual(after, before)
+            # A real change is still written.
+            changed = run("screen-size", "set", "15")
+            self.assertEqual(changed.returncode, 0, changed.stderr)
+            self.assertIn("15", watched[0].read_text())
+            self.assertEqual(stat.S_IMODE(watched[1].stat().st_mode), 0o600)
+
     def test_managed_links_follow_a_moved_checkout(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
