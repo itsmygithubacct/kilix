@@ -123,6 +123,43 @@ case "${1:-}" in
   models)
     shift
     exec python3 "$KILIX_HOME/config/content_models.py" "$@" ;;
+  # Kilix's own commands first, in one screen: agents learn the CLI from this,
+  # and the engine's option list says nothing about panes (2026-09-29 route
+  # benchmark). Answered here, before setup, so asking for help never rewrites
+  # the running session's config. The engine's options stay one flag away.
+  -h|--help|help)
+    cat <<'EOF'
+usage: kilix [COMMAND] [ARGS...]    (no command: open a Kilix window)
+
+Panes and tabs (run inside a Kilix pane; directions are relative to it):
+  kilix pane right|left|up|down [--title T] [--cwd DIR] [--hold] [--porcelain] [-- CMD...]
+        kilix pane right -- bash
+  kilix pane list [--json]            pane ids, titles, programs; (self) is you
+  kilix pane send pane:ID 'TEXT'      type TEXT, no Enter
+  kilix pane send pane:ID $'\r'       press Enter (send it separately from the text)
+        kilix pane send pane:12 'make test' && kilix pane send pane:12 $'\r'
+  kilix pane read pane:ID [--extent all]
+  kilix pane close pane:ID            closes the pane and kills its program
+  kilix pane focus pane:ID
+  kilix new-tab [--title T] [--cwd DIR] [CMD...]
+        kilix new-tab --title Codex --cwd ~/src/app codex
+  kilix tab list|close|rename|focus|left|right
+
+Target panes as pane:ID from `kilix pane list`; a bare number or word may match a title.
+
+Typing into another coding agent's input box (verifies the target first; not
+needed to start one or for shell panes):
+  kilix agent-control list|dump|send|key     see its --help
+
+Also: settings, status, update, install, games, screen-size, transcript,
+  help-search "QUESTION". Add --help to a command for its options.
+Terminal engine (kitty) options: kilix --help-engine
+EOF
+    printf 'Agent guide: %s/docs/AGENTS.md\n' "$KILIX_HOME"
+    exit 0 ;;
+  --help-engine)
+    shift
+    set -- --help "$@" ;;
 esac
 
 _kilix_validate_private_storage_layout() {
