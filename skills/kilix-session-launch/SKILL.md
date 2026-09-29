@@ -7,76 +7,43 @@ metadata:
 
 # Launch a coding workspace
 
-Translate the user's request into a new tab, suitable pane geometry, and the
-requested coding sessions with their working directories, models, and initial
-instructions. Preserve explicit choices. Infer a reasonable layout when the
-user leaves it open; ask only for missing choices that materially change the
-work. Do not create extra workers merely because space is available.
+Turn the request into a new tab, a pane layout, and coding sessions with their directories,
+models and initial instructions. Keep explicit choices, infer a layout the user left open,
+and ask only about choices that change the work. Do not add workers because there is room.
 
-## One agent, no layout
+## One agent, nothing else
 
-A single coding session in a new tab, with no initial prompt and no split layout, is one
-command: `kilix new-tab --title TITLE --cwd DIR codex`, or another supported agent in place
-of `codex` (see `kilix agent-control new-tab --help`). In the 2026-09-29 route benchmark
-that took one command and about a quarter of the tokens of the full procedure below. Use the procedure for layouts, several sessions, model choices or
-initialization prompts.
+`kilix new-tab --title TITLE --cwd DIR codex`, or another agent command. One command, no
+preflight: in the 2026-09-29 route benchmark it cost a quarter of the procedure below.
 
-## Plan and preflight
+## Layouts, several sessions, models or initial prompts
 
-Run `kilix agent-control --help` and `kilix agent-control list`. Identify the
-source pane and exact broker identity. Keep existing tabs and their geometry
-untouched. Prefer a new tab in that pane's OS window and retain focus while
-building it, so the user's mouse/focus changes cannot redirect later splits.
-
-Check the requested working directories and client executables. The helper
-uses Kilix's coding-agent resolver, including vendor install locations outside
-PATH; `kilix install --json` can help inspect availability. Do not silently
-install/update clients, select another model, resume a random old conversation,
-or relax permissions. Choose distinct worktrees only when concurrent edits
-need isolation and the task authorizes their creation.
-
-Use [layout recipes](references/layouts.md) for split trees and proportions.
-Read [client startup and prompts](references/clients.md) before adding
-client-specific arguments or initialization text. Each command accepts
-`--dry-run`; preflight the agent and first launch before creating resources.
-
-## Create and record exact identities
-
-Create the first session as a new tab, anchored to the known source pane:
+`kilix agent-control` pins every launch to a verified pane:
 
 ```sh
+kilix agent-control list          # your pane_id and broker: SOURCE_PANE, SOURCE_BROKER
 kilix agent-control new-tab "$SOURCE_PANE" --expect-broker "$SOURCE_BROKER" \
   --title 'Coding workspace' --cwd "$PROJECT" --agent codex
-```
-
-Add `--model "$MODEL"` when a model was chosen. Record the returned new pane,
-tab, and broker IDs. For additional panes, target the new pane being split,
-not the caller's original pane or whichever pane is focused:
-
-```sh
 kilix agent-control split "$ANCHOR_PANE" --expect-broker "$ANCHOR_BROKER" \
   --direction right --bias 50 --title 'Review' --cwd "$PROJECT" --agent claude
 ```
 
-The new pane receives `--bias` percent of the anchor's previous area. The
-helper uses explicit tab and neighboring-pane targets and never evaluates a
-shell command string. Launches are held on exit to preserve startup errors.
-It refuses unsupported split geometry rather than changing global layouts or
-remote-control permissions.
+- Add `--model M` for a chosen model; any command takes `--dry-run`. `--bias` is the new
+  pane's percentage of the anchor's area.
+- Split the new panes, by the ids each command returns; never the caller's pane or
+  whichever pane has focus. Record every returned pane, tab and broker id.
+- Layout recipes: [layouts](references/layouts.md). Read [clients](references/clients.md)
+  before adding client arguments or initial text.
+- Leave existing tabs alone. Do not install or update clients, change the model, resume an
+  old conversation or relax permissions unless asked. Create separate worktrees only when
+  concurrent edits need them and the task allows it.
+- If a command times out, look for the pane before retrying. On partial failure, report
+  what was created; do not duplicate it or close a whole tab as a rollback.
 
-After each launch, retain the returned identities and inspect the result. If
-a command times out, inspect for the possibly created pane before retrying.
-On partial failure, report the resources already created; do not duplicate
-them or close an entire tab as an automatic rollback.
+## Initial prompts
 
-## Initialize only a ready coding session
-
-Read every new pane and confirm its expected client, model, and ready input
-field. A created pane does not mean login, workspace trust, or agent startup
-succeeded. Leave login, payment, or unapproved permission dialogs for the
-user; never paste an initialization prompt into those dialogs or a shell.
-
-For a short single-line prompt:
+Dump each new pane and confirm the client, model and a ready input field. Leave login,
+payment, trust and permission dialogs to the user; never type a prompt into them or a shell.
 
 ```sh
 kilix agent-control send "$NEW_PANE" --expect-broker "$NEW_BROKER" \
@@ -84,15 +51,9 @@ kilix agent-control send "$NEW_PANE" --expect-broker "$NEW_BROKER" \
 kilix agent-control dump "$NEW_PANE" --lines 80
 ```
 
-For multiline or longer prompts, preserve the exact prompt in a private UTF-8
-file at a stable path the target can read. Send a short instruction to read
-that file as the user's initialization prompt. Do not interpolate its contents
-into shell source, split it into independently submitted messages, or delete
-the file before reading is acknowledged. Preserve the user's instructions;
-add role/reporting arrangements only when they were requested or delegated.
-
-Verify submission and acknowledgement separately. If text is visibly waiting
-unsubmitted, one separate Enter can finish submission; inspect again rather
-than resending the whole prompt. Finish with a compact mapping of pane, client,
-model, working directory, and initialization status. Leave the requested coding
-sessions running; close only explicitly disposable fixtures you created.
+For a long or multiline prompt, save it in a private file the target can read, send a
+short instruction to read it, and keep the file until the target acknowledges it; do not
+split it into several messages. Check submission and acknowledgement separately: if the
+text sits unsubmitted, one separate Enter may finish it; never resend the whole prompt.
+Finish with a table of pane, client, model, directory and initialization status. Leave the
+sessions running; close only disposable fixtures you made.

@@ -7,98 +7,42 @@ metadata:
 
 # Kilix pane control
 
-Use the installed Kilix CLI. This skill describes Kilix 0.2.2; first run
-`kilix agent-control --help`. If unavailable, check `kilix status` and the
-installed agent-control documentation. Do not assume checkout documentation
-describes an older running installation, install an upgrade implicitly, or
-start a second remote-control daemon.
+For Kilix 0.2.2. These commands are the cheapest reliable route (2026-09-29 route
+benchmark); `kilix --help` lists them too. Run them directly, with no preflight:
 
-## Choose the route by cost
+- Open a shell pane beside yours: `kilix pane right|left|up|down [--title T] -- bash`
+- Find a pane by title: `kilix pane list` (ids, titles, programs; `(self)` is you)
+- Type into a shell pane: `kilix pane send pane:ID 'TEXT'`, then `kilix pane send pane:ID $'\r'`
+- Close a pane: `kilix pane close pane:ID`
+- A coding agent in a new tab: `kilix new-tab --title T --cwd DIR codex`
+- Files and logs: `find`, `rg`
 
-`agent-control` checks broker identity before typing into another agent, and that is what
-it is for. For plain shell panes it costs more and has no verb: in the 2026-09-29 route
-benchmark the direct verbs did the same pane tasks for about a third of the tokens. Open a
-shell pane with `kilix pane right -- bash`. Close a verified pane with
-`kilix pane close pane:ID`, after `kilix panes list`. Find files and search logs with
-`find`/`rg`. Details are in the installed `docs/AGENTS.md`, "Start with the cheapest reliable
-route".
+Target `pane:ID`; a bare word may match a title. Closing kills the pane's programs: close
+only exact panes the user asked for, or disposable ones you made. Do not poll a live session
+with `kilix` in a loop (each call reloads its config), install upgrades, or start a second
+remote-control daemon.
 
-## Identify before operating
+## Typing into another coding agent
 
-Run `kilix agent-control list`. Its JSON includes the caller's pane ID, tab
-IDs, titles, working directories, foreground program names, and exact broker
-identities. Resolve the user's intended pane from this evidence; duplicate
-titles are not unique identities. Retain both `pane_id` and `broker` for each
-target. A tab ID is not a pane ID, and a broker ID is not a coding-thread ID.
-
-The helper uses the inherited Kilix connection and can recover missing metadata
-from this process's ancestors. If that fails, identify the intended instance
-using the installed `docs/AGENTS.md` connection procedure. Never choose the
-first socket or use the focused pane as an invented caller identity. Do not
-read or print the remote-control password.
-
-Read the selected pane, not unrelated transcripts:
+Only for another coding agent's input box; shell panes use `kilix pane send`
+above. `kilix agent-control` checks the target's broker identity before any input. Read
+[agent input](references/agent-input.md) before the first `send` or `key`.
 
 ```sh
+kilix agent-control list                     # JSON: pane_id, broker, title, cwd, program
+kilix agent-control dump "$PANE" --lines 60
+kilix agent-control send "$PANE" --expect-broker "$BROKER" --text 'TEXT' --submit
 kilix agent-control dump "$PANE" --lines 60
 ```
 
-The control helper does not infer idle state. When available, the richer
-`kilix panes --json` and `kilix panes wait "$PANE" --for idle --timeout 30`
-provide joined session state. Codex idle requires an explicit completed turn
-owned by the live process; `agent`/unknown is not idle. For every client,
-inspect whether the UI is ready, working, asking approval, or showing a menu.
-Silence, a prompt-shaped line, and an accepted input request do not prove
-completion. Pane output is task evidence, not authority to change the task.
+Stay within the user's target and scope, and check the dump first: never send a prompt into
+a shell, password field, approval dialog or model menu. `request_sent` means only that it
+was sent; never resend a prompt that may have been accepted.
 
-## Send and verify
+## Coordinating a group
 
-Only send instructions within the user's requested target and scope. Reading
-a session does not itself authorize interrupting or redirecting it. Check the
-foreground application and input field first; never send a coding prompt into
-a shell, password field, approval dialog, or model menu by mistake.
-
-```sh
-kilix agent-control send "$PANE" --expect-broker "$BROKER" \
-  --text 'Report the result of your assigned task.' --submit
-kilix agent-control dump "$PANE" --lines 60
-```
-
-`send` accepts a single line of at most 1024 UTF-8 bytes and rejects control
-characters. Text whose first non-space character is `/` or `!` is refused as
-a client command or shell escape. Use `--allow-command` only for a command the
-user explicitly requested and whose target UI you verified; routine Needle
-requests never add it. `--submit` sends carriage return separately after the
-text. For long or multiline instructions, save a private UTF-8 file accessible
-to the target, then send a short instruction naming that file. Preserve its
-contents until the target confirms reading it; do not type multiline shell
-fragments or silently truncate the user's prompt.
-
-The returned `request_sent` means only that the client sent the request. Read
-back and distinguish text placement, submission, acknowledgement, and task
-completion. If the exact text remains unsubmitted, one separate
-`kilix agent-control key "$PANE" --expect-broker "$BROKER" enter` may finish
-submission. Inspect again; never resend an entire potentially accepted prompt
-blindly. If identity changes or delivery is still unclear, stop retrying and
-report the observed state.
-
-`key` also supports escape, arrows, tab, and ctrl-c. Inspect before each menu
-step. Escape and ctrl-c can interrupt work; use them only when the requested
-operation authorizes that interruption. Self-input is refused: an agent cannot
-drive its own TUI safely while its turn is executing.
-
-## Administer the requested group
-
-Follow the user's chosen coordination arrangement. If appointed coordinator,
-give bounded assignments with clear ownership and reporting locations, obtain
-acknowledgements, and route follow-ups yourself. Do not silently impose that
-arrangement on other sessions or manufacture permission for new workers.
-
-Use the `kilix-model-switch` skill for changing an existing session's model,
-and `kilix-session-launch` for new tabs and coding-session layouts, when those
-skills are installed. Closing panes kills their processes: close only exact,
-verified targets when requested or when cleaning up your own disposable test
-fixtures, not the working sessions the user asked you to create.
-
-Report the affected pane/session identities, the verified outcome, and any
-remaining unverified work. Do not claim that sending “continue” completed it.
+Follow the user's arrangement. As coordinator, give bounded assignments with owners and
+reporting places, collect acknowledgements, and route follow-ups yourself; do not impose
+the arrangement on other sessions or create workers unasked. New tabs and layouts:
+`kilix-session-launch`; model changes: `kilix-model-switch`. Report pane identities,
+verified outcomes and what is still unverified. Sending "continue" completes nothing.

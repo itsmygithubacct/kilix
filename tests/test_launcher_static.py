@@ -8,6 +8,7 @@ import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
 
 # The suite runs both as `discover -s tests` (bare module names) and as
@@ -792,3 +793,52 @@ class KilixLauncherTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AgentHelpTests(unittest.TestCase):
+    """`kilix --help` is how an agent with no hints learns the CLI.
+
+    In the 2026-09-29 route benchmark it fell through to the engine's 7.6 KB
+    option list, which never mentions panes, and discovery cost 3.9x the
+    direct commands.
+    """
+
+    def run_help(self, *argv):
+        with tempfile.TemporaryDirectory() as scratch:
+            home = Path(scratch) / "gt"
+            result = subprocess.run(
+                [str(ROOT / "kilix"), *argv], capture_output=True, text=True,
+                timeout=60, check=False,
+                env=sandbox_env(GPU_TERMINAL_HOME=str(home),
+                                XDG_CONFIG_HOME=str(Path(scratch) / "xdg")))
+            # Answered before setup: asking for help never writes a config,
+            # least of all the running session's kitty.conf.
+            self.assertEqual(list(Path(scratch).iterdir()), [])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "")
+        return result.stdout
+
+    def test_help_names_the_agent_commands_within_a_screen(self):
+        for flag in ("--help", "-h", "help"):
+            with self.subTest(flag=flag):
+                text = self.run_help(flag)
+                self.assertLessEqual(len(text.encode()), 1800)
+                self.assertLessEqual(len(text.splitlines()), 30)
+                for usage in ("kilix pane right -- bash", "kilix pane list",
+                              "kilix pane send pane:ID 'TEXT'", "kilix pane send pane:ID $'\\r'",
+                              "kilix pane close pane:ID", "kilix new-tab --title Codex",
+                              "kilix agent-control", "kilix --help-engine"):
+                    self.assertIn(usage, text)
+                self.assertNotIn("Usage: kitty", text)
+
+    def test_every_pane_verb_in_the_help_exists(self):
+        sys.path.insert(0, str(ROOT / "config"))
+        import remote  # noqa: PLC0415
+        text = self.run_help("--help")
+        named = set(re.findall(r"kilix pane (\w+)", text))
+        self.assertTrue(named)
+        for verb in sorted(named):
+            with self.subTest(verb=verb), self.assertRaises(SystemExit) as done, \
+                    unittest.mock.patch("sys.stdout"):
+                remote.main(["pane", verb, "--help"])
+            self.assertEqual(done.exception.code, 0)
