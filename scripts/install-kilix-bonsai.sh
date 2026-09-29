@@ -26,7 +26,7 @@ KILIX_BONSAI_SOURCES="${KILIX_BONSAI_SOURCES:-$KILIX_STORAGE_HOME/sources}"
 # as an explicit override for testing the refusal path; it is not the default
 # any more, because the repository is published.
 KILIX_BONSAI_REPO="${KILIX_BONSAI_REPO:-https://github.com/itsmygithubacct/kilix-bonsai.git}"
-KILIX_BONSAI_REF="${KILIX_BONSAI_REF:-8c4198879b9c1c6936f752e2f21e89ea1f2d2b2b}"
+KILIX_BONSAI_REF="${KILIX_BONSAI_REF:-f582edd213da86601b375bcb4bd94ae79eabb788}"
 
 die() { printf 'kilix bonsai: %s\n' "$*" >&2; exit 1; }
 log() { printf 'kilix bonsai: %s\n' "$*" >&2; }
