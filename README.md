@@ -2280,3 +2280,25 @@ Kilix 95's optional startup voice uses the pinned Piper runtime through
 shows the model notice in a terminal; the desktop owns the persistent session
 and its configurable greeting. No speech model is fetched during a normal
 restart of an enabled session.
+
+Enabled system voice polls the shared telemetry ring and local power/link state
+about every two seconds. It prepares the five fixed warning clips once, then
+plays cached audio without neural synthesis during an incident:
+
+| Condition | Spoken warning | Recovery |
+| --- | --- | --- |
+| Any temperature sensor above 101°C (213.8°F) | WARNING: the system is overheating | All readings at or below 98°C |
+| Discharging battery below 10% | battery low | Charging or at least 12% |
+| Discharging battery below 5% | battery critically low | Charging or at least 12% |
+| Previously connected physical links all down for 4 seconds | offline | A physical link reconnects |
+| Available RAM at most 2%, swap traffic at least 8 MiB/s, and memory PSI `some_avg10` at least 20%, sustained for 10 seconds | heavy swapping | A fresh sample no longer meets the conditions |
+
+Each warning is spoken once per incident, with a five-minute cooldown (one minute
+for offline). Starting below 5% announces only the critical battery warning.
+Unknown or stale readings do not trigger warnings. Network detection checks
+physical carrier, not Internet access; loopback and VPN links do not mask a lost
+uplink. Swap occupancy alone does not trigger speech. Swap detection needs Linux
+memory-pressure telemetry and consecutive samples no more than five seconds apart.
+Temperature thresholds use raw Celsius values regardless of display preferences.
+Turning system voice off stops these warnings too. Audio still depends on a
+working output device and the process being able to run under resource pressure.
