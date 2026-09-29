@@ -992,8 +992,10 @@ transcribes each turn when the turn ends rather than showing live partials.
 
 VibeVoice dictation runs through VibeASR.cpp. `kilix voice vibeasr` fetches
 upstream commit `c4334009c88060f86cdbbd684b62662f710b6c20` of
-microsoft/VibeASR.cpp (MIT) with the llama.cpp revision it records, builds
-only a statically linked `asr_infer`, and publishes it at
+microsoft/VibeASR.cpp (MIT) with the llama.cpp revision it records (a
+gitlink to XsquirrelC/llama.cpp, the fork carrying VibeASR's BitNet kernels),
+builds only `asr_infer` with llama.cpp and ggml linked in (libc, libstdc++ and
+libgomp stay the system's), and publishes it at
 `$KILIX_DATA_HOME/voice/vibeasr/current/bin/asr_infer`. It needs a C/C++
 toolchain and cmake, takes about a minute, and does nothing when that pinned
 build is already current. `kilix stt --install vibevoice-asr-bitnet` runs it

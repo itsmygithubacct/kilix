@@ -1,4 +1,5 @@
 """The VibeASR runtime installer pins one upstream commit and installs nothing on a query."""
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -38,6 +39,39 @@ class VibeAsrInstallerTests(unittest.TestCase):
                                     env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertRegex(result.stdout, r'^vibeasr=[0-9a-f]{40}\n$')
+
+    def _published(self, root, ref_text):
+        data = Path(root, "data")
+        pin = subprocess.run([str(INSTALLER), "--print-ref"], env=sandbox_env(),
+                             capture_output=True, text=True).stdout.strip().split("=")[1]
+        generation = data / "voice" / "vibeasr" / "generations" / pin
+        (generation / "bin").mkdir(parents=True)
+        fake = generation / "bin" / "asr_infer"
+        fake.write_text("#!/bin/sh\necho 'Error: --vae-model is required' >&2\nexit 1\n")
+        fake.chmod(0o755)
+        (generation / "REF").write_text(ref_text.replace("PIN", pin) + "\n")
+        (data / "voice" / "vibeasr" / "current").symlink_to(generation)
+        bare = Path(root, "bin")
+        bare.mkdir()
+        for tool in ("bash", "cat", "readlink", "mkdir", "flock", "id", "grep"):
+            (bare / tool).symlink_to(shutil.which(tool))
+        env = sandbox_env(KILIX_DATA_HOME=str(data),
+                          GPU_TERMINAL_SOURCE_HOME=root + "/sources", PATH=str(bare))
+        return subprocess.run(["bash", str(INSTALLER)], env=env,
+                              capture_output=True, text=True)
+
+    def test_a_generation_built_from_the_pin_is_current(self):
+        with tempfile.TemporaryDirectory() as root:
+            result = self._published(root, "vibeasr=PIN")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("runtime ready", result.stderr)
+
+    def test_a_generation_without_the_pinned_ref_is_rebuilt(self):
+        # Seat 2 (RC3): anything answering --vae-model used to count as current.
+        with tempfile.TemporaryDirectory() as root:
+            result = self._published(root, "vibeasr=0000000000000000000000000000000000000000")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("is required to build VibeASR", result.stderr)
 
     def test_unknown_arguments_are_refused(self):
         result = subprocess.run([str(INSTALLER), '--force'], env=sandbox_env(),

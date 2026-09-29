@@ -3,7 +3,9 @@
 #
 # kilix-voice runs vibevoice-asr-bitnet through VibeASR.cpp's `asr_infer`.
 # This fetches exactly one upstream commit (and the llama.cpp submodule that
-# commit records), builds only `asr_infer`, statically linked, and publishes it
+# commit records: XsquirrelC/llama.cpp, the VibeASR authors' fork carrying the
+# BitNet kernels, at the gitlink hash), builds only `asr_infer` with llama.cpp
+# and ggml linked in (libc, libstdc++ and libgomp stay the system's), and publishes it
 # as $KILIX_DATA_HOME/voice/vibeasr/current/bin/asr_infer, the path kilix-voice
 # resolves. Weights are not handled here: they are the licence-gated
 # vibevoice-asr-bitnet model, installed by `kilix stt --install`.
@@ -54,7 +56,9 @@ fi
 # asr_infer with no arguments prints its usage and exits non-zero; a binary
 # that runs at all and names the model flags is the one this built.
 runs() { local out; out="$("$1" 2>&1)" || true; [[ "$out" == *--vae-model* ]]; }
+# Current only if this exact pin built it: the generation records its ref.
 if [ -L "$current" ] && [ "$(readlink -- "$current")" = "$generation" ] \
+    && [ "$(cat -- "$generation/REF" 2>/dev/null)" = "vibeasr=$KILIX_VIBEASR_REF" ] \
     && [ -x "$binary" ] && runs "$binary"; then
   printf 'kilix vibeasr: runtime ready at %s\n' "$current/bin/asr_infer" >&2
   exit 0
