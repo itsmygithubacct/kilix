@@ -2311,3 +2311,25 @@ restarts, owner-pipe closure and disabling voice remain silent. Generic hosts
 need system Python's `dbus` and `gi` bindings for logind notification; the desktop
 menu path works without them. Forced shutdown and power loss cannot guarantee
 audio playback.
+
+Additional enabled system-voice messages:
+
+- **power connected** / **running on battery**: a known system battery changes
+  power source for four seconds. Startup is silent; a fifteen-second per-direction
+  cooldown suppresses cable chatter. Peripheral batteries are ignored.
+- **disk space low**: the writable local filesystem for `/`, home or Kilix data
+  has less than 5% available and less than 2 GiB available. Filesystems are sampled
+  every thirty seconds and deduplicated; remote and read-only mounts are skipped.
+  Recovery requires at least 8% available or 3 GiB available. The existing
+  five-minute incident cooldown prevents repeated warnings.
+- **update complete. restart required**: the Plebian-OS whole-stack updater,
+  running as the desktop user, commits successfully, completes apt reconciliation,
+  and leaves restart to the user. It atomically replaces the private state event
+  `system-voice-update-complete`; the running voice worker announces each new
+  event once. Automatic restarts, failed updates and notices already present when
+  the worker starts are silent. Root-only maintenance updates do not emit a
+  per-user voice notice. A notification failure cannot fail an otherwise
+  successful update.
+
+All phrases use the existing pre-rendered warning cache; no synthesis is needed
+when power changes, disk space is low, or the updater commits.

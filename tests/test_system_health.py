@@ -140,7 +140,8 @@ class SourceTests(unittest.TestCase):
                     memory_total=100, memory_available=50, swap_total=100)
         snapshot = NS(monotonic_ns=100*10**9, thermal=[NS(celsius=102)], system=system)
         client.snapshot.return_value = snapshot
-        monitor = HealthMonitor(client=client, root=self.root, clock=clock)
+        monitor = HealthMonitor(client=client, root=self.root, clock=clock,
+                                disk_reader=lambda: None, update_path=self.root/'notice')
         self.assertEqual(monitor.poll(), [ALERTS['overheat']])
         client.snapshot.assert_called_with(start=True, fallback=False)
         clock.return_value = 102

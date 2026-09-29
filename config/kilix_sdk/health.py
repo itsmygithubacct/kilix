@@ -10,12 +10,19 @@ import os
 from pathlib import Path
 import time
 
+from . import paths
+from .system_events import UPDATE_NOTICE, UpdateNotice, disk_space, external_power
+
 ALERTS = {
     'overheat': 'WARNING: the system is overheating',
     'battery_low': 'battery low',
     'battery_critical': 'battery critically low',
     'offline': 'offline',
     'swap': 'heavy swapping',
+    'power_connected': 'power connected',
+    'on_battery': 'running on battery',
+    'disk_low': 'disk space low',
+    'update_complete': 'update complete. restart required',
 }
 OVERHEAT_C = 101.0
 
@@ -91,6 +98,9 @@ class AlertPolicy:
         self.swap_since = None
         self.previous_vm = None
         self.previous_time = None
+        self.power_source = None
+        self.power_candidate = None
+        self.power_since = None
 
     def _enter(self, key, now, events):
         if key not in self.active:
@@ -101,8 +111,28 @@ class AlertPolicy:
                 events.append(ALERTS[key])
 
     def update(self, *, now, temperature=None, power=None, online=None,
-               memory=None, page_size=4096):
+               memory=None, page_size=4096, external=None, disks=None):
         events = []
+        if external is None:
+            self.power_candidate = self.power_since = None
+        elif self.power_source is None:
+            self.power_source = external  # Initial state is silent.
+        elif external == self.power_source:
+            self.power_candidate = self.power_since = None
+        elif external != self.power_candidate:
+            self.power_candidate, self.power_since = external, now
+        elif now-self.power_since >= 4:
+            self.power_source = external
+            self.power_candidate = self.power_since = None
+            key = 'power_connected' if external else 'on_battery'
+            if now-self.last_spoken.get(key, -math.inf) >= 15:
+                self.last_spoken[key] = now
+                events.append(ALERTS[key])
+        if disks:
+            if any(d is not None and d[1] < min(d[0]*.05, 2*1024**3) for d in disks):
+                self._enter('disk_low', now, events)
+            elif all(d is not None and (d[1] >= d[0]*.08 or d[1] >= 3*1024**3) for d in disks):
+                self.active.discard('disk_low')
         temperature = number(temperature)
         if temperature is not None:
             if temperature > self.overheat_c:
@@ -161,7 +191,8 @@ class AlertPolicy:
 class HealthMonitor:
     phrases = tuple(ALERTS.values())
 
-    def __init__(self, *, client=None, root=Path('/'), clock=time.monotonic):
+    def __init__(self, *, client=None, root=Path('/'), clock=time.monotonic,
+                 update_path=None, disk_reader=None):
         if client is None:
             from .telemetry import TelemetryClient
             client = TelemetryClient()
@@ -170,6 +201,10 @@ class HealthMonitor:
         self.next_start = 0.0
         self.last_stamp = None
         self.page_size = os.sysconf('SC_PAGE_SIZE')
+        self.updates = UpdateNotice(update_path or Path(paths.state_dir())/UPDATE_NOTICE)
+        self.disk_reader = disk_reader or (lambda: disk_space((self.root, Path.home(), paths.data_dir())))
+        self.next_disk = 0.0
+        self.disks = None
 
     def poll(self):
         now = self.clock()
@@ -193,9 +228,16 @@ class HealthMonitor:
                     memory = (stamp, system.memory_total, system.memory_available,
                               system.swap_total, (vm['pswpin'], vm['pswpout']), pressure)
                 self.last_stamp = stamp
-        return self.policy.update(now=now, temperature=temperature,
+        if now >= self.next_disk:
+            self.disks = self.disk_reader()
+            self.next_disk = now+30
+        events = self.policy.update(now=now, temperature=temperature,
             power=battery(self.root), online=link_online(self.root),
-            memory=memory, page_size=self.page_size)
+            memory=memory, page_size=self.page_size,
+            external=external_power(self.root), disks=self.disks)
+        if self.updates.poll():
+            events.append(ALERTS['update_complete'])
+        return events
 
     def close(self):
         self.client.close()
