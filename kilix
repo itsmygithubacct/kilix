@@ -158,8 +158,15 @@ EOF
     printf 'Agent guide: %s/docs/AGENTS.md\n' "$KILIX_HOME"
     exit 0 ;;
   --help-engine)
-    shift
-    set -- --help "$@" ;;
+    # The engine's own option list, answered here like --help: falling through
+    # into the launcher as a plain --help ran the whole setup and never
+    # returned (token-cost finding 4, 2026-09-29).
+    _engine="$KILIX_BUILD_DIRECTORY/current/src/kitty/launcher/kitty"
+    if [ -x "$_engine" ]; then
+      exec "$_engine" --help
+    fi
+    echo "kilix: the terminal engine is not built yet ($_engine); run: kilix --build" >&2
+    exit 1 ;;
 esac
 
 _kilix_validate_private_storage_layout() {

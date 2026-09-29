@@ -818,6 +818,36 @@ class AgentHelpTests(unittest.TestCase):
         self.assertEqual(result.stderr, "")
         return result.stdout
 
+    def _help_engine(self, with_engine):
+        with tempfile.TemporaryDirectory() as scratch:
+            home = Path(scratch) / "gt"
+            engine = home / "kilix" / "build" / "current" / "src" / "kitty" / "launcher" / "kitty"
+            if with_engine:
+                engine.parent.mkdir(parents=True)
+                engine.write_text("#!/bin/sh\necho \"Usage: kitty [options] $*\"\n")
+                engine.chmod(0o755)
+            before = sorted(str(q) for q in Path(scratch).rglob("*"))
+            result = subprocess.run(
+                [str(ROOT / "kilix"), "--help-engine"], capture_output=True, text=True,
+                timeout=30, check=False,
+                env=sandbox_env(GPU_TERMINAL_HOME=str(home),
+                                XDG_CONFIG_HOME=str(Path(scratch) / "xdg")))
+            # Answered before setup: nothing is created or rewritten.
+            self.assertEqual(sorted(str(q) for q in Path(scratch).rglob("*")), before)
+        return result
+
+    def test_help_engine_prints_the_engine_options_and_returns(self):
+        """It used to fall through into the launcher as --help and never
+        return (token-cost finding 4)."""
+        result = self._help_engine(with_engine=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "Usage: kitty [options] --help")
+
+    def test_help_engine_without_a_built_engine_says_so(self):
+        result = self._help_engine(with_engine=False)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("kilix --build", result.stderr)
+
     def test_help_names_the_agent_commands_within_a_screen(self):
         for flag in ("--help", "-h", "help"):
             with self.subTest(flag=flag):
