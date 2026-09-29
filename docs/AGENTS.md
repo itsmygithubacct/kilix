@@ -68,8 +68,8 @@ leave a prompt unsubmitted (§10). Bare `kilix pane` with no arguments opens a p
 
 Each acting verb prints what it did (`kilix pane close: closed pane 12 'build'`, `kilix pane
 send: typed 9 characters into pane 12 'build' and pressed Enter`), and a title that matches
-no pane is refused without acting. There is nothing to check afterwards: do not follow a
-close with `kilix pane list`. The top of `kilix --help` and `kilix pane --help` is the
+no pane is refused without acting. There is nothing to check before or after: do not run
+`kilix pane list` before a send or close, or after it. The top of `kilix --help` and `kilix pane --help` is the
 complete syntax; no subcommand `--help` is needed.
 
 Where the other routes still fit:
