@@ -17,7 +17,7 @@ benchmark); `kilix --help` lists them too. Run them directly, with no preflight:
 - A coding agent in a new tab: `kilix new-tab --title T --cwd DIR codex`
 - Files and logs: `find`, `rg`
 
-Target `pane:ID`; a bare word may match a title. Closing kills the pane's programs: close
+Target `pane:ID`; a bare number may name a tab instead. Closing kills the pane's programs: close
 only exact panes the user asked for, or disposable ones you made. Do not poll a live session
 with `kilix` in a loop (each call reloads its config), install upgrades, or start a second
 remote-control daemon.
