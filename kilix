@@ -3111,6 +3111,9 @@ sys.exit(0 if ready else 1)
       vibeasr)
         # The VibeVoice dictation runtime; its weights are separate and gated.
         exec "$KILIX_HOME/scripts/install-kilix-vibeasr.sh" "$@" ;;
+      whisper)
+        # The Whisper dictation runtime; its weights are separate and gated.
+        exec "$KILIX_HOME/scripts/install-kilix-whisper-stt.sh" "$@" ;;
       daemon)
         [ $# -eq 0 ] || { echo "usage: $_self voice daemon" >&2; exit 2; }
         # The kitty fork uses this only when no installed daemon or development
@@ -3134,9 +3137,11 @@ sys.exit(0 if ready else 1)
         _kilix_voice_request stop || exit $?
         exit 0 ;;
       -h|--help|help)
-        echo "usage: $_self voice [status|install|vibeasr|doctor|stop|daemon]"
+        echo "usage: $_self voice [status|install|vibeasr|whisper|doctor|stop|daemon]"
         echo "  status   widget, engine, and daemon state (default)"
         echo "  install  install the pinned closure; --model selects a Vosk model"
+        echo "  vibeasr  build the VibeVoice dictation runtime"
+        echo "  whisper  install the Whisper dictation runtime"
         echo "  doctor   probe every engine, device, and pin voice depends on"
         echo "  stop     silence speech and close the microphone"
         echo "  daemon   run the pinned voice daemon in the foreground"
@@ -3145,7 +3150,7 @@ sys.exit(0 if ready else 1)
         echo "under Voice, or with '$_self settings --set wpm=200'."
         exit 0 ;;
       *)
-        echo "usage: $_self voice [status|install|vibeasr|doctor|stop|daemon]" >&2
+        echo "usage: $_self voice [status|install|vibeasr|whisper|doctor|stop|daemon]" >&2
         exit 2 ;;
     esac ;;
   power|--power)

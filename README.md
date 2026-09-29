@@ -912,6 +912,8 @@ kilix stt --models --json         # versioned machine-readable catalog contract
 kilix stt --install lgraph-en-us --default lgraph-en-us
 kilix stt --install vibevoice-asr-bitnet --default vibevoice-asr-bitnet  # weights + VibeASR runtime
 kilix voice vibeasr               # (re)build the pinned VibeASR.cpp dictation runtime
+kilix stt --install whisper-small-en --default whisper-small-en  # weights + Whisper runtime
+kilix voice whisper               # (re)install the pinned Whisper dictation runtime
 kilix tts --tiers                 # hardware-aware read-aloud choices
 kilix tts --interactive --tier neural   # first-use Piper setup and session
 kilix tts --interactive --tier pocket-cpu # measured Pocket/Alba CPU audition
@@ -1000,6 +1002,15 @@ libgomp stay the system's), and publishes it at
 toolchain and cmake, takes about a minute, and does nothing when that pinned
 build is already current. `kilix stt --install vibevoice-asr-bitnet` runs it
 after the licence-gated weights are in place.
+
+Whisper dictation runs through `kilix-whisper-stt`, a small provider around
+faster-whisper (CTranslate2, int8 on the CPU). `kilix voice whisper` fetches
+provider commit `1338652895d74882fbf00dd262b80a2814aae0be`, installs its
+locked environment with `uv sync --locked` under Python 3.12.8, and publishes
+it at `$KILIX_DATA_HOME/voice/whisper/current/bin/kilix-whisper-stt`. It does
+nothing when that pinned generation is already current. The provider holds no
+model and never downloads one; `kilix stt --install whisper-small-en` installs
+the licence-gated weights and then runs it.
 
 `kilix voice install` installs the immutable `kilix-voice` 0.1.6 source at
 commit `ae18f4d079e9d32d6a3f471b1969a6bda8af668d`, the official Vosk 0.3.45
