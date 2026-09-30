@@ -19,7 +19,8 @@ kilix action --request-json - < request.json
 
 For example, after verifying the source and anchor pane identities:
 
-```json
+```sh
+kilix action --request-json - <<'JSON'
 {
   "schema": "kilix.actions/v1",
   "operation_id": "open-build-001",
@@ -32,10 +33,9 @@ For example, after verifying the source and anchor pane identities:
     "title": "Build",
     "placement": "split",
     "direction": "right"
-  },
-  "timeout": 10,
-  "dry_run": true
+  }
 }
+JSON
 ```
 
 The IDs and broker in this example are placeholders. Use the exact values from
@@ -43,6 +43,13 @@ the selected terminal's `kilix agent-control list` result. A source is the calli
 pane; a target is the launch anchor or message recipient. Titles are display
 labels, not identity selectors. A plan is not permission to reuse stale identities:
 execution validates them again.
+
+`--request-json -` needs the JSON body in the same invocation: use a quoted
+here-document as above, a pipe, or `< request.json`. An empty stdin is refused.
+`timeout` is optional and measured in **seconds**, from 1 to 60, default 15.
+Omit it for a routine call or use `"timeout": 15`; `15000` is invalid.
+Set `"dry_run": true` for an optional preview. An authorized action runs the
+same checks directly, so a preview is not required.
 
 Supported operations:
 
@@ -80,6 +87,15 @@ If a caller loses the result, submit `operation.status` with the original
 does not launch or resend anything. An interrupted attempt can remain uncertain;
 inspect the exact target before deciding on further work. Changing the ID merely
 to escape uncertainty can duplicate the original action.
+
+Use status to recover a missing or uncertain result. A fresh operation does not
+need a status preflight, and a verified receipt does not need another receipt
+lookup. Keep the receipt and its operation ID for later recovery.
+
+For clients using only these actions, `kilix-needle mcp --tools actions` exposes
+and accepts just the three structured action tools. The default MCP menu still
+includes the other Needle jobs. Tool selection does not change consent, identity
+checks, or receipt guarantees.
 
 Receipts are private local state. Their idempotency guarantee depends on retaining
 that state and using the same terminal and identities. Removing it removes the

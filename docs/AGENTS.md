@@ -33,6 +33,13 @@ submission do not establish agent readiness, acknowledgment, or task completion.
 See [structured actions](structured-actions.md) for the request and recovery
 contract. This newer route is not included in the benchmark tables below.
 
+Pass JSON in the same invocation, for example
+`kilix action --request-json - < request.json`. Omit `timeout` for the default
+15 seconds; supplied values are seconds from 1 to 60. Call an authorized action
+directly. Use status for a lost or uncertain receipt, rather than routine
+preflight or a second lookup after a verified receipt. A client needing only
+these actions can select `kilix-needle mcp --tools actions` to use a smaller menu.
+
 ## Start with the cheapest reliable route
 
 The current measurements use gpt-6-luna at max effort, Standard tier, Codex

@@ -2,6 +2,8 @@
 
 An observed pane creation or screen submission never establishes agent startup,
 acknowledgment or task completion. Uncertain operations are never replayed.
+timeout is in seconds (1–60, default 15). With --request-json -, pipe or
+redirect JSON in the same invocation; omit timeout for routine calls.
 """
 from __future__ import annotations
 
@@ -37,7 +39,7 @@ ACTION_OPERATIONS = {
 ACTION_REQUEST = {"required": ["schema", "operation_id", "operation", "source", "target", "params"],
                   "optional": ["timeout", "dry_run"],
                   "identity": {"required": ["pane_id", "broker"]},
-                  "timeout_seconds": [1, 60]}
+                    "timeout_seconds": [1, 60], "timeout_default_seconds": 15}
 
 
 def capabilities():
@@ -429,6 +431,8 @@ def main(argv=None):
         raw = sys.stdin.buffer.read(MAX_REQUEST + 1)
         if len(raw) > MAX_REQUEST:
             raise control.ControlError("request exceeds 16 KiB")
+        if not raw.strip():
+            raise control.ControlError("empty request; pipe JSON or redirect a file into --request-json - in the same invocation")
         result = dispatch(json.loads(raw, object_pairs_hook=unique_object))
     except (control.ControlError, UnicodeError, ValueError) as exc:
         result = {**receipt({}), "error": str(exc)[:240]}

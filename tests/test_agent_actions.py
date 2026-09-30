@@ -35,6 +35,18 @@ def request(operation="pane.open", operation_id="open-1"):
 
 
 class ActionsTests(unittest.TestCase):
+    def test_stdin_errors_explain_input_and_units_without_connecting(self):
+        for raw in (b"", b" \n", json.dumps({**request(), "timeout": 30000}).encode()):
+            with io.TextIOWrapper(io.BytesIO(raw)) as stdin, \
+                    mock.patch("sys.stdin", stdin), \
+                    mock.patch("sys.stdout", new_callable=io.StringIO) as stdout, \
+                    mock.patch("agent_control.Client") as client:
+                self.assertEqual(actions.main(["--request-json", "-"]), 1)
+            result = json.loads(stdout.getvalue())
+            self.assertEqual(result["status"], "blocked")
+            self.assertIn("seconds" if raw.strip() else "pipe JSON", result["error"])
+            client.assert_not_called()
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
