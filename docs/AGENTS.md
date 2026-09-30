@@ -52,7 +52,7 @@ successful action at gpt-6-luna's Fast-tier list price, failed attempts included
 | Open a settings section | `kilix new-tab --title Settings kilix settings --section voice` | 1–2 commands, 1.2 m$ |
 | Terminal text size | `kilix screen-size set 14` | 1 command, 27k, 1.0 m$ |
 | Play a game | `kilix games play GAME` (ids: `kilix games list`) | 2 commands, 42k, 1.4–1.6 m$ |
-| Type into another coding agent's input box | `kilix agent-control send` (§10) | verifies the target first; worth it only there |
+| Send a message to a Codex input box | `kilix agent-control deliver` (§10) | verifies submission and returns a short receipt |
 
 `kilix games play` from an agent's shell sets the game up and opens it in a new tab (RC3).
 Before that it failed without a Kitty terminal.
@@ -784,6 +784,34 @@ Answer any menu with the exact key you intend, then check the screen again.
 
 ### Put text in, check it, then submit
 
+For Codex, perform these checks in one call with a stable message ID:
+
+```sh
+kilix agent-control deliver "$PANE" --expect-broker "$BROKER" \
+  --message-id review-42 --text 'Read the prepared review and report the result.'
+```
+
+`deliver` validates the broker and foreground Codex process, recognizes the styled
+empty composer, pastes once, verifies the full text, sends a separate Enter, and
+checks for an empty composer plus the message ID in the transcript or pending queue.
+It returns compact JSON with `status`, `message_id` and `delivery_verified`; it does
+not assert acknowledgment or task completion. Unknown UI layouts, occupied composers
+and collapsed pastes stop the operation. It supports the current Codex composer/footer;
+other clients continue to use the separate primitives below.
+
+Reuse the same ID and payload for retries. Successful repeats return the stored
+receipt without terminal input. Interrupted or uncertain attempts are inspected
+without resending text or Enter. Never work around `uncertain` by using a new ID.
+Receipts and target locks use `${XDG_STATE_HOME:-~/.local/state}/kilix/agent-delivery`;
+senders must share that directory. Locks cover cooperating helpers, not manual typing.
+The message, including its visible `[kilix-message:ID]` prefix, is limited to 900 UTF-8
+bytes. `--file` accepts a single-line file; longer briefs should be referenced by path.
+`--timeout` bounds the operation (default 15 seconds, maximum 60). Exit 0 is verified
+`submitted` or `deferred`; exit 1 is `blocked` or `uncertain`.
+
+Enter steers a busy Codex session at its next tool boundary. Use `--mode defer` only
+for an intentional Tab-queued follow-up to a visibly working session.
+
 Send the text and the submit key as two separate operations, and read the pane
 back between them. The read is what stops a malformed prompt reaching a live
 agent.
@@ -813,10 +841,10 @@ in a file: write the brief to disk and send one sentence with its path.
 
 - A working agent shows markers such as `esc to interrupt` or `Working (…)`.
   Typing still works, but think about when the message will be read.
-- While a Codex turn is running, its input box offers **Tab to queue** the
-  message. Send the text, check it, then send a Tab character (`\t`) instead
-  of the submit byte. The message then waits for the current step to finish
-  rather than interrupting it, and appears under "Queued follow-up inputs".
+- Use separate Enter for steering a busy Codex session at its next tool
+  boundary. Its input box also offers **Tab to queue** a deliberate follow-up
+  after the current turn; use Tab only when that deferral is intended and
+  verify the message appears under "Queued follow-up inputs".
 - Ctrl-U does not clear the Codex input box. Repeated DEL (`\177`) does; check
   that the idle placeholder is back before sending anything new.
 - If someone else's text is already in an agent's input box, it is theirs. Do

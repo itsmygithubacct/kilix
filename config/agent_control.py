@@ -220,6 +220,9 @@ class Client:
     def run(self, args, payload=None):
         process = None
         try:
+            deadline = min(time.monotonic() + 10, getattr(self, "deadline", float("inf")))
+            if deadline <= time.monotonic():
+                raise ControlError("terminal request deadline expired; inspect state before retrying")
             process = subprocess.Popen(self.command + args,
                                        stdin=subprocess.PIPE if payload is not None else subprocess.DEVNULL,
                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -230,7 +233,6 @@ class Client:
                 process.stdin.close()
             output = {"stdout": bytearray(), "stderr": bytearray()}
             total = 0
-            deadline = time.monotonic() + 10
             with selectors.DefaultSelector() as selector:
                 selector.register(process.stdout, selectors.EVENT_READ, "stdout")
                 selector.register(process.stderr, selectors.EVENT_READ, "stderr")
@@ -464,21 +466,30 @@ def parser():
     dump = commands.add_parser("dump", help="read a pane's visible screen")
     dump.add_argument("pane", type=positive)
     dump.add_argument("--lines", type=int, default=80)
-    for name in ("send", "key", "new-tab", "split"):
+    for name in ("send", "deliver", "key", "new-tab", "split"):
         command = commands.add_parser(name)
         command.add_argument("pane", type=positive,
                              help="input target, or explicit anchor for a new tab/split")
         command.add_argument("--expect-broker", required=True,
                              help="exact broker identity from the inspected snapshot")
-        if name == "send":
+        if name in ("send", "deliver"):
             text = command.add_mutually_exclusive_group(required=True)
             text.add_argument("--text")
             text.add_argument("--file", type=Path,
-                              help="single-line UTF-8 input, at most 1024 bytes")
-            command.add_argument("--submit", action="store_true",
-                                 help="send a separate Enter after text; verify the result")
-            command.add_argument("--allow-command", action="store_true",
-                                 help="explicitly allow leading / or ! client commands")
+                              help=("single-line UTF-8 message; 900 bytes including the ID prefix"
+                                    if name == "deliver" else "single-line UTF-8 input, at most 1024 bytes"))
+            if name == "deliver":
+                command.add_argument("--message-id", required=True,
+                                     help="stable unique ID; reuse it for retries of this message")
+                command.add_argument("--timeout", type=float, default=15,
+                                     help="total delivery deadline in seconds (1–60)")
+                command.add_argument("--mode", choices=("steer", "defer"), default="steer",
+                                     help="Enter for steering, or Tab for deliberate next-turn deferral")
+            else:
+                command.add_argument("--submit", action="store_true",
+                                     help="send a separate Enter after text; verify the result")
+                command.add_argument("--allow-command", action="store_true",
+                                     help="explicitly allow leading / or ! client commands")
         elif name == "key":
             command.add_argument("key", choices=KEYS)
         else:
@@ -520,6 +531,11 @@ def main(argv=None):
             return 0
         elif args.action in ("new-tab", "split"):
             result = launch(client, args)
+        elif args.action == "deliver":
+            from agent_delivery import deliver
+            result = deliver(client, args)
+            print(json.dumps(result, ensure_ascii=True))
+            return 0 if result["delivery_verified"] else 1
         else:
             if args.action == "key":
                 payload = KEYS[args.key]
@@ -553,4 +569,7 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    # Delivery imports these primitives too. Keep one ControlError class when
+    # this file is invoked as a script, so refused input still yields JSON.
+    sys.modules["agent_control"] = sys.modules[__name__]
     raise SystemExit(main())

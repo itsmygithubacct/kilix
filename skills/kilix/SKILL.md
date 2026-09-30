@@ -27,18 +27,27 @@ remote-control daemon.
 
 Only for another coding agent's input box; shell panes use `kilix pane send`
 above. `kilix agent-control` checks the target's broker identity before any input. Read
-[agent input](references/agent-input.md) before the first `send` or `key`.
+[agent input](references/agent-input.md) before the first `deliver`, `send` or `key`.
 
 ```sh
 kilix agent-control list                     # JSON: pane_id, broker, title, cwd, program
-kilix agent-control dump "$PANE" --lines 60
-kilix agent-control send "$PANE" --expect-broker "$BROKER" --text 'TEXT' --submit
-kilix agent-control dump "$PANE" --lines 60
+kilix agent-control deliver "$PANE" --expect-broker "$BROKER" \
+  --message-id task-42 --text 'Read the prepared result and report your findings.'
 ```
 
-Stay within the user's target and scope, and check the dump first: never send a prompt into
-a shell, password field, approval dialog or model menu. `request_sent` means only that it
-was sent; never resend a prompt that may have been accepted.
+`deliver` supports Codex's recognized input layout. It checks the empty composer,
+pastes once, checks the full message, sends separate Enter, and verifies submission.
+It returns a short JSON receipt; `submitted` is not acknowledgment or task completion.
+Reuse the same message ID when retrying the same payload: verified repeats return the
+receipt, and uncertain repeats never resend input. Keep messages within 900 UTF-8 bytes
+including the helper's ID prefix; use a file reference for longer briefs. `--mode defer`
+uses Tab only for an intentional next-turn follow-up to a visibly busy session.
+
+Stay within the user's target and scope. For other clients or unrecognized layouts,
+use `dump`, `send` without `--submit`, another `dump`, a separate broker-checked
+`key ... enter`, and a final `dump`. Never append to occupied input, send into menus,
+or resend a prompt that may have been accepted. Inspect an `uncertain` result instead
+of assigning a new ID to retry it.
 
 ## Coordinating a group
 
