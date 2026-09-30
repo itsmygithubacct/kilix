@@ -100,7 +100,67 @@ they do not establish a speed improvement or approve a release pin.
 
 The earlier 1,560-run low/medium Fast-tier report remains historical evidence.
 Its costs, effort levels and marker-only typing criteria differ from these
-max/Standard measurements. Tmux has no scored benchmark results yet.
+max/Standard measurements. The separate tmux max/Fast sample follows.
+
+### Tmux: max effort, Fast tier
+
+A separate 2026-09-30 sample used gpt-6-luna/max/Fast (`service_tier=priority`),
+Kilix `60e8157`, Needle `c1009df`, and bundled backend `172bdc5`. Eight operations,
+seven routes and twelve private variants produced **651/672 verified outcomes**,
+**$2.098559 API-equivalent**, with **23.0s** median agent time. This subscription
+run's dollar figures are estimates, not charged receipts. Later observed-form
+and structured-action fixes are outside this sample.
+
+The skill and both Needle routes passed 96/96; the direct Kilix verb and discovery
+passed 95/96. Literal `send` accounted for twenty misses; native `read` accounted
+for the remaining miss. For literal input without Enter, consult the bundled
+skill or use Needle's tmux CLI/MCP. The skill's send cell passed 12/12 at 3.79
+API-equivalent m$/success; Needle CLI passed 12/12 at 9.76 and MCP at 6.25.
+Native commands remain useful for listing and lifecycle operations, with the
+operation counts below; native `send` passed only 1/12 in this sample.
+
+| Operation | Native tmux | Derivative CLI | Kilix verb | Discovery | Skill | Needle CLI | Needle MCP |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `list` | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 |
+| `new` | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 |
+| `read` | 11/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 |
+| `send` | 1/12 | 5/12 | 11/12 | 11/12 | 12/12 | 12/12 | 12/12 |
+| `type` | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 |
+| `key` | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 |
+| `rename` | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 |
+| `close` | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 |
+
+Route medians summarize all eight operations; API-equivalent cost per verified
+outcome includes spend on misses. Cells above contain twelve runs each.
+
+| Route | Success | Input tokens | Calls | m$/success | Agent seconds |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Native tmux | 84/96 | 41.9k | 2 | 2.54 | 19.7 |
+| Derivative CLI | 89/96 | 71.4k | 5 | 3.56 | 23.9 |
+| Kilix verb | 95/96 | 71.6k | 5 | 3.40 | 24.2 |
+| Discovery | 95/96 | 74.1k | 5 | 3.65 | 26.8 |
+| Skill | 96/96 | 47.9k | 2 | 2.78 | 20.9 |
+| Needle CLI | 96/96 | 44.4k | 2 | 3.27 | 22.4 |
+| Needle MCP | 96/96 | 72.3k | 3 | 3.30 | 23.0 |
+
+Every request used an explicit private socket and the same outcome checks.
+Listing required session/pane identities and unchanged pane inventory. Type/key
+required execution receipts from the actual target pane and socket. Send required
+exact literal bytes with no Enter or prior execution; the verifier then supplied
+Enter to establish origin. Submission alone did not establish success.
+
+All 672 agent processes exited zero, with no verifier exceptions, platform-error
+or turn-failed events. All 21 task misses and 25 recovered model-refresh warnings
+remain in the sample; no rows were excluded or retried. One unfinished Needle CLI
+send was independently verified by its target receipt. Engine shutdown left
+private telemetry/broker/shell processes; exact owned-process cleanup removed
+them after the run without changing results.
+
+This is one positive-task sample, with interleaved routes and varying host load,
+cache and service timing. It does not compare causally with the different
+max/Standard tasks or establish results for newer product code. Twelve successes
+per cell are limited evidence; no release pin clearance follows. Private prompt
+wording and payloads are omitted.
 
 ## 1. Are you inside Kilix?
 
@@ -919,9 +979,9 @@ result. `--dry-run` validates and resolves without mutation. Close only the
 exact session requested by the user.
 
 `KILIX_TMUX_CLI` and `KILIX_TMUX_MODULE_ROOT` select another implementation,
-never a socket. These commands do not install or configure a server. Tmux
-route measurements are pending; the earlier benchmark tables cover the
-other categories only.
+never a socket. These commands do not install or configure a server. The
+max/Fast tmux tables above cover the fixed RC4 checkout pair; the other
+categories use the separate installed max/Standard measurements.
 
 ## 13. Failure reference
 
