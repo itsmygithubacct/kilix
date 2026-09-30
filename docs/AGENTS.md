@@ -23,6 +23,16 @@ daemon to start. In-pane callers receive the socket and credential paths
 directly; an out-of-pane tool runner must use the bounded discovery procedure
 below rather than guessing.
 
+## Structured actions and receipts
+
+For a selected build exposing `kilix.actions/v1`, an agent that already knows
+the action can use `kilix action --request-json -` and Needle's structured
+action tools. Check `kilix action capabilities` once per selected stack, retain
+the operation ID, and read its receipt after an interrupted call. Creation and
+submission do not establish agent readiness, acknowledgment, or task completion.
+See [structured actions](structured-actions.md) for the request and recovery
+contract. This newer route is not included in the benchmark tables below.
+
 ## Start with the cheapest reliable route
 
 The current measurements use gpt-6-luna at max effort, Standard tier, Codex

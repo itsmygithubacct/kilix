@@ -26,6 +26,7 @@
 #   ./kilix launcher          # catalog TUI: stack programs, apps, launchers
 #   ./kilix skills ...        # explicitly install/list/remove bundled agent skills
 #   ./kilix agent-control ... # bounded coding-session inspection and control
+#   ./kilix action ...        # structured actions and compact verified receipts
 #   ./kilix app run ID        # install/run one pinned catalog application
 #   ./kilix app window ID     # render a terminal app in a desktop window
 #   ./kilix models ...       # inspect or explicitly set up receipt-gated models
@@ -120,6 +121,13 @@ case "${1:-}" in
   agent-control)
     shift
     exec python3 "$KILIX_HOME/config/agent_control.py" "$@" ;;
+  action)
+    shift
+    if [[ "${1:-}" == capabilities ]]; then
+      shift
+      exec python3 -B "$KILIX_HOME/config/agent_capabilities.py" "$@"
+    fi
+    exec python3 -B "$KILIX_HOME/config/agent_actions.py" "$@" ;;
   models)
     shift
     exec python3 "$KILIX_HOME/config/content_models.py" "$@" ;;
@@ -161,6 +169,10 @@ pane, or several, is refused without acting, and each verb prints what it did.
 Typing into another coding agent's input box (verifies the target first; not
 needed to start one or for shell panes):
   kilix agent-control list|dump|send|key     see its --help
+
+Structured actions with durable receipts (no model invocation):
+  kilix action --request-json -            read a structured action from stdin
+  kilix action capabilities                inspect selected/installed features
 
 Also: settings, status, update, install, games, screen-size, transcript,
   help-search "QUESTION". Add --help to a command for its options.
