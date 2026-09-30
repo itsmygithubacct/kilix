@@ -146,6 +146,30 @@ class MultiplexerBuildTests(unittest.TestCase):
         self.assertIn('must be clean',self.run_build(False).stderr)
         self.assertEqual(self.count(),0)
 
+    def test_v2_package_builds_and_still_refuses_mutated_members(self):
+        record=json.loads(self.record_path.read_text())
+        record['schema']='kilix.encodec.native-package/v2'
+        record['compiler']={'name':'fixture compiler'}
+        record['runtime_libraries']={}
+        self.record_path.write_text(json.dumps(record))
+        self.run_build()
+        before=self.count()
+        (self.prefix/'include/kilix_encodec_content.h').write_text('replaced')
+        self.assertIn('member differs',self.run_build(False).stderr)
+        self.assertEqual(self.count(),before)
+
+    def test_unknown_package_schema_and_disabled_v2_admission_refuse(self):
+        record=json.loads(self.record_path.read_text())
+        record['schema']='kilix.encodec.native-package/v3'
+        self.record_path.write_text(json.dumps(record))
+        self.run_build(False)
+        self.assertEqual(self.count(),0)
+        record['schema']='kilix.encodec.native-package/v2'
+        record['build']['CONTENT']=0
+        self.record_path.write_text(json.dumps(record))
+        self.run_build(False)
+        self.assertEqual(self.count(),0)
+
     def test_symlink_stamp_and_fifo_refuse_without_following(self):
         self.run_build()
         stamp=self.root/'storage/build/libraries/kilix-multiplexer/build-identity'

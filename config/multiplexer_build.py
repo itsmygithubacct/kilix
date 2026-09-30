@@ -39,7 +39,10 @@ def package_plan(prefix, cflags, libs):
         raise ValueError('shared native prefix must be canonical')
     record_bytes = data(prefix/'share/doc/kilix-encodec/native-package.json', 2*1024**2)
     record = json.loads(record_bytes)
-    if (record['schema'] != 'kilix.encodec.native-package/v1'
+    # v2 adds package/compiler/runtime provenance; its source binding and
+    # member-byte contract are unchanged and must pass the same checks below.
+    if (record['schema'] not in ('kilix.encodec.native-package/v1',
+                                'kilix.encodec.native-package/v2')
             or any(record['build'].get(k) != v for k,v in {'ONNX':1,'CONTENT':1,'PREFIX':'/usr'}.items())
             or not all(re.fullmatch('[0-9a-f]{40}', record[k]) for k in ('source_commit','content_commit'))):
         raise ValueError('shared native package has no enabled source binding')
