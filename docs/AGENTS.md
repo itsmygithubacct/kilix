@@ -72,9 +72,11 @@ Success at low / medium effort, and cost against the plain route for the same ta
 The plain routes' misses in files, logs and system questions are almost all one model habit at
 low effort: answering "I can't run shell commands" without trying (the benchmark keeps the
 same wording for every route, so they count). For system questions the Needle CLI is as cheap
-as the shell and did not show that habit, so either is right. Most Needle CLI misses on pane
-tasks were a command Codex stopped waiting for (26 of 36 failures), a latency issue in
-kilix-needle; use the `kilix pane` commands for panes.
+as the shell and did not show that habit, so either is right. In that run most Needle CLI misses
+on pane tasks were a command Codex stopped waiting for (26 of 36 failures). kilix-needle
+03c3462 loads each job's engine only when a request needs it; in a mixed-load A/B its CLI went
+from 46% to 83% success on the pane tasks and MCP from 70% to 92%. The `kilix pane` commands
+stay first for panes (95–96%, about 1.0 m$ per success); the Needle CLI is a fair second.
 
 **MCP has a fixed cost under Codex.** One MCP call costs about 13.9k tokens more than the same
 operation through a CLI (41.1k against 27.3k), whether the server registers one tool or
