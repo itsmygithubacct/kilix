@@ -102,6 +102,8 @@ class Injector:
 
         etype: 1 = press, 3 = release. Returns True if a key was injected.
         """
+        if etype not in (1, 3):
+            return False
         if self.is_modifier(key):
             # A drag can change between copy/move/selection modes while the
             # pointer is stationary. Bare modifiers may update that existing
@@ -119,6 +121,11 @@ class Injector:
         if not keycode:
             return False
         if etype == 1:
+            # Repeated/duplicate presses do not acquire another owner. Xvfb
+            # autorepeats held keys; overwriting this key's first ownership
+            # would strand a modifier when its single release arrives.
+            if keycode in self._chord_mods:
+                return False
             modcodes = self._modifier_codes(mods)
             self._hold_modifiers(modcodes)
             xtest.fake_input(self.xd, X.KeyPress, keycode)

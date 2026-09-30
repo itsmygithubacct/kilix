@@ -264,6 +264,13 @@ class RunTerm(browse.Term):
             ev = {"kind": "key", "key": FKEY_CSI[final], "code": "",
                   "vk": 0, "mods": mods, "text": ""}
         if ev and ev.get("kind") == "key":
+            if final == "u" and parts:
+                # browse uses the shifted glyph as a browser key. XTest needs
+                # the unshifted identity for both edges: '(' and '9' can map
+                # to different X keycodes, leaving Shift held after release.
+                base = int(parts[0].split(":")[0])
+                if base not in browse.SPECIAL_U:
+                    ev["key"] = chr(base)
             etype = 1  # 1 press, 2 repeat, 3 release
             if len(parts) > 1 and ":" in parts[1]:
                 try:

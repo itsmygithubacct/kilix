@@ -86,6 +86,34 @@ class ChordTests(unittest.TestCase):
         releases = [e for e in self.events if e == (X.KeyRelease, 37)]
         self.assertEqual((len(presses), len(releases)), (1, 1))
 
+    def test_duplicate_press_keeps_original_modifier_ownership(self):
+        self.inj.chord("a", xinject.MOD_SHIFT, 1)
+        self.assertFalse(self.inj.chord("a", 0, 1))
+        self.inj.chord("a", 0, 3)
+        self.assertEqual(self.events, [(X.KeyPress, 50), (X.KeyPress, 38),
+                                       (X.KeyRelease, 38), (X.KeyRelease, 50)])
+        self.assertEqual(self.inj._keys_down, set())
+        self.assertEqual(self.inj._mod_holds, {})
+
+    def test_duplicate_press_does_not_strand_a_shared_modifier(self):
+        self.inj.chord("a", xinject.MOD_CTRL, 1)
+        self.inj.chord("l", xinject.MOD_CTRL, 1)
+        self.inj.chord("a", xinject.MOD_CTRL, 1)
+        self.inj.chord("a", 0, 3)
+        self.assertIn(37, self.inj._keys_down)
+        self.inj.chord("l", 0, 3)
+        self.assertEqual(self.inj._keys_down, set())
+        self.assertEqual(self.inj._mod_holds, {})
+
+    def test_repeat_and_invalid_event_types_do_not_release_a_chord(self):
+        self.inj.chord("a", xinject.MOD_ALT, 1)
+        before = list(self.events)
+        for etype in (2, 0, 4):
+            self.assertFalse(self.inj.chord("a", 0, etype))
+        self.assertEqual(self.events, before)
+        self.inj.chord("a", 0, 3)
+        self.assertEqual(self.inj._keys_down, set())
+
     def test_release_all_lets_go_of_everything_and_forgets_the_counts(self):
         self.inj.chord("a", xinject.MOD_SHIFT | xinject.MOD_SUPER, 1)
         self.inj.release_all()
