@@ -61,14 +61,17 @@ AGENT_ARG_PATTERNS = {
 _SUBCOMMANDS = {}
 
 
-def client_subcommands(executable):
+def client_subcommands(executable, deadline=float("inf")):
     """The client's own subcommand names and aliases, read from its --help.
     A prompt whose first word is one of them would run that command instead."""
     if executable in _SUBCOMMANDS:
         return _SUBCOMMANDS[executable]
+    remaining = min(30, deadline - time.monotonic())
+    if remaining <= 0:
+        raise ControlError("client help deadline expired")
     try:
         done = subprocess.run([executable, "--help"], stdin=subprocess.DEVNULL,
-                              capture_output=True, text=True, timeout=30, check=False)
+                              capture_output=True, text=True, timeout=remaining, check=False)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise ControlError(f"cannot read {Path(executable).name} --help to check the prompt") from exc
     names, inside = set(), False
@@ -122,18 +125,21 @@ def _git_marker_above(directory):
                for parent in (current, *current.parents))
 
 
-def grok_trust_is_exact(cwd):
+def grok_trust_is_exact(cwd, deadline=float("inf")):
     """Refuse Grok trust when its repository-scoped grant would exceed cwd."""
     # A jj workspace above cwd may be the root grok trusts: only its root.
     if any((parent / ".jj").is_dir() for parent in cwd.resolve().parents):
         raise ControlError("grok --trust-folder inside a jj workspace needs --cwd to be its root")
     try:
+        remaining = min(10, deadline - time.monotonic())
+        if remaining <= 0:
+            raise ControlError("repository check deadline expired")
         # The caller's GIT_DIR/GIT_WORK_TREE must not redefine the repository
         # (KX-R13-39).
         env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
         done = subprocess.run(
             ["git", "-C", os.fspath(cwd), "rev-parse", "--show-toplevel"],
-            stdin=subprocess.DEVNULL, capture_output=True, timeout=10, check=False, env=env)
+            stdin=subprocess.DEVNULL, capture_output=True, timeout=remaining, check=False, env=env)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise ControlError("cannot determine the Git repository root for grok --trust-folder") from exc
     if done.returncode:
@@ -335,7 +341,7 @@ def describe(pane):
             "neighbors": pane.get("neighbors", {})}
 
 
-def launch(client, args):
+def launch(client, args, *, explicit_argv=None):
     target = client.resolve(args.pane, args.expect_broker)
     if not client.caller or not any(p["id"] == client.caller for p in client.snapshot()):
         raise ControlError("caller identity unknown; provide the verified --caller-pane")
@@ -345,11 +351,14 @@ def launch(client, args):
     title = plain_text(args.title, "title", 200)
     # Share the coding-agent installer's executable resolution, including
     # vendor locations that desktop PATH values may omit.
-    from agent_programs import resolve_agent_command
-    executable = resolve_agent_command(PROGRAMS.get(args.agent, args.agent))
-    if not executable:
-        raise ControlError(f"{args.agent} is not installed; use kilix install explicitly")
-    argv = agent_argv(args, executable, cwd)
+    if explicit_argv is None:
+        from agent_programs import resolve_agent_command
+        executable = resolve_agent_command(PROGRAMS.get(args.agent, args.agent))
+        if not executable:
+            raise ControlError(f"{args.agent} is not installed; use kilix install explicitly")
+        argv = agent_argv(args, executable, cwd, deadline=getattr(client, "deadline", float("inf")))
+    else:
+        argv = explicit_argv
     trusted = None
     if args.trust_folder and not args.dry_run:
         from agent_trust import TrustError, trust
@@ -395,7 +404,7 @@ def launch(client, args):
             "folder_trust": trusted}
 
 
-def agent_argv(args, executable, cwd):
+def agent_argv(args, executable, cwd, deadline=float("inf")):
     """The client's argv: its own flags, then resume, then a prompt, each one
     literal item. Nothing here comes from a shell string."""
     agent = args.agent
@@ -421,7 +430,7 @@ def agent_argv(args, executable, cwd):
         yolo = settings.coding_yolo()
     argv.extend(YOLO_FLAGS.get(agent, []) if yolo else ASK_FLAGS.get(agent, []))
     if getattr(args, "trust_folder", False) and agent == "grok":
-        grok_trust_is_exact(cwd)
+        grok_trust_is_exact(cwd, deadline=deadline)
         argv.append("--trust")         # grok records its own folder trust
     if agent == "qwen-omp" and cwd == Path.home():
         argv.append("--allow-home")
@@ -446,7 +455,7 @@ def agent_argv(args, executable, cwd):
         if len(words) == 1:
             raise ControlError("a one-word prompt could select a client subcommand")
         first = words[0].casefold()
-        if first in client_subcommands(executable):
+        if first in client_subcommands(executable, deadline=deadline):
             # "codex logout", "claude update": the first word would run a command.
             raise ControlError(f"a prompt may not begin with {first!r}, one of "
                                f"{Path(executable).name}'s own commands")
