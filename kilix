@@ -153,12 +153,7 @@ Panes and tabs (directions are relative to the pane you run in):
   kilix pane list [--json]            pane ids, titles, programs; (self) is you
   kilix new-tab [--title T] [--cwd DIR] [CMD...]
   kilix tab list|close|rename|focus|left|right
-
-Tmux sessions (headless; socket required on every call):
-  kilix tmux --socket /absolute/path --json list|new|read|send|type|key|rename|close ...
-  kilix tmux --help                   control syntax and implementation selection
-  kilix tmux                          interactive Tmux Manager
-
+  kilix tmux --socket PATH [--json] VERB ...  see tmux --help; no args: manager
 TARGET is a pane's unique title or pane:ID. These lines are the complete syntax:
 no subcommand --help or pane list is needed first. A title that matches no
 pane, or several, is refused without acting, and each verb prints what it did.

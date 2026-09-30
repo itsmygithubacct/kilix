@@ -10,6 +10,8 @@ import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'tests'))
+from _env_support import sandbox_env
 sys.path.insert(0, str(ROOT / "config"))
 from kilix_tmux import dispatch
 
@@ -71,7 +73,7 @@ class PrivateServerTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix="kt-test-")
         self.directory = Path(self.tmp.name)
         self.socket = str(self.directory / "socket")
-        self.env = dict(os.environ, HOME=self.tmp.name, PS1="fixture> ", TERM="xterm-256color")
+        self.env = sandbox_env(HOME=self.tmp.name, PS1="fixture> ", TERM="xterm-256color")
         self.env.pop("TMUX", None)
         self.tmux("-f", "/dev/null", "new-session", "-d", "-s", "fixture", "-x", "200", "-y", "30",
                   "/bin/bash --noprofile --norc")
