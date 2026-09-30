@@ -25,6 +25,23 @@ below rather than guessing.
 
 ## Structured actions and receipts
 
+For a compact startup snapshot, use `kilix agent-control context`. It reports
+the tool runner's caller pane/broker, invoked versus PATH-selected sources,
+Needle selection and the short action rules in at most 4096 JSON bytes.
+`--target ID --expect-broker BROKER` additionally inspects one known target;
+it never chooses a target or sends input. Exit 1 and `status: partial` mean
+identity discovery is incomplete. `observed` is a snapshot, not authorization
+or a readiness check. The executing tool runner can belong to a different pane
+from the visible client UI. Keep the existing self-input guard.
+If the existing `--caller-pane` option supplies a verified missing identity,
+`identity_basis` explicitly says `explicit_caller`; it cannot override a
+conflicting inherited identity.
+
+Use this once for discovery, not before every action. Retain installation
+facts per selected stack; refresh pane/broker identities after a restart or a
+stale-identity error. For full installation details, use
+`kilix action capabilities`; source-file presence is not runtime readiness.
+
 For a selected build exposing `kilix.actions/v1`, an agent that already knows
 the action can use `kilix action --request-json -` and Needle's structured
 action tools. Check `kilix action capabilities` once per selected stack, retain

@@ -154,10 +154,10 @@ def grok_trust_is_exact(cwd, deadline=float("inf")):
 
 def connection_values():
     """Recover only pane connection metadata from this process's ancestors."""
-    names = ("KITTY_LISTEN_ON", "KITTY_WINDOW_ID", "KILIX_RC_PASSWORD_FILE",
+    names = ("KITTY_LISTEN_ON", "KITTY_WINDOW_ID", "KILIX_RC_PASSWORD_FILE", "KITTY_PUBLIC_KEY",
              "KILIX_KITTEN", "KILIX_BUILD_DIRECTORY", "KILIX_PREBUILT_HOME")
     values = {name: os.environ[name] for name in names if os.environ.get(name)}
-    needed = names[:3]
+    needed = names[:4]
     pid = os.getppid()
     for _ in range(24):
         if all(values.get(name) for name in needed) or pid <= 1:
@@ -222,6 +222,9 @@ class Client:
         self.caller = caller_pane or inherited
         self.command = [kitten_path(values), "@", "--to", socket,
                         "--password-file", credential]
+        self.command_env = os.environ.copy()
+        if values.get("KITTY_PUBLIC_KEY"):
+            self.command_env["KITTY_PUBLIC_KEY"] = values["KITTY_PUBLIC_KEY"]
 
     def run(self, args, payload=None):
         process = None
@@ -231,7 +234,8 @@ class Client:
                 raise ControlError("terminal request deadline expired; inspect state before retrying")
             process = subprocess.Popen(self.command + args,
                                        stdin=subprocess.PIPE if payload is not None else subprocess.DEVNULL,
-                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                       env=getattr(self, "command_env", None))
             if payload is not None:
                 if len(payload) > 1024:
                     raise ControlError("input exceeds 1024 bytes")
@@ -472,6 +476,9 @@ def parser():
                         help="verified source pane, only when its environment was stripped")
     commands = result.add_subparsers(dest="action", required=True)
     commands.add_parser("list", help="redacted JSON snapshot; no inferred idle state")
+    context = commands.add_parser("context", help="compact read-only identity and installation facts")
+    context.add_argument("--target", type=positive, help="inspect this explicit pane only")
+    context.add_argument("--expect-broker", help="report a stale target if this broker no longer matches")
     dump = commands.add_parser("dump", help="read a pane's visible screen")
     dump.add_argument("pane", type=positive)
     dump.add_argument("--lines", type=int, default=80)
@@ -526,6 +533,15 @@ def parser():
 
 def main(argv=None):
     args = parser().parse_args(argv)
+    if args.action == "context":
+        if args.expect_broker is not None and (not args.target or not BROKER.fullmatch(args.expect_broker)):
+            parser().error("context --expect-broker requires --target and an exact broker identity")
+        from agent_context import collect, encode
+        result = collect(caller_pane=args.caller_pane, target=args.target,
+                         expected=args.expect_broker)
+        output = encode(result)
+        print(output, end="")
+        return 0 if json.loads(output)["status"] == "observed" else 1
     try:
         client = Client(args.caller_pane)
         if args.action == "list":

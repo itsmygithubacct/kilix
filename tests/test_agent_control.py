@@ -631,6 +631,32 @@ class TrustTests(unittest.TestCase):
 
 
 class ConnectionTests(unittest.TestCase):
+    def test_public_key_recovery_stays_with_the_selected_instance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for pid, parent, socket, key in ((100, 101, "unix:@other", "wrong-key"),
+                                             (101, 1, "unix:@selected", "right-key")):
+                proc = root / str(pid)
+                proc.mkdir()
+                (proc / "environ").write_bytes(
+                    f"KITTY_LISTEN_ON={socket}\0KITTY_PUBLIC_KEY={key}\0".encode())
+                (proc / "status").write_text(f"PPid:\t{parent}\n")
+            env = {"KITTY_LISTEN_ON": "unix:@selected", "KITTY_WINDOW_ID": "1",
+                   "KILIX_RC_PASSWORD_FILE": "credential"}
+            with mock.patch.dict(os.environ, env, clear=True), \
+                    mock.patch.object(control.os, "getppid", return_value=100), \
+                    mock.patch.object(control, "Path", side_effect=lambda p: root if p == "/proc" else Path(p)):
+                values = control.connection_values()
+            self.assertEqual(values["KITTY_PUBLIC_KEY"], "right-key")
+            self.assertEqual(values["KITTY_LISTEN_ON"], "unix:@selected")
+
+    def test_recovered_key_is_passed_only_in_the_child_environment(self):
+        client = control.Client.__new__(control.Client)
+        client.command = [sys.executable, "-c"]
+        client.command_env = {"KITTY_PUBLIC_KEY": "test-public-key"}
+        self.assertEqual(client.run(["import os; print(os.environ['KITTY_PUBLIC_KEY'])"]),
+                         "test-public-key\n")
+
     def test_process_output_is_bounded_before_collecting_it_all(self):
         client = control.Client.__new__(control.Client)
         client.command = [sys.executable, "-c"]
@@ -644,11 +670,14 @@ class ConnectionTests(unittest.TestCase):
             password = root / "password"
             password.write_text("private")
             values = {"KITTY_LISTEN_ON": "unix:@kilix-123", "KITTY_WINDOW_ID": "1",
+                      "KITTY_PUBLIC_KEY": "test-public-key",
                       "KILIX_RC_PASSWORD_FILE": str(password)}
             with mock.patch.object(control, "connection_values", return_value=values), \
                     mock.patch.object(control, "kitten_path", return_value="/kitten"):
                 password.chmod(0o600)
                 client = control.Client()
+                self.assertEqual(client.command_env["KITTY_PUBLIC_KEY"], "test-public-key")
+                self.assertNotIn("test-public-key", client.command)
                 self.assertEqual(client.command, ["/kitten", "@", "--to", "unix:@kilix-123",
                                                    "--password-file", str(password)])
                 with self.assertRaises(control.ControlError):

@@ -165,7 +165,7 @@ TARGET is a pane's unique title or pane:ID. Above is the complete syntax:
 no subcommand --help or pane list is needed first. Missing/ambiguous titles
 are refused without acting; each verb prints what it did.
 Coding agent input (verify the target first):
-  kilix agent-control list|dump|send|key      see its --help
+  kilix agent-control context|list|dump|send|key   --help
 Structured actions with durable receipts:
   kilix action --request-json -             structured request from stdin
   kilix action capabilities                inspect available features
