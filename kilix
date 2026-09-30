@@ -145,37 +145,32 @@ case "${1:-}" in
   -h|--help|help)
     cat <<'EOF'
 usage: kilix [COMMAND] [ARGS...]    (no command: open a Kilix window)
-
 Common tasks, complete as shown (run inside a Kilix pane):
-  kilix pane right -- bash                           open a shell pane to the right
-  kilix pane send build 'make test' --submit         type into the pane titled build + Enter
-  kilix pane close build                             close the pane titled build
-  kilix new-tab --title Codex --cwd ~/src/app codex  start a program in a new tab
+  kilix pane right -- bash                          open a shell right
+  kilix pane send build 'make test' --submit         type into build + Enter
+  kilix pane close build                            close the named pane
+  kilix new-tab --title Codex --cwd ~/src/app codex  start a program in a tab
 
-Panes and tabs (directions are relative to the pane you run in):
+Panes and tabs (directions relative to the calling pane):
   kilix pane right|left|up|down [--title T] [--cwd DIR] [--hold] [--porcelain] [-- CMD...]
-  kilix pane send TARGET 'TEXT' [--submit]   --submit presses Enter after the text
-  kilix pane close [TARGET]           closes it (default: this pane) and its program
+  kilix pane send TARGET 'TEXT' [--submit]   --submit presses Enter
+  kilix pane close [TARGET]                 default: this pane and its program
   kilix pane read TARGET [--extent all]
   kilix pane focus TARGET
-  kilix pane list [--json]            pane ids, titles, programs; (self) is you
+  kilix pane list [--json]                  ids, titles, programs; (self) is you
   kilix new-tab [--title T] [--cwd DIR] [CMD...]
   kilix tab list|close|rename|focus|left|right
-  kilix tmux --socket PATH [--json] VERB ...  see tmux --help; no args: manager
-TARGET is a pane's unique title or pane:ID. These lines are the complete syntax:
-no subcommand --help or pane list is needed first. A title that matches no
-pane, or several, is refused without acting, and each verb prints what it did.
-
-Typing into another coding agent's input box (verifies the target first; not
-needed to start one or for shell panes):
-  kilix agent-control list|dump|send|key     see its --help
-
-Structured actions with durable receipts (no model invocation):
-  kilix action --request-json -            read a structured action from stdin
-  kilix action capabilities                inspect selected/installed features
-
+  kilix tmux --socket PATH [--json] VERB ...  no args: manager
+TARGET is a pane's unique title or pane:ID. Above is the complete syntax:
+no subcommand --help or pane list is needed first. Missing/ambiguous titles
+are refused without acting; each verb prints what it did.
+Coding agent input (verify the target first):
+  kilix agent-control list|dump|send|key      see its --help
+Structured actions with durable receipts:
+  kilix action --request-json -             structured request from stdin
+  kilix action capabilities                inspect available features
 Also: settings, status, update, install, games, screen-size, transcript,
-  help-search "QUESTION". Add --help to a command for its options.
+  help-search "QUESTION". Command options: --help.
 Terminal engine (kitty) options: kilix --help-engine
 EOF
     printf 'Agent guide: %s/docs/AGENTS.md\n' "$KILIX_HOME"
