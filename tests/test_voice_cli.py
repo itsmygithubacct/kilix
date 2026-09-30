@@ -170,6 +170,66 @@ class VoiceCliTests(unittest.TestCase):
         self.assertIn("stt --install MODEL", help_result.stdout)
         self.assertIn("stt --default MODEL", help_result.stdout)
 
+    def fake_pinned_sizer(self, present: bool):
+        """A fake git that answers only for the pinned sizer checkout and
+        logs every fetch; the sizer executable exists when `present`."""
+        installer = ROOT / "scripts" / "install-kilix-tts-sizer.sh"
+        self.environment["GPU_TERMINAL_SOURCE_HOME"] = str(self.root / "sources")
+        ref = subprocess.check_output([installer, "--print-ref"], text=True).strip()
+        ref = ref.removeprefix("kilix-system-monitor=")
+        sizer = Path(subprocess.check_output(
+            [installer, "--print-path"], env=self.environment, text=True).strip())
+        if present:
+            sizer.parent.mkdir(parents=True)
+            sizer.write_text("#!/bin/sh\nexit 0\n")
+            sizer.chmod(0o755)
+        log = self.root / "git.log"
+        git = self.bin / "git"
+        git.write_text(
+            "#!/bin/sh\n"
+            f"printf '%s\\n' \"$*\" >> '{log}'\n"
+            'case "$*" in\n'
+            f"  *kilix-tts-sizer-*rev-parse\\ HEAD*) echo {ref}; exit 0 ;;\n"
+            "  *kilix-tts-sizer-*status*) exit 0 ;;\n"
+            "  *fetch*) exit 1 ;;\n"
+            "esac\n"
+            'exec /usr/bin/git "$@"\n')
+        git.chmod(0o755)
+        return sizer, log
+
+    def install_sizer_echo_stt(self):
+        return self.install_runtime_tool(
+            "kilix-stt",
+            "#!/bin/sh\n"
+            "if [ \"${1:-}\" = --version ]; then\n"
+            "  printf '%s\\n' 'kilix-stt fixture'\n"
+            "  exit 0\n"
+            "fi\n"
+            "printf 'sizer=%s\\n' \"${PLEBIAN_MODEL_SIZER:-none}\"\n")
+
+    def test_setup_default_and_recommend_get_the_pinned_sizer(self):
+        # First-run setup asks the sizer which dictation model this hardware
+        # should get; without it every machine was offered the compact model.
+        self.install_sizer_echo_stt()
+        sizer, _log = self.fake_pinned_sizer(present=True)
+        for arguments in (("--setup-default", "--result", "r.json"), ("--recommend",),
+                          ("--models",)):
+            with self.subTest(arguments=arguments):
+                result = self.run_kilix("stt", *arguments)
+                self.assertEqual(result.stdout.strip(), f"sizer={sizer}")
+
+    def test_opening_stt_never_fetches_the_sizer(self):
+        self.install_sizer_echo_stt()
+        _sizer, log = self.fake_pinned_sizer(present=False)
+        result = self.run_kilix("stt", "--models")
+        self.assertEqual(result.stdout.strip(), "sizer=none")
+        self.assertNotIn("fetch", log.read_text() if log.exists() else "")
+        # Setup does fetch it, and fails closed when it cannot.
+        setup = self.run_kilix("stt", "--setup-default", check=False)
+        self.assertNotEqual(setup.returncode, 0)
+        self.assertIn("fetch", log.read_text())
+        self.assertNotIn("sizer=", setup.stdout)
+
     def test_stt_refreshes_a_runtime_from_the_previous_voice_pin(self):
         repo = self.root / "voice-origin"
         repo.mkdir()

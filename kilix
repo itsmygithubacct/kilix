@@ -2796,6 +2796,26 @@ sys.exit(0 if ready else 1)
       _kilix_voice_tool kilix-stt "$_stt_force" --without-dictation
     )" || exit 1
     [ "$_stt_install_only" = 0 ] || exit 0
+    # The model sizer names the dictation model this hardware should get.
+    # First-run setup and --recommend need it, so they fetch the pinned copy;
+    # any other use takes it only if it is already there, never downloading.
+    _sizer_installer="$KILIX_HOME/scripts/install-kilix-tts-sizer.sh"
+    if [ -f "$_sizer_installer" ] && [ ! -L "$_sizer_installer" ] \
+        && [ -x "$_sizer_installer" ] && [ -z "${PLEBIAN_MODEL_SIZER:-}" ]; then
+      _stt_sizer_needed=0
+      for _stt_argument in "$@"; do
+        case "$_stt_argument" in --setup-default|--recommend) _stt_sizer_needed=1 ;; esac
+      done
+      if [ "$_stt_sizer_needed" = 1 ]; then
+        PLEBIAN_MODEL_SIZER="$("$_sizer_installer")" || exit 1
+        export PLEBIAN_MODEL_SIZER
+      else
+        _stt_sizer="$("$_sizer_installer" --print-path)" || exit 1
+        if [ -x "$_stt_sizer" ]; then
+          export PLEBIAN_MODEL_SIZER="$_stt_sizer"
+        fi
+      fi
+    fi
     exec "$_stt_installed" "$@" ;;
   avatar)
     shift
