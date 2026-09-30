@@ -440,6 +440,10 @@ class YoloxPin(unittest.TestCase):
     def _origin(self, scratch):
         origin = os.path.join(scratch, "origin")
         self._git("init", "-q", "-b", "main", origin)
+        tools = pathlib.Path(origin) / "tools"
+        tools.mkdir()
+        for tool in ("kilix-yolox-detect", "kilix-yolox-cut"):
+            (tools / tool).write_text("raise SystemExit('private pin fixture must not execute a model')\n")
         refs = []
         for name in ("old", "new"):
             with open(os.path.join(origin, "marker"), "w") as handle:
@@ -482,7 +486,10 @@ class YoloxPin(unittest.TestCase):
             origin, (old, new) = self._origin(scratch)
             result = self._run(scratch, origin, old)
             # Stops at the licence, which is after the source was prepared.
-            self.assertIn("typed agreement", result.stderr, result.stderr)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertIn("the YOLOX licence needs your typed agreement",
+                          result.stderr, result.stderr)
+            self.assertFalse(os.path.exists(os.path.join(scratch, "yolox", "venv")))
             checkout = os.path.join(scratch, "sources", "kilix-yolox")
             self.assertEqual(self._git("rev-parse", "HEAD", cwd=checkout), old)
 

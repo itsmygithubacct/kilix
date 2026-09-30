@@ -41,7 +41,7 @@ KILIX_YOLOX_ALLOW_MUTABLE_REF="${KILIX_YOLOX_ALLOW_MUTABLE_REF:-0}"
 # resolves it - a first-use clone and an existing checkout alike - so a moved
 # pin reaches machines that already have the module. Set
 # KILIX_YOLOX_KEEP_EXISTING_CHECKOUT=1 to work from a checkout as it is.
-KILIX_YOLOX_DEFAULT_REF=3b921c732bf87b98c98c265509b7f2e0628d6101
+KILIX_YOLOX_DEFAULT_REF=029ea556082d07772848f82c1f5bed9e3ffff4b4
 KILIX_YOLOX_MODEL="${KILIX_YOLOX_MODEL:-yolox_s}"
 # kilix-look sends a 320-pixel square. The detector prefers the cut that matches
 # the frame (0.89 on the test image against 0.52 for the 640 export fed the same
@@ -115,6 +115,10 @@ case "$yolox_dir" in
   /|"$HOME"|"$GPU_TERMINAL_DATA_HOME")
     die "refusing broad runtime path: $yolox_dir" ;;
 esac
+# Native detector callers split command arguments on whitespace. The recorded
+# wrapper must therefore be one unambiguous token, also safe as an env-file line.
+"$KILIX_PYTHON" -c 'import sys; p=sys.argv[1]; sys.exit(any(c.isspace() or not c.isprintable() for c in p))' "$yolox_dir" \
+  || die "runtime path must contain no whitespace or control characters"
 # The model name reaches a path and a python argument; only the three the
 # checksum list knows are accepted, so it can carry neither.
 case "$KILIX_YOLOX_MODEL" in
@@ -124,6 +128,8 @@ esac
 case "$KILIX_YOLOX_SIZE" in
   ''|*[!0-9]*|0*) die "KILIX_YOLOX_SIZE must be a positive integer: $KILIX_YOLOX_SIZE" ;;
 esac
+"$KILIX_PYTHON" -c 'import sys; sys.exit(int(sys.argv[1]) % 32 != 0)' "$KILIX_YOLOX_SIZE" \
+  || die "KILIX_YOLOX_SIZE must be a positive multiple of 32"
 
 venv="$yolox_dir/venv"
 python="$venv/bin/python"
@@ -133,9 +139,20 @@ wrapper="$yolox_dir/bin/kilix-yolox-detect"
 
 # ---------------------------------------------------------------- state ----
 
+runtime_binding() {
+  "$KILIX_PYTHON" "$KILIX_HOME/config/yolox_runtime.py" "$1" \
+    "$yolox_dir" "$KILIX_YOLOX_SRC" "$KILIX_YOLOX_MODEL" "$KILIX_YOLOX_SIZE"
+}
+
 runtime_ready() {
+  if git -C "$KILIX_YOLOX_SRC" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+      && [ "$KILIX_YOLOX_KEEP_EXISTING_CHECKOUT" != 1 ]; then
+    [ "$(git -C "$KILIX_YOLOX_SRC" rev-parse HEAD)" = "$install_ref" ] || return 1
+  fi
   [ -x "$python" ] && [ -f "$weights" ] && [ -x "$wrapper" ] \
-    && "$python" -c 'import onnxruntime, numpy' >/dev/null 2>&1
+    && "$python" -c 'import onnxruntime, numpy' >/dev/null 2>&1 \
+    && "$KILIX_HOME/kilix" models verify "$KILIX_YOLOX_MODEL" >/dev/null 2>&1 \
+    && runtime_binding check >/dev/null 2>&1
 }
 
 # ------------------------------------------------------------- source ----
@@ -320,39 +337,31 @@ EOF
 }
 
 install_runtime() {
-  local tool cut
+  local cut asset want got
   resolve_source
-  tool="$(module_tool kilix-yolox-detect)"
+  module_tool kilix-yolox-detect >/dev/null
   cut="$(module_tool kilix-yolox-cut)"
 
-  # The licence comes first: declining it leaves no virtualenv behind.
-  mkdir -p "$models" "$yolox_dir/bin"
-  if [ ! -f "$models/${KILIX_YOLOX_MODEL}.onnx" ]; then
-    local asset
-    asset="$(content_asset)"
-    if [ ! -f "$asset/${KILIX_YOLOX_MODEL}.onnx" ]; then
-      # Interactive by design: the authority refuses piped or --yes consent.
-      { [ -t 0 ] && [ -t 2 ]; } \
-        || die "the YOLOX licence needs your typed agreement: run \`kilix models install $KILIX_YOLOX_MODEL\` in a terminal, then re-run this"
-      log "the weights come from kilix-content; its licence screen follows"
-      "$KILIX_HOME/kilix" models install "$KILIX_YOLOX_MODEL" >&2 \
-        || die "the model was not installed (declined, or the download failed)"
-    fi
-    [ -f "$asset/${KILIX_YOLOX_MODEL}.onnx" ] \
-      || die "kilix models did not leave $KILIX_YOLOX_MODEL at $asset"
-    # Content verified every byte against the pinned manifest; the module's own
-    # list is a second witness for the same file.
-    local want got
-    want="$(awk -v f="${KILIX_YOLOX_MODEL}.onnx" '$2==f {print $1}' "$KILIX_YOLOX_SRC/models/SHA256SUMS")"
-    got="$(sha256sum -- "$asset/${KILIX_YOLOX_MODEL}.onnx" | cut -d' ' -f1)"
-    [ -n "$want" ] && [ "$want" = "$got" ] \
-      || die "$KILIX_YOLOX_MODEL does not match the kilix-yolox checksum list"
-    cp -- "$asset/${KILIX_YOLOX_MODEL}.onnx" "$models/${KILIX_YOLOX_MODEL}.onnx"
-    [ ! -f "$asset/notices/LICENSE-apache-2.0.txt" ] \
-      || cp -- "$asset/notices/LICENSE-apache-2.0.txt" "$models/LICENSE.yolox"
-    printf 'YOLOX weights, Megvii-BaseDetection/YOLOX.\nLicensed under the Apache License, Version 2.0; see LICENSE.yolox.\n' \
-      > "$models/NOTICE"
+  # Existing files alone grant neither agreement nor integrity. Use the same
+  # authority for fresh and reused models, before creating a runtime.
+  asset="$(content_asset)"
+  if ! "$KILIX_HOME/kilix" models verify "$KILIX_YOLOX_MODEL" >/dev/null 2>&1; then
+    { [ -t 0 ] && [ -t 2 ]; } \
+      || die "the YOLOX licence needs your typed agreement and verified model bytes: run \`kilix models install $KILIX_YOLOX_MODEL\` in a terminal, then re-run this"
+    log "the model needs installation or agreement; its licence screen follows"
+    "$KILIX_HOME/kilix" models install "$KILIX_YOLOX_MODEL" >&2 \
+      || die "the model was not installed (declined, or the download failed)"
+    "$KILIX_HOME/kilix" models verify "$KILIX_YOLOX_MODEL" >/dev/null \
+      || die "the installed model or agreement could not be verified"
   fi
+  want="$(awk -v f="${KILIX_YOLOX_MODEL}.onnx" '$2==f {print $1}' "$KILIX_YOLOX_SRC/models/SHA256SUMS")"
+  got="$(sha256sum -- "$asset/${KILIX_YOLOX_MODEL}.onnx" | cut -d' ' -f1)"
+  [ -n "$want" ] && [ "$want" = "$got" ] \
+    || die "$KILIX_YOLOX_MODEL does not match the kilix-yolox checksum list"
+  mkdir -p "$models" "$yolox_dir/bin"
+  cp -- "$asset/${KILIX_YOLOX_MODEL}.onnx" "$models/${KILIX_YOLOX_MODEL}.onnx"
+  cp -- "$asset/notices/LICENSE-apache-2.0.txt" "$models/LICENSE.yolox"
+  printf 'YOLOX weights, Megvii-BaseDetection/YOLOX.\nLicensed under the Apache License, Version 2.0; see LICENSE.yolox.\n' > "$models/NOTICE"
   if [ ! -x "$python" ]; then
     if have_uv; then
       local interpreter
@@ -373,30 +382,46 @@ install_runtime() {
   python_install onnxruntime numpy onnx \
     || die "could not install onnxruntime"
 
-  if [ ! -f "$weights" ]; then
-    log "cutting $KILIX_YOLOX_MODEL for a ${KILIX_YOLOX_SIZE}-pixel square"
-    "$python" "$cut" "$models/${KILIX_YOLOX_MODEL}.onnx" \
-      --size "$KILIX_YOLOX_SIZE" >&2 \
-      || die "could not cut $KILIX_YOLOX_MODEL"
-  fi
+  # Rebuild rather than trusting a pre-existing derived graph. The cut tool
+  # publishes atomically; the binding below records its bytes and inputs.
+  log "cutting $KILIX_YOLOX_MODEL for a ${KILIX_YOLOX_SIZE}-pixel square"
+  "$python" "$cut" "$models/${KILIX_YOLOX_MODEL}.onnx" \
+    --size "$KILIX_YOLOX_SIZE" >&2 || die "could not cut $KILIX_YOLOX_MODEL"
   [ -f "$weights" ] || die "the cut did not produce $weights"
 
-  # A wrapper rather than an environment variable holding a command line:
-  # KILIX_OBJECT_DETECTOR is split on spaces with no quoting. It exports the
-  # runtime directory so a relocated runtime finds its own weights, and names
-  # the model bare so the detector can still choose the cut that matches the
-  # frame it is sent.
-  cat > "$wrapper" <<EOF
-#!/bin/sh
-# Written by kilix install yolox. Re-run it to repoint this at a moved
-# checkout; delete $yolox_dir to remove the runtime entirely.
-KILIX_YOLOX_DIR="$yolox_dir"
-export KILIX_YOLOX_DIR
-exec "$python" "$tool" --model "$KILIX_YOLOX_MODEL" "\$@"
-EOF
-  chmod 700 "$wrapper"
+  write_wrapper
+  runtime_binding record
   record_setting
   log "installed"
+}
+
+write_wrapper() {
+  local tool
+  tool="$(module_tool kilix-yolox-detect)"
+  "$KILIX_PYTHON" - "$wrapper" "$yolox_dir" "$python" "$tool" "$KILIX_YOLOX_MODEL" <<'PY'
+import os
+import shlex
+import sys
+import tempfile
+
+destination, runtime, interpreter, tool, model = sys.argv[1:]
+payload = ("#!/bin/sh\n"
+           "# Written by kilix install yolox.\n"
+           "KILIX_YOLOX_DIR=" + shlex.quote(runtime) + "\n"
+           "export KILIX_YOLOX_DIR\n"
+           "exec " + " ".join(shlex.quote(word) for word in
+                              (interpreter, tool, "--model", model)) + ' "$@"\n')
+descriptor, temporary = tempfile.mkstemp(prefix=".yolox-wrapper-",
+                                       dir=os.path.dirname(destination))
+try:
+    with os.fdopen(descriptor, "w") as output:
+        os.fchmod(output.fileno(), 0o700)
+        output.write(payload)
+    os.replace(temporary, destination)
+finally:
+    if os.path.exists(temporary):
+        os.unlink(temporary)
+PY
 }
 
 # The launcher exports allowlisted KILIX_* keys from this file into every pane.
@@ -426,9 +451,12 @@ remove_runtime() {
 
 upgrade_runtime() {
   runtime_ready || die "nothing installed at $yolox_dir yet"
+  resolve_source
   log "upgrading onnxruntime, numpy and onnx"
   python_install --upgrade onnxruntime numpy onnx \
-    || die "the upgrade failed; the previous runtime is still in place"
+    || die "the package upgrade failed; the detector wrapper was not refreshed"
+  write_wrapper
+  runtime_binding record
   log "upgraded"
 }
 
@@ -449,6 +477,8 @@ case "$action" in
     if runtime_ready; then
       log "already installed at $yolox_dir"
       resolve_source
+      write_wrapper
+      runtime_binding record
       record_setting
       printf '%s\n' "$wrapper"
       exit 0

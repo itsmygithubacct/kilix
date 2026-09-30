@@ -392,6 +392,32 @@ _FROM_HELP = (
     "record that you supplied the files.")
 
 
+def _verify(api, lic, spec, root: str, output) -> int:
+    """Check the authority's existing receipt and declared bytes without setup."""
+    class ReadOnlyStore(lic.ReceiptStore):
+        def __init__(self):
+            # ReceiptStore's ordinary constructor creates/chmods the store.
+            # Its existing lookup and coverage rules also work without writes.
+            self.root = Path(lic.receipt_store_root())
+
+    if api.first_use.needs_agreement(
+            spec, records=lic.load_determined_records(), store=ReadOnlyStore()):
+        raise SetupError("no stored receipt covers this exact model and manifest; "
+                         f"run kilix models install {spec.asset_id} in a terminal")
+    supplied = importlib.import_module("kilix_content.install").SuppliedFile
+    for item in spec.files:
+        relative = f"assets/{spec.asset_id}/{item.path}"
+        with supplied.open_beneath(root, relative) as held:
+            if held.bytes != item.bytes or held.sha256 != item.sha256:
+                raise SetupError(f"installed model file differs from its manifest: {item.path}")
+            held.revalidate()
+    _json({"verified": spec.asset_id, "version": spec.version, "root": root,
+           "manifest_digest": spec.manifest_digest,
+           "declared_files_verified": len(spec.files),
+           "note": "Existing licence receipt and declared bytes verified; no setup or inference performed."}, output)
+    return 0
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="kilix models", description=__doc__)
     parser.add_argument("--root", help="explicit absolute installer root; defaults to the host application root")
@@ -399,6 +425,8 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("list", help="list packaged model identities without changing state")
     show = commands.add_parser("show", help="show the exact plan and licence identities without changing state")
     show.add_argument("asset")
+    verify = commands.add_parser("verify", help="check existing licence receipt and model files without changing state")
+    verify.add_argument("asset")
     install = commands.add_parser("install", help="present and explicitly install one exact packaged model")
     install.add_argument("asset")
     install.add_argument("--timeout", type=_timeout, default=900.0,
@@ -426,6 +454,8 @@ def main(argv=None) -> int:
         if args.command == "show":
             _json(_plan(lic, spec, args.root), sys.stdout)
             return 0
+        if args.command == "verify":
+            return _verify(api, lic, spec, args.root, sys.stdout)
         return _install(api, lic, spec, args, sys.stdin, sys.stdout, sys.stderr)
     except KeyboardInterrupt:
         print("kilix models: interrupted; no completed installation is claimed", file=sys.stderr)

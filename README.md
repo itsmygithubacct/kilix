@@ -1142,9 +1142,24 @@ that root, and neither command creates any of those directories.
 ```sh
 kilix models list
 kilix models show encodec-24khz-stateful
+kilix models verify yolox_s
 kilix models install whisper-tiny-ggml
 kilix models install whisper-tiny-ggml --from /media/usb/whisper-tiny-ggml
 ```
+
+`kilix models verify ID` checks the existing licence receipt against the exact
+manifest and verifies every declared installed file. It creates no directories,
+changes no receipts, and performs no download or inference. Missing agreement
+or missing, altered or symlinked files beneath the installer root fail the check.
+
+For object detection, `kilix install yolox` prepares ONNX Runtime and a
+320-pixel model cut, then records a detector wrapper for `kilix look` and NVR.
+`KILIX_YOLOX_MODEL=yolox_nano kilix install yolox` selects nano; s is the
+default and tiny is also supported. Explicit reinstallation refreshes the
+selected model and module path. `kilix yolox check` requires the existing
+agreement and byte binding for the export, cut, tools and wrapper. Older
+runtimes without that binding need one explicit reinstall. These integrity
+checks do not certify inference or model accuracy.
 
 Installation requires an interactive terminal and explicit confirmation; there
 is no `--yes` option or piped consent. The licence screen is the licence

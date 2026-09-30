@@ -857,6 +857,74 @@ raise SystemExit(result)
         self.assertEqual(len(list(Path(store.root).glob("*.json"))), 1)
         self.assertEqual(self.origin().requests(), ["/weights.bin"])
 
+    def test_verify_checks_real_receipt_and_files_without_writes(self):
+        spec = self.spec()
+        with self.no_network():
+            self.assertEqual(self.execute(spec, args=self.from_args(self.held())), 0)
+        store = Path(self.lic.receipt_store_root())
+        store.chmod(0o750)
+        before = {p: (p.read_bytes(), p.stat().st_mtime_ns, p.stat().st_mode)
+                  for p in self.root.rglob("*") if p.is_file()}
+        result = io.StringIO()
+        with self.no_network(), mock.patch.object(self.api, "Installer", side_effect=AssertionError("setup")):
+            self.assertEqual(ui._verify(self.api, self.lic, spec, str(self.root / "apps"), result), 0)
+        self.assertEqual(json.loads(result.getvalue())["declared_files_verified"], len(spec.files))
+        self.assertEqual(store.stat().st_mode & 0o777, 0o750)
+        self.assertEqual(before, {p: (p.read_bytes(), p.stat().st_mtime_ns, p.stat().st_mode)
+                                  for p in self.root.rglob("*") if p.is_file()})
+
+    def test_verify_missing_agreement_creates_neither_store_nor_root(self):
+        with self.no_network(), self.assertRaisesRegex(ui.SetupError, "no stored receipt"):
+            ui._verify(self.api, self.lic, self.spec(), str(self.root / "absent"), io.StringIO())
+        self.assertFalse(Path(self.lic.receipt_store_root()).exists())
+        self.assertFalse((self.root / "absent").exists())
+
+    def test_verify_informational_receipt_requires_no_typed_agreement(self):
+        spec = self.spec(record_id=INFORMATIONAL)
+        with self.no_network():
+            self.assertEqual(self.execute(spec, answer="y\n", args=self.from_args(self.held())), 0)
+            self.assertEqual(ui._verify(self.api, self.lic, spec, str(self.root / "apps"), io.StringIO()), 0)
+        self.assertNotIn(b"typing exactly", self.output.value())
+
+    def test_verify_refuses_changed_manifest_even_with_same_asset_identity(self):
+        spec = self.spec()
+        with self.no_network():
+            self.assertEqual(self.execute(spec, args=self.from_args(self.held())), 0)
+        self.weights = b"different manifest bytes\n"
+        other = self.spec()
+        self.assertNotEqual(spec.manifest_digest, other.manifest_digest)
+        with self.assertRaisesRegex(ui.SetupError, "no stored receipt"):
+            ui._verify(self.api, self.lic, other, str(self.root / "apps"), io.StringIO())
+
+    def test_verify_refuses_modified_missing_and_symlinked_bytes(self):
+        spec = self.spec()
+        with self.no_network():
+            self.assertEqual(self.execute(spec, args=self.from_args(self.held())), 0)
+        installed = self.root / "apps/assets" / spec.asset_id
+        data = installed / "data.bin"
+        data.write_bytes(b"tampered")
+        with self.assertRaisesRegex(ui.SetupError, "differs from its manifest"):
+            ui._verify(self.api, self.lic, spec, str(self.root / "apps"), io.StringIO())
+        data.unlink()
+        error = __import__("kilix_content.install", fromlist=["InstallError"]).InstallError
+        with self.assertRaises(error):
+            ui._verify(self.api, self.lic, spec, str(self.root / "apps"), io.StringIO())
+        held = self.held(name="external") / "data.bin"
+        data.symlink_to(held)
+        with self.assertRaises(error):
+            ui._verify(self.api, self.lic, spec, str(self.root / "apps"), io.StringIO())
+
+    def test_verify_command_dispatches_with_packaged_catalog_verification(self):
+        spec = self.spec()
+        with self.no_network():
+            self.assertEqual(self.execute(spec, args=self.from_args(self.held())), 0)
+        output = io.StringIO()
+        with mock.patch.object(ui, "_verified_catalog", return_value=self.catalog(spec)) as catalog, \
+                mock.patch.object(sys, "stdout", output):
+            self.assertEqual(ui.main(["--root", str(self.root / "apps"), "verify", spec.asset_id]), 0)
+        catalog.assert_called_once_with(self.api)
+        self.assertEqual(json.loads(output.getvalue())["verified"], spec.asset_id)
+
     def test_a_receipt_for_another_manifest_does_not_cover_and_nothing_installs(self):
         self.origin()
         first = self.spec()
