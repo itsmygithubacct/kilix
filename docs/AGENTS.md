@@ -26,7 +26,8 @@ below rather than guessing.
 ## Start with the cheapest reliable route
 
 Every route below was measured against a private Kilix with Codex, success checked from the
-terminal's own state (0.2.2 RC3, 2026-09-29). A run that uses no tools costs about 14k input
+terminal's own state: the 0.2.2 RC3 full benchmark, 1,560 runs on the installed RC3 (gpt-6-luna,
+low and medium effort, 12 runs per task, route and effort, 2026-09-30). A run that uses no tools costs about 14k input
 tokens, and every further model round trip re-sends about 14k more, so **the number of
 commands is the cost**; their output hardly matters. m$ is thousandths of a US dollar per
 successful action at gpt-6-luna's Fast-tier list price, failed attempts included.
@@ -43,6 +44,7 @@ successful action at gpt-6-luna's Fast-tier list price, failed attempts included
 | Biggest memory user, RAM in use | `ps -eo comm,rss --sort=-rss \| head`, `free -h` | 1 command, 27k, 1.2 m$ |
 | Free disk space | `df -h /` | 1 command, 27k, 0.9 m$ |
 | Which package owns a file; a package's version | `dpkg -S FILE`; `dpkg-query -W PKG` | 1 command, 27k, 0.8–1.7 m$ |
+| Any of the four system questions above, in plain words | `kilix-needle system "QUESTION" --agent --json` | 1 call, as cheap as the shell (0.96–1.04 m$), 143/144 |
 | Errors in the system journal | `journalctl -p err -t TAG --since ...` | 1 command, 27k, 0.9 m$ |
 | Is a service running | `systemctl is-active UNIT` | 1 command, 30k, 1.8 m$ |
 | Change a Kilix setting (e.g. hide the clock) | `kilix settings --set clock=off` | 1–3 commands, 1.0–2.0 m$ |
@@ -57,12 +59,22 @@ Before that it failed without a Kitty terminal.
 
 ### The other routes, measured on the same tasks
 
-| Route | Result | Cost against the table above |
-| --- | --- | --- |
-| The bundled Kilix skills (`kilix agent-control`) | 36/36 pane tasks | 0.92–0.99× |
-| Learning the CLI from `kilix --help` | every task, help then action | 2 commands, about 42k (1.5×) |
-| `kilix-needle` CLI (kilix-needle 67b97ac) | pane, agent and game actions 3/3–6/6; system and apps 11–12/12 | about 1× (1.0–1.5 m$) |
-| kilix-needle MCP tools (`kilix_act`, `kilix_system_read`, ...) | as the CLI | about 1.8×: one extra round per session |
+Success at low / medium effort, and cost against the plain route for the same task group:
+
+| Route | Panes and agents | Files and logs | System questions | Kilix apps and settings |
+| --- | --- | --- | --- | --- |
+| Commands in the table above | 118/120 · 1× | 41/48 · 1× | 128/144 · 1× | 142/144 · 1× |
+| Bundled Kilix skills (`kilix agent-control`) | 96/96 · 1.2× | — | — | — |
+| Learning the CLI from `kilix --help` | 96/96 · 1.5× | — | — | — |
+| `kilix-needle` CLI (job subcommands) | 84/120 · 1.2–1.4× | — | **143/144 · 1.0–1.1×** | 134/144 · 0.95× |
+| kilix-needle MCP tools | 103/120 · 1.6–1.7× | 48/48 · 1.9× | 144/144 · 1.6–1.9× | 139/144 · 1.4–1.5× |
+
+The plain routes' misses in files, logs and system questions are almost all one model habit at
+low effort: answering "I can't run shell commands" without trying (the benchmark keeps the
+same wording for every route, so they count). For system questions the Needle CLI is as cheap
+as the shell and did not show that habit, so either is right. Most Needle CLI misses on pane
+tasks were a command Codex stopped waiting for (26 of 36 failures), a latency issue in
+kilix-needle; use the `kilix pane` commands for panes.
 
 **MCP has a fixed cost under Codex.** One MCP call costs about 13.9k tokens more than the same
 operation through a CLI (41.1k against 27.3k), whether the server registers one tool or
