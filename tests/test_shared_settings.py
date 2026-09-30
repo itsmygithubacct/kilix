@@ -522,7 +522,7 @@ class SharedSettingsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.conf"
             for key, rejected in (
-                (settings.VOICE_TTS_ENGINE_KEY, "piper"),
+                (settings.VOICE_TTS_ENGINE_KEY, "festival"),
                 (settings.VOICE_TTS_RATE_KEY, "185"),
                 (settings.VOICE_TTS_EXTENT_KEY, "everything"),
                 (settings.VOICE_TTS_MAX_CHARS_KEY, "2500"),

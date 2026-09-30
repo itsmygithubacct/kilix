@@ -315,12 +315,37 @@ class VoiceSegmentTests(unittest.TestCase):
                 (data / "voice" / "models" / "whisper-small-en").mkdir(parents=True)
                 self.assertFalse(self.voice._stt_available("whisper", "whisper-small-en"))
 
+    def test_a_piper_default_reads_aloud_through_the_piper_provider(self):
+        # Kristin is the default voice, and the chrome fell back to espeak for
+        # an engine it did not know; status then reported the wrong voice.
+        data = Path(self.tmp.name) / "data"
+        players = {"pacat"}
+        real_which = self.voice.which
+        with self.settings(KILIX_VOICE_TTS_ENGINE="piper",
+                           KILIX_VOICE_TTS_VOICE="en_US-kristin-medium"), \
+                mock.patch.dict(os.environ, {"KILIX_DATA_HOME": str(data)}, clear=False), \
+                mock.patch.object(self.voice, "which",
+                                  lambda name: f"/usr/bin/{name}" if name in players
+                                  else (None if name in ("kilix-piper-tts", "pacat", "paplay", "aplay")
+                                        else real_which(name))):
+            os.environ.pop("KILIX_PIPER_TTS", None)
+            self.assertEqual(self.voice.tts_engine(), "piper")
+            self.assertFalse(self.voice._tts_available("piper"))
+            provider = data / "voice" / "piper" / "current" / "bin" / "kilix-piper-tts"
+            provider.parent.mkdir(parents=True)
+            provider.write_text("#!/bin/sh\n")
+            provider.chmod(0o755)
+            self.assertTrue(self.voice._tts_available("piper"))
+            players.clear()           # nothing to play it on
+            self.assertFalse(self.voice._tts_available("piper"))
+
     def test_the_chrome_and_the_sdk_share_one_speech_vocabulary(self):
         # The chrome re-reads these rather than importing them; a divergence
         # is a silent fallback to vosk, not a crash.
         sys.path.insert(0, str(ROOT / "config"))
         self.addCleanup(sys.path.remove, str(ROOT / "config"))
         from kilix_sdk import settings as sdk
+        self.assertEqual(self.voice.TTS_ENGINES, sdk.VOICE_TTS_ENGINE_CHOICES)
         self.assertEqual(self.voice.STT_ENGINES, sdk.VOICE_STT_ENGINE_CHOICES)
         self.assertEqual(self.voice.STT_MODELS, sdk.VOICE_STT_MODEL_CHOICES)
         self.assertEqual(self.voice.STT_MODEL_ENGINES, sdk.VOICE_STT_MODEL_ENGINES)
