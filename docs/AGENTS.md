@@ -25,42 +25,57 @@ below rather than guessing.
 
 ## Start with the cheapest reliable route
 
-Routes were measured on 2026-09-29 with Codex (gpt-6-sol, medium effort) against a private
-Kilix: 89 runs, 3 per task and route, with success checked from the terminal's own state.
-A run that uses no tools costs about 13.8k input tokens; the figures below are whole runs.
+Every route below was measured against a private Kilix with Codex, success checked from the
+terminal's own state (0.2.2 RC3, 2026-09-29). A run that uses no tools costs about 14k input
+tokens, and every further model round trip re-sends about 14k more, so **the number of
+commands is the cost**; their output hardly matters. m$ is thousandths of a US dollar per
+successful action at gpt-6-luna's Fast-tier list price, failed attempts included.
+
+### What to use, per task
 
 | Task | Use | Measured |
 | --- | --- | --- |
-| Open a shell pane beside yours | `kilix pane right -- bash` | 1 command, 28k tokens, 3/3 |
-| Start a coding agent in a new tab | `kilix new-tab --title T --cwd DIR codex` | 1 command, 28k, 3/3 |
-| Type a command into another pane | `kilix pane send TITLE 'TEXT' --submit` | 1 command, 28k, measured with the equivalent `kilix panes send TITLE --enter` |
-| Close a pane | `kilix pane close TITLE` | 1 command, 27.5k, measured with the equivalent `kilix panes close TITLE` (gpt-6-luna) |
-| Find a file, search a log | `find`, `rg`, `grep` | 1 command, 28k, 3/3 |
+| Open a shell pane beside yours | `kilix pane right -- bash` | 1 command, 27k tokens |
+| Start a coding agent in a new tab | `kilix new-tab --title T --cwd DIR codex` | 1 command, 28k |
+| Type a command into another pane | `kilix pane send TITLE 'TEXT' --submit` | 1 command, 28k |
+| Close a pane | `kilix pane close TITLE` | 1 command, 28k |
+| Find a file, search a log file | `find`, `rg`, `grep` | 1 command, 27k |
+| Biggest memory user, RAM in use | `ps -eo comm,rss --sort=-rss \| head`, `free -h` | 1 command, 27k, 1.2 m$ |
+| Free disk space | `df -h /` | 1 command, 27k, 0.9 m$ |
+| Which package owns a file; a package's version | `dpkg -S FILE`; `dpkg-query -W PKG` | 1 command, 27k, 0.8–1.7 m$ |
+| Errors in the system journal | `journalctl -p err -t TAG --since ...` | 1 command, 27k, 0.9 m$ |
+| Is a service running | `systemctl is-active UNIT` | 1 command, 30k, 1.8 m$ |
+| Change a Kilix setting (e.g. hide the clock) | `kilix settings --set clock=off` | 1–3 commands, 1.0–2.0 m$ |
+| Show or hide a game in the games list | `kilix settings --game GAME=on\|off` | 2 commands, 1.6 m$ |
+| Open a settings section | `kilix new-tab --title Settings kilix settings --section voice` | 1–2 commands, 1.2 m$ |
+| Terminal text size | `kilix screen-size set 14` | 1 command, 27k, 1.0 m$ |
+| Play a game | `kilix games play GAME` (ids: `kilix games list`) | 2 commands, 42k, 1.4–1.6 m$ |
+| Type into another coding agent's input box | `kilix agent-control send` (§10) | verifies the target first; worth it only there |
 
-Before title targets (0.2.2 RC2), typing and closing needed `kilix pane list` first to turn a
-title into an id: 3 and 2 commands, about 42k each. Every round trip re-sends the agent's own
-context (about 14k tokens), so the commands you avoid matter far more than their output.
+`kilix games play` from an agent's shell sets the game up and opens it in a new tab (RC3).
+Before that it failed without a Kitty terminal.
 
-The alternatives, rerun on the installed RC3 with Codex gpt-6-luna (Fast) at low, medium
-and high effort, 3 runs per task, route and effort:
+### The other routes, measured on the same tasks
 
-| Route | Pane tasks succeeded | Cost against the commands above |
-| --- | :---: | :---: |
-| The bundled Kilix skills (`kilix agent-control`) | 36/36 | 0.92–0.99× |
-| Learning the CLI from `kilix --help` | 27/27 | 1.9–2.2× (was 3.9×) |
-| kilix-needle MCP tools (`kilix_act`, `kilix_agents_act`, ...) | 20/36 | 1.4–2.3× |
-| `kilix-needle` CLI | 21/36 | 0.9–1.8× |
-
-Needle's failures in that run (starting an agent in a directory, finding a file, closing a
-pane by title) were fixed afterwards in kilix-needle and are being re-measured.
+| Route | Result | Cost against the table above |
+| --- | --- | --- |
+| The bundled Kilix skills (`kilix agent-control`) | 36/36 pane tasks | 0.92–0.99× |
+| Learning the CLI from `kilix --help` | every task, help then action | 2 commands, about 42k (1.5×) |
+| `kilix-needle` CLI (kilix-needle 67b97ac) | pane, agent and game actions 3/3–6/6; system and apps 11–12/12 | about 1× (1.0–1.5 m$) |
+| kilix-needle MCP tools (`kilix_act`, `kilix_system_read`, ...) | as the CLI | about 1.8×: one extra round per session |
 
 **MCP has a fixed cost under Codex.** One MCP call costs about 13.9k tokens more than the same
 operation through a CLI (41.1k against 27.3k), whether the server registers one tool or
 twelve: Codex spends one model round discovering MCP tools, once per session. For a one-off
 operation the commands are always cheaper; an MCP server pays off only over several calls.
 
-So: **use the commands in the first table.** They are the whole cost; this guide exists so
-you do not pay for discovering them. Target a pane by its unique title, or by `pane:ID` from
+**Needle on wordings it has not seen** is less sure than on the benchmark's: on held-out
+journal, package and text-size requests it read 70–73% correctly (0.2.2 RC3 known limit).
+A refusal names an accepted form, so a retry usually succeeds in one more call, but the plain
+commands above never need one.
+
+So: **use the table above.** Its commands are the whole cost; this guide exists so you do
+not pay for discovering them. Target a pane by its unique title, or by `pane:ID` from
 `kilix pane list`. A title shared by several panes is refused with their ids, and a bare
 number is always an id (possibly a tab's). `--submit` sends Enter as its own keystroke after
 the text, which coding-agent input boxes need; before RC3 it went in the same write and could
@@ -78,11 +93,9 @@ Where the other routes still fit:
   send/key/dump` verify the broker identity before typing. That check is worth its cost when
   the target is another agent's input box (§10); it has no verb for plain shell panes or for
   closing panes.
-- **Needle:** a short natural-language layout request ("make it a grid", "resize left") was
-  not measured and may suit it. For the measured tasks it was slower and less reliable:
-  - requests containing long paths were misread (one became a tab rename);
-  - typing into a plain `sh` pane is refused as "not at a shell prompt".
-  If you use it, `kilix_act` needs `confirm_risky: true` for closing, typing and starting
+- **Needle:** plain-language requests, including layout ones ("make it a grid", "resize
+  left") that have no single command above. Typing into a plain `sh` pane is refused as "not
+  at a shell prompt". If you use it, `kilix_act` needs `confirm_risky: true` for closing, typing and starting
   programs. The MCP server only receives the environment variables its client forwards
   (`KITTY_LISTEN_ON`, `KITTY_WINDOW_ID`, `KILIX_DATA_HOME`, `KILIX_CONTENT_ROOT`,
   `KILIX_CONFIG_HOME` in the default Codex entry), so a non-default Kilix storage root makes
