@@ -919,6 +919,32 @@ recover what a session was asked and what it reported.
   (have the job write `$$` to a file) or check that its output is still growing.
 
 
+## Tmux session control
+
+The RC4 control interface uses the bundled stdlib tmux backend. Every request
+names its socket explicitly; it never selects the caller's ambient `TMUX`
+server. With no arguments, `kilix tmux` still opens the interactive manager.
+
+```sh
+kilix tmux --help
+kilix tmux --socket /absolute/path --json list
+kilix tmux --socket /absolute/path --json read --help
+```
+
+Available operations: `list`, `new`, `read`, `send`, `type`, `key`, `rename`,
+and `close`. Use exact session names or stable session IDs (`'$0'`). For I/O,
+use stable pane IDs (`'%0'`) or numeric `NAME:WINDOW.PANE`; a session with
+multiple panes requires an explicit pane. `send` writes literal text without
+Enter; `type` sends literal text and then separate Enter. Responses record
+submission, with command completion unknown. Read output to establish the
+result. `--dry-run` validates and resolves without mutation. Close only the
+exact session requested by the user.
+
+`KILIX_TMUX_CLI` and `KILIX_TMUX_MODULE_ROOT` select another implementation,
+never a socket. These commands do not install or configure a server. Tmux
+route measurements are pending; the earlier benchmark tables cover the
+other categories only.
+
 ## 13. Failure reference
 
 | Symptom | Cause |

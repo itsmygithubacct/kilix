@@ -123,6 +123,13 @@ case "${1:-}" in
   models)
     shift
     exec python3 "$KILIX_HOME/config/content_models.py" "$@" ;;
+  tmux)
+    # Keep the interactive manager path; explicit control is headless and
+    # runs before any engine/storage setup, with a mandatory socket.
+    case "${2:-}" in
+      ''|--install-only|--force-install|--with-tb|--without-tb) ;;
+      *) shift; exec python3 -B "$KILIX_HOME/config/tmux_control.py" "$@" ;;
+    esac ;;
   # Kilix's own commands first, in one screen: agents learn the CLI from this,
   # and the engine's option list says nothing about panes (2026-09-29 route
   # benchmark). Answered here, before setup, so asking for help never rewrites
@@ -146,6 +153,11 @@ Panes and tabs (directions are relative to the pane you run in):
   kilix pane list [--json]            pane ids, titles, programs; (self) is you
   kilix new-tab [--title T] [--cwd DIR] [CMD...]
   kilix tab list|close|rename|focus|left|right
+
+Tmux sessions (headless; socket required on every call):
+  kilix tmux --socket /absolute/path --json list|new|read|send|type|key|rename|close ...
+  kilix tmux --help                   control syntax and implementation selection
+  kilix tmux                          interactive Tmux Manager
 
 TARGET is a pane's unique title or pane:ID. These lines are the complete syntax:
 no subcommand --help or pane list is needed first. A title that matches no

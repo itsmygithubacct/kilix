@@ -56,3 +56,24 @@ reporting places, collect acknowledgements, and route follow-ups yourself; do no
 the arrangement on other sessions or create workers unasked. New tabs and layouts:
 `kilix-session-launch`; model changes: `kilix-model-switch`. Report pane identities,
 verified outcomes and what is still unverified. Sending "continue" completes nothing.
+
+## Tmux session control
+
+Use `kilix tmux --socket /absolute/path --json VERB ...` for the server the user
+selected. The socket is required on every control call; `TMUX` does not select
+it. `kilix tmux --help` describes control, and a verb's `--help` lists its
+arguments. With no arguments, `kilix tmux` opens the interactive manager.
+
+Operations are `list`, `new`, `read`, `send`, `type`, `key`, `rename`, and
+`close`. Address exact session names, stable session IDs (`$N`), stable pane
+IDs (`%N`), or numeric `NAME:WINDOW.PANE` for I/O. Quote IDs containing `$`
+so the caller's shell does not expand them. Session-only I/O is refused if
+more than one pane exists. Read before input when the target's state matters.
+
+`send` writes literal text without Enter. `type` writes literal text and then
+sends separate Enter. `key` accepts named keys, including Enter. A response
+with `submitted: true` records input submission; command completion remains
+unknown until separately observed. Use `--dry-run` to validate and resolve
+a request without mutation. Close only the exact session within the user's
+requested scope. Implementation selection uses `KILIX_TMUX_CLI` or
+`KILIX_TMUX_MODULE_ROOT`; these do not choose a socket or install anything.

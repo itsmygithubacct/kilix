@@ -1,0 +1,7 @@
+{
+  "source_repository": "https://github.com/itsmygithubacct/tmux-cli",
+  "source_commit": "c1c9a3ff1617a5e517bd60d32222d545b58f5466",
+  "derivative_commit": "172bdc581076b14aeaefec0982036e3122cd0365",
+  "snapshot_sha256": "a65816d4e77b66e6c30d9ee7af35d5bb7b602418848c0dfd0fe390ce5eacbb90",
+  "license": "MIT"
+}
