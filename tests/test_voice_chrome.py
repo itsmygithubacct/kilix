@@ -268,6 +268,65 @@ class VoiceSegmentTests(unittest.TestCase):
                 self.assertFalse(self.voice._stt_available(
                     "vibevoice", "vibevoice-asr-bitnet"))
 
+    def test_whisper_dictates_from_the_content_store_once_its_runtime_is_installed(self):
+        # A Whisper default read as vosk/small-en-us before the chrome knew
+        # whisper: the button checked, and offered to fetch, the wrong model.
+        data = Path(self.tmp.name) / "data"
+        with self.settings(
+                KILIX_VOICE_STT_ENGINE="whisper",
+                KILIX_VOICE_STT_MODEL="whisper-small-en"), \
+                mock.patch.dict(os.environ, {
+                    "KILIX_DATA_HOME": str(data),
+                    "KILIX_HOME": str(ROOT),
+                }, clear=False):
+            os.environ.pop("KILIX_VOICE_WHISPER", None)
+            self.assertEqual((self.voice.stt_engine(), self.voice.stt_model()),
+                             ("whisper", "whisper-small-en"))
+            offer = self.voice.dictation_install_offer()
+            self.assertIsNotNone(offer)
+            self.assertEqual(offer.argv[1:], ("stt", "--install", "whisper-small-en",
+                                              "--default", "whisper-small-en"))
+            self.assertIn("model and Whisper runtime", offer.message)
+            # `kilix models install` puts the weights in the content store.
+            model = data / "desktop-apps" / "assets" / "faster-whisper-small-en"
+            for relative in ("model.bin", "config.json", "tokenizer.json", "vocabulary.txt"):
+                target = model / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(b"fixture")
+            offer = self.voice.dictation_install_offer()
+            self.assertIsNotNone(offer)
+            self.assertIn("its Whisper runtime is not installed", offer.message)
+            runtime = data / "voice" / "whisper" / "current" / "bin" / "kilix-whisper-stt"
+            runtime.parent.mkdir(parents=True)
+            runtime.write_text("#!/bin/sh\n")
+            runtime.chmod(0o755)
+            self.assertIsNone(self.voice.dictation_install_offer())
+            real_which = self.voice.which
+            with mock.patch.object(
+                    self.voice, "which",
+                    lambda name: f"/usr/bin/{name}" if name == "parec"
+                    else real_which(name)):
+                self.assertTrue(self.voice._stt_available("whisper", "whisper-small-en"))
+                runtime.chmod(0o644)       # present but not executable
+                self.assertFalse(self.voice._stt_available("whisper", "whisper-small-en"))
+                runtime.chmod(0o755)
+                # A copy under voice/models is the one kilix-voice loads; an
+                # incomplete copy there is not rescued by the content store.
+                (data / "voice" / "models" / "whisper-small-en").mkdir(parents=True)
+                self.assertFalse(self.voice._stt_available("whisper", "whisper-small-en"))
+
+    def test_the_chrome_and_the_sdk_share_one_speech_vocabulary(self):
+        # The chrome re-reads these rather than importing them; a divergence
+        # is a silent fallback to vosk, not a crash.
+        sys.path.insert(0, str(ROOT / "config"))
+        self.addCleanup(sys.path.remove, str(ROOT / "config"))
+        from kilix_sdk import settings as sdk
+        self.assertEqual(self.voice.STT_ENGINES, sdk.VOICE_STT_ENGINE_CHOICES)
+        self.assertEqual(self.voice.STT_MODELS, sdk.VOICE_STT_MODEL_CHOICES)
+        self.assertEqual(self.voice.STT_MODEL_ENGINES, sdk.VOICE_STT_MODEL_ENGINES)
+        self.assertEqual(set(self.voice.STT_MODEL_BYTES), set(sdk.VOICE_STT_MODEL_CHOICES))
+        self.assertEqual(set(self.voice.STT_MODEL_REQUIRED_FILES), set(sdk.VOICE_STT_MODEL_CHOICES))
+
     def test_choosing_the_vibevoice_engine_selects_its_model(self):
         with self.settings(KILIX_VOICE_STT_ENGINE="vibevoice",
                            KILIX_VOICE_STT_MODEL="small-en-us"):

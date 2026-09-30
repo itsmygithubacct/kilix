@@ -509,6 +509,7 @@ class SharedSettingsTests(unittest.TestCase):
                 ("small-en-us", "vosk"),
                 ("lgraph-en-us", "vosk"),
                 ("vibevoice-asr-bitnet", "vibevoice"),
+                ("whisper-small-en", "whisper"),
             ):
                 self.assertEqual(settings.stt_engine_for_model(model), engine)
                 settings.set_stt_default(model, str(path))
@@ -525,7 +526,7 @@ class SharedSettingsTests(unittest.TestCase):
                 (settings.VOICE_TTS_RATE_KEY, "185"),
                 (settings.VOICE_TTS_EXTENT_KEY, "everything"),
                 (settings.VOICE_TTS_MAX_CHARS_KEY, "2500"),
-                (settings.VOICE_STT_ENGINE_KEY, "whisper"),
+                (settings.VOICE_STT_ENGINE_KEY, "deepspeech"),
                 (settings.VOICE_STT_MODEL_KEY, "en-us-0.22"),
                 (settings.VOICE_STT_MAX_SECONDS_KEY, "600"),
                 (settings.VOICE_STT_SILENCE_MS_KEY, "50"),
