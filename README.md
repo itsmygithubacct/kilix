@@ -32,6 +32,8 @@ source is 0.2.1; image, upgrade and final human acceptance remain pending.
 See the [0.2.2 help guide](docs/help/README.md) for current commands, storage,
 model setup, speech and troubleshooting. Older release sections below describe
 their named versions; they are not a current component inventory.
+For the human and agent workflows that connect terminal work, automation,
+verification and recovery, see [Kilix Workflows](docs/workflows/README.md).
 
 - The three-line Start button and status widgets open floating drop-downs above
   the panes. Panes keep their size and continue updating behind the popup.

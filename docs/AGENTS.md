@@ -1,5 +1,7 @@
 # Driving Kilix from an agent
 
+For an overview of human and agent routes through Kilix, see [Kilix Workflows](workflows/README.md). This guide covers the pane-agent interface and its version-specific evidence.
+
 **0.2.2 source-selection note:** the host's default toolkit installer and
 Content package pin `af7e848` provides the interactive switcher. The richer
 `kilix panes list/dump/wait/send` and JSON interfaces described in this guide
