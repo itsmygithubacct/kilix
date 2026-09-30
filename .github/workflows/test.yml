@@ -25,7 +25,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            ffmpeg python3-pil python3-xlib shellcheck xvfb openbox dbus-daemon \
+            ffmpeg python3-pil python3-xlib shellcheck xvfb openbox dbus-daemon tmux \
             libsamplerate0-dev libssl-dev
 
       - name: Allow unprivileged user namespaces for the X11 sandbox tests
