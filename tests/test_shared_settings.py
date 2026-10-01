@@ -931,7 +931,7 @@ class TranscriptBudgetTests(unittest.TestCase):
     def test_launcher_reaps_for_the_frontend_lifetime(self):
         launcher = (ROOT / "kilix").read_text()
         self.assertIn("_kilix_transcript_reap_periodically()", launcher)
-        self.assertIn('while kill -0 "$frontend_pid"', launcher)
+        self.assertIn('[ "$current_tick" = "$frontend_start_tick" ]', launcher)
         self.assertIn('flock -n 9', launcher)
 
 

@@ -31,12 +31,11 @@ case "${1:-status}" in
     case "${KILIX_TELEMETRY_DISABLE:-}" in
       1|true|TRUE|yes|YES|on|ON) exit 0 ;;
     esac
-    if env PYTHONPATH="$_pythonpath" "$_python" -m kilix_telemetry \
-         status >/dev/null 2>&1; then
-      exit 0
-    fi
-    nohup env PYTHONPATH="$_pythonpath" "$_python" -m kilix_telemetry \
-      serve --quiet </dev/null >/dev/null 2>&1 &
+    # Register the launcher before startup; engine clients also register when
+    # polling, including after a detached launch. All live consumers share one
+    # writer, whose idle grace covers hand-off and failed engine startup.
+    exec env PYTHONPATH="$_pythonpath" "$_python" -m kilix_telemetry \
+      start --owner-pid "$PPID"
     ;;
   *)
     exec env PYTHONPATH="$_pythonpath" "$_python" -m kilix_telemetry "$@" ;;

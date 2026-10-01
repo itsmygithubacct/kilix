@@ -19,6 +19,43 @@ import socket
 import sys
 
 
+class ParentLifetime:
+    """Observe one kernel process handle; PID reuse cannot prolong its lifetime."""
+    def __init__(self, pid, expected_start_tick=None):
+        self.fd = None
+        self.dead = False
+        if not pid:
+            return
+        try:
+            self.fd = os.pidfd_open(pid)
+        except ProcessLookupError:
+            self.dead = True
+            return
+        if expected_start_tick is not None:
+            try:
+                fields = Path(f'/proc/{pid}/stat').read_text().rsplit(') ', 1)[1].split()
+                if fields[19] != str(expected_start_tick):
+                    self.dead = True
+            except (OSError, IndexError):
+                self.dead = True
+            if self.dead:
+                self.close()
+
+    def active(self):
+        return not self.dead and (self.fd is None or not select.select([self.fd], [], [], 0)[0])
+
+    def close(self):
+        if self.fd is not None:
+            os.close(self.fd)
+            self.fd = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        self.close()
+
+
 def process_chain(pid, proc=Path('/proc')):
     chain = []
     seen = set()
@@ -195,29 +232,31 @@ def main():
     parser.add_argument('--state-dir', type=Path, default=Path(os.environ.get(
         'PLEB_STATE_HOME', str(Path.home() / '.local/gpu_terminal/pleb/state'))))
     parser.add_argument('--parent-pid', type=int)
+    parser.add_argument('--parent-start-tick', type=int)
     args = parser.parse_args()
-    os.umask(0o077)
-    from Xlib import display
-    d = display.Display()
-    args.state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-    key = hashlib.sha256(d.get_display_name().encode()).hexdigest()[:16]
-    with open(args.state_dir / f'native-windows-{key}.lock', 'a') as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
+    with ParentLifetime(args.parent_pid, args.parent_start_tick) as parent:
+        if not parent.active():
             return 0
-        watcher = Watcher(d, make_logger(args.state_dir))
-        watcher.reconcile()
-        while True:
-            if args.parent_pid:
-                try:
-                    os.kill(args.parent_pid, 0)
-                except ProcessLookupError:
+        os.umask(0o077)
+        from Xlib import display
+        d = display.Display()
+        args.state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        key = hashlib.sha256(d.get_display_name().encode()).hexdigest()[:16]
+        with open(args.state_dir / f'native-windows-{key}.lock', 'a') as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return 0
+            watcher = Watcher(d, make_logger(args.state_dir))
+            watcher.reconcile()
+            while True:
+                if not parent.active():
                     return 0
-            if d.pending_events():
-                watcher.handle(d.next_event())
-            else:
-                select.select([d.fileno()], [], [], 1)
+                if d.pending_events():
+                    watcher.handle(d.next_event())
+                else:
+                    endpoints = [d.fileno()] + ([] if parent.fd is None else [parent.fd])
+                    select.select(endpoints, [], [], 1)
 
 
 if __name__ == '__main__':
