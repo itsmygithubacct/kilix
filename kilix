@@ -128,6 +128,9 @@ case "${1:-}" in
       exec python3 -B "$KILIX_HOME/config/agent_capabilities.py" "$@"
     fi
     exec python3 -B "$KILIX_HOME/config/agent_actions.py" "$@" ;;
+  wizard)
+    shift
+    exec python3 -B "$KILIX_HOME/config/model_wizard.py" "$@" ;;
   models)
     shift
     exec python3 "$KILIX_HOME/config/content_models.py" "$@" ;;
@@ -169,7 +172,7 @@ Coding agent input (verify the target first):
 Structured actions with durable receipts:
   kilix action --request-json -             structured request from stdin
   kilix action capabilities                inspect available features
-Also: settings, status, update, install, games, screen-size, transcript,
+Also: wizard [--tui|--json|--all], settings, status, update, install, games, screen-size, transcript,
   help-search "QUESTION". Command options: --help.
 Terminal engine (kitty) options: kilix --help-engine
 EOF

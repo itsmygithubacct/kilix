@@ -284,7 +284,7 @@ class ModelSetupTests(unittest.TestCase):
         return SimpleNamespace(root=str(self.root / root), timeout=30.0)
 
     def typed(self, record_id=AFFIRMATIVE):
-        return self.lic.typed_agreement_line(self.record(record_id))
+        return "yes"
 
     def spies(self):
         """A real store whose write is a spy, and a mocked install path.
@@ -341,7 +341,7 @@ class ModelSetupTests(unittest.TestCase):
                 self.execute(api=api, facade=facade)
         facade.ReceiptStore.shared.assert_not_called()
 
-    def test_typed_agreement_is_separate_unchecked_and_exact(self):
+    def test_yes_no_agreement_is_separate_and_defaults_to_no(self):
         line = self.typed()
         for answer, accepted in (("y\n\n", False), ("y\naccept\n", False),
                                  (f"y\n{line} \n", True), (f"y\n{line}x\n", False),
@@ -500,7 +500,7 @@ class ModelSetupTests(unittest.TestCase):
             yield attempts
         self.assertEqual(attempts, [])
 
-    def test_from_shows_the_same_screen_names_the_directory_and_demands_the_typed_line(self):
+    def test_from_shows_the_same_screen_names_the_directory_and_asks_yes_no(self):
         self.require_supply()
         held = self.held()
         line = self.typed()
@@ -518,7 +518,7 @@ class ModelSetupTests(unittest.TestCase):
                 self.assertIn(b"download: none (every file is verified against the manifest)",
                               screen)
                 self.assertIn(b"Apache License", screen)
-                self.assertEqual(b"typing exactly" in screen, answer.startswith("y"))
+                self.assertNotIn(b"typing exactly", screen)
                 self.assertNotIn(b"may download", screen)
                 self.assertIn(b"It does not record that you supplied the files.", screen)
                 plan = json.loads(screen.split(b"\n", 1)[0])

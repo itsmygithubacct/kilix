@@ -8,15 +8,15 @@ calls this command and it never infers model readiness from paths, starts a
 provider, or accepts terms on a user's behalf.
 
 This is the asset/v3 surface (OD-BM). The consumer shows the catalog record,
-prints every licence text the authority renders, takes the exact typed
-agreement line the authority demands, and hands the decision back to it. It
+prints every licence text the authority renders, takes an explicit yes/no
+agreement, and hands the decision back to it. It
 writes no receipt of its own and spells no receipt path: the store root is
 whatever ``kilix_license.receipt_store_root()`` reports, so this command and
 the gates that read receipts cannot disagree about where consent was filed.
 
 ``install --from DIR`` (OD-BS) reads the model's files from a directory the
 user already holds instead of downloading them. It is the same install, not a
-third path: the same screen, the same typed agreement and the same receipt,
+third path: the same screen, the same yes/no agreement and the same receipt,
 and the Content component verifies every file against the manifest. The only
 difference is where the bytes come from, and under ``--from`` no route in this
 file can reach a download. A receipt records acceptance of the licence, as a
@@ -41,10 +41,8 @@ from kilix_sdk._content_runtime import apps_root, normalized_root
 # A rendered first-use screen is licence text, not a document; anything past
 # this is not something a terminal should be asked to display.
 _MAX_SCREEN = 1024 * 1024
-# A yes/no answer is short. The typed agreement line names the licence, every
-# binding text and the licensor, so it is longer and still strictly bounded.
+# Consent is a bounded yes/no answer after the full terms are shown.
 _MAX_ANSWER = 32
-_MAX_TYPED = 512
 # Categories Cc/Cf/Zl/Zp minus the two whitespace characters a licence may use.
 _SAFE_CONTROLS = "\n\t"
 
@@ -321,7 +319,7 @@ def _install(api, lic, spec, args, source, output, errors) -> int:
         _require_supply(api)
         supplied = _supplied_directory(supplied)
     if not source.isatty() or not output.isatty() or not hasattr(output, "buffer"):
-        raise SetupError("install requires an interactive terminal; there is no --yes or piped consent")
+        raise SetupError("install requires an interactive terminal; consent must be answered at the terminal")
     with ExitStack() as stack:
         store = lic.ReceiptStore.shared()
         records = lic.load_determined_records()
@@ -347,14 +345,10 @@ def _install(api, lic, spec, args, source, output, errors) -> int:
             return 1
         typed = None
         if not covered and record.expected_decision == "accept":
-            # Separate from the install confirmation, unchecked by default, and
-            # exact: the authority refuses anything but its own line, and an
-            # informational record has no typed line and no fake checkbox.
-            expected = lic.typed_agreement_line(record)
             typed = _read_line(
-                f"Accept {record.id} for this model/version by typing exactly\n"
-                f"  {expected}\nor press Enter to decline: ", _MAX_TYPED, source, output)
-            if typed != expected:
+                f"Do you accept {record.id} and the binding conditions shown for "
+                f"{spec.label}? [y/N] ", _MAX_ANSWER, source, output).lower()
+            if typed not in ("y", "yes"):
                 return 1
         # Nothing has been written yet: the installer root is not created and
         # no receipt exists until every required choice above has succeeded.
@@ -387,7 +381,7 @@ _FROM_HELP = (
     "install from files you already hold instead of downloading them: DIR holds "
     "this model's files at their manifest paths, the layout an installed copy has. "
     "Nothing is downloaded, and every file is verified against the pinned manifest. "
-    "The licence screen and the typed agreement are unchanged, and the receipt "
+    "The licence screen and yes/no agreement are unchanged, and the receipt "
     "records your acceptance of the licence exactly as for a download; it does not "
     "record that you supplied the files.")
 
@@ -470,7 +464,7 @@ def main(argv=None) -> int:
                 and not (base and isinstance(error, base)):
             raise
         _json({"error": f"{type(error).__name__}: {str(error)[:4096]}",
-               "note": "No receipt is written unless the exact typed agreement line is given."},
+               "note": "No acceptance receipt is written without an affirmative answer."},
               sys.stderr)
         return 1
 

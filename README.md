@@ -2391,3 +2391,37 @@ CLI must be installed separately. The model and effort selection persists, and
 an explicitly saved default takes precedence on startup; the initial fallback is
 Luna / low. Local Qwen chat, Kristin speech and dictation use their existing
 explicit setup flows.
+
+## Model setup wizard
+
+Run `kilix wizard` (or `kilix wizard --tui`) for the terminal wizard. Kilix95
+uses the same saved choices in its startup window and **Model Setup** menu.
+Each unanswered model category offers checkbox alternatives, download/disk
+sizes, and available sizing recommendations. Accept or decline, then Continue.
+Speech, dictation, workflows, YOLOX vision, EnCodec audio, Bonsai images, sound
+recognition, System-local LLM for Avatar, other language models, embeddings,
+documents and visual chat each have a page. RAM/VRAM estimates that the sizer
+does not provide are shown as unavailable; a default is not a fit guarantee.
+
+Choices are saved before downloads begin. At the end, licence texts and all
+model-specific conditions are presented in groups, with one Yes/No question
+naming the affected models. Declining a group skips its models. Kilix95 hosts
+this agreement terminal inside the desktop. Accepted models receive individual
+receipts; microphone permission remains a separate question for dictation.
+Installing a catalog asset does not enable a runtime that does not support it.
+
+Useful CLI routes:
+
+```sh
+kilix wizard --json                 # inspect remaining pages and pending choices
+kilix wizard --all                  # revisit saved choices
+kilix wizard answer vision yes --model yolox_nano
+kilix wizard answer audio no
+kilix wizard finish                # terminal licence batch and installation
+```
+
+Repeat `--model` to select alternatives together. The recommended selection is
+first when checked in the interactive wizard; Avatar uses the first selected
+System-local LLM as its default. Closing setup retains saved choices and leaves
+unfinished installation available for retry. No model or licence is accepted
+by merely opening or listing the wizard.
