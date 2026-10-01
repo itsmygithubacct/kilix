@@ -172,7 +172,7 @@ Coding agent input (verify the target first):
 Structured actions with durable receipts:
   kilix action --request-json -             structured request from stdin
   kilix action capabilities                inspect available features
-Also: wizard [--tui|--json|--all], settings, status, update, install, games, screen-size, transcript,
+Also: wizard, settings, status, update, install, games, screen-size, transcript,
   help-search "QUESTION". Command options: --help.
 Terminal engine (kitty) options: kilix --help-engine
 EOF
