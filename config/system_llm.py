@@ -24,14 +24,23 @@ def catalog():
             for name, (label, size, parameters, digest) in MODELS.items()]
 
 
-def sizer_executable():
+def sizer_executable(*, ensure=False):
     override = os.environ.get('PLEBIAN_MODEL_SIZER')
     if override:
         path = Path(override).expanduser()
         return str(path) if path.is_file() and os.access(path, os.X_OK) else None
     host = Path(__file__).resolve().parents[1]
+    installer = host / 'scripts/install-kilix-tts-sizer.sh'
+    if ensure:
+        try:
+            reply = subprocess.run([str(installer)], capture_output=True, text=True, timeout=60)
+            path = Path(reply.stdout.strip())
+            if reply.returncode == 0 and path.is_file() and os.access(path, os.X_OK):
+                return str(path)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
     try:
-        reply = subprocess.run([str(host / 'scripts/install-kilix-tts-sizer.sh'), '--print-path'],
+        reply = subprocess.run([str(installer), '--print-path'],
                                capture_output=True, text=True, timeout=3)
         path = Path(reply.stdout.strip())
         if reply.returncode == 0 and path.is_file() and os.access(path, os.X_OK):
@@ -47,8 +56,8 @@ def sizer_executable():
     return None
 
 
-def recommend(rows):
-    executable = sizer_executable()
+def recommend(rows, *, ensure_sizer=False):
+    executable = sizer_executable(ensure=ensure_sizer)
     if not executable:
         return {}, None, 'Model sizer unavailable; no system-local LLM is preselected.'
     request = {'schema': 'kilix.avatar-chat.sizing-request/v1', 'models': [

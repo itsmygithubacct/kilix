@@ -169,11 +169,11 @@ def size_text(number):
     return f'{number / 1024**3:.2f} GiB' if number >= 1024**3 else f'{number / 1024**2:.1f} MiB'
 
 
-def sizing(rows, segment):
+def sizing(rows, segment, *, ensure_sizer=False):
     """Use the installed sizer's measured speech profiles, never invented RAM fits."""
     if segment == 'system-local-llm':
-        return __import__('system_llm').recommend(rows)
-    executable = __import__('system_llm').sizer_executable()
+        return __import__('system_llm').recommend(rows, ensure_sizer=ensure_sizer)
+    executable = __import__('system_llm').sizer_executable(ensure=ensure_sizer)
     if not executable or segment not in ('speech', 'dictation'):
         return {}, None, 'Runtime RAM/VRAM estimate unavailable for this model type.'
     task = 'tts' if segment == 'speech' else 'stt'
@@ -210,7 +210,7 @@ def sizing(rows, segment):
         return {}, None, 'Model sizer unavailable; showing catalog defaults and disk sizes.'
 
 
-def pages(include_answered=False, *, assets=None, measure=True):
+def pages(include_answered=False, *, assets=None, measure=True, ensure_sizer=False):
     assets = catalog() if assets is None else assets
     from kilix_sdk._content_runtime import apps_root
     location = Path(apps_root())
@@ -234,7 +234,7 @@ def pages(include_answered=False, *, assets=None, measure=True):
         answer = decisions.get(key, {}).get('answer')
         if not rows or (not include_answered and answer in ('yes', 'no')):
             continue
-        reports, recommended, note = sizing(rows, key) if measure else ({}, None, 'Sizing not requested.')
+        reports, recommended, note = sizing(rows, key, ensure_sizer=ensure_sizer) if measure else ({}, None, 'Sizing not requested.')
         for row in rows:
             report = reports.get(STT_IDS.get(row['id'], row['id']), {})
             row['fit'] = report.get('verdict', 'unknown')
@@ -331,7 +331,7 @@ def finish(*, input_fn=input):
 
 
 def interactive(*, input_fn=input, include_answered=False):
-    for page in pages(include_answered):
+    for page in pages(include_answered, ensure_sizer=True):
         selected = {page['default']} if page['default'] else set()
         while True:
             print(f'\n{page["title"]}\n{page["recommendation"]}')
