@@ -529,13 +529,32 @@ _kilix_transcript_reap() (
     || echo "compressed $compressed, recompressed $moved, removed $removed, errors $errors (live panes kept)"
 )
 
+_kilix_process_start_tick() {
+  local pid="$1" record
+  local -a fields=()
+  [ -r "/proc/$pid/stat" ] || return 1
+  record=$(<"/proc/$pid/stat") || return 1
+  # comm can contain spaces and closing parentheses; fields follow the last ).
+  read -r -a fields <<<"${record##*) }"
+  [ "${fields[0]:-}" != Z ] && [ "${fields[0]:-}" != X ] || return 1
+  [[ "${fields[19]:-}" =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "${fields[19]}"
+}
+
 _kilix_transcript_reap_periodically() {
-  local frontend_pid="$1" dir="$2"
-  while kill -0 "$frontend_pid" 2>/dev/null; do
-    _kilix_read_transcript_config
-    _kilix_transcript_reap "$dir" "$_KILIX_TRANSCRIPT_TOTAL" \
-      "$_KILIX_TRANSCRIPT_ARCHIVE" 1
-    sleep 60
+  local frontend_pid="$1" frontend_start_tick="$2" dir="$3"
+  local current_tick remaining=0
+  while current_tick="$(_kilix_process_start_tick "$frontend_pid")" \
+      && [ "$current_tick" = "$frontend_start_tick" ]; do
+    if [ "$remaining" -le 0 ]; then
+      _kilix_read_transcript_config
+      _kilix_transcript_reap "$dir" "$_KILIX_TRANSCRIPT_TOTAL" \
+        "$_KILIX_TRANSCRIPT_ARCHIVE" 1
+      remaining=60
+    fi
+    # Budget enforcement stays once per minute; ownership is checked each second.
+    sleep 1
+    remaining=$((remaining - 1))
   done
 }
 
@@ -5074,9 +5093,11 @@ if [ "${KILIX_PTY_BROKER:-1}" != 0 ]; then
       # A lock makes multiple Kilix windows share the work safely, and running
       # out of process means a large archive pass never delays the window.
       _kilix_frontend_pid=$$
-      ( _kilix_transcript_reap_periodically \
-          "$_kilix_frontend_pid" "$KILIX_TRANSCRIPT_DIR" \
-          </dev/null >/dev/null 2>&1 ) &
+      if _kilix_frontend_start_tick="$(_kilix_process_start_tick "$_kilix_frontend_pid")"; then
+        ( _kilix_transcript_reap_periodically \
+            "$_kilix_frontend_pid" "$_kilix_frontend_start_tick" "$KILIX_TRANSCRIPT_DIR" \
+            </dev/null >/dev/null 2>&1 ) &
+      fi
     else
       echo "kilix: session logging disabled; cannot use $KILIX_TRANSCRIPT_DIR" >&2
       unset KITTY_PTY_BROKER_TRANSCRIPT_DIR KITTY_PTY_BROKER_TRANSCRIPT_LIMIT \

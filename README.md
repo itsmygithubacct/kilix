@@ -244,6 +244,17 @@ the pinned client as `kilix_sdk.telemetry`; `kilix telemetry status`,
 lock-backed, oversized process tables compact without stopping the sampler,
 and pane CPU includes commands that exit between process-table scans.
 
+Automatic samplers now share registered process owners and exit after five
+seconds without a live consumer. Identity includes the boot, PID namespace and
+start tick, so a reused PID does not retain a sampler. Explicit `kilix telemetry
+serve` remains persistent for service management. Automatic startup requires
+consumer lifetime support in the host-selected `kilix-telemetry` component.
+The transcript budget worker checks the frontend's start tick each second and
+exits when that frontend ends; budget passes remain once per minute. The host
+native-window observer binds its parent through a kernel process handle; session
+callers supply `--parent-start-tick` with `--parent-pid` to reject a PID reused
+before observer startup. An observer without a parent remains persistent.
+
 Optional desktop pins carried by this Kilix release advance to:
 
 - **Kilix TUI utilities** — `dbdf8e5d8f3d4ab64bb555acd7c8f53cd0241c0a`;
