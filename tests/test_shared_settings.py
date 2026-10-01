@@ -69,6 +69,16 @@ class FakeScreen:
 
 
 class SharedSettingsTests(unittest.TestCase):
+    def test_display_tool_delegates_to_pleb_without_shell(self):
+        tui = _load_settings_tui()
+        with mock.patch.object(tui.shutil, "which", return_value="/tmp/private tools/pleb"):
+            self.assertEqual(tui._tool_argv("displays"),
+                             ["/tmp/private tools/pleb", "displays", "gui"])
+        with mock.patch.object(tui.shutil, "which", return_value=None):
+            with self.assertRaisesRegex(FileNotFoundError, "requires Pleb"):
+                tui._tool_argv("displays")
+        self.assertIn("displays", [spec.key for spec in tui.TOOL_SPECS])
+
     def test_default_path_is_at_shared_gpu_terminal_root(self):
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch.dict(os.environ, {

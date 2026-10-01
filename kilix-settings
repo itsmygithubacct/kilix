@@ -8,6 +8,7 @@ import curses
 import os
 from pathlib import Path
 import signal
+import shutil
 import subprocess
 import sys
 from typing import NamedTuple
@@ -268,6 +269,7 @@ TOOL_SPECS = (
     ToolSpec("install-tb", "Install / repair tmux-cli's tb command"),
     ToolSpec("kilix-tts", "kilix-tts — read-aloud voice and rate"),
     ToolSpec("kilix-stt", "kilix-stt — dictation and microphone"),
+    ToolSpec("displays", "Displays — layout, resolution and primary monitor"),
 )
 UI_SECTIONS = SECTION_SPECS + (("Tools", TOOL_SPECS),)
 TOOLS_SECTION_INDEX = len(SECTION_SPECS)
@@ -733,6 +735,11 @@ def _run_tui(stdscr, initial_section: int | str | None = None) -> int | str:
 
 def _tool_argv(action: str) -> list[str]:
     kilix = str(ROOT / "kilix")
+    if action == "displays":
+        pleb = shutil.which("pleb")
+        if not pleb:
+            raise FileNotFoundError("Display management requires Pleb (pleb displays configure)")
+        return [pleb, "displays", "gui"]
     if action == "memory-monitor":
         return [kilix, "memory", "--graphics"]
     if action == "tmux-manager":
@@ -848,7 +855,10 @@ def main(argv: list[str] | None = None) -> int:
         return curses.wrapper(run)
     result = curses.wrapper(_run_tui, args.section)
     if isinstance(result, str) and result.startswith("tool:"):
-        _exec_tool(result.removeprefix("tool:"))
+        try:
+            _exec_tool(result.removeprefix("tool:"))
+        except OSError as error:
+            parser.exit(1, f"kilix-settings: {error}\n")
         return 0
     if isinstance(result, str) and result.startswith("model:"):
         _exec_model_install(result.removeprefix("model:"))
