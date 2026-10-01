@@ -3,9 +3,8 @@
 set -euo pipefail
 umask 077
 
-# b58b871 adds the Whisper small.en profile and defaults.stt, the dictation
-# model first-run setup offers for this hardware.
-KILIX_SYSTEM_MONITOR_REF=b58b871c44bbf9a2eda01a747e8fa78c0168b182
+# RC5 merges the selected Whisper/Pocket profiles with Avatar CPU sizing.
+KILIX_SYSTEM_MONITOR_REF=3beed58942281963546c23d62b74f480f8801cf1
 KILIX_SYSTEM_MONITOR_REPO=https://github.com/itsmygithubacct/kilix-system-monitor.git
 GPU_TERMINAL_HOME="${GPU_TERMINAL_HOME:-$HOME/.local/gpu_terminal}"
 GPU_TERMINAL_SOURCE_HOME="${GPU_TERMINAL_SOURCE_HOME:-$GPU_TERMINAL_HOME/sources}"
