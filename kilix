@@ -2561,6 +2561,15 @@ case "${1:-}" in
     exit 0 ;;
   tts|kilix-tts)
     shift
+    if [ "${1:-}" = provider ]; then
+      shift
+      exec /usr/bin/python3 -I -B -c '
+import sys
+sys.path.insert(0,sys.argv[1])
+from kilix_sdk.qwen_provider import main
+raise SystemExit(main(sys.argv[2:]))
+' "$KILIX_HOME/config" "$@"
+    fi
     _tts_install_only=0
     _tts_force=0
     while :; do
@@ -2571,6 +2580,7 @@ case "${1:-}" in
           echo "usage: $_self tts [--install-only|--force-install] [ARGS...]"
           echo "opens the read-aloud settings TUI"
           echo "--enable-kristin: opt in to Piper Kristin as the shared voice"
+          echo "provider prepare|serve|status: manage the receipt-backed Qwen CPU provider"
           echo "For documents, use Kilix 95: Start > Programs > Document Reader"
           exit 0 ;;
         --) shift; break ;;

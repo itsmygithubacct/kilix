@@ -969,6 +969,27 @@ installs only the pinned Qwen socket client. Synthesis additionally requires a
 separately running, receipt-backed Qwen provider; the audition runtime and its
 model files do not satisfy that requirement, and neither is started implicitly.
 
+After installing the Qwen CustomVoice model through `kilix wizard`, explicitly
+prepare and run its receipt-backed provider:
+
+```sh
+kilix tts provider prepare --uv /absolute/path/to/uv
+kilix tts provider serve
+# In another terminal:
+kilix tts provider status
+```
+
+Preparation requires uv 0.12.5 and builds the pinned CPU dependency graph with
+managed Python 3.12.8. It checks the installed model's current licence coverage
+before building; model weights and acceptance receipts are never created by
+this command. Add `--offline` to require already cached sources, Python and
+dependencies. Failed preparation leaves the previous selection intact. `serve`
+runs in the foreground; Ctrl-C stops the provider and cleans its owned workers.
+Status reports the running provider's state and model selection; it does not
+certify a new receipt check or release qualification. This route uses the host's
+actual model installation root and preserves the receipt and runtime directories
+selected during preparation.
+
 ## Read aloud and dictation
 
 The speaking-head and microphone controls in Kilix's page strip are the actual
