@@ -22,6 +22,7 @@ class QwenProviderRouteTests(unittest.TestCase):
         generation = managed/'generations'/('a'*40+'-'+'b'*32)
         generation.mkdir(mode=0o700,parents=True)
         managed.chmod(0o700)
+        (managed/'generations').chmod(0o700)
         (generation/'sentinel').write_text('previous selection')
         (managed/'current').symlink_to(generation)
         return managed,generation
