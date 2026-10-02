@@ -7,7 +7,7 @@ KILIX_HOME="${KILIX_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 GPU_TERMINAL_HOME="${GPU_TERMINAL_HOME:-$HOME/.local/gpu_terminal}"
 GPU_TERMINAL_SOURCE_HOME="${GPU_TERMINAL_SOURCE_HOME:-$GPU_TERMINAL_HOME/sources}"
 KILIX_DATA_HOME="${KILIX_DATA_HOME:-$GPU_TERMINAL_HOME/kilix/data}"
-KILIX_QWEN_CLIENT_REF=3f1031263b4369761d77a90fec8e480fcb87f3d0
+KILIX_QWEN_CLIENT_REF=7e1c57dc4f446b1a7139e1cb49d93958d8847355
 KILIX_QWEN_CLIENT_REPO=https://github.com/itsmygithubacct/kilix-qwen-tts.git
 
 fail() { printf 'kilix qwen client: %s\n' "$*" >&2; exit 1; }
