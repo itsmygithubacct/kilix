@@ -102,6 +102,10 @@ def current_generation(root: Path):
     if not current.is_symlink():
         raise ValueError('provider is not prepared; run kilix tts provider prepare')
     target = Path(os.readlink(current))
+    return validate_generation(root,target)
+
+
+def validate_generation(root: Path,target: Path):
     if target.parent != root/'generations' or len(target.name) != 73 or target.name[40] != '-':
         raise ValueError('provider current link is outside its managed generations')
     if any(c not in '0123456789abcdef' for c in target.name[:40]+target.name[41:]):
@@ -319,10 +323,18 @@ def main(argv=None):
     prep.add_argument('--offline',action='store_true',help='require cached sources, Python and dependencies')
     sub.add_parser('serve',help='run the prepared provider in this terminal; Ctrl-C stops it')
     sub.add_parser('status',help='query provider selection and current state')
+    service = sub.add_parser('service',help='install and control login startup for the prepared provider')
+    service.add_argument('action',choices=('install','enable','disable','start','stop','restart','status'))
     args = parser.parse_args(argv)
     if os.geteuid() == 0:
         parser.error('run this as the desktop user')
     stopping = False
+    if args.command == 'service':
+        try:
+            from . import qwen_service
+            return qwen_service.main(args.action)
+        except (OSError,ValueError,RuntimeError,subprocess.SubprocessError) as error:
+            parser.exit(1,'kilix tts provider service: '+str(error)+'\n')
     if args.command != 'prepare':
         try:
             executable = current_generation(managed_root())/'bin/kilix-qwen-provider'

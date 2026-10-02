@@ -65,10 +65,61 @@ def main():
         command += ['--runtime-root',str(generation/'runtime'),
             '--installed-asset',value['model'],'--content-root',value['content_root'],
             '--model-snapshot-bytes',str(value['budget'])]
-    elif command != ['status']:
-        raise ValueError('usage: kilix-qwen-provider serve|status')
+    elif command != ['status'] and not (len(command)==2 and command[0]=='wait-ready'
+                                          and command[1].isdigit() and int(command[1])>0):
+        raise ValueError('usage: kilix-qwen-provider serve|status|wait-ready')
     bootstrap = ('import sys;sys.path.insert(0,sys.argv[1]);'
                  'from kilix_qwen_tts.cli import main;raise SystemExit(main(sys.argv[2:]))')
+    if command[0] == 'serve':
+        # Consent is checked under the bound supported Python, before a socket.
+        bootstrap = '''import sys,json
+from pathlib import Path
+sys.path.insert(0,sys.argv[1])
+from kilix_qwen_tts.content import InstalledModel
+value=json.loads(sys.argv[2])
+with InstalledModel(value['model'],Path(value['content_root']),maximum_bytes=value['budget'],
+                    provider='kilix-qwen-tts',consumer_schema='kilix.qwen-tts.runtime') as model:
+    model.bind(model.spec.asset_id,model.spec.version,
+               {f.path:f.sha256 for f in model.spec.files if not f.path.startswith('notices/')})
+    with model.open(lambda:None):
+        pass
+from kilix_qwen_tts.cli import main
+raise SystemExit(main(sys.argv[3:]))
+'''
+        command.insert(0,json.dumps({k:value[k] for k in ('model','content_root','budget')}))
+    if command[0] == 'wait-ready':
+        owner = os.pidfd_open(int(command[1]))
+        os.set_inheritable(owner,True)
+        command.append(str(owner))
+        bootstrap = '''import sys,time,os,select,socket,struct
+sys.path.insert(0,sys.argv[1])
+from kilix_qwen_tts.service import client_request,request_value,runtime_directory,SOCKET_NAME
+from kilix_qwen_tts.protocol import ProtocolError
+pid=int(sys.argv[3]);owner=int(sys.argv[4])
+poll=select.poll();poll.register(owner,select.POLLIN)
+class UnitSocket(socket.socket):
+    def connect(self,address):
+        super().connect(address)
+        peer=struct.unpack('3i',self.getsockopt(socket.SOL_SOCKET,socket.SO_PEERCRED,12))
+        if peer[0]!=pid or peer[1]!=os.geteuid():
+            raise SystemExit('ready endpoint belongs to another provider')
+socket.socket=UnitSocket
+deadline=time.monotonic()+290
+while time.monotonic()<deadline:
+    if poll.poll(0):
+        raise SystemExit('unit provider exited before becoming ready')
+    try:
+        value=client_request(runtime_directory(),request_value('status',timeout=1))
+        if value.get('provider_state')=='ready' and not poll.poll(0):
+            raise SystemExit(0)
+    except (FileNotFoundError,ConnectionRefusedError):
+        pass
+    except ProtocolError as error:
+        if error.code not in {'INVALID_RUNTIME','PROVIDER_UNAVAILABLE','TRANSPORT_ERROR'}:
+            raise
+    time.sleep(.2)
+raise SystemExit('provider did not become ready within startup deadline')
+'''
     python = str(generation/'environment/bin/python')
     os.execve(python,[python,'-I','-S','-B','-X','pycache_prefix=/dev/null',
                       '-c',bootstrap,str(lib),*command],environment)

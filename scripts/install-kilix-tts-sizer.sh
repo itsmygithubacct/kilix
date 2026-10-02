@@ -3,8 +3,8 @@
 set -euo pipefail
 umask 077
 
-# RC5 merges the selected Whisper/Pocket profiles with Avatar CPU sizing.
-KILIX_SYSTEM_MONITOR_REF=3beed58942281963546c23d62b74f480f8801cf1
+# RC5 selects catalog-bound speech/vision/audio and measured Bonsai preview sizing.
+KILIX_SYSTEM_MONITOR_REF=849e35051eee81e1ad11c9b00236597409c835dd
 KILIX_SYSTEM_MONITOR_REPO=https://github.com/itsmygithubacct/kilix-system-monitor.git
 GPU_TERMINAL_HOME="${GPU_TERMINAL_HOME:-$HOME/.local/gpu_terminal}"
 GPU_TERMINAL_SOURCE_HOME="${GPU_TERMINAL_SOURCE_HOME:-$GPU_TERMINAL_HOME/sources}"

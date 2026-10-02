@@ -990,6 +990,24 @@ certify a new receipt check or release qualification. This route uses the host's
 actual model installation root and preserves the receipt and runtime directories
 selected during preparation.
 
+For a desktop user service, prepare first, then run:
+
+```sh
+kilix tts provider service install  # install only; no startup
+kilix tts provider service enable   # start, wait for readiness, then enable at login
+kilix tts provider service status
+kilix tts provider service disable  # stop and disable login startup
+```
+
+`start`, `stop`, and `restart` are also available. The unit selects an immutable
+prepared generation; preparing a newer generation does not change a running
+service. Stop it before reinstalling, or use `service enable` to stop the old
+generation and start the new one. Status probes the generation recorded in the
+unit. Startup checks current model receipts before opening the socket, and
+readiness must come from the unit's own process. Unit installation preserves
+user edits and restores the previous selection if publication fails. Nothing
+in this route downloads weights, accepts terms, or enables system-wide startup.
+
 ## Read aloud and dictation
 
 The speaking-head and microphone controls in Kilix's page strip are the actual

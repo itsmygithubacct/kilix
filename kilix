@@ -2920,6 +2920,10 @@ sys.exit(0 if ready else 1)
     done
     _kilix_bonsai_resolve "$_bonsai_force" || exit 1
     [ "$_bonsai_install_only" = 0 ] || exit 0
+    KILIX_CONTENT_ROOT="$(python3 -I -B -c \
+      'import sys; sys.path.insert(0, sys.argv[1]); from kilix_sdk._content_runtime import apps_root; print(apps_root(), end="")' \
+      "$KILIX_HOME/config")" || exit 1
+    export KILIX_CONTENT_ROOT
     exec "${_KILIX_BONSAI_COMMAND[@]}" "$@" ;;
   yamnet|classifier)
     shift
