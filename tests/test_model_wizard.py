@@ -111,6 +111,82 @@ class WizardTests(unittest.TestCase):
             page = wizard.pages()[0]
         self.assertEqual(page['default'], model)
 
+    def test_runtime_alternate_recommendation_and_unknown_fit_defaults(self):
+        reports = {'yolox_s': {'verdict': 'does-not-fit', 'required_ram_bytes': 300000000},
+                   'yolox_nano': {'verdict': 'estimated-fit', 'required_ram_bytes': 120000000}}
+        with patch.object(wizard, 'sizing', return_value=(reports, 'yolox_nano', 'reference memory')):
+            page = wizard.pages()[0]
+        self.assertEqual(page['default'], 'yolox_nano')
+        self.assertEqual(page['models'][1]['ram_bytes'], 120000000)
+        with patch.object(wizard, 'sizing', return_value=(reports, None, 'unknown')):
+            page = wizard.pages()[0]
+        self.assertIsNone(page['default'])
+        self.assertIn('No confirmed fit', page['recommendation'])
+
+    def test_runtime_report_is_bound_to_request_and_checked_choice(self):
+        rows = [dict(self.assets[0], manifest_digest='a' * 64)]
+        def run(command, *, input, stdout, **kwargs):
+            import hashlib
+            request = json.loads(input)
+            self.assertIn('runtime', command)
+            self.assertNotIn('--task', command)
+            report = {'schema': 'plebian.models.runtime-sizing/v1-development',
+                      'resource_source': 'live', 'request_sha256': hashlib.sha256(input).hexdigest(),
+                      'selected_model': None, 'qualification_eligible': False,
+                      'defaults': {'vision': 'yolox_s'},
+                      'candidates': [dict(request['models'][0], verdict='estimated-fit', backend='cpu',
+                                          required_ram_bytes=120000000, required_vram_bytes=None,
+                                          inference={'resources': {'ram': {'required_bytes': 120000000,
+                                                      'budget_bytes': 240000000, 'status': 'estimated-fit'}}})]}
+            stdout.write(json.dumps(report).encode())
+            return subprocess.CompletedProcess(command, 0)
+        with patch.object(system_llm, 'sizer_executable', return_value='/sizer'), \
+                patch.object(wizard.subprocess, 'run', side_effect=run):
+            reports, choice, _ = wizard.sizing(rows, 'vision')
+        self.assertEqual(choice, 'yolox_s')
+        self.assertEqual(reports['yolox_s']['manifest_digest'], 'a' * 64)
+
+    def test_malformed_runtime_reports_fall_back_without_memory_claims(self):
+        rows = [dict(self.assets[0], manifest_digest='a' * 64)]
+        for defect in ('object', 'ram', 'vram', 'budget', 'qualified', 'selected', 'duplicate',
+                       'backend', 'missing-backend', 'unknown-inference', 'unknown-resources', 'unknown-check'):
+            def run(command, *, input, stdout, **kwargs):
+                import hashlib
+                candidate = dict(json.loads(input)['models'][0], verdict='estimated-fit', backend='cpu',
+                                 required_ram_bytes=120000000, required_vram_bytes=None,
+                                 inference={'resources': {'ram': {'required_bytes': 120000000,
+                                            'budget_bytes': 240000000, 'status': 'estimated-fit'}}})
+                report = {'schema': 'plebian.models.runtime-sizing/v1-development', 'resource_source': 'live',
+                          'request_sha256': hashlib.sha256(input).hexdigest(), 'selected_model': None,
+                          'qualification_eligible': False, 'candidates': [candidate], 'defaults': {'vision': 'yolox_s'}}
+                if defect == 'object': report = []
+                elif defect == 'ram': candidate['required_ram_bytes'] = 'broken'
+                elif defect == 'vram': candidate['required_vram_bytes'] = -1
+                elif defect == 'budget': candidate['inference']['resources']['ram']['budget_bytes'] = True
+                elif defect == 'qualified': report['qualification_eligible'] = True
+                elif defect == 'selected': report['selected_model'] = 'yolox_s'
+                elif defect == 'duplicate': report['candidates'] *= 2
+                elif defect == 'backend': candidate['backend'] = 'unrecognized-gpu'
+                elif defect == 'missing-backend': candidate.pop('backend')
+                elif defect.startswith('unknown-'):
+                    candidate.update(verdict='unknown', required_ram_bytes=None, required_vram_bytes=None)
+                    report['defaults']['vision'] = None
+                    candidate['inference'] = (['bad'] if defect == 'unknown-inference' else
+                                               {'resources': ['bad']} if defect == 'unknown-resources' else
+                                               {'resources': {'ram': ['bad']}})
+                stdout.write(json.dumps(report).encode())
+                return subprocess.CompletedProcess(command, 0)
+            with self.subTest(defect=defect), patch.object(system_llm, 'sizer_executable', return_value='/sizer'), \
+                    patch.object(wizard.subprocess, 'run', side_effect=run):
+                reports, choice, note = wizard.sizing(rows, 'vision')
+            self.assertEqual(reports, {})
+            self.assertIsNone(choice)
+            self.assertIn('unavailable', note)
+
+    def test_memory_text_includes_vram_and_unknown_fit(self):
+        self.assertEqual(wizard.memory_text({'ram_bytes': None, 'vram_bytes': 1024**3,
+                                            'fit': 'unknown'}), 'VRAM 1.00 GiB; unknown')
+
     def test_no_acquisition_on_nonterminal_accept(self):
         with patch.object(wizard.sys.stdin, 'isatty', return_value=False), patch.object(wizard, 'apply') as apply:
             self.assertEqual(wizard.main(['finish']), 1)

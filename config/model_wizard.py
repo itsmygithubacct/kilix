@@ -37,6 +37,7 @@ PAGES = (
 STT_IDS = {'vosk-model-small-en-us-0.15': 'small-en-us',
            'vosk-model-en-us-0.22-lgraph': 'lgraph-en-us',
            'faster-whisper-small-en': 'whisper-small-en'}
+RUNTIME_PAGES = {'vision', 'audio', 'image'}
 LEGACY = {'speech': 'system-voice.state', 'dictation': 'dictation-offer.state',
           'workflows': 'workflows-offer.state'}
 
@@ -161,7 +162,7 @@ def catalog():
     api = content_models._api()
     return [dict(id=spec.asset_id, label=spec.label, provider=spec.provider,
                  download_bytes=spec.download_bytes, installed_bytes=spec.installed_bytes,
-                 temporary_bytes=spec.temporary_bytes)
+                 temporary_bytes=spec.temporary_bytes, manifest_digest=spec.manifest_digest)
             for spec in content_models._verified_catalog(api).assets] + __import__('system_llm').catalog()
 
 
@@ -170,43 +171,85 @@ def size_text(number):
 
 
 def sizing(rows, segment, *, ensure_sizer=False):
-    """Use the installed sizer's measured speech profiles, never invented RAM fits."""
+    """Ask the installed sizer for reference workload memory and a default."""
     if segment == 'system-local-llm':
         return __import__('system_llm').recommend(rows, ensure_sizer=ensure_sizer)
     executable = __import__('system_llm').sizer_executable(ensure=ensure_sizer)
-    if not executable or segment not in ('speech', 'dictation'):
+    if not executable or segment not in ('speech', 'dictation') and segment not in RUNTIME_PAGES:
         return {}, None, 'Runtime RAM/VRAM estimate unavailable for this model type.'
-    task = 'tts' if segment == 'speech' else 'stt'
-    request = {'schema': 'kilix.voice.sizing-request/v1', 'models': [
+    runtime = segment in RUNTIME_PAGES
+    task = segment if runtime else 'tts' if segment == 'speech' else 'stt'
+    request = {'schema': 'kilix.runtime.sizing-request/v1', 'models': [
+        {'id': row['id'], 'task': task, 'manifest_digest': row.get('manifest_digest', '')}
+        for row in rows]} if runtime else {'schema': 'kilix.voice.sizing-request/v1', 'models': [
         {'id': STT_IDS.get(row['id'], row['id']), 'task': task, 'backend': 'cpu',
          'installed': None, 'runtime_supported': (row['id'] in STT_IDS if task == 'stt'
           else row['id'] in ('piper-en-us-kristin-medium', 'qwen3-tts-0.6b-customvoice'))} for row in rows]}
     raw_request = json.dumps(request, sort_keys=True, separators=(',', ':')).encode()
     try:
         with tempfile.TemporaryFile() as output:
-            process = subprocess.run([executable, 'recommend', 'voice', '--task', task,
-                                      '--catalog', '-', '--json'], input=raw_request,
+            command = [executable, 'recommend', 'runtime' if runtime else 'voice']
+            if not runtime:
+                command += ['--task', task]
+            process = subprocess.run(command + ['--catalog', '-', '--json'], input=raw_request,
                                      stdout=output, stderr=subprocess.DEVNULL, timeout=20)
             output.seek(0)
             raw = output.read(1024 * 1024 + 1)
         if process.returncode or len(raw) > 1024 * 1024:
             raise ValueError('No sizing report')
         report = json.loads(raw)
-        if report.get('schema') != 'plebian.models.voice-sizing/v1-development' or report.get('resource_source') != 'live'\
+        schema = 'plebian.models.runtime-sizing/v1-development' if runtime else 'plebian.models.voice-sizing/v1-development'
+        if not isinstance(report, dict) or report.get('schema') != schema or report.get('resource_source') != 'live'\
                 or report.get('request_sha256') != hashlib.sha256(raw_request).hexdigest():
             raise ValueError('Incompatible sizing report')
-        candidates = {row['id']: row for row in report['candidates']}
+        if runtime and (report.get('selected_model', 'missing') is not None or report.get('qualification_eligible') is not False):
+            raise ValueError('Runtime sizing is resource planning only')
+        values = report['candidates']
+        if not isinstance(values, list) or len(values) != len(rows) or any(not isinstance(row, dict) for row in values):
+            raise ValueError('Invalid sizing candidates')
+        candidates = {row['id']: row for row in values}
         if len(candidates) != len(rows) or set(candidates) != {row['id'] for row in request['models']}:
             raise ValueError('Incomplete sizing report')
         for candidate in request['models']:
             observed = candidates[candidate['id']]
             if any(observed.get(k) != v for k, v in candidate.items()):
                 raise ValueError('Changed sizing metadata')
+            if runtime:
+                if observed.get('verdict') not in ('unknown', 'estimated-fit', 'does-not-fit'):
+                    raise ValueError('Invalid fit verdict')
+                backend = observed.get('backend')
+                expected_backend = 'cuda' if segment == 'image' else 'cpu'
+                if backend is not None and backend != expected_backend:
+                    raise ValueError('Unexpected runtime backend')
+                inference = observed.get('inference')
+                if inference is not None and (not isinstance(inference, dict)
+                        or not isinstance(inference.get('resources'), dict)
+                        or any(not isinstance(check, dict) for check in inference['resources'].values())):
+                    raise ValueError('Invalid memory checks')
+                for resource in ('ram', 'vram'):
+                    required = observed.get('required_' + resource + '_bytes')
+                    if required is not None and (type(required) is not int or not 0 <= required <= 2**63):
+                        raise ValueError('Invalid memory estimate')
+                if observed['verdict'] == 'estimated-fit':
+                    if backend != expected_backend:
+                        raise ValueError('Unconfirmed runtime backend')
+                    resources = observed['inference']['resources']
+                    for resource in ('ram', 'vram') if observed.get('backend') == 'cuda' else ('ram',):
+                        required = observed.get('required_' + resource + '_bytes')
+                        check = resources[resource]
+                        budget = check['budget_bytes']
+                        if (type(required) is not int or type(budget) is not int or not 0 < required <= budget <= 2**63
+                                or check.get('required_bytes') != required or check.get('status') != 'estimated-fit'):
+                            raise ValueError('Unconfirmed memory fit')
         chosen = (report.get('defaults') or report.get('provisional_candidates', {})).get(task)
         if chosen is not None and (chosen not in candidates or candidates[chosen].get('verdict') != 'estimated-fit'):
             raise ValueError('Invalid recommended model')
-        return candidates, chosen, 'Model sizer: provisional estimates for current available resources.'
-    except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired):
+        note = ('Model sizer: reference memory estimates for current resources; runtime support and speed unverified.'
+                if runtime else 'Model sizer: provisional estimates for current available resources.')
+        if runtime and task == 'image':
+            note = 'Model sizer: upstream image VRAM estimate; local RAM and runtime fit remain unknown.'
+        return candidates, chosen, note
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.TimeoutExpired):
         return {}, None, 'Model sizer unavailable; showing catalog defaults and disk sizes.'
 
 
@@ -241,15 +284,27 @@ def pages(include_answered=False, *, assets=None, measure=True, ensure_sizer=Fal
             row['disk_required_bytes'] = row['installed_bytes'] + row['temporary_bytes']
             row['disk_fit'] = ('unknown' if disk_free is None else
                                'estimated-fit' if row['disk_required_bytes'] <= disk_free else 'does-not-fit')
-            resources = (report.get('inference') or {}).get('resources', {})
+            resources = {} if key in RUNTIME_PAGES else (report.get('inference') or {}).get('resources', {})
             row['ram_bytes'] = report.get('required_ram_bytes', resources.get('ram', {}).get('required_bytes'))
+            row['vram_bytes'] = report.get('required_vram_bytes', resources.get('vram', {}).get('required_bytes'))
         choice = next((row['id'] for row in rows if STT_IDS.get(row['id'], row['id']) == recommended), None)
         default = choice or next((row['id'] for row in rows if row['id'] == preferred), rows[0]['id'])
-        if key == 'system-local-llm':
+        if key == 'system-local-llm' or key in RUNTIME_PAGES and reports:
             default = choice
         result.append(dict(id=key, title=title, models=rows, default=default, answer=answer, disk_available_bytes=disk_free,
-                           recommendation=f'{"Recommended" if choice else "Catalog default"}: {default or "none"}. {note}'))
+                           recommendation=f'{"Recommended" if choice else "No confirmed fit" if default is None else "Catalog default"}: {default or "none"}. {note}'))
     return result
+
+
+def memory_text(row):
+    parts = []
+    if row.get('ram_bytes') is not None:
+        parts.append(f'RAM {size_text(row["ram_bytes"])}')
+    if row.get('vram_bytes') is not None:
+        parts.append(f'VRAM {size_text(row["vram_bytes"])}')
+    if parts or row.get('fit') != 'unknown':
+        parts.append(row.get('fit', 'unknown').replace('-', ' '))
+    return '; '.join(parts)
 
 
 def run_command(*args):
@@ -336,9 +391,10 @@ def interactive(*, input_fn=input, include_answered=False):
         while True:
             print(f'\n{page["title"]}\n{page["recommendation"]}')
             for index, row in enumerate(page['models'], 1):
-                ram = f'; RAM estimate {size_text(row["ram_bytes"])}' if row['ram_bytes'] is not None else ''
+                memory = memory_text(row)
                 print(f'  {index}. [{"x" if row["id"] in selected else " "}] {row["label"]}'
-                      f' — download {size_text(row["download_bytes"])}; disk {size_text(row["installed_bytes"])}{ram}')
+                      f' — download {size_text(row["download_bytes"])}; disk {size_text(row["installed_bytes"])}'
+                      + (f'; {memory}' if memory else ''))
             command = input_fn('Toggle number, [a]ccept checked, [d]ecline, [q]uit: ').strip().lower()
             if command in ('q', ''): return 0
             if command.isdigit() and 1 <= int(command) <= len(page['models']):
