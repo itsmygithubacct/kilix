@@ -55,6 +55,17 @@ jobs:
           python3 -m compileall -q config desktop scripts tests third_party/kilix-state/python/src third_party/kilix-state/python/tests third_party/kilix-telemetry/src third_party/kitty-frame-presenter/src
           git diff --check "$(git hash-object -t tree /dev/null)" HEAD -- . ':(exclude)src'
 
+      - name: Fetch the exact Qwen provider for preparation fixtures
+        run: |
+          ref="$(sed -n "s/^PROVIDER_REF = '\([0-9a-f]\{40\}\)'$/\1/p" config/kilix_sdk/qwen_provider.py)"
+          [[ "$ref" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          source_dir="$RUNNER_TEMP/kilix-qwen-provider"
+          git init -q "$source_dir"
+          git -C "$source_dir" fetch -q --depth=1 \
+            https://github.com/itsmygithubacct/kilix-qwen-tts.git "$ref"
+          git -C "$source_dir" checkout -q --detach "$ref"
+          printf 'KILIX_QWEN_PROVIDER_TEST_SOURCE=%s\n' "$source_dir" >> "$GITHUB_ENV"
+
       - name: Run host tests
         run: |
           export KILIX_STORAGE_HOME="$RUNNER_TEMP/kilix-storage"
