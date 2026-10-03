@@ -1008,6 +1008,30 @@ readiness must come from the unit's own process. Unit installation preserves
 user edits and restores the previous selection if publication fails. Nothing
 in this route downloads weights, accepts terms, or enables system-wide startup.
 
+The installed Tiny transcription model has an explicit managed route as well:
+
+```sh
+kilix models install whisper-tiny-ggml
+kilix transcribe prepare --engine /absolute/path/to/whisper-cli --engine-sha256 SHA256 \
+  --decoder /absolute/path/to/ffmpeg --decoder-sha256 SHA256
+kilix transcribe serve
+# In another terminal:
+kilix transcribe status
+kilix transcribe file speech.wav --format json
+```
+
+Preparation requires reviewed whisper.cpp and decoder bytes, uv 0.12.5 and
+managed Python 3.12.8. Add `--offline` to require cached sources and Python.
+It checks existing model receipts and the full installed model before staging,
+copies the tools and manifest into a private generation, and binds its provider,
+Content, Licence and Python files. The model stays in Content's installation.
+Failed preparation preserves the previous selection. Foreground startup checks
+the current receipt and installed bytes before publishing its local socket;
+each job checks them again. `record --seconds N` explicitly captures a bounded
+microphone recording; file transcription requires no microphone. These tools
+provide a CPU development route; hardware, sustained-load and release
+qualification remain separate checks.
+
 ## Read aloud and dictation
 
 The speaking-head and microphone controls in Kilix's page strip are the actual

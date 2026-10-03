@@ -2559,6 +2559,15 @@ case "${1:-}" in
       _kilix_voice_request dictate "$_dictate_seconds" || exit $?
     fi
     exit 0 ;;
+  transcribe|kilix-transcribe)
+    shift
+    exec /usr/bin/python3 -I -B -c '
+import sys
+sys.path.insert(0,sys.argv[1])
+from kilix_sdk.transcribe_provider import main
+raise SystemExit(main(sys.argv[2:]))
+' "$KILIX_HOME/config" "$@"
+    ;;
   tts|kilix-tts)
     shift
     if [ "${1:-}" = provider ]; then
