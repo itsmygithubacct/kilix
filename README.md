@@ -41,6 +41,16 @@ verification and recovery, see [Kilix Workflows](docs/workflows/README.md).
   return focus to the original pane when dismissed. Outside clicks close the
   popup without activating the pane beneath it.
 
+The RC5 desktop-completion candidate also routes desktop portals from managed
+private-X applications to the physical session. Application singleton names
+stay on their private D-Bus; each portal caller gets a separate host connection,
+translated request/session handles, and Unix file-descriptor forwarding.
+Disconnecting a client or killing its app releases its capture sessions. This
+relay requires the system Python's GIO bindings (`python3-gi` on Debian); the
+stream dependency installer includes them. A private XID is not forwarded as
+the parent of a physical-session dialog. Capture integration has component VM
+evidence; browser and installed default-desktop acceptance remain pending.
+
 ## Release 0.2.1
 
 Prepared 2026-08-25 for the coordinated Plebian-OS 0.2.1 release. The supported

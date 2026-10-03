@@ -256,8 +256,15 @@ class XAppSession:
             runner = shutil.which("dbus-run-session")
             if runner is None:
                 raise RuntimeError("pane apps need dbus-run-session (install dbus-daemon)")
+            host_bus = (app_env.get("PLEB_DESKTOP_BUS_ADDRESS") or
+                        app_env.get("KILIX_PORTAL_HOST_BUS") or
+                        app_env.get("DBUS_SESSION_BUS_ADDRESS"))
             app_env.pop("DBUS_SESSION_BUS_ADDRESS", None)
             app_env.pop("DBUS_SESSION_BUS_PID", None)
+            if host_bus:
+                app_env["KILIX_PORTAL_HOST_BUS"] = host_bus
+                bridge = Path(__file__).with_name("portal_bridge.py")
+                argv = [sys.executable, str(bridge), "--wrap", "--", *argv]
             argv = [runner, "--", *argv]
         self.app = self.supervisor.spawn(
             "app", argv, env=app_env, cwd=cwd,

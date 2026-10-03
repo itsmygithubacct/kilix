@@ -97,6 +97,10 @@ verify() {
   [ -n "$xvnc" ] && echo "   Xvnc: $xvnc" || { echo "   Xvnc: MISSING"; ok=0; }
   echo "   vncpasswd: not required (kilix generates VNC passwords itself)"
   python3 -c "import Xlib; print('   python-xlib:', Xlib.__version__)" 2>/dev/null || { echo "   python-xlib: MISSING"; ok=0; }
+  /usr/bin/python3 -c "from gi.repository import Gio; print('   portal relay: GIO ready')" 2>/dev/null \
+    || { echo "   portal relay: MISSING (python3-gi)"; ok=0; }
+  command -v dbus-run-session >/dev/null 2>&1 \
+    || { echo "   private application bus: MISSING (dbus-daemon)"; ok=0; }
   python3 -c "import websockets; print('   websockets:', websockets.__version__)" 2>/dev/null \
     || echo "   websockets: MISSING (scripts/install-stream-deps.sh --python-deps)"
   command -v pactl >/dev/null 2>&1 && echo "   pactl (audio): $(command -v pactl)" || echo "   pactl (audio): none (video-only)"
@@ -113,7 +117,7 @@ verify() {
 
 # ---- Fedora / dnf (system-wide, needs sudo) ----------------------------------
 fedora_install() {
-  local pkgs="tigervnc-server xorg-x11-server-Xvfb python3-xlib python3-pillow python3-websockets"
+  local pkgs="tigervnc-server xorg-x11-server-Xvfb python3-xlib python3-pillow python3-websockets python3-gobject dbus-daemon"
   echo "==> Fedora/RHEL detected — installing system-wide via dnf: $pkgs"
   sudo dnf install -y $pkgs
   rm -f "$ENVFILE"          # system-wide install: launcher needs no prefix env
@@ -136,6 +140,7 @@ write_env() {
     # the system one (and its websockets). System tools win; prefix fills gaps.
     echo "export PATH=\"\$PATH:$PREFIX/usr/bin\""
     echo "export LD_LIBRARY_PATH=\"$PREFIX/usr/lib/$TRIPLET:$PREFIX/usr/lib:\${LD_LIBRARY_PATH:-}\""
+    echo "export GI_TYPELIB_PATH=\"$PREFIX/usr/lib/$TRIPLET/girepository-1.0:\${GI_TYPELIB_PATH:-}\""
     if site="$(pydeps_site)"; then
       echo "export PYTHONPATH=\"\${PYTHONPATH:-}:$PREFIX/usr/lib/python3/dist-packages:$site\""
     else
@@ -150,7 +155,7 @@ write_env() {
 debian_install() {
   command -v dpkg >/dev/null || { echo "need dpkg"; exit 1; }
   mkdir -p "$PREFIX"
-  local targets="xvfb tigervnc-standalone-server tigervnc-common python3-xlib x11-xkb-utils xfonts-base xauth"
+  local targets="xvfb tigervnc-standalone-server tigervnc-common python3-xlib python3-gi dbus-daemon x11-xkb-utils xfonts-base xauth"
   echo "==> Debian/Ubuntu detected — no-root install into $PREFIX"
   echo "==> resolving dependency closure for: $targets"
   local closure need="" p
