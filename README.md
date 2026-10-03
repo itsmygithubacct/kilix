@@ -2363,7 +2363,7 @@ metadata. Inspect records with `tail -f` or a JSON-lines reader.
 
 ### Search the documentation
 
-Run `kilix help-search "how do I split a pane"` to search the bundled Kilix, Kitty, Pleb and Plebian-OS documentation. The pinned Help Search app installs on first use, uses no model weights, and returns source passages rather than generated answers.
+Run `kilix help-search "how do I split a pane"` to search the bundled Kilix, Kitty, Pleb and Plebian-OS documentation. The same lookup is available from Kilix 95's Start > Help > Help Search and the Kilix TUI Programs menu. The pinned Help Search app installs on first use, uses no model weights, and returns source passages rather than generated answers.
 
 Kilix 95's optional startup voice uses the pinned Piper runtime through
 `kilix tts --prepare-system-voice` and `kilix tts --system-voice`. First-use setup
