@@ -2,8 +2,8 @@
 
 For an overview of human and agent routes through Kilix, see [Kilix Workflows](workflows/README.md). This guide covers the pane-agent interface and its version-specific evidence.
 
-**0.2.2 source-selection note:** the host toolkit installer selects
-`15c31b6`, while Content's package pin remains `d910110`. The richer
+**0.2.2 source-selection note:** the host toolkit installer and
+Content's package selection both use `15c31b6`. The richer
 `kilix panes list/dump/wait/send` and JSON interfaces described here require a
 compatible installed toolkit; the wrapper verb alone does not establish that
 it is installed. Use the [version-specific operation guide](help/operations/README.md)
