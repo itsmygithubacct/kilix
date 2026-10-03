@@ -102,7 +102,120 @@ explicit requested change. Read-only queries do not need `--yes`. Names and
 settings sections still need to match the interface; use the version-specific
 operation guide for exact supported names.
 
-### Candidate comparison and limits
+
+## RC3 low/medium measurement reference
+
+Prefer direct `kilix` commands for pane operations and agent launches, and
+`find` or `rg` for files and log files. For system questions, the Needle CLI
+matched shell costs with fewer failed runs. Apps and settings depend on the
+task: direct commands are a good default, while the Needle CLI was cheaper
+for launching a ready game and opening a settings section.
+
+The completed 0.2.2 RC3 benchmark ran 1,560 trials on private Xvfb Kilix
+instances, with gpt-6-luna at low and medium effort on the Fast tier, 12
+repetitions per task, route and effort (2026-09-30 UTC). It used Kilix
+`f5c66d3`, kilix-needle `67b97ac` and codex-cli `0.159.0`. The
+[published RC3 guide](https://github.com/itsmygithubacct/kilix/blob/7aaf72424a8c5bec8e51000339c92936268ab0c7/docs/AGENTS.md#start-with-the-cheapest-reliable-route)
+records the route summary; the detailed release research report is
+`RESULTS-LUNA-FULL.md`. These measurements apply to that stack and model.
+
+### What handles each task
+
+The examples in this table use the RC3 interfaces. See the version notes
+below for installations built from earlier `main` commits.
+
+| Task | Interface and example |
+| --- | --- |
+| Open a shell pane beside yours | `kilix pane right -- bash` |
+| Start a coding agent in a directory | `kilix new-tab --title T --cwd DIR codex` |
+| Type a command into a shell pane | `kilix pane send TITLE 'TEXT' --submit` |
+| Close a pane | `kilix pane close TITLE` |
+| Find files | `find DIR -name 'PREFIX*'`, `rg --files DIR` |
+| Search a log file | `rg 'PATTERN' FILE` |
+| Find the largest memory user | `ps -eo comm,rss --sort=-rss \| head` |
+| Read RAM usage | `free -h` |
+| Read disk space | `df -h /` |
+| Identify a file's package or a package's version | `dpkg -S FILE`, `dpkg-query -W PKG` |
+| Ask a system question in plain words | `kilix-needle system "QUESTION" --agent --json` |
+| Read system journal errors | `journalctl -p err -t TAG --since ...`, or the Needle `system` job |
+| Check a service | `systemctl is-active UNIT`, or the Needle `system` job |
+| Change a Kilix setting | `kilix settings --set clock=off` |
+| Show or hide a game | `kilix settings --game GAME=off` or `GAME=on` |
+| Open a settings section | `kilix new-tab --title Settings kilix settings --section voice` |
+| Set terminal text size | `kilix screen-size set 14` |
+| Launch a ready game | `kilix games play GAME`, or the Needle `apps` job |
+| Type into another coding agent's input box | `kilix agent-control send` (§10), which checks the broker identity |
+| Arrange panes using a layout request | Needle's default panes job; these layout requests were outside the benchmark |
+
+Needle's `files` job searches files, `logs` reads pane sessions and log files,
+`system` reads processes, packages, services and the system journal, `apps`
+handles Kilix apps/settings, and `agents` launches or controls coding sessions.
+The panes job is the CLI default: `kilix-needle --agent --json 'split right'`.
+On RC3, the other jobs are explicit `files`, `logs`, `system`, `apps` and
+`agents` subcommands. System journal queries belong to `system`.
+
+### Measured success and cost
+
+Each cell is successful runs / total runs, followed by m$ per successful
+action. One m$ is $0.001; costs include failed attempts at the benchmark's
+Fast-tier list prices. Agent launches are included in the panes group.
+
+| Task group | Route | Low effort | Medium effort |
+| --- | --- | --- | --- |
+| Panes and agent launches | Direct `kilix` commands | 58/60 · 0.97 m$ | 60/60 · 0.94 m$ |
+| Panes and agent launches | Bundled Kilix skill | 48/48 · 1.38 m$ | 48/48 · 1.43 m$ |
+| Panes and agent launches | Discover CLI from `kilix --help` | 48/48 · 1.61 m$ | 48/48 · 1.58 m$ |
+| Panes and agent launches | Needle CLI | 38/60 · 2.04 m$ | 46/60 · 2.25 m$ |
+| Panes and agent launches | Needle MCP | 49/60 · 2.27 m$ | 54/60 · 2.16 m$ |
+| Files and log files | Shell | 19/24 · 0.99 m$ | 22/24 · 0.95 m$ |
+| Files and log files | Needle MCP | 24/24 · 2.15 m$ | 24/24 · 2.17 m$ |
+| System questions | Shell | 58/72 · 1.06 m$ | 70/72 · 1.00 m$ |
+| System questions | Needle CLI | 71/72 · 1.04 m$ | 72/72 · 0.96 m$ |
+| System questions | Needle MCP | 72/72 · 1.74 m$ | 72/72 · 1.72 m$ |
+| Apps and settings | Direct `kilix` commands | 70/72 · 1.33 m$ | 72/72 · 1.30 m$ |
+| Apps and settings | Needle CLI | 62/72 · 1.42 m$ | 72/72 · 1.22 m$ |
+| Apps and settings | Needle MCP | 71/72 · 1.90 m$ | 68/72 · 1.96 m$ |
+
+The skill and discovery routes covered four pane tasks; the other pane routes
+also covered typing into a plain `sh` pane. Some shell failures were the model
+declining to execute a command. Of 36 Needle CLI pane failures, 26 ended while
+a command was still running. Typing was scored by the resulting marker file;
+these reported scores do not independently establish which shell created it.
+
+Later Needle `03c3462` loads each job's engine only when needed. A separate
+mixed-load A/B measured pane CLI success rising from 46% to 83% and MCP from
+70% to 92%; those results are separate from the table above.
+
+### Version requirements and using Needle
+
+RC3 supports unique-title targets and sends Enter separately for `--submit`.
+Earlier `main` installations require `pane:ID`, found with `kilix pane list`,
+and may leave a coding-agent prompt unsubmitted. Use the broker-checked
+`kilix agent-control` interface in §10 for those input boxes. RC3 also supports
+launching a game from an agent tool runner without a terminal; earlier builds
+may require starting it inside a terminal. Check the installed Needle's help
+for its available jobs; the RC3 benchmark used newer job interfaces and pins.
+
+One tool-free benchmark run cost about 14k input tokens. Another model round
+trip added about 14k, so avoid discovering commands you already know. A first
+MCP operation included an extra tool-discovery round; reuse across several
+operations can amortize that cost. These token counts are specific to the
+measured client and session configuration.
+
+For Needle, use one short request at a time. `kilix_plan` previews a pane
+request; `kilix_act` applies it. Closing, typing and starting programs require
+`confirm_risky: true` on `kilix_act`, or `--yes` with `--agent` on the CLI.
+Use these only for authorized actions and a verified target. Identify the
+calling pane correctly (§1), read refusals and check the intended effect.
+If a request is refused, use its accepted form or an authorized direct command.
+Do not install a model or change licence acceptance to perform a pane action.
+
+Keep live monitoring bounded. Launchers before RC3 can rewrite the live
+configuration even on reads; repeated reloads reset runtime settings. Use the
+running engine's matching `kitten` for repeated reads on those installations.
+Rerun the benchmark when the client, model, tier, commands or Needle change.
+
+## Max-effort candidate comparison and limits
 
 A separate checkout run used Needle `a70c6a6` over the same installed host stack.
 It completed 773/780 with strict typing 95/96. CLI launch missed four of twelve
@@ -279,8 +392,8 @@ to be focused.
 
 ## 2. Choosing an interface
 
-**Prefer the `kilix` verbs; they were the cheapest measured route (see above).** The verbs
-are stable, handle credential
+**Prefer the `kilix` verbs for the measured pane tasks above.** Use Needle for
+plain-language requests where its job is appropriate. The verbs handle credential
 and binary resolution for you, and print human-readable tables:
 
 ```
