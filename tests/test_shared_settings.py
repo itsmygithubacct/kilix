@@ -69,6 +69,17 @@ class FakeScreen:
 
 
 class SharedSettingsTests(unittest.TestCase):
+    def test_device_tools_use_the_session_owner(self):
+        tui = _load_settings_tui()
+        with mock.patch.object(tui.shutil, "which", return_value="/fixture/pleb"):
+            self.assertEqual(tui._tool_argv("lock-desktop"), ["/fixture/pleb", "lock"])
+            self.assertEqual(tui._tool_argv("device-printers"), ["/fixture/pleb", "devices", "printers"])
+            with self.assertRaises(ValueError):
+                tui._tool_argv("device-unknown")
+        with mock.patch.object(tui.shutil, "which", return_value=None):
+            with self.assertRaisesRegex(FileNotFoundError, "require Pleb"):
+                tui._tool_argv("device-bluetooth")
+
     def test_temperature_choice_persists_across_cli_and_tui(self):
         with tempfile.TemporaryDirectory() as scratch:
             path = Path(scratch) / 'settings.conf'
