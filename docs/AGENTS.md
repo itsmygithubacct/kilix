@@ -2,14 +2,14 @@
 
 For an overview of human and agent routes through Kilix, see [Kilix Workflows](workflows/README.md). This guide covers the pane-agent interface and its version-specific evidence.
 
-**0.2.2 source-selection note:** the host's default toolkit installer and
-Content package pin `af7e848` provides the interactive switcher. The richer
-`kilix panes list/dump/wait/send` and JSON interfaces described in this guide
-require a later compatible toolkit; the wrapper verb alone does not establish
-that they are installed. Use the [version-specific operation guide](help/operations/README.md)
-and the basic `ls`, `focus`, `watch` and authenticated `kitten @` paths with the
-default pin. The same-OS-window uncredentialed send-text policy is separate
-from the narrower authenticated broker-session byte-input checker below.
+**0.2.2 source-selection note:** the host toolkit installer selects
+`15c31b6`, while Content's package pin remains `d910110`. The richer
+`kilix panes list/dump/wait/send` and JSON interfaces described here require a
+compatible installed toolkit; the wrapper verb alone does not establish that
+it is installed. Use the [version-specific operation guide](help/operations/README.md)
+and the installed toolkit's help to identify the available interfaces. The
+same-OS-window uncredentialed send-text policy is separate from the narrower
+authenticated broker-session byte-input checker below.
 
 How a program associated with a Kilix pane can find the other panes, open new
 ones, read what is on them, and type into them. The ordinary path is a process
