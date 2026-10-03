@@ -17,6 +17,13 @@ from kilix_sdk import qwen_provider as provider
 
 
 class QwenProviderRouteTests(unittest.TestCase):
+    def test_selected_host_content_passes_provider_authority_check(self):
+        # Exercise the real checkout guard: a mocked ref derived from the
+        # provider constant cannot detect drift from the host's gitlink.
+        with patch.object(provider.paths, 'kilix_home', return_value=str(ROOT)):
+            provider.verify_content(ROOT/'third_party/kilix-content',
+                                    provider.clean_environment())
+
     def previous(self, root):
         managed = root/'data/voice/qwen-provider'
         generation = managed/'generations'/('a'*40+'-'+'b'*32)
