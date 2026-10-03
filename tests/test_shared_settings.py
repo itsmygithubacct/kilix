@@ -69,6 +69,30 @@ class FakeScreen:
 
 
 class SharedSettingsTests(unittest.TestCase):
+    def test_temperature_choice_persists_across_cli_and_tui(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            path = Path(scratch) / 'settings.conf'
+            with mock.patch.dict(os.environ, {'GPU_TERMINAL_SETTINGS_FILE': str(path)}, clear=True):
+                self.assertEqual(settings.temperature_unit(), 'fahrenheit')
+                tui = _load_settings_tui()
+                self.assertIn(settings.TEMPERATURE_UNIT_KEY,
+                              [spec.key for spec in tui.UI_SECTIONS[0][1]])
+                key, value = tui._parse_assignment('temperature_unit=CELSIUS')
+                settings.update({key: value})
+                self.assertEqual(settings.temperature_unit(), 'celsius')
+                self.assertIn('KILIX_TEMPERATURE_UNIT=celsius', path.read_text())
+                before = path.read_bytes()
+                with self.assertRaises(argparse.ArgumentTypeError):
+                    tui._parse_assignment('temperature_unit=kelvin')
+                self.assertEqual(path.read_bytes(), before)
+                index = next(i for i, spec in enumerate(tui.UI_SECTIONS[0][1])
+                             if spec.key == settings.TEMPERATURE_UNIT_KEY)
+                screen = FakeScreen([ord('j')] * index + [ord(' '), ord('s'), ord('q')])
+                self.assertEqual(tui._run_tui(screen, 'top-bar'), 0)
+                self.assertEqual(settings.temperature_unit(), 'fahrenheit')
+                self.assertEqual(tui.main(['--set', 'temperature_unit=fahrenheit', '--print']), 0)
+                self.assertEqual(settings.temperature_unit(), 'fahrenheit')
+
     def test_display_tool_delegates_to_pleb_without_shell(self):
         tui = _load_settings_tui()
         with mock.patch.object(tui.shutil, "which", return_value="/tmp/private tools/pleb"):
@@ -761,7 +785,7 @@ class SharedSettingsTests(unittest.TestCase):
             self.assertIn("▶1 Top bar", first_frame)
             self.assertIn("─" * 20, first_frame)
             self.assertNotIn(" // ", first_frame)
-            self.assertIn("Top bar: 8/9 enabled", first_frame)
+            self.assertIn("Top bar: 9/10 enabled", first_frame)
             self.assertIn("Thermal status", first_frame)
             self.assertIn("Volume", first_frame)
             self.assertIn("Read pane aloud", first_frame)

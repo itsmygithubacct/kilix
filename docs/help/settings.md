@@ -19,3 +19,10 @@ page strip and sizes itself to fit the window without resizing terminal panes.
 
 Use `kilix screen-size larger` or `kilix screen-size smaller` to change terminal
 scale. `Ctrl+Shift+Backspace` resets the terminal scale.
+
+Temperature displays default to Fahrenheit. Set the shared preference with
+`kilix settings --set temperature_unit=celsius` or `temperature_unit=fahrenheit`.
+The **Top bar** section of `kilix settings` and the **Temperature units** choice
+in Kilix95 Settings offer the same persistent control. `kilix temps --celsius`
+or `--fahrenheit`, and its `u` key, override only that dashboard invocation.
+Sensor readings, alert thresholds, JSON and CSV remain in Celsius.

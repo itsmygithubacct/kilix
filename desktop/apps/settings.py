@@ -93,6 +93,9 @@ SETTING_PAGES = [
     ]),
     ("Chrome", [
         S("KILIX_CHROME_TEMPERATURE", "Thermal status", default="0"),
+        S(shared_settings.TEMPERATURE_UNIT_KEY, "Temperature units", "choice",
+          shared_settings.TEMPERATURE_UNIT_DEFAULT,
+          list(shared_settings.TEMPERATURE_UNIT_CHOICES)),
         S("KILIX_CHROME_VOLUME", "Volume"),
         S("KILIX_CHROME_NETWORK", "Network / Wi-Fi"),
         S("KILIX_CHROME_CALENDAR", "Calendar"),

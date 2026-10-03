@@ -127,6 +127,9 @@ TOGGLE_SPECS = (
 TOGGLE_BY_KEY = {spec.key: spec for spec in TOGGLE_SPECS}
 CLOCK_FORMAT_KEY = "KILIX_CHROME_CLOCK_FORMAT"
 CLOCK_FORMAT_DEFAULT = "%Y-%m-%d %I:%M %p"
+TEMPERATURE_UNIT_KEY = "KILIX_TEMPERATURE_UNIT"
+TEMPERATURE_UNIT_DEFAULT = "fahrenheit"
+TEMPERATURE_UNIT_CHOICES = ("fahrenheit", "celsius")
 PANE_CPU_MODE_KEY = "KILIX_CHROME_PANE_CPU_MODE"
 PANE_CPU_MODE_DEFAULT = "auto"
 PANE_CPU_MODE_CHOICES = ("auto", "always", "off")
@@ -302,6 +305,7 @@ CODING_KEYS = tuple(CODING_CHOICE_SPECS)
 
 MANAGED_KEYS = tuple(spec.key for spec in TOGGLE_SPECS) + (
     CLOCK_FORMAT_KEY,
+    TEMPERATURE_UNIT_KEY,
     PANE_CPU_MODE_KEY,
     PANE_MEMORY_MODE_KEY,
     TAB_BAR_EDGE_KEY,
@@ -376,6 +380,11 @@ def truthy(value: object) -> bool:
 
 
 def _normalize_change(key: str, raw_value: object) -> str:
+    if key == TEMPERATURE_UNIT_KEY:
+        value = str(raw_value).strip().lower()
+        if value not in TEMPERATURE_UNIT_CHOICES:
+            raise ValueError(f"{key} must be one of: {', '.join(TEMPERATURE_UNIT_CHOICES)}")
+        return value
     if key in TOGGLE_BY_KEY:
         return "1" if truthy(raw_value) else "0"
     if key in (PANE_CPU_MODE_KEY, PANE_MEMORY_MODE_KEY):
@@ -453,6 +462,7 @@ def defaults(*, migrate_environment: bool = False) -> dict[str, str]:
         for spec in TOGGLE_SPECS
     }
     values[CLOCK_FORMAT_KEY] = CLOCK_FORMAT_DEFAULT
+    values[TEMPERATURE_UNIT_KEY] = TEMPERATURE_UNIT_DEFAULT
     values[PANE_CPU_MODE_KEY] = PANE_CPU_MODE_DEFAULT
     values[PANE_MEMORY_MODE_KEY] = PANE_MEMORY_MODE_DEFAULT
     values[TAB_BAR_EDGE_KEY] = TAB_BAR_EDGE_DEFAULT
@@ -525,6 +535,7 @@ def _initial_text(values: Mapping[str, str]) -> str:
     for spec in TOP_BAR_TOGGLES:
         lines.append(f"{spec.key}={values[spec.key]}")
     lines.append(f"{CLOCK_FORMAT_KEY}={values[CLOCK_FORMAT_KEY]}")
+    lines.append(f"{TEMPERATURE_UNIT_KEY}={values[TEMPERATURE_UNIT_KEY]}")
     for spec in PANE_BUTTON_TOGGLES:
         lines.append(f"{spec.key}={values[spec.key]}")
     lines.append(f"{PANE_CPU_MODE_KEY}={values[PANE_CPU_MODE_KEY]}")
@@ -670,6 +681,12 @@ def update(changes: Mapping[str, object], path: str | None = None) -> str:
             text = _initial_text(defaults(migrate_environment=True))
         _atomic_write(target, _apply_changes(text, normalized))
     return target
+
+
+def temperature_unit(path: str | None = None) -> str:
+    """Return the shared display unit; sensor and alert values remain Celsius."""
+    value = load(path).get(TEMPERATURE_UNIT_KEY, TEMPERATURE_UNIT_DEFAULT).strip().lower()
+    return value if value in TEMPERATURE_UNIT_CHOICES else TEMPERATURE_UNIT_DEFAULT
 
 
 def pane_memory_mode(path: str | None = None) -> str:
@@ -860,6 +877,10 @@ def voice_history(path: str | None = None) -> bool:
 
 
 __all__ = [
+    "TEMPERATURE_UNIT_KEY",
+    "TEMPERATURE_UNIT_DEFAULT",
+    "TEMPERATURE_UNIT_CHOICES",
+    "temperature_unit",
     "CLOCK_FORMAT_DEFAULT",
     "CLOCK_FORMAT_KEY",
     "CODING_CHOICE_SPECS",

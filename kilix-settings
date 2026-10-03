@@ -55,6 +55,8 @@ def _control_names() -> dict[str, str]:
     ):
         names[alias] = shared.PANE_CPU_MODE_KEY
     names[shared.PANE_CPU_MODE_KEY.lower()] = shared.PANE_CPU_MODE_KEY
+    for alias in ("temperature_unit", "temperature_units", "temp_unit", shared.TEMPERATURE_UNIT_KEY.lower()):
+        names[alias] = shared.TEMPERATURE_UNIT_KEY
     for alias in ("transcript", "session_log", "session_logs", "logging"):
         names[alias] = "KILIX_TRANSCRIPT"
     for alias in ("transcript_graphics", "log_graphics"):
@@ -206,6 +208,8 @@ LEADING_CHOICES = {
 # type: the session-logging controls follow their on/off control, and the voice
 # presets bracket the punctuation toggle the way the shared file writes them.
 TRAILING_CHOICES = {
+    "Top bar": (ChoiceSpec(shared.TEMPERATURE_UNIT_KEY, "Temperature units",
+                           shared.TEMPERATURE_UNIT_CHOICES, shared.TEMPERATURE_UNIT_DEFAULT),),
     "Session logging": (
         TRANSCRIPT_GRAPHICS_SPEC, TRANSCRIPT_LIMIT_SPEC,
         TRANSCRIPT_TOTAL_SPEC, TRANSCRIPT_ARCHIVE_SPEC,
@@ -322,6 +326,11 @@ def _parse_assignment(value: str) -> tuple[str, object]:
             key for key in CONTROL_NAMES if not key.startswith("kilix_")))
         raise argparse.ArgumentTypeError(
             f"unknown control {name!r}; choose one of: {choices}")
+    if key == shared.TEMPERATURE_UNIT_KEY:
+        unit = raw.strip().lower()
+        if unit not in shared.TEMPERATURE_UNIT_CHOICES:
+            raise argparse.ArgumentTypeError("temperature units must be fahrenheit|celsius")
+        return key, unit
     if key in (shared.PANE_CPU_MODE_KEY, shared.PANE_MEMORY_MODE_KEY):
         mode = raw.strip().lower()
         if mode == "on":
@@ -444,6 +453,10 @@ def _print_settings(values: dict[str, str]) -> None:
         mode = shared.PANE_MEMORY_MODE_DEFAULT
     print(f"{shared.PANE_MEMORY_MODE_KEY}={mode}")
     print(f"{shared.CLOCK_FORMAT_KEY}={values[shared.CLOCK_FORMAT_KEY]}")
+    unit = values.get(shared.TEMPERATURE_UNIT_KEY, shared.TEMPERATURE_UNIT_DEFAULT).strip().lower()
+    if unit not in shared.TEMPERATURE_UNIT_CHOICES:
+        unit = shared.TEMPERATURE_UNIT_DEFAULT
+    print(f"{shared.TEMPERATURE_UNIT_KEY}={unit}")
     print(f"{shared.TRANSCRIPT_GRAPHICS_KEY}={shared.transcript_graphics()}")
     size = values.get(
         shared.TRANSCRIPT_LIMIT_KEY, shared.TRANSCRIPT_LIMIT_DEFAULT
@@ -588,6 +601,7 @@ def _run_tui(stdscr, initial_section: int | str | None = None) -> int | str:
     }
     values[shared.PANE_CPU_MODE_KEY] = shared.pane_cpu_mode()
     values[shared.PANE_MEMORY_MODE_KEY] = shared.pane_memory_mode()
+    values[shared.TEMPERATURE_UNIT_KEY] = shared.temperature_unit()
     values[shared.TRANSCRIPT_GRAPHICS_KEY] = shared.transcript_graphics()
     values[shared.TRANSCRIPT_LIMIT_KEY] = effective.get(
         shared.TRANSCRIPT_LIMIT_KEY, shared.TRANSCRIPT_LIMIT_DEFAULT)
