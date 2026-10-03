@@ -79,6 +79,7 @@ def _load_fork_voice():
 
     rgb = types.ModuleType(f"{package_name}.rgb")
     rgb.to_color = lambda spec: spec
+    rgb.color_from_int = lambda value: value
     utils = types.ModuleType(f"{package_name}.utils")
     utils.color_as_int = lambda color: 0
     utils.log_error = lambda *args: None
