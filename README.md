@@ -72,12 +72,17 @@ Managed local application panes now mirror ordinary clipboard formats through
 SDK 1.16: Unicode text, PNG/JPEG images, and local file URI lists. The relay
 supports incremental X11 transfers, limits each clipboard value to 64 MiB, bounds in-flight transfers, and stops
 with its pane. Network broadcast modes leave the host clipboard disconnected.
-Paste requests made during a copy wait for the complete new value, with bounded
+Paste requests made during a copy wait for the complete requested format, with bounded
 waits and request counts. A failed acquisition refuses the waiting request
 instead of returning the previous clipboard as the new copy.
+Known targets and completed formats become available while other representations
+are still being collected. The hub retains its previous complete bundle until
+the new bundle finishes; all alternate-format bytes remain preserved.
 New empty panes initialize their clipboard endpoint. Pending copies refresh
 clipboard ownership so browser and GTK format caches discover the new value;
 older ownership notifications cannot overwrite a newer claim.
+Reply-buffered X11 events drain within the callback's event budget, so the
+desktop does not sleep between already available clipboard chunks.
 `KILIX_HOST_CLIP=0` disables host clipboard exchange. Kilix 95 and its built-in
 fallback use the same transport, including file-manager copy/cut/paste. Two
 GTK windows on separate private displays have component VM evidence for large

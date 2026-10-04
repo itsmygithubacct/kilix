@@ -126,6 +126,7 @@ class Hub:
         self.tick_hooks = []
         self.clipboard_revision = 0
         self.clipboard_read_revision = None
+        self.clipboard_read_source = None
 
     def add_fd(self, fd, callback):
         self.fd_hooks[fd] = callback
@@ -147,9 +148,10 @@ class Hub:
         if callback in self._pending_sinks:
             self._pending_sinks.remove(callback)
 
-    def begin_clipboard_read(self):
+    def begin_clipboard_read(self, source=None):
         self.clipboard_revision += 1
         self.clipboard_read_revision = self.clipboard_revision
+        self.clipboard_read_source = source
         for callback in tuple(self._pending_sinks):
             callback()
         return self.clipboard_revision
@@ -157,10 +159,12 @@ class Hub:
     def end_clipboard_read(self, revision):
         if self.clipboard_read_revision == revision:
             self.clipboard_read_revision = None
+            self.clipboard_read_source = None
 
     def set_clipboard_content(self, content, source=None):
         self.clipboard_revision += 1
         self.clipboard_read_revision = None
+        self.clipboard_read_source = None
         self.content = content
         for callback in tuple(self._sinks):
             if callback != source:
@@ -199,6 +203,7 @@ class SelectionBridge:
         self._queue = []
         self._read_formats = {}
         self._read_known_targets = False
+        self._read_targets = ()
         self._read_owner = 0
         self._outgoing = {}
         self._pending_requests = []
@@ -285,7 +290,12 @@ class SelectionBridge:
         if not self._ok:
             return
         try:
-            for _ in range(min(self.d.pending_events(), 256)):
+            for _ in range(256):
+                # Reading a property reply can buffer the next transfer
+                # event in python-xlib. Drain it before select() waits on a
+                # socket that no longer contains those bytes.
+                if not self.d.pending_events():
+                    break
                 self._handle(self.d.next_event())
         except Exception as error:
             self.error = error
@@ -308,6 +318,8 @@ class SelectionBridge:
             if now > request['deadline']:
                 self._pending_requests.remove(request)
                 self._notify(request['event'], 0)
+            elif pending is not None and self._serve_pending(request['event']):
+                self._pending_requests.remove(request)
             elif pending is None:
                 self._pending_requests.remove(request)
                 if self.hub.clipboard_revision == request['revision']:
@@ -386,13 +398,14 @@ class SelectionBridge:
         self._queue = []
         self._read_formats = {}
         self._read_known_targets = False
+        self._read_targets = ()
         self._read_owner = 0
 
     def _start_read(self, owner, timestamp):
         self._abort_read()
         self._read_owner = owner
         self._read_time = timestamp
-        self._read_revision = self.hub.begin_clipboard_read()
+        self._read_revision = self.hub.begin_clipboard_read(self)
         self._read_deadline = time.monotonic() + MAX_TRANSFER_TIME
         self._queue = ['TARGETS']
         self._next_read()
@@ -520,6 +533,7 @@ class SelectionBridge:
                 self._read_known_targets = True
                 available = set(value)
                 self._queue = [name for name in FORMATS if self.atoms[name] in available]
+                self._read_targets = tuple(self._queue)
         elif value is not None:
             total = sum(len(data) for data in self._read_formats.values()) + len(value)
             if total > MAX_BYTES:
@@ -529,22 +543,23 @@ class SelectionBridge:
         self.d.flush()
         self._next_read()
 
-    def _write_target(self, requestor, target, prop):
+    def _write_target(self, requestor, target, prop, *, content=None):
+        content = self._content if content is None else content
         if target == self.atoms['TARGETS']:
-            if self._content is None:
+            if content is None:
                 return False
             requestor.change_property(prop, Xatom.ATOM, 32,
-                [self.atoms[name] for name, _ in self._content.formats] +
+                [self.atoms[name] for name, _ in content.formats] +
                 [self.atoms[name] for name in ('TARGETS', 'TIMESTAMP', 'MULTIPLE')] +
-                ([self.atoms['TEXT']] if self._content.get('UTF8_STRING') is not None else []))
+                ([self.atoms['TEXT']] if content.get('UTF8_STRING') is not None else []))
             return True
         if target == self.atoms['TIMESTAMP']:
             requestor.change_property(prop, Xatom.INTEGER, 32, [self._timestamp])
-            return self._content is not None
+            return content is not None
         name = self.names.get(target)
         if name == 'TEXT':
             name, target = 'UTF8_STRING', self.atoms['UTF8_STRING']
-        value = self._content.get(name) if self._content and name in FORMATS else None
+        value = content.get(name) if content and name in FORMATS else None
         if value is None:
             return False
         if len(value) <= self.chunk_size:
@@ -590,6 +605,37 @@ class SelectionBridge:
             # A paste client can close while waiting for the copied formats.
             pass
 
+    def _serve_pending(self, ev):
+        """Serve a fully acquired new target without waiting for other targets."""
+        source = getattr(self.hub, 'clipboard_read_source', None)
+        if (source is None or not source._ok or
+                source._read_revision != self.hub.clipboard_read_revision or
+                time.monotonic() > source._read_deadline):
+            return False
+        name = self.names.get(ev.target)
+        if name == 'TARGETS' and source._read_known_targets:
+            # Only this metadata request may use the empty placeholders.
+            content = Content({target: b'' for target in source._read_targets})
+        elif name in (*FORMATS, 'TEXT'):
+            target = 'UTF8_STRING' if name == 'TEXT' else name
+            if target not in source._read_formats:
+                return False
+            content = Content(source._read_formats)
+        else:
+            # MULTIPLE retains its complete-bundle behavior.
+            return False
+        try:
+            owner = source.d.get_selection_owner(source.atoms['CLIPBOARD'])
+            if not owner or owner.id != source._read_owner:
+                return False
+            prop = ev.property or ev.target
+            if not self._write_target(ev.requestor, ev.target, prop, content=content):
+                return False
+            self._notify(ev, prop)
+            return True
+        except Exception:
+            return False
+
     def _serve(self, ev, *, deferred=False):
         prop = ev.property or ev.target
         served = False
@@ -600,6 +646,8 @@ class SelectionBridge:
                     ev.selection == self.atoms['CLIPBOARD'] and
                     ev.target in (self.atoms[name] for name in
                                   (*FORMATS, 'TARGETS', 'TEXT', 'MULTIPLE'))):
+                if self._serve_pending(ev):
+                    return
                 if len(self._pending_requests) < MAX_TRANSFERS:
                     ev.requestor.change_attributes(event_mask=X.PropertyChangeMask | X.StructureNotifyMask)
                     self._pending_requests.append({'event': ev, 'revision': pending,

@@ -136,6 +136,7 @@ class Desk:
         self.clipboard_content = Content({})
         self.clipboard_revision = 0
         self.clipboard_read_revision = None
+        self.clipboard_read_source = None
         self._clipboard_pending_sinks = []
         self._content_sinks = []
         self._clip_sinks = []         # realms that mirror the hub (XPanes, host)
@@ -204,9 +205,10 @@ class Desk:
         if sink in self._content_sinks:
             self._content_sinks.remove(sink)
 
-    def begin_clipboard_read(self):
+    def begin_clipboard_read(self, source=None):
         self.clipboard_revision += 1
         self.clipboard_read_revision = self.clipboard_revision
+        self.clipboard_read_source = source
         for callback in tuple(self._clipboard_pending_sinks):
             callback()
         return self.clipboard_revision
@@ -221,6 +223,7 @@ class Desk:
     def end_clipboard_read(self, revision):
         if self.clipboard_read_revision == revision:
             self.clipboard_read_revision = None
+            self.clipboard_read_source = None
 
     def set_clipboard(self, text, source=None):
         self.set_clipboard_content(Content.from_text(text), source=source)
@@ -229,6 +232,7 @@ class Desk:
         """Publish one clipboard with byte-preserving alternate formats."""
         self.clipboard_revision += 1
         self.clipboard_read_revision = None
+        self.clipboard_read_source = None
         self.clipboard_content = content
         self.clipboard = content.text
         has_text = any(content.get(name) is not None for name in

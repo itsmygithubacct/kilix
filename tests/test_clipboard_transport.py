@@ -160,6 +160,34 @@ class ClipboardTransportTests(unittest.TestCase):
         self.assertEqual(self.receive('UTF8_STRING')[0], '世界 héllo'.encode())
         self.assertTrue(all(bridge._ok for bridge in self.bridges))
 
+    def test_readable_callback_drains_events_buffered_during_a_reply(self):
+        bridge = self.bridges[0]
+        self.pump(lambda: all(item._owns_selection() for item in self.bridges))
+        while bridge.d.pending_events():
+            bridge._handle(bridge.d.next_event())
+        first, second = [bridge.d.intern_atom(name) for name in
+                         ('_BUFFERED_FIRST', '_BUFFERED_SECOND')]
+        received = []
+        handle = bridge._handle
+
+        def observe(ev):
+            handle(ev)
+            if ev.type == X.PropertyNotify and ev.window.id == bridge.win.id:
+                received.append(ev.atom)
+                if ev.atom == first:
+                    bridge.win.change_property(second, Xatom.INTEGER, 8, b'')
+                    # Replies can read the next event into python-xlib's
+                    # buffer, leaving no socket readiness for select().
+                    bridge.d.sync()
+
+        bridge.win.change_property(first, Xatom.INTEGER, 8, b'')
+        bridge.d.sync()
+        with mock.patch.object(bridge, '_handle', side_effect=observe):
+            bridge._on_readable()
+        self.assertIn(first, received)
+        self.assertIn(second, received,
+                      'Buffered clipboard events must not wait for another socket wakeup')
+
     def test_file_formats_and_reverse_direction(self):
         content = clip.Content.from_files(['/tmp/a b', '/tmp/é'], cut=True)
         self.owner(content, which=1)
@@ -194,6 +222,64 @@ class ClipboardTransportTests(unittest.TestCase):
 
     def test_first_paste_in_new_empty_pane_waits_for_in_progress_copy(self):
         self._pending_copy_paste(abort=False, previous=False)
+
+    def test_ready_format_pastes_while_another_format_is_still_being_collected(self):
+        self.hub.set_clipboard_content(clip.Content.from_text('previous value'))
+        self.pump(lambda: all(bridge._owns_selection() for bridge in self.bridges))
+        source, destination = (session.xd for session in self.sessions)
+        owner = source.screen().root.create_window(-10, -10, 1, 1, 0, X.CopyFromParent,
+            window_class=X.InputOnly, visual=X.CopyFromParent)
+        requestor = destination.screen().root.create_window(-10, -10, 1, 1, 0, X.CopyFromParent,
+            window_class=X.InputOnly, visual=X.CopyFromParent)
+        requests, notices = [], []
+
+        def observe():
+            while source.pending_events():
+                ev = source.next_event()
+                if ev.type == X.SelectionRequest:
+                    requests.append(ev)
+            while destination.pending_events():
+                ev = destination.next_event()
+                if ev.type == X.SelectionNotify and ev.requestor.id == requestor.id:
+                    notices.append(ev)
+
+        def answer(value, property_type, width):
+            request = requests.pop(0)
+            request.requestor.change_property(request.property, property_type, width, value)
+            request.requestor.send_event(xevent.SelectionNotify(time=request.time,
+                requestor=request.requestor.id, selection=request.selection,
+                target=request.target, property=request.property))
+            source.flush()
+
+        try:
+            owner.set_selection_owner(source.intern_atom('CLIPBOARD'), X.CurrentTime)
+            source.flush()
+            self.pump(lambda: (observe() or bool(requests)))
+            answer([source.intern_atom('UTF8_STRING'), source.intern_atom('image/png')],
+                   Xatom.ATOM, 32)
+            self.pump(lambda: (observe() or bool(requests)))
+            prop = destination.intern_atom('_READY_FORMAT_TARGETS')
+            requestor.convert_selection(destination.intern_atom('CLIPBOARD'),
+                destination.intern_atom('TARGETS'), prop, X.CurrentTime)
+            destination.flush()
+            self.pump(lambda: (observe() or bool(notices)))
+            self.assertEqual(notices[0].property, prop)
+            targets = requestor.get_property(prop, X.AnyPropertyType, 0, 256)
+            self.assertIn(destination.intern_atom('UTF8_STRING'), targets.value)
+            self.assertIn(destination.intern_atom('image/png'), targets.value)
+            expected = 'new café 世界'.encode() * 10000
+            # A complete large UTF-8 representation becomes available while
+            # the owner still withholds an independent PNG representation.
+            answer(expected, source.intern_atom('UTF8_STRING'), 8)
+            self.pump(lambda: (observe() or bool(requests)))
+            self.assertEqual(requests[0].target, source.intern_atom('image/png'))
+            self.assertEqual(self.hub.content.text, 'previous value')
+            self.assertIsNotNone(self.hub.clipboard_read_revision)
+            self.assertEqual(self.receive('UTF8_STRING')[0], expected)
+            self.assertEqual(self.hub.content.text, 'previous value')
+        finally:
+            requestor.destroy(); destination.flush()
+            owner.destroy(); source.flush()
 
     def _pending_copy_paste(self, *, abort, previous=True):
         if previous:
