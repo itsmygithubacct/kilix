@@ -12,7 +12,7 @@
 
 _kilix_find_real_browser() {
   local candidate resolved
-  for candidate in google-chrome chromium-browser firefox-esr; do
+  for candidate in google-chrome chromium chromium-browser firefox-esr; do
     resolved="$(command -v "$candidate" 2>/dev/null)" || continue
     if [ -n "$resolved" ] && [ -x "$resolved" ]; then
       printf '%s\n' "$resolved"
@@ -72,7 +72,7 @@ _kilix_exec_real_browser() {
   done
 
   case "${browser##*/}" in
-    firefox-esr)
+    firefox|firefox-esr)
       if [ "$private" = 1 ]; then
         arguments=(--private-window "${arguments[@]}")
       fi ;;
@@ -94,6 +94,9 @@ _kilix_exec_real_browser() {
           exec "${KILIX_HOME}/kilix" run "$browser" "${arguments[@]}"
         fi ;;
     esac
+  fi
+  if [ "${KILIX_PRIVATE_XAPP:-}" = 1 ] && [ -n "${KILIX_PORTAL_HOST_BUS:-}" ]; then
+    exec python3 "${KILIX_HOME}/config/kilix_sdk/browser_portals.py" -- "$browser" "${arguments[@]}"
   fi
   exec "$browser" "${arguments[@]}"
 }

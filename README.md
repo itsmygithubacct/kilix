@@ -48,8 +48,13 @@ translated request/session handles, and Unix file-descriptor forwarding.
 Disconnecting a client or killing its app releases its capture sessions. This
 relay requires the system Python's GIO bindings (`python3-gi` on Debian); the
 stream dependency installer includes them. A private XID is not forwarded as
-the parent of a physical-session dialog. Capture integration has component VM
-evidence; browser and installed default-desktop acceptance remain pending.
+the parent of a physical-session dialog. Firefox in a private pane uses the
+system portal for screen capture while its GUI stays on X11. This browser-only
+compatibility context uses an unreachable Wayland display path and preserves
+the normal browser and desktop permission dialogs. The SDK launcher and
+`kilix open-url` from an existing private pane share this policy. Firefox ESR
+capture and Stop sharing have component VM evidence; Chromium and installed
+default-desktop acceptance remain pending.
 
 ## Release 0.2.1
 
@@ -1375,7 +1380,7 @@ kilix browse --incognito site.com   # compatible spelling; same policy
 ```
 
 Both commands launch the first installed browser in this fixed order:
-`google-chrome`, `chromium-browser`, then `firefox-esr`. `--incognito` is
+`google-chrome`, `chromium`, `chromium-browser`, then `firefox-esr`. `--incognito` is
 translated to Firefox's `--private-window` spelling when necessary.
 
 Only when none of those real browsers is available does Kilix use its
