@@ -93,7 +93,10 @@ the space occupied by native pane chrome. The SDK refreshes a surviving
 broker client's route before selecting its pane, validates identity and bounds,
 and maps canvas rectangles to physical X11 coordinates. Hidden panes, changed
 terminal grids and unavailable screen origins are refused. Installed coordinate
-and text hit-testing qualification remains pending.
+and text hit-testing qualification remains pending. X11 button events update
+the cursor from their own client coordinates before dispatch, so a click after
+a pointer warp or window move cannot reuse an older motion sample. Relative
+input with a disabled cursor retains its accumulated position.
 
 Broker-backed SDK clients can refresh their remote-control route after the
 original frontend exits. The replacement frontend's live attach process must
