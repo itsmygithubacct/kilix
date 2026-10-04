@@ -82,10 +82,18 @@ Managed private application buses also forward the physical session's
 accessibility discovery and status service. GTK/ATK applications can join the
 same AT-SPI registry as the session's screen reader while their application
 singleton names remain private. Status properties and change signals retain
-their types; discovery calls are bounded. This supplies the native-toolkit
-connection, not an accessible tree for the pixel desktop or native Kilix
-chrome; their semantic integration and screen-reader qualification remain
-RC5 work.
+their types; discovery calls are bounded. The matching Kilix 95 candidate
+exposes its live pixel-shell tree separately. Native Kilix chrome, broader
+toolkit and input workflows, and complete screen-reader acceptance remain RC5 work.
+
+The native candidate also provides `get-pane-geometry`, consumed through
+`kilix_sdk.geometry.current()`. It reports the actual pane content bounds,
+cells, visibility, OS window origin and framebuffer/window sizes, including
+the space occupied by native pane chrome. The SDK refreshes a surviving
+broker client's route before selecting its pane, validates identity and bounds,
+and maps canvas rectangles to physical X11 coordinates. Hidden panes, changed
+terminal grids and unavailable screen origins are refused. Installed coordinate
+and text hit-testing qualification remains pending.
 
 Broker-backed SDK clients can refresh their remote-control route after the
 original frontend exits. The replacement frontend's live attach process must
