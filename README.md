@@ -48,13 +48,15 @@ translated request/session handles, and Unix file-descriptor forwarding.
 Disconnecting a client or killing its app releases its capture sessions. This
 relay requires the system Python's GIO bindings (`python3-gi` on Debian); the
 stream dependency installer includes them. A private XID is not forwarded as
-the parent of a physical-session dialog. Firefox in a private pane uses the
-system portal for screen capture while its GUI stays on X11. This browser-only
+the parent of a physical-session dialog. Firefox and Chromium browsers in private panes use the
+system portal for screen capture while their GUIs stay on X11. This browser-only
 compatibility context uses an unreachable Wayland display path and preserves
 the normal browser and desktop permission dialogs. The SDK launcher and
-`kilix open-url` from an existing private pane share this policy. Firefox ESR
-capture and Stop sharing have component VM evidence; Chromium and installed
-default-desktop acceptance remain pending.
+`kilix open-url` from an existing private pane share this policy. Chromium's Ozone
+platform is explicitly X11; its profile, sandbox and permission settings are retained.
+Firefox ESR capture, cancellation and Stop sharing have bounded installed
+default-desktop VM evidence. Chromium's policy has regression coverage; its
+installed default-desktop acceptance remains pending.
 
 Managed GTK applications using `GtkFileChooserNative` select desktop portal
 file choosers when a physical-session bus route is available. An explicit `GTK_USE_PORTAL=0` is
