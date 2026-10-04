@@ -13,6 +13,13 @@ from gi.repository import Gio, GLib
 NAME = "org.freedesktop.portal.Desktop"
 ROOT = "/org/freedesktop/portal/desktop"
 IFACE = "org.freedesktop.portal.BridgeFixture"
+A11Y = 'org.a11y.Bus'
+A11Y_PATH = '/org/a11y/bus'
+STATUS = 'org.a11y.Status'
+A11Y_XML = '''<node><interface name="org.a11y.Bus">
+<method name="GetAddress"><arg direction="out" type="s"/></method></interface>
+<interface name="org.a11y.Status"><property name="IsEnabled" type="b" access="readwrite"/>
+<property name="ScreenReaderEnabled" type="b" access="readwrite"/></interface></node>'''
 XML = '''<node><interface name="org.freedesktop.portal.BridgeFixture">
 <method name="Create"><arg direction="in" type="s"/><arg direction="out" type="o"/></method>
 <method name="ExchangeFD"><arg direction="in" type="h"/><arg direction="out" type="h"/></method>
@@ -37,6 +44,23 @@ def client():
                               None, Gio.DBusCallFlags.NONE, 5000, None).unpack()[0]
     assert singleton == 1, 'Application singleton name escaped its private bus'
     assert call(bus, 'Singleton', None).unpack()[0] is True
+    address = bus.call_sync(A11Y, A11Y_PATH, A11Y, 'GetAddress', None, None,
+                           Gio.DBusCallFlags.NONE, 5000, None).unpack()[0]
+    assert address == os.environ['KILIX_PORTAL_HOST_BUS'], 'Accessibility registry was private'
+    properties='org.freedesktop.DBus.Properties'
+    changed=[]
+    bus.signal_subscribe(A11Y, properties, 'PropertiesChanged', A11Y_PATH, STATUS,
+                         Gio.DBusSignalFlags.NONE, lambda *_args: changed.append(_args[-1]))
+    bus.call_sync(A11Y,A11Y_PATH,properties,'Set',
+                  GLib.Variant('(ssv)',(STATUS,'ScreenReaderEnabled',GLib.Variant('b',True))),
+                  None,Gio.DBusCallFlags.NONE,5000,None)
+    enabled=bus.call_sync(A11Y,A11Y_PATH,properties,'GetAll',GLib.Variant('(s)',(STATUS,)),
+                          None,Gio.DBusCallFlags.NONE,5000,None).unpack()[0]
+    assert enabled['ScreenReaderEnabled'] is True
+    deadline=time.monotonic()+2
+    while not changed and time.monotonic()<deadline:
+        GLib.MainContext.default().iteration(False);time.sleep(.01)
+    assert changed and changed[-1].unpack()[1]['ScreenReaderEnabled'] is True
     with tempfile.TemporaryFile() as supplied:
         supplied.write(b'private-to-host')
         supplied.flush()
@@ -65,6 +89,8 @@ def client():
     Path(os.environ['BRIDGE_FIXTURE_PROOF']).write_text(json.dumps({
         'request_session_identity': True, 'fd_in_and_out': True,
         'singleton_names_remain_private': True, 'two_clients_have_separate_host_connections': True,
+        'accessibility_discovery_uses_physical_registry': True,
+        'accessibility_status_properties_and_signals_stay_typed': True,
         'app_pid': os.getpid()}))
     # Leave this session open; hard-killing the app must close it and relay.
     call(bus, 'Create', GLib.Variant('(s)', ('death',)))
@@ -77,6 +103,23 @@ def host(bridge):
     bus.call_sync('org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus',
                   'RequestName', GLib.Variant('(su)', (NAME, 4)), None,
                   Gio.DBusCallFlags.NONE, 5000, None)
+    bus.call_sync('org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus',
+                  'RequestName', GLib.Variant('(su)', (A11Y, 4)), None,
+                  Gio.DBusCallFlags.NONE, 5000, None)
+    status={'IsEnabled':False,'ScreenReaderEnabled':False}
+    def a11y_dispatch(_bus,_sender,_path,_interface,method,_args,invocation):
+        assert method=='GetAddress'
+        invocation.return_value(GLib.Variant('(s)',(os.environ['DBUS_SESSION_BUS_ADDRESS'],)))
+    def get_status(_bus,_sender,_path,_interface,name):
+        return GLib.Variant('b',status[name])
+    def set_status(_bus,_sender,_path,_interface,name,value):
+        status[name]=value.unpack()
+        bus.emit_signal(None,A11Y_PATH,'org.freedesktop.DBus.Properties','PropertiesChanged',
+                         GLib.Variant('(sa{sv}as)',(STATUS,{name:value},[])))
+        return True
+    info=Gio.DBusNodeInfo.new_for_xml(A11Y_XML)
+    bus.register_object(A11Y_PATH,info.interfaces[0],a11y_dispatch,None,None)
+    bus.register_object(A11Y_PATH,info.interfaces[1],None,get_status,set_status)
     bus.call_sync('org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus',
                   'RequestName', GLib.Variant('(su)', ('org.example.Singleton', 4)), None,
                   Gio.DBusCallFlags.NONE, 5000, None)

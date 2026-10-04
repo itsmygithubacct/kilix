@@ -6,7 +6,8 @@ other names (including GtkApplication names) stay on the private bus. The relay
 uses GIO messages so Unix file descriptors retain their handle indices.
 
 Native notifications use caller-specific identifiers and signal delivery.
-The launcher waits for ownership of both private service names before execing
+Accessibility discovery reaches the physical session's AT-SPI registry.
+The launcher waits for ownership of the private service names before execing
 the app. Linux parent-death notification ties the relay to that app, even on SIGKILL.
 """
 from __future__ import annotations
@@ -24,11 +25,13 @@ import threading
 
 
 if __package__:
+    from . import accessibility_bus
     from .notifications import (
         NativeNotifications, NotificationState,
         NAME as NOTIFICATIONS, PATH as NOTIFICATION_PATH,
     )
 else:
+    import accessibility_bus
     from notifications import (
         NativeNotifications, NotificationState,
         NAME as NOTIFICATIONS, PATH as NOTIFICATION_PATH,
@@ -157,7 +160,7 @@ class PortalRelay:
             "org.freedesktop.DBus", "org.freedesktop.DBus", "NameOwnerChanged",
             "/org/freedesktop/DBus", None, Gio.DBusSignalFlags.NONE, self.owner_changed)
         self.filter_id = self.private.add_filter(self.filter_message, None)
-        for name in (PORTAL, NOTIFICATIONS):
+        for name in (PORTAL, NOTIFICATIONS, accessibility_bus.NAME):
             response = self.private.call_sync(
                 "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
                 "RequestName", GLib.Variant("(su)", (name, 4)), GLib.VariantType.new("(u)"),
@@ -183,7 +186,8 @@ class PortalRelay:
 
     def filter_message(self, connection, message, incoming, _data):
         if (not incoming or message.get_message_type() != self.Gio.DBusMessageType.METHOD_CALL
-                or message.get_destination() not in (PORTAL, NOTIFICATIONS, connection.get_unique_name())):
+                or message.get_destination() not in (PORTAL, NOTIFICATIONS, accessibility_bus.NAME,
+                                                     connection.get_unique_name())):
             return message
         # GIO invokes filters on its message thread. All relay state and I/O
         # work runs in the main context, without blocking that thread.
@@ -213,7 +217,8 @@ class PortalRelay:
             self.release_message(original)
             return False
         name = original.get_sender() or ""
-        if not _UNIQUE.fullmatch(name) or not (portal_path(original.get_path() or "") or original.get_path() == NOTIFICATION_PATH):
+        if not _UNIQUE.fullmatch(name) or not (portal_path(original.get_path() or "")
+                or original.get_path() in (NOTIFICATION_PATH, accessibility_bus.PATH)):
             self.error(original, "Not a desktop portal object",
                        "org.freedesktop.DBus.Error.UnknownObject")
             return False
@@ -284,6 +289,10 @@ class PortalRelay:
             "/org/freedesktop/DBus", PORTAL, self.Gio.DBusSignalFlags.NONE,
             self.frontend_changed, client)
         self.notifications.connect(client)
+        connection.signal_subscribe(
+            accessibility_bus.NAME, accessibility_bus.PROPERTIES, 'PropertiesChanged',
+            accessibility_bus.PATH, accessibility_bus.STATUS, self.Gio.DBusSignalFlags.NONE,
+            self.accessibility_status_changed, client)
         waiting, client.waiting = client.waiting, []
         for original in waiting:
             self.send(client, original)
@@ -297,9 +306,14 @@ class PortalRelay:
         if original.get_path() == NOTIFICATION_PATH:
             self.notifications.send(client, original)
             return
+        accessibility = original.get_path() == accessibility_bus.PATH
+        if accessibility and not accessibility_bus.allowed(original):
+            self.error(original, 'Invalid accessibility discovery method or arguments',
+                       'org.freedesktop.DBus.Error.InvalidArgs')
+            return
         message = original.copy()
         message.set_sender(None)
-        message.set_destination(PORTAL)
+        message.set_destination(accessibility_bus.NAME if accessibility else PORTAL)
         try:
             message.set_path(translate_path(message.get_path(), client.name, connection.get_unique_name(), strict=True))
             if message.get_body() is not None:
@@ -317,13 +331,17 @@ class PortalRelay:
                 return
             client.inflight += 1
             connection.send_message_with_reply(
-                message, self.Gio.DBusSendMessageFlags.NONE, 2 ** 31 - 1,
+                message, self.Gio.DBusSendMessageFlags.NONE, 1500 if accessibility else 2 ** 31 - 1,
                 client.cancellable, self.replied, (client, original))
         except self.GLib.Error:
             if expects_reply:
                 client.inflight -= 1
             self.error(original, "Desktop portal connection unavailable")
             self.close_client(client, notify=True)
+
+    def accessibility_status_changed(self, _connection, _sender, _path, _interface, _member, body, client):
+        if self.clients.get(client.name) is client and accessibility_bus.status_signal(body):
+            self.emit(client, accessibility_bus.PATH, accessibility_bus.PROPERTIES, 'PropertiesChanged', body)
 
     def replied(self, connection, result, state):
         client, original = state

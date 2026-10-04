@@ -78,6 +78,15 @@ GTK windows on separate private displays have component VM evidence for large
 text and image exchange; cross-app drag/drop and installed default-desktop
 acceptance remain pending.
 
+Managed private application buses also forward the physical session's
+accessibility discovery and status service. GTK/ATK applications can join the
+same AT-SPI registry as the session's screen reader while their application
+singleton names remain private. Status properties and change signals retain
+their types; discovery calls are bounded. This supplies the native-toolkit
+connection, not an accessible tree for the pixel desktop or native Kilix
+chrome; their semantic integration and screen-reader qualification remain
+RC5 work.
+
 Broker-backed SDK clients can refresh their remote-control route after the
 original frontend exits. The replacement frontend's live attach process must
 match the caller's exact private broker runtime and session, executable, user,
