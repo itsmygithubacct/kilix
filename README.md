@@ -78,6 +78,13 @@ GTK windows on separate private displays have component VM evidence for large
 text and image exchange; cross-app drag/drop and installed default-desktop
 acceptance remain pending.
 
+Broker-backed SDK clients can refresh their remote-control route after the
+original frontend exits. The replacement frontend's live attach process must
+match the caller's exact private broker runtime and session, executable, user,
+and process identities. Only the route, window identity, public key, and
+password-file path are refreshed; normal remote-control authentication remains
+required. Kilix 95's matching candidate applies this before launching tabs.
+
 ## Release 0.2.1
 
 Prepared 2026-08-25 for the coordinated Plebian-OS 0.2.1 release. The supported

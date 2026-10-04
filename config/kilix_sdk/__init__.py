@@ -51,6 +51,7 @@ __all__ = [
     "IncompatibleSDKError",
     "clipboard",
     "content",
+    "frontend_context",
     "graphics",
     "panes",
     "paths",
