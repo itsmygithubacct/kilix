@@ -186,6 +186,113 @@ class ClipboardTransportTests(unittest.TestCase):
         stalled.destroy()
         d.flush()
 
+    def test_paste_during_copy_waits_for_new_complete_content(self):
+        self._pending_copy_paste(abort=False)
+
+    def test_failed_pending_copy_refuses_paste_instead_of_returning_old_data(self):
+        self._pending_copy_paste(abort=True)
+
+    def _pending_copy_paste(self, *, abort):
+        self.hub.set_clipboard_content(clip.Content.from_text('previous value'))
+        self.pump(lambda: all(bridge._owns_selection() for bridge in self.bridges))
+        source, destination = (session.xd for session in self.sessions)
+        owner = source.screen().root.create_window(-10,-10,1,1,0,X.CopyFromParent,
+            window_class=X.InputOnly,visual=X.CopyFromParent)
+        requestor = destination.screen().root.create_window(-10,-10,1,1,0,X.CopyFromParent,
+            window_class=X.InputOnly,visual=X.CopyFromParent,event_mask=X.PropertyChangeMask)
+        owner.set_selection_owner(source.intern_atom('CLIPBOARD'), X.CurrentTime)
+        source.flush()
+        source_requests = []
+        notices = []
+        prop = destination.intern_atom('_PASTE_DURING_COPY')
+        request_time = []
+        def observe():
+            while source.pending_events():
+                ev = source.next_event()
+                if ev.type == X.SelectionRequest: source_requests.append(ev)
+            while destination.pending_events():
+                ev = destination.next_event()
+                if ev.type == X.SelectionNotify and ev.requestor.id == requestor.id:
+                    notices.append(ev)
+                if ev.type == X.PropertyNotify and ev.window.id == requestor.id:
+                    request_time.append(ev.time)
+            return False
+        try:
+            self.pump(lambda: (observe() or bool(source_requests)))
+            requestor.change_property(prop,Xatom.INTEGER,8,b'timestamp')
+            destination.flush()
+            self.pump(lambda: (observe() or bool(request_time)))
+            requestor.convert_selection(destination.intern_atom('CLIPBOARD'),
+                destination.intern_atom('UTF8_STRING'), prop, request_time[-1])
+            destination.flush()
+            deadline = time.monotonic() + .1
+            self.pump(lambda: (observe() or time.monotonic() >= deadline))
+            self.assertEqual(notices, [], 'Paste returned the previous value before the new copy completed')
+            answer = source_requests.pop(0)
+            if not abort:
+                answer.requestor.change_property(answer.property, Xatom.ATOM, 32,
+                    [source.intern_atom('UTF8_STRING')])
+            answer.requestor.send_event(xevent.SelectionNotify(time=answer.time,
+                requestor=answer.requestor.id, selection=answer.selection,
+                target=answer.target, property=0 if abort else answer.property))
+            source.flush()
+            if not abort:
+                self.pump(lambda: (observe() or bool(source_requests)))
+                answer = source_requests.pop(0)
+                answer.requestor.change_property(answer.property, source.intern_atom('UTF8_STRING'),
+                    8, 'new café 世界'.encode())
+                answer.requestor.send_event(xevent.SelectionNotify(time=answer.time,
+                    requestor=answer.requestor.id, selection=answer.selection,
+                    target=answer.target, property=answer.property))
+                source.flush()
+            else:
+                # TARGETS refusal triggers the supported legacy text fallback.
+                def refuse_remaining():
+                    observe()
+                    for answer in source_requests[:]:
+                        answer.requestor.send_event(xevent.SelectionNotify(time=answer.time,
+                            requestor=answer.requestor.id,selection=answer.selection,
+                            target=answer.target,property=0))
+                        source_requests.remove(answer)
+                    source.flush()
+                    return bool(notices)
+                self.pump(refuse_remaining)
+            self.pump(lambda: (observe() or bool(notices)))
+            if abort:
+                self.assertEqual(notices[0].property, 0)
+                self.assertEqual(self.hub.content.text, 'previous value')
+            else:
+                self.assertEqual(notices[0].property, prop)
+                self.assertEqual(bytes(requestor.get_property(prop,X.AnyPropertyType,0,1024).value),
+                    'new café 世界'.encode())
+        finally:
+            requestor.destroy();destination.flush();owner.destroy();source.flush()
+
+    def test_pending_paste_expires_without_returning_previous_content(self):
+        self.hub.set_clipboard_content(clip.Content.from_text('previous value'))
+        self.pump(lambda: all(bridge._owns_selection() for bridge in self.bridges))
+        source,destination=(session.xd for session in self.sessions)
+        owner=source.screen().root.create_window(-10,-10,1,1,0,X.CopyFromParent,
+            window_class=X.InputOnly,visual=X.CopyFromParent)
+        req=destination.screen().root.create_window(-10,-10,1,1,0,X.CopyFromParent,
+            window_class=X.InputOnly,visual=X.CopyFromParent)
+        notices=[]
+        try:
+            owner.set_selection_owner(source.intern_atom('CLIPBOARD'),X.CurrentTime);source.flush()
+            self.pump(lambda:self.bridges[0]._incoming is not None)
+            req.convert_selection(destination.intern_atom('CLIPBOARD'),destination.intern_atom('UTF8_STRING'),
+                destination.intern_atom('_EXPIRED_PASTE'),X.CurrentTime);destination.flush()
+            def expired():
+                while destination.pending_events():
+                    ev=destination.next_event()
+                    if ev.type==X.SelectionNotify and ev.requestor.id==req.id:notices.append(ev)
+                return bool(notices)
+            with mock.patch.object(clip,'TRANSFER_TIMEOUT',.05):self.pump(expired)
+            self.assertEqual(notices[0].property,0)
+            self.assertEqual(self.hub.content.text,'previous value')
+        finally:
+            req.destroy();destination.flush();owner.destroy();source.flush()
+
     def test_outgoing_incr_survives_new_copy_and_expires_when_abandoned(self):
         original = b'old image' * 20000
         self.hub.set_clipboard_content(clip.Content({'image/png': original}))

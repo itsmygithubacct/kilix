@@ -124,6 +124,7 @@ class Hub:
         self.fd_hooks = {}
         self.tick_hooks = []
         self.clipboard_revision = 0
+        self.clipboard_read_revision = None
 
     def add_fd(self, fd, callback):
         self.fd_hooks[fd] = callback
@@ -140,10 +141,16 @@ class Hub:
 
     def begin_clipboard_read(self):
         self.clipboard_revision += 1
+        self.clipboard_read_revision = self.clipboard_revision
         return self.clipboard_revision
+
+    def end_clipboard_read(self, revision):
+        if self.clipboard_read_revision == revision:
+            self.clipboard_read_revision = None
 
     def set_clipboard_content(self, content, source=None):
         self.clipboard_revision += 1
+        self.clipboard_read_revision = None
         self.content = content
         for callback in tuple(self._sinks):
             if callback != source:
@@ -182,6 +189,7 @@ class SelectionBridge:
         self._read_known_targets = False
         self._read_owner = 0
         self._outgoing = {}
+        self._pending_requests = []
         self._generation = 0
         try:
             with xauthority_env(xauthority):
@@ -259,6 +267,19 @@ class SelectionBridge:
         for key, transfer in tuple(self._outgoing.items()):
             if now > transfer['deadline'] or now > transfer['hard_deadline']:
                 self._outgoing.pop(key, None)
+        pending = getattr(self.hub, 'clipboard_read_revision', None)
+        for request in tuple(self._pending_requests):
+            if now > request['deadline']:
+                self._pending_requests.remove(request)
+                self._notify(request['event'], 0)
+            elif pending is None:
+                self._pending_requests.remove(request)
+                if self.hub.clipboard_revision == request['revision']:
+                    # Acquisition failed: the last clipboard is retained in
+                    # the hub, but must not masquerade as the attempted copy.
+                    self._notify(request['event'], 0)
+                else:
+                    self._serve(request['event'], deferred=True)
 
     def _handle(self, ev):
         # python-xlib constructs display-specific event classes, so matching
@@ -298,12 +319,19 @@ class SelectionBridge:
             for key in tuple(self._outgoing):
                 if key[0] == ev.window.id:
                     self._outgoing.pop(key, None)
+            self._pending_requests[:] = [request for request in self._pending_requests
+                if request['event'].requestor.id != ev.window.id]
         elif ev.type == X.SelectionClear:
             # Existing outgoing transfers retain their immutable payload.
             if not self._claim and ((ev.time - self._timestamp) & 0xffffffff) < 0x80000000:
                 self._content = None
 
     def _abort_read(self):
+        revision = getattr(self, '_read_revision', None)
+        if revision is not None:
+            end = getattr(self.hub, 'end_clipboard_read', None)
+            if end is not None:
+                end(revision)
         if self._incoming:
             try:
                 self._incoming['window'].destroy()
@@ -337,6 +365,9 @@ class SelectionBridge:
                 content = Content(self._read_formats)
                 self._content = content
                 self.hub.set_clipboard_content(content, source=self._sink)
+            end = getattr(self.hub, 'end_clipboard_read', None)
+            if end is not None:
+                end(self._read_revision)
             self._read_formats = {}
             self._read_owner = 0
             return
@@ -505,11 +536,34 @@ class SelectionBridge:
         if not value:
             self._outgoing.pop(key, None)
 
-    def _serve(self, ev):
+    def _notify(self, ev, prop):
+        try:
+            ev.requestor.send_event(xevent.SelectionNotify(
+                time=ev.time, requestor=ev.requestor.id, selection=ev.selection,
+                target=ev.target, property=prop), onerror=lambda *_args: None)
+            self.d.flush()
+        except Exception:
+            # A paste client can close while waiting for the copied formats.
+            pass
+
+    def _serve(self, ev, *, deferred=False):
         prop = ev.property or ev.target
         served = False
         try:
-            valid_time = ev.time == X.CurrentTime or ((ev.time - self._timestamp) & 0xffffffff) < 0x80000000
+            valid_time = deferred or ev.time == X.CurrentTime or ((ev.time - self._timestamp) & 0xffffffff) < 0x80000000
+            pending = getattr(self.hub, 'clipboard_read_revision', None)
+            if (not deferred and pending is not None and valid_time and
+                    ev.selection == self.atoms['CLIPBOARD'] and
+                    ev.target in (self.atoms[name] for name in
+                                  (*FORMATS, 'TARGETS', 'TEXT', 'MULTIPLE'))):
+                if len(self._pending_requests) < MAX_TRANSFERS:
+                    ev.requestor.change_attributes(event_mask=X.PropertyChangeMask | X.StructureNotifyMask)
+                    self._pending_requests.append({'event': ev, 'revision': pending,
+                        'deadline': time.monotonic() + TRANSFER_TIMEOUT})
+                    self.d.flush()
+                    return
+                self._notify(ev, 0)
+                return
             if (ev.selection == self.atoms['CLIPBOARD'] and self._content is not None
                     and valid_time):
                 if ev.target == self.atoms['MULTIPLE'] and ev.property:
@@ -529,14 +583,14 @@ class SelectionBridge:
                     served = self._write_target(ev.requestor, ev.target, prop)
         except Exception:
             served = False
-        ev.requestor.send_event(xevent.SelectionNotify(
-            time=ev.time, requestor=ev.requestor.id, selection=ev.selection,
-            target=ev.target, property=prop if served else 0))
-        self.d.flush()
+        self._notify(ev, prop if served else 0)
 
     def close(self):
         self._ok = False
         self._abort_read()
+        for request in self._pending_requests:
+            self._notify(request['event'], 0)
+        self._pending_requests.clear()
         self._outgoing.clear()
         if self._fd is not None:
             self.hub.remove_fd(self._fd)

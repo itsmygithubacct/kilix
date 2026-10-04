@@ -135,6 +135,7 @@ class Desk:
         self.clipboard = ""
         self.clipboard_content = Content({})
         self.clipboard_revision = 0
+        self.clipboard_read_revision = None
         self._content_sinks = []
         self._clip_sinks = []         # realms that mirror the hub (XPanes, host)
         self.clip_host = None         # host-X CLIPBOARD bridge (set up in run())
@@ -204,7 +205,12 @@ class Desk:
 
     def begin_clipboard_read(self):
         self.clipboard_revision += 1
+        self.clipboard_read_revision = self.clipboard_revision
         return self.clipboard_revision
+
+    def end_clipboard_read(self, revision):
+        if self.clipboard_read_revision == revision:
+            self.clipboard_read_revision = None
 
     def set_clipboard(self, text, source=None):
         self.set_clipboard_content(Content.from_text(text), source=source)
@@ -212,6 +218,7 @@ class Desk:
     def set_clipboard_content(self, content, source=None):
         """Publish one clipboard with byte-preserving alternate formats."""
         self.clipboard_revision += 1
+        self.clipboard_read_revision = None
         self.clipboard_content = content
         self.clipboard = content.text
         has_text = any(content.get(name) is not None for name in
