@@ -54,9 +54,12 @@ compatibility context uses an unreachable Wayland display path and preserves
 the normal browser and desktop permission dialogs. The SDK launcher and
 `kilix open-url` from an existing private pane share this policy. Chromium's Ozone
 platform is explicitly X11; its profile, sandbox and permission settings are retained.
-Firefox ESR capture, cancellation and Stop sharing have bounded installed
-default-desktop VM evidence. Chromium's policy has regression coverage; its
-installed default-desktop acceptance remains pending.
+Firefox ESR and Chromium capture, cancellation, Stop sharing and source closure
+have bounded installed default-desktop VM evidence. Chromium also shares native
+dialogs within a minimized pane. Its browser preview and actual capture open
+separate portal sessions; this candidate asks for system consent for each, so
+answer the second picker after the browser's Share button. Multiple-source,
+display, lock and broader daily-use acceptance remains pending.
 
 Managed GTK applications using `GtkFileChooserNative` select desktop portal
 file choosers when a physical-session bus route is available. An explicit `GTK_USE_PORTAL=0` is
