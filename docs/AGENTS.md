@@ -3,7 +3,7 @@
 For an overview of human and agent routes through Kilix, see [Kilix Workflows](workflows/README.md). This guide covers the pane-agent interface and its version-specific evidence.
 
 **0.2.2 source-selection note:** the host toolkit installer and
-Content's package selection both use `75ce46b`. The richer
+Content's package selection both use `8b46104`. The richer
 `kilix panes list/dump/wait/send` and JSON interfaces described here require a
 compatible installed toolkit; the wrapper verb alone does not establish that
 it is installed. Use the [version-specific operation guide](help/operations/README.md)
