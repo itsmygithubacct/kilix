@@ -33,9 +33,10 @@ sys.pycache_prefix = _pycache
 from PIL import Image
 
 from kilix_sdk import require_compatible as require_kilix_sdk
+require_kilix_sdk("1.16")
 from kilix_sdk import graphics as kilix_graphics
+from kilix_sdk.clipboard import Content
 from kilix_sdk import term as kilix_term
-require_kilix_sdk("1.14")
 import icons
 import shell as shell_mod
 import taskbar as taskbar_mod
@@ -132,6 +133,9 @@ class Desk:
         self.dirty = True
         self.running = True
         self.clipboard = ""
+        self.clipboard_content = Content({})
+        self.clipboard_revision = 0
+        self._content_sinks = []
         self._clip_sinks = []         # realms that mirror the hub (XPanes, host)
         self.clip_host = None         # host-X CLIPBOARD bridge (set up in run())
         self.draw_cursor = draw_cursor
@@ -191,23 +195,42 @@ class Desk:
         if sink in self._clip_sinks:
             self._clip_sinks.remove(sink)
 
+    def add_content_sink(self, sink):
+        self._content_sinks.append(sink)
+
+    def remove_content_sink(self, sink):
+        if sink in self._content_sinks:
+            self._content_sinks.remove(sink)
+
+    def begin_clipboard_read(self):
+        self.clipboard_revision += 1
+        return self.clipboard_revision
+
     def set_clipboard(self, text, source=None):
-        """Publish `text` as the one clipboard. `source`, when given, is the
-        sink the copy came from — it is skipped in the fan-out so a read from
-        one realm never echoes straight back into it."""
-        self.clipboard = text
-        # OSC 52 mirrors to the host terminal/tabs — but only when no host X
-        # bridge is active, or the two would fight over the host CLIPBOARD
-        if self.term and self.clip_host is None:
-            b64 = base64.b64encode(text.encode()).decode()
+        self.set_clipboard_content(Content.from_text(text), source=source)
+
+    def set_clipboard_content(self, content, source=None):
+        """Publish one clipboard with byte-preserving alternate formats."""
+        self.clipboard_revision += 1
+        self.clipboard_content = content
+        self.clipboard = content.text
+        has_text = any(content.get(name) is not None for name in
+                       ("UTF8_STRING", "text/plain;charset=utf-8", "text/plain", "STRING"))
+        if self.term and self.clip_host is None and has_text:
+            b64 = base64.b64encode(content.text.encode()).decode()
             self.term.write(f"\x1b]52;c;{b64}\x07")
+        for sink in list(self._content_sinks):
+            if sink != source:
+                try:
+                    sink(content)
+                except Exception:
+                    pass
         for sink in list(self._clip_sinks):
-            if sink is source:
-                continue
-            try:
-                sink(text)
-            except Exception:
-                pass
+            if sink != source:
+                try:
+                    sink(content.text)
+                except Exception:
+                    pass
 
     def play_sound(self, name):
         """Fire-and-forget UI sound. No-op headless (term is None) or when the
@@ -683,7 +706,8 @@ class Desk:
             try:
                 import clipboard as clip_mod
                 self.clip_host = clip_mod.SelectionBridge(
-                    self, os.environ["DISPLAY"])
+                    self, os.environ.get("PLEB_DESKTOP_DISPLAY") or os.environ["DISPLAY"],
+                    os.environ.get("PLEB_DESKTOP_XAUTHORITY"), read_existing=True)
             except Exception:
                 self.clip_host = None
         try:

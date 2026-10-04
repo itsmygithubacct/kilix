@@ -107,7 +107,8 @@ class XPane(wm.Window):
             n = self.xapp.start_xvfb(nocursor=True)
             self.xd = self.xapp.connect()
             self._paint_root_chroma()
-            self.app = self.xapp.launch_app(cmd, env=env, cwd=cwd, isolate_bus=True)
+            self.app = self.xapp.launch_app(cmd, env=env, cwd=cwd, isolate_bus=True,
+                                              clipboard=False)
             self.inj = self.xapp.make_injector()
             started = self.xapp.start_capture(draw_cursor=False)
             self.capture = self.xapp.capture

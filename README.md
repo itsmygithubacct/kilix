@@ -56,6 +56,16 @@ the normal browser and desktop permission dialogs. The SDK launcher and
 capture and Stop sharing have component VM evidence; Chromium and installed
 default-desktop acceptance remain pending.
 
+Managed local application panes now mirror ordinary clipboard formats through
+SDK 1.16: Unicode text, PNG/JPEG images, and local file URI lists. The relay
+supports incremental X11 transfers, limits each clipboard value to 64 MiB, bounds in-flight transfers, and stops
+with its pane. Network broadcast modes leave the host clipboard disconnected.
+`KILIX_HOST_CLIP=0` disables host clipboard exchange. Kilix 95 and its built-in
+fallback use the same transport, including file-manager copy/cut/paste. Two
+GTK windows on separate private displays have component VM evidence for large
+text and image exchange; cross-app drag/drop and installed default-desktop
+acceptance remain pending.
+
 ## Release 0.2.1
 
 Prepared 2026-08-25 for the coordinated Plebian-OS 0.2.1 release. The supported

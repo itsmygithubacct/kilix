@@ -1,9 +1,8 @@
 """Unified clipboard: Desk hub fan-out + SelectionBridge branch logic.
 
-The hub is exercised on a real (headless) Desk. The bridge's X handlers are
-driven with object.__new__ and a fake Xlib display/window — no server — so
-every copy/paste/serve branch and the loop-guards run without an Xvfb. The
-live ICCCM handshake against a real selection still needs VM validation.
+The hub is exercised on a real headless Desk. The shared SDK tests exercise
+real authenticated X11 transfers; this provider verifies format preservation,
+source suppression and the terminal fallback.
 """
 import harness as H                 # noqa: sets sys.path for the imports below
 import clipboard
@@ -69,117 +68,43 @@ d.set_clipboard("noosc")
 assert not term.did("write"), "host bridge active: OSC 52 must be suppressed"
 
 
-# ── SelectionBridge: build a bare bridge over a fake display/window ──────────
-def bare_bridge():
-    b = object.__new__(clipboard.SelectionBridge)
-    b.desk = Rec()
-    b.d = Rec()
-    b.win = Rec(id=4242)
-    b._text = None
-    b._ok = True
-    b.A_CLIPBOARD = 1
-    b.A_UTF8 = 2
-    b.A_TARGETS = 3
-    b.A_TEXT = 4
-    b.A_STRING = Xatom.STRING
-    b.A_PROP = 9
-    return b
+# Rich clipboard values retain binary data and clear stale native text.
+content = clipboard.Content({'image/png': b'\x89PNG\r\n\x1a\n\0\xff'})
+received = []
+d.add_content_sink(received.append)
+d.set_clipboard_content(content)
+assert d.clipboard == ''
+assert d.clipboard_content == content
+assert received == [content]
+# A bound callback must be recognized when supplied as the source, even if
+# attribute access created a new bound-method object.
+class Sink:
+    def push(self, value):
+        raise AssertionError('clipboard echoed to its source')
+sink = Sink()
+d.add_content_sink(sink.push)
+d.set_clipboard_content(content, source=sink.push)
+d.remove_content_sink(sink.push)
+# Changing text replaces a previous file/image clipboard value.
+d.set_clipboard('new text')
+assert d.clipboard_content.get('image/png') is None
+assert d.clipboard_content.files[1] == ()
+# Explicitly clearing text also clears an OSC 52-only clipboard.
+d.clip_host = None
+term.calls.clear()
+d.set_clipboard('')
+assert term.did('write')
 
-
-# push(): take ownership + dedup + None-guard
-b = bare_bridge()
-b.push("abc")
-assert b._text == "abc"
-assert len(b.win.did("set_selection_owner")) == 1
-b.push("abc")                        # identical: no re-assert
-assert len(b.win.did("set_selection_owner")) == 1, "dedup must skip re-owning"
-b.push(None)
-assert len(b.win.did("set_selection_owner")) == 1
-
-# XFixes owner-change: our own push is ignored; a foreign owner triggers a read
-b = bare_bridge()
-mine = object.__new__(xfixes.SetSelectionOwnerNotify)
-mine.owner, mine.selection = b.win.id, b.A_CLIPBOARD
-b._handle(mine)
-assert not b.win.did("convert_selection"), "own ownership change must be ignored"
-
-foreign = object.__new__(xfixes.SetSelectionOwnerNotify)
-foreign.owner, foreign.selection = 777, b.A_CLIPBOARD
-b._handle(foreign)
-assert b.win.did("convert_selection"), "a foreign copy must start a read"
-
-# read reply: property → decoded text published to the hub with source=push
-b = bare_bridge()
-b.win._ret_get_full_property = Rec(value=b"pasted text")
-reply = Ev(type=X.SelectionNotify, property=b.A_PROP, target=b.A_UTF8)
-b._handle(reply)
-assert b._text == "pasted text"
-setc = b.desk.did("set_clipboard")
-assert setc and setc[0][1][0] == "pasted text", setc
-assert setc[0][2].get("source") == b.push, "must tag itself as the source"
-assert b.win.did("delete_property"), "property must be consumed after reading"
-
-# a read that matches what we already have must not re-publish (loop guard)
-b = bare_bridge()
-b._text = "same"
-b.win._ret_get_full_property = Rec(value=b"same")
-b._handle(Ev(type=X.SelectionNotify, property=b.A_PROP, target=b.A_UTF8))
-assert not b.desk.did("set_clipboard"), "unchanged read must not re-publish"
-
-# UTF8 refused (property==0) → fall back to STRING once
-b = bare_bridge()
-b._handle(Ev(type=X.SelectionNotify, property=0, target=b.A_UTF8))
-conv = b.win.did("convert_selection")
-assert conv and conv[0][1][1] == b.A_STRING, "must retry with STRING target"
-
-# SelectionRequest for TARGETS → advertise the text targets, positive notify
-b = bare_bridge()
-b._text = "payload"
-req = Rec(id=55)
-b._handle(Ev(type=X.SelectionRequest, requestor=req, target=b.A_TARGETS,
-             property=b.A_PROP, selection=b.A_CLIPBOARD, time=X.CurrentTime))
-cp = req.did("change_property")
-assert cp and cp[0][1][1] == Xatom.ATOM, "TARGETS reply is a list of ATOMs"
-assert b.A_UTF8 in cp[0][1][3], "TARGETS must advertise UTF8_STRING"
-se = req.did("send_event")
-assert se and se[0][1][0].property == b.A_PROP, "served: notify carries the prop"
-
-# SelectionRequest for UTF8 → hand over the bytes
-b = bare_bridge()
-b._text = "payload"
-req = Rec(id=55)
-b._handle(Ev(type=X.SelectionRequest, requestor=req, target=b.A_UTF8,
-             property=b.A_PROP, selection=b.A_CLIPBOARD, time=X.CurrentTime))
-cp = req.did("change_property")
-assert cp and cp[0][1][3] == b"payload", cp
-
-# SelectionClear: we lost ownership, forget what we served
-b = bare_bridge()
-b._text = "held"
-b._handle(Ev(type=X.SelectionClear))
-assert b._text is None, "SelectionClear must drop our served text"
-
-# _decode tolerates bytes and int arrays
-assert clipboard._decode(b"hi") == "hi"
-assert clipboard._decode([104, 105]) == "hi"
-assert clipboard._decode(b"\xff\xfe") == "��"   # never raises
-
-
-# XAUTHORITY overrides are connect-local and must not leak to later launches.
-old = os.environ.get("XAUTHORITY")
+# Xauthority overrides are scoped to the single connection.
+old = os.environ.get('XAUTHORITY')
 try:
-    os.environ["XAUTHORITY"] = "/tmp/host-xauth"
-    with clipboard.xauthority_env("/tmp/private-xauth"):
-        assert os.environ["XAUTHORITY"] == "/tmp/private-xauth"
-    assert os.environ["XAUTHORITY"] == "/tmp/host-xauth"
-    os.environ.pop("XAUTHORITY")
-    with clipboard.xauthority_env("/tmp/private-xauth"):
-        assert os.environ["XAUTHORITY"] == "/tmp/private-xauth"
-    assert "XAUTHORITY" not in os.environ
+    os.environ['XAUTHORITY'] = '/tmp/host-xauth'
+    with clipboard.xauthority_env('/tmp/private-xauth'):
+        assert os.environ['XAUTHORITY'] == '/tmp/private-xauth'
+    assert os.environ['XAUTHORITY'] == '/tmp/host-xauth'
 finally:
     if old is None:
-        os.environ.pop("XAUTHORITY", None)
+        os.environ.pop('XAUTHORITY', None)
     else:
-        os.environ["XAUTHORITY"] = old
-
-print("test_clipboard OK")
+        os.environ['XAUTHORITY'] = old
+print('test_clipboard OK')

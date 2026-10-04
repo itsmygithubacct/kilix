@@ -5,6 +5,7 @@ bar. Opening a file defers to the shell's open_path verb, so text lands in
 Notepad, images in the viewer, launchers launch, and executables prompt.
 """
 import os
+import clipboard
 import shutil
 import stat
 import time
@@ -20,7 +21,6 @@ TB_Y = T.MENU_H + 2                  # toolbar row (below the menu bar)
 TB_H = 26
 STATUS_H = 20
 
-_clip = {"op": None, "paths": []}    # module-wide file clipboard: copy | cut
 
 
 class FileWindow(wm.Window):
@@ -167,7 +167,7 @@ class FileWindow(wm.Window):
         return [
             MI("Cut", enabled=bool(sel), action=self._cut),
             MI("Copy", enabled=bool(sel), action=self._copy),
-            MI("Paste", enabled=bool(_clip["op"] and _clip["paths"]),
+            MI("Paste", enabled=bool(self.desk.clipboard_content.files[1]),
                action=self._paste),
             sep(),
             MI("Delete…", enabled=bool(sel),
@@ -212,7 +212,7 @@ class FileWindow(wm.Window):
             items = [
                 MI("New Folder…", icon="folder", action=self._new_folder),
                 MI("New Text File…", icon="doc_text", action=self._new_file),
-                MI("Paste", enabled=bool(_clip["op"] and _clip["paths"]),
+                MI("Paste", enabled=bool(self.desk.clipboard_content.files[1]),
                    action=self._paste),
                 sep(),
                 MI("Open Terminal Here", icon="terminal",
@@ -300,12 +300,14 @@ class FileWindow(wm.Window):
     def _copy(self, sel=None):
         sel = sel if sel is not None else self.grid.selected_items()
         if sel:
-            _clip["op"], _clip["paths"] = "copy", [i["data"] for i in sel]
+            self.desk.set_clipboard_content(clipboard.Content.from_files(
+                [i["data"] for i in sel]))
 
     def _cut(self, sel=None):
         sel = sel if sel is not None else self.grid.selected_items()
         if sel:
-            _clip["op"], _clip["paths"] = "cut", [i["data"] for i in sel]
+            self.desk.set_clipboard_content(clipboard.Content.from_files(
+                [i["data"] for i in sel], cut=True))
 
     def _copy_name(self, dest):
         stem, ext = os.path.splitext(os.path.basename(dest))
@@ -318,7 +320,8 @@ class FileWindow(wm.Window):
         return cand
 
     def _paste(self):
-        op, paths = _clip["op"], list(_clip["paths"])
+        op, paths = self.desk.clipboard_content.files
+        remaining = []
         if not op or not paths:
             return
         srcdirs, err = set(), None
@@ -328,6 +331,7 @@ class FileWindow(wm.Window):
             same = os.path.abspath(os.path.dirname(src)) == \
                 os.path.abspath(self.path)
             if op == "cut" and same:
+                remaining.append(src)
                 continue                    # move onto self — no-op
             dest = os.path.join(self.path, os.path.basename(src.rstrip("/")))
             if os.path.lexists(dest):
@@ -342,8 +346,10 @@ class FileWindow(wm.Window):
                     shutil.copy2(src, dest)
             except (OSError, shutil.Error) as e:
                 err = str(e)
+                remaining.append(src)
         if op == "cut":
-            _clip["op"], _clip["paths"] = None, []
+            self.desk.set_clipboard_content(clipboard.Content.from_files(remaining, cut=True)
+                if remaining else clipboard.Content({}))
         if err:
             wm.msgbox(self.desk, "Paste", err, icon="error")
         self.desk.shell.dir_changed(self.path)

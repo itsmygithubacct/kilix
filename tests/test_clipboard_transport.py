@@ -1,0 +1,289 @@
+"""Real authenticated X11 clipboard exchanges, including INCR and races."""
+import os
+from pathlib import Path
+import select
+import shutil
+import sys
+import tempfile
+import time
+import unittest
+from unittest import mock
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'config'))
+from kilix_sdk import clipboard as clip, xapp
+from Xlib import X, Xatom
+from Xlib.protocol import event as xevent
+
+
+class ContentTests(unittest.TestCase):
+    def test_text_encodings_and_immutable_binary_payloads(self):
+        value = clip.Content.from_text('héllo 世界')
+        self.assertEqual(value.text, 'héllo 世界')
+        self.assertEqual(value.get('STRING'), b'h\xe9llo ??')
+        raw = bytearray(b'\x00\xffPNG')
+        value = clip.Content({'image/png': raw})
+        raw[0] = 9
+        self.assertEqual(value.get('image/png'), b'\x00\xffPNG')
+        self.assertEqual(value.text, '')
+        with self.assertRaises(ValueError):
+            clip.Content({'DELETE': b''})
+        with mock.patch.object(clip, 'MAX_BYTES', 3):
+            with self.assertRaises(ValueError):
+                clip.Content({'image/png': b'abcd'})
+
+    def test_local_files_preserve_spaces_unicode_and_cut_semantics(self):
+        paths = ['/tmp/white space.txt', '/tmp/é\nname.txt']
+        value = clip.Content.from_files(paths, cut=True)
+        self.assertEqual(value.files, ('cut', tuple(paths)))
+        self.assertEqual(clip.Content({'text/uri-list': value.get('text/uri-list')}).files,
+                         ('copy', tuple(paths)))
+        self.assertEqual(clip.Content({'text/uri-list': b'file://localhost/tmp/a\r\n',
+            'application/x-kde-cutselection': b'1'}).files, ('cut', ('/tmp/a',)))
+        self.assertEqual(clip.Content({'text/uri-list':
+            b'# comment\r\nhttps://example.com/a\r\nfile://remote/tmp/a\r\nfile:///tmp/%00bad\r\n'}).files[1], ())
+
+
+@unittest.skipUnless(shutil.which('Xvfb') and shutil.which('xauth'), 'Xvfb and xauth required')
+class ClipboardTransportTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix='kilix-clipboard-test-')
+        self.env = mock.patch.dict(os.environ, {
+            'KILIX_STORAGE_HOME': self.tmp.name, 'KILIX_SESSION_HOME': self.tmp.name,
+            'KILIX_HOST_CLIP': '0'})
+        self.env.start()
+        self.sessions = []
+        self.hubs = []
+        self.bridges = []
+        for name in ('first', 'second'):
+            session = xapp.XAppSession('clip-'+name+'-'+str(os.getpid()), 64, 48)
+            self.sessions.append(session)
+            session.start_xvfb()
+            session.connect()
+        self.hub = clip.Hub()
+        self.hubs.append(self.hub)
+        for session in self.sessions:
+            self.bridges.append(clip.SelectionBridge(self.hub, session.display,
+                                                     session.xauthority))
+
+    def tearDown(self):
+        for bridge in reversed(self.bridges):
+            bridge.close()
+        for session in reversed(self.sessions):
+            session.close()
+        self.env.stop()
+        self.tmp.cleanup()
+
+    def pump(self, predicate, timeout=4):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            for hub in self.hubs:
+                for callback in tuple(hub.tick_hooks):
+                    callback()
+            if predicate():
+                return
+            time.sleep(.002)
+        self.fail('clipboard exchange timed out')
+
+    def owner(self, content, which=0):
+        source_hub = clip.Hub()
+        self.hubs.append(source_hub)
+        session = self.sessions[which]
+        owner = clip.SelectionBridge(source_hub, session.display, session.xauthority)
+        self.bridges.append(owner)
+        source_hub.set_clipboard_content(content)
+        return owner
+
+    def receive(self, name, which=1):
+        self.pump(lambda: bool(self.sessions[which].xd.get_selection_owner(
+            self.sessions[which].xd.intern_atom('CLIPBOARD'))))
+        d = self.sessions[which].xd
+        w = d.screen().root.create_window(-10, -10, 1, 1, 0, X.CopyFromParent,
+            window_class=X.InputOnly, visual=X.CopyFromParent,
+            event_mask=X.PropertyChangeMask)
+        target, prop = d.intern_atom(name), d.intern_atom('_TEST_CLIP_READ')
+        w.convert_selection(d.intern_atom('CLIPBOARD'), target, prop, X.CurrentTime)
+        d.flush()
+        result = bytearray()
+        incremental = False
+        done = False
+        def read_events():
+            nonlocal done, incremental
+            while d.pending_events():
+                ev = d.next_event()
+                if ev.type == X.SelectionNotify and ev.requestor.id == w.id:
+                    if not ev.property:
+                        raise AssertionError('selection refused')
+                    reply = w.get_property(prop, X.AnyPropertyType, 0, clip.MAX_BYTES // 4)
+                    if reply.property_type == d.intern_atom('INCR'):
+                        incremental = True
+                    else:
+                        result.extend(reply.value)
+                        done = True
+                    w.delete_property(prop)
+                    d.flush()
+                elif (incremental and ev.type == X.PropertyNotify and ev.window.id == w.id
+                      and ev.atom == prop and ev.state == X.PropertyNewValue):
+                    reply = w.get_property(prop, X.AnyPropertyType, 0, clip.MAX_BYTES // 4)
+                    if reply is None or reply.property_type == d.intern_atom('INCR'):
+                        continue
+                    self.assertEqual(reply.format, 8)
+                    self.assertEqual(reply.property_type, target)
+                    result.extend(reply.value)
+                    done = not len(reply.value)
+                    w.delete_property(prop)
+                    d.flush()
+            return done
+        try:
+            self.pump(read_events, timeout=8)
+            return bytes(result), incremental
+        finally:
+            w.destroy()
+            d.flush()
+
+    def test_large_image_and_unicode_text_cross_servers_byte_for_byte(self):
+        import io
+        from PIL import Image
+        image = Image.frombytes('RGB', (512, 512), os.urandom(512*512*3))
+        output = io.BytesIO()
+        image.save(output, format='PNG')
+        raw = output.getvalue()
+        self.assertGreater(len(raw), 65536)
+        content = clip.Content({'image/png': raw,
+                                'UTF8_STRING': '世界 héllo'.encode()})
+        self.owner(content)
+        self.pump(lambda: self.hub.content == content)
+        self.pump(lambda: self.bridges[1]._owns_selection())
+        copied, incremental = self.receive('image/png')
+        self.assertTrue(incremental)
+        self.assertEqual(copied, raw)
+        self.assertEqual(self.receive('UTF8_STRING')[0], '世界 héllo'.encode())
+        self.assertTrue(all(bridge._ok for bridge in self.bridges))
+
+    def test_file_formats_and_reverse_direction(self):
+        content = clip.Content.from_files(['/tmp/a b', '/tmp/é'], cut=True)
+        self.owner(content, which=1)
+        self.pump(lambda: self.hub.content == content)
+        self.pump(lambda: self.bridges[0]._owns_selection())
+        self.assertEqual(self.receive('text/uri-list', which=0)[0], content.get('text/uri-list'))
+        self.assertEqual(self.receive('x-special/gnome-copied-files', which=0)[0],
+                         content.get('x-special/gnome-copied-files'))
+
+    def test_new_owner_replaces_a_stalled_read_without_old_data(self):
+        d = self.sessions[0].xd
+        stalled = d.screen().root.create_window(-10,-10,1,1,0,X.CopyFromParent,
+            window_class=X.InputOnly,visual=X.CopyFromParent)
+        stalled.set_selection_owner(d.intern_atom('CLIPBOARD'), X.CurrentTime)
+        d.flush()
+        self.pump(lambda: self.bridges[0]._incoming is not None)
+        previous = self.bridges[0]._incoming['window'].id
+        content = clip.Content.from_text('new copy')
+        self.owner(content)
+        self.pump(lambda: self.hub.content == content)
+        self.assertNotEqual(self.bridges[0]._read_owner, stalled.id)
+        self.pump(lambda: self.bridges[1]._owns_selection())
+        self.assertEqual(self.receive('UTF8_STRING')[0], b'new copy')
+        stalled.destroy()
+        d.flush()
+
+    def test_outgoing_incr_survives_new_copy_and_expires_when_abandoned(self):
+        original = b'old image' * 20000
+        self.hub.set_clipboard_content(clip.Content({'image/png': original}))
+        self.pump(lambda: self.bridges[1]._owns_selection())
+        bridge = self.bridges[1]
+        d = self.sessions[1].xd
+        requestor = d.screen().root.create_window(-10,-10,1,1,0,X.CopyFromParent,
+            window_class=X.InputOnly,visual=X.CopyFromParent)
+        prop = d.intern_atom('_TEST_ABANDONED')
+        self.assertTrue(bridge._write_target(requestor, bridge.atoms['image/png'], prop))
+        key = (requestor.id, prop)
+        self.hub.set_clipboard_content(clip.Content.from_text('new'))
+        self.assertEqual(bridge._outgoing[key]['data'], original)
+        bridge._outgoing[key]['deadline'] = 0
+        bridge.tick()
+        self.assertNotIn(key, bridge._outgoing)
+        requestor.destroy()
+        d.flush()
+
+    def test_managed_app_relay_starts_ready_mirrors_existing_copy_and_closes(self):
+        for bridge in self.bridges:
+            bridge.close()
+        self.bridges.clear()
+        content = clip.Content.from_text('initial host clipboard')
+        owner = self.owner(content)
+        self.pump(lambda: owner._owns_selection())
+        host, private = self.sessions
+        with mock.patch.dict(os.environ, {
+                'KILIX_HOST_CLIP': '1', 'PLEB_DESKTOP_DISPLAY': host.display,
+                'PLEB_DESKTOP_XAUTHORITY': host.xauthority}):
+            private.launch_app([sys.executable, '-c', 'import time; time.sleep(20)'])
+        relay = private.clipboard_process
+        self.assertIsNotNone(relay)
+        self.assertIsNone(relay.poll())
+        self.assertEqual(self.receive('UTF8_STRING')[0], b'initial host clipboard')
+        private.close()
+        self.assertIsNotNone(relay.poll())
+
+    def test_multiple_requests_return_each_format_and_refuse_side_effects(self):
+        self.hub.set_clipboard_content(clip.Content.from_text('hello'))
+        bridge = self.bridges[0]
+        self.pump(lambda: bridge._owns_selection())
+        d = self.sessions[0].xd
+        req = d.screen().root.create_window(-10,-10,1,1,0,X.CopyFromParent,
+            window_class=X.InputOnly,visual=X.CopyFromParent)
+        prop, text, timestamp, denied = [d.intern_atom(name) for name in
+            ('_MULTIPLE_TEST','_MULTIPLE_TEXT','_MULTIPLE_TIME','_MULTIPLE_DENIED')]
+        targets = [d.intern_atom('UTF8_STRING'),text,d.intern_atom('TIMESTAMP'),timestamp,
+                   d.intern_atom('DELETE'),denied]
+        req.change_property(prop,d.intern_atom('ATOM_PAIR'),32,targets)
+        req.convert_selection(d.intern_atom('CLIPBOARD'),d.intern_atom('MULTIPLE'),prop,X.CurrentTime)
+        d.flush()
+        notices=[]
+        def ready():
+            while d.pending_events():
+                ev=d.next_event()
+                if ev.type==X.SelectionNotify and ev.requestor.id==req.id:notices.append(ev)
+            return bool(notices)
+        self.pump(ready)
+        pairs=req.get_property(prop,X.AnyPropertyType,0,64)
+        self.assertEqual(list(pairs.value)[4],0)
+        self.assertEqual(bytes(req.get_property(text,X.AnyPropertyType,0,64).value),b'hello')
+        value=req.get_property(timestamp,X.AnyPropertyType,0,64)
+        self.assertEqual(value.property_type,Xatom.INTEGER)
+        self.assertGreater(value.value[0],0)
+        self.assertIsNone(req.get_property(denied,X.AnyPropertyType,0,64))
+        req.destroy()
+        d.flush()
+
+    def test_oversized_incr_is_rejected_without_replacing_current_content(self):
+        baseline=clip.Content.from_text('existing clipboard')
+        self.hub.set_clipboard_content(baseline)
+        self.pump(lambda: self.bridges[0]._owns_selection())
+        d=self.sessions[0].xd
+        owner=d.screen().root.create_window(-10,-10,1,1,0,X.CopyFromParent,
+            window_class=X.InputOnly,visual=X.CopyFromParent)
+        owner.set_selection_owner(d.intern_atom('CLIPBOARD'),X.CurrentTime)
+        d.flush()
+        served=[]
+        def respond():
+            while d.pending_events():
+                ev=d.next_event()
+                if ev.type!=X.SelectionRequest:continue
+                if ev.target==d.intern_atom('TARGETS'):
+                    ev.requestor.change_property(ev.property,Xatom.ATOM,32,[d.intern_atom('UTF8_STRING')])
+                else:
+                    ev.requestor.change_property(ev.property,d.intern_atom('INCR'),32,[clip.MAX_BYTES+1])
+                ev.requestor.send_event(xevent.SelectionNotify(time=ev.time,requestor=ev.requestor.id,
+                    selection=ev.selection,target=ev.target,property=ev.property))
+                served.append(ev.target)
+                d.flush()
+            return len(served)==2 and self.bridges[0]._incoming is None
+        self.pump(respond)
+        self.assertEqual(self.hub.content,baseline)
+        self.assertTrue(self.bridges[0]._ok)
+        owner.destroy()
+        d.flush()
+
+
+if __name__ == '__main__':
+    unittest.main()
