@@ -75,6 +75,9 @@ with its pane. Network broadcast modes leave the host clipboard disconnected.
 Paste requests made during a copy wait for the complete new value, with bounded
 waits and request counts. A failed acquisition refuses the waiting request
 instead of returning the previous clipboard as the new copy.
+New empty panes initialize their clipboard endpoint. Pending copies refresh
+clipboard ownership so browser and GTK format caches discover the new value;
+older ownership notifications cannot overwrite a newer claim.
 `KILIX_HOST_CLIP=0` disables host clipboard exchange. Kilix 95 and its built-in
 fallback use the same transport, including file-manager copy/cut/paste. Two
 GTK windows on separate private displays have component VM evidence for large

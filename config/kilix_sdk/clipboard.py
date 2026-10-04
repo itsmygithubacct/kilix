@@ -121,6 +121,7 @@ class Hub:
     def __init__(self):
         self.content = Content({})
         self._sinks = []
+        self._pending_sinks = []
         self.fd_hooks = {}
         self.tick_hooks = []
         self.clipboard_revision = 0
@@ -139,9 +140,18 @@ class Hub:
         if callback in self._sinks:
             self._sinks.remove(callback)
 
+    def add_pending_sink(self, callback):
+        self._pending_sinks.append(callback)
+
+    def remove_pending_sink(self, callback):
+        if callback in self._pending_sinks:
+            self._pending_sinks.remove(callback)
+
     def begin_clipboard_read(self):
         self.clipboard_revision += 1
         self.clipboard_read_revision = self.clipboard_revision
+        for callback in tuple(self._pending_sinks):
+            callback()
         return self.clipboard_revision
 
     def end_clipboard_read(self, revision):
@@ -180,9 +190,11 @@ class SelectionBridge:
         self._ok = False
         self.error = None
         self._sink = self.push
+        self._pending_sink = self._announce_pending
         self._content = None
         self._claim = False
         self._timestamp = 0
+        self._selection_owner = 0
         self._incoming = None
         self._queue = []
         self._read_formats = {}
@@ -215,13 +227,24 @@ class SelectionBridge:
             self._fd = self.d.fileno()
             hub.add_fd(self._fd, self._on_readable)
             hub.add_content_sink(self._sink)
+            add_pending = getattr(hub, 'add_pending_sink', None)
+            if add_pending is not None:
+                add_pending(self._pending_sink)
             hub.tick_hooks.append(self.tick)
             self._ok = True
             self.d.flush()
-            if read_existing:
-                owner = self.d.get_selection_owner(self.atoms['CLIPBOARD'])
-                if owner:
-                    self._start_read(owner.id, X.CurrentTime)
+            owner = self.d.get_selection_owner(self.atoms['CLIPBOARD'])
+            self._selection_owner = owner.id if owner else 0
+            if owner and read_existing:
+                self._start_read(owner.id, X.CurrentTime)
+            elif not owner and not read_existing:
+                # A new pane needs an owner even before its first copy. With
+                # no owner, X11 refuses paste without consulting this relay.
+                content = getattr(hub, 'clipboard_content', None)
+                if content is None:
+                    content = getattr(hub, 'content', None)
+                if isinstance(content, Content):
+                    self.push(content)
         except Exception:
             self.close()
             raise
@@ -240,6 +263,19 @@ class SelectionBridge:
         self.win.change_property(self.atoms['_KILIX_CLIP_TIME'], Xatom.INTEGER,
                                  8, b'')
         self.d.flush()
+
+    def _announce_pending(self):
+        if self._ok and self._selection_owner == self.win.id:
+            # GTK/browser clients cache available formats. A fresh ownership
+            # timestamp invalidates that cache before the new data arrives;
+            # requests for the refreshed formats wait for acquisition.
+            try:
+                self._claim = True
+                self.win.change_property(self.atoms['_KILIX_CLIP_TIME'], Xatom.INTEGER, 8, b'')
+                self.d.flush()
+            except Exception as error:
+                self.error = error
+                self.close()
 
     def _owns_selection(self):
         owner = self.d.get_selection_owner(self.atoms['CLIPBOARD'])
@@ -286,7 +322,14 @@ class SelectionBridge:
         # against the extension module's class fails on real X servers.
         if ev.type == self._selection_event:
             if ev.selection == self.atoms['CLIPBOARD']:
+                age = (self._timestamp - ev.selection_timestamp) & 0xffffffff
+                if 0 < age < 0x80000000:
+                    # A synchronous reply can leave an earlier ownership
+                    # notification buffered. It must not undo a newer claim
+                    # or start reading a clipboard this endpoint now owns.
+                    return
                 owner = getattr(ev.owner, 'id', ev.owner)
+                self._selection_owner = owner
                 if owner == self.win.id:
                     self._timestamp = ev.selection_timestamp
                 elif owner:
@@ -307,6 +350,7 @@ class SelectionBridge:
                     self._claim = False
                     self._timestamp = ev.time
                     self.win.set_selection_owner(self.atoms['CLIPBOARD'], ev.time)
+                    self._selection_owner = self.win.id
                     self.d.flush()
             elif (self._incoming and self._incoming['incremental'] and
                   ev.window.id == self._incoming['window'].id and
@@ -595,6 +639,9 @@ class SelectionBridge:
         if self._fd is not None:
             self.hub.remove_fd(self._fd)
         self.hub.remove_content_sink(self._sink)
+        remove_pending = getattr(self.hub, 'remove_pending_sink', None)
+        if remove_pending is not None:
+            remove_pending(self._pending_sink)
         if self.tick in self.hub.tick_hooks:
             self.hub.tick_hooks.remove(self.tick)
         if self.d is not None:

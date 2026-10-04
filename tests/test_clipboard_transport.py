@@ -192,9 +192,16 @@ class ClipboardTransportTests(unittest.TestCase):
     def test_failed_pending_copy_refuses_paste_instead_of_returning_old_data(self):
         self._pending_copy_paste(abort=True)
 
-    def _pending_copy_paste(self, *, abort):
-        self.hub.set_clipboard_content(clip.Content.from_text('previous value'))
-        self.pump(lambda: all(bridge._owns_selection() for bridge in self.bridges))
+    def test_first_paste_in_new_empty_pane_waits_for_in_progress_copy(self):
+        self._pending_copy_paste(abort=False, previous=False)
+
+    def _pending_copy_paste(self, *, abort, previous=True):
+        if previous:
+            self.hub.set_clipboard_content(clip.Content.from_text('previous value'))
+            self.pump(lambda: all(bridge._owns_selection() for bridge in self.bridges))
+        else:
+            deadline=time.monotonic()+.05
+            self.pump(lambda:time.monotonic()>=deadline)
         source, destination = (session.xd for session in self.sessions)
         owner = source.screen().root.create_window(-10,-10,1,1,0,X.CopyFromParent,
             window_class=X.InputOnly,visual=X.CopyFromParent)
@@ -290,6 +297,39 @@ class ClipboardTransportTests(unittest.TestCase):
             with mock.patch.object(clip,'TRANSFER_TIMEOUT',.05):self.pump(expired)
             self.assertEqual(notices[0].property,0)
             self.assertEqual(self.hub.content.text,'previous value')
+        finally:
+            req.destroy();destination.flush();owner.destroy();source.flush()
+
+    def test_pending_copy_invalidates_cached_formats_before_acquisition(self):
+        self.hub.set_clipboard_content(clip.Content({}))
+        self.pump(lambda:all(bridge._owns_selection() for bridge in self.bridges))
+        source,destination=(session.xd for session in self.sessions)
+        req=destination.screen().root.create_window(-10,-10,1,1,0,X.CopyFromParent,
+            window_class=X.InputOnly,visual=X.CopyFromParent)
+        owner=source.screen().root.create_window(-10,-10,1,1,0,X.CopyFromParent,
+            window_class=X.InputOnly,visual=X.CopyFromParent)
+        selection=destination.intern_atom('CLIPBOARD')
+        destination.xfixes_query_version()
+        destination.xfixes_select_selection_input(req,selection,
+            clip.xfixes.XFixesSetSelectionOwnerNotifyMask)
+        destination.sync()
+        while destination.pending_events():destination.next_event()
+        notices=[];source_requests=[]
+        event_type=destination.query_extension('XFIXES').first_event+clip.xfixes.XFixesSelectionNotify
+        try:
+            owner.set_selection_owner(source.intern_atom('CLIPBOARD'),X.CurrentTime);source.flush()
+            def invalidated():
+                while source.pending_events():
+                    ev=source.next_event()
+                    if ev.type==X.SelectionRequest:source_requests.append(ev)
+                while destination.pending_events():
+                    ev=destination.next_event()
+                    if ev.type==event_type and ev.selection==selection:
+                        notices.append(getattr(ev.owner,'id',ev.owner))
+                return source_requests and self.bridges[1].win.id in notices
+            self.pump(invalidated)
+            self.assertEqual(self.hub.content,clip.Content({}))
+            self.assertEqual(len(source_requests),1,'New formats must not arrive before the source answers')
         finally:
             req.destroy();destination.flush();owner.destroy();source.flush()
 

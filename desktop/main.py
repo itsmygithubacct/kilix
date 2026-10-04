@@ -136,6 +136,7 @@ class Desk:
         self.clipboard_content = Content({})
         self.clipboard_revision = 0
         self.clipboard_read_revision = None
+        self._clipboard_pending_sinks = []
         self._content_sinks = []
         self._clip_sinks = []         # realms that mirror the hub (XPanes, host)
         self.clip_host = None         # host-X CLIPBOARD bridge (set up in run())
@@ -206,7 +207,16 @@ class Desk:
     def begin_clipboard_read(self):
         self.clipboard_revision += 1
         self.clipboard_read_revision = self.clipboard_revision
+        for callback in tuple(self._clipboard_pending_sinks):
+            callback()
         return self.clipboard_revision
+
+    def add_pending_sink(self, callback):
+        self._clipboard_pending_sinks.append(callback)
+
+    def remove_pending_sink(self, callback):
+        if callback in self._clipboard_pending_sinks:
+            self._clipboard_pending_sinks.remove(callback)
 
     def end_clipboard_read(self, revision):
         if self.clipboard_read_revision == revision:
