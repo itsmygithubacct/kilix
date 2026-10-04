@@ -2192,6 +2192,21 @@ case "${1:-}" in
       view)
         [ $# -eq 1 ] || { echo "usage: $_self transcript view SESSION" >&2; exit 2; }
         exec python3 "$KILIX_HOME/scripts/transcript-view.py" "$_tr_dir" "$1" ;;
+      clean)
+        # The text a person saw in the pane: the recording is replayed on a
+        # screen and full-screen programs' chrome is dropped. A session id,
+        # a file, or --pane ID; --format json for programs.
+        [ $# -ge 1 ] || {
+          echo "usage: $_self transcript clean SESSION|FILE|--pane ID [--format json]" >&2; exit 2; }
+        _tr_clean="$KILIX_HOME/third_party/kilix-transcript-clean/src"
+        [ -f "$_tr_clean/kilix_transcript_clean/__init__.py" ] || {
+          echo "kilix: kilix-transcript-clean is missing; initialize it with:" \
+               "git -C \"$KILIX_HOME\" submodule update --init third_party/kilix-transcript-clean" >&2
+          exit 1
+        }
+        KITTY_PTY_BROKER_TRANSCRIPT_DIR="$_tr_dir" \
+          PYTHONPATH="$_tr_clean${PYTHONPATH:+:$PYTHONPATH}" \
+          exec python3 -m kilix_transcript_clean "$@" ;;
       show|cat)
         [ $# -eq 1 ] || { echo "usage: $_self transcript show SESSION" >&2; exit 2; }
         _tr_name="${1%.log}"; _tr_name="${_tr_name%.log.zst}"
@@ -2227,10 +2242,12 @@ case "${1:-}" in
         _kilix_transcript_reap "$_tr_dir" 0 "$_KILIX_TRANSCRIPT_ARCHIVE"
         exit 0 ;;
       -h|--help|help)
-        echo "usage: $_self transcript [list|show SESSION|path [SESSION]|prune|archive]"
+        echo "usage: $_self transcript [list|show SESSION|view SESSION|clean SESSION|path [SESSION]|prune|archive]"
         echo "  list     newest-first index of recorded pane logs, live and archived"
         echo "  show     write one transcript to stdout, decompressing if archived"
-        echo "  view     browse all retained output as searchable text"
+        echo "  view     browse what the pane showed, as searchable text"
+        echo "  clean    print what the pane showed, without control codes or program"
+        echo "           chrome; --pane ID picks a pane, --format json is for programs"
         echo "  path     print the transcript directory, or one session's file"
         echo "  prune    apply the configured size budgets now"
         echo "  archive  recompress everything into the denser older tier"
@@ -2242,7 +2259,7 @@ case "${1:-}" in
         echo "Session logging, or with '$_self settings --set transcript=off'."
         exit 0 ;;
       *)
-        echo "usage: $_self transcript [list|show SESSION|path [SESSION]|prune|archive]" >&2
+        echo "usage: $_self transcript [list|show SESSION|view SESSION|clean SESSION|path [SESSION]|prune|archive]" >&2
         exit 2 ;;
     esac ;;
   pty|pty-manager|pty-tui)

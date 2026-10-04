@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Open all retained pane output as searchable text, without replaying escapes."""
+"""Open all retained pane output as searchable text.
+
+The recording is replayed on a screen by the pinned kilix-transcript-clean
+module, so full-screen programs read as what the pane showed. Without that
+module the escapes are only stripped, which leaves redraw fragments.
+"""
 
 import codecs
 import os
@@ -60,6 +65,20 @@ class PlainText:
         return ''.join(result)
 
 
+def _replayer():
+    """The pinned replay's clean_bytes, or None when it is not checked out."""
+    source = Path(__file__).resolve().parents[1] / 'third_party' / 'kilix-transcript-clean' / 'src'
+    if not (source / 'kilix_transcript_clean' / '__init__.py').is_file():
+        return None
+    if str(source) not in sys.path:
+        sys.path.insert(0, str(source))
+    try:
+        from kilix_transcript_clean import clean_bytes
+    except ImportError:
+        return None
+    return clean_bytes
+
+
 def find_log(directory, session):
     if not re.fullmatch(r'[A-Za-z0-9._-]{1,64}', session) or session in ('.', '..'):
         raise ValueError('Invalid pane session identifier.')
@@ -86,17 +105,27 @@ def copy_text(source, destination, size=None):
 
 
 def snapshot(path, destination):
+    replay = _replayer()
     if path.suffix == '.zst':
         if not shutil.which('zstd'):
             raise ValueError('Install zstd to read archived pane logs.')
         with subprocess.Popen(['zstd', '-dcq', '--', str(path)], stdout=subprocess.PIPE) as process:
-            copy_text(process.stdout, destination)
+            if replay:
+                data = process.stdout.read()
+            else:
+                copy_text(process.stdout, destination)
             if process.wait():
                 raise ValueError('The archived pane log could not be read.')
     else:
         with path.open('rb') as source:
             # Read to the click-time end, even if a busy pane keeps writing.
-            copy_text(source, destination, os.fstat(source.fileno()).st_size)
+            size = os.fstat(source.fileno()).st_size
+            if not replay:
+                copy_text(source, destination, size)
+                return
+            data = source.read(size)
+    if replay:
+        destination.write(replay(data).text(header=False))
 
 
 def main():

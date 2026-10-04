@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import unittest.mock
 
 from test_transcript_index import run_launcher
 
@@ -44,10 +45,56 @@ class TranscriptViewTests(unittest.TestCase):
             archive.write_bytes(subprocess.check_output(['zstd', '-cq'], input=b'old\r\n\x1b[2Jnew\n'))
             output = io.StringIO()
             viewer.snapshot(viewer.find_log(root, 'pane'), output)
-            self.assertEqual(output.getvalue(), 'old\nnew\n')
+            # The clear erased "old" from the screen, but not from the log;
+            # "new" was then drawn on the second row, below a blank one.
+            self.assertEqual(output.getvalue(), 'old\n\nnew\n')
             for session in ('../pane', '.', '', 'missing'):
                 with self.assertRaises(ValueError):
                     viewer.find_log(root, session)
+
+    def test_full_screen_program_reads_as_what_the_pane_showed(self):
+        # Each frame repaints the same rows in place. Stripping escapes alone
+        # repeats every partial frame; the replay shows each line once.
+        frames = ''.join(
+            '\x1b[?2026h' + ''.join(f'\x1b[{i};1Hreply line {i}\x1b[K' for i in range(1, n + 1))
+            + '\x1b[?2026l' for n in range(1, 6))
+        data = ('$ agent\r\n\x1b[?1049h' + frames + '\x1b[?1049l$ exit\r\n').encode()
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / 'pane.log').write_bytes(data)
+            output = io.StringIO()
+            viewer.snapshot(viewer.find_log(Path(tmp), 'pane'), output)
+            text = output.getvalue()
+            for i in range(1, 6):
+                self.assertEqual(text.count(f'reply line {i}'), 1)
+            self.assertLess(text.index('$ agent'), text.index('reply line 1'))
+            self.assertLess(text.index('reply line 5'), text.index('$ exit'))
+            # Without the pinned replay the viewer still strips escapes.
+            output = io.StringIO()
+            with unittest.mock.patch.object(viewer, '_replayer', return_value=None):
+                viewer.snapshot(viewer.find_log(Path(tmp), 'pane'), output)
+            self.assertEqual(output.getvalue().count('reply line 1'), 5)
+
+    def test_clean_prints_the_session_through_launcher(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            logs = root / 'logs'
+            logs.mkdir()
+            session = '0123456789abcdef'
+            (logs / f'{session}.log').write_bytes(
+                b'\x1b_kilix-transcript;rows=5;cols=12\x1b\\$ echo hello world again\r\n'
+                b'hello world again\r\n$ \r\n')
+            (logs / f'{session}.meta').write_text('cwd=/home/pleb\ncmd=/bin/bash --posix\n')
+            result = run_launcher('transcript', 'clean', session, '--no-header',
+                                  storage=root / 'storage', transcript_dir=logs)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            # Lines the 12-column pane wrapped read whole again.
+            self.assertEqual(result.stdout, '$ echo hello world again\nhello world again\n$\n')
+            result = run_launcher('transcript', 'clean', session, '--format', 'json',
+                                  storage=root / 'storage', transcript_dir=logs)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('"cwd": "/home/pleb"', result.stdout)
+            result = run_launcher('transcript', 'clean', storage=root / 'storage', transcript_dir=logs)
+            self.assertEqual(result.returncode, 2)
 
     def test_snapshot_is_bounded_at_open_time_and_preserves_utf8(self):
         source = io.BytesIO('retained café\nnot in snapshot\n'.encode())

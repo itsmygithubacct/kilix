@@ -601,7 +601,9 @@ as `<session-id>.log`, mode `0600`, one per pane.
 ```bash
 kilix transcript                  # newest-first index, live and archived
 kilix transcript show <session>   # write one transcript to stdout
-kilix transcript view <session>   # search all retained output in a pager
+kilix transcript view <session>   # search what the pane showed, in a pager
+kilix transcript clean <session>  # print what the pane showed, for people or agents
+kilix transcript clean --pane 29 --format json
 kilix transcript path             # print the directory
 kilix transcript prune            # apply the size budgets now
 kilix transcript archive          # move dead logs into the denser older tier
@@ -610,11 +612,22 @@ kilix transcript archive          # move dead logs into the denser older tier
 Each log is bounded (8 MiB by default); on overflow the newest three quarters
 are kept and the oldest bytes are dropped, so a busy pane cannot fill the disk.
 
+A log is the raw output of whatever ran in the pane. Full-screen programs such
+as coding agents redraw the screen in place, so stripping the escape codes
+leaves spinner frames and half-drawn rows in no particular order. `view` and
+`clean` therefore replay the log on a virtual screen, with the pinned
+`third_party/kilix-transcript-clean` module, and read off what the pane showed,
+in order. They drop the program's status lines and prompt boxes, and join lines
+the terminal wrapped. The broker records the pane size in the log for this
+(a private escape that terminals ignore), so the replay wraps where the pane
+did. `clean --format json` gives the same text as sections per program, for
+agents, and Needle's logs reader uses the same replay.
+
 Click the document button in a pane's title bar to open that pane's saved log in
 a new tab. The viewer opens at the newest output: `g` goes to the first retained
 line, `G` to the last, `/` searches, and `q` closes the log tab. It shows a snapshot
 of all retained output at opening time, including output beyond the terminal's
-scrollback. Terminal control sequences are removed for readable text. Logging
+scrollback, replayed so it reads as the pane showed it. Logging
 must already have been enabled; output removed by retention limits cannot be
 recovered. The button is configurable as **Open pane session log** in Settings.
 
@@ -898,6 +911,7 @@ kilix settings                    # shared chrome/game settings TUI
 kilix settings --section tools    # memory monitor, Tmux Manager, or tb installer
 kilix transcript                  # list recorded pane session logs
 kilix transcript show <session>   # print one pane's transcript
+kilix transcript clean <session>  # print what one pane showed, without control codes
 kilix games list                  # show games available in Kilix 95
 kilix games settings              # open the TUI directly on Games
 kilix games disable doom          # hide a game (enable reverses it)
