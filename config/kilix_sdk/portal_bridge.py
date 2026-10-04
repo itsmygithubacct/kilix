@@ -1,12 +1,13 @@
-"""Forward desktop portals while keeping application singleton buses private.
+"""Forward desktop services while keeping application singleton buses private.
 
 Each private caller has a separate physical-session bus connection. Portal
 request/session paths are translated between those connections' unique names;
 other names (including GtkApplication names) stay on the private bus. The relay
 uses GIO messages so Unix file descriptors retain their handle indices.
 
-The launcher waits for ownership of the private portal name before execing the
-app. Linux parent-death notification ties the relay to that app, even on SIGKILL.
+Native notifications use caller-specific identifiers and signal delivery.
+The launcher waits for ownership of both private service names before execing
+the app. Linux parent-death notification ties the relay to that app, even on SIGKILL.
 """
 from __future__ import annotations
 
@@ -21,6 +22,17 @@ import subprocess
 import sys
 import threading
 
+
+if __package__:
+    from .notifications import (
+        NativeNotifications, NotificationState,
+        NAME as NOTIFICATIONS, PATH as NOTIFICATION_PATH,
+    )
+else:
+    from notifications import (
+        NativeNotifications, NotificationState,
+        NAME as NOTIFICATIONS, PATH as NOTIFICATION_PATH,
+    )
 
 PORTAL = "org.freedesktop.portal.Desktop"
 ROOT = "/org/freedesktop/portal/desktop"
@@ -116,12 +128,15 @@ class Client:
     sessions: set = field(default_factory=set)
     requests: set = field(default_factory=set)
     responses: set = field(default_factory=set)
+    notifications: NotificationState = field(default_factory=NotificationState)
 
 
 class PortalRelay:
     MAX_CLIENTS = 64
     MAX_CALLS = 64
     MAX_QUEUED = 512
+    MAX_MESSAGE_BYTES = 16 * 1024 * 1024
+    MAX_RETAINED_BYTES = 64 * 1024 * 1024
 
     def __init__(self, address: str):
         from gi.repository import Gio, GLib
@@ -129,9 +144,12 @@ class PortalRelay:
         self.address = address
         self.loop = GLib.MainLoop()
         self.clients = {}
+        self.notifications = NativeNotifications(self)
         self.stopped = False
         self.queued = 0
         self.queue_lock = threading.Lock()
+        self.payload_sizes = {}
+        self.retained_bytes = 0
         self.private = Gio.bus_get_sync(Gio.BusType.SESSION, None)
         self.private.set_exit_on_close(False)
         self.private.connect("closed", lambda *_: self.close())
@@ -139,14 +157,22 @@ class PortalRelay:
             "org.freedesktop.DBus", "org.freedesktop.DBus", "NameOwnerChanged",
             "/org/freedesktop/DBus", None, Gio.DBusSignalFlags.NONE, self.owner_changed)
         self.filter_id = self.private.add_filter(self.filter_message, None)
-        response = self.private.call_sync(
-            "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
-            "RequestName", GLib.Variant("(su)", (PORTAL, 4)), GLib.VariantType.new("(u)"),
-            Gio.DBusCallFlags.NONE, 5000, None)
-        if response.unpack()[0] != 1:
-            raise RuntimeError("private desktop portal name is already owned")
+        for name in (PORTAL, NOTIFICATIONS):
+            response = self.private.call_sync(
+                "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
+                "RequestName", GLib.Variant("(su)", (name, 4)), GLib.VariantType.new("(u)"),
+                Gio.DBusCallFlags.NONE, 5000, None)
+            if response.unpack()[0] != 1:
+                raise RuntimeError("private desktop service name is already owned: " + name)
 
-    def error(self, original, message, name="org.freedesktop.DBus.Error.Failed"):
+    def release_message(self, original):
+        key = (original.get_sender(), original.get_serial())
+        with self.queue_lock:
+            self.retained_bytes -= self.payload_sizes.pop(key, 0)
+
+    def error(self, original, message, name="org.freedesktop.DBus.Error.Failed", *, release=True):
+        if release:
+            self.release_message(original)
         if original.get_flags() & self.Gio.DBusMessageFlags.NO_REPLY_EXPECTED:
             return
         try:
@@ -157,16 +183,26 @@ class PortalRelay:
 
     def filter_message(self, connection, message, incoming, _data):
         if (not incoming or message.get_message_type() != self.Gio.DBusMessageType.METHOD_CALL
-                or message.get_destination() not in (PORTAL, connection.get_unique_name())):
+                or message.get_destination() not in (PORTAL, NOTIFICATIONS, connection.get_unique_name())):
             return message
         # GIO invokes filters on its message thread. All relay state and I/O
         # work runs in the main context, without blocking that thread.
+        body = message.get_body()
+        size = (body.get_size() if body is not None else 0) + 1024
+        key = (message.get_sender(), message.get_serial())
         with self.queue_lock:
-            if self.queued >= self.MAX_QUEUED:
-                self.error(message, "Too many pending portal calls",
-                           "org.freedesktop.DBus.Error.LimitsExceeded")
-                return None
-            self.queued += 1
+            if (self.queued >= self.MAX_QUEUED or size > self.MAX_MESSAGE_BYTES or
+                    self.retained_bytes + size > self.MAX_RETAINED_BYTES or key in self.payload_sizes):
+                rejected = True
+            else:
+                rejected = False
+                self.queued += 1
+                self.payload_sizes[key] = size
+                self.retained_bytes += size
+        if rejected:
+            self.error(message, "Too much pending desktop service data",
+                       "org.freedesktop.DBus.Error.LimitsExceeded", release=False)
+            return None
         self.GLib.idle_add(self.forward, message.copy())
         return None
 
@@ -174,9 +210,10 @@ class PortalRelay:
         with self.queue_lock:
             self.queued -= 1
         if self.stopped:
+            self.release_message(original)
             return False
         name = original.get_sender() or ""
-        if not _UNIQUE.fullmatch(name) or not portal_path(original.get_path() or ""):
+        if not _UNIQUE.fullmatch(name) or not (portal_path(original.get_path() or "") or original.get_path() == NOTIFICATION_PATH):
             self.error(original, "Not a desktop portal object",
                        "org.freedesktop.DBus.Error.UnknownObject")
             return False
@@ -194,7 +231,7 @@ class PortalRelay:
                 "NameHasOwner", self.GLib.Variant("(s)", (name,)), self.GLib.VariantType.new("(b)"),
                 self.Gio.DBusCallFlags.NONE, 5000, client.cancellable,
                 self.checked_owner, client)
-        if client.inflight + len(client.waiting) >= self.MAX_CALLS:
+        if client.inflight + len(client.waiting) + len(client.notifications.queue) >= self.MAX_CALLS:
             self.error(original, "Too many portal calls", "org.freedesktop.DBus.Error.LimitsExceeded")
         elif client.connection is None:
             client.waiting.append(original)
@@ -246,6 +283,7 @@ class PortalRelay:
             "org.freedesktop.DBus", "org.freedesktop.DBus", "NameOwnerChanged",
             "/org/freedesktop/DBus", PORTAL, self.Gio.DBusSignalFlags.NONE,
             self.frontend_changed, client)
+        self.notifications.connect(client)
         waiting, client.waiting = client.waiting, []
         for original in waiting:
             self.send(client, original)
@@ -255,6 +293,9 @@ class PortalRelay:
         if (self.clients.get(client.name) is not client or connection is None
                 or connection.is_closed()):
             self.error(original, "Desktop portal connection unavailable")
+            return
+        if original.get_path() == NOTIFICATION_PATH:
+            self.notifications.send(client, original)
             return
         message = original.copy()
         message.set_sender(None)
@@ -272,6 +313,7 @@ class PortalRelay:
         try:
             if not expects_reply:
                 connection.send_message(message, self.Gio.DBusSendMessageFlags.NONE)
+                self.release_message(original)
                 return
             client.inflight += 1
             connection.send_message_with_reply(
@@ -285,6 +327,7 @@ class PortalRelay:
 
     def replied(self, connection, result, state):
         client, original = state
+        self.release_message(original)
         client.inflight -= 1
         try:
             response = connection.send_message_with_reply_finish(result)
@@ -360,6 +403,7 @@ class PortalRelay:
         if self.clients.get(client.name) is not client:
             return
         del self.clients[client.name]
+        self.notifications.disconnect(client, notify=notify)
         client.cancellable.cancel()
         for original in client.waiting:
             self.error(original, "Desktop portal connection unavailable")

@@ -266,6 +266,7 @@ class XAppSession:
             app_env.pop("DBUS_SESSION_BUS_PID", None)
             if host_bus:
                 app_env["KILIX_PORTAL_HOST_BUS"] = host_bus
+                app_env.setdefault("GTK_USE_PORTAL", "1")
                 argv, app_env = prepare_browser(argv, app_env)
                 bridge = Path(__file__).with_name("portal_bridge.py")
                 argv = [sys.executable, str(bridge), "--wrap", "--", *argv]

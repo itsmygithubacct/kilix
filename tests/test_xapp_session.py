@@ -251,6 +251,7 @@ class XAppSessionTests(unittest.TestCase):
         self.assertEqual(env["KILIX_PRIVATE_XAPP"], "1")
         self.assertEqual(env["GDK_BACKEND"], "x11")
         self.assertEqual(env["KILIX_PORTAL_HOST_BUS"], "unix:path=/host/bus")
+        self.assertEqual(env["GTK_USE_PORTAL"], "1")
 
     def test_private_portal_uses_physical_bus_and_headless_apps_need_no_bridge(self):
         supervisor = FakeSupervisor()
@@ -271,6 +272,16 @@ class XAppSessionTests(unittest.TestCase):
             session.launch_app(["fixture-app"], isolate_bus=True)
         self.assertEqual(supervisor.spawns["app"][0],
                          ["/usr/bin/dbus-run-session", "--", "fixture-app"])
+        session.close()
+
+    def test_explicit_private_gtk_chooser_policy_is_preserved(self):
+        supervisor = FakeSupervisor()
+        session = xapp.XAppSession("chooser-policy", 640, 480, supervisor=supervisor)
+        session.start_xvfb()
+        with mock.patch.dict(os.environ, {"PLEB_DESKTOP_BUS_ADDRESS": "unix:path=/physical"}, clear=True), \
+                mock.patch.object(xapp.shutil, "which", return_value="/usr/bin/dbus-run-session"):
+            session.launch_app(["fixture-app"], env={"GTK_USE_PORTAL": "0"}, isolate_bus=True)
+        self.assertEqual(supervisor.spawns["app"][1]["env"]["GTK_USE_PORTAL"], "0")
         session.close()
 
     def test_private_wm_is_supervised_and_ready_before_app_launch(self):

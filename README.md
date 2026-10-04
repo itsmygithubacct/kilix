@@ -56,6 +56,18 @@ the normal browser and desktop permission dialogs. The SDK launcher and
 capture and Stop sharing have component VM evidence; Chromium and installed
 default-desktop acceptance remain pending.
 
+Managed GTK applications using `GtkFileChooserNative` select desktop portal
+file choosers when a physical-session bus route is available. An explicit `GTK_USE_PORTAL=0` is
+preserved. The same private bus exposes native desktop notifications through
+the physical daemon, with separate identifiers for each caller. Replacement,
+closure and action signals stay with their owning application; closing the
+sender leaves an already displayed notification available, as with
+`notify-send`. Notification image hints keep their binary data, while private
+window IDs are removed. Pending service payloads are bounded to 16 MiB per
+message and 64 MiB across the relay. Native GTK Open, Save, Cancel and
+application-close checks, and Libnotify show/update/close/action checks, have
+component VM evidence; installed default-desktop acceptance remains pending.
+
 Managed local application panes now mirror ordinary clipboard formats through
 SDK 1.16: Unicode text, PNG/JPEG images, and local file URI lists. The relay
 supports incremental X11 transfers, limits each clipboard value to 64 MiB, bounds in-flight transfers, and stops

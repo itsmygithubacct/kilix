@@ -4,6 +4,8 @@ import json
 import shutil
 import subprocess
 import sys
+import threading
+from types import SimpleNamespace
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -68,6 +70,97 @@ class PortalPathTests(unittest.TestCase):
         self.assertNotIn("TypeError", result.stderr)
         proof = json.loads(result.stdout.strip().splitlines()[-1])
         self.assertTrue(all(proof.values()), proof)
+
+
+@unittest.skipUnless(Gio, "system python3-gi is required")
+class DesktopMessageLimitsTests(unittest.TestCase):
+    def setUp(self):
+        self.idles = []
+        self.sent = []
+        self.relay = bridge.PortalRelay.__new__(bridge.PortalRelay)
+        self.relay.Gio = Gio
+        self.relay.GLib = SimpleNamespace(
+            Error=GLib.Error, idle_add=lambda *args: self.idles.append(args))
+        self.relay.private = SimpleNamespace(
+            get_unique_name=lambda: ":1.1",
+            send_message=lambda message, _flags: self.sent.append(message))
+        self.relay.clients = {}
+        self.relay.queue_lock = threading.Lock()
+        self.relay.payload_sizes = {}
+        self.relay.retained_bytes = self.relay.queued = 0
+        self.relay.stopped = False
+
+    def message(self, serial, size=64, *, no_reply=False, path=bridge.ROOT):
+        message = Gio.DBusMessage.new_method_call(
+            bridge.PORTAL, path, "org.freedesktop.portal.Notification", "AddNotification")
+        message.set_sender(":1.5")
+        message.set_serial(serial)
+        message.set_body(GLib.Variant("(ay)", (bytes(size),)))
+        if no_reply:
+            message.set_flags(Gio.DBusMessageFlags.NO_REPLY_EXPECTED)
+        return message
+
+    def retain(self, message):
+        self.assertIsNone(self.relay.filter_message(self.relay.private, message, True, None))
+
+    def test_single_and_aggregate_limits_recover_after_completed_calls(self):
+        self.relay.MAX_MESSAGE_BYTES = 2048
+        self.relay.MAX_RETAINED_BYTES = 2600
+        oversized = self.message(1, 2048)
+        self.retain(oversized)
+        self.assertEqual(self.relay.retained_bytes, 0)
+        self.assertEqual(self.sent[-1].get_error_name(), "org.freedesktop.DBus.Error.LimitsExceeded")
+        first, second, third = (self.message(serial) for serial in (2, 3, 4))
+        self.retain(first)
+        self.retain(second)
+        retained = self.relay.retained_bytes
+        self.retain(third)
+        self.assertEqual(self.relay.retained_bytes, retained)
+        self.assertEqual(len(self.idles), 2)
+        self.relay.release_message(first)
+        self.retain(third)
+        self.assertEqual(len(self.idles), 3)
+        self.relay.release_message(second)
+        self.relay.release_message(third)
+        self.assertEqual(self.relay.retained_bytes, 0)
+        self.assertFalse(self.relay.payload_sizes)
+
+    def test_duplicate_serial_does_not_release_the_original_reservation(self):
+        original = self.message(1)
+        self.retain(original)
+        retained = self.relay.retained_bytes
+        self.retain(original.copy())
+        self.assertEqual(self.relay.retained_bytes, retained)
+        self.assertEqual(self.relay.queued, 1)
+        self.assertEqual(len(self.idles), 1)
+        self.relay.stopped = True
+        callback, pending = self.idles.pop()
+        callback(pending)
+        self.assertEqual(self.relay.retained_bytes, 0)
+        self.assertEqual(self.relay.queued, 0)
+
+    def test_fire_and_forget_error_and_unknown_object_release_their_data(self):
+        original = self.message(1, no_reply=True)
+        self.retain(original)
+        self.relay.error(original, "connection closed")
+        self.assertEqual(self.relay.retained_bytes, 0)
+        self.assertFalse(self.sent)
+        unknown = self.message(2, path="/org/example/Unknown")
+        self.retain(unknown)
+        callback, pending = self.idles[-1]
+        callback(pending)
+        self.assertEqual(self.relay.retained_bytes, 0)
+        self.assertEqual(self.sent[-1].get_error_name(), "org.freedesktop.DBus.Error.UnknownObject")
+
+    def test_notification_queue_counts_toward_each_clients_call_limit(self):
+        client = bridge.Client(":1.5", Gio.Cancellable(), connection=object())
+        client.notifications.queue = [object()] * self.relay.MAX_CALLS
+        self.relay.clients[client.name] = client
+        self.retain(self.message(1))
+        callback, pending = self.idles.pop()
+        callback(pending)
+        self.assertEqual(self.relay.retained_bytes, 0)
+        self.assertEqual(self.sent[-1].get_error_name(), "org.freedesktop.DBus.Error.LimitsExceeded")
 
 
 if __name__ == "__main__":
