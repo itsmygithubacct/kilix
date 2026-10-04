@@ -27,6 +27,7 @@ import xinject
 from Xlib import display as xdisplay
 from .browser_portals import prepare_browser
 from .clipboard import _XAUTHORITY_LOCK
+from . import capture_registry
 
 
 _PROCESS_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
@@ -120,6 +121,8 @@ class XAppSession:
         self.capture_backend = "pending"
         self._capture_seq = 0
         self._closed = False
+        self._local_capture_source = False
+        self._capture_publication = None
 
     @property
     def xauthority(self) -> str | None:
@@ -144,6 +147,7 @@ class XAppSession:
             number, selected_width, selected_height,
             nocursor=nocursor)
         self.number, self.display = number, f":{number}"
+        self._local_capture_source = True
         return number
 
     def start_xvnc(self, port: int, password_file: str, *,
@@ -245,6 +249,8 @@ class XAppSession:
                    cwd: str | None = None,
                    isolate_bus: bool = False,
                    clipboard: bool = True,
+                   capture_source: bool = True,
+                   capture_label: str | None = None,
                    stdout=subprocess.DEVNULL,
                    stderr=subprocess.DEVNULL):
         if self.app is not None:
@@ -252,6 +258,7 @@ class XAppSession:
         argv = list(command)
         if not argv:
             raise ValueError("X app command must not be empty")
+        label = capture_label or os.path.basename(argv[0])
         app_env = self.environment(env)
         if isolate_bus:
             # GtkApplication and other singleton apps otherwise ask the
@@ -276,6 +283,8 @@ class XAppSession:
         self.app = self.supervisor.spawn(
             "app", argv, env=app_env, cwd=cwd,
             stdout=stdout, stderr=stderr)
+        if self._local_capture_source and capture_source:
+            self._capture_publication = capture_registry.publish(self, label)
         return self.app
 
     def start_clipboard(self, *, timeout: float = 3.0) -> bool:
@@ -432,6 +441,9 @@ class XAppSession:
         if self._closed:
             return
         self._closed = True
+        if self._capture_publication is not None:
+            self._capture_publication.close()
+            self._capture_publication = None
         self.release_input()
         self.stop_capture()
         if self.clipboard_process is not None:

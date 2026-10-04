@@ -119,6 +119,28 @@ class FakeInjector:
 
 
 class XAppSessionTests(unittest.TestCase):
+    def test_local_pane_publication_is_independent_of_clipboard_and_closes_first(self):
+        supervisor=FakeSupervisor()
+        session=xapp.XAppSession('capture-publication',640,480,supervisor=supervisor)
+        publication=mock.Mock()
+        with mock.patch.object(xapp.capture_registry,'publish',return_value=publication) as publish:
+            session.start_xvfb()
+            session.launch_app(['/bin/app'],clipboard=False,capture_label='Visible application')
+            publish.assert_called_once_with(session,'Visible application')
+        publication.close.side_effect=lambda:self.assertEqual(supervisor.cleaned,0)
+        session.close();session.close()
+        publication.close.assert_called_once()
+        self.assertEqual(supervisor.cleaned,1)
+
+    def test_network_or_explicitly_excluded_apps_do_not_publish_capture_sources(self):
+        for local,enabled in ((False,True),(True,False)):
+            session=xapp.XAppSession('excluded-publication',640,480,supervisor=FakeSupervisor())
+            if local:session.start_xvfb()
+            else:session.start_xvnc(5901,'/private/password')
+            with mock.patch.object(xapp.capture_registry,'publish') as publish:
+                session.launch_app(['/bin/app'],clipboard=False,capture_source=enabled)
+                publish.assert_not_called()
+            session.close()
     def test_dimensions_display_port_and_capture_inputs_are_validated(self):
         supervisor = FakeSupervisor()
         session = xapp.XAppSession(

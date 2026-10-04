@@ -91,6 +91,14 @@ before starting a new desktop. The association persists across repeated
 frontend crashes; a missing or ambiguous match keeps the usual startup.
 Explicit startup-session definitions and URL launches keep their own commands.
 
+Managed local application panes register with the matching Pleb capture picker
+as individual Application pane sources. Private runtime records identify the
+live owner, application, X server and authority file without storing cookies or
+remote-control credentials. Every screenshot or sharing request still needs
+physical-desktop consent. Closing a pane removes its registration; stale
+process identities are refused. Network broadcast launches remain outside this
+local capture catalogue.
+
 ## Release 0.2.1
 
 Prepared 2026-08-25 for the coordinated Plebian-OS 0.2.1 release. The supported
