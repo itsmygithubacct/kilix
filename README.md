@@ -85,6 +85,12 @@ and process identities. Only the route, window identity, public key, and
 password-file path are refreshed; normal remote-control authentication remains
 required. Kilix 95's matching candidate applies this before launching tabs.
 
+The matching Pleb supervisor also associates an ordinary initial page with one
+login. A crash retry attaches that surviving PTY as the first active page
+before starting a new desktop. The association persists across repeated
+frontend crashes; a missing or ambiguous match keeps the usual startup.
+Explicit startup-session definitions and URL launches keep their own commands.
+
 ## Release 0.2.1
 
 Prepared 2026-08-25 for the coordinated Plebian-OS 0.2.1 release. The supported
