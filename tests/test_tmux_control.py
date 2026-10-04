@@ -71,6 +71,14 @@ class TmuxControlTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn('Submission does not establish command completion', r.stdout)
 
+    def test_verb_help_without_socket_cannot_block_the_next_command(self):
+        self.env.pop('KILIX_TMUX_CLI')
+        for verb in ('send', 'type', 'close', 'new'):
+            r = self.call(verb, '--help')
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn('usage: kilix-tmux', r.stdout)
+        self.assertEqual(self.call('close', '$0').returncode, 2)
+
 
 @unittest.skipUnless(shutil.which('tmux'), 'tmux unavailable')
 class BundledTmuxTests(unittest.TestCase):

@@ -17,6 +17,8 @@ Verbs: list, new, read, send, type, key, rename, close.
 Use --help after a verb for its arguments. Targets are exact session names,
 session IDs ($N), pane IDs (%N), or numeric NAME:WINDOW.PANE for I/O.
 send writes literal text without Enter; type sends text then separate Enter.
+send/type accept --text-file FILE (- for stdin); text is preserved, not trimmed.
+key TARGET Enter submits an already pending line without retyping it.
 Submission does not establish command completion. Reads are bounded.
 
 KILIX_TMUX_CLI selects an executable. KILIX_TMUX_MODULE_ROOT selects an
@@ -48,7 +50,8 @@ def main(args: list[str] | None = None) -> int:
     except (argparse.ArgumentError, SystemExit):
         return fail('--socket requires an absolute path', args)
     socket = selected.socket
-    if not socket or not os.path.isabs(socket) or '\0' in socket:
+    help_only = '--help' in args or '-h' in args
+    if not help_only and (not socket or not os.path.isabs(socket) or '\0' in socket):
         return fail('an explicit absolute --socket is required', args)
 
     # Overrides select one implementation, never a fallback server. An invalid

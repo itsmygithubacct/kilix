@@ -23,6 +23,37 @@ only exact panes the user asked for, or disposable ones you made. Do not poll a 
 with `kilix` in a loop (each call reloads its config), install upgrades, or start a second
 remote-control daemon.
 
+Reuse the complete IDs and paths returned by the tools, including in the final
+answer. Decode JSON string values before reusing them; JSON escape characters
+are not part of an ID, path or input payload.
+
+For file and log lookups, read the supplied scope before answering. Use literal
+matching for names or text containing shell or regex characters. A filename
+prefix must match the start of the basename, not its middle. Preserve complete
+returned paths. If the requested file is missing, use an alternative only when
+the user authorized it.
+
+Follow the requested final-response format. For JSON-only answers, return one
+valid JSON value without a preface, code fence, explanation or trailing prose.
+Sort paths before the final answer rather than narrating the ordering. Automated
+callers that require JSON should use the client's native schema-output mode
+when available and validate its structured result. A missing or invalid result
+is a failure; do not extract an embedded object from prose and call it a strict
+formatting pass.
+
+Check result limits and truncation before claiming absence or selecting the
+latest event. Continue pagination or narrow the query until the needed evidence
+is visible. Select the latest log event by timestamp within the exact requested
+ID and files; line order can differ. Distinguish tool results from an assistant's
+later description. For package versions, request the version field directly
+instead of cutting off a longer package record before that field.
+
+Use `bash` or another installed shell executable when opening a shell pane;
+`shell` is not an executable name. An opened pane proves creation only. If
+the user needs a ready coding session, inspect its returned pane once with
+`kilix agent-control list` and `dump` before claiming readiness. Report an
+exited client, login or trust dialog as such; do not launch a duplicate.
+
 ## Typing into another coding agent
 
 Only for another coding agent's input box; shell panes use `kilix pane send`
@@ -70,8 +101,36 @@ IDs (`%N`), or numeric `NAME:WINDOW.PANE` for I/O. Quote IDs containing `$`
 so the caller's shell does not expand them. Session-only I/O is refused if
 more than one pane exists. Read before input when the target's state matters.
 
-`send` writes literal text without Enter. `type` writes literal text and then
-sends separate Enter. `key` accepts named keys, including Enter. A response
+`send` writes literal text without Enter. For complex quotes, dollar signs,
+backticks or trailing semicolons, use `send TARGET --text-file FILE` (UTF-8),
+or `--text-file -` with stdin. Files are not trimmed: omit a trailing newline
+when leaving a line pending. In shell single quotes, double quotes and dollar
+signs are already literal; adding a backslash changes the text. For example:
+
+```sh
+printf '%s' 'cost=$5; say "hello";' | kilix tmux --socket /absolute/path send %0 --text-file -
+```
+
+When the user explicitly requires native tmux, a trailing semicolon can be
+parsed as a command separator even with `send-keys -l`. For arbitrary literal
+text, use `load-buffer -b UNIQUE -` with the bytes on stdin, followed by
+`paste-buffer -d -r -b UNIQUE -t PANE`, with the selected `-S SOCKET` on both
+calls. Use a fresh buffer name; clean up only that buffer if pasting fails.
+Keep Enter separate and omit a trailing newline for a pending line.
+If the requested payload is a JSON string, preserve that encoded string and
+decode it once with a JSON parser before loading the buffer. Do not copy its
+escape backslashes into the text. Compare `save-buffer -b UNIQUE -` bytes with
+the decoded payload before pasting; on mismatch, remove your buffer and stop.
+
+For an exact-input check, decode the `read --json` result and compare the
+returned text with the original payload programmatically. A visually similar
+JSON representation can hide extra backslashes. A screen capture shows rendered
+text; wrapping, tabs or other display transformations can leave exact input
+unverified. Keep that uncertainty explicit and avoid resending a pending line.
+
+`type` writes literal text and then sends
+separate Enter. For an already pending line, use `key TARGET Enter` without
+retyping it. `key` accepts named keys, including Enter. A response
 with `submitted: true` records input submission; command completion remains
 unknown until separately observed. Use `--dry-run` to validate and resolve
 a request without mutation. Close only the exact session within the user's

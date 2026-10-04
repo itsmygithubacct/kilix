@@ -3,6 +3,7 @@
 import argparse
 import json
 import sys
+from pathlib import Path
 
 from .control import ControlError, EXITS, SCHEMA, dispatch
 
@@ -23,14 +24,21 @@ def main(argv=None):
     subs.add_parser("list", parents=[common], help="list sessions and stable pane IDs")
     new = subs.add_parser("new", parents=[common], help="create a detached default-shell session")
     new.add_argument("name")
-    new.add_argument("--cwd", default=argparse.SUPPRESS)
+    new.add_argument("--cwd", default=argparse.SUPPRESS,
+                     help="optional existing working directory; omit to use the default. The server path belongs in --socket")
     for verb in ("read", "send", "type", "key", "rename", "close"):
-        sub = subs.add_parser(verb, parents=[common])
+        description = {"send": "send literal text without pressing Enter",
+                       "type": "send literal text and press Enter (submit)"}.get(verb)
+        epilog = ("Use --text-file for mixed quoting. Within shell single quotes, double quotes "
+                  "are literal and need no backslash." if verb in {"send", "type"} else None)
+        sub = subs.add_parser(verb, parents=[common], help=description, description=description, epilog=epilog)
         sub.add_argument("target")
         if verb == "read":
             sub.add_argument("--lines", type=int, default=80)
         if verb in {"send", "type"}:
-            sub.add_argument("text", help="one quoted literal string; send does not append Enter")
+            sub.add_argument("text", nargs="?", help=("literal text; no Enter is sent" if verb == "send"
+                                          else "literal text; Enter is appended to submit"))
+            sub.add_argument("--text-file", help="UTF-8 literal text from FILE (- for stdin); exclusive with text")
         if verb == "key":
             sub.add_argument("keys", nargs="+")
         if verb == "rename":
@@ -39,6 +47,19 @@ def main(argv=None):
     try:
         values = vars(parser.parse_args(argv))
         json_mode = values.pop("json", False)
+        source = values.pop("text_file", None)
+        if values.get("operation") in {"send", "type"} and source is not None:
+            if values.get("text") is not None:
+                raise ControlError("EUSAGE", "choose text or --text-file, not both")
+            try:
+                if source == "-":
+                    text = sys.stdin.read(65537)
+                else:
+                    with Path(source).open(encoding="utf-8", newline="") as stream:
+                        text = stream.read(65537)
+            except (OSError, UnicodeError) as error:
+                raise ControlError("EUSAGE", "cannot read literal UTF-8 text") from error
+            values["text"] = text
         result = dispatch(values)
     except ControlError as exc:
         result = {"schema": SCHEMA, "ok": False, "error": str(exc),

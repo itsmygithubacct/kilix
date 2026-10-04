@@ -69,8 +69,12 @@ def _validate(request):
         if "cwd" in req:
             cwd = req["cwd"]
             if (not isinstance(cwd, str) or not os.path.isabs(cwd)
-                    or any(ord(c) < 32 or ord(c) == 127 for c in cwd)
-                    or not Path(cwd).is_dir()):
+                    or any(ord(c) < 32 or ord(c) == 127 for c in cwd)):
+                _usage("cwd must be an existing absolute directory")
+            if not Path(cwd).is_dir():
+                if cwd == socket or Path(cwd).is_socket():
+                    _usage("cwd is a socket path; use socket/--socket for the server. "
+                           "Omit --cwd (or the cwd field) unless a working directory was requested")
                 _usage("cwd must be an existing absolute directory")
     if op not in {"list", "new"}:
         target = req.get("target")

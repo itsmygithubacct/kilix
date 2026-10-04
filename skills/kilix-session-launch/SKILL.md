@@ -16,6 +16,12 @@ and ask only about choices that change the work. Do not add workers because ther
 `kilix new-tab --title TITLE --cwd DIR codex`, or another agent command. One command, no
 preflight: in the 2026-09-29 route benchmark it cost a quarter of the procedure below.
 
+The command confirms pane creation. Before reporting a ready agent, inspect
+the returned pane's client and directory with `kilix agent-control list`;
+use `dump` if readiness is unclear. Keep creation, readiness and completion
+separate. If the client exited or a login/trust dialog is present, report
+that state and preserve the pane instead of launching another session.
+
 ## Layouts, several sessions, models or initial prompts
 
 `kilix agent-control` pins every launch to a verified pane:
