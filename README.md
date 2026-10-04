@@ -1739,8 +1739,10 @@ right-click menu everywhere. Built in:
   dosbox-staging build if no dosbox is installed (fullscreen, fire on Space,
   sound on); **Bashed Earth** clones + builds
   [itsmygithubacct/bashed-earth](https://github.com/itsmygithubacct/bashed-earth).
-  Native catalog games include **Kilix Lights** and **Super Kilix**, which are
+  Native catalog games include **Pleb Tower**, **Kilix Lights**, and **Super Kilix**, which are
   cloned recursively, built, and launched directly in their Kilix tabs.
+  Play Pleb Tower from this menu, the TUI's Programs ▸ Games list, or
+  `kilix games play pleb-tower`. Its two campaigns span Maple Loop and Rail Yard.
   The Games tab, `kilix settings`, and `kilix games enable|disable NAME...`
   all select which entries appear, using the root-level shared settings file.
 - **Media Player** — Start ▸ Programs ▸ Media Player. The skin sits *directly

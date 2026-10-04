@@ -91,6 +91,7 @@ GAME_TOGGLE_IDS = (
     ("kilix-jpak", "Kilix JPAK"),
     ("kilix-rancher", "Kilix Rancher"),
     ("kilix-pong", "Kilix Pong"),
+    ("pleb-tower", "Pleb Tower"),
     ("kilix-lights", "Kilix Lights"),
     ("super-kilix", "Super Kilix"),
     ("joustix", "Joustix"),
