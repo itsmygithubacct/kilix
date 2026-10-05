@@ -295,10 +295,15 @@ class SelectionBridge:
         self._abort_read()
         self._claim = False
         self._content = None
-        if self._selection_owner == self.win.id or self._owns_selection():
+        if self._timestamp:
+            # Release at this endpoint's own claim time, never CurrentTime: X
+            # ignores an older SetSelectionOwner, so a copy another client
+            # made since (even one this endpoint has not yet heard about) is
+            # never taken away.
             xrequest.SetSelectionOwner(display=self.d.display, window=X.NONE,
                                        selection=self.atoms['CLIPBOARD'],
-                                       time=X.CurrentTime)
+                                       time=self._timestamp)
+        if self._selection_owner == self.win.id:
             self._selection_owner = 0
         self.d.flush()
 

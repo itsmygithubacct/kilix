@@ -216,6 +216,30 @@ class ClipboardTransportTests(unittest.TestCase):
         self.pump(lambda: self.hub.content == clip.Content({}))
         self.pump(lambda: self.clipboard_owner(1) == 0)
 
+    def test_source_clear_cannot_take_a_newer_copy_from_a_pane(self):
+        # In one select() pass the host source clears while an app in the
+        # pane copies something new. Releasing at CurrentTime would clear the
+        # app's newer ownership; releasing at the endpoint's own claim time
+        # cannot, because X ignores an older SetSelectionOwner.
+        content = clip.Content.from_text('secret')
+        owner = self.owner(content)
+        self.pump(lambda: self.hub.content == content)
+        self.assertEqual(self.receive('UTF8_STRING')[0], b'secret')
+        d = self.sessions[1].xd
+        app = d.screen().root.create_window(-10, -10, 1, 1, 0, X.CopyFromParent,
+            window_class=X.InputOnly, visual=X.CopyFromParent)
+        app.set_selection_owner(d.intern_atom('CLIPBOARD'), X.CurrentTime)
+        d.sync()
+        clip.xrequest.SetSelectionOwner(display=owner.d.display, window=X.NONE,
+                                        selection=owner.atoms['CLIPBOARD'], time=X.CurrentTime)
+        owner.d.sync()
+        self.bridges[0]._on_readable()
+        try:
+            self.assertEqual(self.clipboard_owner(1), app.id)
+        finally:
+            app.destroy()
+            d.flush()
+
     def test_owner_exit_clears_the_mirrored_copy(self):
         content = clip.Content.from_text('from an app that exits')
         owner = self.owner(content)
