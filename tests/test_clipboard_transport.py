@@ -65,6 +65,10 @@ class ClipboardTransportTests(unittest.TestCase):
         for session in self.sessions:
             self.bridges.append(clip.SelectionBridge(self.hub, session.display,
                                                      session.xauthority))
+        # Each endpoint claims its empty display asynchronously. A test owner
+        # created before that claim lands would lose CLIPBOARD to it.
+        self.pump(lambda: all(not bridge._claim and bridge._owns_selection()
+                              for bridge in self.bridges))
 
     def tearDown(self):
         for bridge in reversed(self.bridges):
