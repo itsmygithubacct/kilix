@@ -1077,8 +1077,10 @@ installs only the pinned Qwen socket client. Synthesis additionally requires a
 separately running, receipt-backed Qwen provider; the audition runtime and its
 model files do not satisfy that requirement, and neither is started implicitly.
 
-After installing the Qwen CustomVoice model through `kilix wizard`, explicitly
-prepare and run its receipt-backed provider:
+After installing one or more Qwen models (CustomVoice, 0.6B Base, 1.7B
+VoiceDesign) with their licences accepted, for example through
+`kilix models install <model>`, explicitly prepare and run the receipt-backed
+provider:
 
 ```sh
 kilix tts provider prepare --uv /absolute/path/to/uv
@@ -1087,10 +1089,16 @@ kilix tts provider serve
 kilix tts provider status
 ```
 
-Preparation requires uv 0.12.5 and builds the pinned CPU dependency graph with
-managed Python 3.12.8. It checks the installed model's current licence coverage
-before building; model weights and acceptance receipts are never created by
-this command. Add `--offline` to require already cached sources, Python and
+Preparation requires uv 0.12.5 and builds the pinned dependency graph with
+managed Python 3.12.8. It checks each Qwen model's current licence coverage and
+installed files before building, stages a runtime for every model that passes
+(CustomVoice stays the default) and serves them all from one service; a model
+without a receipt is left out, and with none the command refuses. Model weights
+and acceptance receipts are never created by this command. `--device cuda`
+builds the CUDA 12.4 graph instead of the CPU one; such a provider uses NVIDIA
+GPU 0 when it is usable and otherwise runs each job on the CPU. The default
+`--device auto` picks `cuda` when GPU 0's device nodes exist and it reports
+compute capability 7.0 or newer, otherwise `cpu`. Add `--offline` to require already cached sources, Python and
 dependencies. Failed preparation leaves the previous selection intact. `serve`
 runs in the foreground; Ctrl-C stops the provider and cleans its owned workers.
 Status reports the running provider's state and model selection; it does not

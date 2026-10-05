@@ -146,6 +146,22 @@ class WizardTests(unittest.TestCase):
         self.assertEqual(choice, 'yolox_s')
         self.assertEqual(reports['yolox_s']['manifest_digest'], 'a' * 64)
 
+    def test_speech_sizing_marks_every_provider_served_qwen_model_supported(self):
+        names = ('piper-en-us-kristin-medium', 'qwen3-tts-0.6b-customvoice', 'qwen3-tts-0.6b-base',
+                 'qwen3-tts-1.7b-voicedesign', 'qwen3-tts-1.7b-base', 'pocket-tts-en-alba')
+        rows = [asset(name) for name in names]
+        requests = []
+        def run(command, *, input, stdout, **kwargs):
+            requests.append(json.loads(input))
+            return subprocess.CompletedProcess(command, 1)
+        with patch.object(system_llm, 'sizer_executable', return_value='/sizer'), \
+                patch.object(wizard.subprocess, 'run', side_effect=run):
+            wizard.sizing(rows, 'speech')
+        supported = {row['id']: row['runtime_supported'] for row in requests[0]['models']}
+        self.assertEqual(supported, {'piper-en-us-kristin-medium': True, 'qwen3-tts-0.6b-customvoice': True,
+                                     'qwen3-tts-0.6b-base': True, 'qwen3-tts-1.7b-voicedesign': True,
+                                     'qwen3-tts-1.7b-base': False, 'pocket-tts-en-alba': False})
+
     def test_malformed_runtime_reports_fall_back_without_memory_claims(self):
         rows = [dict(self.assets[0], manifest_digest='a' * 64)]
         for defect in ('object', 'ram', 'vram', 'budget', 'qualified', 'selected', 'duplicate',

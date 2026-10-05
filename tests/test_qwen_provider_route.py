@@ -83,7 +83,8 @@ class QwenProviderRouteTests(unittest.TestCase):
                     if failed_step == 'receipt':
                         raise subprocess.CalledProcessError(69,words)
                     return json.dumps({'receipt_root':str(root/'receipts'),
-                                       'runtime_root':str(root/'xdg')}).encode()
+                                       'runtime_root':str(root/'xdg'),
+                                       'ready':['qwen3-tts-0.6b-customvoice']}).encode()
                 if any(word.endswith('build_environment.py') for word in words):
                     raise subprocess.CalledProcessError(1,words)
             def source(_parent,name,*_args):
@@ -121,7 +122,7 @@ class QwenProviderRouteTests(unittest.TestCase):
         self.assertIn('prepare',completed.stdout)
         self.assertIn('serve',completed.stdout)
 
-    def launcher_fixture(self, root):
+    def launcher_fixture(self, root, script='#!/bin/sh\nprintf "verified-marker\\n"\n'):
         selected = os.environ.get('KILIX_QWEN_PROVIDER_TEST_SOURCE')
         if not selected:
             self.skipTest('set KILIX_QWEN_PROVIDER_TEST_SOURCE to the exact provider checkout')
@@ -138,7 +139,7 @@ class QwenProviderRouteTests(unittest.TestCase):
         base = generation/'python-root'
         (base/'bin').mkdir(mode=0o700,parents=True)
         original = base/'bin/python'
-        original.write_text('#!/bin/sh\nprintf "verified-marker\\n"\n')
+        original.write_text(script)
         original.chmod(0o700)
         python = generation/'environment/bin/python'
         python.parent.mkdir(mode=0o700,parents=True)
@@ -148,15 +149,25 @@ class QwenProviderRouteTests(unittest.TestCase):
         site = generation/'environment/site-packages'
         site.mkdir(mode=0o700)
         (site/'dependency.py').write_text('value = 1\n')
-        manifest = {'environment':{'python':str(python),'python_sha256':digest_file(python,follow=True),
+        environment = {'python':str(python),'python_sha256':digest_file(python,follow=True),
             'site_packages':str(site),'site_packages_sha256':tree_digest(site),
-            'python_root':str(base),'python_root_sha256':tree_digest(base,allow_file_links=True)}}
-        (generation/'runtime').mkdir(mode=0o700)
-        runtime = generation/'runtime/runtime.json'
-        runtime.write_text(json.dumps(manifest))
+            'python_root':str(base),'python_root_sha256':tree_digest(base,allow_file_links=True)}
+        models = {'qwen3-tts-0.6b-customvoice':3*1024**3,'qwen3-tts-1.7b-voicedesign':5*1024**3}
+        digests = {}
+        for name in models:
+            (generation/'runtimes'/name).mkdir(mode=0o700,parents=True)
+            manifest = generation/'runtimes'/name/'runtime.json'
+            manifest.write_text(json.dumps({'device':'cuda','model':{'id':name},'environment':environment}))
+            digests[name] = hashlib.sha256(manifest.read_bytes()).hexdigest()
+        runtime = generation/'runtimes/qwen3-tts-1.7b-voicedesign/runtime.json'
+        index = generation/'runtime-index.json'
+        index.write_text(json.dumps({'schema':'kilix.qwen-tts.runtime-set/v1','runtimes':[
+            {'root':str(generation/'runtimes'/name),'asset_id':name,'snapshot_bytes':budget}
+            for name,budget in models.items()]}))
         binding = {'files':provider.package_files(lib),'content_root':str(root/'models'),
             'environment':{'KILIX_LICENSE_RECEIPTS':str(root/'receipts'),'XDG_RUNTIME_DIR':str(root/'xdg')},
-            'runtime_sha256':hashlib.sha256(runtime.read_bytes()).hexdigest()}
+            'models':models,'device':'cuda','runtimes':digests,
+            'index_sha256':hashlib.sha256(index.read_bytes()).hexdigest()}
         binding['venv_config_sha256'] = digest_file(config)
         payload = json.dumps(binding).encode()
         (generation/'binding.json').write_bytes(payload)
@@ -167,7 +178,7 @@ class QwenProviderRouteTests(unittest.TestCase):
         return launcher,original,site,runtime
 
     def test_verified_generation_launcher_and_tamper_refusals(self):
-        for kind in ('unchanged','interpreter','dependency','manifest','library','configuration','bytecode'):
+        for kind in ('unchanged','interpreter','dependency','manifest','index','library','configuration','bytecode'):
             with self.subTest(kind=kind), tempfile.TemporaryDirectory() as scratch:
                 launcher,python,site,runtime = self.launcher_fixture(Path(scratch))
                 if kind == 'interpreter':
@@ -176,6 +187,8 @@ class QwenProviderRouteTests(unittest.TestCase):
                     (site/'dependency.py').write_text('value = 2\n')
                 elif kind == 'manifest':
                     runtime.write_text('{}')
+                elif kind == 'index':
+                    (launcher.parent.parent/'runtime-index.json').write_text('{"runtimes":[]}')
                 elif kind == 'library':
                     (launcher.parent.parent/'lib/kilix_qwen_tts/extra.py').write_text('value = 1')
                 elif kind == 'configuration':
@@ -190,6 +203,192 @@ class QwenProviderRouteTests(unittest.TestCase):
                 else:
                     self.assertNotEqual(result.returncode,0)
                     self.assertEqual(result.stdout,'')
+
+    def test_serve_selects_the_bound_runtime_index_and_every_model(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            launcher,_python,_site,_runtime = self.launcher_fixture(
+                Path(scratch),'#!/bin/sh\nprintf "%s\\n" "$@"\n')
+            result = subprocess.run(['/usr/bin/python3','-I','-B',str(launcher),'serve'],
+                                    capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stderr)
+            words = result.stdout.splitlines()
+            generation = launcher.parent.parent
+            self.assertEqual(words[-4:],['--runtime-index',str(generation/'runtime-index.json'),
+                                         '--content-root',str(Path(scratch)/'models')])
+            consent = json.loads(words[words.index(str(generation/'lib'))+1])
+            self.assertEqual(list(consent['models']),
+                             ['qwen3-tts-0.6b-customvoice','qwen3-tts-1.7b-voicedesign'])
+            self.assertIn("for name,budget in value['models'].items():",result.stdout)
+
+    def test_runtime_index_or_manifest_disagreeing_with_binding_refuses(self):
+        for kind in ('order','device','environment','model'):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as scratch:
+                launcher,_python,_site,_runtime = self.launcher_fixture(Path(scratch))
+                generation = launcher.parent.parent
+                binding = json.loads((generation/'binding.json').read_text())
+                if kind == 'order':
+                    index = generation/'runtime-index.json'
+                    value = json.loads(index.read_text())
+                    value['runtimes'].reverse()
+                    index.write_text(json.dumps(value))
+                    binding['index_sha256'] = hashlib.sha256(index.read_bytes()).hexdigest()
+                else:
+                    name = 'qwen3-tts-1.7b-voicedesign'
+                    manifest = generation/'runtimes'/name/'runtime.json'
+                    value = json.loads(manifest.read_text())
+                    if kind == 'device':
+                        value['device'] = 'cpu'
+                    elif kind == 'environment':
+                        value['environment']['site_packages'] = '/elsewhere'
+                    else:
+                        value['model']['id'] = 'qwen3-tts-0.6b-base'
+                    manifest.write_text(json.dumps(value))
+                    binding['runtimes'][name] = hashlib.sha256(manifest.read_bytes()).hexdigest()
+                payload = json.dumps(binding).encode()
+                (generation/'binding.json').write_bytes(payload)
+                launcher.write_text((ROOT/'scripts/kilix-qwen-provider-launch.py').read_text().replace(
+                    '@BINDING_SHA256@',hashlib.sha256(payload).hexdigest()))
+                result = subprocess.run(['/usr/bin/python3','-I','-B',str(launcher),'status'],
+                                        capture_output=True,text=True)
+                self.assertNotEqual(result.returncode,0)
+                self.assertEqual(result.stdout,'')
+
+    def test_auto_device_requires_every_node_and_capability(self):
+        self.assertEqual(provider.selected_device('cpu'),'cpu')
+        self.assertEqual(provider.selected_device('cuda'),'cuda')
+        with self.assertRaises(ValueError):
+            provider.selected_device('rocm')
+        with patch.object(provider,'cuda_capable',return_value=True):
+            self.assertEqual(provider.selected_device('auto'),'cuda')
+        with patch.object(provider,'cuda_capable',return_value=False):
+            self.assertEqual(provider.selected_device('auto'),'cpu')
+        def smi(capability):
+            return subprocess.CompletedProcess([],0,stdout=(capability+'\n').encode(),stderr=b'')
+        nodes = ('/dev/null','/dev/zero','/dev/full')
+        with patch.object(provider,'GPU_NODES',nodes), \
+             patch.object(provider.shutil,'which',return_value='/usr/bin/nvidia-smi'):
+            for capability,expected in (('8.6',True),('7.0',True),('6.1',False),('',False)):
+                with self.subTest(capability=capability), \
+                     patch.object(provider.subprocess,'run',return_value=smi(capability)):
+                    self.assertEqual(provider.cuda_capable(),expected)
+            with patch.object(provider.subprocess,'run',side_effect=OSError('no driver')):
+                self.assertFalse(provider.cuda_capable())
+        with tempfile.TemporaryDirectory() as scratch, \
+             patch.object(provider,'GPU_NODES',('/dev/null','/dev/zero',str(Path(scratch)/'nvidia0'))), \
+             patch.object(provider.subprocess,'run',side_effect=AssertionError('probed without nodes')):
+            self.assertFalse(provider.cuda_capable())
+
+    def staged_preparation(self, ready, requested_device, capable=False):
+        selected = os.environ.get('KILIX_QWEN_PROVIDER_TEST_SOURCE')
+        if not selected:
+            self.skipTest('set KILIX_QWEN_PROVIDER_TEST_SOURCE to the exact provider checkout')
+        builder = Path(selected)/'tools'
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        root = Path(scratch.name)
+        managed,previous = self.previous(root)
+        calls = []
+        def run(source,command,_environment,**kwargs):
+            words = list(map(str,command))
+            calls.append(words)
+            if '--version' in words:
+                return b'uv 0.12.5\n'
+            if 'find' in words:
+                return b'/private/python3.12\n'
+            if 'rev-parse' in words:
+                return ((provider.CONTENT_REF if 'kilix-content' in words[2] else provider.PROVIDER_REF)
+                        +'\n').encode()
+            if 'status' in words:
+                return b''
+            if 'InstalledModel' in ' '.join(words):
+                compile(words[words.index('-c')+1],'<receipt-preflight>','exec')
+                return json.dumps({'receipt_root':str(root/'receipts') if ready else None,
+                                   'runtime_root':str(root/'xdg'),'ready':ready}).encode()
+            if any(word.endswith('build_environment.py') for word in words):
+                destination = Path(words[words.index('--destination')+1])
+                destination.mkdir(mode=0o700)
+                (destination/'pyvenv.cfg').write_text('home = /private\n')
+                return None
+            if 'archive' in words:
+                import io,tarfile
+                stream = io.BytesIO()
+                with tarfile.open(fileobj=stream,mode='w') as archive:
+                    item = tarfile.TarInfo(words[-1]+'/module.py')
+                    item.size = 1
+                    archive.addfile(item,io.BytesIO(b'x'))
+                return stream.getvalue()
+            if '--installed-asset' in words:
+                destination = Path(words[words.index('--destination')+1])
+                destination.mkdir(mode=0o700)
+                (destination/'runtime.json').write_text(json.dumps({
+                    'device':words[words.index('--device')+1],
+                    'model':{'id':words[words.index('--installed-asset')+1]}}))
+                return None
+            return None
+        def source(_parent,name,*_args):
+            return Path(selected) if name.startswith('.kilix-qwen-tts-') else root/'engine'
+        with patch.object(provider.paths,'data_dir',return_value=str(root/'data')), \
+             patch.object(provider.paths,'source_home',return_value=str(root/'sources')), \
+             patch.object(provider.paths,'kilix_home',return_value=str(ROOT)), \
+             patch.object(provider,'acquire_source',side_effect=source), \
+             patch.object(provider,'cuda_capable',return_value=capable), \
+             patch.object(provider,'owned_run',side_effect=run):
+            sys.path.insert(0,str(builder))
+            try:
+                provider.prepare(argparse.Namespace(uv=Path('/uv'),offline=True,device=requested_device))
+            finally:
+                sys.path.remove(str(builder))
+        return managed,previous,calls
+
+    def test_preparation_stages_every_licensed_model_on_the_selected_device(self):
+        ready = ['qwen3-tts-1.7b-voicedesign','qwen3-tts-0.6b-customvoice']
+        for requested,capable,device in (('cuda',False,'cuda'),('auto',True,'cuda'),
+                                         ('auto',False,'cpu'),('cpu',True,'cpu')):
+            with self.subTest(requested=requested,capable=capable):
+                managed,previous,calls = self.staged_preparation(ready,requested,capable)
+                generation = (managed/'current').resolve()
+                self.assertNotEqual(generation,previous)
+                builds = [c for c in calls if any(w.endswith('build_environment.py') for w in c)]
+                self.assertEqual(len(builds),1)
+                self.assertEqual(builds[0][builds[0].index('--device')+1],device)
+                stages = [(c[c.index('--installed-asset')+1],c[c.index('--device')+1],
+                           c[c.index('--model-snapshot-bytes')+1]) for c in calls if '--installed-asset' in c]
+                expected = ['qwen3-tts-0.6b-customvoice','qwen3-tts-1.7b-voicedesign']
+                self.assertEqual(stages,[(name,device,str(provider.MODELS[name])) for name in expected])
+                index = json.loads((generation/'runtime-index.json').read_text())
+                self.assertEqual(index,{'schema':'kilix.qwen-tts.runtime-set/v1','runtimes':[
+                    {'root':str(generation/'runtimes'/name),'asset_id':name,
+                     'snapshot_bytes':provider.MODELS[name]} for name in expected]})
+                self.assertEqual(oct((generation/'runtime-index.json').stat().st_mode & 0o777),'0o600')
+                binding = json.loads((generation/'binding.json').read_text())
+                self.assertEqual(binding['models'],{name:provider.MODELS[name] for name in expected})
+                self.assertEqual(list(binding['models']),expected)
+                self.assertEqual(binding['device'],device)
+                self.assertEqual(binding['index_sha256'],hashlib.sha256(
+                    (generation/'runtime-index.json').read_bytes()).hexdigest())
+                self.assertEqual(set(binding['runtimes']),set(expected))
+                self.assertNotIn('qwen3-tts-0.6b-base',binding['models'])
+
+    def test_no_licensed_model_refuses_before_build_and_keeps_selection(self):
+        with self.assertRaisesRegex(ValueError,'licence receipt'):
+            self.staged_preparation([], 'cpu')
+
+    def test_model_budgets_cover_the_catalogued_installations(self):
+        sys.path.insert(0,str(ROOT/'third_party/kilix-content/src'))
+        sys.path.insert(0,str(ROOT/'third_party/kilix-content/third_party/kilix-license/src'))
+        try:
+            import kilix_content
+            catalog = kilix_content.verified_packaged_catalog()
+        finally:
+            sys.path.remove(str(ROOT/'third_party/kilix-content/src'))
+            sys.path.remove(str(ROOT/'third_party/kilix-content/third_party/kilix-license/src'))
+        self.assertEqual(next(iter(provider.MODELS)),provider.MODEL)
+        for name,budget in provider.MODELS.items():
+            spec = catalog.require_asset(name)
+            self.assertEqual((spec.provider,spec.stream,spec.consumer_schema),
+                             ('kilix-qwen-tts','F104','kilix.qwen-tts.runtime'))
+            self.assertLessEqual(spec.installed_bytes,budget)
+            self.assertLessEqual(budget,8*1024**3)
 
     def test_pinned_archive_excludes_checkout_changes_and_ignored_extras(self):
         with tempfile.TemporaryDirectory() as scratch:

@@ -2611,7 +2611,7 @@ raise SystemExit(main(sys.argv[2:]))
           echo "usage: $_self tts [--install-only|--force-install] [ARGS...]"
           echo "opens the read-aloud settings TUI"
           echo "--enable-kristin: opt in to Piper Kristin as the shared voice"
-          echo "provider prepare|serve|status: manage the receipt-backed Qwen CPU provider"
+          echo "provider prepare|serve|status: manage the receipt-backed Qwen provider (CPU or CUDA)"
           echo "For documents, use Kilix 95: Start > Programs > Document Reader"
           exit 0 ;;
         --) shift; break ;;
