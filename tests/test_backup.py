@@ -16,6 +16,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "config"))
 
 from kilix_sdk import backup  # noqa: E402
+sys.path.insert(0, str(ROOT / "tests"))
+from _env_support import sandbox_env  # noqa: E402
 
 
 class BackupTests(unittest.TestCase):
@@ -160,7 +162,7 @@ class BackupTests(unittest.TestCase):
     def test_cli_restore_without_yes_writes_nothing(self):
         archive = backup.create()
         (self.gt / "settings.conf").write_text("clock=12h\n")
-        env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+        env = sandbox_env(**self.env, PYTHONDONTWRITEBYTECODE="1")
         result = subprocess.run([sys.executable, "-B", str(ROOT / "config/kilix_sdk/backup.py"),
                                  "restore", archive], env=env, capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)
