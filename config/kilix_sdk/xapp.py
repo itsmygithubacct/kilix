@@ -93,6 +93,20 @@ class CaptureStart:
     damage_error: Exception | None = None
 
 
+def _open_private_log(path: Path):
+    """Append to an owner-only log; never follow a link or widen it first."""
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    except OSError:
+        return None  # A substituted log only costs the diagnostics.
+    try:
+        os.fchmod(fd, 0o600)  # A log left by an older version keeps no group access.
+        return os.fdopen(fd, "ab")
+    except OSError:
+        os.close(fd)
+        return None
+
+
 class XAppSession:
     """Own one authenticated private X server and its application processes."""
 
@@ -311,9 +325,7 @@ class XAppSession:
         try:
             runtime_dir = getattr(self.supervisor, "runtime_dir", None)
             if runtime_dir:
-                log_path = Path(runtime_dir) / "clipboard.log"
-                log = open(log_path, "ab")
-                os.chmod(log_path, 0o600)
+                log = _open_private_log(Path(runtime_dir) / "clipboard.log")
             argv = [sys.executable, str(Path(__file__).with_name("clipboard.py")),
                     "--host-display", host, "--private-display", self.display,
                     "--private-authority", self.xauthority,
