@@ -3,6 +3,13 @@
 GTK/ATK discovers its AT-SPI connection through org.a11y.Bus.GetAddress.
 Forward only this discovery/status API, never arbitrary session-bus names.
 The accessible objects themselves use the toolkit's ordinary AT-SPI transport.
+
+Deliberate widening: Set is allowed on IsEnabled and ScreenReaderEnabled, so
+any managed private app can turn the physical session's accessibility and
+screen-reader status on or off, exactly as an unmanaged app on the session bus
+can. Toolkits and assistive tools (Orca, accessibility settings panels) write
+these properties, and a private app is the same user, not a security boundary.
+Only these two booleans are writable; nothing else on the session bus is.
 """
 
 NAME = 'org.a11y.Bus'
