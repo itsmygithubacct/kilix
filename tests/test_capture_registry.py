@@ -98,4 +98,20 @@ class CapturePublicationTests(unittest.TestCase):
         self.assertEqual(latest.path.stat().st_nlink,1)
 
 
+    def test_staging_files_left_by_a_killed_provider_are_pruned_only_once_stale(self):
+        directory=registry.publish(self.session,'Original').path.parent
+        old=os.stat(directory).st_mtime-3600
+        abandoned=directory/('a'*32+'.pending');abandoned.write_text('{"version": 1, "id"');abandoned.chmod(0o600)
+        os.utime(abandoned,(old,old))
+        in_progress=directory/('b'*32+'.pending');in_progress.write_text('{}');in_progress.chmod(0o600)
+        unknown=directory/'notes.pending';unknown.write_text('kept');os.utime(unknown,(old,old))
+        outside=self.root/'outside';outside.write_text('kept')
+        linked=directory/('c'*32+'.pending');linked.symlink_to(outside)
+        os.utime(linked,(old,old),follow_symlinks=False)
+        self.assertIsNotNone(registry.publish(self.session,'Latest'))
+        self.assertFalse(abandoned.exists())
+        self.assertTrue(in_progress.exists());self.assertTrue(unknown.exists())
+        self.assertTrue(linked.is_symlink());self.assertEqual(outside.read_text(),'kept')
+
+
 if __name__=='__main__':unittest.main()
