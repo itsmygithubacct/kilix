@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_pty_broker import load_module
+from _env_support import sandbox_env  # noqa: E402
 
 
 @unittest.skipUnless(sys.platform.startswith('linux'), 'Linux /proc child association')
@@ -29,8 +30,7 @@ class StartupSessionTests(unittest.TestCase):
                 child.wait(timeout=2)
 
     def child(self, token=None):
-        env = os.environ.copy()
-        env.pop('KITTY_PTY_BROKER_STARTUP_SESSION', None)
+        env = sandbox_env()
         if token is not None:
             env['KITTY_PTY_BROKER_STARTUP_SESSION'] = token
         child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], env=env)

@@ -10,6 +10,9 @@ import time
 
 from gi.repository import Gio, GLib
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _env_support import sandbox_env  # noqa: E402
+
 NAME = "org.freedesktop.portal.Desktop"
 ROOT = "/org/freedesktop/portal/desktop"
 IFACE = "org.freedesktop.portal.BridgeFixture"
@@ -166,7 +169,7 @@ def host(bridge):
                          '/org/freedesktop/DBus', None, Gio.DBusSignalFlags.NONE, owner_changed)
     with tempfile.TemporaryDirectory(prefix='kilix-portal-fixture-') as directory:
         proof = Path(directory) / 'proof.json'
-        env = dict(os.environ, KILIX_PORTAL_HOST_BUS=os.environ['DBUS_SESSION_BUS_ADDRESS'],
+        env = sandbox_env(KILIX_PORTAL_HOST_BUS=os.environ['DBUS_SESSION_BUS_ADDRESS'],
                    BRIDGE_FIXTURE_PROOF=str(proof))
         app = subprocess.Popen(['dbus-run-session', '--', '/usr/bin/python3', bridge, '--wrap', '--',
                                 '/usr/bin/python3', __file__, 'client'], env=env,

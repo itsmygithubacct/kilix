@@ -85,7 +85,7 @@ class FrontendContextTests(unittest.TestCase):
     def test_pane_transport_keeps_password_authentication_after_rebinding(self):
         calls = []
         def capture(argv, **kwargs):
-            calls.append((argv, dict(os.environ)))
+            calls.append((argv, {key: os.environ.get(key) for key in context._ROUTE}))
             return unittest.mock.Mock(returncode=0, stdout='[]', stderr='')
         with patch.dict(os.environ, self.env, clear=True), \
                 patch.object(panes, 'KITTEN', '/fixture/kitten'), \

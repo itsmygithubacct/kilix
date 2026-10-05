@@ -1,6 +1,8 @@
 """Native notification protocol exercised on two owned temporary buses."""
 import json,os,signal,subprocess,sys,tempfile,time
 from pathlib import Path
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+from _env_support import sandbox_env
 from gi.repository import Gio,GLib
 NAME='org.freedesktop.Notifications'
 PATH='/org/freedesktop/Notifications'
@@ -170,7 +172,7 @@ def host(bridge):
   invocation.return_value(GLib.Variant('(u)',(value,)))
  bus.register_object(PATH,Gio.DBusNodeInfo.new_for_xml(XML).interfaces[0],dispatch,None,None)
  bus.register_object(ROOT,Gio.DBusNodeInfo.new_for_xml(CXML).interfaces[0],ctrl,None,None)
- env=dict(os.environ,KILIX_PORTAL_HOST_BUS=os.environ['DBUS_SESSION_BUS_ADDRESS'])
+ env=sandbox_env(KILIX_PORTAL_HOST_BUS=os.environ['DBUS_SESSION_BUS_ADDRESS'])
  app=subprocess.Popen(['dbus-run-session','--','/usr/bin/python3',bridge,'--wrap','--','/usr/bin/python3',__file__,'client'],
   env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,start_new_session=True)
  try:
