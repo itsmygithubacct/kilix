@@ -94,6 +94,18 @@ d.clip_host = None
 term.calls.clear()
 d.set_clipboard('')
 assert term.did('write')
+# A secret copied from an XPane and cleared at its source must not stay in
+# the outer terminal's clipboard: CLEARED writes an empty OSC 52 payload.
+d.set_clipboard('hunter2-password')
+term.calls.clear()
+from kilix_sdk.clipboard import CLEARED
+d.set_clipboard_content(CLEARED)
+assert [c[1] for c in term.did('write')] == [('\x1b]52;c;\x07',)], term.calls
+# Other empty values (an image-only copy, a fresh Content) still write nothing.
+term.calls.clear()
+d.set_clipboard_content(clipboard.Content({}))
+d.set_clipboard_content(content)
+assert not term.did('write'), term.calls
 
 # Xauthority overrides are scoped to the single connection.
 old = os.environ.get('XAUTHORITY')
