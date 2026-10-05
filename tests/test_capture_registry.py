@@ -62,6 +62,13 @@ class CapturePublicationTests(unittest.TestCase):
         self.assertIsNone(registry.publish(self.session,'Test'))
         self.assertFalse((self.runtime/'kilix-capture-sources').exists())
 
+    def test_an_app_that_is_not_the_owners_child_cannot_publish(self):
+        # The X server is ours but the application process is someone else's
+        # child: the record would name a pane this provider does not own.
+        (self.proc/'502/stat').write_text('502 (app) '+' '.join(['S','1']+['0']*17+['12']))
+        self.assertIsNone(registry.publish(self.session,'Test'))
+        self.assertFalse((self.runtime/'kilix-capture-sources').exists())
+
     def test_physical_or_remote_display_cannot_be_published_as_a_private_pane(self):
         for display in (':0','localhost:10.0',':91; command'):
             self.session.display=display

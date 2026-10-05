@@ -272,6 +272,38 @@ class ClipboardTransportTests(unittest.TestCase):
         self.assertEqual(self.hub.content, newer)
         self.assertEqual(self.receive('UTF8_STRING', which=1)[0], b'newer')
 
+    def test_read_is_not_committed_when_the_owner_changed_before_it_finished(self):
+        # Another app copies on the source display after the last format
+        # arrived but before this endpoint has processed that notification.
+        # The finished read belongs to the old owner and must not replace the
+        # newer copy's place in the hub.
+        self.pump(lambda: all(item._owns_selection() for item in self.bridges))
+        content = clip.Content.from_text('older copy')
+        self.owner(content, which=0)
+        bridge, d = self.bridges[0], self.sessions[0].xd
+        newer = d.screen().root.create_window(-10, -10, 1, 1, 0, X.CopyFromParent,
+            window_class=X.InputOnly, visual=X.CopyFromParent)
+        original = bridge._next_read
+        decisions = []
+
+        def racing():
+            if not bridge._queue and bridge._read_formats and not decisions:
+                newer.set_selection_owner(d.intern_atom('CLIPBOARD'), X.CurrentTime)
+                d.sync()
+                original()
+                decisions.append(self.hub.content == content)
+                return
+            original()
+
+        try:
+            with mock.patch.object(bridge, '_next_read', side_effect=racing):
+                self.pump(lambda: bool(decisions))
+            self.assertEqual(decisions, [False])
+            self.assertNotEqual(self.hub.content, content)
+        finally:
+            newer.destroy()
+            d.flush()
+
     def test_new_owner_replaces_a_stalled_read_without_old_data(self):
         d = self.sessions[0].xd
         stalled = d.screen().root.create_window(-10,-10,1,1,0,X.CopyFromParent,

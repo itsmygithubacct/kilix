@@ -202,5 +202,76 @@ class DesktopMessageLimitsTests(unittest.TestCase):
         self.assertEqual(self.sent[-1].get_error_name(), "org.freedesktop.DBus.Error.LimitsExceeded")
 
 
+class FakeHostConnection:
+    def __init__(self, unique=":1.40"):
+        self.unique = unique
+        self.sent = []
+
+    def get_unique_name(self):
+        return self.unique
+
+    def is_closed(self):
+        return False
+
+    def send_message(self, message, _flags):
+        self.sent.append(message)
+
+    def send_message_with_reply(self, message, _flags, _timeout, _cancellable, callback, state):
+        self.sent.append(message)
+
+
+@unittest.skipUnless(Gio, "system python3-gi is required")
+class RelayRoutingTests(unittest.TestCase):
+    """Drive the relay's own send/signal/reply paths, not their helpers."""
+
+    def setUp(self):
+        self.sent = []
+        self.relay = bridge.PortalRelay.__new__(bridge.PortalRelay)
+        self.relay.Gio, self.relay.GLib = Gio, GLib
+        self.relay.private = SimpleNamespace(
+            is_closed=lambda: False,
+            send_message=lambda message, _flags: self.sent.append(message))
+        self.relay.queue_lock = threading.Lock()
+        self.relay.payload_sizes = {}
+        self.relay.retained_bytes = 0
+        self.host = FakeHostConnection()
+        self.client = bridge.Client(":1.5", Gio.Cancellable(), connection=self.host)
+        self.relay.clients = {self.client.name: self.client}
+
+    def call(self, interface, member, signature=None, values=None, path=bridge.ROOT, serial=7):
+        message = Gio.DBusMessage.new_method_call(bridge.PORTAL, path, interface, member)
+        message.set_sender(self.client.name)
+        message.set_serial(serial)
+        if signature:
+            message.set_body(GLib.Variant(signature, values))
+        return message
+
+    def denied(self):
+        self.assertFalse(self.host.sent)
+        self.assertEqual(len(self.sent), 1)
+        self.assertEqual(self.sent[0].get_error_name(), "org.freedesktop.DBus.Error.AccessDenied")
+
+    def test_another_clients_object_path_is_refused_not_forwarded(self):
+        self.relay.send(self.client, self.call(
+            "org.freedesktop.portal.Session", "Close", path=bridge.ROOT + "/session/1_6/theirs"))
+        self.denied()
+
+    def test_another_clients_handle_in_the_body_is_refused_not_forwarded(self):
+        self.relay.send(self.client, self.call(
+            "org.freedesktop.portal.ScreenCast", "Start", "(osa{sv})",
+            (bridge.ROOT + "/session/1_6/theirs", "", {})))
+        self.denied()
+
+    def test_forwarded_calls_use_host_handles_and_lose_private_parents(self):
+        self.relay.send(self.client, self.call(
+            "org.freedesktop.portal.ScreenCast", "Start", "(osa{sv})",
+            (bridge.ROOT + "/session/1_5/mine", "x11:1a2b", {})))
+        self.assertFalse(self.sent)
+        (forwarded,) = self.host.sent
+        self.assertEqual(forwarded.get_destination(), bridge.PORTAL)
+        self.assertEqual(forwarded.get_body().unpack(), (bridge.ROOT + "/session/1_40/mine", "", {}))
+        self.assertEqual(self.client.inflight, 1)
+
+
 if __name__ == "__main__":
     unittest.main()
