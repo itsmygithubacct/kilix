@@ -206,6 +206,8 @@ class FakeHostConnection:
     def __init__(self, unique=":1.40"):
         self.unique = unique
         self.sent = []
+        self.pending = []
+        self.closed = False
 
     def get_unique_name(self):
         return self.unique
@@ -217,7 +219,24 @@ class FakeHostConnection:
         self.sent.append(message)
 
     def send_message_with_reply(self, message, _flags, _timeout, _cancellable, callback, state):
+        message.set_serial(len(self.sent) + 100)
         self.sent.append(message)
+        self.pending.append((message, callback, state))
+
+    def send_message_with_reply_finish(self, result):
+        return result
+
+    def close(self, *_args):
+        self.closed = True
+
+    def answer_pending(self, body=None):
+        """Deliver the host's successful reply after the relay has moved on."""
+        for message, callback, state in self.pending:
+            reply = message.new_method_reply()
+            if body is not None:
+                reply.set_body(body)
+            callback(self, reply, state)
+        self.pending.clear()
 
 
 @unittest.skipUnless(Gio, "system python3-gi is required")
@@ -234,6 +253,7 @@ class RelayRoutingTests(unittest.TestCase):
         self.relay.queue_lock = threading.Lock()
         self.relay.payload_sizes = {}
         self.relay.retained_bytes = 0
+        self.relay.notifications = bridge.NativeNotifications(self.relay)
         self.host = FakeHostConnection()
         self.client = bridge.Client(":1.5", Gio.Cancellable(), connection=self.host)
         self.relay.clients = {self.client.name: self.client}
@@ -271,6 +291,27 @@ class RelayRoutingTests(unittest.TestCase):
         self.assertEqual(forwarded.get_destination(), bridge.PORTAL)
         self.assertEqual(forwarded.get_body().unpack(), (bridge.ROOT + "/session/1_40/mine", "", {}))
         self.assertEqual(self.client.inflight, 1)
+
+    def test_calls_in_flight_when_the_host_connection_closes_get_an_error_reply(self):
+        portal = self.call("org.freedesktop.portal.Screenshot", "Screenshot", "(sa{sv})", ("", {}), serial=7)
+        notify = self.call(bridge.NOTIFICATIONS, "Notify", "(susssasa{sv}i)",
+                           ("app", 0, "", "summary", "body", [], {}, -1),
+                           path=bridge.NOTIFICATION_PATH, serial=8)
+        self.relay.send(self.client, portal)
+        self.relay.send(self.client, notify)
+        self.assertEqual(len(self.host.sent), 2)
+        self.assertFalse(self.sent)
+        # The host connection's "closed" handler runs before GIO dispatches
+        # the replies that were already on their way.
+        self.relay.close_client(self.client, notify=True)
+        self.host.answer_pending(GLib.Variant("(u)", (9,)))
+        replies = {m.get_reply_serial(): m for m in self.sent
+                   if m.get_message_type() == Gio.DBusMessageType.ERROR}
+        self.assertEqual(sorted(replies), [7, 8])
+        for reply in replies.values():
+            self.assertEqual(reply.get_error_name(), "org.freedesktop.DBus.Error.Failed")
+            self.assertEqual(reply.get_destination(), self.client.name)
+        self.assertEqual(self.client.inflight, 0)
 
     def signal(self, path, interface, member, signature, values):
         self.relay.portal_signal(self.host, ":1.2", path, interface, member,

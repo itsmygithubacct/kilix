@@ -369,9 +369,12 @@ class PortalRelay:
         try:
             response = connection.send_message_with_reply_finish(result)
         except self.GLib.Error:
-            self.error(original, "Desktop portal connection closed")
+            self.error(original, "Desktop portal connection closed", release=False)
             return
         if self.clients.get(client.name) is not client:
+            # The host connection closed while this call was in flight. The
+            # caller may still be alive and must not wait out its own timeout.
+            self.error(original, "Desktop portal connection closed", release=False)
             return
         reply = original.new_method_reply()
         if response.get_message_type() == self.Gio.DBusMessageType.ERROR:
