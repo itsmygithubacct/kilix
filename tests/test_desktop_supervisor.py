@@ -18,7 +18,8 @@ statuses = json.loads((base / 'statuses').read_text())
 runs = base / 'runs'
 n = len(runs.read_text().splitlines()) if runs.exists() else 0
 with runs.open('a') as fh:
-    fh.write(json.dumps({'restarted': os.environ.get('KILIX_DESKTOP_RESTARTED'),
+    fh.write(json.dumps({'supervised': os.environ.get('KILIX_DESKTOP_SUPERVISED'),
+                         'restarted': os.environ.get('KILIX_DESKTOP_RESTARTED'),
                          'last': os.environ.get('KILIX_DESKTOP_LAST_STATUS'),
                          'home': os.environ.get('KILIX_HOME')}) + '\\n')
 sys.exit(statuses[min(n, len(statuses) - 1)])
@@ -72,6 +73,19 @@ class DesktopSupervisorTests(unittest.TestCase):
         result, runs = self.supervise([1, 0], KILIX_DESKTOP_RESTART="off")
         self.assertEqual(result.returncode, 1)
         self.assertEqual(len(runs), 1)
+
+    def test_a_requested_restart_is_immediate_and_not_a_failure(self):
+        # Six deliberate restarts would trip the crash limit if they counted.
+        result, runs = self.supervise([75, 75, 75, 75, 75, 75, 0],
+                                      KILIX_DESKTOP_RESTART_DELAY="30")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(runs), 7)
+        self.assertEqual([r["last"] for r in runs[1:]], ["75"] * 6)
+        self.assertNotIn("stopped unexpectedly", result.stderr)
+
+    def test_every_run_knows_it_is_supervised(self):
+        _result, runs = self.supervise([1, 0])
+        self.assertEqual([r["supervised"] for r in runs], ["1", "1"])
 
     def test_the_python_provider_runs_under_the_supervisor(self):
         self.assertIn('_kilix_desktop_supervise python3 "$_KILIX_DESKTOP_MAIN" "$@" || rc=$? ;;',

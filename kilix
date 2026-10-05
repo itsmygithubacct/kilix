@@ -4264,6 +4264,9 @@ _kilix_restore_pane_tty() {
 # off 1, 2, 4, 8, 16 s; more than five within a minute stop with the last status.
 # KILIX_DESKTOP_RESTART=off disables restarting. The restarted provider gets
 # KILIX_DESKTOP_RESTARTED=1 and KILIX_DESKTOP_LAST_STATUS so it can say why.
+# Status 75 is the provider asking to be restarted on purpose (after a settings
+# restore): that restart is immediate and is not counted as a failure. Every run
+# sees KILIX_DESKTOP_SUPERVISED=1, so the provider knows it may ask.
 _kilix_desktop_supervise() {
   _sup_restarts=0
   _sup_window=$(date +%s)
@@ -4274,12 +4277,18 @@ _kilix_desktop_supervise() {
   while :; do
     _sup_rc=0
     if [ -n "$_sup_restarted" ]; then
-      KILIX_DESKTOP_RESTARTED=1 KILIX_DESKTOP_LAST_STATUS="$_sup_last" "$@" || _sup_rc=$?
+      KILIX_DESKTOP_SUPERVISED=1 KILIX_DESKTOP_RESTARTED=1 \
+        KILIX_DESKTOP_LAST_STATUS="$_sup_last" "$@" || _sup_rc=$?
     else
-      "$@" || _sup_rc=$?
+      KILIX_DESKTOP_SUPERVISED=1 "$@" || _sup_rc=$?
     fi
     case "$_sup_rc" in
       0|129|130|143) return "$_sup_rc" ;;
+      75)
+        _kilix_restore_pane_tty
+        _sup_restarted=1
+        _sup_last=75
+        continue ;;
     esac
     [ "${KILIX_DESKTOP_RESTART:-on}" = off ] && return "$_sup_rc"
     _sup_now=$(date +%s)
