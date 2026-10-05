@@ -762,6 +762,20 @@ kilix settings --set transcript_size=32M          # 2M | 8M | 32M | 128M
 kilix settings --set transcript_graphics=keep     # elide | keep
 ```
 
+### Back up and restore settings and documents
+
+```
+kilix backup create                 # ~/kilix-backups/kilix-backup-<time>.tar.gz (private, 0600)
+kilix backup list ARCHIVE           # what a restore would create or replace
+kilix backup restore ARCHIVE --yes  # restore; your current files are backed up first
+```
+
+A backup holds the shared settings file, your `kilix.env`, the desktop's
+configuration and saved state, and the documents on the desktop. Restoring only
+creates or replaces the files the archive names. It refuses the whole archive
+if any member is a link, escapes its folder, or fails its checksum. The Kilix 95
+Settings window offers the same Back Up and Restore buttons.
+
 Closing the whole frontend, closing a page, or a Kilix crash detaches the
 client. Detached sessions are discovered on the next startup and reopened
 under the tab name and title they had; a pane that never recorded one opens

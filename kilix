@@ -131,6 +131,10 @@ case "${1:-}" in
   wizard)
     shift
     exec python3 -B "$KILIX_HOME/config/model_wizard.py" "$@" ;;
+  backup)
+    # Settings and desktop documents: create, list or restore an archive.
+    shift
+    exec python3 -B "$KILIX_HOME/config/kilix_sdk/backup.py" "$@" ;;
   models)
     shift
     exec python3 "$KILIX_HOME/config/content_models.py" "$@" ;;
