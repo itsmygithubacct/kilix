@@ -108,7 +108,14 @@ class PortalPathTests(unittest.TestCase):
         self.assertNotIn("CRITICAL", result.stderr)
         self.assertNotIn("TypeError", result.stderr)
         proof = json.loads(result.stdout.strip().splitlines()[-1])
-        self.assertTrue(all(proof.values()), proof)
+        # Every check the fixture performs must report, and report True; a
+        # fixture that returned early with fewer keys must not pass.
+        self.assertEqual(proof, dict.fromkeys((
+            "request_session_identity", "fd_in_and_out", "singleton_names_remain_private",
+            "two_clients_have_separate_host_connections",
+            "accessibility_discovery_uses_physical_registry",
+            "accessibility_status_properties_and_signals_stay_typed",
+            "client_disconnect_and_hard_app_death_close_host_connections"), True))
 
 
 @unittest.skipUnless(Gio, "system python3-gi is required")
