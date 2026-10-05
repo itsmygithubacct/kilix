@@ -18,6 +18,7 @@ from urllib.parse import unquote_to_bytes, urlsplit
 from Xlib import X, Xatom, display as xdisplay
 from Xlib.ext import xfixes
 from Xlib.protocol import event as xevent
+from Xlib.protocol import request as xrequest
 
 _XAUTHORITY_LOCK = threading.RLock()
 
@@ -30,6 +31,9 @@ FORMATS = (
     'UTF8_STRING', 'text/plain;charset=utf-8', 'text/plain', 'STRING',
     'image/png', 'image/jpeg', 'text/uri-list',
     'x-special/gnome-copied-files', 'application/x-kde-cutselection',
+    # KeePassXC and KDE mark secrets with this. Mirroring it lets a pane's own
+    # clipboard manager keep the value out of its history.
+    'x-kde-passwordManagerHint',
 )
 
 
@@ -117,6 +121,13 @@ class Content:
         return operation, tuple(dict.fromkeys(paths))
 
 
+# Published when the copy the hub holds is cleared at its source. It equals an
+# empty Content, so everything else treats it as empty, but endpoints receive
+# it by identity and give up their mirrored selection instead of claiming an
+# empty one (an empty claim is how a new pane waits for an in-progress copy).
+CLEARED = Content({})
+
+
 class Hub:
     def __init__(self):
         self.content = Content({})
@@ -193,11 +204,12 @@ class SelectionBridge:
         self.d = self.win = self._fd = None
         self._ok = False
         self.error = None
-        self._sink = self.push
+        self._sink = self._receive
         self._pending_sink = self._announce_pending
         self._content = None
         self._claim = False
         self._timestamp = 0
+        self._published_revision = None
         self._selection_owner = 0
         self._incoming = None
         self._queue = []
@@ -254,6 +266,16 @@ class SelectionBridge:
             self.close()
             raise
 
+    def _receive(self, value):
+        if value is CLEARED:
+            # The hub published a clear: the copy this display mirrored was
+            # cleared at its source (a password manager's auto-clear, or the
+            # owner exiting). Stop serving it rather than keep it pasteable.
+            if self._ok:
+                self._release()
+            return
+        self.push(value)
+
     def push(self, value):
         if isinstance(value, str):
             value = Content.from_text(value)
@@ -268,6 +290,25 @@ class SelectionBridge:
         self.win.change_property(self.atoms['_KILIX_CLIP_TIME'], Xatom.INTEGER,
                                  8, b'')
         self.d.flush()
+
+    def _release(self):
+        self._abort_read()
+        self._claim = False
+        self._content = None
+        if self._selection_owner == self.win.id or self._owns_selection():
+            xrequest.SetSelectionOwner(display=self.d.display, window=X.NONE,
+                                       selection=self.atoms['CLIPBOARD'],
+                                       time=X.CurrentTime)
+            self._selection_owner = 0
+        self.d.flush()
+
+    def _source_released(self):
+        # Clear the hub only if what it holds is still the value read from
+        # this display; a newer copy elsewhere must survive an old owner here.
+        revision = self._published_revision
+        self._published_revision = None
+        if revision is not None and revision == getattr(self.hub, 'clipboard_revision', None):
+            self.hub.set_clipboard_content(CLEARED, source=self._sink)
 
     def _announce_pending(self):
         if self._ok and self._selection_owner == self.win.id:
@@ -350,6 +391,7 @@ class SelectionBridge:
                     self._start_read(owner, ev.timestamp)
                 else:
                     self._abort_read()
+                    self._source_released()
             return
         if ev.type == X.SelectionNotify:
             self._read_reply(ev)
@@ -422,6 +464,7 @@ class SelectionBridge:
                 content = Content(self._read_formats)
                 self._content = content
                 self.hub.set_clipboard_content(content, source=self._sink)
+                self._published_revision = getattr(self.hub, 'clipboard_revision', None)
             end = getattr(self.hub, 'end_clipboard_read', None)
             if end is not None:
                 end(self._read_revision)

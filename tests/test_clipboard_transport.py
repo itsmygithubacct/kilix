@@ -197,6 +197,57 @@ class ClipboardTransportTests(unittest.TestCase):
         self.assertEqual(self.receive('x-special/gnome-copied-files', which=0)[0],
                          content.get('x-special/gnome-copied-files'))
 
+    def clipboard_owner(self, which):
+        session = self.sessions[which]
+        owner = session.xd.get_selection_owner(session.xd.intern_atom('CLIPBOARD'))
+        return owner.id if owner else 0
+
+    def test_source_release_clears_the_mirrored_copy_on_every_other_display(self):
+        # A password manager's auto-clear releases CLIPBOARD (QClipboard::clear).
+        content = clip.Content({'UTF8_STRING': b'hunter2-password',
+                                'x-kde-passwordManagerHint': b'secret'})
+        owner = self.owner(content)
+        self.pump(lambda: self.hub.content == content)
+        self.pump(lambda: self.bridges[1]._owns_selection())
+        self.assertEqual(self.receive('x-kde-passwordManagerHint')[0], b'secret')
+        clip.xrequest.SetSelectionOwner(display=owner.d.display, window=X.NONE,
+                                        selection=owner.atoms['CLIPBOARD'], time=X.CurrentTime)
+        owner.d.flush()
+        self.pump(lambda: self.hub.content == clip.Content({}))
+        self.pump(lambda: self.clipboard_owner(1) == 0)
+
+    def test_owner_exit_clears_the_mirrored_copy(self):
+        content = clip.Content.from_text('from an app that exits')
+        owner = self.owner(content)
+        self.pump(lambda: self.hub.content == content)
+        self.assertEqual(self.receive('UTF8_STRING')[0], b'from an app that exits')
+        owner.close()
+        self.pump(lambda: self.clipboard_owner(1) == 0)
+        self.assertEqual(self.hub.content, clip.Content({}))
+
+    def test_abandoned_copy_cannot_clear_a_newer_copy_from_elsewhere(self):
+        # Display 0 once supplied the hub's value; a newer copy then came from
+        # display 1. An app on display 0 that grabs CLIPBOARD and exits before
+        # its copy is read must not clear the newer value everywhere.
+        older = clip.Content.from_text('older')
+        self.owner(older, which=0)
+        self.pump(lambda: self.hub.content == older)
+        newer = clip.Content.from_text('newer')
+        self.owner(newer, which=1)
+        self.pump(lambda: self.hub.content == newer)
+        self.pump(lambda: self.bridges[0]._owns_selection())
+        d = self.sessions[0].xd
+        stalled = d.screen().root.create_window(-10, -10, 1, 1, 0, X.CopyFromParent,
+            window_class=X.InputOnly, visual=X.CopyFromParent)
+        stalled.set_selection_owner(d.intern_atom('CLIPBOARD'), X.CurrentTime)
+        d.flush()
+        self.pump(lambda: self.bridges[0]._incoming is not None)
+        stalled.destroy()
+        d.flush()
+        self.pump(lambda: self.clipboard_owner(0) == 0 and self.bridges[0]._incoming is None)
+        self.assertEqual(self.hub.content, newer)
+        self.assertEqual(self.receive('UTF8_STRING', which=1)[0], b'newer')
+
     def test_new_owner_replaces_a_stalled_read_without_old_data(self):
         d = self.sessions[0].xd
         stalled = d.screen().root.create_window(-10,-10,1,1,0,X.CopyFromParent,
