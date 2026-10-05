@@ -83,6 +83,20 @@ def translate_path(path: str, source: str, target: str, *, strict=False) -> str:
     return path
 
 
+def own_handle_or_shared(path: str, unique: str) -> bool:
+    """A request/session path must belong to this host connection.
+
+    Signals the portal broadcasts rather than unicasts reach every host
+    connection; another caller's Response or Closed is not this client's.
+    Paths outside request/session (Settings, Notification) are shared.
+    """
+    owner = unique[1:].replace(".", "_")
+    for kind in ("request", "session"):
+        if path.startswith(f"{ROOT}/{kind}/"):
+            return path.startswith(f"{ROOT}/{kind}/{owner}/")
+    return True
+
+
 def translate_variant(value, source: str, target: str, *, strict=False):
     """Keep exact GVariant types, including legacy string session handles."""
     from gi.repository import GLib
@@ -396,7 +410,8 @@ class PortalRelay:
 
     def portal_signal(self, connection, sender, path, interface, member, body, client):
         if (self.clients.get(client.name) is not client or not portal_path(path)
-                or not interface.startswith("org.freedesktop.portal.")):
+                or not interface.startswith("org.freedesktop.portal.")
+                or not own_handle_or_shared(path, connection.get_unique_name())):
             return
         path = translate_path(path, connection.get_unique_name(), client.name)
         body = translate_variant(body, connection.get_unique_name(), client.name)

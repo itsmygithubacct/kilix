@@ -272,6 +272,29 @@ class RelayRoutingTests(unittest.TestCase):
         self.assertEqual(forwarded.get_body().unpack(), (bridge.ROOT + "/session/1_40/mine", "", {}))
         self.assertEqual(self.client.inflight, 1)
 
+    def signal(self, path, interface, member, signature, values):
+        self.relay.portal_signal(self.host, ":1.2", path, interface, member,
+                                 GLib.Variant(signature, values), self.client)
+
+    def test_only_this_connections_request_and_session_signals_are_relayed(self):
+        response = ("org.freedesktop.portal.Request", "Response", "(ua{sv})")
+        for foreign in (bridge.ROOT + "/request/1_41/t", bridge.ROOT + "/request/1_4/t"):
+            self.signal(foreign, *response, (0, {"session_handle": GLib.Variant("s", foreign)}))
+        self.signal(bridge.ROOT + "/session/1_41/s", "org.freedesktop.portal.Session", "Closed",
+                    "(a{sv})", ({},))
+        self.assertFalse(self.sent)
+        self.assertFalse(self.client.responses or self.client.sessions)
+        session = bridge.ROOT + "/session/1_40/s"
+        self.signal(bridge.ROOT + "/request/1_40/t", *response,
+                    (0, {"session_handle": GLib.Variant("s", session)}))
+        self.signal(bridge.ROOT, "org.freedesktop.portal.Settings", "SettingChanged",
+                    "(ssv)", ("org.example", "key", GLib.Variant("b", True)))
+        self.assertEqual([(m.get_path(), m.get_member(), m.get_destination()) for m in self.sent], [
+            (bridge.ROOT + "/request/1_5/t", "Response", ":1.5"),
+            (bridge.ROOT, "SettingChanged", ":1.5")])
+        self.assertEqual(self.client.responses, {bridge.ROOT + "/request/1_5/t"})
+        self.assertEqual(self.client.sessions, {bridge.ROOT + "/session/1_5/s"})
+
 
 if __name__ == "__main__":
     unittest.main()
