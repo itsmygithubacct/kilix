@@ -108,10 +108,21 @@ class RemoteControlPolicyTests(unittest.TestCase):
         # the file being 0600, single-link and owned by the user — so the
         # reader is the user — and by get-text having been in this list since
         # `kilix watch`, which discloses more than closing destroys.
+        # get-pane-geometry is read-only and narrower than get-text: one
+        # matched pane's rectangle, with no process or screen content.
         self.assertEqual(
             self.password_allowlist(),
             ["launch", "ls", "focus-window", "focus-tab", "get-text",
-             "close-window", "close-tab", "set-tab-title"])
+             "get-pane-geometry", "close-window", "close-tab", "set-tab-title"])
+
+    def test_pane_geometry_command_is_one_the_password_authorises(self):
+        # The SDK sends this command with the password, so a command missing
+        # from the list fails in every real Kilix while the mocked unit tests
+        # still pass. Read the command from the caller, not from this test.
+        caller = (ROOT / "config" / "kilix_sdk" / "geometry.py").read_text()
+        sent = re.findall(r"_check\(\['([a-z-]+)'", caller)
+        self.assertEqual(sent, ["get-pane-geometry"])
+        self.assertIn(sent[0], self.password_allowlist())
 
     def test_password_uses_the_pane_scoped_multiplexer_checker(self):
         launcher = (ROOT / "kilix").read_text()

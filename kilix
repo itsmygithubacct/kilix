@@ -692,12 +692,17 @@ _kilix_init_rc_password() {
   # was never a read-only one; closing a window destroys less than reading it
   # discloses.
   #
+  # get-pane-geometry is here for the SDK's `geometry.current()`, which maps
+  # accessible components onto one live pane. It is read-only: it answers for
+  # exactly one matched pane with its cell and pixel rectangle, and returns no
+  # process, environment or screen content, so it discloses less than get-text.
+  #
   # The custom checker adds one narrow input route for `kilix remote`: send-text
   # must target exactly one broker session through its environment marker and
   # may carry only a bounded base64 byte chunk. The command name is deliberately
   # absent from the wildcard list, so the checker is the only route to it.
   tmp="$(mktemp "$KILIX_SESSION_HOME/.rc-config.XXXXXX")" || return 1
-  printf 'remote_control_password "%s" launch ls focus-window focus-tab get-text close-window close-tab set-tab-title "%s"\n' \
+  printf 'remote_control_password "%s" launch ls focus-window focus-tab get-text get-pane-geometry close-window close-tab set-tab-title "%s"\n' \
     "$password" "$KILIX_HOME/config/kilix_mux_rc_auth.py" >"$tmp"
   chmod 0600 "$tmp" || { rm -f -- "$tmp"; return 1; }
   # Same content, same private regular file: keep it. The running terminal
