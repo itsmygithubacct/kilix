@@ -4259,18 +4259,22 @@ _kilix_restore_pane_tty() {
 # Run the desktop provider and restart it when it dies abnormally, so a crash
 # costs a moment rather than the desktop and the unsaved work its own document
 # recovery keeps. A clean exit (status 0, including Shut Down and SIGTERM/SIGHUP,
-# which the provider maps to 0) or 129/130/143 (a hangup, interrupt or terminate
-# that arrived before its handlers) ends the session as before. Restarts back
+# which the provider maps to 0), 129/130/143 (a hangup, interrupt or terminate
+# that arrived before its handlers), 2 (a usage error) or 126/127 (the command
+# cannot run at all) ends the session as before. Restarts back
 # off 1, 2, 4, 8, 16 s; more than five within a minute stop with the last status.
 # KILIX_DESKTOP_RESTART=off disables restarting. The restarted provider gets
 # KILIX_DESKTOP_RESTARTED=1 and KILIX_DESKTOP_LAST_STATUS so it can say why.
 # Status 75 is the provider asking to be restarted on purpose (after a settings
-# restore): that restart is immediate and is not counted as a failure. Every run
+# restore): that restart is immediate and is not counted as a failure, though
+# more than five within a minute stop the loop like crashes do. Every run
 # sees KILIX_DESKTOP_SUPERVISED=1, so the provider knows it may ask.
 _kilix_desktop_supervise() {
   _sup_restarts=0
   _sup_window=$(date +%s)
   _sup_base="${KILIX_DESKTOP_RESTART_DELAY:-1}"
+  case "$_sup_base" in ''|*[!0-9]*) _sup_base=1 ;; esac
+  _sup_requests=0
   _sup_delay="$_sup_base"
   _sup_restarted=
   _sup_last=
@@ -4282,21 +4286,27 @@ _kilix_desktop_supervise() {
     else
       KILIX_DESKTOP_SUPERVISED=1 "$@" || _sup_rc=$?
     fi
+    _sup_now=$(date +%s)
+    if [ $((_sup_now - _sup_window)) -ge 60 ]; then
+      _sup_window=$_sup_now
+      _sup_restarts=0
+      _sup_requests=0
+      _sup_delay="$_sup_base"
+    fi
     case "$_sup_rc" in
-      0|129|130|143) return "$_sup_rc" ;;
+      0|2|126|127|129|130|143) return "$_sup_rc" ;;
       75)
+        _sup_requests=$((_sup_requests + 1))
+        if [ "$_sup_requests" -gt 5 ]; then
+          echo "kilix desktop: the desktop asked to restart $_sup_requests times within a minute; not restarting it again" >&2
+          return "$_sup_rc"
+        fi
         _kilix_restore_pane_tty
         _sup_restarted=1
         _sup_last=75
         continue ;;
     esac
     [ "${KILIX_DESKTOP_RESTART:-on}" = off ] && return "$_sup_rc"
-    _sup_now=$(date +%s)
-    if [ $((_sup_now - _sup_window)) -ge 60 ]; then
-      _sup_window=$_sup_now
-      _sup_restarts=0
-      _sup_delay="$_sup_base"
-    fi
     _sup_restarts=$((_sup_restarts + 1))
     if [ "$_sup_restarts" -gt 5 ]; then
       echo "kilix desktop: the desktop failed $_sup_restarts times within a minute (last status $_sup_rc); not restarting it again" >&2

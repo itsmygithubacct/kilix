@@ -772,9 +772,14 @@ kilix backup restore ARCHIVE --yes  # restore; your current files are backed up 
 
 A backup holds the shared settings file, your `kilix.env`, the desktop's
 configuration and saved state, and the documents on the desktop. Restoring only
-creates or replaces the files the archive names. It refuses the whole archive
-if any member is a link, escapes its folder, or fails its checksum. The Kilix 95
-Settings window offers the same Back Up and Restore buttons.
+creates or replaces the files the archive names, and first keeps a copy of each
+file it replaces. It refuses the whole archive if any member is a link, escapes
+its folder, or fails its checksum. `list` and `restore` show every setting the
+archive would change, and flag `kilix.env` keys that decide what the desktop
+runs, because a backup file may come from somewhere else. From the command line,
+restore refuses while the desktop is running, since the desktop would save its
+own state over the restored files. Control Panel > Backup in Kilix 95 restores
+and restarts the desktop for you.
 
 Closing the whole frontend, closing a page, or a Kilix crash detaches the
 client. Detached sessions are discovered on the next startup and reopened

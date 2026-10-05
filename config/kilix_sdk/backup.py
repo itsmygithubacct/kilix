@@ -10,11 +10,15 @@ every file it carries with its size and SHA-256.  It holds:
                          without crash logs or crash-recovery checkpoints;
 * ``desktop``            the documents on the desktop.
 
+Each file is copied once into a private spool while it is hashed, so the
+archive always matches its manifest even if the file changes meanwhile.
+
 Restoring is non-destructive: it only creates or replaces the files the backup
-names, each atomically, and first takes a safety backup of what it is about to
-replace.  An archive is refused whole if any member is not a plain file or
-directory, escapes its root, is missing from the manifest, or fails its digest.
-Symlinks are never archived and never followed.
+names, each atomically, after checking every destination and keeping a safety
+copy of the files it replaces.  An archive is refused whole if any member is
+not a plain file or directory, escapes its root, is excluded crash state, is
+missing from the manifest, fails its digest, or collides with another member.
+Symlinks are never archived, followed or written through.
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import stat
 import tarfile
 import tempfile
@@ -31,7 +36,13 @@ import tempfile
 FORMAT = "kilix.backup/v1"
 MANIFEST = "manifest.json"
 MAX_TOTAL = 1 << 30                  # 1 GiB of payload
+MAX_MEMBERS = 100_000
+NAME_MAX = 255
+PATH_MAX = 4096
 _STATE_EXCLUDE = ("document-recovery", "crash.log")
+# kilix.env keys that decide what the launcher runs; a restore names them.
+LAUNCH_KEYS = ("KILIX_DESKTOP_COMMAND", "KILIX_DESKTOP_PROVIDER", "KILIX95_DIR",
+               "KILIX95_REPO", "KILIX95_REF", "KILIX_PYTHON")
 
 
 class BackupError(Exception):
@@ -48,17 +59,52 @@ def _env_dir(name: str, default: str) -> str:
     return os.path.abspath(os.path.expanduser(os.environ.get(name) or default))
 
 
+def _parse_env(path: str) -> dict[str, str]:
+    values: dict[str, str] = {}
+    try:
+        with open(path, encoding="utf-8", errors="surrogateescape") as fh:
+            for line in fh:
+                line = line.rstrip("\n").rstrip("\r")
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                values[key] = value
+    except OSError:
+        pass
+    return values
+
+
+def _kilix_env_files() -> list[str]:
+    from kilix_sdk import paths
+    default = os.path.join(paths.kilix_home(), "config", "kilix.env")
+    user = os.environ.get("KILIX_ENV_CONFIG") or os.path.join(paths.config_dir(), "kilix.env")
+    return [default] if user == default else [default, user]
+
+
+def persisted_value(key: str) -> str | None:
+    """A launcher setting as the launcher resolves it: the process environment
+    wins, otherwise the last kilix.env that sets it."""
+    if key in os.environ:
+        return os.environ[key]
+    value = None
+    for path in _kilix_env_files():
+        value = _parse_env(path).get(key, value)
+    return value
+
+
 def sources() -> list[tuple[str, str]]:
     """[(archive name, absolute path)] for everything a backup carries."""
     from kilix_sdk import paths, settings
     k95 = _env_dir("KILIX95_STORAGE_HOME", _home("kilix-95"))
     data = _env_dir("KILIX95_DATA_HOME", os.path.join(k95, "data"))
+    desktop = persisted_value("KILIX_DESKTOP_DIR") or os.path.join(data, "desktop")
     return [
         ("settings.conf", settings.settings_path()),
-        ("kilix/kilix.env", os.path.join(paths.config_dir(), "kilix.env")),
+        ("kilix/kilix.env", os.environ.get("KILIX_ENV_CONFIG")
+         or os.path.join(paths.config_dir(), "kilix.env")),
         ("kilix95/config", _env_dir("KILIX95_CONFIG_HOME", os.path.join(k95, "config"))),
         ("kilix95/state", _env_dir("KILIX95_STATE_HOME", os.path.join(k95, "state"))),
-        ("desktop", _env_dir("KILIX_DESKTOP_DIR", os.path.join(data, "desktop"))),
+        ("desktop", os.path.abspath(os.path.expanduser(desktop))),
     ]
 
 
@@ -69,8 +115,7 @@ def default_directory() -> str:
 def _excluded(name: str) -> bool:
     if not name.startswith("kilix95/state/"):
         return False
-    rest = name[len("kilix95/state/"):]
-    first = rest.split("/", 1)[0]
+    first = name[len("kilix95/state/"):].split("/", 1)[0]
     return (first in _STATE_EXCLUDE or first.startswith("crash.log")
             or first.startswith(".kilixstate."))
 
@@ -91,67 +136,88 @@ def _walk(name: str, path: str):
         yield from _walk(f"{name}/{entry}", os.path.join(path, entry))
 
 
+def _open_nofollow(path: str):
+    return open(path, "rb", opener=lambda p, f: os.open(p, f | os.O_NOFOLLOW))
+
+
 def _digest(path: str) -> tuple[int, str]:
     h = hashlib.sha256()
     size = 0
-    with open(path, "rb", opener=lambda p, f: os.open(p, f | os.O_NOFOLLOW)) as fh:
+    with _open_nofollow(path) as fh:
         for block in iter(lambda: fh.read(1 << 20), b""):
             h.update(block)
             size += len(block)
     return size, h.hexdigest()
 
 
-def _private_output(path: str):
-    directory = os.path.dirname(path)
-    os.makedirs(directory, mode=0o700, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(prefix=".kilix-backup-", dir=directory)
-    os.fchmod(fd, 0o600)
-    return fd, temporary
-
-
-def create(output: str | None = None, *, label: str = "kilix-backup") -> str:
-    """Write a backup and return its path."""
+def create(output: str | None = None, *, label: str = "kilix-backup",
+           only: set[str] | None = None) -> str:
+    """Write a backup and return its path; ``only`` limits it to those names."""
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     output = os.path.abspath(os.path.expanduser(
         output or os.path.join(default_directory(), f"{label}-{stamp}.tar.gz")))
-    files = [item for name, path in sources() for item in _walk(name, path)]
-    entries, total = {}, 0
-    for name, path in files:
-        size, digest = _digest(path)
-        total += size
-        if total > MAX_TOTAL:
-            raise BackupError("backup would exceed 1 GiB; move large files off the desktop first")
-        entries[name] = {"size": size, "sha256": digest}
-    manifest = json.dumps({
-        "format": FORMAT,
-        "created": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        "entries": entries,
-    }, indent=1, sort_keys=True).encode("utf-8")
-    fd, temporary = _private_output(output)
+    directory = os.path.dirname(output)
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    spool = tempfile.mkdtemp(prefix=".kilix-backup-spool-", dir=directory)
+    fd, temporary = tempfile.mkstemp(prefix=".kilix-backup-", dir=directory)
+    os.fchmod(fd, 0o600)
     try:
+        entries, spooled, total = {}, [], 0
+        files = [item for name, path in sources() for item in _walk(name, path)
+                 if only is None or item[0] in only]
+        for index, (name, path) in enumerate(files):
+            copy = os.path.join(spool, str(index))
+            h, size = hashlib.sha256(), 0
+            try:
+                with _open_nofollow(path) as src, open(copy, "xb") as dst:
+                    for block in iter(lambda: src.read(1 << 20), b""):
+                        size += len(block)
+                        total += len(block)
+                        if total > MAX_TOTAL:
+                            raise BackupError("backup would exceed 1 GiB; move large "
+                                              "files off the desktop first")
+                        h.update(block)
+                        dst.write(block)
+            except (FileNotFoundError, IsADirectoryError):
+                continue                             # vanished or replaced meanwhile
+            entries[name] = {"size": size, "sha256": h.hexdigest()}
+            spooled.append((name, copy))
+        manifest = json.dumps({
+            "format": FORMAT,
+            "created": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "entries": entries,
+        }, indent=1, sort_keys=True).encode("utf-8")
         with os.fdopen(fd, "wb") as raw, tarfile.open(fileobj=raw, mode="w:gz") as tar:
+            fd = -1
             info = tarfile.TarInfo(MANIFEST)
             info.size, info.mode = len(manifest), 0o600
             tar.addfile(info, io.BytesIO(manifest))
-            for name, path in files:
-                with open(path, "rb", opener=lambda p, f: os.open(p, f | os.O_NOFOLLOW)) as fh:
+            for name, copy in spooled:
+                with open(copy, "rb") as fh:
                     info = tarfile.TarInfo(name)
                     info.size, info.mode = entries[name]["size"], 0o600
                     tar.addfile(info, fh)
         os.replace(temporary, output)
     except BaseException:
+        if fd >= 0:
+            os.close(fd)
         try:
             os.unlink(temporary)
         except OSError:
             pass
         raise
+    finally:
+        shutil.rmtree(spool, ignore_errors=True)
     return output
 
 
 def _safe_name(name: str) -> bool:
     parts = name.split("/")
     return (bool(name) and not name.startswith("/") and "\\" not in name
-            and all(p not in ("", ".", "..") for p in parts))
+            and len(name.encode("utf-8", "surrogateescape")) <= PATH_MAX
+            and all(p not in ("", ".", "..")
+                    and len(p.encode("utf-8", "surrogateescape")) <= NAME_MAX
+                    for p in parts))
 
 
 def read(archive: str) -> tuple[dict, dict[str, bytes]]:
@@ -161,40 +227,60 @@ def read(archive: str) -> tuple[dict, dict[str, bytes]]:
     except (OSError, tarfile.TarError) as error:
         raise BackupError(f"not a readable backup: {error}") from None
     payload: dict[str, bytes] = {}
-    with tar:
-        members = tar.getmembers()
-        if not members or members[0].name != MANIFEST or not members[0].isfile():
-            raise BackupError("missing manifest")
-        try:
-            manifest = json.loads(tar.extractfile(members[0]).read(1 << 20))
-        except ValueError:
-            raise BackupError("unreadable manifest") from None
-        if not isinstance(manifest, dict) or manifest.get("format") != FORMAT \
-                or not isinstance(manifest.get("entries"), dict):
-            raise BackupError("unsupported backup format")
-        entries = manifest["entries"]
-        roots = {name for name, _path in sources()}
-        total = 0
-        for member in members[1:]:
-            name = member.name
-            if not member.isfile() or not _safe_name(name):
-                raise BackupError(f"refusing archive member {name!r}")
-            if not any(name == r or name.startswith(r + "/") for r in roots):
-                raise BackupError(f"archive member outside the backup: {name!r}")
-            expected = entries.get(name)
-            if not isinstance(expected, dict) or name in payload:
-                raise BackupError(f"archive member not in the manifest: {name!r}")
-            total += member.size
-            if total > MAX_TOTAL:
-                raise BackupError("archive larger than 1 GiB")
-            data = tar.extractfile(member).read()
-            if len(data) != expected.get("size") or \
-                    hashlib.sha256(data).hexdigest() != expected.get("sha256"):
-                raise BackupError(f"digest mismatch for {name!r}")
-            payload[name] = data
-        missing = set(entries) - set(payload)
-        if missing:
-            raise BackupError(f"manifest names files the archive lacks: {sorted(missing)[:3]}")
+    roots = [name for name, _path in sources()]
+    try:
+        with tar:
+            first = tar.next()
+            if first is None or first.name != MANIFEST or not first.isfile():
+                raise BackupError("missing manifest")
+            try:
+                manifest = json.loads(tar.extractfile(first).read(1 << 22))
+            except ValueError:
+                raise BackupError("unreadable manifest") from None
+            if not isinstance(manifest, dict) or manifest.get("format") != FORMAT \
+                    or not isinstance(manifest.get("entries"), dict) \
+                    or len(manifest["entries"]) > MAX_MEMBERS:
+                raise BackupError("unsupported backup format")
+            entries = manifest["entries"]
+            total = 0
+            while True:
+                # One header at a time: an archive cannot make us parse more
+                # members than its own manifest promised.
+                member = tar.next()
+                if member is None:
+                    break
+                if len(payload) >= len(entries):
+                    raise BackupError("archive has more members than its manifest lists")
+                name = member.name
+                if not member.isfile() or not _safe_name(name):
+                    raise BackupError(f"refusing archive member {name!r}")
+                if not any(name == r or name.startswith(r + "/") for r in roots):
+                    raise BackupError(f"archive member outside the backup: {name!r}")
+                if _excluded(name):
+                    raise BackupError(f"archive member is crash state a backup never holds: {name!r}")
+                expected = entries.get(name)
+                if not isinstance(expected, dict) or name in payload:
+                    raise BackupError(f"archive member not in the manifest: {name!r}")
+                total += member.size
+                if total > MAX_TOTAL:
+                    raise BackupError("archive larger than 1 GiB")
+                data = tar.extractfile(member).read()
+                if len(data) != expected.get("size") or \
+                        hashlib.sha256(data).hexdigest() != expected.get("sha256"):
+                    raise BackupError(f"digest mismatch for {name!r}")
+                payload[name] = data
+    except (tarfile.TarError, EOFError, OSError) as error:
+        raise BackupError(f"damaged backup: {error}") from None
+    missing = set(entries) - set(payload)
+    if missing:
+        raise BackupError(f"manifest names files the archive lacks: {sorted(missing)[:3]}")
+    names = set(payload)
+    for name in names:                               # a file cannot also be a folder
+        parts = name.split("/")
+        for i in range(1, len(parts)):
+            if "/".join(parts[:i]) in names:
+                raise BackupError(
+                    f"archive member is both a file and a folder: {'/'.join(parts[:i])!r}")
     return manifest, payload
 
 
@@ -207,21 +293,42 @@ def _destination(name: str) -> str:
     raise BackupError(f"no destination for {name!r}")
 
 
+def _action(dest: str, data: bytes) -> str:
+    if not os.path.lexists(dest):
+        return "create"
+    try:
+        same = _digest(dest)[1] == hashlib.sha256(data).hexdigest()
+    except OSError:
+        same = False
+    return "same" if same else "replace"
+
+
 def plan(archive: str) -> list[tuple[str, str, str]]:
     """[(name, destination, 'create'|'replace'|'same')] without writing anything."""
     _manifest, payload = read(archive)
+    return [(name, _destination(name), _action(_destination(name), data))
+            for name, data in sorted(payload.items())]
+
+
+def changes(archive: str) -> list[tuple[str, str, str | None, str | None]]:
+    """Setting-level changes a restore makes: (file, key, current, restored).
+
+    A backup file can come from anywhere, and kilix.env decides what the
+    launcher runs, so these are shown before anything is applied."""
+    _manifest, payload = read(archive)
     out = []
-    for name, data in sorted(payload.items()):
-        dest = _destination(name)
-        if not os.path.lexists(dest):
-            action = "create"
-        else:
-            try:
-                same = _digest(dest)[1] == hashlib.sha256(data).hexdigest()
-            except OSError:
-                same = False
-            action = "same" if same else "replace"
-        out.append((name, dest, action))
+    for name in ("settings.conf", "kilix/kilix.env"):
+        if name not in payload:
+            continue
+        current = _parse_env(_destination(name))
+        restored: dict[str, str] = {}
+        for line in payload[name].decode("utf-8", "surrogateescape").splitlines():
+            if line and not line.startswith("#") and "=" in line:
+                key, value = line.split("=", 1)
+                restored[key] = value
+        for key in sorted(set(current) | set(restored)):
+            if current.get(key) != restored.get(key):
+                out.append((name, key, current.get(key), restored.get(key)))
     return out
 
 
@@ -239,41 +346,73 @@ def _check_destination(dest: str) -> None:
         probe = os.path.dirname(probe)
 
 
+def desktop_running() -> bool:
+    """Whether this user's desktop provider is running (it saves its own state)."""
+    from kilix_sdk import paths
+    main = os.path.realpath(os.path.join(
+        os.environ.get("KILIX95_DIR") or paths.kilix95_home(), "main.py"))
+    uid = os.getuid()
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            if os.stat(f"/proc/{entry}").st_uid != uid:
+                continue
+            with open(f"/proc/{entry}/cmdline", "rb") as fh:
+                argv = fh.read().split(b"\0")
+        except OSError:
+            continue
+        for arg in argv[1:3]:
+            if arg.endswith(b"main.py") and os.path.realpath(os.fsdecode(arg)) == main:
+                return True
+    return False
+
+
 def restore(archive: str) -> dict:
-    """Apply a backup; returns {'safety': path, 'written': n, 'unchanged': n}.
+    """Apply a backup; returns {'safety': path|None, 'written': n, 'unchanged': n}.
 
     Every destination is checked before anything is written, so a refused
     archive leaves the user's files exactly as they were."""
     _manifest, payload = read(archive)
-    targets = [(name, _destination(name), data) for name, data in sorted(payload.items())]
-    for _name, dest, _data in targets:
+    targets = []
+    for name, data in sorted(payload.items()):
+        dest = _destination(name)
         _check_destination(dest)
-    safety = create(label="kilix-before-restore")
-    written = unchanged = 0
-    for _name, dest, data in targets:
-        parent = os.path.dirname(dest)
-        os.makedirs(parent, mode=0o700, exist_ok=True)
-        if os.path.isfile(dest) and _digest(dest)[1] == hashlib.sha256(data).hexdigest():
+        targets.append((name, dest, data, _action(dest, data)))
+    replaced = {name for name, _dest, _data, action in targets if action == "replace"}
+    safety = create(label="kilix-before-restore", only=replaced) if replaced else None
+    written: list[str] = []
+    unchanged = 0
+    for name, dest, data, action in targets:
+        if action == "same":
             unchanged += 1
             continue
-        fd, temporary = tempfile.mkstemp(prefix=".kilix-restore-", dir=parent)
+        parent = os.path.dirname(dest)
         try:
-            os.fchmod(fd, 0o600)
-            with os.fdopen(fd, "wb") as fh:
-                fh.write(data)
-            os.replace(temporary, dest)
-        except BaseException:
+            os.makedirs(parent, mode=0o700, exist_ok=True)
+            fd, temporary = tempfile.mkstemp(prefix=".kilix-restore-", dir=parent)
             try:
-                os.unlink(temporary)
-            except OSError:
-                pass
-            raise
-        written += 1
-    return {"safety": safety, "written": written, "unchanged": unchanged}
+                os.fchmod(fd, 0o600)
+                with os.fdopen(fd, "wb") as fh:
+                    fh.write(data)
+                os.replace(temporary, dest)
+            except BaseException:
+                try:
+                    os.unlink(temporary)
+                except OSError:
+                    pass
+                raise
+        except OSError as error:
+            done = ", ".join(written) or "nothing"
+            raise BackupError(f"could not write {name}: {error.strerror or error}; "
+                              f"already restored: {done}; previous files: {safety}") from None
+        written.append(name)
+    return {"safety": safety, "written": len(written), "unchanged": unchanged}
 
 
 def main(argv: list[str]) -> int:
     import argparse
+    import sys
     parser = argparse.ArgumentParser(
         prog="kilix backup",
         description="Back up or restore your Kilix settings and desktop documents.")
@@ -291,21 +430,33 @@ def main(argv: list[str]) -> int:
             print(create(args.output))
             return 0
         rows = plan(args.archive)
-        for name, dest, action in rows:
+        for name, _dest, action in rows:
             print(f"{action:8} {name}")
+        setting_changes = changes(args.archive)
+        if setting_changes:
+            print("\nSetting changes:")
+            for name, key, old, new in setting_changes:
+                note = "   <- decides what the desktop runs" if (
+                    name == "kilix/kilix.env" and key in LAUNCH_KEYS) else ""
+                print(f"  {name}: {key}: {old!r} -> {new!r}{note}")
         if args.command == "list":
             return 0
         if not args.yes:
-            print("\nNothing written. Re-run with --yes to restore; your current files "
-                  "are backed up first.")
+            print("\nNothing written. Re-run with --yes to restore; the files it "
+                  "replaces are backed up first.")
             return 0
+        if desktop_running():
+            print("\nThe desktop is running and would save its own state over the "
+                  "restore. Close it first, or restore from Control Panel > Backup.",
+                  file=sys.stderr)
+            return 3
         result = restore(args.archive)
         print(f"\nRestored {result['written']} file(s), {result['unchanged']} already "
-              f"current. Previous files: {result['safety']}")
+              "current." + (f" Previous files: {result['safety']}" if result["safety"] else ""))
         print("Restart the desktop (or log out and in) to load restored settings.")
         return 0
-    except BackupError as error:
-        print(f"kilix backup: {error}", file=__import__("sys").stderr)
+    except (BackupError, OSError) as error:
+        print(f"kilix backup: {error}", file=sys.stderr)
         return 2
 
 

@@ -170,6 +170,93 @@ class BackupTests(unittest.TestCase):
         self.assertIn("Nothing written", result.stdout)
         self.assertEqual((self.gt / "settings.conf").read_text(), "clock=12h\n")
 
+    def test_a_file_changing_mid_backup_still_gives_a_valid_archive(self):
+        real_dumps = backup.json.dumps
+        letter = self.gt / "desktop" / "letter.txt"
+
+        def edit_then_dump(*args, **kwargs):          # after spooling, before the tar
+            letter.write_text("DEAR OWNER\n")        # same length, different bytes
+            return real_dumps(*args, **kwargs)
+        with mock.patch.object(backup.json, "dumps", edit_then_dump):
+            archive = backup.create()
+        _manifest, payload = backup.read(archive)      # must not be a digest mismatch
+        self.assertEqual(payload["desktop/letter.txt"], b"Dear owner\n")
+
+    def test_the_desktop_folder_set_in_kilix_env_is_the_one_backed_up(self):
+        elsewhere = self.tmp / "my-desktop"
+        elsewhere.mkdir()
+        (elsewhere / "mine.txt").write_text("from kilix.env's desktop\n")
+        (self.gt / "kilix" / "config" / "kilix.env").write_text(f"KILIX_DESKTOP_DIR={elsewhere}\n")
+        os.environ.pop("KILIX_DESKTOP_DIR")
+        self.assertIn("desktop/mine.txt", self.names(backup.create()))
+        os.environ["KILIX_DESKTOP_DIR"] = str(self.gt / "desktop")   # explicit env still wins
+        self.assertIn("desktop/letter.txt", self.names(backup.create()))
+
+    def test_cli_restore_refuses_while_the_desktop_runs(self):
+        archive = backup.create()
+        (self.gt / "settings.conf").write_text("clock=12h\n")
+        with mock.patch.object(backup, "desktop_running", return_value=True):
+            self.assertEqual(backup.main(["restore", archive, "--yes"]), 3)
+        self.assertEqual((self.gt / "settings.conf").read_text(), "clock=12h\n")
+
+    def test_a_running_desktop_is_detected(self):
+        k95 = self.tmp / "k95"
+        k95.mkdir()
+        (k95 / "main.py").write_text("import time\ntime.sleep(30)\n")
+        os.environ["KILIX95_DIR"] = str(k95)
+        self.assertFalse(backup.desktop_running())
+        proc = subprocess.Popen([sys.executable, str(k95 / "main.py")])
+        self.addCleanup(proc.kill)
+        for _ in range(50):
+            if Path(f"/proc/{proc.pid}/cmdline").read_bytes().count(b"main.py"):
+                break
+        self.assertTrue(backup.desktop_running())
+
+    def test_colliding_long_surplus_and_crash_members_are_refused(self):
+        ok = (b"clock=0\n", "file")
+        cases = {
+            "both a file and a folder": [("settings.conf",) + ok, ("desktop/a", b"x", "file"),
+                                         ("desktop/a/b", b"y", "file")],
+            "refusing archive member": [("settings.conf",) + ok, ("desktop/" + "n" * 300, b"x", "file")],
+            "crash state": [("settings.conf",) + ok, ("kilix95/state/crash.log", b"t", "file")],
+        }
+        for message, members in cases.items():
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(backup.BackupError, message):
+                    backup.read(self.hostile(members))
+        surplus = self.hostile([("settings.conf",) + ok, ("desktop/x", b"x", "file"),
+                                ("desktop/y", b"y", "file")],
+                               manifest_entries={"settings.conf": {"size": 8, "sha256": hashlib.sha256(b"clock=0\n").hexdigest()}})
+        with self.assertRaisesRegex(backup.BackupError, "more members than its manifest"):
+            backup.read(surplus)
+
+    def test_the_safety_copy_holds_only_what_is_replaced(self):
+        archive = backup.create()
+        (self.gt / "settings.conf").write_text("clock=12h\n")
+        result = backup.restore(archive)
+        self.assertEqual(self.names(result["safety"]), ["manifest.json", "settings.conf"])
+        self.assertIsNone(backup.restore(archive)["safety"], "nothing replaced, nothing copied")
+
+    def test_setting_changes_are_shown_and_launch_keys_flagged(self):
+        env_file = self.gt / "kilix" / "config" / "kilix.env"
+        env_file.write_text("KILIX_DESKTOP_COMMAND=/usr/bin/trusted\n")
+        archive = backup.create()
+        env_file.write_text("KILIX_DESKTOP_COMMAND=/usr/bin/other\n")
+        self.assertIn(("kilix/kilix.env", "KILIX_DESKTOP_COMMAND", "/usr/bin/other", "/usr/bin/trusted"),
+                      backup.changes(archive))
+        out = io.StringIO()
+        with mock.patch("sys.stdout", out):
+            backup.main(["list", archive])
+        self.assertIn("decides what the desktop runs", out.getvalue())
+
+    def test_the_size_cap_holds_on_create_and_read(self):
+        archive = backup.create()
+        with mock.patch.object(backup, "MAX_TOTAL", 10):
+            with self.assertRaisesRegex(backup.BackupError, "exceed 1 GiB"):
+                backup.create()
+            with self.assertRaisesRegex(backup.BackupError, "larger than 1 GiB"):
+                backup.read(archive)
+
     def test_launcher_dispatches_backup_before_setup(self):
         launcher = (ROOT / "kilix").read_text()
         self.assertIn('exec python3 -B "$KILIX_HOME/config/kilix_sdk/backup.py" "$@" ;;', launcher)
