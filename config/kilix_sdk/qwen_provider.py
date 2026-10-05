@@ -23,7 +23,7 @@ from . import paths
 from ._content_runtime import apps_root
 
 PROVIDER_REF = 'e255d4af90eb3593c880e10894f2a128aa28eec7'
-CONTENT_REF = '34ef86a57789f5b065f34cf0203bd43001e61396'
+CONTENT_REF = 'ad620c1429d825230e1c337a20f8a9682ff060d4'
 LICENSE_REF = 'ca8a0f479893ab9c8cd6cadc2716c474aaad2820'
 ENGINE_REF = '6cafe5582caea83df269c36b1ce62d953a9cc66b'
 MODEL = 'qwen3-tts-0.6b-customvoice'
