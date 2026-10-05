@@ -4229,6 +4229,56 @@ _kilix_restore_pane_tty() {
   stty sane 2>/dev/null || true
 }
 
+# BEGIN DESKTOP SUPERVISOR
+# Run the desktop provider and restart it when it dies abnormally, so a crash
+# costs a moment rather than the desktop and the unsaved work its own document
+# recovery keeps. A clean exit (status 0, including Shut Down and SIGTERM/SIGHUP,
+# which the provider maps to 0) or 129/130/143 (a hangup, interrupt or terminate
+# that arrived before its handlers) ends the session as before. Restarts back
+# off 1, 2, 4, 8, 16 s; more than five within a minute stop with the last status.
+# KILIX_DESKTOP_RESTART=off disables restarting. The restarted provider gets
+# KILIX_DESKTOP_RESTARTED=1 and KILIX_DESKTOP_LAST_STATUS so it can say why.
+_kilix_desktop_supervise() {
+  _sup_restarts=0
+  _sup_window=$(date +%s)
+  _sup_base="${KILIX_DESKTOP_RESTART_DELAY:-1}"
+  _sup_delay="$_sup_base"
+  _sup_restarted=
+  _sup_last=
+  while :; do
+    _sup_rc=0
+    if [ -n "$_sup_restarted" ]; then
+      KILIX_DESKTOP_RESTARTED=1 KILIX_DESKTOP_LAST_STATUS="$_sup_last" "$@" || _sup_rc=$?
+    else
+      "$@" || _sup_rc=$?
+    fi
+    case "$_sup_rc" in
+      0|129|130|143) return "$_sup_rc" ;;
+    esac
+    [ "${KILIX_DESKTOP_RESTART:-on}" = off ] && return "$_sup_rc"
+    _sup_now=$(date +%s)
+    if [ $((_sup_now - _sup_window)) -ge 60 ]; then
+      _sup_window=$_sup_now
+      _sup_restarts=0
+      _sup_delay="$_sup_base"
+    fi
+    _sup_restarts=$((_sup_restarts + 1))
+    if [ "$_sup_restarts" -gt 5 ]; then
+      echo "kilix desktop: the desktop failed $_sup_restarts times within a minute (last status $_sup_rc); not restarting it again" >&2
+      return "$_sup_rc"
+    fi
+    _kilix_restore_pane_tty
+    echo "kilix desktop: the desktop stopped unexpectedly (status $_sup_rc); restarting in ${_sup_delay}s" >&2
+    sleep "$_sup_delay"
+    _sup_delay=$((_sup_delay * 2))
+    [ "$_sup_delay" -gt 16 ] && _sup_delay=16
+    [ "$_sup_base" -eq 0 ] && _sup_delay=0
+    _sup_restarted=1
+    _sup_last="$_sup_rc"
+  done
+}
+# END DESKTOP SUPERVISOR
+
 _kilix_screen_size_usage() {
   cat >&2 <<EOF
 usage: $_self screen-size [show|larger [STEP]|smaller [STEP]|reset|set POINTS|+POINTS|-POINTS|POINTS]
@@ -4896,7 +4946,7 @@ print(ids[0] if ids else "")' 2>/dev/null)"
       mkdir -p "$_desktop_pycache"
       KILIX_HOME="$KILIX_HOME" KILIX95_HOME="$(dirname "$_KILIX_DESKTOP_MAIN")" \
         KILIX_KITTEN="$KITTEN" PYTHONPYCACHEPREFIX="$_desktop_pycache" \
-        python3 "$_KILIX_DESKTOP_MAIN" "$@" || rc=$? ;;
+        _kilix_desktop_supervise python3 "$_KILIX_DESKTOP_MAIN" "$@" || rc=$? ;;
     executable)
       _cap_home="$KILIX_HOME"
       _cap_launch_path="$_cap_home:${PATH:-/usr/local/bin:/usr/bin:/bin}"
