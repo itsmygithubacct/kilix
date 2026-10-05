@@ -119,6 +119,28 @@ class FakeInjector:
 
 
 class XAppSessionTests(unittest.TestCase):
+    def test_local_pane_publication_is_independent_of_clipboard_and_closes_first(self):
+        supervisor=FakeSupervisor()
+        session=xapp.XAppSession('capture-publication',640,480,supervisor=supervisor)
+        publication=mock.Mock()
+        with mock.patch.object(xapp.capture_registry,'publish',return_value=publication) as publish:
+            session.start_xvfb()
+            session.launch_app(['/bin/app'],clipboard=False,capture_label='Visible application')
+            publish.assert_called_once_with(session,'Visible application')
+        publication.close.side_effect=lambda:self.assertEqual(supervisor.cleaned,0)
+        session.close();session.close()
+        publication.close.assert_called_once()
+        self.assertEqual(supervisor.cleaned,1)
+
+    def test_network_or_explicitly_excluded_apps_do_not_publish_capture_sources(self):
+        for local,enabled in ((False,True),(True,False)):
+            session=xapp.XAppSession('excluded-publication',640,480,supervisor=FakeSupervisor())
+            if local:session.start_xvfb()
+            else:session.start_xvnc(5901,'/private/password')
+            with mock.patch.object(xapp.capture_registry,'publish') as publish:
+                session.launch_app(['/bin/app'],clipboard=False,capture_source=enabled)
+                publish.assert_not_called()
+            session.close()
     def test_dimensions_display_port_and_capture_inputs_are_validated(self):
         supervisor = FakeSupervisor()
         session = xapp.XAppSession(
@@ -240,7 +262,9 @@ class XAppSessionTests(unittest.TestCase):
                 xapp.shutil, "which", return_value="/usr/bin/dbus-run-session"):
             session.launch_app(["fixture-app", "two words"], isolate_bus=True)
         argv, kwargs, _ = supervisor.spawns["app"]
-        self.assertEqual(argv, ["/usr/bin/dbus-run-session", "--", "fixture-app", "two words"])
+        self.assertEqual(argv, ["/usr/bin/dbus-run-session", "--", xapp.sys.executable,
+                               str(Path(xapp.__file__).with_name("portal_bridge.py")),
+                               "--wrap", "--", "fixture-app", "two words"])
         env = kwargs["env"]
         for key in inherited:
             self.assertNotIn(key, env)
@@ -248,6 +272,39 @@ class XAppSessionTests(unittest.TestCase):
         self.assertEqual(env["KILIX_RUN_ALIASES"], "0")
         self.assertEqual(env["KILIX_PRIVATE_XAPP"], "1")
         self.assertEqual(env["GDK_BACKEND"], "x11")
+        self.assertEqual(env["KILIX_PORTAL_HOST_BUS"], "unix:path=/host/bus")
+        self.assertEqual(env["GTK_USE_PORTAL"], "1")
+
+    def test_private_portal_uses_physical_bus_and_headless_apps_need_no_bridge(self):
+        supervisor = FakeSupervisor()
+        session = xapp.XAppSession("portals", 640, 480, supervisor=supervisor)
+        session.start_xvfb()
+        with mock.patch.dict(os.environ, {"DBUS_SESSION_BUS_ADDRESS": "unix:path=/outer/private",
+                                         "PLEB_DESKTOP_BUS_ADDRESS": "unix:path=/physical"}, clear=True), \
+                mock.patch.object(xapp.shutil, "which", return_value="/usr/bin/dbus-run-session"):
+            session.launch_app(["fixture-app"], isolate_bus=True)
+        self.assertEqual(supervisor.spawns["app"][1]["env"]["KILIX_PORTAL_HOST_BUS"],
+                         "unix:path=/physical")
+        session.close()
+        supervisor = FakeSupervisor()
+        session = xapp.XAppSession("headless", 640, 480, supervisor=supervisor)
+        session.start_xvfb()
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(
+                xapp.shutil, "which", return_value="/usr/bin/dbus-run-session"):
+            session.launch_app(["fixture-app"], isolate_bus=True)
+        self.assertEqual(supervisor.spawns["app"][0],
+                         ["/usr/bin/dbus-run-session", "--", "fixture-app"])
+        session.close()
+
+    def test_explicit_private_gtk_chooser_policy_is_preserved(self):
+        supervisor = FakeSupervisor()
+        session = xapp.XAppSession("chooser-policy", 640, 480, supervisor=supervisor)
+        session.start_xvfb()
+        with mock.patch.dict(os.environ, {"PLEB_DESKTOP_BUS_ADDRESS": "unix:path=/physical"}, clear=True), \
+                mock.patch.object(xapp.shutil, "which", return_value="/usr/bin/dbus-run-session"):
+            session.launch_app(["fixture-app"], env={"GTK_USE_PORTAL": "0"}, isolate_bus=True)
+        self.assertEqual(supervisor.spawns["app"][1]["env"]["GTK_USE_PORTAL"], "0")
+        session.close()
 
     def test_private_wm_is_supervised_and_ready_before_app_launch(self):
         supervisor = FakeSupervisor()

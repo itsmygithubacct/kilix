@@ -41,6 +41,100 @@ verification and recovery, see [Kilix Workflows](docs/workflows/README.md).
   return focus to the original pane when dismissed. Outside clicks close the
   popup without activating the pane beneath it.
 
+The RC5 desktop-completion candidate also routes desktop portals from managed
+private-X applications to the physical session. Application singleton names
+stay on their private D-Bus; each portal caller gets a separate host connection,
+translated request/session handles, and Unix file-descriptor forwarding.
+Disconnecting a client or killing its app releases its capture sessions. This
+relay requires the system Python's GIO bindings (`python3-gi` on Debian); the
+stream dependency installer includes them. A private XID is not forwarded as
+the parent of a physical-session dialog. Firefox and Chromium browsers in private panes use the
+system portal for screen capture while their GUIs stay on X11. This browser-only
+compatibility context uses an unreachable Wayland display path and preserves
+the normal browser and desktop permission dialogs. The SDK launcher and
+`kilix open-url` from an existing private pane share this policy. Chromium's Ozone
+platform is explicitly X11; its profile, sandbox and permission settings are retained.
+Firefox ESR and Chromium capture, cancellation, Stop sharing and source closure
+have bounded installed default-desktop VM evidence. Chromium also shares native
+dialogs within a minimized pane. Its browser preview and actual capture open
+separate portal sessions; this candidate asks for system consent for each, so
+answer the second picker after the browser's Share button. Multiple-source,
+display, lock and broader daily-use acceptance remains pending.
+
+Managed GTK applications using `GtkFileChooserNative` select desktop portal
+file choosers when a physical-session bus route is available. An explicit `GTK_USE_PORTAL=0` is
+preserved. The same private bus exposes native desktop notifications through
+the physical daemon, with separate identifiers for each caller. Replacement,
+closure and action signals stay with their owning application; closing the
+sender leaves an already displayed notification available, as with
+`notify-send`. Notification image hints keep their binary data, while private
+window IDs are removed. Pending service payloads are bounded to 16 MiB per
+message and 64 MiB across the relay. Native GTK Open, Save, Cancel and
+application-close checks, and Libnotify show/update/close/action checks, have
+component VM evidence; installed default-desktop acceptance remains pending.
+
+Managed local application panes now mirror ordinary clipboard formats through
+SDK 1.16: Unicode text, PNG/JPEG images, and local file URI lists. The relay
+supports incremental X11 transfers, limits each clipboard value to 64 MiB, bounds in-flight transfers, and stops
+with its pane. Network broadcast modes leave the host clipboard disconnected.
+Paste requests made during a copy wait for the complete requested format, with bounded
+waits and request counts. A failed acquisition refuses the waiting request
+instead of returning the previous clipboard as the new copy.
+Known targets and completed formats become available while other representations
+are still being collected. The hub retains its previous complete bundle until
+the new bundle finishes; all alternate-format bytes remain preserved.
+New empty panes initialize their clipboard endpoint. Pending copies refresh
+clipboard ownership so browser and GTK format caches discover the new value;
+older ownership notifications cannot overwrite a newer claim.
+Reply-buffered X11 events drain within the callback's event budget, so the
+desktop does not sleep between already available clipboard chunks.
+`KILIX_HOST_CLIP=0` disables host clipboard exchange. Kilix 95 and its built-in
+fallback use the same transport, including file-manager copy/cut/paste. Two
+GTK windows on separate private displays have component VM evidence for large
+text and image exchange; cross-app drag/drop and installed default-desktop
+acceptance remain pending.
+
+Managed private application buses also forward the physical session's
+accessibility discovery and status service. GTK/ATK applications can join the
+same AT-SPI registry as the session's screen reader while their application
+singleton names remain private. Status properties and change signals retain
+their types; discovery calls are bounded. The matching Kilix 95 candidate
+exposes its live pixel-shell tree separately. Native Kilix chrome, broader
+toolkit and input workflows, and complete screen-reader acceptance remain RC5 work.
+
+The native candidate also provides `get-pane-geometry`, consumed through
+`kilix_sdk.geometry.current()`. It reports the actual pane content bounds,
+cells, visibility, OS window origin and framebuffer/window sizes, including
+the space occupied by native pane chrome. The SDK refreshes a surviving
+broker client's route before selecting its pane, validates identity and bounds,
+and maps canvas rectangles to physical X11 coordinates. Hidden panes, changed
+terminal grids and unavailable screen origins are refused. Installed coordinate
+and text hit-testing qualification remains pending. X11 button events update
+the cursor from their own client coordinates before dispatch, so a click after
+a pointer warp or window move cannot reuse an older motion sample. Relative
+input with a disabled cursor retains its accumulated position.
+
+Broker-backed SDK clients can refresh their remote-control route after the
+original frontend exits. The replacement frontend's live attach process must
+match the caller's exact private broker runtime and session, executable, user,
+and process identities. Only the route, window identity, public key, and
+password-file path are refreshed; normal remote-control authentication remains
+required. Kilix 95's matching candidate applies this before launching tabs.
+
+The matching Pleb supervisor also associates an ordinary initial page with one
+login. A crash retry attaches that surviving PTY as the first active page
+before starting a new desktop. The association persists across repeated
+frontend crashes; a missing or ambiguous match keeps the usual startup.
+Explicit startup-session definitions and URL launches keep their own commands.
+
+Managed local application panes register with the matching Pleb capture picker
+as individual Application pane sources. Private runtime records identify the
+live owner, application, X server and authority file without storing cookies or
+remote-control credentials. Every screenshot or sharing request still needs
+physical-desktop consent. Closing a pane removes its registration; stale
+process identities are refused. Network broadcast launches remain outside this
+local capture catalogue.
+
 ## Release 0.2.1
 
 Prepared 2026-08-25 for the coordinated Plebian-OS 0.2.1 release. The supported
@@ -1379,7 +1473,7 @@ kilix browse --incognito site.com   # compatible spelling; same policy
 ```
 
 Both commands launch the first installed browser in this fixed order:
-`google-chrome`, `chromium-browser`, then `firefox-esr`. `--incognito` is
+`google-chrome`, `chromium`, `chromium-browser`, then `firefox-esr`. `--incognito` is
 translated to Firefox's `--private-window` spelling when necessary.
 
 Only when none of those real browsers is available does Kilix use its

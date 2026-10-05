@@ -273,7 +273,15 @@ TOOL_SPECS = (
     ToolSpec("install-tb", "Install / repair tmux-cli's tb command"),
     ToolSpec("kilix-tts", "kilix-tts — read-aloud voice and rate"),
     ToolSpec("kilix-stt", "kilix-stt — dictation and microphone"),
-    ToolSpec("displays", "Displays — layout, resolution and primary monitor"),
+    ToolSpec("displays", "Displays — layout, resolution, scaling and primary monitor"),
+    ToolSpec("lock-desktop", "Lock desktop — use the account password"),
+    ToolSpec("device-power", "Power — lid, battery, brightness and sleep"),
+    ToolSpec("device-bluetooth", "Bluetooth — pair and connect devices"),
+    ToolSpec("device-storage", "Disks — mount, unmount and eject"),
+    ToolSpec("device-printers", "Printers — configure physical printers"),
+    ToolSpec("device-audio", "Sound devices — outputs and microphones"),
+    ToolSpec("device-input-method", "Input methods — languages and typing"),
+    ToolSpec("device-accessibility", "Accessibility — screen-reader preferences"),
 )
 UI_SECTIONS = SECTION_SPECS + (("Tools", TOOL_SPECS),)
 TOOLS_SECTION_INDEX = len(SECTION_SPECS)
@@ -749,6 +757,16 @@ def _run_tui(stdscr, initial_section: int | str | None = None) -> int | str:
 
 def _tool_argv(action: str) -> list[str]:
     kilix = str(ROOT / "kilix")
+    if action == "lock-desktop" or action.startswith("device-"):
+        pleb = shutil.which("pleb")
+        if not pleb:
+            raise FileNotFoundError("Desktop device controls require Pleb (run pleb install)")
+        if action == "lock-desktop":
+            return [pleb, "lock"]
+        tool = action.removeprefix("device-")
+        if tool not in {"power", "bluetooth", "storage", "printers", "audio", "input-method", "accessibility"}:
+            raise ValueError(f"unknown desktop device tool: {tool}")
+        return [pleb, "devices", tool]
     if action == "displays":
         pleb = shutil.which("pleb")
         if not pleb:

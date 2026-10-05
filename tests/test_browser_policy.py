@@ -78,6 +78,22 @@ class BrowserPolicyTests(unittest.TestCase):
                 "browser=firefox-esr",
             )
 
+    def test_debian_chromium_binary_is_discovered(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.make_browser(directory, "chromium")
+            self.make_browser(directory, "firefox-esr")
+            self.assertEqual(self.run_policy(directory, "https://example.test")[0], "browser=chromium")
+
+    def test_browser_from_an_existing_private_pane_uses_the_capture_policy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            browser = self.make_browser(directory, "firefox-esr")
+            browser.write_text("#!/bin/sh\nprintf 'display=%s\\nportal=%s\\ntoolkit=%s\\n' \"$DISPLAY\" \"$WAYLAND_DISPLAY\" \"$GDK_BACKEND\"\n")
+            (Path(directory) / "python3").symlink_to(sys.executable)
+            output = self.run_policy(directory, "https://example.test", KILIX_HOME=str(ROOT),
+                                     KILIX_PRIVATE_XAPP="1", KILIX_PORTAL_HOST_BUS="unix:path=/physical/bus",
+                                     DISPLAY=":77", GDK_BACKEND="wayland", WAYLAND_DISPLAY="host-wayland")
+            self.assertEqual(output, ["display=:77", "portal=/dev/null", "toolkit=x11"])
+
     def test_no_supported_browser_signals_the_in_pane_fallback(self):
         with tempfile.TemporaryDirectory() as directory:
             script = (

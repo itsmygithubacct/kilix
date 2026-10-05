@@ -13,8 +13,8 @@ keeps the 1.0 contract, while a provider may require a newer 1.y minor.
 import re
 
 
-SDK_VERSION = "1.15.0"
-SDK_API_VERSION = (1, 15)
+SDK_VERSION = "1.16.0"
+SDK_API_VERSION = (1, 16)
 __version__ = SDK_VERSION
 
 _REQUIREMENT = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
@@ -49,7 +49,9 @@ __all__ = [
     "SDK_API_VERSION",
     "SDK_VERSION",
     "IncompatibleSDKError",
+    "clipboard",
     "content",
+    "frontend_context",
     "graphics",
     "panes",
     "paths",

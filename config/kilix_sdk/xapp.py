@@ -11,6 +11,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 import os
 import re
+import select
 import shlex
 import shutil
 import sys
@@ -18,16 +19,17 @@ import tempfile
 import time
 from pathlib import Path
 import subprocess
-import threading
 from typing import Iterable, Mapping
 
 import stream
 import xcapture
 import xinject
 from Xlib import display as xdisplay
+from .browser_portals import prepare_browser
+from .clipboard import _XAUTHORITY_LOCK
+from . import capture_registry
 
 
-_XAUTHORITY_LOCK = threading.RLock()
 _PROCESS_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 
 
@@ -112,12 +114,15 @@ class XAppSession:
         self.xd = None
         self.app = None
         self.window_manager = None
+        self.clipboard_process = None
         self.injector = None
         self.capture = None
         self.capture_process = None
         self.capture_backend = "pending"
         self._capture_seq = 0
         self._closed = False
+        self._local_capture_source = False
+        self._capture_publication = None
 
     @property
     def xauthority(self) -> str | None:
@@ -142,6 +147,7 @@ class XAppSession:
             number, selected_width, selected_height,
             nocursor=nocursor)
         self.number, self.display = number, f":{number}"
+        self._local_capture_source = True
         return number
 
     def start_xvnc(self, port: int, password_file: str, *,
@@ -242,6 +248,9 @@ class XAppSession:
                    env: Mapping[str, str] | None = None,
                    cwd: str | None = None,
                    isolate_bus: bool = False,
+                   clipboard: bool = True,
+                   capture_source: bool = True,
+                   capture_label: str | None = None,
                    stdout=subprocess.DEVNULL,
                    stderr=subprocess.DEVNULL):
         if self.app is not None:
@@ -249,6 +258,7 @@ class XAppSession:
         argv = list(command)
         if not argv:
             raise ValueError("X app command must not be empty")
+        label = capture_label or os.path.basename(argv[0])
         app_env = self.environment(env)
         if isolate_bus:
             # GtkApplication and other singleton apps otherwise ask the
@@ -256,13 +266,80 @@ class XAppSession:
             runner = shutil.which("dbus-run-session")
             if runner is None:
                 raise RuntimeError("pane apps need dbus-run-session (install dbus-daemon)")
+            host_bus = (app_env.get("PLEB_DESKTOP_BUS_ADDRESS") or
+                        app_env.get("KILIX_PORTAL_HOST_BUS") or
+                        app_env.get("DBUS_SESSION_BUS_ADDRESS"))
             app_env.pop("DBUS_SESSION_BUS_ADDRESS", None)
             app_env.pop("DBUS_SESSION_BUS_PID", None)
+            if host_bus:
+                app_env["KILIX_PORTAL_HOST_BUS"] = host_bus
+                app_env.setdefault("GTK_USE_PORTAL", "1")
+                argv, app_env = prepare_browser(argv, app_env)
+                bridge = Path(__file__).with_name("portal_bridge.py")
+                argv = [sys.executable, str(bridge), "--wrap", "--", *argv]
             argv = [runner, "--", *argv]
+        if clipboard:
+            self.start_clipboard()
         self.app = self.supervisor.spawn(
             "app", argv, env=app_env, cwd=cwd,
             stdout=stdout, stderr=stderr)
+        if self._local_capture_source and capture_source:
+            self._capture_publication = capture_registry.publish(self, label)
         return self.app
+
+    def start_clipboard(self, *, timeout: float = 3.0) -> bool:
+        """Mirror ordinary clipboard data to the containing desktop display.
+
+        Providers supplying their own rich hub pass clipboard=False at launch.
+        Clipboard failure is logged and never prevents opening an application.
+        """
+        if self.clipboard_process is not None:
+            return self.clipboard_process.poll() is None
+        if os.environ.get("KILIX_HOST_CLIP", "1") == "0":
+            return False
+        host = (os.environ.get("PLEB_DESKTOP_DISPLAY") or
+                os.environ.get("KILIX_CLIPBOARD_HOST_DISPLAY") or
+                os.environ.get("DISPLAY"))
+        if not host or host == self.display or self.display is None:
+            return False
+        authority = (os.environ.get("PLEB_DESKTOP_XAUTHORITY") or
+                     os.environ.get("KILIX_CLIPBOARD_HOST_XAUTHORITY") or
+                     os.environ.get("XAUTHORITY"))
+        read_fd, write_fd = os.pipe()
+        process = None
+        log = None
+        try:
+            runtime_dir = getattr(self.supervisor, "runtime_dir", None)
+            if runtime_dir:
+                log_path = Path(runtime_dir) / "clipboard.log"
+                log = open(log_path, "ab")
+                os.chmod(log_path, 0o600)
+            argv = [sys.executable, str(Path(__file__).with_name("clipboard.py")),
+                    "--host-display", host, "--private-display", self.display,
+                    "--private-authority", self.xauthority,
+                    "--parent-pid", str(os.getpid()), "--ready-fd", str(write_fd)]
+            if authority:
+                argv.extend(["--host-authority", authority])
+            process = self.supervisor.spawn(
+                "clipboard", argv, env=dict(os.environ), pass_fds=(write_fd,),
+                stdout=subprocess.DEVNULL, stderr=log or subprocess.DEVNULL)
+            os.close(write_fd)
+            write_fd = None
+            ready, _, _ = select.select([read_fd], [], [], timeout)
+            if not ready or os.read(read_fd, 1) != b"1":
+                _stop_process(process)
+                return False
+            self.clipboard_process = process
+            return True
+        except (OSError, ValueError):
+            _stop_process(process)
+            return False
+        finally:
+            if log is not None:
+                log.close()
+            os.close(read_fd)
+            if write_fd is not None:
+                os.close(write_fd)
 
     def make_injector(self, *, width: int | None = None,
                       height: int | None = None):
@@ -364,8 +441,14 @@ class XAppSession:
         if self._closed:
             return
         self._closed = True
+        if self._capture_publication is not None:
+            self._capture_publication.close()
+            self._capture_publication = None
         self.release_input()
         self.stop_capture()
+        if self.clipboard_process is not None:
+            _stop_process(self.clipboard_process)
+            self.clipboard_process = None
         if self.xd is not None:
             try:
                 self.xd.close()

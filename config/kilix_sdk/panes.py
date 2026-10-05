@@ -451,9 +451,12 @@ def _run(args: Sequence[str], *, authenticated: bool = True,
     socket.  ``resize-os-window --self`` needs that: over the socket "self" is
     the socket peer, not the OS window the operator is looking at.
     """
+    from kilix_sdk.frontend_context import refresh
+    refresh()
     command = [KITTEN, "@"]
-    if authenticated and RC_PASSWORD_FILE:
-        command.extend(["--password-file", RC_PASSWORD_FILE])
+    password_file = os.environ.get('KILIX_RC_PASSWORD_FILE') or RC_PASSWORD_FILE
+    if authenticated and password_file:
+        command.extend(["--password-file", password_file])
     env = None
     if via_tty:
         env = os.environ.copy()

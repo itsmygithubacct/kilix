@@ -602,7 +602,12 @@ class AppPane:
         env = {}
         if self.pulse_sink:
             env["PULSE_SINK"] = self.pulse_sink   # route app audio to our sink
-        self.app = self.xapp.launch_app(self.cmd, env=env, isolate_bus=self.manage_windows)
+        self.app = self.xapp.launch_app(
+            self.cmd, env=env, isolate_bus=self.manage_windows,
+            capture_source=not (self.no_pane or self.serve or self.lan or self.hls or
+                                self.mse or self.webrtc or self.stream),
+            clipboard=not (self.no_pane or self.serve or self.lan or self.hls or
+                           self.mse or self.webrtc or self.stream))
         if self.term:
             self.inj = self.xapp.make_injector()
         self.focus_app_window()
