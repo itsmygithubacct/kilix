@@ -50,13 +50,52 @@ class PortalPathTests(unittest.TestCase):
         self.assertEqual(mapped.unpack()[2], [0, 2])
         self.assertEqual(bridge.translate_variant(mapped, ":1.40", ":1.5"), value)
 
+    @staticmethod
+    def cleared(interface, member, signature, values):
+        message = Gio.DBusMessage.new_method_call(bridge.PORTAL, bridge.ROOT, interface, member)
+        message.set_body(GLib.Variant(signature, values))
+        bridge.clear_private_parent(message)
+        return message.get_body().unpack()
+
     @unittest.skipUnless(Gio, "system python3-gi is required")
     def test_private_xid_is_not_used_to_parent_a_host_dialog(self):
-        message = Gio.DBusMessage.new_method_call(bridge.PORTAL, bridge.ROOT,
-                                                  "org.freedesktop.portal.ScreenCast", "Start")
-        message.set_body(GLib.Variant("(osa{sv})", (bridge.ROOT, "x11:1a2b", {})))
-        bridge.clear_private_parent(message)
-        self.assertEqual(message.get_body().unpack()[1], "")
+        portal = "org.freedesktop.portal."
+        session = bridge.ROOT + "/session/1_5/s"
+        for interface, member, signature, values, index in (
+                ("ScreenCast", "Start", "(osa{sv})", (session, "x11:1a2b", {}), 1),
+                ("RemoteDesktop", "Start", "(osa{sv})", (session, "x11:1a2b", {}), 1),
+                ("GlobalShortcuts", "BindShortcuts", "(oa(sa{sv})sa{sv})",
+                 (session, [("id", {"description": GLib.Variant("s", "x11:keep")})], "x11:1a2b", {}), 2),
+                ("FileChooser", "OpenFile", "(ssa{sv})", ("x11:1a2b", "Open", {}), 0),
+                ("Print", "Print", "(ssha{sv})", ("x11:1a2b", "x11:title", 0, {}), 0),
+                # Methods review A found missing from the former fixed table.
+                ("Email", "ComposeEmail", "(sa{sv})", ("x11:1a2b", {}), 0),
+                ("Location", "Start", "(osa{sv})", (session, "x11:1a2b", {}), 1),
+                ("InputCapture", "CreateSession", "(sa{sv})", ("x11:1a2b", {}), 0),
+                ("DynamicLauncher", "PrepareInstall", "(ssva{sv})",
+                 ("x11:1a2b", "App", GLib.Variant("s", "icon"), {}), 0),
+                ("Inhibit", "CreateMonitor", "(sa{sv})", ("x11:1a2b", {}), 0),
+                # A portal method this relay has never heard of is covered too.
+                ("FutureDialog", "Ask", "(usa{sv})", (7, "x11:1a2b", {}), 1)):
+            with self.subTest(interface=interface, member=member):
+                body = self.cleared(portal + interface, member, signature, values)
+                self.assertEqual(body[index], "")
+                expected = list(values)
+                expected[index] = ""
+                self.assertEqual(body, GLib.Variant(signature, tuple(expected)).unpack())
+
+    @unittest.skipUnless(Gio, "system python3-gi is required")
+    def test_caller_data_and_non_portal_strings_are_not_cleared(self):
+        for interface, member, signature, values in (
+                ("org.freedesktop.portal.Notification", "AddNotification", "(sa{sv})", ("x11:id", {})),
+                ("org.freedesktop.portal.Settings", "Read", "(ss)", ("x11:ns", "key")),
+                ("org.freedesktop.portal.OpenURI", "SchemeSupported", "(sa{sv})", ("x11:", {})),
+                ("org.freedesktop.portal.OpenURI", "OpenURI", "(ssa{sv})", ("wayland:abc", "x11:uri", {})),
+                ("org.freedesktop.DBus.Properties", "Get", "(ss)", ("x11:iface", "version")),
+                ("org.a11y.Status", "Probe", "(s)", ("x11:1a2b",))):
+            with self.subTest(interface=interface, member=member):
+                self.assertEqual(self.cleared(interface, member, signature, values),
+                                 GLib.Variant(signature, values).unpack())
 
     @unittest.skipUnless(Gio and shutil.which("dbus-run-session"), "GI and private D-Bus needed")
     def test_real_private_buses_forward_fds_and_cleanup_client_sessions(self):

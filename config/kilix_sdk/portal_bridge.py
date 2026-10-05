@@ -41,26 +41,28 @@ PORTAL = "org.freedesktop.portal.Desktop"
 ROOT = "/org/freedesktop/portal/desktop"
 HOST_BUS = "KILIX_PORTAL_HOST_BUS"
 _UNIQUE = re.compile(r"^:[0-9]+(?:\.[0-9]+)+$")
-_PARENT_ARGUMENT = {
-    ("ScreenCast", "Start"): 1,
-    ("RemoteDesktop", "Start"): 1,
-    ("Screenshot", "Screenshot"): 0,
-    ("Screenshot", "PickColor"): 0,
-    ("FileChooser", "OpenFile"): 0,
-    ("FileChooser", "SaveFile"): 0,
-    ("FileChooser", "SaveFiles"): 0,
-    ("OpenURI", "OpenURI"): 0,
-    ("OpenURI", "OpenFile"): 0,
-    ("OpenURI", "OpenDirectory"): 0,
-    ("Print", "Print"): 0,
-    ("Print", "PreparePrint"): 0,
-    ("Background", "RequestBackground"): 0,
-    ("Account", "GetUserInformation"): 0,
-    ("Inhibit", "Inhibit"): 0,
-    ("GlobalShortcuts", "BindShortcuts"): 2,
-    ("Wallpaper", "SetWallpaperURI"): 0,
-    ("Wallpaper", "SetWallpaperFile"): 0,
-}
+# Every org.freedesktop.portal.* method that names a parent window takes it as
+# its first top-level string argument (ScreenCast.Start (osa{sv}), Location.Start,
+# GlobalShortcuts.BindShortcuts (oa(sa{sv})sa{sv}), Email.ComposeEmail,
+# InputCapture.CreateSession, DynamicLauncher.PrepareInstall, Usb.AcquireDevices,
+# ...). Clear that argument when it carries an x11: handle for every portal
+# method, including ones added after this was written, except the methods whose
+# first string is caller data rather than a window.
+_FIRST_STRING_IS_DATA = frozenset({
+    ("Notification", "AddNotification"),
+    ("Notification", "RemoveNotification"),
+    ("DynamicLauncher", "RequestInstallToken"),
+    ("DynamicLauncher", "Install"),
+    ("DynamicLauncher", "Uninstall"),
+    ("DynamicLauncher", "GetDesktopEntry"),
+    ("DynamicLauncher", "GetIcon"),
+    ("DynamicLauncher", "Launch"),
+    ("Settings", "Read"),
+    ("Settings", "ReadOne"),
+    ("OpenURI", "SchemeSupported"),
+    ("ProxyResolver", "Lookup"),
+    ("NetworkMonitor", "CanReach"),
+})
 
 
 def portal_path(path: str) -> bool:
@@ -109,14 +111,17 @@ def translate_variant(value, source: str, target: str, *, strict=False):
 def clear_private_parent(message):
     """A private XID cannot identify a parent on the physical X server."""
     from gi.repository import GLib
-    interface = (message.get_interface() or "").removeprefix("org.freedesktop.portal.")
-    index = _PARENT_ARGUMENT.get((interface, message.get_member()))
-    body = message.get_body()
-    if index is None or body is None or body.n_children() <= index:
+    interface = message.get_interface() or ""
+    if not interface.startswith("org.freedesktop.portal."):
         return
-    parent = body.get_child_value(index)
-    if parent.get_type_string() == "s" and parent.get_string().startswith("x11:"):
-        children = [body.get_child_value(i) for i in range(body.n_children())]
+    if (interface.removeprefix("org.freedesktop.portal."), message.get_member()) in _FIRST_STRING_IS_DATA:
+        return
+    body = message.get_body()
+    if body is None or not body.get_type_string().startswith("("):
+        return
+    children = [body.get_child_value(i) for i in range(body.n_children())]
+    index = next((i for i, child in enumerate(children) if child.get_type_string() == "s"), None)
+    if index is not None and children[index].get_string().startswith("x11:"):
         children[index] = GLib.Variant("s", "")
         message.set_body(GLib.Variant.new_tuple(*children))
 
