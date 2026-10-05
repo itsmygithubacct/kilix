@@ -763,8 +763,9 @@ kilix settings --set transcript_graphics=keep     # elide | keep
 ```
 
 Closing the whole frontend, closing a page, or a Kilix crash detaches the
-client. Detached sessions are discovered on the next startup and opened in
-`recovered:<id>` tabs. The per-pane `✕` and `Ctrl+Alt+W` are the explicit
+client. Detached sessions are discovered on the next startup and reopened
+under the tab name and title they had; a pane that never recorded one opens
+as `recovered:<id>`. The per-pane `✕` and `Ctrl+Alt+W` are the explicit
 destructive path and always ask before asking the broker to terminate that
 pane. Set `KILIX_PTY_BROKER=0` to disable persistence,
 `KILIX_PTY_BROKER_AUTO_RECOVER=0` to leave detached sessions for manual

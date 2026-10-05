@@ -1,6 +1,6 @@
 # Kilix 0.2.2: Persistent pane sessions
 
-Run `kilix pty` to open the interactive manager for persistent pane sessions. Detached sessions are discovered on the next startup and opened in recovered:ID tabs by default.
+Run `kilix pty` to open the interactive manager for persistent pane sessions. Detached sessions are discovered on the next startup and reopened under their recorded tab name and title (recovered:ID when none was recorded).
 
 Set KILIX_PTY_BROKER_AUTO_RECOVER=0 to leave detached sessions for manual attachment. Set KILIX_PTY_BROKER=0 to disable pane persistence.
 
