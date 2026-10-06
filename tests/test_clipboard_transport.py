@@ -394,6 +394,51 @@ class ClipboardTransportTests(unittest.TestCase):
         self.assertEqual(self.hub.content, newer)
         self.assertEqual(self.receive('UTF8_STRING', which=0)[0], b'newer copy')
 
+    # Review D M1: the held clear compares the hub's value with the one this
+    # display published by identity. Re-copying the same text on another
+    # display is a newer copy, not the released one, so an equal value must
+    # survive too; comparing with == would clear the fresh copy everywhere.
+
+    def test_held_source_clear_yields_to_an_equal_competing_copy(self):
+        secret = clip.Content.from_text('hunter2-password')
+        owner = self.owner(secret, which=0)
+        self.pump(lambda: self.hub.content == secret and self.mirrors(1, secret))
+        published = self.hub.content
+        again = clip.Content.from_text('hunter2-password')
+        self.owner(again, which=1)
+        self.pump(lambda: self.bridges[1]._incoming is not None)
+        # The source clears while the equal copy is still being read.
+        self.release(owner)
+        self.bridges[0]._on_readable()
+        self.assertIsNotNone(self.bridges[0]._pending_clear)
+        self.pump(lambda: self.hub.content is not published and self.hub.content == secret)
+        revision = self.hub.clipboard_revision
+        self.pump(lambda: self.bridges[0]._pending_clear is None)
+        for _ in range(20):
+            self.pump(lambda: True)
+        self.assertEqual(self.hub.content, secret)
+        self.assertEqual(self.hub.clipboard_revision, revision)
+        self.assertEqual(self.receive('UTF8_STRING', which=1)[0], b'hunter2-password')
+
+    def test_source_clear_after_an_equal_copy_completed_does_not_hold(self):
+        secret = clip.Content.from_text('hunter2-password')
+        owner = self.owner(secret, which=0)
+        self.pump(lambda: self.hub.content == secret and self.mirrors(1, secret))
+        published = self.hub.content
+        again = clip.Content.from_text('hunter2-password')
+        self.owner(again, which=1)
+        self.pump(lambda: self.hub.content is not published and self.hub.content == secret)
+        revision = self.hub.clipboard_revision
+        # The old source releases only after the equal copy was published.
+        self.release(owner)
+        self.bridges[0]._on_readable()
+        self.assertIsNone(self.bridges[0]._pending_clear)
+        for _ in range(20):
+            self.pump(lambda: True)
+        self.assertEqual(self.hub.content, secret)
+        self.assertEqual(self.hub.clipboard_revision, revision)
+        self.assertEqual(self.receive('UTF8_STRING', which=1)[0], b'hunter2-password')
+
     def test_new_owner_replaces_a_stalled_read_without_old_data(self):
         d = self.sessions[0].xd
         stalled = d.screen().root.create_window(-10,-10,1,1,0,X.CopyFromParent,
