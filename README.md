@@ -1473,6 +1473,23 @@ simple full-screen programs but is not real multiplexing. It does not carry
 graphics, mouse state, or a second interactive PTY. For true attach/view, start
 the session under tmux with `kilix serve` or `kilix mux <name>`.
 
+After a terminal restart, a persistent shell or agent can still hold the old
+socket, public key, and pane number. Kilix refreshes these together before
+pane commands and `agent-control`, using the same PTY broker session's current
+attachment. It does not select a terminal by title or reuse an old pane number.
+Commands are sent once; failed mutations are not automatically retried.
+
+Use `kilix connection` to inspect the resolved connection without printing its
+public key or credential path. `kilix connection --exec COMMAND [ARGS...]`
+starts another tool with the refreshed environment. Direct `kitten @` calls
+and already-running tools retain their inherited environment unless they use
+this helper. Custom socket addresses keep their existing behavior.
+
+If the original broker session has no live attachment, or has multiple
+attachments, Kilix stops with a reconnect diagnostic. Reattach the original
+session or restart the tool/MCP server from the intended pane. Changing only
+`KITTY_LISTEN_ON` cannot repair a stale encryption key or caller identity.
+
 ## Calculator
 
 ```bash

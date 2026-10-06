@@ -632,6 +632,7 @@ class TrustTests(unittest.TestCase):
 
 class ConnectionTests(unittest.TestCase):
     def test_public_key_recovery_stays_with_the_selected_instance(self):
+        import terminal_connection
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             for pid, parent, socket, key in ((100, 101, "unix:@other", "wrong-key"),
@@ -640,13 +641,11 @@ class ConnectionTests(unittest.TestCase):
                 proc.mkdir()
                 (proc / "environ").write_bytes(
                     f"KITTY_LISTEN_ON={socket}\0KITTY_PUBLIC_KEY={key}\0".encode())
-                (proc / "status").write_text(f"PPid:\t{parent}\n")
+                (proc / "stat").write_text(f"{pid} (shell) S {parent} " + "0 " * 18 + "\n")
             env = {"KITTY_LISTEN_ON": "unix:@selected", "KITTY_WINDOW_ID": "1",
                    "KILIX_RC_PASSWORD_FILE": "credential"}
-            with mock.patch.dict(os.environ, env, clear=True), \
-                    mock.patch.object(control.os, "getppid", return_value=100), \
-                    mock.patch.object(control, "Path", side_effect=lambda p: root if p == "/proc" else Path(p)):
-                values = control.connection_values()
+            values = terminal_connection.connection_values(
+                env, proc_root=root, parent=100, uid=os.getuid())
             self.assertEqual(values["KITTY_PUBLIC_KEY"], "right-key")
             self.assertEqual(values["KITTY_LISTEN_ON"], "unix:@selected")
 

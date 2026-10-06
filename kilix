@@ -55,6 +55,7 @@
 #   ./kilix browse [URL]      # compatibility alias for open-url
 #   ./kilix chawan [URL]      # install/run the Chawan text browser
 #   ./kilix status            # show version, engine, config, and provider
+#   ./kilix connection        # inspect this pane's refreshed control connection
 #   ./kilix power ACTION      # logout|reboot|poweroff — no prompt, no UI
 #   ./kilix security password-status  # is the login password still the default?
 #   ./kilix update            # verified-origin, clean, fast-forward/ref update
@@ -74,6 +75,22 @@ umask 077
 # Resolve symlinks so `ln -s .../kilix ~/.local/bin/kilix` still finds the project.
 _self="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 KILIX_HOME="$(cd "$(dirname "$_self")" && pwd)"
+# Persistent shells and MCP servers retain their first terminal's environment.
+# Refresh the complete connection before any pane-facing setup or operation.
+# The helper execs this launcher once; remove its marker before child dispatch.
+case "${1:-}" in
+  connection)
+    shift
+    exec python3 -B "$KILIX_HOME/config/terminal_connection.py" "$@" ;;
+  @|ls|focus|watch|fullscreen|pane|tab|new-pane|split|new-tab|new-page|panes|pane-center|agent-control)
+    if [ "${_KILIX_CONNECTION_CHECKED:-}" != 1 ]; then
+      case "${2:-}" in
+        -h|--help) ;; # Help must remain usable without a live connection.
+        *) exec python3 -B "$KILIX_HOME/config/terminal_connection.py" --launch "$_self" "$@" ;;
+      esac
+    fi ;;
+esac
+unset _KILIX_CONNECTION_CHECKED
 # BEGIN TUI ROOT ARGUMENTS
 # Validate before writable setup; scratch state stays in the helper process.
 # The alias dispatch below resets inherited selection and normalizes argv again.

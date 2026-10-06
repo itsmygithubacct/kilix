@@ -153,37 +153,12 @@ def grok_trust_is_exact(cwd, deadline=float("inf")):
 
 
 def connection_values():
-    """Recover only pane connection metadata from this process's ancestors."""
-    names = ("KITTY_LISTEN_ON", "KITTY_WINDOW_ID", "KILIX_RC_PASSWORD_FILE", "KITTY_PUBLIC_KEY",
-             "KILIX_KITTEN", "KILIX_BUILD_DIRECTORY", "KILIX_PREBUILT_HOME")
-    values = {name: os.environ[name] for name in names if os.environ.get(name)}
-    needed = names[:4]
-    pid = os.getppid()
-    for _ in range(24):
-        if all(values.get(name) for name in needed) or pid <= 1:
-            break
-        proc = Path("/proc") / str(pid)
-        try:
-            if proc.stat().st_uid != os.getuid():
-                break
-            entries = (proc / "environ").read_bytes().split(b"\0")
-            parent_values = {}
-            for entry in entries:
-                key, sep, value = entry.partition(b"=")
-                name = key.decode("ascii", errors="ignore")
-                if sep and name in names:
-                    parent_values[name] = os.fsdecode(value)
-            # Never combine metadata belonging to different terminal instances.
-            if (not values.get("KITTY_LISTEN_ON") or
-                    parent_values.get("KITTY_LISTEN_ON") == values["KITTY_LISTEN_ON"]):
-                for name, value in parent_values.items():
-                    values.setdefault(name, value)
-            status = (proc / "status").read_text()
-            pid = int(next(line.split()[1] for line in status.splitlines()
-                           if line.startswith("PPid:")))
-        except (OSError, ValueError, StopIteration):
-            break
-    return values
+    """Also used directly by skill clients, without the shell launcher."""
+    from terminal_connection import ConnectionError, connection_values as resolve
+    try:
+        return resolve()
+    except ConnectionError as error:
+        raise ControlError(str(error)) from error
 
 
 def kitten_path(values):
@@ -222,9 +197,11 @@ class Client:
         self.caller = caller_pane or inherited
         self.command = [kitten_path(values), "@", "--to", socket,
                         "--password-file", credential]
-        self.command_env = os.environ.copy()
-        if values.get("KITTY_PUBLIC_KEY"):
-            self.command_env["KITTY_PUBLIC_KEY"] = values["KITTY_PUBLIC_KEY"]
+        # The child sees this pane's refreshed connection, never a stale inherited
+        # socket, key or pane number left over from before a terminal restart.
+        from terminal_connection import NAMES
+        self.command_env = {k: v for k, v in os.environ.items() if k not in NAMES}
+        self.command_env.update(values)
 
     def run(self, args, payload=None):
         process = None
