@@ -640,7 +640,15 @@ _kilix_init_user_config() {
   if [ ! -e "$_user_env" ]; then
     printf '%s\n' '# Kilix user runtime overrides (KEY=value; not shell code).' >"$_user_env"
   fi
-  chmod 600 "$_user_kitty" "$_user_env" 2>/dev/null || true
+  # Only when the mode is wrong: even a no-op chmod updates the file's ctime
+  # and raises an inotify attribute event, on which the running terminal's
+  # config watcher reloads its whole configuration, dropping settings changed
+  # at runtime, on every kilix call. -L reads the mode chmod would change: a
+  # symlinked kitty.conf (dotfiles) is followed by both.
+  for _private in "$_user_kitty" "$_user_env"; do
+    [ "$(stat -L -c '%a' -- "$_private" 2>/dev/null)" = 600 ] \
+      || chmod 600 -- "$_private" 2>/dev/null || true
+  done
 
   # Refresh managed symlinks on every launch so moving/reinstalling the checkout
   # does not strand the XDG configuration at an obsolete absolute path.

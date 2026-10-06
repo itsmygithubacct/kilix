@@ -6,6 +6,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -102,18 +103,53 @@ class UserConfigBehaviorTests(unittest.TestCase):
             first = run("screen-size", "show")
             self.assertEqual(first.returncode, 0, first.stderr)
             watched = [storage / "config" / "kitty.conf",
-                       storage / "session" / "rc-password.conf"]
-            before = [(p.stat().st_ino, p.stat().st_mtime_ns) for p in watched]
+                       storage / "session" / "rc-password.conf",
+                       storage / "config" / "kilix.env"]
+            # ctime too: a no-op chmod leaves inode and mtime alone but still
+            # raises the inotify event the terminal's config watcher reloads on.
+            identity = lambda p: (p.stat().st_ino, p.stat().st_mtime_ns, p.stat().st_ctime_ns)
+            before = [identity(p) for p in watched]
+            time.sleep(0.02)
             for args in (("screen-size", "show"), ("status",)):
                 again = run(*args)
                 self.assertEqual(again.returncode, 0, again.stderr)
-            after = [(p.stat().st_ino, p.stat().st_mtime_ns) for p in watched]
+            after = [identity(p) for p in watched]
             self.assertEqual(after, before)
+            # A wrong mode is still repaired, on both files.
+            watched[0].chmod(0o644)
+            watched[2].chmod(0o644)
+            self.assertEqual(run("status").returncode, 0)
+            self.assertEqual(watched[0].stat().st_mode & 0o777, 0o600)
+            self.assertEqual(watched[2].stat().st_mode & 0o777, 0o600)
             # A real change is still written.
             changed = run("screen-size", "set", "15")
             self.assertEqual(changed.returncode, 0, changed.stderr)
             self.assertIn("15", watched[0].read_text())
             self.assertEqual(stat.S_IMODE(watched[1].stat().st_mode), 0o600)
+
+    def test_a_symlinked_kitty_conf_is_not_touched_either(self):
+        # Dotfile managers link kitty.conf; the watcher watches the target.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env = clean_env()
+            env.pop("KITTY_CONFIG_DIRECTORY", None)
+            storage = root / "storage"
+            env.update({"HOME": str(root / "home"), "KILIX_STORAGE_HOME": str(storage)})
+            run = lambda *a: subprocess.run(
+                [str(ROOT / "kilix"), *a], env=env, capture_output=True, text=True)
+            self.assertEqual(run("status").returncode, 0)
+            conf = storage / "config" / "kitty.conf"
+            target = root / "dotfiles" / "kitty.conf"
+            target.parent.mkdir()
+            os.replace(conf, target)
+            target.chmod(0o600)
+            conf.symlink_to(target)
+            self.assertEqual(run("status").returncode, 0)
+            before = target.stat().st_ctime_ns
+            time.sleep(0.02)
+            self.assertEqual(run("status").returncode, 0)
+            self.assertEqual(target.stat().st_ctime_ns, before, "the link target was chmodded again")
+            self.assertTrue(conf.is_symlink(), "the link itself is kept")
 
     def test_managed_links_follow_a_moved_checkout(self):
         with tempfile.TemporaryDirectory() as tmp:
