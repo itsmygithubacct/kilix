@@ -266,7 +266,7 @@ class FakeInjector:
     def __init__(self):
         self.keys = []
 
-    def chord(self, key, mods, etype):
+    def chord(self, key, mods, etype, shifted=None):
         self.keys.append((key, mods, etype))
 
 
