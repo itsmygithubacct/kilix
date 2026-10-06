@@ -650,6 +650,86 @@ class ConnectionTests(unittest.TestCase):
             self.assertEqual(values["KITTY_PUBLIC_KEY"], "right-key")
             self.assertEqual(values["KITTY_LISTEN_ON"], "unix:@selected")
 
+    def _proc_tree(self, root, rows):
+        for pid, parent, pairs in rows:
+            proc = root / str(pid)
+            proc.mkdir()
+            (proc / "environ").write_bytes(
+                b"".join(f"{k}={v}\0".encode() for k, v in pairs.items()))
+            (proc / "status").write_text(f"PPid:\t{parent}\n")
+
+    def _values(self, root, env, refresh):
+        import kilix_sdk.frontend_context as frontend_context
+        with mock.patch.dict(os.environ, env, clear=True), \
+                mock.patch.object(control.os, "getppid", return_value=100), \
+                mock.patch.object(control, "Path", side_effect=lambda p: root if p == "/proc" else Path(p)), \
+                mock.patch.object(frontend_context, "refresh", side_effect=refresh):
+            return control.connection_values()
+
+    BROKER = {"KITTY_PID": "4242", "KITTY_PTY_BROKER_SESSION": "sess-1",
+              "KITTY_PTY_BROKER_RUNTIME": "/run/user/1/broker",
+              "KITTY_PTY_BROKER_EXECUTABLE": "/opt/kilix/kitty-pty-broker"}
+    STALE = {"KITTY_LISTEN_ON": "unix:@kilix-4242", "KITTY_WINDOW_ID": "7",
+             "KILIX_RC_PASSWORD_FILE": "/old/rc-password", "KITTY_PUBLIC_KEY": "1:old-key"}
+
+    def test_a_restored_pane_takes_the_replacement_terminals_route(self):
+        seen = []
+        def refresh(values):
+            seen.append(dict(values))
+            values.update({"KITTY_LISTEN_ON": "unix:@kilix-5151", "KITTY_PID": "5151",
+                           "KITTY_WINDOW_ID": "3", "KITTY_PUBLIC_KEY": "1:new-key",
+                           "KILIX_RC_PASSWORD_FILE": "/new/rc-password"})
+            return True
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            # A persistent agent whose own environment was stripped: the route and
+            # the broker identity both come from its shell, the same terminal.
+            self._proc_tree(root, [(100, 1, {**self.STALE, **self.BROKER})])
+            values = self._values(root, {}, refresh)
+        self.assertEqual({k: seen[0].get(k) for k in self.BROKER}, self.BROKER,
+                         "the broker identity reaches the shared refresh")
+        self.assertEqual(values["KITTY_LISTEN_ON"], "unix:@kilix-5151")
+        self.assertEqual(values["KITTY_PUBLIC_KEY"], "1:new-key")
+        self.assertEqual(values["KILIX_RC_PASSWORD_FILE"], "/new/rc-password")
+
+    def test_another_terminals_broker_identity_is_never_borrowed(self):
+        seen = []
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            other = {"KITTY_LISTEN_ON": "unix:@kilix-9999", **self.BROKER}
+            self._proc_tree(root, [(100, 101, {}), (101, 1, other)])
+            self._values(root, dict(self.STALE), lambda v: seen.append(dict(v)) or False)
+        self.assertNotIn("KITTY_PTY_BROKER_SESSION", seen[0])
+        self.assertNotIn("KITTY_PID", seen[0])
+
+    def test_without_a_verified_replacement_the_inherited_route_is_kept(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._proc_tree(root, [(100, 1, {})])
+            values = self._values(root, {**self.STALE, **self.BROKER}, lambda v: False)
+        for key, value in self.STALE.items():
+            self.assertEqual(values[key], value)
+
+    def test_the_client_uses_the_refreshed_route(self):
+        with tempfile.TemporaryDirectory() as directory:
+            password = Path(directory) / "rc-password"
+            password.write_text("private")
+            password.chmod(0o600)
+            def refresh(values):
+                values.update({"KITTY_LISTEN_ON": "unix:@kilix-5151", "KITTY_PUBLIC_KEY": "1:new-key",
+                               "KILIX_RC_PASSWORD_FILE": str(password), "KITTY_WINDOW_ID": "3"})
+                return True
+            import kilix_sdk.frontend_context as frontend_context
+            env = {**self.STALE, **self.BROKER}
+            with mock.patch.dict(os.environ, env, clear=True), \
+                    mock.patch.object(frontend_context, "refresh", side_effect=refresh), \
+                    mock.patch.object(control, "kitten_path", return_value="/kitten"):
+                client = control.Client()
+        self.assertEqual(client.command, ["/kitten", "@", "--to", "unix:@kilix-5151",
+                                          "--password-file", str(password)])
+        self.assertEqual(client.command_env["KITTY_PUBLIC_KEY"], "1:new-key")
+        self.assertEqual(client.caller, 3)
+
     def test_recovered_key_is_passed_only_in_the_child_environment(self):
         client = control.Client.__new__(control.Client)
         client.command = [sys.executable, "-c"]

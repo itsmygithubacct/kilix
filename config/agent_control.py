@@ -152,10 +152,33 @@ def grok_trust_is_exact(cwd, deadline=float("inf")):
                            f"refusing repository-wide trust from {cwd}")
 
 
+# The pane's PTY broker identity, recovered with the route so a restored pane
+# can be rebound to the terminal that replaced the one that launched it.
+BROKER_IDENTITY = ("KITTY_PID", "KITTY_PTY_BROKER_SESSION", "KITTY_PTY_BROKER_RUNTIME",
+                   "KITTY_PTY_BROKER_EXECUTABLE")
+
+
+def refresh_route(values):
+    """Rebind a stale route after the terminal that launched this tool exited.
+
+    A persistent shell or agent keeps the socket, window id, public key and
+    password-file path of its original terminal. kilix_sdk.frontend_context,
+    the same check every SDK pane command uses, replaces those fields only
+    when the original terminal is gone and exactly one verified attach helper
+    of this pane's own broker session runs under a live terminal; otherwise
+    nothing changes. Returns whether the route was replaced.
+    """
+    try:
+        from kilix_sdk.frontend_context import refresh
+    except ImportError:
+        return False
+    return refresh(values)
+
+
 def connection_values():
     """Recover only pane connection metadata from this process's ancestors."""
     names = ("KITTY_LISTEN_ON", "KITTY_WINDOW_ID", "KILIX_RC_PASSWORD_FILE", "KITTY_PUBLIC_KEY",
-             "KILIX_KITTEN", "KILIX_BUILD_DIRECTORY", "KILIX_PREBUILT_HOME")
+             "KILIX_KITTEN", "KILIX_BUILD_DIRECTORY", "KILIX_PREBUILT_HOME", *BROKER_IDENTITY)
     values = {name: os.environ[name] for name in names if os.environ.get(name)}
     needed = names[:4]
     pid = os.getppid()
@@ -183,6 +206,7 @@ def connection_values():
                            if line.startswith("PPid:")))
         except (OSError, ValueError, StopIteration):
             break
+    refresh_route(values)
     return values
 
 

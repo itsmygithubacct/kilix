@@ -120,6 +120,9 @@ match the caller's exact private broker runtime and session, executable, user,
 and process identities. Only the route, window identity, public key, and
 password-file path are refreshed; normal remote-control authentication remains
 required. Kilix 95's matching candidate applies this before launching tabs.
+`agent-control` applies the same refresh, recovering the broker identity with
+the route from its own process ancestors, so an agent that outlived its
+terminal keeps working from the restored pane.
 
 The matching Pleb supervisor also associates an ordinary initial page with one
 login. A crash retry attaches that surviving PTY as the first active page
