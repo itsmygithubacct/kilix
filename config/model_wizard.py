@@ -34,6 +34,10 @@ PAGES = (
     ('documents', 'Document understanding', 'granite-docling-258m'),
     ('visual-chat', 'Visual chat', 'granite3.2-vision-2b'),
 )
+# Speech models a selected runtime can serve once installed and licensed: the
+# Qwen provider stages every catalogued Qwen model that has a receipt.
+SPEECH_RUNTIMES = ('piper-en-us-kristin-medium', 'qwen3-tts-0.6b-customvoice',
+                   'qwen3-tts-0.6b-base', 'qwen3-tts-1.7b-voicedesign')
 STT_IDS = {'vosk-model-small-en-us-0.15': 'small-en-us',
            'vosk-model-en-us-0.22-lgraph': 'lgraph-en-us',
            'faster-whisper-small-en': 'whisper-small-en'}
@@ -184,7 +188,7 @@ def sizing(rows, segment, *, ensure_sizer=False):
         for row in rows]} if runtime else {'schema': 'kilix.voice.sizing-request/v1', 'models': [
         {'id': STT_IDS.get(row['id'], row['id']), 'task': task, 'backend': 'cpu',
          'installed': None, 'runtime_supported': (row['id'] in STT_IDS if task == 'stt'
-          else row['id'] in ('piper-en-us-kristin-medium', 'qwen3-tts-0.6b-customvoice'))} for row in rows]}
+          else row['id'] in SPEECH_RUNTIMES)} for row in rows]}
     raw_request = json.dumps(request, sort_keys=True, separators=(',', ':')).encode()
     try:
         with tempfile.TemporaryFile() as output:
