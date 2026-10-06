@@ -121,7 +121,8 @@ class Content:
         return operation, tuple(dict.fromkeys(paths))
 
 
-# Published when the copy the hub holds is cleared at its source. It equals an
+# Published when the copy the hub holds is explicitly released at its source
+# (SetSelectionOwner to None; an owner exiting is not a release). It equals an
 # empty Content, so everything else treats it as empty, but endpoints receive
 # it by identity and give up their mirrored selection instead of claiming an
 # empty one (an empty claim is how a new pane waits for an in-progress copy).
@@ -271,8 +272,9 @@ class SelectionBridge:
     def _receive(self, value):
         if value is CLEARED:
             # The hub published a clear: the copy this display mirrored was
-            # cleared at its source (a password manager's auto-clear, or the
-            # owner exiting). Stop serving it rather than keep it pasteable.
+            # explicitly released at its source (a password manager's
+            # auto-clear). Stop serving it rather than keep it pasteable. An
+            # owner exiting is not a clear and never publishes this.
             if self._ok:
                 self._release()
             return
@@ -422,7 +424,17 @@ class SelectionBridge:
                     self._start_read(owner, ev.timestamp)
                 else:
                     self._abort_read()
-                    self._source_released()
+                    if ev.sub_code == xfixes.XFixesSetSelectionOwnerNotify:
+                        # An explicit release (SetSelectionOwner to None, as
+                        # a password manager's auto-clear does) clears it.
+                        self._source_released()
+                    else:
+                        # The owner window was destroyed or its client
+                        # closed: an app exit is not a clear. The last copy
+                        # survives in the hub, every mirror and the outer
+                        # terminal, and nothing on this display can clear
+                        # it later.
+                        self._published_revision = self._published_content = None
             return
         if ev.type == X.SelectionNotify:
             self._read_reply(ev)

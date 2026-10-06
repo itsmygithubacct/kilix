@@ -244,14 +244,44 @@ class ClipboardTransportTests(unittest.TestCase):
             app.destroy()
             d.flush()
 
-    def test_owner_exit_clears_the_mirrored_copy(self):
+    def assert_copy_survives_owner_exit(self, exit_owner):
+        # Owner answer 13: only an explicit release (SetSelectionOwner to
+        # None) is a clear. An app exiting (SelectionWindowDestroy or
+        # SelectionClientClose) is not: the last copy stays in the hub, in
+        # every mirrored pane and, because nothing is published, in the outer
+        # terminal's OSC 52 clipboard.
         content = clip.Content.from_text('from an app that exits')
         owner = self.owner(content)
-        self.pump(lambda: self.hub.content == content)
+        self.pump(lambda: self.hub.content == content and self.mirrors(1, content))
         self.assertEqual(self.receive('UTF8_STRING')[0], b'from an app that exits')
-        owner.close()
-        self.pump(lambda: self.clipboard_owner(1) == 0)
-        self.assertEqual(self.hub.content, clip.Content({}))
+        revision = self.hub.clipboard_revision
+        exit_owner(owner)
+        self.pump(lambda: self.clipboard_owner(0) == 0 and self.bridges[0]._selection_owner == 0)
+        self.assertEqual(self.hub.content, content)
+        self.assertEqual(self.hub.clipboard_revision, revision)
+        self.assertTrue(self.mirrors(1, content))
+        self.assertEqual(self.receive('UTF8_STRING')[0], b'from an app that exits')
+        # The source is gone, so a later release on its display (by a client
+        # that never owned this copy) cannot clear it either.
+        d = self.sessions[0].xd
+        clip.xrequest.SetSelectionOwner(display=d.display, window=X.NONE,
+                                        selection=d.intern_atom('CLIPBOARD'), time=X.CurrentTime)
+        d.sync()
+        self.bridges[0]._on_readable()
+        for _ in range(20):
+            self.pump(lambda: True)
+        self.assertEqual(self.hub.content, content)
+        self.assertEqual(self.hub.clipboard_revision, revision)
+        self.assertEqual(self.receive('UTF8_STRING')[0], b'from an app that exits')
+
+    def test_owner_client_exit_keeps_the_mirrored_copy(self):
+        self.assert_copy_survives_owner_exit(lambda owner: owner.close())
+
+    def test_owner_window_destroyed_keeps_the_mirrored_copy(self):
+        def destroy(owner):
+            owner.win.destroy()
+            owner.d.sync()
+        self.assert_copy_survives_owner_exit(destroy)
 
     def test_abandoned_copy_cannot_clear_a_newer_copy_from_elsewhere(self):
         # Display 0 once supplied the hub's value; a newer copy then came from
