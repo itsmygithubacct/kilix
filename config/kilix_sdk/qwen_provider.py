@@ -22,7 +22,7 @@ import uuid
 from . import paths
 from ._content_runtime import apps_root
 
-PROVIDER_REF = '482f82bdd5b50f9f7b26db3a28bfae3ba3b0fd13'
+PROVIDER_REF = 'c8093798a0a643d3dbacea38979b5d27a46744ce'
 CONTENT_REF = 'ad620c1429d825230e1c337a20f8a9682ff060d4'
 LICENSE_REF = 'ca8a0f479893ab9c8cd6cadc2716c474aaad2820'
 ENGINE_REF = '6cafe5582caea83df269c36b1ce62d953a9cc66b'
