@@ -39,12 +39,18 @@ NAME_KEYSYMS = {"Enter": "Return", "Escape": "Escape",
                 "PageDown": "Next", "Insert": "Insert", "Delete": "Delete",
                 **{f"F{i}": f"F{i}" for i in range(1, 13)}}
 
+# Control characters a paste can carry that have a key of their own.
+PASTE_KEYS = {"\n": "Enter", "\t": "Tab"}
 
 # kitty keyboard-protocol modifier bits, after the protocol's +1 offset is
 # removed (apprun does that before calling in). Order is the press order.
 MOD_SHIFT, MOD_ALT, MOD_CTRL, MOD_SUPER = 1, 2, 4, 8
 MOD_BITS = ((MOD_SHIFT, "Shift_L"), (MOD_ALT, "Alt_L"),
             (MOD_CTRL, "Control_L"), (MOD_SUPER, "Super_L"))
+# The keyboard protocol also reports the lock states in the modifier field
+# (CapsLock 64, NumLock 128). They are not chord modifiers: with one set, a
+# Shift-only key would no longer count as Shift-only.
+MOD_LOCKS = 64 | 128
 MOD_KEY_BITS = {57441: MOD_SHIFT, 57442: MOD_CTRL, 57443: MOD_ALT,
                 57444: MOD_SUPER, 57447: MOD_SHIFT, 57448: MOD_CTRL,
                 57449: MOD_ALT, 57450: MOD_SUPER}
@@ -207,6 +213,7 @@ class Injector:
         """
         if etype not in (1, 3):
             return False
+        mods &= ~MOD_LOCKS
         if self.is_modifier(key):
             # A drag can change between copy/move/selection modes while the
             # pointer is stationary. Bare modifiers may update that existing
@@ -271,6 +278,8 @@ class Injector:
                 return XK.string_to_keysym(MOD_KEYSYMS[o])
             if 57344 <= o <= 63743:      # other functional keys: unmapped
                 return 0
+            if o < 0x20 or 0x7f <= o <= 0x9f:
+                return 0                 # control characters are not keys
             if o < 256:                  # latin-1 keysyms == codepoints
                 return o
             if o > 0x10FFFF or 0xD800 <= o <= 0xDFFF:
@@ -342,7 +351,7 @@ class Injector:
         """Type *text*: each character as its own keysym, Shift where needed."""
         shift = self._modifier_codes(MOD_SHIFT)
         for ch in text:
-            keysym = self.keysym_for(ch if ch != "\n" else "Enter")
+            keysym = self.keysym_for(PASTE_KEYS.get(ch, ch))
             keycode, level = self._keycode_for(keysym) if keysym else (0, 0)
             if not keycode:
                 continue

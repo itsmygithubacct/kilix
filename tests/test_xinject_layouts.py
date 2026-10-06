@@ -149,6 +149,44 @@ class LayoutIndependentKeys(unittest.TestCase):
         self.assertEqual(self.typed(), [(ord("c"), X.ControlMask)])
         self.assertEqual(self.held(), [])
 
+    def test_lock_keys_do_not_defeat_the_shifted_glyph(self):
+        # The keyboard protocol reports NumLock (128) and CapsLock (64) in the
+        # modifier field. German Shift+7 is still '/' with either, or both, on.
+        for params in ("55:47;130:1", "55:47;66:1", "55:47;194:1"):
+            self.inject(params)
+            self.inject("55;1:3")
+        self.assertEqual([sym for sym, _ in self.typed()], [ord("/")] * 3)
+        self.assertEqual(self.held(), [])
+        self.assertEqual(self.xd.screen().root.query_pointer().mask & X.ShiftMask, 0)
+
+    def test_lock_keys_do_not_defeat_an_unshifted_glyph_or_a_chord(self):
+        # '<' is typed as the glyph the pane produced, not as a lock-shifted key.
+        self.inject("60;129:1")
+        self.inject("60;129:3")
+        # Ctrl+c is still a Ctrl chord on the base key, and Ctrl alone.
+        self.inject("99;133:1")
+        self.inject("99;133:3")
+        typed = self.typed()
+        self.assertEqual([sym for sym, _ in typed], [ord("<"), ord("c")])
+        self.assertEqual(typed[1][1], X.ControlMask)
+        self.assertEqual(self.held(), [])
+
+    def test_control_characters_are_not_keysyms(self):
+        for code in list(range(0x20)) + list(range(0x7f, 0xa0)):
+            self.assertEqual(self.inj.keysym_for(chr(code)), 0, hex(code))
+        self.assertEqual(self.inj.keysym_for(" "), 0x20)
+        self.assertEqual(self.inj.keysym_for("~"), 0x7e)
+        self.assertEqual(self.inj.keysym_for("\xa0"), 0xa0)
+
+    def test_paste_types_tab_and_drops_other_control_characters(self):
+        self.inj.paste("a\tb\r\x01c\x7fd")
+        self.xd.sync()
+        self.assertEqual([sym for sym, _ in self.typed()],
+                         [ord("a"), XK.XK_Tab, ord("b"), ord("c"), ord("d")])
+        self.assertEqual(self.held(), [])
+        # No spare keycode was spent on a control character.
+        self.assertEqual(self.inj._scratch, {})
+
     def test_more_new_symbols_than_spare_keycodes_are_all_typed(self):
         # A responsive client reads each key before the next one; once every
         # spare keycode is bound, the least recently used one is rebound.
