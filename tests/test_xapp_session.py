@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import shlex
+import stat
 import subprocess
 from pathlib import Path
 import sys
@@ -496,6 +497,49 @@ class XAppSessionTests(unittest.TestCase):
             stderr = self.start_clipboard_with_log(runtime)
             self.assertFalse(target.exists())
             self.assertEqual(stderr, subprocess.DEVNULL)
+
+    def test_clipboard_log_is_a_blocking_regular_file(self):
+        # The log is opened O_NONBLOCK so a planted FIFO cannot block it; the
+        # relay that inherits it as stderr must get an ordinary blocking fd.
+        with tempfile.TemporaryDirectory() as runtime:
+            log = xapp._open_private_log(Path(runtime) / "clipboard.log")
+            try:
+                self.assertTrue(stat.S_ISREG(os.fstat(log.fileno()).st_mode))
+                self.assertTrue(os.get_blocking(log.fileno()))
+            finally:
+                log.close()
+
+    def test_clipboard_log_refuses_a_planted_fifo_with_a_reader(self):
+        # Review D M5: a FIFO someone keeps open for reading opens at once;
+        # it must still never become the clipboard relay's stderr.
+        with tempfile.TemporaryDirectory() as runtime:
+            fifo = Path(runtime) / "clipboard.log"
+            os.mkfifo(fifo, 0o600)
+            reader = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
+            try:
+                stderr = self.start_clipboard_with_log(runtime)
+                self.assertEqual(stderr, subprocess.DEVNULL)
+            finally:
+                os.close(reader)
+
+    def test_clipboard_log_never_blocks_on_a_planted_fifo(self):
+        with tempfile.TemporaryDirectory() as runtime:
+            fifo = Path(runtime) / "clipboard.log"
+            os.mkfifo(fifo, 0o600)
+            result = []
+            worker = threading.Thread(
+                target=lambda: result.append(self.start_clipboard_with_log(runtime)),
+                daemon=True)
+            worker.start()
+            worker.join(3)
+            blocked = worker.is_alive()
+            if blocked:
+                # Release the blocked open so the test can finish.
+                reader = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
+                worker.join(3)
+                os.close(reader)
+            self.assertFalse(blocked, "a planted FIFO blocked the clipboard log open")
+            self.assertEqual(result, [subprocess.DEVNULL])
 
     def test_broadcast_encoder_receives_private_xauthority_without_leak(self):
         with tempfile.TemporaryDirectory() as runtime:
