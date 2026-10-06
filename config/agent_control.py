@@ -175,12 +175,28 @@ def refresh_route(values):
     return refresh(values)
 
 
+ROUTE = ("KITTY_LISTEN_ON", "KITTY_WINDOW_ID", "KILIX_RC_PASSWORD_FILE", "KITTY_PUBLIC_KEY")
+
+
+REFRESHED = "_route_refreshed"     # set by connection_values(); never an environment name
+
+
 def connection_values():
+    """Recover this pane's connection metadata, rebound to a replacement terminal."""
+    values = recovered_values()
+    if refresh_route(values):
+        values[REFRESHED] = "1"
+    return values
+
+
+def recovered_values():
     """Recover only pane connection metadata from this process's ancestors."""
-    names = ("KITTY_LISTEN_ON", "KITTY_WINDOW_ID", "KILIX_RC_PASSWORD_FILE", "KITTY_PUBLIC_KEY",
-             "KILIX_KITTEN", "KILIX_BUILD_DIRECTORY", "KILIX_PREBUILT_HOME", *BROKER_IDENTITY)
+    names = (*ROUTE, "KILIX_KITTEN", "KILIX_BUILD_DIRECTORY", "KILIX_PREBUILT_HOME",
+             *BROKER_IDENTITY)
     values = {name: os.environ[name] for name in names if os.environ.get(name)}
-    needed = names[:4]
+    # Keep walking until the broker identity is found too: a caller that kept
+    # the route but lost the identity could otherwise never be rebound.
+    needed = (*ROUTE, *BROKER_IDENTITY)
     pid = os.getppid()
     for _ in range(24):
         if all(values.get(name) for name in needed) or pid <= 1:
@@ -199,21 +215,31 @@ def connection_values():
             # Never combine metadata belonging to different terminal instances.
             if (not values.get("KITTY_LISTEN_ON") or
                     parent_values.get("KITTY_LISTEN_ON") == values["KITTY_LISTEN_ON"]):
+                # The broker identity selects which pane to rebind, so it comes
+                # only from an ancestor of this same pane: one that names a
+                # socket, and no other window of that terminal.
+                same_pane = bool(parent_values.get("KITTY_LISTEN_ON")) and (
+                    not values.get("KITTY_WINDOW_ID") or not parent_values.get("KITTY_WINDOW_ID")
+                    or parent_values["KITTY_WINDOW_ID"] == values["KITTY_WINDOW_ID"])
                 for name, value in parent_values.items():
+                    if name in BROKER_IDENTITY and not same_pane:
+                        continue
                     values.setdefault(name, value)
             status = (proc / "status").read_text()
             pid = int(next(line.split()[1] for line in status.splitlines()
                            if line.startswith("PPid:")))
         except (OSError, ValueError, StopIteration):
             break
-    refresh_route(values)
     return values
 
 
-def kitten_path(values):
+def kitten_path(values, from_socket=True):
+    """The kitten matching this terminal. The process a socket names is trusted
+    to locate it only for the inherited socket: a refreshed route names a
+    process found by inspection, and the kitten receives the password file."""
     candidates = [values.get("KILIX_KITTEN", "")]
     match = re.fullmatch(r"unix:@kilix-(\d+)", values.get("KITTY_LISTEN_ON", ""))
-    if match:
+    if match and from_socket:
         try:
             candidates.append(str(Path(os.readlink(f"/proc/{match[1]}/exe")).with_name("kitten")))
         except OSError:
@@ -232,6 +258,7 @@ def kitten_path(values):
 class Client:
     def __init__(self, caller_pane=None):
         values = connection_values()
+        refreshed = bool(values.pop(REFRESHED, ""))
         socket = values.get("KITTY_LISTEN_ON", "")
         credential = values.get("KILIX_RC_PASSWORD_FILE", "")
         if not socket or not credential:
@@ -244,11 +271,15 @@ class Client:
         if caller_pane and inherited and caller_pane != inherited:
             raise ControlError("--caller-pane conflicts with the inherited caller identity")
         self.caller = caller_pane or inherited
-        self.command = [kitten_path(values), "@", "--to", socket,
+        self.command = [kitten_path(values, from_socket=not refreshed), "@", "--to", socket,
                         "--password-file", credential]
-        self.command_env = os.environ.copy()
-        if values.get("KITTY_PUBLIC_KEY"):
-            self.command_env["KITTY_PUBLIC_KEY"] = values["KITTY_PUBLIC_KEY"]
+        # The kitten forwards KITTY_WINDOW_ID and KITTY_PUBLIC_KEY to the engine,
+        # so its environment carries the same (possibly refreshed) route.
+        self.command_env = {k: v for k, v in os.environ.items()
+                            if k not in ROUTE and k != "KITTY_PID"}
+        for name in (*ROUTE, "KITTY_PID"):
+            if values.get(name):
+                self.command_env[name] = values[name]
 
     def run(self, args, payload=None):
         process = None
