@@ -14,6 +14,7 @@ import re
 import select
 import shlex
 import shutil
+import stat
 import sys
 import tempfile
 import time
@@ -96,10 +97,16 @@ class CaptureStart:
 def _open_private_log(path: Path):
     """Append to an owner-only log; never follow a link or widen it first."""
     try:
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+        # O_NONBLOCK: a FIFO planted at the path must not block the open.
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW
+                     | os.O_CLOEXEC | os.O_NONBLOCK, 0o600)
     except OSError:
         return None  # A substituted log only costs the diagnostics.
     try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            os.close(fd)  # A FIFO or device is never a log.
+            return None
+        os.set_blocking(fd, True)  # The child inherits it as stderr.
         os.fchmod(fd, 0o600)  # A log left by an older version keeps no group access.
         return os.fdopen(fd, "ab")
     except OSError:

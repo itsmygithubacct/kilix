@@ -1,4 +1,4 @@
-"""Explicit preparation and foreground startup of the receipt-backed CPU provider."""
+"""Explicit preparation and foreground startup of the receipt-backed Qwen provider."""
 from __future__ import annotations
 
 import argparse
@@ -22,12 +22,20 @@ import uuid
 from . import paths
 from ._content_runtime import apps_root
 
-PROVIDER_REF = 'e255d4af90eb3593c880e10894f2a128aa28eec7'
+PROVIDER_REF = 'c8093798a0a643d3dbacea38979b5d27a46744ce'
 CONTENT_REF = 'ad620c1429d825230e1c337a20f8a9682ff060d4'
 LICENSE_REF = 'ca8a0f479893ab9c8cd6cadc2716c474aaad2820'
 ENGINE_REF = '6cafe5582caea83df269c36b1ce62d953a9cc66b'
 MODEL = 'qwen3-tts-0.6b-customvoice'
 BUDGET = 3 * 1024**3
+# Every catalogued Qwen model the provider can serve, with its per-job model
+# snapshot budget (catalog installed bytes plus headroom). Preparation stages
+# each one that is installed and covered by a licence receipt; CustomVoice
+# stays first so it remains the service's default model.
+MODELS = {MODEL: BUDGET, 'qwen3-tts-0.6b-base': 3 * 1024**3,
+          'qwen3-tts-1.7b-voicedesign': 5 * 1024**3}
+DEVICES = ('cpu', 'cuda')
+GPU_NODES = ('/dev/nvidiactl', '/dev/nvidia-uvm', '/dev/nvidia0')
 stopping = False
 
 
@@ -90,6 +98,36 @@ def acquire_source(parent: Path, name: str, repo: str, revision: str, offline: b
             stage.rename(source)
     exact_source(source, revision)
     return source
+
+
+def cuda_capable():
+    """GPU 0 has every CUDA device node and reports compute capability 7.0+."""
+    try:
+        if not all(stat.S_ISCHR(os.stat(node).st_mode) for node in GPU_NODES):
+            return False
+        smi = shutil.which('nvidia-smi', path='/usr/bin:/bin')
+        if smi is None:
+            return False
+        result = subprocess.run([smi, '-i', '0', '--query-gpu=compute_cap', '--format=csv,noheader'],
+                                capture_output=True, stdin=subprocess.DEVNULL, timeout=10,
+                                env={'PATH': '/usr/bin:/bin', 'LANG': 'C'})
+        return result.returncode == 0 and float(result.stdout.split()[0]) >= 7.0
+    except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+        return False
+
+
+def selected_device(requested):
+    if requested == 'auto':
+        return 'cuda' if cuda_capable() else 'cpu'
+    if requested not in DEVICES:
+        raise ValueError('unsupported provider device')
+    return requested
+
+
+def write_private(path, payload):
+    descriptor = os.open(path, os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW|os.O_CLOEXEC, 0o600)
+    with os.fdopen(descriptor, 'wb') as output:
+        output.write(payload)
 
 
 def managed_root():
@@ -235,18 +273,31 @@ def prepare(args):
         owned_run(provider,[python,'-I','-B',content/'tools/vendored_kilix_license.py','--check'],environment,timeout=30)
         libraries = [str(provider/'src'),str(content/'src'),
                      str(content/'third_party/kilix-license/src')]
-        preflight = ('import sys;sys.path[:0]='+repr(libraries)+'\n'
+        # Each model is admitted only by its own receipt and complete installed
+        # population; a model without either is left out, never fetched.
+        preflight = ('import sys,json;sys.path[:0]='+repr(libraries)+'\n'
+            'from pathlib import Path\n'
             'from kilix_qwen_tts.content import InstalledModel\n'
+            'from kilix_qwen_tts.protocol import ProtocolError\n'
             'from kilix_qwen_tts.service import runtime_directory\n'
-            'runtime=runtime_directory()\n'
-            f'm=InstalledModel({MODEL!r},__import__("pathlib").Path({apps_root()!r}),'
-            f'maximum_bytes={BUDGET},provider="kilix-qwen-tts",consumer_schema="kilix.qwen-tts.runtime")\n'
-            'm.bind(m.spec.asset_id,m.spec.version,{f.path:f.sha256 for f in m.spec.files '
+            'runtime=runtime_directory();ready=[];receipts=None\n'
+            f'for name,budget in {MODELS!r}.items():\n'
+            ' try:\n'
+            f'  m=InstalledModel(name,Path({apps_root()!r}),maximum_bytes=budget,'
+            'provider="kilix-qwen-tts",consumer_schema="kilix.qwen-tts.runtime")\n'
+            '  m.bind(m.spec.asset_id,m.spec.version,{f.path:f.sha256 for f in m.spec.files '
             'if not f.path.startswith("notices/")})\n'
-            'with m, m.open(lambda:None):\n pass\n'
-            'import json;print(json.dumps({"receipt_root":str(m.store.root),"runtime_root":str(runtime)}))\n')
+            '  with m, m.open(lambda:None):\n   pass\n'
+            ' except ProtocolError:\n  continue\n'
+            ' ready.append(name);receipts=str(m.store.root)\n'
+            'print(json.dumps({"receipt_root":receipts,"runtime_root":str(runtime),"ready":ready}))\n')
         effective = json.loads(owned_run(provider,[python,'-I','-B','-c',preflight],
-                                        environment,timeout=300,capture=True))
+                                        environment,timeout=600,capture=True))
+        models = [name for name in MODELS if name in effective['ready']]
+        if not models or effective['receipt_root'] is None:
+            raise ValueError('no installed Qwen model has a licence receipt; '
+                             'run kilix models install <model> in a terminal first')
+        device = selected_device(getattr(args, 'device', 'cpu'))
         environment['KILIX_LICENSE_RECEIPTS'] = effective['receipt_root']
         environment['XDG_RUNTIME_DIR'] = effective['runtime_root']
         engine = acquire_source(sources,'.qwen3-tts-'+ENGINE_REF,
@@ -259,7 +310,7 @@ def prepare(args):
             with Destination(generation) as held:
                 write_root = Path('/proc/self/fd')/str(held.descriptors[-1])
                 build = [sys.executable,'-I','-S',provider/'tools/build_environment.py',
-                         '--uv',uv,'--destination',generation/'environment']
+                         '--uv',uv,'--destination',generation/'environment','--device',device]
                 if args.offline:
                     build.append('--offline')
                 owned_run(provider,build,environment,timeout=1850)
@@ -273,15 +324,26 @@ def prepare(args):
                 held.check()
                 stage = ('import sys,runpy;sys.path.insert(0,'+repr(str(generation/'lib'))+');'
                     'runpy.run_path('+repr(str(provider/'tools/stage_installed_runtime.py'))+',run_name="__main__")')
-                owned_run(provider,[generation/'environment/bin/python','-I','-B','-c',stage,
-                    '--destination',generation/'runtime','--environment',generation/'environment',
-                    '--source-checkout',engine,'--installed-asset',MODEL,'--content-root',apps_root(),
-                    '--model-snapshot-bytes',str(BUDGET)],environment,timeout=330)
-                held.check()
+                (write_root/'runtimes').mkdir(mode=0o700)
+                rows = []
+                for name in models:
+                    owned_run(provider,[generation/'environment/bin/python','-I','-B','-c',stage,
+                        '--destination',generation/'runtimes'/name,'--environment',generation/'environment',
+                        '--source-checkout',engine,'--installed-asset',name,'--content-root',apps_root(),
+                        '--model-snapshot-bytes',str(MODELS[name]),'--device',device,'--timeout','600'],
+                        environment,timeout=630)
+                    held.check()
+                    rows.append({'root':str(generation/'runtimes'/name),'asset_id':name,
+                                 'snapshot_bytes':MODELS[name]})
+                index = (json.dumps({'schema':'kilix.qwen-tts.runtime-set/v1','runtimes':rows},
+                                    sort_keys=True)+'\n').encode()
+                write_private(write_root/'runtime-index.json',index)
                 checkpoint()
                 binding = {'provider_ref':PROVIDER_REF,'content_ref':CONTENT_REF,'license_ref':LICENSE_REF,
-                    'content_root':apps_root(),'model':MODEL,'budget':BUDGET,
-                    'runtime_sha256':hashlib.sha256((write_root/'runtime/runtime.json').read_bytes()).hexdigest(),
+                    'content_root':apps_root(),'models':{name:MODELS[name] for name in models},
+                    'device':device,'index_sha256':hashlib.sha256(index).hexdigest(),
+                    'runtimes':{name:hashlib.sha256((write_root/'runtimes'/name/'runtime.json')
+                                                    .read_bytes()).hexdigest() for name in models},
                     'venv_config_sha256':hashlib.sha256((write_root/'environment/pyvenv.cfg').read_bytes()).hexdigest(),
                     'environment':{k:environment[k] for k in ('GPU_TERMINAL_HOME','KILIX_LICENSE_RECEIPTS',
                         'XDG_RUNTIME_DIR','XDG_STATE_HOME') if k in environment},'files':package_files(lib)}
@@ -318,8 +380,11 @@ def main(argv=None):
     global stopping
     parser = argparse.ArgumentParser(prog='kilix tts provider')
     sub = parser.add_subparsers(dest='command',required=True)
-    prep = sub.add_parser('prepare',help='build a managed CPU environment for the installed model')
+    prep = sub.add_parser('prepare',help='build a managed environment for every installed, licensed Qwen model')
     prep.add_argument('--uv',type=Path,default=Path(shutil.which('uv') or '/usr/bin/uv'))
+    prep.add_argument('--device',choices=('auto',*DEVICES),default='auto',
+                      help='cuda builds a CUDA environment that still runs on the CPU when no GPU '
+                           'is usable; auto selects cuda for an NVIDIA GPU 0 with compute capability 7.0+')
     prep.add_argument('--offline',action='store_true',help='require cached sources, Python and dependencies')
     sub.add_parser('serve',help='run the prepared provider in this terminal; Ctrl-C stops it')
     sub.add_parser('status',help='query provider selection and current state')

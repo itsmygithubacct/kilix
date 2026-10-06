@@ -31,13 +31,30 @@ def main():
             actual[str(path.relative_to(lib))] = hashlib.sha256(path.read_bytes()).hexdigest()
     if actual != value['files']:
         raise ValueError('provider library changed; prepare a new generation')
-    manifest_path = generation/'runtime/runtime.json'
-    if manifest_path.is_symlink():
-        raise ValueError('unsafe runtime manifest')
-    manifest_bytes = manifest_path.read_bytes()
-    if hashlib.sha256(manifest_bytes).hexdigest() != value['runtime_sha256']:
-        raise ValueError('runtime manifest changed; prepare a new generation')
-    manifest = json.loads(manifest_bytes)
+    def bound_bytes(path, digest, what):
+        if any(part.is_symlink() for part in (path, *path.parents) if generation in (part, *part.parents)):
+            raise ValueError('unsafe '+what)
+        payload = path.read_bytes()
+        if hashlib.sha256(payload).hexdigest() != digest:
+            raise ValueError(what+' changed; prepare a new generation')
+        return payload
+    models = value['models']
+    if (type(models) is not dict or not models or set(value['runtimes']) != set(models)
+            or value['device'] not in ('cpu', 'cuda')):
+        raise ValueError('invalid provider binding')
+    index = json.loads(bound_bytes(generation/'runtime-index.json', value['index_sha256'],
+                                   'runtime selection index'))
+    if [(row['asset_id'], row['root'], row['snapshot_bytes']) for row in index['runtimes']] != [
+            (name, str(generation/'runtimes'/name), budget) for name, budget in models.items()]:
+        raise ValueError('runtime selection index differs from its binding')
+    manifests = [json.loads(bound_bytes(generation/'runtimes'/name/'runtime.json',
+                                        value['runtimes'][name], 'runtime manifest'))
+                 for name in models]
+    # Every selected model shares the one bound environment and device.
+    if any(item['environment'] != manifests[0]['environment'] or item['device'] != value['device']
+           or item['model']['id'] != name for item, name in zip(manifests, models)):
+        raise ValueError('runtime manifests differ from their binding')
+    manifest = manifests[0]
     # -B alone disables writes, not reads of pre-existing bytecode.
     sys.pycache_prefix = '/dev/null'
     sys.path.insert(0,str(lib))
@@ -62,31 +79,32 @@ def main():
     environment['PYTHONDONTWRITEBYTECODE'] = '1'
     command = sys.argv[1:]
     if command == ['serve']:
-        command += ['--runtime-root',str(generation/'runtime'),
-            '--installed-asset',value['model'],'--content-root',value['content_root'],
-            '--model-snapshot-bytes',str(value['budget'])]
+        command += ['--runtime-index',str(generation/'runtime-index.json'),
+                    '--content-root',value['content_root']]
     elif command != ['status'] and not (len(command)==2 and command[0]=='wait-ready'
                                           and command[1].isdigit() and int(command[1])>0):
         raise ValueError('usage: kilix-qwen-provider serve|status|wait-ready')
     bootstrap = ('import sys;sys.path.insert(0,sys.argv[1]);'
                  'from kilix_qwen_tts.cli import main;raise SystemExit(main(sys.argv[2:]))')
     if command[0] == 'serve':
-        # Consent is checked under the bound supported Python, before a socket.
+        # Consent for every bound model is checked under the bound supported
+        # Python, before a socket. A withdrawn receipt needs a new preparation.
         bootstrap = '''import sys,json
 from pathlib import Path
 sys.path.insert(0,sys.argv[1])
 from kilix_qwen_tts.content import InstalledModel
 value=json.loads(sys.argv[2])
-with InstalledModel(value['model'],Path(value['content_root']),maximum_bytes=value['budget'],
-                    provider='kilix-qwen-tts',consumer_schema='kilix.qwen-tts.runtime') as model:
-    model.bind(model.spec.asset_id,model.spec.version,
-               {f.path:f.sha256 for f in model.spec.files if not f.path.startswith('notices/')})
-    with model.open(lambda:None):
-        pass
+for name,budget in value['models'].items():
+    with InstalledModel(name,Path(value['content_root']),maximum_bytes=budget,
+                        provider='kilix-qwen-tts',consumer_schema='kilix.qwen-tts.runtime') as model:
+        model.bind(model.spec.asset_id,model.spec.version,
+                   {f.path:f.sha256 for f in model.spec.files if not f.path.startswith('notices/')})
+        with model.open(lambda:None):
+            pass
 from kilix_qwen_tts.cli import main
 raise SystemExit(main(sys.argv[3:]))
 '''
-        command.insert(0,json.dumps({k:value[k] for k in ('model','content_root','budget')}))
+        command.insert(0,json.dumps({k:value[k] for k in ('models','content_root')}))
     if command[0] == 'wait-ready':
         owner = os.pidfd_open(int(command[1]))
         os.set_inheritable(owner,True)

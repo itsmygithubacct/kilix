@@ -9,7 +9,7 @@ APPRUN = (ROOT / "config" / "apprun.py").read_text()
 
 class ForwardingDisciplineTests(unittest.TestCase):
     def test_keys_are_forwarded_as_chords_not_raw(self):
-        self.assertIn("self.inj.chord(ev[\"key\"], mods, etype)", APPRUN)
+        self.assertIn("self.inj.chord(ev[\"key\"], mods, etype, ev.get(\"shifted\"))", APPRUN)
         self.assertNotIn("self.inj.key(ev[\"key\"], etype)", APPRUN)
 
     def test_focus_reporting_is_enabled_and_disabled_with_the_pane(self):

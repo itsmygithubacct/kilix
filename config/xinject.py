@@ -11,8 +11,20 @@ which keys/buttons are currently held and can release them all on disconnect, so
 a viewer that drops mid-drag or mid-keypress never leaves a stuck modifier or
 button down on the shared display.
 """
+from collections import OrderedDict
+import time
+
 from Xlib import X, XK
 from Xlib.ext import xtest
+
+# X11 maps any Unicode code point above Latin-1 to keysym 0x01000000 | cp.
+UNICODE_KEYSYM = 0x01000000
+# Spare keycodes kept bound to keysyms the private keymap lacks (a default
+# Xvfb keymap has 19 unused keycodes).
+SCRATCH_KEYCODES = 32
+# Before rebinding a spare keycode, give clients time to read the key events
+# that used its previous keysym: they resolve keycodes with their current map.
+REBIND_DELAY = .03
 
 # kitty functional keycodes for modifier keys -> X keysym names
 MOD_KEYSYMS = {57441: "Shift_L", 57442: "Control_L", 57443: "Alt_L",
@@ -27,12 +39,18 @@ NAME_KEYSYMS = {"Enter": "Return", "Escape": "Escape",
                 "PageDown": "Next", "Insert": "Insert", "Delete": "Delete",
                 **{f"F{i}": f"F{i}" for i in range(1, 13)}}
 
+# Control characters a paste can carry that have a key of their own.
+PASTE_KEYS = {"\n": "Enter", "\t": "Tab"}
 
 # kitty keyboard-protocol modifier bits, after the protocol's +1 offset is
 # removed (apprun does that before calling in). Order is the press order.
 MOD_SHIFT, MOD_ALT, MOD_CTRL, MOD_SUPER = 1, 2, 4, 8
 MOD_BITS = ((MOD_SHIFT, "Shift_L"), (MOD_ALT, "Alt_L"),
             (MOD_CTRL, "Control_L"), (MOD_SUPER, "Super_L"))
+# The keyboard protocol also reports the lock states in the modifier field
+# (CapsLock 64, NumLock 128). They are not chord modifiers: with one set, a
+# Shift-only key would no longer count as Shift-only.
+MOD_LOCKS = 64 | 128
 MOD_KEY_BITS = {57441: MOD_SHIFT, 57442: MOD_CTRL, 57443: MOD_ALT,
                 57444: MOD_SUPER, 57447: MOD_SHIFT, 57448: MOD_CTRL,
                 57449: MOD_ALT, 57450: MOD_SUPER}
@@ -48,6 +66,94 @@ class Injector:
         self._chord_mods = {}        # key keycode -> modifier keycodes pressed for it
         self._mouse_mods = []        # one modifier owner for the pointer gesture
         self._mouse_mask = 0
+        self._key_presses = {}       # pane key identity -> keycode pressed for it
+        self._scratch = OrderedDict()  # keysym -> spare keycode bound to it (LRU)
+        self._spare = None           # spare keycodes of the private keymap
+
+    # The private Xvfb starts with its default (US) keymap and never learns the
+    # physical layout. A German pane sends a, o, u umlauts and sharp s as their
+    # own code points; a Cyrillic or Greek one sends letters above Latin-1.
+    # Looking those keysyms up in the private keymap found no keycode and the
+    # key was silently dropped, and a shifted glyph was injected as Shift plus
+    # the base key, which is the US glyph (Shift+7 gave '&' instead of '/').
+    # Each character is injected as the keysym it names: an existing keycode
+    # at the level that produces it, or a spare keycode bound to it, the same
+    # technique xdotool uses.
+    def _find_spare(self):
+        try:
+            first = self.xd.display.info.min_keycode
+            last = self.xd.display.info.max_keycode
+            rows = self.xd.get_keyboard_mapping(first, last - first + 1)
+        except Exception:
+            return []
+        def reusable(row):
+            # Unused, or a scratch binding an earlier injector left behind: one
+            # keysym repeated that a default US keymap never contains.
+            syms = {sym for sym in row if sym}
+            if not syms:
+                return True
+            sym = syms.pop() if len(syms) == 1 else 0
+            return 0xa0 <= sym <= 0xff or sym >= UNICODE_KEYSYM
+        spare = [first + i for i, row in enumerate(rows) if reusable(row)]
+        return spare[::-1][:SCRATCH_KEYCODES]
+
+    def _bind_scratch(self, keysym):
+        if keysym in self._scratch:
+            self._scratch.move_to_end(keysym)
+            return self._scratch[keysym]
+        if self._spare is None:
+            self._spare = self._find_spare()
+        used = set(self._scratch.values())
+        free = [code for code in self._spare if code not in used]
+        if free:
+            code = free[0]
+        else:
+            # Rebind the least recently used spare that is not held down.
+            for old, code in self._scratch.items():
+                if code not in self._keys_down:
+                    del self._scratch[old]
+                    break
+            else:
+                return 0
+            self.xd.sync()
+            time.sleep(REBIND_DELAY)
+        try:
+            self.xd.change_keyboard_mapping(code, [(keysym, keysym)])
+            self.xd.sync()
+        except Exception:
+            return 0
+        # This connection never reads its MappingNotify; refresh the cached
+        # keymap so later lookups do not see the keycode's old keysym.
+        update = getattr(self.xd, "_update_keymap", None)
+        if update is not None:
+            try:
+                update(code, 1)
+            except Exception:
+                pass
+        self._scratch[keysym] = code
+        return code
+
+    def _keycode_for(self, keysym):
+        """(keycode, level) that produces *keysym*; level 1 needs Shift."""
+        if keysym in self._scratch:
+            return self._bind_scratch(keysym), 0
+        code = self.xd.keysym_to_keycode(keysym)
+        if code:
+            lookup = getattr(self.xd, "keycode_to_keysym", None)
+            if lookup is None:
+                return code, 0
+            try:
+                for level in (0, 1):
+                    if lookup(code, level) == keysym:
+                        return code, level
+            except Exception:
+                return code, 0
+            # Only reachable through a group or level-3 shift: bind it plainly.
+        return self._bind_scratch(keysym), 0
+
+    @staticmethod
+    def _is_glyph(key):
+        return len(key) == 1 and not 57344 <= ord(key) <= 63743 and ord(key) >= 32
 
     def _modifier_codes(self, mods):
         codes = []
@@ -87,7 +193,7 @@ class Injector:
         """True for a bare modifier key event (Shift/Ctrl/Alt/Super alone)."""
         return len(key) == 1 and ord(key) in MOD_KEYSYMS
 
-    def chord(self, key, mods, etype):
+    def chord(self, key, mods, etype, shifted=None):
         """Inject *key* with the *mods* bitmask held only for this event.
 
         The pane's modifier keys are never injected without a gesture. A bare Alt
@@ -100,10 +206,14 @@ class Injector:
         modifier by count, so releasing one key does not drop a modifier that
         another held key still needs.
 
+        *shifted* is the glyph the pane's own layout produced with Shift (the
+        kitty protocol's alternate key); a Shift-only chord injects that glyph.
+
         etype: 1 = press, 3 = release. Returns True if a key was injected.
         """
         if etype not in (1, 3):
             return False
+        mods &= ~MOD_LOCKS
         if self.is_modifier(key):
             # A drag can change between copy/move/selection modes while the
             # pointer is stationary. Bare modifiers may update that existing
@@ -114,16 +224,26 @@ class Injector:
                 self._set_mouse_modifiers(mask)
                 self.xd.flush()
             return False
-        keysym = self.keysym_for(key)
-        if not keysym:
-            return False
-        keycode = self.xd.keysym_to_keycode(keysym)
-        if not keycode:
-            return False
         if etype == 1:
             # Repeated/duplicate presses do not acquire another owner. Xvfb
             # autorepeats held keys; overwriting this key's first ownership
             # would strand a modifier when its single release arrives.
+            if key in self._key_presses:
+                return False
+            symbol = key
+            only_shift = not mods & ~MOD_SHIFT
+            if only_shift and mods & MOD_SHIFT and shifted:
+                symbol = shifted
+            keysym = self.keysym_for(symbol)
+            if not keysym:
+                return False
+            keycode, level = self._keycode_for(keysym)
+            if not keycode:
+                return False
+            if only_shift and self._is_glyph(symbol) and (shifted or not mods):
+                # Produce exactly this glyph: Shift only where the private
+                # keymap needs it, whatever the pane's layout needed.
+                mods = MOD_SHIFT if level == 1 else 0
             if keycode in self._chord_mods:
                 return False
             modcodes = self._modifier_codes(mods)
@@ -131,12 +251,19 @@ class Injector:
             xtest.fake_input(self.xd, X.KeyPress, keycode)
             self._keys_down.add(keycode)
             self._chord_mods[keycode] = modcodes
+            self._key_presses[key] = keycode
         else:
-            # Release the modifiers this key was PRESSED with, not the ones the
-            # release event reports. An operator who lets go of Alt before the
-            # key produces a release with mods=0; computing from that would
-            # leave the Alt pressed at key-down held for ever -- the same latch
-            # this method exists to remove.
+            # Release the keycode and the modifiers this key was PRESSED with,
+            # not the ones the release event reports. An operator who lets go
+            # of Alt (or Shift) before the key produces a release with mods=0;
+            # computing from that would leave the Alt pressed at key-down held
+            # for ever -- the same latch this method exists to remove.
+            keycode = self._key_presses.pop(key, None)
+            if keycode is None:
+                keysym = self.keysym_for(key)
+                keycode = self.xd.keysym_to_keycode(keysym) if keysym else 0
+                if not keycode:
+                    return False
             modcodes = self._chord_mods.pop(keycode, [])
             xtest.fake_input(self.xd, X.KeyRelease, keycode)
             self._keys_down.discard(keycode)
@@ -151,9 +278,13 @@ class Injector:
                 return XK.string_to_keysym(MOD_KEYSYMS[o])
             if 57344 <= o <= 63743:      # other functional keys: unmapped
                 return 0
+            if o < 0x20 or 0x7f <= o <= 0x9f:
+                return 0                 # control characters are not keys
             if o < 256:                  # latin-1 keysyms == codepoints
                 return o
-            return 0
+            if o > 0x10FFFF or 0xD800 <= o <= 0xDFFF:
+                return 0
+            return UNICODE_KEYSYM | o
         name = NAME_KEYSYMS.get(key)
         return XK.string_to_keysym(name) if name else 0
 
@@ -162,7 +293,7 @@ class Injector:
         keysym = self.keysym_for(key)
         if not keysym:
             return False
-        keycode = self.xd.keysym_to_keycode(keysym)
+        keycode, _level = self._keycode_for(keysym)
         if not keycode:
             return False
         if etype == 1:
@@ -217,12 +348,19 @@ class Injector:
         self.xd.flush()
 
     def paste(self, text):
+        """Type *text*: each character as its own keysym, Shift where needed."""
+        shift = self._modifier_codes(MOD_SHIFT)
         for ch in text:
-            keysym = self.keysym_for(ch if ch != "\n" else "Enter")
-            keycode = self.xd.keysym_to_keycode(keysym) if keysym else 0
-            if keycode:
-                xtest.fake_input(self.xd, X.KeyPress, keycode)
-                xtest.fake_input(self.xd, X.KeyRelease, keycode)
+            keysym = self.keysym_for(PASTE_KEYS.get(ch, ch))
+            keycode, level = self._keycode_for(keysym) if keysym else (0, 0)
+            if not keycode:
+                continue
+            if level == 1:
+                self._hold_modifiers(shift)
+            xtest.fake_input(self.xd, X.KeyPress, keycode)
+            xtest.fake_input(self.xd, X.KeyRelease, keycode)
+            if level == 1:
+                self._release_modifiers(shift)
         self.xd.flush()
 
     def mouse(self, ev, box):
@@ -294,5 +432,6 @@ class Injector:
             pass
         self._mod_holds.clear()
         self._chord_mods.clear()
+        self._key_presses.clear()
         self._mouse_mods.clear()
         self._mouse_mask = 0

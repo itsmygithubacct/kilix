@@ -268,9 +268,14 @@ class RunTerm(browse.Term):
                 # browse uses the shifted glyph as a browser key. XTest needs
                 # the unshifted identity for both edges: '(' and '9' can map
                 # to different X keycodes, leaving Shift held after release.
-                base = int(parts[0].split(":")[0])
+                fields = parts[0].split(":")
+                base = int(fields[0])
                 if base not in browse.SPECIAL_U:
                     ev["key"] = chr(base)
+                    # The glyph the pane's layout gives with Shift; the
+                    # injector types it instead of the private US keymap's.
+                    if len(fields) > 1 and fields[1].isdigit():
+                        ev["shifted"] = chr(int(fields[1]))
             etype = 1  # 1 press, 2 repeat, 3 release
             if len(parts) > 1 and ":" in parts[1]:
                 try:
@@ -1000,7 +1005,7 @@ class AppPane:
             return                       # Xvfb autorepeats held keys itself
         # Modifiers travel with the key that needs them and are released with
         # it; a bare modifier is never forwarded on its own (see xinject.chord).
-        self.inj.chord(ev["key"], mods, etype)
+        self.inj.chord(ev["key"], mods, etype, ev.get("shifted"))
 
     def on_focus(self, ev):
         """Pane lost or regained focus. On focus-out nothing forwarded from

@@ -244,14 +244,44 @@ class ClipboardTransportTests(unittest.TestCase):
             app.destroy()
             d.flush()
 
-    def test_owner_exit_clears_the_mirrored_copy(self):
+    def assert_copy_survives_owner_exit(self, exit_owner):
+        # Owner answer 13: only an explicit release (SetSelectionOwner to
+        # None) is a clear. An app exiting (SelectionWindowDestroy or
+        # SelectionClientClose) is not: the last copy stays in the hub, in
+        # every mirrored pane and, because nothing is published, in the outer
+        # terminal's OSC 52 clipboard.
         content = clip.Content.from_text('from an app that exits')
         owner = self.owner(content)
-        self.pump(lambda: self.hub.content == content)
+        self.pump(lambda: self.hub.content == content and self.mirrors(1, content))
         self.assertEqual(self.receive('UTF8_STRING')[0], b'from an app that exits')
-        owner.close()
-        self.pump(lambda: self.clipboard_owner(1) == 0)
-        self.assertEqual(self.hub.content, clip.Content({}))
+        revision = self.hub.clipboard_revision
+        exit_owner(owner)
+        self.pump(lambda: self.clipboard_owner(0) == 0 and self.bridges[0]._selection_owner == 0)
+        self.assertEqual(self.hub.content, content)
+        self.assertEqual(self.hub.clipboard_revision, revision)
+        self.assertTrue(self.mirrors(1, content))
+        self.assertEqual(self.receive('UTF8_STRING')[0], b'from an app that exits')
+        # The source is gone, so a later release on its display (by a client
+        # that never owned this copy) cannot clear it either.
+        d = self.sessions[0].xd
+        clip.xrequest.SetSelectionOwner(display=d.display, window=X.NONE,
+                                        selection=d.intern_atom('CLIPBOARD'), time=X.CurrentTime)
+        d.sync()
+        self.bridges[0]._on_readable()
+        for _ in range(20):
+            self.pump(lambda: True)
+        self.assertEqual(self.hub.content, content)
+        self.assertEqual(self.hub.clipboard_revision, revision)
+        self.assertEqual(self.receive('UTF8_STRING')[0], b'from an app that exits')
+
+    def test_owner_client_exit_keeps_the_mirrored_copy(self):
+        self.assert_copy_survives_owner_exit(lambda owner: owner.close())
+
+    def test_owner_window_destroyed_keeps_the_mirrored_copy(self):
+        def destroy(owner):
+            owner.win.destroy()
+            owner.d.sync()
+        self.assert_copy_survives_owner_exit(destroy)
 
     def test_abandoned_copy_cannot_clear_a_newer_copy_from_elsewhere(self):
         # Display 0 once supplied the hub's value; a newer copy then came from
@@ -363,6 +393,51 @@ class ClipboardTransportTests(unittest.TestCase):
         self.pump(lambda: self.bridges[0]._pending_clear is None)
         self.assertEqual(self.hub.content, newer)
         self.assertEqual(self.receive('UTF8_STRING', which=0)[0], b'newer copy')
+
+    # Review D M1: the held clear compares the hub's value with the one this
+    # display published by identity. Re-copying the same text on another
+    # display is a newer copy, not the released one, so an equal value must
+    # survive too; comparing with == would clear the fresh copy everywhere.
+
+    def test_held_source_clear_yields_to_an_equal_competing_copy(self):
+        secret = clip.Content.from_text('hunter2-password')
+        owner = self.owner(secret, which=0)
+        self.pump(lambda: self.hub.content == secret and self.mirrors(1, secret))
+        published = self.hub.content
+        again = clip.Content.from_text('hunter2-password')
+        self.owner(again, which=1)
+        self.pump(lambda: self.bridges[1]._incoming is not None)
+        # The source clears while the equal copy is still being read.
+        self.release(owner)
+        self.bridges[0]._on_readable()
+        self.assertIsNotNone(self.bridges[0]._pending_clear)
+        self.pump(lambda: self.hub.content is not published and self.hub.content == secret)
+        revision = self.hub.clipboard_revision
+        self.pump(lambda: self.bridges[0]._pending_clear is None)
+        for _ in range(20):
+            self.pump(lambda: True)
+        self.assertEqual(self.hub.content, secret)
+        self.assertEqual(self.hub.clipboard_revision, revision)
+        self.assertEqual(self.receive('UTF8_STRING', which=1)[0], b'hunter2-password')
+
+    def test_source_clear_after_an_equal_copy_completed_does_not_hold(self):
+        secret = clip.Content.from_text('hunter2-password')
+        owner = self.owner(secret, which=0)
+        self.pump(lambda: self.hub.content == secret and self.mirrors(1, secret))
+        published = self.hub.content
+        again = clip.Content.from_text('hunter2-password')
+        self.owner(again, which=1)
+        self.pump(lambda: self.hub.content is not published and self.hub.content == secret)
+        revision = self.hub.clipboard_revision
+        # The old source releases only after the equal copy was published.
+        self.release(owner)
+        self.bridges[0]._on_readable()
+        self.assertIsNone(self.bridges[0]._pending_clear)
+        for _ in range(20):
+            self.pump(lambda: True)
+        self.assertEqual(self.hub.content, secret)
+        self.assertEqual(self.hub.clipboard_revision, revision)
+        self.assertEqual(self.receive('UTF8_STRING', which=1)[0], b'hunter2-password')
 
     def test_new_owner_replaces_a_stalled_read_without_old_data(self):
         d = self.sessions[0].xd
