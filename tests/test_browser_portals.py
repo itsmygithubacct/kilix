@@ -57,6 +57,14 @@ class BrowserPortalTests(unittest.TestCase):
         command, _ = prepare_browser(args, env)
         self.assertEqual(command, ["chromium", "--incognito", "--ozone-platform=x11", "--", "--ozone-platform=literal", "https://example.test/"])
 
+    def test_bare_ozone_switch_keeps_chromiums_own_meaning_for_the_next_argument(self):
+        # Chromium has no "--switch value" form: the next word is a URL. Only
+        # the final --ozone-platform=x11 selects the platform.
+        env = {"KILIX_PRIVATE_XAPP": "1", "KILIX_PORTAL_HOST_BUS": "unix:path=/physical/bus"}
+        args = ["chromium", "--ozone-platform", "wayland", "https://example.test/"]
+        command, _ = prepare_browser(args, env)
+        self.assertEqual(command, args + ["--ozone-platform=x11"])
+
     def test_chromium_policy_does_not_change_an_unrouted_or_host_launch(self):
         for env in ({}, {"KILIX_PRIVATE_XAPP": "1"}, {"KILIX_PORTAL_HOST_BUS": "unix:path=/physical/bus"}):
             with self.subTest(env=env):

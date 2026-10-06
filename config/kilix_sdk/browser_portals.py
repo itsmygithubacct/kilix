@@ -30,9 +30,12 @@ def prepare_browser(argv: Sequence[str], env: Mapping[str, str]) -> tuple[list[s
         # Ozone would otherwise select Wayland for the browser window, too.
         # Private app sessions supply X11. Preserve profiles, permission and
         # sandbox options, URLs and arguments after the literal separator.
+        # Chromium reads switch values only in the --switch=value form: a
+        # bare "--ozone-platform wayland" is an empty switch (overridden by
+        # the final one below) followed by a URL. Leave both untouched rather
+        # than drop the switch and strand its would-be value.
         separator = command.index("--") if "--" in command else len(command)
-        head = [arg for arg in command[1:separator]
-                if arg != "--ozone-platform" and not arg.startswith("--ozone-platform=")]
+        head = [arg for arg in command[1:separator] if not arg.startswith("--ozone-platform=")]
         command = [command[0], *head, "--ozone-platform=x11", *command[separator:]]
     return command, environment
 

@@ -13,8 +13,10 @@ from pathlib import Path
 import re
 import secrets
 import stat
+import time
 
 _PROC = Path('/proc')
+_PENDING_STALE_SECONDS = 60
 _RECORD_KEYS = frozenset((
     'version', 'id', 'label', 'owner_pid', 'owner_start', 'server_pid', 'server_start',
     'app_pid', 'app_start', 'display', 'desktop_display', 'authority',
@@ -51,6 +53,20 @@ def _prune_exited_owners(directory: Path) -> None:
                 if not alive and (current.st_dev,current.st_ino) == (info.st_dev,info.st_ino):
                     path.unlink()
         except (OSError,ValueError,TypeError):
+            continue
+    # publish() removes its staging file in the same call, so a .pending name
+    # that has aged is from a provider killed between create and unlink. Its
+    # content may be partial, so age (not the recorded owner) identifies it.
+    now = time.time()
+    for path in itertools.islice(directory.glob('*.pending'), 4096):
+        try:
+            if not re.fullmatch(r'[0-9a-f]{32}', path.stem):
+                continue
+            info = path.lstat()
+            if (stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid()
+                    and now - info.st_mtime > _PENDING_STALE_SECONDS):
+                path.unlink()
+        except OSError:
             continue
 
 

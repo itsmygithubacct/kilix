@@ -35,7 +35,7 @@ from PIL import Image
 from kilix_sdk import require_compatible as require_kilix_sdk
 require_kilix_sdk("1.16")
 from kilix_sdk import graphics as kilix_graphics
-from kilix_sdk.clipboard import Content
+from kilix_sdk.clipboard import CLEARED, Content
 from kilix_sdk import term as kilix_term
 import icons
 import shell as shell_mod
@@ -237,7 +237,10 @@ class Desk:
         self.clipboard = content.text
         has_text = any(content.get(name) is not None for name in
                        ("UTF8_STRING", "text/plain;charset=utf-8", "text/plain", "STRING"))
-        if self.term and self.clip_host is None and has_text:
+        if self.term and self.clip_host is None and (has_text or content is CLEARED):
+            # A source clear (CLEARED: a password manager's auto-clear, or the
+            # owning app exiting) must reach the outer terminal's clipboard
+            # too; an empty OSC 52 payload clears it, as an empty copy does.
             b64 = base64.b64encode(content.text.encode()).decode()
             self.term.write(f"\x1b]52;c;{b64}\x07")
         for sink in list(self._content_sinks):

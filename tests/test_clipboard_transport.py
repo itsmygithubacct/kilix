@@ -65,6 +65,10 @@ class ClipboardTransportTests(unittest.TestCase):
         for session in self.sessions:
             self.bridges.append(clip.SelectionBridge(self.hub, session.display,
                                                      session.xauthority))
+        # Each endpoint claims its empty display asynchronously. A test owner
+        # created before that claim lands would lose CLIPBOARD to it.
+        self.pump(lambda: all(not bridge._claim and bridge._owns_selection()
+                              for bridge in self.bridges))
 
     def tearDown(self):
         for bridge in reversed(self.bridges):
@@ -271,6 +275,94 @@ class ClipboardTransportTests(unittest.TestCase):
         self.pump(lambda: self.clipboard_owner(0) == 0 and self.bridges[0]._incoming is None)
         self.assertEqual(self.hub.content, newer)
         self.assertEqual(self.receive('UTF8_STRING', which=1)[0], b'newer')
+
+    def test_read_is_not_committed_when_the_owner_changed_before_it_finished(self):
+        # Another app copies on the source display after the last format
+        # arrived but before this endpoint has processed that notification.
+        # The finished read belongs to the old owner and must not replace the
+        # newer copy's place in the hub.
+        self.pump(lambda: all(item._owns_selection() for item in self.bridges))
+        content = clip.Content.from_text('older copy')
+        self.owner(content, which=0)
+        bridge, d = self.bridges[0], self.sessions[0].xd
+        newer = d.screen().root.create_window(-10, -10, 1, 1, 0, X.CopyFromParent,
+            window_class=X.InputOnly, visual=X.CopyFromParent)
+        original = bridge._next_read
+        decisions = []
+
+        def racing():
+            if not bridge._queue and bridge._read_formats and not decisions:
+                newer.set_selection_owner(d.intern_atom('CLIPBOARD'), X.CurrentTime)
+                d.sync()
+                original()
+                decisions.append(self.hub.content == content)
+                return
+            original()
+
+        try:
+            with mock.patch.object(bridge, '_next_read', side_effect=racing):
+                self.pump(lambda: bool(decisions))
+            self.assertEqual(decisions, [False])
+            self.assertNotEqual(self.hub.content, content)
+        finally:
+            newer.destroy()
+            d.flush()
+
+    def mirrors(self, which, content):
+        # Owning CLIPBOARD is not enough: the endpoint may still hold the
+        # claim for the previous value and take ownership back later.
+        bridge = self.bridges[which]
+        return bridge._content == content and not bridge._claim and bridge._owns_selection()
+
+    def release(self, owner):
+        clip.xrequest.SetSelectionOwner(display=owner.d.display, window=X.NONE,
+                                        selection=owner.atoms['CLIPBOARD'], time=X.CurrentTime)
+        owner.d.sync()
+
+    def test_source_clear_applies_after_a_competing_copy_fails(self):
+        # Review C R2: a newer copy starts on display 1 (advancing the hub
+        # revision) and its owner then exits without answering. The source
+        # release on display 0 happened in between; it must not be lost, or
+        # the hub keeps the cleared secret and any pane opened later gets it.
+        secret = clip.Content.from_text('hunter2-password')
+        owner = self.owner(secret, which=0)
+        self.pump(lambda: self.hub.content == secret and self.mirrors(1, secret))
+        d = self.sessions[1].xd
+        stalled = d.screen().root.create_window(-10, -10, 1, 1, 0, X.CopyFromParent,
+            window_class=X.InputOnly, visual=X.CopyFromParent)
+        stalled.set_selection_owner(d.intern_atom('CLIPBOARD'), X.CurrentTime)
+        d.sync()
+        self.pump(lambda: self.bridges[1]._incoming is not None)
+        self.release(owner)
+        self.pump(lambda: self.bridges[0]._published_revision is None)
+        stalled.destroy()
+        d.sync()
+        self.pump(lambda: self.hub.content == clip.Content({}))
+        self.assertEqual(self.clipboard_owner(0), 0)
+        late = xapp.XAppSession('clip-late-'+str(os.getpid()), 64, 48)
+        self.sessions.append(late)
+        late.start_xvfb()
+        late.connect()
+        pane = clip.SelectionBridge(self.hub, late.display, late.xauthority)
+        self.bridges.append(pane)
+        self.pump(lambda: pane._owns_selection())
+        self.assertNotEqual(pane._content, secret)
+
+    def test_held_source_clear_yields_to_a_competing_copy_that_completes(self):
+        secret = clip.Content.from_text('hunter2-password')
+        owner = self.owner(secret, which=0)
+        self.pump(lambda: self.hub.content == secret and self.mirrors(1, secret))
+        newer = clip.Content.from_text('newer copy')
+        self.owner(newer, which=1)
+        self.pump(lambda: self.bridges[1]._incoming is not None)
+        # The source clears while the newer copy is still being read.
+        self.release(owner)
+        self.bridges[0]._on_readable()
+        self.assertIsNotNone(self.bridges[0]._pending_clear)
+        self.pump(lambda: self.hub.content == newer)
+        self.pump(lambda: self.bridges[0]._pending_clear is None)
+        self.assertEqual(self.hub.content, newer)
+        self.assertEqual(self.receive('UTF8_STRING', which=0)[0], b'newer copy')
 
     def test_new_owner_replaces_a_stalled_read_without_old_data(self):
         d = self.sessions[0].xd

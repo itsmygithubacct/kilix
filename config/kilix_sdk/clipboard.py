@@ -210,6 +210,8 @@ class SelectionBridge:
         self._claim = False
         self._timestamp = 0
         self._published_revision = None
+        self._published_content = None
+        self._pending_clear = None
         self._selection_owner = 0
         self._incoming = None
         self._queue = []
@@ -307,12 +309,35 @@ class SelectionBridge:
             self._selection_owner = 0
         self.d.flush()
 
+    def _hub_content(self):
+        content = getattr(self.hub, 'clipboard_content', None)
+        return getattr(self.hub, 'content', None) if content is None else content
+
     def _source_released(self):
         # Clear the hub only if what it holds is still the value read from
         # this display; a newer copy elsewhere must survive an old owner here.
-        revision = self._published_revision
-        self._published_revision = None
-        if revision is not None and revision == getattr(self.hub, 'clipboard_revision', None):
+        revision, published = self._published_revision, self._published_content
+        self._published_revision = self._published_content = None
+        if revision is None:
+            return
+        if revision == getattr(self.hub, 'clipboard_revision', None):
+            self.hub.set_clipboard_content(CLEARED, source=self._sink)
+        elif self._hub_content() is published:
+            # A copy started elsewhere since then (it advanced the revision)
+            # but has not replaced this value. Should it end without
+            # publishing, the hub would keep serving what the source cleared,
+            # so hold the clear until that read is resolved (see tick).
+            self._pending_clear = published
+
+    def _apply_pending_clear(self):
+        if (self._pending_clear is None
+                or getattr(self.hub, 'clipboard_read_revision', None) is not None):
+            return
+        published, self._pending_clear = self._pending_clear, None
+        if self._hub_content() is published:
+            # Every competing read ended without publishing. The other
+            # endpoints release at their own claim times (_release), so this
+            # cannot take a copy made since then from its owner.
             self.hub.set_clipboard_content(CLEARED, source=self._sink)
 
     def _announce_pending(self):
@@ -351,6 +376,7 @@ class SelectionBridge:
         if not self._ok:
             return
         self._on_readable()  # python-xlib can buffer events after a reply.
+        self._apply_pending_clear()
         now = time.monotonic()
         if self._incoming and (now > self._incoming['deadline'] or
                                now > self._read_deadline or
@@ -470,6 +496,7 @@ class SelectionBridge:
                 self._content = content
                 self.hub.set_clipboard_content(content, source=self._sink)
                 self._published_revision = getattr(self.hub, 'clipboard_revision', None)
+                self._published_content = content
             end = getattr(self.hub, 'end_clipboard_read', None)
             if end is not None:
                 end(self._read_revision)

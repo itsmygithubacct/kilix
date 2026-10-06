@@ -62,6 +62,13 @@ class CapturePublicationTests(unittest.TestCase):
         self.assertIsNone(registry.publish(self.session,'Test'))
         self.assertFalse((self.runtime/'kilix-capture-sources').exists())
 
+    def test_an_app_that_is_not_the_owners_child_cannot_publish(self):
+        # The X server is ours but the application process is someone else's
+        # child: the record would name a pane this provider does not own.
+        (self.proc/'502/stat').write_text('502 (app) '+' '.join(['S','1']+['0']*17+['12']))
+        self.assertIsNone(registry.publish(self.session,'Test'))
+        self.assertFalse((self.runtime/'kilix-capture-sources').exists())
+
     def test_physical_or_remote_display_cannot_be_published_as_a_private_pane(self):
         for display in (':0','localhost:10.0',':91; command'):
             self.session.display=display
@@ -89,6 +96,22 @@ class CapturePublicationTests(unittest.TestCase):
         self.assertTrue(incomplete.exists());self.assertTrue(future.exists())
         self.assertEqual(list(directory.glob('*.pending')),[])
         self.assertEqual(latest.path.stat().st_nlink,1)
+
+
+    def test_staging_files_left_by_a_killed_provider_are_pruned_only_once_stale(self):
+        directory=registry.publish(self.session,'Original').path.parent
+        old=os.stat(directory).st_mtime-3600
+        abandoned=directory/('a'*32+'.pending');abandoned.write_text('{"version": 1, "id"');abandoned.chmod(0o600)
+        os.utime(abandoned,(old,old))
+        in_progress=directory/('b'*32+'.pending');in_progress.write_text('{}');in_progress.chmod(0o600)
+        unknown=directory/'notes.pending';unknown.write_text('kept');os.utime(unknown,(old,old))
+        outside=self.root/'outside';outside.write_text('kept')
+        linked=directory/('c'*32+'.pending');linked.symlink_to(outside)
+        os.utime(linked,(old,old),follow_symlinks=False)
+        self.assertIsNotNone(registry.publish(self.session,'Latest'))
+        self.assertFalse(abandoned.exists())
+        self.assertTrue(in_progress.exists());self.assertTrue(unknown.exists())
+        self.assertTrue(linked.is_symlink());self.assertEqual(outside.read_text(),'kept')
 
 
 if __name__=='__main__':unittest.main()

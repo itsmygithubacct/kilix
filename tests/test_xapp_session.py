@@ -466,6 +466,37 @@ class XAppSessionTests(unittest.TestCase):
             else:
                 os.environ["XAUTHORITY"] = previous
 
+    def start_clipboard_with_log(self, runtime):
+        supervisor = FakeSupervisor()
+        supervisor.runtime_dir = runtime
+        session = xapp.XAppSession("clipboard-log", 64, 48, supervisor=supervisor)
+        session.start_xvfb()
+        with mock.patch.dict(os.environ, {"KILIX_HOST_CLIP": "1", "PLEB_DESKTOP_DISPLAY": ":0"}):
+            session.start_clipboard(timeout=0.01)
+        argv, kwargs, _process = supervisor.spawns["clipboard"]
+        self.assertIn("--private-display", argv)
+        return kwargs["stderr"]
+
+    def test_clipboard_log_is_created_owner_only_whatever_the_umask(self):
+        with tempfile.TemporaryDirectory() as runtime:
+            previous = os.umask(0)
+            try:
+                # Creation itself must be private: no window between a
+                # umask-mode create and a later chmod.
+                with mock.patch.object(xapp.os, "chmod"), mock.patch.object(xapp.os, "fchmod"):
+                    self.start_clipboard_with_log(runtime)
+            finally:
+                os.umask(previous)
+            self.assertEqual((Path(runtime) / "clipboard.log").stat().st_mode & 0o777, 0o600)
+
+    def test_clipboard_log_never_follows_a_planted_link(self):
+        with tempfile.TemporaryDirectory() as runtime, tempfile.TemporaryDirectory() as elsewhere:
+            target = Path(elsewhere) / "victim"
+            (Path(runtime) / "clipboard.log").symlink_to(target)
+            stderr = self.start_clipboard_with_log(runtime)
+            self.assertFalse(target.exists())
+            self.assertEqual(stderr, subprocess.DEVNULL)
+
     def test_broadcast_encoder_receives_private_xauthority_without_leak(self):
         with tempfile.TemporaryDirectory() as runtime:
             supervisor = object.__new__(xapp.stream.StreamSupervisor)

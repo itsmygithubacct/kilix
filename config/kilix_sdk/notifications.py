@@ -116,6 +116,8 @@ class NativeNotifications:
         try:
             response = connection.send_message_with_reply_finish(result)
             if r.clients.get(client.name) is not client:
+                # Host connection closed mid-call; answer a still-live caller.
+                r.error(original, 'Desktop notification connection closed')
                 return
             if epoch != state.epoch:
                 r.error(original, 'Desktop notification service restarted')

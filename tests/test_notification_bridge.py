@@ -24,7 +24,18 @@ class NotificationBridgeTests(unittest.TestCase):
         ], capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         proof = json.loads(result.stdout.strip().splitlines()[-1])
-        self.assertTrue(all(proof.values()), proof)
+        # The exact set: a fixture that stops early must not pass.
+        self.assertEqual(proof, dict.fromkeys((
+            'native_protocol_information', 'private_ids_hide_the_physical_id_namespace',
+            'replacement_preserves_private_identifier', 'foreign_close_and_replace_are_denied',
+            'actions_are_unicast_to_the_owner', 'closure_invalidates_private_identifier',
+            'signal_before_notify_reply_is_preserved',
+            'daemon_restart_invalidates_old_ids_and_allows_new_calls',
+            'fire_and_forget_notifications_outlive_their_sender',
+            'closure_before_replacement_reply_does_not_resurrect_id',
+            'queued_requests_and_errors_preserve_client_call_order',
+            'no_reply_notify_still_reaches_the_physical_daemon',
+            'opaque_image_hints_survive_and_private_window_hint_is_removed'), True))
         self.assertNotIn('Traceback', result.stderr)
         self.assertNotIn('CRITICAL', result.stderr)
 
