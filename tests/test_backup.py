@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -212,6 +213,27 @@ class BackupTests(unittest.TestCase):
         for _ in range(50):
             if Path(f"/proc/{proc.pid}/cmdline").read_bytes().count(b"main.py"):
                 break
+            time.sleep(0.05)
+        self.assertTrue(backup.desktop_running())
+
+    def test_a_desktop_rehomed_from_a_legacy_kilix95_dir_is_detected(self):
+        source = self.tmp / "src"
+        canonical = source / "kilix-desktops" / "kilix-95"
+        canonical.mkdir(parents=True)
+        (canonical / "main.py").write_text("import time\ntime.sleep(30)\n")
+        os.environ["GPU_TERMINAL_SOURCE_HOME"] = str(source)
+        os.environ.pop("KILIX95_DIR", None)
+        # kilix.env still names the pre-umbrella default, which no longer exists;
+        # the launcher runs the canonical checkout instead.
+        (self.gt / "kilix" / "config" / "kilix.env").write_text(
+            f"KILIX95_DIR={source / 'kilix-95'}\n")
+        self.assertFalse(backup.desktop_running())
+        proc = subprocess.Popen([sys.executable, str(canonical / "main.py")])
+        self.addCleanup(proc.kill)
+        for _ in range(50):
+            if Path(f"/proc/{proc.pid}/cmdline").read_bytes().count(b"main.py"):
+                break
+            time.sleep(0.05)
         self.assertTrue(backup.desktop_running())
 
     def test_colliding_long_surplus_and_crash_members_are_refused(self):
@@ -264,7 +286,7 @@ class BackupTests(unittest.TestCase):
         out = io.StringIO()
         with mock.patch("sys.stdout", out):
             backup.main(["list", archive])
-        self.assertIn("decides what the desktop runs", out.getvalue())
+        self.assertIn("can change what Kilix runs or downloads", out.getvalue())
 
     def test_the_size_cap_holds_on_create_and_read(self):
         archive = backup.create()
@@ -275,8 +297,11 @@ class BackupTests(unittest.TestCase):
                 backup.read(archive)
 
     def test_create_refuses_what_read_would_refuse(self):
-        with mock.patch.object(backup, "MAX_MEMBERS", 2):
-            with self.assertRaisesRegex(backup.BackupError, "more than 2 files"):
+        count = len(backup.read(backup.create())[1])
+        with mock.patch.object(backup, "MAX_MEMBERS", count):
+            backup.read(backup.create())                 # exactly the limit is fine
+        with mock.patch.object(backup, "MAX_MEMBERS", count - 1):
+            with self.assertRaisesRegex(backup.BackupError, f"more than {count - 1} files"):
                 backup.create()
         archive = backup.create()
         with mock.patch.object(backup, "MAX_MANIFEST", 64):
@@ -296,15 +321,65 @@ class BackupTests(unittest.TestCase):
             raw = tar.extractfile("manifest.json").read()
         self.assertEqual(raw, json.dumps(_manifest, sort_keys=True, separators=(",", ":")).encode())
 
-    def test_every_kind_of_launch_key_is_flagged(self):
-        for key in ("KILIX_DESKTOP_COMMAND", "KILIX95_DIR", "KILIX95_REPO", "KILIX95_REF",
-                    "KILIX95_TRUST_EXISTING_CHECKOUT", "KILIX_TUI_UTILS_DIR",
-                    "KILIX_ALLOW_UNVERIFIED_PREBUILT", "KILIX_CAP_AUTO_INSTALL",
-                    "KILIX_AVATAR_PREFIX", "KILIX_QWEN_GPU_PYTHON", "KILIX_HOME",
-                    "KILIX_DESKTOP_FLAVOR", "KILIX95_BRANCH", "KILIX_PTY_BROKER"):
+    def launcher_allowlist(self):
+        """Every key the launcher accepts from kilix.env, read from the launcher."""
+        import re
+        text = (ROOT / "kilix").read_text()
+        block = text[text.index('    case "$_key" in\n      KILIX_CHROME_CLOCK'):]
+        block = block[:block.index(")\n        # An explicit process environment wins")]
+        return set(re.findall(r"[A-Z][A-Z0-9_]+", block))
+
+    def test_only_vouched_cosmetic_keys_go_unflagged(self):
+        allowed = self.launcher_allowlist()
+        self.assertGreater(len(allowed), 100)
+        self.assertLessEqual(backup.COSMETIC_KEYS, allowed, "a cosmetic key the launcher dropped")
+        for key in ("KILIX_DESKTOP_COMMAND", "KILIX95_DIR", "KILIX_OBJECT_DETECTOR",
+                    "KILIX_SOUND_CLASSIFIER", "KILIX_NVR_DETECT", "KILIX_PTY_BROKER_HOME",
+                    "KILIX_YOLOX_SRC", "KILIX_KITTY_DEPS_URL", "KILIX_KITTY_DEPS_SHA256",
+                    "KILIX_PREBUILT_VERSION", "KILIX_LOOK_KEEP_EXISTING_CHECKOUT",
+                    "KILIX_ALLOW_UNVERIFIED_PREBUILT", "KILIX_SOME_FUTURE_KEY"):
             self.assertTrue(backup.launch_key(key), key)
-        for key in ("clock", "KILIX_STREAM", "KILIX_PTY_BROKER_JOURNAL_LIMIT"):
+        for key in ("KILIX_DESKTOP_DIR", "KILIX_RECYCLE_DIR", "KILIX_CHROME_CLOCK",
+                    "KILIX_PTY_BROKER_JOURNAL_LIMIT"):
             self.assertFalse(backup.launch_key(key), key)
+
+    def test_a_manifest_near_the_real_limit_is_read_whole(self):
+        data = b"clock=1\n"
+        entries = {"settings.conf": {"size": len(data), "sha256": hashlib.sha256(data).hexdigest()}}
+        path = self.tmp / "big-manifest.tar.gz"
+        body = json.dumps({"format": backup.FORMAT, "entries": entries}).encode()
+        pad = backup.MAX_MANIFEST - len(body) - 64
+        body = json.dumps({"format": backup.FORMAT, "entries": entries,
+                           "note": "x" * pad}).encode()
+        self.assertGreater(len(body), backup.MAX_MANIFEST - 128)
+        with tarfile.open(path, "w:gz") as tar:
+            for name, blob in (("manifest.json", body), ("settings.conf", data)):
+                info = tarfile.TarInfo(name)
+                info.size = len(blob)
+                tar.addfile(info, io.BytesIO(blob))
+        _manifest, payload = backup.read(str(path))
+        self.assertEqual(payload, {"settings.conf": data})
+
+    def test_a_name_no_backup_can_hold_is_skipped_and_reported(self):
+        (self.gt / "desktop" / "C:\\Users\\me\\report.txt").write_text("from a zip\n")
+        skipped = []
+        archive = backup.create(skipped=skipped)
+        self.assertEqual(skipped, ["desktop/C:\\Users\\me\\report.txt"])
+        _manifest, payload = backup.read(archive)        # the rest still restores
+        self.assertIn("desktop/letter.txt", payload)
+        err = io.StringIO()
+        with mock.patch("sys.stdout", io.StringIO()), mock.patch("sys.stderr", err):
+            self.assertEqual(backup.main(["create"]), 0)
+        self.assertIn("skipped (a backup cannot hold this name): desktop/C:", err.getvalue())
+
+    def test_no_restart_advice_when_nothing_was_written(self):
+        archive = backup.create()
+        out = io.StringIO()
+        with mock.patch("sys.stdout", out), \
+                mock.patch.object(backup, "desktop_running", return_value=False):
+            self.assertEqual(backup.main(["restore", archive, "--yes"]), 0)
+        self.assertIn("Restored 0 file(s)", out.getvalue())
+        self.assertNotIn("Restart the desktop", out.getvalue())
 
     def test_a_failed_write_names_what_was_restored_and_where_the_old_files_are(self):
         archive = backup.create()

@@ -775,8 +775,10 @@ configuration and saved state, and the documents on the desktop. Restoring only
 creates or replaces the files the archive names, and first keeps a copy of each
 file it replaces. It refuses the whole archive if any member is a link, escapes
 its folder, or fails its checksum. `list` and `restore` show every setting the
-archive would change, and flag `kilix.env` keys that decide what the desktop
-runs, because a backup file may come from somewhere else. From the command line,
+archive would change, and flag every `kilix.env` key that can change what Kilix
+runs or downloads (all but a few display settings), because a backup file may
+come from somewhere else. A file whose name a backup cannot hold, such as one
+with a backslash in it, is left out and named when the backup is made. From the command line,
 restore refuses while the desktop is running, since the desktop would save its
 own state over the restored files. Control Panel > Backup in Kilix 95 restores
 and restarts the desktop for you. A restored `kilix.env` takes effect only in a

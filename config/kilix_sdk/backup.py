@@ -41,17 +41,21 @@ MAX_MANIFEST = 16 << 20               # bytes; a compact entry is ~120 bytes
 NAME_MAX = 255
 PATH_MAX = 4096
 _STATE_EXCLUDE = ("document-recovery", "crash.log")
-# kilix.env keys that decide what the launcher runs or trusts; a restore flags them.
-LAUNCH_KEYS = ("KILIX_HOME", "KILIX_PREBUILT_HOME", "KILIX_DESKTOP_FLAVOR",
-               "KILIX_DESKTOP_NAME", "KILIX_DESKTOP_PROVIDER", "KILIX_PTY_BROKER",
-               "KILIX_KITTEN", "KILIX_SHELL", "KILIX_STATE_LIBRARY")
-_LAUNCH_MARKERS = ("_DIR", "_REPO", "_REF", "_BRANCH", "_TRUST", "_ALLOW",
-                   "_AUTO_INSTALL", "_COMMAND", "_PREFIX", "_PYTHON")
+# kilix.env keys that only change how Kilix looks or behaves, never what code it
+# fetches, trusts or runs. A restore flags every other kilix.env key, so a key
+# added to the launcher later is flagged until someone vouches for it here.
+COSMETIC_KEYS = frozenset({
+    "KILIX_CHROME_BATTERY", "KILIX_CHROME_CLOCK", "KILIX_CHROME_CLOCK_FORMAT",
+    "KILIX_DEBUG", "KILIX_NO_SOUND", "KILIX_NO_PANE", "KILIX_SAVER_IDLE",
+    "KILIX_HOST_CLIP", "KILIX_RUN_AUTO_FIT", "KILIX_PTY_BROKER_AUTO_RECOVER",
+    "KILIX_PTY_BROKER_JOURNAL_LIMIT", "KILIX_DESKTOP_DIR", "KILIX_RECYCLE_DIR",
+    "KILIX_BATTERY_SUPPLY_DIR", "KILIX_BROWSE_LOG", "KILIX_RUN_LOG",
+})
 
 
 def launch_key(key: str) -> bool:
-    """Whether a kilix.env key decides what code the launcher fetches, trusts or runs."""
-    return key in LAUNCH_KEYS or any(marker in key for marker in _LAUNCH_MARKERS)
+    """Whether a kilix.env key can change what code Kilix fetches, trusts or runs."""
+    return key not in COSMETIC_KEYS
 
 
 class BackupError(Exception):
@@ -160,8 +164,12 @@ def _digest(path: str) -> tuple[int, str]:
 
 
 def create(output: str | None = None, *, label: str = "kilix-backup",
-           only: set[str] | None = None) -> str:
-    """Write a backup and return its path; ``only`` limits it to those names."""
+           only: set[str] | None = None, skipped: list[str] | None = None) -> str:
+    """Write a backup and return its path; ``only`` limits it to those names.
+
+    A file whose name no backup can hold (a backslash, an over-long name) is
+    left out and appended to ``skipped``: every archive this writes, its own
+    ``read()`` accepts."""
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     output = os.path.abspath(os.path.expanduser(
         output or os.path.join(default_directory(), f"{label}-{stamp}.tar.gz")))
@@ -172,8 +180,15 @@ def create(output: str | None = None, *, label: str = "kilix-backup",
     os.fchmod(fd, 0o600)
     try:
         entries, spooled, total = {}, [], 0
-        files = [item for name, path in sources() for item in _walk(name, path)
-                 if only is None or item[0] in only]
+        files = []
+        for name, path in (item for root, top in sources() for item in _walk(root, top)):
+            if only is not None and name not in only:
+                continue
+            if not _safe_name(name):
+                if skipped is not None:
+                    skipped.append(name)
+                continue
+            files.append((name, path))
         for index, (name, path) in enumerate(files):
             copy = os.path.join(spool, str(index))
             h, size = hashlib.sha256(), 0
@@ -366,8 +381,10 @@ def _check_destination(dest: str) -> None:
 def desktop_running() -> bool:
     """Whether this user's desktop provider is running (it saves its own state)."""
     from kilix_sdk import paths
-    main = os.path.realpath(os.path.join(
-        persisted_value("KILIX95_DIR") or paths.kilix95_home(), "main.py"))
+    # The configured checkout, and the default one: the launcher re-homes a
+    # missing pre-umbrella KILIX95_DIR to the default, so either may be running.
+    mains = {os.path.realpath(os.path.join(home, "main.py"))
+             for home in (persisted_value("KILIX95_DIR"), paths.kilix95_home()) if home}
     uid = os.getuid()
     for entry in os.listdir("/proc"):
         if not entry.isdigit():
@@ -380,7 +397,7 @@ def desktop_running() -> bool:
         except OSError:
             continue
         for arg in argv[1:3]:
-            if arg.endswith(b"main.py") and os.path.realpath(os.fsdecode(arg)) == main:
+            if arg.endswith(b"main.py") and os.path.realpath(os.fsdecode(arg)) in mains:
                 return True
     return False
 
@@ -457,7 +474,10 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
     try:
         if args.command == "create":
-            print(create(args.output))
+            skipped: list[str] = []
+            print(create(args.output, skipped=skipped))
+            for name in skipped:
+                print(f"skipped (a backup cannot hold this name): {name}", file=sys.stderr)
             return 0
         rows = plan(args.archive)
         for name, _dest, action in rows:
@@ -466,7 +486,7 @@ def main(argv: list[str]) -> int:
         if setting_changes:
             print("\nSetting changes:")
             for name, key, old, new in setting_changes:
-                note = "   <- decides what the desktop runs" if (
+                note = "   <- can change what Kilix runs or downloads" if (
                     name == "kilix/kilix.env" and launch_key(key)) else ""
                 print(f"  {name}: {key}: {old!r} -> {new!r}{note}")
         if args.command == "list":
