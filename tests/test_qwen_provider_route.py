@@ -24,6 +24,24 @@ class QwenProviderRouteTests(unittest.TestCase):
             provider.verify_content(ROOT/'third_party/kilix-content',
                                     provider.clean_environment())
 
+    def provider_source(self):
+        """The provider checkout the tests use, which must be the pinned commit.
+
+        The preparation tests mock `git rev-parse` to answer PROVIDER_REF, so
+        they cannot notice a pin that names a different commit than the
+        checkout they exercise; ask git for the checkout's own HEAD.
+        """
+        selected = os.environ.get('KILIX_QWEN_PROVIDER_TEST_SOURCE')
+        if not selected:
+            self.skipTest('set KILIX_QWEN_PROVIDER_TEST_SOURCE to the exact provider checkout')
+        head = subprocess.run(['git','-C',selected,'rev-parse','HEAD'],capture_output=True,text=True,check=True)
+        self.assertEqual(head.stdout.strip(),provider.PROVIDER_REF,
+                         'PROVIDER_REF does not name the provider checkout under test')
+        return selected
+
+    def test_pinned_provider_ref_is_the_tested_provider_checkout(self):
+        self.provider_source()
+
     def previous(self, root):
         managed = root/'data/voice/qwen-provider'
         generation = managed/'generations'/('a'*40+'-'+'b'*32)
@@ -59,9 +77,7 @@ class QwenProviderRouteTests(unittest.TestCase):
             run.assert_not_called()
 
     def preparation_failure(self, failed_step):
-        selected = os.environ.get('KILIX_QWEN_PROVIDER_TEST_SOURCE')
-        if not selected:
-            self.skipTest('set KILIX_QWEN_PROVIDER_TEST_SOURCE to the exact provider checkout')
+        selected = self.provider_source()
         builder = Path(selected)/'tools'
         with tempfile.TemporaryDirectory() as scratch:
             root = Path(scratch)
@@ -123,9 +139,7 @@ class QwenProviderRouteTests(unittest.TestCase):
         self.assertIn('serve',completed.stdout)
 
     def launcher_fixture(self, root, script='#!/bin/sh\nprintf "verified-marker\\n"\n'):
-        selected = os.environ.get('KILIX_QWEN_PROVIDER_TEST_SOURCE')
-        if not selected:
-            self.skipTest('set KILIX_QWEN_PROVIDER_TEST_SOURCE to the exact provider checkout')
+        selected = self.provider_source()
         generation = root/'generation'
         (generation/'bin').mkdir(mode=0o700,parents=True)
         lib = generation/'lib'
@@ -279,9 +293,7 @@ class QwenProviderRouteTests(unittest.TestCase):
             self.assertFalse(provider.cuda_capable())
 
     def staged_preparation(self, ready, requested_device, capable=False):
-        selected = os.environ.get('KILIX_QWEN_PROVIDER_TEST_SOURCE')
-        if not selected:
-            self.skipTest('set KILIX_QWEN_PROVIDER_TEST_SOURCE to the exact provider checkout')
+        selected = self.provider_source()
         builder = Path(selected)/'tools'
         scratch = tempfile.TemporaryDirectory()
         self.addCleanup(scratch.cleanup)
