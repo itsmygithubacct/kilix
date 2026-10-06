@@ -37,12 +37,21 @@ FORMAT = "kilix.backup/v1"
 MANIFEST = "manifest.json"
 MAX_TOTAL = 1 << 30                  # 1 GiB of payload
 MAX_MEMBERS = 100_000
+MAX_MANIFEST = 16 << 20               # bytes; a compact entry is ~120 bytes
 NAME_MAX = 255
 PATH_MAX = 4096
 _STATE_EXCLUDE = ("document-recovery", "crash.log")
-# kilix.env keys that decide what the launcher runs; a restore names them.
-LAUNCH_KEYS = ("KILIX_DESKTOP_COMMAND", "KILIX_DESKTOP_PROVIDER", "KILIX95_DIR",
-               "KILIX95_REPO", "KILIX95_REF", "KILIX_PYTHON")
+# kilix.env keys that decide what the launcher runs or trusts; a restore flags them.
+LAUNCH_KEYS = ("KILIX_HOME", "KILIX_PREBUILT_HOME", "KILIX_DESKTOP_FLAVOR",
+               "KILIX_DESKTOP_NAME", "KILIX_DESKTOP_PROVIDER", "KILIX_PTY_BROKER",
+               "KILIX_KITTEN", "KILIX_SHELL", "KILIX_STATE_LIBRARY")
+_LAUNCH_MARKERS = ("_DIR", "_REPO", "_REF", "_BRANCH", "_TRUST", "_ALLOW",
+                   "_AUTO_INSTALL", "_COMMAND", "_PREFIX", "_PYTHON")
+
+
+def launch_key(key: str) -> bool:
+    """Whether a kilix.env key decides what code the launcher fetches, trusts or runs."""
+    return key in LAUNCH_KEYS or any(marker in key for marker in _LAUNCH_MARKERS)
 
 
 class BackupError(Exception):
@@ -182,11 +191,17 @@ def create(output: str | None = None, *, label: str = "kilix-backup",
                 continue                             # vanished or replaced meanwhile
             entries[name] = {"size": size, "sha256": h.hexdigest()}
             spooled.append((name, copy))
+            if len(entries) > MAX_MEMBERS:
+                raise BackupError(f"backup would hold more than {MAX_MEMBERS} files; "
+                                  "move some off the desktop first")
         manifest = json.dumps({
             "format": FORMAT,
             "created": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "entries": entries,
-        }, indent=1, sort_keys=True).encode("utf-8")
+        }, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        if len(manifest) > MAX_MANIFEST:
+            raise BackupError("backup manifest would be too large; move some files off "
+                              "the desktop first")
         with os.fdopen(fd, "wb") as raw, tarfile.open(fileobj=raw, mode="w:gz") as tar:
             fd = -1
             info = tarfile.TarInfo(MANIFEST)
@@ -234,7 +249,9 @@ def read(archive: str) -> tuple[dict, dict[str, bytes]]:
             if first is None or first.name != MANIFEST or not first.isfile():
                 raise BackupError("missing manifest")
             try:
-                manifest = json.loads(tar.extractfile(first).read(1 << 22))
+                if first.size > MAX_MANIFEST:
+                    raise BackupError("manifest too large")
+                manifest = json.loads(tar.extractfile(first).read(MAX_MANIFEST))
             except ValueError:
                 raise BackupError("unreadable manifest") from None
             if not isinstance(manifest, dict) or manifest.get("format") != FORMAT \
@@ -350,7 +367,7 @@ def desktop_running() -> bool:
     """Whether this user's desktop provider is running (it saves its own state)."""
     from kilix_sdk import paths
     main = os.path.realpath(os.path.join(
-        os.environ.get("KILIX95_DIR") or paths.kilix95_home(), "main.py"))
+        persisted_value("KILIX95_DIR") or paths.kilix95_home(), "main.py"))
     uid = os.getuid()
     for entry in os.listdir("/proc"):
         if not entry.isdigit():
@@ -369,7 +386,8 @@ def desktop_running() -> bool:
 
 
 def restore(archive: str) -> dict:
-    """Apply a backup; returns {'safety': path|None, 'written': n, 'unchanged': n}.
+    """Apply a backup; returns {'safety': path|None, 'written': n, 'names': [...],
+    'unchanged': n}.
 
     Every destination is checked before anything is written, so a refused
     archive leaves the user's files exactly as they were."""
@@ -407,7 +425,19 @@ def restore(archive: str) -> dict:
             raise BackupError(f"could not write {name}: {error.strerror or error}; "
                               f"already restored: {done}; previous files: {safety}") from None
         written.append(name)
-    return {"safety": safety, "written": len(written), "unchanged": unchanged}
+    return {"safety": safety, "written": len(written), "names": written,
+            "unchanged": unchanged}
+
+
+SESSION_FILES = ("kilix/kilix.env",)
+
+
+def restart_advice(names) -> str:
+    """What the user must do for the restored files to take effect."""
+    if any(name in SESSION_FILES for name in names):
+        return ("kilix.env was restored: log out and back in (or start a new Kilix "
+                "session) for it to take effect; restarting the desktop is not enough.")
+    return "Restart the desktop to load the restored settings."
 
 
 def main(argv: list[str]) -> int:
@@ -437,7 +467,7 @@ def main(argv: list[str]) -> int:
             print("\nSetting changes:")
             for name, key, old, new in setting_changes:
                 note = "   <- decides what the desktop runs" if (
-                    name == "kilix/kilix.env" and key in LAUNCH_KEYS) else ""
+                    name == "kilix/kilix.env" and launch_key(key)) else ""
                 print(f"  {name}: {key}: {old!r} -> {new!r}{note}")
         if args.command == "list":
             return 0
@@ -453,7 +483,8 @@ def main(argv: list[str]) -> int:
         result = restore(args.archive)
         print(f"\nRestored {result['written']} file(s), {result['unchanged']} already "
               "current." + (f" Previous files: {result['safety']}" if result["safety"] else ""))
-        print("Restart the desktop (or log out and in) to load restored settings.")
+        if result["written"]:
+            print(restart_advice(result["names"]))
         return 0
     except (BackupError, OSError) as error:
         print(f"kilix backup: {error}", file=sys.stderr)

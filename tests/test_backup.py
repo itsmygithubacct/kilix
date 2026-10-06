@@ -203,7 +203,9 @@ class BackupTests(unittest.TestCase):
         k95 = self.tmp / "k95"
         k95.mkdir()
         (k95 / "main.py").write_text("import time\ntime.sleep(30)\n")
-        os.environ["KILIX95_DIR"] = str(k95)
+        # Set where the launcher reads it: kilix.env, not this process's environment.
+        (self.gt / "kilix" / "config" / "kilix.env").write_text(f"KILIX95_DIR={k95}\n")
+        os.environ.pop("KILIX95_DIR", None)
         self.assertFalse(backup.desktop_running())
         proc = subprocess.Popen([sys.executable, str(k95 / "main.py")])
         self.addCleanup(proc.kill)
@@ -229,6 +231,21 @@ class BackupTests(unittest.TestCase):
                                manifest_entries={"settings.conf": {"size": 8, "sha256": hashlib.sha256(b"clock=0\n").hexdigest()}})
         with self.assertRaisesRegex(backup.BackupError, "more members than its manifest"):
             backup.read(surplus)
+
+    def test_restore_says_kilix_env_needs_a_new_session(self):
+        env_file = self.gt / "kilix" / "config" / "kilix.env"
+        archive = backup.create()
+        (self.gt / "settings.conf").write_text("clock=12h\n")
+        result = backup.restore(archive)
+        self.assertEqual(result["names"], ["settings.conf"])
+        self.assertNotIn("log out", backup.restart_advice(result["names"]))
+        env_file.write_text("KILIX_DESKTOP_FLAVOR=classic\n")
+        out = io.StringIO()
+        with mock.patch("sys.stdout", out), \
+                mock.patch.object(backup, "desktop_running", return_value=False):
+            self.assertEqual(backup.main(["restore", archive, "--yes"]), 0)
+        self.assertIn("log out and back in", out.getvalue())
+        self.assertIn("restarting the desktop is not enough", out.getvalue())
 
     def test_the_safety_copy_holds_only_what_is_replaced(self):
         archive = backup.create()
@@ -256,6 +273,60 @@ class BackupTests(unittest.TestCase):
                 backup.create()
             with self.assertRaisesRegex(backup.BackupError, "larger than 1 GiB"):
                 backup.read(archive)
+
+    def test_create_refuses_what_read_would_refuse(self):
+        with mock.patch.object(backup, "MAX_MEMBERS", 2):
+            with self.assertRaisesRegex(backup.BackupError, "more than 2 files"):
+                backup.create()
+        archive = backup.create()
+        with mock.patch.object(backup, "MAX_MANIFEST", 64):
+            with self.assertRaisesRegex(backup.BackupError, "manifest would be too large"):
+                backup.create()
+            with self.assertRaisesRegex(backup.BackupError, "manifest too large"):
+                backup.read(archive)
+        # A desktop of many small files still round-trips: the manifest stays compact.
+        many = self.gt / "desktop" / "many"
+        many.mkdir()
+        for i in range(3000):
+            (many / f"note-{i:05d}-{'x' * 40}.txt").write_text(str(i))
+        archive = backup.create()
+        _manifest, payload = backup.read(archive)
+        self.assertEqual(sum(name.startswith("desktop/many/") for name in payload), 3000)
+        with tarfile.open(archive) as tar:
+            raw = tar.extractfile("manifest.json").read()
+        self.assertEqual(raw, json.dumps(_manifest, sort_keys=True, separators=(",", ":")).encode())
+
+    def test_every_kind_of_launch_key_is_flagged(self):
+        for key in ("KILIX_DESKTOP_COMMAND", "KILIX95_DIR", "KILIX95_REPO", "KILIX95_REF",
+                    "KILIX95_TRUST_EXISTING_CHECKOUT", "KILIX_TUI_UTILS_DIR",
+                    "KILIX_ALLOW_UNVERIFIED_PREBUILT", "KILIX_CAP_AUTO_INSTALL",
+                    "KILIX_AVATAR_PREFIX", "KILIX_QWEN_GPU_PYTHON", "KILIX_HOME",
+                    "KILIX_DESKTOP_FLAVOR", "KILIX95_BRANCH", "KILIX_PTY_BROKER"):
+            self.assertTrue(backup.launch_key(key), key)
+        for key in ("clock", "KILIX_STREAM", "KILIX_PTY_BROKER_JOURNAL_LIMIT"):
+            self.assertFalse(backup.launch_key(key), key)
+
+    def test_a_failed_write_names_what_was_restored_and_where_the_old_files_are(self):
+        archive = backup.create()
+        (self.gt / "settings.conf").write_text("clock=12h\n")
+        (self.gt / "desktop" / "letter.txt").write_text("edited\n")
+        real = os.replace
+        def fail_second(src, dst):
+            if dst.endswith("settings.conf"):
+                raise OSError(28, "No space left on device")
+            return real(src, dst)
+        with mock.patch.object(backup.os, "replace", fail_second):
+            with self.assertRaises(backup.BackupError) as caught:
+                backup.restore(archive)
+        message = str(caught.exception)
+        self.assertIn("could not write settings.conf: No space left on device", message)
+        self.assertIn("already restored: desktop/letter.txt", message)
+        safety = message.rsplit("previous files: ", 1)[1]
+        self.assertEqual(sorted(self.names(safety)),
+                         ["desktop/letter.txt", "manifest.json", "settings.conf"])
+        self.assertEqual((self.gt / "desktop" / "letter.txt").read_text(), "Dear owner\n")
+        self.assertEqual((self.gt / "settings.conf").read_text(), "clock=12h\n")
+        self.assertEqual([p for p in self.gt.iterdir() if p.name.startswith(".kilix-restore-")], [])
 
     def test_launcher_dispatches_backup_before_setup(self):
         launcher = (ROOT / "kilix").read_text()

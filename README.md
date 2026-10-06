@@ -779,7 +779,8 @@ archive would change, and flag `kilix.env` keys that decide what the desktop
 runs, because a backup file may come from somewhere else. From the command line,
 restore refuses while the desktop is running, since the desktop would save its
 own state over the restored files. Control Panel > Backup in Kilix 95 restores
-and restarts the desktop for you.
+and restarts the desktop for you. A restored `kilix.env` takes effect only in a
+new Kilix session (log out and back in); restarting the desktop is not enough.
 
 Closing the whole frontend, closing a page, or a Kilix crash detaches the
 client. Detached sessions are discovered on the next startup and reopened
