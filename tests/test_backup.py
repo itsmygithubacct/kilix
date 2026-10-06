@@ -333,15 +333,35 @@ class BackupTests(unittest.TestCase):
         allowed = self.launcher_allowlist()
         self.assertGreater(len(allowed), 100)
         self.assertLessEqual(backup.COSMETIC_KEYS, allowed, "a cosmetic key the launcher dropped")
+        # Pinned literally: widening the unflagged set must be a reviewed change here.
+        self.assertEqual(backup.COSMETIC_KEYS, {
+            "KILIX_CHROME_BATTERY", "KILIX_CHROME_CLOCK", "KILIX_CHROME_CLOCK_FORMAT",
+            "KILIX_DEBUG", "KILIX_NO_SOUND", "KILIX_NO_PANE", "KILIX_SAVER_IDLE",
+            "KILIX_HOST_CLIP", "KILIX_RUN_AUTO_FIT", "KILIX_PTY_BROKER_AUTO_RECOVER",
+            "KILIX_PTY_BROKER_JOURNAL_LIMIT", "KILIX_BATTERY_SUPPLY_DIR"})
+        self.assertEqual(sum(backup.launch_key(key) for key in allowed),
+                         len(allowed) - len(backup.COSMETIC_KEYS))
         for key in ("KILIX_DESKTOP_COMMAND", "KILIX95_DIR", "KILIX_OBJECT_DETECTOR",
+                    "KILIX_DESKTOP_DIR", "KILIX_RUN_LOG", "KILIX_BROWSE_LOG",
+                    "KILIX_RECYCLE_DIR", "TMUX_TUI_REPO", "TMUX_CLI_REF",
                     "KILIX_SOUND_CLASSIFIER", "KILIX_NVR_DETECT", "KILIX_PTY_BROKER_HOME",
                     "KILIX_YOLOX_SRC", "KILIX_KITTY_DEPS_URL", "KILIX_KITTY_DEPS_SHA256",
                     "KILIX_PREBUILT_VERSION", "KILIX_LOOK_KEEP_EXISTING_CHECKOUT",
                     "KILIX_ALLOW_UNVERIFIED_PREBUILT", "KILIX_SOME_FUTURE_KEY"):
             self.assertTrue(backup.launch_key(key), key)
-        for key in ("KILIX_DESKTOP_DIR", "KILIX_RECYCLE_DIR", "KILIX_CHROME_CLOCK",
-                    "KILIX_PTY_BROKER_JOURNAL_LIMIT"):
+        for key in ("KILIX_CHROME_CLOCK", "KILIX_PTY_BROKER_JOURNAL_LIMIT"):
             self.assertFalse(backup.launch_key(key), key)
+
+    def test_a_restored_desktop_folder_is_flagged(self):
+        env_file = self.gt / "kilix" / "config" / "kilix.env"
+        env_file.write_text("KILIX_DESKTOP_DIR=/srv/elsewhere\n")
+        archive = backup.create()
+        env_file.write_text(f"KILIX_DESKTOP_DIR={self.gt / 'desktop'}\n")
+        out = io.StringIO()
+        with mock.patch("sys.stdout", out):
+            backup.main(["list", archive])
+        line = [l for l in out.getvalue().splitlines() if "KILIX_DESKTOP_DIR" in l]
+        self.assertTrue(line and "can change what Kilix runs" in line[0], out.getvalue())
 
     def test_a_manifest_near_the_real_limit_is_read_whole(self):
         data = b"clock=1\n"

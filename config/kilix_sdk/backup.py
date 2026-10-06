@@ -44,12 +44,13 @@ _STATE_EXCLUDE = ("document-recovery", "crash.log")
 # kilix.env keys that only change how Kilix looks or behaves, never what code it
 # fetches, trusts or runs. A restore flags every other kilix.env key, so a key
 # added to the launcher later is flagged until someone vouches for it here.
+# Paths that decide where Kilix reads, writes or moves files (the desktop
+# folder, logs, the recycle bin) are not cosmetic: they stay flagged.
 COSMETIC_KEYS = frozenset({
     "KILIX_CHROME_BATTERY", "KILIX_CHROME_CLOCK", "KILIX_CHROME_CLOCK_FORMAT",
     "KILIX_DEBUG", "KILIX_NO_SOUND", "KILIX_NO_PANE", "KILIX_SAVER_IDLE",
     "KILIX_HOST_CLIP", "KILIX_RUN_AUTO_FIT", "KILIX_PTY_BROKER_AUTO_RECOVER",
-    "KILIX_PTY_BROKER_JOURNAL_LIMIT", "KILIX_DESKTOP_DIR", "KILIX_RECYCLE_DIR",
-    "KILIX_BATTERY_SUPPLY_DIR", "KILIX_BROWSE_LOG", "KILIX_RUN_LOG",
+    "KILIX_PTY_BROKER_JOURNAL_LIMIT", "KILIX_BATTERY_SUPPLY_DIR",
 })
 
 
