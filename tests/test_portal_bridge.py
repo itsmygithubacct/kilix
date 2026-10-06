@@ -343,6 +343,25 @@ class RelayRoutingTests(unittest.TestCase):
         self.assertEqual(self.client.responses, {bridge.ROOT + "/request/1_5/t"})
         self.assertEqual(self.client.sessions, {bridge.ROOT + "/session/1_5/s"})
 
+    def test_a_shorter_connection_name_never_receives_a_longer_ones_signals(self):
+        # Review D S3: the prefix trap is a host connection :1.4 taking the
+        # signals of :1.40, whose handles start with request/1_4 too.
+        self.host = FakeHostConnection(":1.4")
+        self.client = bridge.Client(":1.5", Gio.Cancellable(), connection=self.host)
+        self.relay.clients = {self.client.name: self.client}
+        response = ("org.freedesktop.portal.Request", "Response", "(ua{sv})")
+        for foreign in (bridge.ROOT + "/request/1_40/t", bridge.ROOT + "/request/1_41/t"):
+            self.signal(foreign, *response, (0, {"session_handle": GLib.Variant("s", foreign)}))
+        self.signal(bridge.ROOT + "/session/1_40/s", "org.freedesktop.portal.Session", "Closed",
+                    "(a{sv})", ({},))
+        self.assertFalse(self.sent)
+        self.assertFalse(self.client.responses or self.client.sessions)
+        self.signal(bridge.ROOT + "/request/1_4/t", *response,
+                    (0, {"session_handle": GLib.Variant("s", bridge.ROOT + "/session/1_4/s")}))
+        self.assertEqual([(m.get_path(), m.get_member(), m.get_destination()) for m in self.sent],
+                         [(bridge.ROOT + "/request/1_5/t", "Response", ":1.5")])
+        self.assertEqual(self.client.sessions, {bridge.ROOT + "/session/1_5/s"})
+
 
 if __name__ == "__main__":
     unittest.main()
