@@ -66,9 +66,16 @@ class Fixture(unittest.TestCase):
         self.helper = self.process(40, self.broker,
                                    [str(self.broker), "--runtime-dir", str(self.runtime),
                                     "attach", SID], self.fresh, parent=20)
+        real_readlink = os.readlink
+        def readlink(path, *a, **k):          # never the live /proc
+            text = os.fspath(path)
+            if text.startswith("/proc/"):
+                return real_readlink(self.proc / text[len("/proc/"):], *a, **k)
+            return real_readlink(path, *a, **k)
         for patcher in (mock.patch.object(context, "_PROC", self.proc),
                         mock.patch.object(control, "Path",
-                                          side_effect=lambda p: self.proc if p == "/proc" else Path(p))):
+                                          side_effect=lambda p: self.proc if p == "/proc" else Path(p)),
+                        mock.patch.object(control.os, "readlink", side_effect=readlink)):
             patcher.start()
             self.addCleanup(patcher.stop)
 
