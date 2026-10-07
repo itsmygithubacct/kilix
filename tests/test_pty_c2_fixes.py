@@ -127,6 +127,16 @@ class CapacityTests(StoreCase):
         self.assertFalse(orphan.exists())
         self.assertTrue(held.exists())
 
+    def test_a_finished_record_whose_lock_is_still_held_is_left_alone(self):
+        # The dispatcher has written the receipt but not yet let go of its lock: the pair stays together.
+        held = self.put("busy", age=30 * DAY, lock=True)
+        self.fill(module.STORE_LIMIT - 1, age=3600)
+        with held.with_suffix(".lock").open("rb") as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            self.assertEqual(json.loads(self.run_kill_request("new-op").stdout)["result"], "verified_absent")
+        self.assertTrue(held.exists() and held.with_suffix(".lock").exists())
+        self.assertLessEqual(len(list(self.directory().glob("op-*.json"))), module.STORE_LIMIT)
+
     def test_a_damaged_record_is_a_bounded_refusal_not_a_traceback(self):
         (self.directory() / (self.name("damaged") + ".json")).write_text("not json {")
         result = self.run_kill_request("damaged")
