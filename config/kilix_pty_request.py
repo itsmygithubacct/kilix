@@ -36,6 +36,9 @@ MAX_REQUEST = 16384
 OPERATION_ID = re.compile(r"[A-Za-z0-9._-]{1,64}")
 STORE_NAME = "pty-operations"
 STORE_LIMIT = 256
+#: A sent-uncertain receipt guards against re-dispatching an operation whose effect is unknown.
+#: It is kept for this long (30 days) and only then may make room; unresolved intents never do.
+UNCERTAIN_TTL = 30 * 24 * 3600
 LINES = (1, 10000)
 BYTES = (1, 1048576)
 TIMEOUT = (0.1, 60)
@@ -262,26 +265,102 @@ class Store:
         return record if isinstance(record, dict) and record.get("operation_id") == operation_id else None
 
     def write(self, operation_id: str, record: dict) -> None:
-        """Replace the record durably: the file is fsynced before the rename and the directory after."""
+        """Replace the record durably: the file is fsynced before the rename and the directory after.
+
+        Never prunes: making room is admission's job (`make_room`), done before anything is
+        dispatched, so a write that follows a dispatch cannot evict another operation's record.
+        """
         path = self.path(operation_id)
         scratch = f"{path}.{os.getpid()}.tmp"
         descriptor = os.open(scratch, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-        with os.fdopen(descriptor, "wb") as stream:
-            stream.write(json.dumps(record, separators=(",", ":")).encode())
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(scratch, path)
+        try:
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(json.dumps(record, separators=(",", ":")).encode())
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(scratch, path)
+        except BaseException:
+            try:
+                os.unlink(scratch)          # nothing half-written is left behind
+            except OSError:
+                pass
+            raise
         self.sync_directory()
-        files = sorted((os.path.getmtime(os.path.join(self.directory, name)), name)
-                       for name in os.listdir(self.directory)
-                       if name.startswith("op-") and name.endswith(".json"))
-        for _, name in files[:max(0, len(files) - STORE_LIMIT)]:
-            if os.path.join(self.directory, name) != path:
-                for victim in (name, name[:-len(".json")] + ".lock"):
-                    try:
-                        os.unlink(os.path.join(self.directory, victim))
-                    except OSError:
-                        pass
+
+    def prunable(self, name: str, now: float) -> bool:
+        """May this record make room? Only a finished one: a delivered `verified_absent` receipt, or a
+        sent-`uncertain` one that has outlived UNCERTAIN_TTL. An unresolved intent, a younger uncertain
+        receipt and anything unreadable are never pruned."""
+        path = os.path.join(self.directory, name)
+        try:
+            with open(path, "rb") as stream:
+                record = json.loads(stream.read(65536))
+            receipt = record.get("receipt") if record.get("phase") == "done" else None
+            if not isinstance(receipt, dict):
+                return False
+            if receipt.get("result") == "verified_absent":
+                return True
+            return now - os.path.getmtime(path) > UNCERTAIN_TTL
+        except (OSError, ValueError, AttributeError):
+            return False
+
+    def make_room(self) -> None:
+        """Admission: leave a free slot for a new operation, or refuse before anything is dispatched.
+
+        Called under the store lock. Prunes the oldest prunable records, and a lock file only after
+        taking its flock (a dispatcher or waiter that still has it open keeps the record that goes
+        with it, so the lock is never unlinked from under a live owner). Unowned lock files without
+        a record are swept.
+        """
+        names = sorted((os.path.getmtime(os.path.join(self.directory, n)), n)
+                       for n in os.listdir(self.directory) if n.startswith("op-") and n.endswith(".json"))
+        now = time.time()
+        for _, name in names:
+            if len(names) < STORE_LIMIT:
+                break
+            if not self.prunable(name, now):
+                continue
+            lock = os.path.join(self.directory, name[:-len(".json")] + ".lock")
+            held = None
+            try:
+                held = os.open(lock, os.O_RDWR | os.O_NOFOLLOW)
+                fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                if held is not None:
+                    os.close(held)
+                continue                  # somebody still has it: leave the pair alone
+            try:
+                os.unlink(os.path.join(self.directory, name))
+                if held is not None:
+                    os.unlink(lock)
+                names = [entry for entry in names if entry[1] != name]
+            except OSError:
+                pass
+            finally:
+                if held is not None:
+                    os.close(held)
+        for name in os.listdir(self.directory):
+            if name.startswith("op-") and name.endswith(".lock") \
+                    and not os.path.exists(os.path.join(self.directory, name[:-len(".lock")] + ".json")):
+                path = os.path.join(self.directory, name)
+                try:
+                    descriptor = os.open(path, os.O_RDWR | os.O_NOFOLLOW)
+                except OSError:
+                    continue
+                try:
+                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    os.unlink(path)
+                except OSError:
+                    pass
+                finally:
+                    os.close(descriptor)
+        if len(names) >= STORE_LIMIT:
+            raise Refusal("store_full", f"the operation store holds {STORE_LIMIT} operations that cannot be "
+                          "forgotten yet (unresolved, or uncertain within the last 30 days), so nothing was sent",
+                          "re-list the sessions to settle those operations, or have a person end this session "
+                          "with kilix pty kill ID --yes; the oldest uncertain receipts expire after 30 days", 3)
 
     def sync_directory(self) -> None:
         descriptor = os.open(self.directory, os.O_RDONLY | os.O_DIRECTORY)
@@ -423,6 +502,7 @@ def reserve(broker, request, store, key):
         with store.locked():
             record = store.read(operation_id)
             if record is None:
+                store.make_room()           # or refuse here, before anything is dispatched
                 owner = store.owner_lock(operation_id)
                 fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)      # nobody can hold it: no record
                 store.write(operation_id, {"fingerprint": key, "phase": "intent", "operation_id": operation_id,
@@ -479,26 +559,49 @@ def execute(broker, request, yes, state):
     operation_id, store, key = request["operation_id"], Store(state), fingerprint(request)
     try:
         owner, replay = reserve(broker, request, store, key)
-    except OSError as error:
-        raise Refusal("store_unavailable", f"the operation store cannot be used: {error.strerror or error}",
-                      "fix the state directory's permissions; a person can end the session with "
-                      "kilix pty kill ID --yes", 3)
+    except (OSError, ValueError) as error:       # ValueError: a record that is not JSON
+        raise Refusal("store_unavailable", f"the operation store cannot be used: "
+                      f"{getattr(error, 'strerror', None) or error}",
+                      "fix the state directory's permissions or remove the damaged record; a person can end "
+                      "the session with kilix pty kill ID --yes", 3)
     if replay is not None:
         return replay
     try:
         # The intent is on disk before this runs; a crash from here on replays as `interrupted`.
-        status, document = run_kill(broker, request, state)
+        try:
+            status, document = run_kill(broker, request, state)
+        except Exception as error:               # the request may be out; say so, bounded
+            return 1, unsaved(broker, request, operation_id, None, "dispatch_failed", error)
         document = {**document, "operation_id": operation_id, "duplicate": False}
-        with store.locked():
+        try:
+            with store.locked():
+                if sent(document):
+                    store.write(operation_id, {"fingerprint": key, "phase": "done", "operation_id": operation_id,
+                                               "receipt": document, "pid": os.getpid(),
+                                               "updated_millis": int(time.time() * 1000)})
+                else:
+                    store.forget(operation_id)   # nothing was sent: the same id may be tried again
+        except (OSError, ValueError) as error:
             if sent(document):
-                store.write(operation_id, {"fingerprint": key, "phase": "done", "operation_id": operation_id,
-                                           "receipt": document, "pid": os.getpid(),
-                                           "updated_millis": int(time.time() * 1000)})
-            else:
-                store.forget(operation_id)     # nothing was sent: the same id may be tried again
+                # The terminate request went out and its outcome could not be saved. The intent stays,
+                # so a retry replays `interrupted` and never sends again.
+                return 1, unsaved(broker, request, operation_id, document, "receipt_not_saved", error)
+            # Nothing was sent: the answer stands; a leftover intent only makes a retry conservative.
     finally:
         os.close(owner)                        # releases the per-operation lock
     return status, document
+
+
+def unsaved(broker, request, operation_id, document, reason, error):
+    observed = document.get("result") if isinstance(document, dict) else None
+    cause = getattr(error, "strerror", None) or type(error).__name__
+    return broker.envelope(
+        result="uncertain", id=request["args"]["id"], request_sent=True, reason=reason, operation_id=operation_id,
+        duplicate=False, observed_result=observed,
+        message=("the terminate request was sent" + (f" and ended as {observed}" if observed else "")
+                 + f", but its receipt could not be saved ({cause}); a retry with the same operation_id replays "
+                 "as interrupted and sends nothing; re-list to see the state"),
+        hint="re-list with kilix pty list --json before anything else; free the disk or fix state/pty-operations")
 
 
 def pty_exit(receipt: dict) -> int:

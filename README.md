@@ -815,7 +815,8 @@ is how it refuses your own session: with `KITTY_PTY_BROKER_SESSION` unset or
 malformed and stdin not a terminal it is refused (`caller_unidentified`, exit 3)
 before anything is asked of a broker. A person at a terminal keeps the
 confirmation prompt, and can pass `--no-caller-check` to say they accept that the
-own-session check will not apply. Agents and scripts never pass it: if the caller
+own-session check cannot apply; an identifiable own session is still refused, and so are
+a missing `--yes`, a stale expectation and a broker that cannot bind it. Agents and scripts never pass it: if the caller
 cannot be identified, stop and report.
 
 Every command that only queries the broker is bounded: a wedged broker costs
@@ -870,8 +871,9 @@ A session object, as `status` and `list` report it:
 | `reachable` | boolean | present and `true` on entries of `list --json` |
 
 `kill` results: `verified_absent`; `uncertain` (`reason` `still_listed`,
-`verify_failed`, `terminate_timed_out`, `terminate_failed`, `not_sent`,
-`status_failed` or `status_timeout`; `request_sent` says whether a
+`verify_failed`, `terminate_timed_out`, `terminate_failed`, `not_sent`, `receipt_not_saved` (the
+request ran but its receipt could not be written: a retry replays `interrupted`),
+`dispatch_failed`, `in_progress`, `interrupted`, `status_failed` or `status_timeout`; `request_sent` says whether a
 termination request went out); `refused` (`reason` `own_session`,
 `started_mismatch`, `cannot_bind`, `caller_unidentified` or `declined`); `not_found`. Exit status 0, 1, 3, 4.
 
@@ -918,8 +920,15 @@ dispatching leaves an intent nobody owns, which replays as `uncertain` /
 `interrupted` (the request may have been sent: re-list, then use a new
 `operation_id`); two callers of one operation at once dispatch exactly once, and
 the second waits for and replays the first's receipt. Receipts of requests that
-were sent are kept privately (mode 0600) in `state/pty-operations/`, at most 256,
-so an `uncertain` kill stays `uncertain`. A refusal that sent nothing releases the
+were sent are kept privately (mode 0600) in `state/pty-operations/`, so an
+`uncertain` kill stays `uncertain`. The store holds at most 256 operations and
+the retention rule is explicit: an unresolved intent and a sent-`uncertain`
+receipt are never pruned to make room (an uncertain one is forgotten only once it
+is 30 days old), a lock file is never removed from under a process that still has
+it, and only a finished `verified_absent` receipt is pruned, oldest first, after
+which that `operation_id` could be dispatched again (the session is already gone,
+so a repeat is a harmless `not_found`). When 256 operations cannot be forgotten, a
+new kill is refused before anything is sent (`store_full`, exit 3) A refusal that sent nothing releases the
 reservation and can be retried under the same id. A kill receipt from this route
 also carries `operation_id` and `duplicate`. Every refusal carries a `hint` with
 one accepted form. Exit status: `2` the request is malformed (nothing ran), `3`

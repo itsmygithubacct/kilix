@@ -313,7 +313,8 @@ class KillTests(RequestCase):
         self.assertEqual(stat.S_IMODE(record.stat().st_mode), 0o600)
         for index in range(module.STORE_LIMIT + 5):
             stale = directory / f"op-{index:064d}.json"
-            stale.write_text("{}")
+            stale.write_text(json.dumps({"phase": "done", "operation_id": f"s{index}",
+                                         "receipt": {"result": "verified_absent", "request_sent": True}}))
             os.utime(stale, (1000 + index, 1000 + index))
         self.vanishes()     # the first kill ended it; the second needs it back
         self.kill(None, "end-2", "--yes")
