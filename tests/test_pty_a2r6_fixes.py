@@ -4,6 +4,7 @@ N7: the multiplexer build test gives every class its own fixture directory (made
 verified base), never follows a symlink at a shared name, and removes only what it created. N8: every
 repeated --timeout is validated, by the launcher and by the helper alike. Each fails on fcf4782f.
 """
+import gc
 import json
 import os
 from pathlib import Path
@@ -12,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import weakref
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -191,12 +193,47 @@ class FixtureNamespaceTests(unittest.TestCase):
             sentinel = peer / "sentinel"
             sentinel.write_text("a peer's fixture")
             run.symlink_to(peer_parent, target_is_directory=True)
+            original = moved / case.root.name / "source" / "main.c"
             with self.assertRaises(multiplexer.FixtureTampered):
                 case.remove_fixture()
             f.First.doClassCleanups()
             self.assertTrue(sentinel.exists(), "a peer fixture was deleted through the replaced parent")
             self.assertTrue(run.is_symlink(), "the replacement link is not ours to remove")
-            self.assertTrue((moved / case.root.name / "source" / "main.c").exists())
+            self.assertTrue(original.exists())
+            # Automatic cleanup obeys the same check: collecting the fixture object must remove nothing.
+            reference = weakref.ref(case.temporary)
+            del case
+            gc.collect()
+            self.assertIsNone(reference(), "the fixture object was not collected, so the schedule did not run")
+            self.assertTrue(sentinel.exists(), "the automatic finalizer deleted a peer fixture")
+            self.assertTrue(original.exists())
+
+    def test_n9_nothing_removes_a_fixture_when_the_interpreter_exits(self):
+        code = '''import pathlib, sys
+sys.path.insert(0, sys.argv[1])
+import test_multiplexer_build as m
+from unittest import mock
+base = pathlib.Path(sys.argv[2]); alternative = base / "alternative"; alternative.mkdir(mode=0o700)
+original = m.quiet_fixture_parent
+class Run(m.MultiplexerBuildTests):
+    pass
+with mock.patch.object(m, "FIXTURE_PARENT", base / "absent" / ".test-tmp"), \\
+        mock.patch.object(m, "ALTERNATIVE_PARENTS", (alternative,)), \\
+        mock.patch.object(m, "quiet_fixture_parent", lambda: original(window=0)):
+    Run.setUpClass()
+    case = Run(sys.argv[3]); case.setUp()
+    run = Run.fixture_parent; name = case.root.name
+    run.rename(base / "moved")
+    peer = base / "peer"; peer.mkdir(); (peer / name).mkdir(); (peer / name / "sentinel").write_text("peer")
+    run.symlink_to(peer, target_is_directory=True)
+    # No cleanup is run at all: the interpreter just exits with the fixture object alive.
+'''
+        with tempfile.TemporaryDirectory(prefix="a2r7-exit.") as private:
+            result = subprocess.run([sys.executable, "-c", code, str(ROOT / "tests"), private, CASE],
+                                    capture_output=True, text=True, timeout=60)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            sentinels = list((Path(private) / "peer").glob("*/sentinel"))
+            self.assertEqual(len(sentinels), 1, "interpreter exit deleted a peer fixture")
 
     def test_n7_a_run_directory_cannot_be_used_after_it_is_replaced(self):
         with Fixtures(self, self.candidate, self.alternative) as f:

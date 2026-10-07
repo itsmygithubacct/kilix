@@ -69,6 +69,23 @@ class FixtureTampered(Exception):
     """The run's private fixture directory is no longer the directory this class made."""
 
 
+class CheckedFixture:
+    """A fixture directory made with mkdtemp and removed only by `cleanup`, which checks first.
+
+    Unlike tempfile.TemporaryDirectory there is no automatic finalizer: nothing removes the directory
+    when this object is collected or the interpreter exits, so every removal obeys the same identity
+    check (the class's own directory, if it was replaced, is left alone).
+    """
+
+    def __init__(self,parent,check):
+        self.name=tempfile.mkdtemp(dir=parent)
+        self._check=check
+
+    def cleanup(self):
+        self._check()
+        shutil.rmtree(self.name)
+
+
 class MultiplexerBuildTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -92,8 +109,8 @@ class MultiplexerBuildTests(unittest.TestCase):
         shutil.rmtree(cls.fixture_parent,ignore_errors=True)
 
     def remove_fixture(self):
-        self.verify_run_directory()      # a replaced parent would make a path-based removal hit someone else
-        self.temporary.cleanup()
+        self.temporary.cleanup()         # checks the run directory first: a replaced parent would make a
+                                         # path-based removal hit someone else's fixture
 
     def setUp(self):
         # The build identity binds every parent directory of its inputs, and
@@ -101,7 +118,7 @@ class MultiplexerBuildTests(unittest.TestCase):
         # entry there, which forces a correct rebuild and hides freshness.
         # The checkout's own parents are quiet; keep the fixture below them.
         self.verify_run_directory()
-        self.temporary=tempfile.TemporaryDirectory(dir=self.fixture_parent)
+        self.temporary=CheckedFixture(self.fixture_parent,self.verify_run_directory)
         self.addCleanup(self.remove_fixture)
         self.root=Path(self.temporary.name)
         self.trace=self.root/'trace';self.trace.touch()
