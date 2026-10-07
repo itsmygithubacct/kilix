@@ -876,7 +876,7 @@ A session object, as `status` and `list` report it:
 `kill` results: `verified_absent`; `uncertain` (`reason` `still_listed`,
 `verify_failed`, `terminate_timed_out`, `terminate_failed`, `not_sent`, `receipt_not_saved` (the
 request ran but its receipt could not be written: a retry replays `interrupted`),
-`dispatch_failed`, `in_progress`, `interrupted`, `status_failed` or `status_timeout`; `request_sent` says whether a
+`dispatch_failed`, `in_progress`, `interrupted`, `receipt_evicted`, `status_failed` or `status_timeout`; `request_sent` says whether a
 termination request went out); `refused` (`reason` `own_session`,
 `started_mismatch`, `cannot_bind`, `caller_unidentified` or `declined`); `not_found`. Exit status 0, 1, 3, 4.
 
@@ -925,13 +925,37 @@ dispatching leaves an intent nobody owns, which replays as `uncertain` /
 the second waits for and replays the first's receipt. Receipts of requests that
 were sent are kept privately (mode 0600) in `state/pty-operations/`, so an
 `uncertain` kill stays `uncertain`. The store holds at most 256 operations and
-the retention rule is explicit: an unresolved intent and a sent-`uncertain`
-receipt are never pruned to make room (an uncertain one is forgotten only once it
-is 30 days old), a lock file is never removed from under a process that still has
-it, and only a finished `verified_absent` receipt is pruned, oldest first, after
-which that `operation_id` could be dispatched again (the session is already gone,
-so a repeat is a harmless `not_found`). When 256 operations cannot be forgotten, a
-new kill is refused before anything is sent (`store_full`, exit 3) A refusal that sent nothing releases the
+the retention rule is explicit:
+
+- a record still in `phase: intent` (an unresolved operation) is never pruned;
+- a sent-`uncertain` receipt is kept until it is more than 30 days old (strictly
+  more than 2,592,000 seconds by the record file's modification time), and only
+  then may make room under capacity pressure. That includes a crashed operation:
+  its intent becomes a `done` / `uncertain` / `interrupted` record on the first
+  replay and enters the same 30-day horizon from that moment, so once it has
+  expired and room is needed the same `operation_id` can be dispatched again;
+- a finished `verified_absent` receipt may make room, oldest first, once it is
+  older than 90 seconds (a waiting caller's longest wait, 30 s, plus the longest
+  broker call, 60 s), after which that `operation_id` could be dispatched again
+  (the session is already gone, so a repeat is a harmless `not_found`);
+- a lock file is never removed while a process holds it.
+
+A caller that has seen a record for its `operation_id` (in progress, or finished)
+never dispatches that id itself. A waiter keeps the per-operation lock it wins
+through its re-read, and a finished receipt younger than the 90 seconds cannot be
+forgotten; if the record has nevertheless been forgotten when the waiter looks
+again (it stalled for longer than that), it returns `uncertain` /
+`receipt_evicted` with `request_sent: null` (unknown) and sends nothing: re-list.
+Only a caller that finds no record at all can dispatch an id. When 256 operations
+cannot be forgotten, a new kill is refused before anything is sent (`store_full`,
+exit 3).
+
+If the record was saved but the final directory fsync failed, the receipt is the
+real outcome with `"receipt_durable": false` and a `durability_note`: every replay
+returns the same outcome, but if the machine stops before the disk catches up a
+retry may report `interrupted` instead. If the receipt file itself could not be
+written, the answer is `uncertain` / `receipt_not_saved`, the intent stays and a
+retry replays `interrupted`. A refusal that sent nothing releases the
 reservation and can be retried under the same id. A kill receipt from this route
 also carries `operation_id` and `duplicate`. Every refusal carries a `hint` with
 one accepted form. Exit status: `2` the request is malformed (nothing ran), `3`
