@@ -706,22 +706,31 @@ _kilix_pty_archive_meta() {
   } >"$output"
 }
 
-# Open the archive's lock on fd 8 without ever creating through, following or
-# truncating a symlink: the file is made with O_EXCL (a link, even a dangling
-# one, is EEXIST), opened read-only (nothing to truncate), and the descriptor is
-# checked to be the very file the path names and to be ours.
-_kilix_pty_open_archive_lock() {
-  local lock="$1"
-  if [ -L "$lock" ] || { [ -e "$lock" ] && [ ! -f "$lock" ]; }; then
-    return 1
-  fi
-  [ -e "$lock" ] || (set -o noclobber; : >"$lock") 2>/dev/null || true
-  [ -f "$lock" ] && [ ! -L "$lock" ] || return 1
-  exec 8<"$lock" || return 1
-  [ "$(stat -c '%d:%i:%u' -- "$lock" 2>/dev/null)" \
-      = "$(stat -L -c '%d:%i:%u' /proc/self/fd/8 2>/dev/null)" ] || return 1
-  [ "$(stat -c '%u' -- "$lock" 2>/dev/null)" = "$(id -u)" ] || return 1
-  chmod 0600 -- "$lock" 2>/dev/null || true
+# Hold an exclusive lock on a plain file of ours for the rest of this subshell.
+# The file is opened by a small helper with O_NOFOLLOW (a symlink, dangling or
+# pointing at a FIFO, is refused at the open itself, so there is no check-then-open
+# window), created O_EXCL when missing, and checked to be a regular file that is
+# ours; the helper keeps the flock until its stdin closes, which happens when this
+# subshell ends. Returns 0 locked, 1 held by someone else, 2 refused.
+_kilix_hold_lock() {
+  local path="$1" answer=""
+  coproc KILIX_LOCKER { exec python3 "$KILIX_HOME/config/kilix_pty.py" hold-lock "$path"; }
+  read -r -t 10 answer <&"${KILIX_LOCKER[0]}" || answer=refused
+  trap '_kilix_release_lock' EXIT
+  case "$answer" in
+    locked) return 0 ;;
+    busy) _kilix_release_lock; return 1 ;;
+    *) _kilix_release_lock; return 2 ;;
+  esac
+}
+
+# Let the helper go and wait for it, so the lock is free when this returns.
+_kilix_release_lock() {
+  local fd="${KILIX_LOCKER[1]:-}"
+  [ -n "$fd" ] || return 0
+  exec {fd}>&-
+  wait "${KILIX_LOCKER_PID:-}" 2>/dev/null || true
+  KILIX_LOCKER=()
 }
 
 # --- journal archive tier ----------------------------------------------------
@@ -751,7 +760,7 @@ _kilix_pty_journal_archive() (
   local budget="${KILIX_PTY_JOURNAL_BUDGET:-268435456}"
   local zlimit="${KILIX_PTY_ZSTD_TIMEOUT:-600}"
   local have=0 file base id started meta stem target tmp tmp_meta raw packed used size tag line
-  local archived=0 already=0 distinct=0 evicted=0 errors=0
+  local archived=0 already=0 distinct=0 evicted=0 errors=0 lockrc=0 variant variants
   case "$budget" in ''|*[!0-9]*) budget=268435456 ;; esac
   case "$zlimit" in ''|*[!0-9.]*) zlimit=600 ;; esac
   [ "$budget" -gt 0 ] || return 0
@@ -764,14 +773,13 @@ _kilix_pty_journal_archive() (
     [ "$quiet" = 1 ] || echo "kilix: flock and zstd are required to archive PTY journals" >&2
     return 0
   }
-  if ! _kilix_pty_open_archive_lock "$KILIX_STATE_DIRECTORY/pty-journals.lock"; then
-    [ "$quiet" = 1 ] || echo "kilix: refusing the PTY journal lock: not a plain file of yours" >&2
-    return 0
-  fi
-  if ! flock -n 8; then
-    [ "$quiet" = 1 ] || echo "kilix: another PTY journal pass is already running"
-    return 0
-  fi
+  _kilix_hold_lock "$KILIX_STATE_DIRECTORY/pty-journals.lock" || lockrc=$?
+  case "$lockrc" in
+    0) ;;
+    1) [ "$quiet" = 1 ] || echo "kilix: another PTY journal pass is already running"; return 0 ;;
+    *) [ "$quiet" = 1 ] || echo "kilix: refusing the PTY journal lock: not a plain file of yours" >&2
+       return 0 ;;
+  esac
 
   if [ "$have" = 1 ]; then
     for file in "$reaped"/*.journal; do
@@ -789,14 +797,24 @@ _kilix_pty_journal_archive() (
       _kilix_ensure_private_directory "$dest" "PTY journals" || return 0
       stem="$id.$started"; tag=""
       target="$dest/$stem.journal.zst"
-      if [ -e "$target" ] || [ -L "$target" ]; then
-        if ! _kilix_pty_archive_matches "$target" "$file"; then
-          # Same name, different journal: keep both, under the new one's own hash.
-          tag="$(sha256sum -- "$file" 2>/dev/null | cut -c1-12)"
-          [ -n "$tag" ] || { errors=$((errors + 1)); continue; }
-          stem="$id.$started+$tag"
-          target="$dest/$stem.journal.zst"
+      # Is this very journal already retained under a variant name? The canonical
+      # name may be vacant (the older journal that held it was evicted) and a retry
+      # must still not make a second copy.
+      variants=("$dest/$stem"+*.journal.zst)
+      for variant in "${variants[@]}"; do
+        [ -f "$variant" ] && [ ! -L "$variant" ] || continue
+        if _kilix_pty_archive_matches "$variant" "$file"; then
+          target="$variant"; stem="${variant##*/}"; stem="${stem%.journal.zst}"
+          break
         fi
+      done
+      if [ "$target" = "$dest/$id.$started.journal.zst" ] && { [ -e "$target" ] || [ -L "$target" ]; } \
+           && ! _kilix_pty_archive_matches "$target" "$file"; then
+        # Same name, different journal: keep both, under the new one's own hash.
+        tag="$(sha256sum -- "$file" 2>/dev/null | cut -c1-12)"
+        [ -n "$tag" ] || { errors=$((errors + 1)); continue; }
+        stem="$id.$started+$tag"
+        target="$dest/$stem.journal.zst"
       fi
       if [ -e "$target" ] || [ -L "$target" ]; then
         if _kilix_pty_archive_matches "$target" "$file"; then
@@ -856,6 +874,8 @@ _kilix_pty_journal_archive() (
       [ -f "$file" ] && [ ! -L "$file" ] || continue
       base="${file##*/}"
       [[ "$base" =~ ^([A-Za-z0-9._-]{1,64})\.([0-9]{1,20})(\+[0-9a-f]{12})?\.journal\.zst$ ]] || continue
+      # The reader never lists the IDs "." and "..": they are not ours to count or evict.
+      [ "${BASH_REMATCH[1]}" != . ] && [ "${BASH_REMATCH[1]}" != .. ] || continue
       stem="${base%.journal.zst}"
       size=$(stat -c%s -- "$file" 2>/dev/null || echo 0)
       if [ -f "$dest/$stem.meta" ] && [ ! -L "$dest/$stem.meta" ]; then
@@ -964,12 +984,14 @@ _kilix_transcript_pass() (
     [ "$quiet" = 1 ] || echo "kilix: flock is required to prune transcripts" >&2
     return 0
   }
-  exec 9>"$KILIX_STATE_DIRECTORY/transcript-reaper.lock" || return 0
-  chmod 0600 "$KILIX_STATE_DIRECTORY/transcript-reaper.lock" 2>/dev/null || return 0
-  if ! flock -n 9; then
-    [ "$quiet" = 1 ] || echo "kilix: another transcript pass is already running"
-    return 0
-  fi
+  local lockrc=0 zlimit="${KILIX_PTY_ZSTD_TIMEOUT:-120}"
+  case "$zlimit" in ''|*[!0-9.]*) zlimit=120 ;; esac
+  _kilix_hold_lock "$KILIX_STATE_DIRECTORY/transcript-reaper.lock" || lockrc=$?
+  case "$lockrc" in
+    0) ;;
+    1) [ "$quiet" = 1 ] || echo "kilix: another transcript pass is already running"; return 0 ;;
+    *) return 0 ;;
+  esac
   if ! live="$(_kilix_transcript_live_ids)"; then
     [ "$quiet" = 1 ] \
       || echo "kilix: could not identify live panes; transcripts were left unchanged" >&2
@@ -996,7 +1018,7 @@ _kilix_transcript_pass() (
     fi
     tmp=""
     if tmp="$(mktemp "$recent/.$name.log.zst.XXXXXX")" \
-         && zstd -3 -q -f -o "$tmp" "$file" 2>/dev/null \
+         && timeout -k 2 "$zlimit" zstd -3 -q -f -o "$tmp" "$file" 2>/dev/null \
          && chmod 0600 "$tmp" \
          && mv -f -- "$tmp" "$recent/$name.log.zst"; then
       if rm -f -- "$file"; then
@@ -1026,8 +1048,8 @@ _kilix_transcript_pass() (
       else
         tmp=""
         if tmp="$(mktemp "$archive/.$name.log.zst.XXXXXX")" \
-             && zstd -dcq -- "$file" 2>/dev/null \
-                | zstd -9 -q -f -o "$tmp" 2>/dev/null \
+             && timeout -k 2 "$zlimit" zstd -dcq -- "$file" 2>/dev/null \
+                | timeout -k 2 "$zlimit" zstd -9 -q -f -o "$tmp" 2>/dev/null \
              && chmod 0600 "$tmp" \
              && touch -r "$file" "$tmp" \
              && mv -f -- "$tmp" "$archive/$name.log.zst"; then

@@ -42,8 +42,11 @@ os.execv(real, [real, *args])
 '''
 
 
+OLD_BROKER = "8cf3eb3671458370e57539be6b7bd6f4a1b8f615"      # before the identity-bound terminate
+
+
 @unittest.skipUnless(CAN_BUILD, "needs make, a C compiler and flock to build the pinned broker")
-class IdentityBoundKillTests(unittest.TestCase):
+class RealBrokerCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.build = Path(tempfile.mkdtemp(prefix="kxid-build."))
@@ -116,17 +119,28 @@ class IdentityBoundKillTests(unittest.TestCase):
         self.executable = str(script)
         return record
 
+    def capture(self, name, receipt):
+        """Keep a real receipt for the consumers that want a fixture (KILIX_PTY_CAPTURE_DIR)."""
+        target = os.environ.get("KILIX_PTY_CAPTURE_DIR")
+        if target:
+            os.makedirs(target, exist_ok=True)
+            Path(target, name + ".json").write_text(json.dumps(receipt, indent=2) + "\n")
+
+
+class IdentityBoundKillTests(RealBrokerCase):
     def test_the_exact_identity_ends_the_session_and_is_verified(self):
         seen = self.spawn()
         result, receipt = self.kill("target", "--expect-started", str(seen["started_millis"]))
         self.assertEqual((result.returncode, receipt["result"]), (0, "verified_absent"), receipt)
         self.assertFalse(self.alive("target"))
+        self.capture("kill-verified_absent", receipt)
 
     def test_a_stale_expectation_leaves_the_session_alone(self):
         seen = self.spawn()
         result, receipt = self.kill("target", "--expect-started", str(seen["started_millis"] - 1))
         self.assertEqual((result.returncode, receipt["result"], receipt["reason"]), (3, "refused", "started_mismatch"))
         self.assertTrue(self.alive("target"))
+        self.capture("kill-refused-started_mismatch", receipt)
 
     def test_a_replacement_between_the_lookup_and_the_terminate_survives(self):
         seen = self.spawn()
@@ -152,6 +166,57 @@ class IdentityBoundKillTests(unittest.TestCase):
         result, receipt = self.kill("target")
         self.assertEqual((result.returncode, receipt["result"]), (0, "verified_absent"), receipt)
         self.assertFalse(self.alive("target"))
+
+
+class OldBrokerTests(RealBrokerCase):
+    """A session whose broker predates the identity-bound terminate (built from 8cf3eb3)."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        source = Path(cls.build) / "old-source"
+        source.mkdir()
+        archive = subprocess.run(["git", "-C", str(ROOT / "third_party" / "kitty-pty-broker"), "archive",
+                                  OLD_BROKER], capture_output=True)
+        if archive.returncode:
+            raise unittest.SkipTest("the old broker source (8cf3eb3) is not in the submodule's history")
+        subprocess.run(["tar", "-x", "-C", str(source)], input=archive.stdout, check=True)
+        built = subprocess.run(["make", "--no-print-directory", "-C", str(source),
+                                f"BUILD_DIR={cls.build / 'old-build'}", "all"],
+                               capture_output=True, text=True, timeout=600,
+                               env={"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(cls.build)})
+        if built.returncode:
+            raise unittest.SkipTest("the old broker did not build: " + built.stderr[-300:])
+        cls.old_broker = str(cls.build / "old-build" / "kitty-pty-broker")
+
+    def old_status(self, ident):
+        return subprocess.run([self.old_broker, "--runtime-dir", str(self.rt), "status", ident, "--json"],
+                              capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL)
+
+    def spawn_old(self, ident="target"):
+        started = subprocess.run([self.old_broker, "--runtime-dir", str(self.rt), "run", "--id", ident, "--",
+                                  "/bin/sleep", "90"], capture_output=True, text=True, timeout=30,
+                                 stdin=subprocess.DEVNULL)
+        self.assertEqual(started.returncode, 0, started.stderr)
+        status = json.loads(self.old_status(ident).stdout)
+        self.pids.extend((status["broker_pid"], status["child_pid"]))
+        return status
+
+    def test_a_bound_kill_of_an_old_session_is_refused_and_the_session_survives(self):
+        seen = self.spawn_old()
+        result, receipt = self.kill("target", "--expect-started", str(seen["started_millis"]))
+        self.assertEqual((result.returncode, receipt["result"], receipt["reason"]), (3, "refused", "cannot_bind"), receipt)
+        self.assertFalse(receipt["request_sent"])
+        self.assertIn("kilix pty kill target --yes", receipt["hint"])
+        self.assertIn("without --expect-started", receipt["message"])
+        self.assertEqual(self.old_status("target").returncode, 0, "the old session was killed blind")
+        self.capture("kill-refused-cannot_bind", receipt)
+
+    def test_a_plain_kill_of_an_old_session_still_works(self):
+        self.spawn_old()
+        result, receipt = self.kill("target")
+        self.assertEqual((result.returncode, receipt["result"]), (0, "verified_absent"), receipt)
+        self.assertNotEqual(self.old_status("target").returncode, 0)
 
 
 if __name__ == "__main__":

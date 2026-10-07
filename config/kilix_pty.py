@@ -20,10 +20,12 @@ from __future__ import annotations
 
 import base64
 import datetime
+import fcntl
 import json
 import os
 import re
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -78,6 +80,42 @@ def cmd_pane(argv: list[str]) -> int:
             print(session)
             return 0
     return fail(f"no kilix pane with id {argv[0]}")
+
+
+def cmd_hold_lock(argv: list[str]) -> int:
+    """Hold an exclusive flock on a plain file of ours until stdin closes (see _kilix_hold_lock).
+
+    The open is O_NOFOLLOW, so a symlink (dangling, or to a FIFO) is refused by the open
+    itself; a missing file is created O_EXCL. Prints locked, busy or refused.
+    """
+    if len(argv) != 1:
+        print("refused")
+        return 2
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+    try:
+        try:
+            descriptor = os.open(argv[0], flags)
+        except FileNotFoundError:
+            os.close(os.open(argv[0], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+                             | os.O_CLOEXEC, 0o600))
+            descriptor = os.open(argv[0], flags)
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid():
+            print("refused")
+            return 2
+        if info.st_mode & 0o077:
+            os.fchmod(descriptor, 0o600)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print("busy")
+            return 1
+    except OSError:
+        print("refused")
+        return 2
+    print("locked", flush=True)
+    sys.stdin.read()            # held until the caller closes our stdin, or dies
+    return 0
 
 
 def cmd_attached(argv: list[str]) -> int:
@@ -552,6 +590,26 @@ def cmd_observe(broker: Broker, argv: list[str]) -> int:
                       cursor=f"{found[1]}:{found[2]}" if found else None)
 
 
+def select_journal(entries: list[dict], wanted: str):
+    """The archive a selector names. `entries` is newest session first.
+
+    ID.STARTED_MILLIS+HASH names that variant, ID.STARTED_MILLIS names exactly the canonical
+    archive of that start (never a newer variant), and a bare ID names the newest archive of
+    that ID.
+    """
+    for entry in entries:
+        stem = f"{entry['id']}.{entry['started_millis']}"
+        if entry["variant"] and wanted == f"{stem}+{entry['variant']}":
+            return entry
+    for entry in entries:
+        if not entry["variant"] and wanted == f"{entry['id']}.{entry['started_millis']}":
+            return entry
+    for entry in entries:
+        if wanted == entry["id"]:
+            return entry
+    return None
+
+
 def cmd_journals(broker: Broker, argv: list[str]) -> int:
     """journals list|path|show DIR ...; DIR is the archive directory."""
     action, directory, rest = argv[0], argv[1], argv[2:]
@@ -565,16 +623,13 @@ def cmd_journals(broker: Broker, argv: list[str]) -> int:
         for entry in entries:
             print(f"{stamp(entry['started_millis'])}  {size(entry['raw_bytes']):>7}"
                   f"  {size(entry['compressed_bytes']):>7}  {entry['id']}"
-                  f".{entry['started_millis']}")
+                  f".{entry['started_millis']}" + (f"+{entry['variant']}" if entry["variant"] else ""))
         return 0
     if not rest or action not in ("path", "show"):
         return fail(f"usage: kilix pty journals {action} ID", EXIT_USAGE)
     wanted = rest[0]
-    for entry in journals(directory):
-        stem = f"{entry['id']}.{entry['started_millis']}"
-        if wanted in (entry["id"], stem, f"{stem}+{entry['variant']}"):
-            break
-    else:
+    entry = select_journal(journals(directory), wanted)
+    if entry is None:
         return fail(f"no archived journal for {wanted}")
     if action == "path":
         print(entry["path"])
@@ -615,6 +670,8 @@ def main(argv: list[str]) -> int:
         return cmd_pane(argv[1:])
     if argv and argv[0] == "attached":
         return cmd_attached(argv[1:])
+    if argv and argv[0] == "hold-lock":
+        return cmd_hold_lock(argv[1:])
     options = {"--broker": None, "--runtime": None, "--timeout": None, "--guard": "10"}
     argv = list(argv)
     while argv and argv[0] in options and len(argv) > 1:
