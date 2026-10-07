@@ -144,7 +144,7 @@ class MultiplexerBuildTests(unittest.TestCase):
         changed anywhere between the two builds' reads, and a rebuild then has
         no explanation. Anything else may have changed in between.
         """
-        for _ in range(10):
+        for _ in range(40):
             before=self.count();earlier=self._since
             now=self.parents()
             result=self.run_build(None);built=self.count()-before
