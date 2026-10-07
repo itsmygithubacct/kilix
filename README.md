@@ -789,22 +789,29 @@ refuses a session that is already attached (`observe` it instead). A script that
 wants to read a pane uses `observe --once`.
 
 `kill` ends the session and the program in it, then checks. It asks the broker
-to terminate, then polls the broker's listing for the broker's 1.5 s grace
-period plus 2 s until the session is gone, and reports exactly one of:
-`verified_absent` (exit 0), `uncertain` (exit 1: the request was sent but the
-session's absence was not verified, so re-list before retrying), `refused`
-(exit 3) or `not_found` (exit 4). A kill that times out is never reported as
-success, and never as nothing having happened. It refuses to end the session of
+to terminate, then asks that session's status, again and again, for the broker's
+1.5 s grace period plus 2 s in all (each question bounded by what is left of
+that time, so nothing else on the machine can stretch it), until the session is
+gone. It reports exactly one of: `verified_absent` (exit 0), `uncertain` (exit 1:
+the request was sent but its effect was not verified, so re-list before
+retrying), `refused` (exit 3) or `not_found` (exit 4). A terminate request that
+timed out is always `uncertain` (`terminate_timed_out`), even if the session is
+seen absent afterwards, because that absence cannot be attributed to the
+request; it is never `verified_absent` and never "nothing happened". It refuses to end the session of
 the pane it runs in (`$KITTY_PTY_BROKER_SESSION`), and with `--expect-started
 MILLIS` it refuses unless the session's `started_millis` is what the caller
-saw, so a reused ID is never ended by mistake. On a terminal it asks first;
-anywhere else `--yes` is required.
+saw. On a terminal it asks first; anywhere else `--yes` is required.
 
 Every command that only queries the broker is bounded: a wedged broker costs
 `--timeout` seconds, not a hang, and `list` reports it as unreachable rather
-than stalling the healthy sessions behind it. Under `--timeout`, `kilix` itself
-gives a broker call 10 seconds (`KILIX_PTY_GUARD`), and the transcript pass
-gives its liveness query 5 (`KILIX_PTY_LIST_TIMEOUT`). Exit status: `0` success, `1`
+than stalling the healthy sessions behind it. `kilix` itself cuts off any one
+broker call after 10 seconds (`KILIX_PTY_GUARD`), or after 75 when `--timeout`
+is given, and waits at most that long for another build of the broker to finish
+before it can look the executable up; the transcript pass gives its liveness
+query 5 (`KILIX_PTY_LIST_TIMEOUT`) and its look-up 30. `--timeout` is checked
+for every command (0.1-60 seconds, exit 2 otherwise), including those that
+only read the disk. Broker errors are relayed as `kilix pty: ...` lines.
+Exit status: `0` success, `1`
 failure or uncertain, `2` usage error, `3` refused, `4` not found (`kill`,
 `status`). `kilix pty help` prints the usage to stdout.
 
@@ -823,7 +830,7 @@ ones keep their names, types and meaning. Session IDs are 1-64 characters from
 | `list --json` | `sessions`: array of session objects; `unreachable`: array of `{"id","reachable":false,"error"}` (a session whose broker did not answer in time, or failed for a reason other than "not there") |
 | `status ID --json` | `session`: one session object. A missing session prints `{"result":"not_found","id"}` and exits 4 |
 | `reaped --json` | `reaped`: array of `{"id","started_millis","reaped_millis" (int or null),"journal_bytes","journal" (path),"meta" (path or null)}` for journals still in the runtime |
-| `journals --json` | `journals`: array, newest session first, of `{"id","started_millis","reaped_millis","archived_millis","broker_pid","child_pid","raw_bytes","compressed_bytes","path"}`; the integers other than `started_millis` and `compressed_bytes` can be null when the `.meta` was missing |
+| `journals --json` | `journals`: array, newest session first, of `{"id","started_millis","variant" (string or null),"reaped_millis","archived_millis","broker_pid","child_pid","raw_bytes","compressed_bytes","path"}`; the integers other than `started_millis` and `compressed_bytes` can be null when the `.meta` was missing |
 | `kill ID --json` | `result`, `id`, `request_sent` (bool), `reason` (string or null), `message`; also `started_millis` and `waited_ms` when known, `expected_started_millis` on a mismatch |
 | `observe ID --once --json`, `journals show ID --json` | `id`, `journal_epoch` and `cursor` (`"EPOCH:OFFSET"`; both null for a journal), `started_millis` (journals only), `total_bytes` (bytes read before bounding), `truncated` (bool), `untrusted` (always true), and `text` (with `--text`) or `bytes_b64` (base64 of the raw bytes) |
 
@@ -846,7 +853,8 @@ A session object, as `status` and `list` report it:
 | `reachable` | boolean | present and `true` on entries of `list --json` |
 
 `kill` results: `verified_absent`; `uncertain` (`reason` `still_listed`,
-`list_failed`, `status_failed` or `status_timeout`; `request_sent` says whether a
+`verify_failed`, `terminate_timed_out`, `terminate_failed`, `status_failed` or
+`status_timeout`; `request_sent` says whether a
 termination request went out); `refused` (`reason` `own_session`,
 `started_mismatch` or `declined`); `not_found`. Exit status 0, 1, 3, 4.
 
@@ -901,13 +909,28 @@ runtime into `~/.local/gpu_terminal/kilix/state/pty-journals/` as
 `ID.STARTED_MILLIS.journal.zst`, with a `.meta` file beside each (mode `0600`).
 Each is compressed with `zstd -19 --long=27`, read back and compared byte for
 byte with the original, and only then is the original removed. Journals are
-long and repetitive (28 dead journals, 48 MB, came to 1.7 MB as one stream). The directory has
-its own budget, 256 MiB by default (`KILIX_PTY_JOURNAL_BUDGET`, in bytes;
-`0` leaves journals in the runtime for the broker's own bound), and the oldest
-session's journal is evicted first.
+long and repetitive (28 dead journals, 48 MB, came to 1.7 MB as one stream).
+Every zstd call is cut off after 10 minutes (`KILIX_PTY_ZSTD_TIMEOUT`), and the
+archive runs after the transcript pass has released its lock, with a lock of its
+own (`state/pty-journals.lock`, never created through or truncated via a
+symlink), so a stuck compressor cannot keep transcript budgets from being
+enforced.
+
+If the name is already taken, nothing is lost. The same journal again is a retry:
+it is not rewritten, and a missing `.meta` is finished. A *different* journal
+(another runtime reaped the same ID and start time, or an ID was reused) is kept
+beside the first as `ID.STARTED_MILLIS+HASH.journal.zst`, HASH being 12 hex
+digits of its own SHA-256, and the pass says so; `journals --json` shows it with
+a `variant`. The directory has its own budget, 256 MiB by default
+(`KILIX_PTY_JOURNAL_BUDGET`, in bytes; `0` leaves journals in the runtime for
+the broker's own bound). Only names `journals` would list (an archive plus its
+`.meta`) count toward it and only they are ever evicted; the *oldest session*
+(smallest `started_millis`, not the oldest file) goes first. Anything else in
+the directory is left alone, and a `.meta` with no journal is removed once it is
+an hour old.
 
 `kilix pty journals` lists them newest first, `journals path ID` prints the
-newest file for an ID (or `ID.STARTED_MILLIS` for a specific one), and
+newest file for an ID (or `ID.STARTED_MILLIS`, or `ID.STARTED_MILLIS+HASH` for a variant, for a specific one), and
 `journals show ID` writes the raw terminal bytes to stdout. Raw bytes can drive
 a terminal, so `show` refuses to write to one unless you pass `--force`; pipe it
 to a file or to `less -R`. Use `kilix transcript clean` on a pane's *session

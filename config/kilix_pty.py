@@ -41,7 +41,10 @@ DEFAULT_BYTES = 64 * 1024
 SNAPSHOT_LIMIT = 512 * 1024 * 1024
 EXIT_USAGE, EXIT_REFUSED, EXIT_NOT_FOUND = 2, 3, 4
 #: `ID.STARTED_MILLIS.journal.zst`; the ID may itself contain dots.
-ARCHIVE_NAME = re.compile(r"(?P<id>[A-Za-z0-9._-]{1,64})\.(?P<started>[0-9]{1,20})\.journal\.zst")
+#: A different journal that would have taken a name already in use gets `+HASH`
+#: (12 hex digits of its own SHA-256) after the start time; `+` is not an ID character.
+ARCHIVE_NAME = re.compile(r"(?P<id>[A-Za-z0-9._-]{1,64})\.(?P<started>[0-9]{1,20})"
+                          r"(?:\+(?P<variant>[0-9a-f]{12}))?\.journal\.zst")
 META_INTEGERS = ("broker_pid", "child_pid", "reaped_millis", "archived_millis",
                  "raw_bytes", "compressed_bytes")
 
@@ -84,7 +87,7 @@ def cmd_attached(argv: list[str]) -> int:
 
 def read_meta(path: str, name: "re.Match[str]") -> dict:
     entry = {"id": name["id"], "started_millis": int(name["started"]),
-             "reaped_millis": None, "archived_millis": None, "broker_pid": None,
+             "variant": name["variant"], "reaped_millis": None, "archived_millis": None, "broker_pid": None,
              "child_pid": None, "raw_bytes": None, "compressed_bytes": None}
     try:
         with open(path, encoding="utf-8", errors="replace") as handle:
@@ -116,13 +119,15 @@ def journals(directory: str) -> list[dict]:
             continue
         if not os.path.isfile(path) or os.path.islink(path):
             continue
-        meta = os.path.join(directory, f"{name['id']}.{name['started']}.meta")
+        stem = f"{name['id']}.{name['started']}" + (f"+{name['variant']}" if name["variant"] else "")
+        meta = os.path.join(directory, f"{stem}.meta")
         entry = read_meta(meta, name)
         if entry["compressed_bytes"] is None:
             entry["compressed_bytes"] = info.st_size
         entry["path"] = path
         found.append(entry)
-    found.sort(key=lambda entry: (entry["started_millis"], entry["id"]), reverse=True)
+    found.sort(key=lambda entry: (entry["started_millis"], entry["id"], entry["archived_millis"] or 0,
+                                  entry["variant"] or ""), reverse=True)
     return found
 
 
@@ -160,6 +165,16 @@ def is_not_found(message: str) -> bool:
     return "not found" in message
 
 
+def relay(message: str) -> None:
+    """The broker's stderr as `kilix pty: ...` lines, one per line it printed."""
+    for line in message.splitlines():
+        line = line.strip()
+        if line.startswith("kitty-pty-broker:"):
+            line = line[len("kitty-pty-broker:"):].strip()
+        if line:
+            print(f"kilix pty: {line}", file=sys.stderr)
+
+
 class Broker:
     """One runtime's broker CLI, called with a deadline and no stdin."""
 
@@ -190,6 +205,13 @@ class Broker:
             return None, b"", ""
         return process.returncode, out, err.decode(errors="replace")
 
+    def bounded(self, remaining: float) -> "Broker":
+        """A copy whose every call, broker deadline and guard alike, fits in `remaining` seconds."""
+        limit = max(0.1, min(self.timeout_seconds, remaining))
+        copy = Broker(self.path, self.runtime, format(limit, "g"), min(self.guard, max(0.1, remaining) + 0.25))
+        copy.default_timeout = self.default_timeout
+        return copy
+
     def envelope(self, **fields) -> dict:
         document = {"schema": SCHEMA, "runtime": self.runtime,
                     "timeout_seconds": self.timeout_seconds}
@@ -203,8 +225,7 @@ class Broker:
 def reply(broker: Broker, *args: str):
     """The parsed JSON of a broker call, or (None, exit status) after reporting why."""
     status, out, err = broker.call(*args)
-    if err:
-        sys.stderr.write(err)
+    relay(err)
     if status is None:
         broker.silent()
         return None, 1
@@ -242,13 +263,31 @@ def cmd_status(broker: Broker, argv: list[str]) -> int:
         if is_not_found(err):
             emit(broker.envelope(result="not_found", id=ident))
             return EXIT_NOT_FOUND
-        sys.stderr.write(err)
+        relay(err)
         return status
     session = json_of(out)
     if not isinstance(session, dict):
         return fail("the broker's status was not an object")
     emit(broker.envelope(session=session))
     return 0
+
+
+def cmd_passthrough(broker: Broker, argv: list[str]) -> int:
+    """A plain (text) broker call: its stdout as is, its stderr as `kilix pty:` lines.
+
+    A session that is not there is exit 4 for `status`, the contract's code for it.
+    """
+    status, out, err = broker.call(*argv)
+    sys.stdout.flush()
+    sys.stdout.buffer.write(out)
+    sys.stdout.buffer.flush()
+    if status is None:
+        broker.silent()
+        return 1
+    relay(err)
+    if status != 0 and argv[0] == "status" and is_not_found(err):
+        return EXIT_NOT_FOUND
+    return status
 
 
 def cmd_reaped(broker: Broker, argv: list[str]) -> int:
@@ -316,27 +355,52 @@ def cmd_kill(broker: Broker, argv: list[str]) -> int:
         sys.stderr.flush()
         if sys.stdin.readline().strip().lower() not in ("y", "yes"):
             return done("refused", EXIT_REFUSED, "not ended", "declined", started_millis=started)
-    status, out, err = broker.call("kill", ident)
+    terminate_status, terminate_out, terminate_err = broker.call("kill", ident)
     sent = True
+    # A reply that never came (the guard, or the broker's own deadline) means the
+    # request MAY have been applied: whatever is seen afterwards, this request
+    # was not confirmed, so the result can only be `uncertain`.
+    timed_out = terminate_status is None or "timed out" in terminate_err
+    terminate_failed = (terminate_status not in (0, None) and not timed_out
+                        and not is_not_found(terminate_err))
     began = time.monotonic()
     deadline = began + KILL_GRACE + VERIFY_SLACK
-    listed = False
+    verdict = None      # absent | present | unknown, from the last look at THIS session
     while True:
-        status, out, err = broker.call("list", "--json", "--all")
-        entries = json_of(out) if status == 0 else None
-        if isinstance(entries, list):
-            listed = True
-            if not [e for e in entries if e.get("id") == ident
-                    and e.get("started_millis") in (None, started)]:
-                return done("verified_absent", 0, "the session is gone", started_millis=started,
-                            waited_ms=int((time.monotonic() - began) * 1000))
-        if time.monotonic() >= deadline:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
             break
-        time.sleep(0.15)
+        # Only this session is asked about, each time within what is left of the
+        # overall budget, so an unrelated wedged broker cannot stretch it.
+        status, out, err = broker.bounded(remaining).call("status", ident, "--json")
+        if status == 0:
+            now = json_of(out)
+            now = now if isinstance(now, dict) else {}
+            verdict = "present" if now.get("started_millis") in (None, started) else "absent"
+        elif status is not None and is_not_found(err):
+            verdict = "absent"
+        else:
+            verdict = "unknown"
+        if verdict == "absent":
+            break
+        time.sleep(min(0.15, max(0.0, deadline - time.monotonic())))
+    waited = int((time.monotonic() - began) * 1000)
+    facts = dict(started_millis=started, waited_ms=waited)
+    if timed_out:
+        seen = {"absent": "the session was later seen absent, but that cannot be attributed to this request",
+                "present": "the session is still there",
+                "unknown": "the session could not be checked afterwards"}.get(verdict or "unknown")
+        return done("uncertain", 1, f"the terminate request timed out, so it may or may not have been "
+                    f"applied; {seen}; re-list before retrying", "terminate_timed_out", **facts)
+    if terminate_failed:
+        return done("uncertain", 1, "the terminate request failed: " + terminate_err.strip()
+                    + "; re-list before retrying", "terminate_failed", **facts)
+    if verdict == "absent":
+        return done("verified_absent", 0, "the session is gone", **facts)
     return done("uncertain", 1, "the request was sent but the session's absence was not verified"
-                + ("" if listed else " (the broker's list did not answer)")
-                + "; re-list before retrying", "still_listed" if listed else "list_failed",
-                started_millis=started, waited_ms=int((time.monotonic() - began) * 1000))
+                + (" (it is still there)" if verdict == "present" else " (the broker did not answer)")
+                + "; re-list before retrying", "still_listed" if verdict == "present" else "verify_failed",
+                **facts)
 
 
 def render(data: bytes) -> str:
@@ -430,7 +494,7 @@ def cmd_observe(broker: Broker, argv: list[str]) -> int:
         broker.silent()
         return 1
     if status != 0:
-        sys.stderr.write(err)
+        relay(err)
         return status
     # With no stdin the broker replays what the session holds, prints where it
     # stopped, and leaves; that is the whole snapshot.
@@ -459,7 +523,8 @@ def cmd_journals(broker: Broker, argv: list[str]) -> int:
         return fail(f"usage: kilix pty journals {action} ID", EXIT_USAGE)
     wanted = rest[0]
     for entry in journals(directory):
-        if wanted in (entry["id"], f"{entry['id']}.{entry['started_millis']}"):
+        stem = f"{entry['id']}.{entry['started_millis']}"
+        if wanted in (entry["id"], stem, f"{stem}+{entry['variant']}"):
             break
     else:
         return fail(f"no archived journal for {wanted}")
@@ -493,7 +558,8 @@ def cmd_request(broker: Broker, argv: list[str]) -> int:
 
 COMMANDS = {"list": cmd_list, "status": cmd_status, "reaped": cmd_reaped,
             "kill": cmd_kill, "observe": cmd_observe, "journals": cmd_journals,
-            "capabilities": cmd_capabilities, "request": cmd_request}
+            "capabilities": cmd_capabilities, "request": cmd_request,
+            "passthrough": cmd_passthrough}
 
 
 def main(argv: list[str]) -> int:

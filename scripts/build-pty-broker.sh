@@ -88,7 +88,17 @@ _ensure_private_directory "$BROKER_BUILD" broker-build
 
 exec 9>"$BROKER_BUILD/.build.lock"
 chmod 0600 "$BROKER_BUILD/.build.lock"
-flock 9
+# A caller with its own deadline (kilix pty, the transcript pass) sets
+# KILIX_PTY_BUILD_LOCK_TIMEOUT so waiting on another build cannot outlast it.
+_lock_wait="${KILIX_PTY_BUILD_LOCK_TIMEOUT:-}"
+case "$_lock_wait" in
+  "") flock 9 ;;
+  *[!0-9.]*) echo "kilix pty broker: KILIX_PTY_BUILD_LOCK_TIMEOUT must be seconds" >&2; exit 2 ;;
+  *) flock -w "$_lock_wait" 9 || {
+       echo "kilix pty broker: another build holds the lock (waited ${_lock_wait}s)" >&2
+       exit 75
+     } ;;
+esac
 if ! make --silent --no-print-directory --question -C "$_source" \
      BUILD_DIR="$BROKER_BUILD" all >/dev/null 2>&1; then
   echo "kilix: building kitty-pty-broker" >&2

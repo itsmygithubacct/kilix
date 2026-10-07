@@ -10,7 +10,7 @@ Run `kilix pty` to open the interactive manager: it lists every persistent sessi
 
 ## End a stuck pane from another terminal
 
-From a different terminal, not from the stuck pane itself, find the full session ID with `kilix pty list` or `kilix pty pane PANE_ID`, then run `kilix pty kill ID --yes`. Add `--expect-started MILLIS`, the started_millis you saw in the list, so a reused ID is never ended by mistake. kill ends the session and its program, then checks that it is gone: verified_absent (exit 0), uncertain (exit 1; the request was sent but its effect was not verified, so list again before retrying), refused (exit 3) or not_found (exit 4). It refuses to end the session of the pane it runs in. On a terminal it asks first; anywhere else --yes is required.
+From a different terminal, not from the stuck pane itself, find the full session ID with `kilix pty list` or `kilix pty pane PANE_ID`, then run `kilix pty kill ID --yes`. Add `--expect-started MILLIS`, the started_millis you saw in the list, so a reused ID is never ended by mistake. kill ends the session and its program, then checks that it is gone, asking about that session alone for about 3.5 seconds: verified_absent (exit 0), uncertain (exit 1; the request was sent but its effect was not verified, or the terminate request itself timed out, so list again before retrying), refused (exit 3) or not_found (exit 4). It refuses to end the session of the pane it runs in. On a terminal it asks first; anywhere else --yes is required.
 
 ## Watch a pane without typing into it
 
@@ -26,7 +26,7 @@ Sessions live in one private runtime directory: KITTY_PTY_BROKER_RUNTIME if set,
 
 ## Where old pane journals are
 
-Old pane journals, the replay journals of panes whose session is dead, are in ~/.local/gpu_terminal/kilix/state/pty-journals/ as ID.STARTED_MILLIS.journal.zst. A session whose broker was killed leaves a directory behind. The broker proves it dead (its process is gone, or the machine rebooted) and moves its journal to the runtime's reaped/ directory instead of deleting it. Kilix then compresses each journal into the directory above (zstd -19, checked by reading it back before the original is removed) under a 256 MiB budget, oldest first out; KILIX_PTY_JOURNAL_BUDGET changes it, in bytes.
+Old pane journals, the replay journals of panes whose session is dead, are in ~/.local/gpu_terminal/kilix/state/pty-journals/ as ID.STARTED_MILLIS.journal.zst. A session whose broker was killed leaves a directory behind. The broker proves it dead (its process is gone, or the machine rebooted) and moves its journal to the runtime's reaped/ directory instead of deleting it. Kilix then compresses each journal into the directory above (zstd -19, checked by reading it back before the original is removed) under a 256 MiB budget, oldest session first out; KILIX_PTY_JOURNAL_BUDGET changes it, in bytes. A different journal that would take a name already in the archive is kept beside it as ID.STARTED_MILLIS+HASH.journal.zst, never overwritten.
 
 - `kilix pty journals [--json]` lists the archived journals, newest first.
 - `kilix pty journals show ID` writes one as raw terminal bytes; pipe it, since it refuses a terminal without --force. It also takes --lines, --bytes, --text and --json like observe --once.

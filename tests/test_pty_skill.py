@@ -16,7 +16,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "config"))
-from test_pty_cli import SESSION, PtyCliCase, status_json  # noqa: E402
+from test_pty_cli import SESSION, PtyCliCase, gone_hook, status_json  # noqa: E402
 import agent_skills as skills  # noqa: E402
 import kilix_pty_request as request_module  # noqa: E402
 
@@ -116,7 +116,7 @@ class SkillCommandTests(PtyCliCase):
         self.reply("status", out=status_json(OTHER) + "\n")
         self.reply("observe", out="a\nb\n", err="kitty-pty-broker: cursor=1:4\n")
         self.reply("reaped", out="[]")
-        (self.fake / "kill.hook").write_text(f'echo "[]" > "{self.fake}/list.out"\n')
+        (self.fake / "kill.hook").write_text(gone_hook(self.fake))
 
     def fill(self, line):
         words = []

@@ -318,15 +318,27 @@ print('archive=%d' % settings.transcript_archive_total())
 # `kilix pty` passes 0 so a missing build says why; the transcript pass passes 1
 # because it has nobody to tell.
 _kilix_pty_broker_path() {
-  local broker="" quiet="${1:-0}"
+  local broker="" quiet="${1:-0}" wait whole
   if [ -n "${KITTY_PTY_BROKER_EXECUTABLE:-}" ] \
        && [ -x "$KITTY_PTY_BROKER_EXECUTABLE" ]; then
     broker="$KITTY_PTY_BROKER_EXECUTABLE"
-  elif [ "$quiet" = 1 ]; then
-    broker="$("$KILIX_HOME/scripts/build-pty-broker.sh" --print-path 2>/dev/null)" \
-      || return 1
   else
-    broker="$("$KILIX_HOME/scripts/build-pty-broker.sh" --print-path)" || return 1
+    # Looking the executable up can mean building it, behind a lock another
+    # build may hold. Neither wait may outlast the caller's own bound: the
+    # transcript pass holds a lock while it looks, and `kilix pty` promises not
+    # to hang. A cold compile is allowed to take a while for a person at the
+    # command line, not for the background pass.
+    if [ "$quiet" = 1 ]; then wait="${KILIX_PTY_LIST_TIMEOUT:-5}"; whole=30
+    else wait="${guard:-${KILIX_PTY_GUARD:-10}}"; whole="${KILIX_PTY_BUILD_TIMEOUT:-600}"; fi
+    case "$wait" in ''|*[!0-9.]*) wait=10 ;; esac
+    case "$whole" in ''|*[!0-9.]*) whole=600 ;; esac
+    if [ "$quiet" = 1 ]; then
+      broker="$(KILIX_PTY_BUILD_LOCK_TIMEOUT="$wait" timeout -k 5 "$whole" \
+        "$KILIX_HOME/scripts/build-pty-broker.sh" --print-path 2>/dev/null)" || return 1
+    else
+      broker="$(KILIX_PTY_BUILD_LOCK_TIMEOUT="$wait" timeout -k 5 "$whole" \
+        "$KILIX_HOME/scripts/build-pty-broker.sh" --print-path)" || return 1
+    fi
   fi
   [ -x "$broker" ] || return 1
   printf '%s\n' "$broker"
@@ -405,16 +417,12 @@ _kilix_pty_valid_id() {
   [[ "$1" =~ ^[A-Za-z0-9._-]{1,64}$ ]] && [ "$1" != . ] && [ "$1" != .. ]
 }
 
-# A bounded, non-interactive broker call. Dynamic scope: the caller's
-# `broker`, `runtime`, `tflag` and `guard`.
+# A bounded, non-interactive broker call: kilix_pty.py runs it with no stdin,
+# under the guard, and relays its output (stderr as `kilix pty: ...` lines; a
+# missing session from `status` is exit 4). Dynamic scope: the caller's
+# `broker`, `runtime`, `tvalue` and `guard`.
 _kilix_pty_call() {
-  local rc=0
-  timeout -k 2 "$guard" "$broker" --runtime-dir "$runtime" "${tflag[@]}" "$@" || rc=$?
-  if [ "$rc" = 124 ] || [ "$rc" = 137 ]; then
-    echo "kilix pty: the broker did not answer within ${guard}s" >&2
-    return 1
-  fi
-  return "$rc"
+  _kilix_pty_py passthrough "$@"
 }
 
 # The JSON and snapshot work, in kilix_pty.py. Dynamic scope as above;
@@ -465,8 +473,11 @@ _kilix_pty_cli() {
     case "$1" in
       --install-only) install_only=1; shift ;;
       --timeout)
-        [ $# -ge 2 ] && [[ "$2" =~ ^[0-9]+([.][0-9]+)?$ ]] || {
-          echo "usage: $_self pty --timeout SECONDS (decimal seconds)" >&2
+        # Seconds, 0.1-60, for every verb (the broker enforces it again, but a
+        # command that reads only the disk would never reach the broker).
+        [ $# -ge 2 ] && [[ "$2" =~ ^[0-9]+([.][0-9]+)?$ ]] \
+          && awk -v v="$2" 'BEGIN { exit !(v >= 0.1 && v <= 60) }' || {
+          echo "kilix pty: --timeout is in seconds, 0.1-60${2:+; got $2}" >&2
           return 2
         }
         tflag=(--timeout "$2"); tvalue="$2"; guard=75; shift 2 ;;
@@ -667,6 +678,50 @@ _kilix_pty_cli() {
   esac
 }
 
+# A journal already archived under this name: is it this very journal? Bounded
+# like every other zstd call here, so a hung decompressor cannot stall a pass.
+_kilix_pty_archive_matches() {
+  local archived="$1" original="$2" limit="${KILIX_PTY_ZSTD_TIMEOUT:-600}"
+  case "$limit" in ''|*[!0-9.]*) limit=600 ;; esac
+  [ -f "$archived" ] && [ ! -L "$archived" ] || return 1
+  timeout -k 2 "$limit" zstd -dcq --long=27 -- "$archived" 2>/dev/null \
+    | cmp -s -- - "$original"
+}
+
+# The .meta that goes with an archived journal: the broker's own fields, then
+# what the archive step knows. Arguments: broker meta (may be absent), id,
+# started_millis, raw bytes, compressed bytes, output file.
+_kilix_pty_archive_meta() {
+  local source="$1" id="$2" started="$3" raw="$4" packed="$5" output="$6"
+  {
+    if [ -f "$source" ]; then
+      grep -E '^(version|id|broker_pid|child_pid|started_millis|boot_id|start_ticks|reaped_millis)=[A-Za-z0-9._:-]*$' "$source" || true
+    else
+      printf 'id=%s\nstarted_millis=%s\n' "$id" "$started"
+    fi
+    printf 'raw_bytes=%s\ncompressed_bytes=%s\narchived_millis=%s\n' \
+      "$raw" "$packed" "$(date +%s%3N)"
+  } >"$output"
+}
+
+# Open the archive's lock on fd 8 without ever creating through, following or
+# truncating a symlink: the file is made with O_EXCL (a link, even a dangling
+# one, is EEXIST), opened read-only (nothing to truncate), and the descriptor is
+# checked to be the very file the path names and to be ours.
+_kilix_pty_open_archive_lock() {
+  local lock="$1"
+  if [ -L "$lock" ] || { [ -e "$lock" ] && [ ! -f "$lock" ]; }; then
+    return 1
+  fi
+  [ -e "$lock" ] || (set -o noclobber; : >"$lock") 2>/dev/null || true
+  [ -f "$lock" ] && [ ! -L "$lock" ] || return 1
+  exec 8<"$lock" || return 1
+  [ "$(stat -c '%d:%i:%u' -- "$lock" 2>/dev/null)" \
+      = "$(stat -L -c '%d:%i:%u' /proc/self/fd/8 2>/dev/null)" ] || return 1
+  [ "$(stat -c '%u' -- "$lock" 2>/dev/null)" = "$(id -u)" ] || return 1
+  chmod 0600 -- "$lock" 2>/dev/null || true
+}
+
 # --- journal archive tier ----------------------------------------------------
 #
 # When the broker proves a session dead it moves the replay journal to
@@ -678,26 +733,39 @@ _kilix_pty_cli() {
 # oldest session first out. KILIX_PTY_JOURNAL_BUDGET is in bytes; 0 turns the
 # tier off and leaves the journals in the runtime for the broker's own bound.
 #
+# An archive is named ID.STARTED_MILLIS.journal.zst. If that name already holds
+# this same journal the step is a retry and just finishes; if it holds a
+# DIFFERENT journal (another runtime reaped the same ID and start, or a reused
+# ID) neither is lost: the new one is kept as ID.STARTED_MILLIS+HASH.journal.zst,
+# HASH being 12 hex digits of its own SHA-256, and the pass says so.
+#
+# Every zstd call runs under timeout (KILIX_PTY_ZSTD_TIMEOUT, 600 s), and the
+# pass takes only its own lock, never transcript-reaper.lock.
+#
 # $3 is `always` when the caller wants a line even if nothing happened.
 _kilix_pty_journal_archive() (
   local runtime="$1" quiet="${2:-0}" report="${3:-changes}"
   local reaped="$runtime/reaped" dest="$KILIX_STATE_DIRECTORY/pty-journals"
   local budget="${KILIX_PTY_JOURNAL_BUDGET:-268435456}"
-  local have=0 file base id started meta tmp tmp_meta raw packed used size
-  local archived=0 evicted=0 errors=0
+  local zlimit="${KILIX_PTY_ZSTD_TIMEOUT:-600}"
+  local have=0 file base id started meta stem target tmp tmp_meta raw packed used size tag line
+  local archived=0 already=0 distinct=0 evicted=0 errors=0
   case "$budget" in ''|*[!0-9]*) budget=268435456 ;; esac
+  case "$zlimit" in ''|*[!0-9.]*) zlimit=600 ;; esac
   [ "$budget" -gt 0 ] || return 0
   if [ -d "$reaped" ] && [ ! -L "$reaped" ] \
        && [ "$(stat -c '%u' -- "$reaped" 2>/dev/null)" = "$(id -u)" ]; then
     have=1
   fi
-  [ "$have" = 1 ] || [ -d "$dest" ] || return 0
+  [ "$have" = 1 ] || { [ -d "$dest" ] && [ ! -L "$dest" ]; } || return 0
   command -v flock >/dev/null 2>&1 && command -v zstd >/dev/null 2>&1 || {
     [ "$quiet" = 1 ] || echo "kilix: flock and zstd are required to archive PTY journals" >&2
     return 0
   }
-  exec 8>"$KILIX_STATE_DIRECTORY/pty-journals.lock" || return 0
-  chmod 0600 "$KILIX_STATE_DIRECTORY/pty-journals.lock" 2>/dev/null || return 0
+  if ! _kilix_pty_open_archive_lock "$KILIX_STATE_DIRECTORY/pty-journals.lock"; then
+    [ "$quiet" = 1 ] || echo "kilix: refusing the PTY journal lock: not a plain file of yours" >&2
+    return 0
+  fi
   if ! flock -n 8; then
     [ "$quiet" = 1 ] || echo "kilix: another PTY journal pass is already running"
     return 0
@@ -717,66 +785,111 @@ _kilix_pty_journal_archive() (
         continue
       fi
       _kilix_ensure_private_directory "$dest" "PTY journals" || return 0
+      stem="$id.$started"; tag=""
+      target="$dest/$stem.journal.zst"
+      if [ -e "$target" ] || [ -L "$target" ]; then
+        if ! _kilix_pty_archive_matches "$target" "$file"; then
+          # Same name, different journal: keep both, under the new one's own hash.
+          tag="$(sha256sum -- "$file" 2>/dev/null | cut -c1-12)"
+          [ -n "$tag" ] || { errors=$((errors + 1)); continue; }
+          stem="$id.$started+$tag"
+          target="$dest/$stem.journal.zst"
+        fi
+      fi
+      if [ -e "$target" ] || [ -L "$target" ]; then
+        if _kilix_pty_archive_matches "$target" "$file"; then
+          # This journal is already archived (a retry after an interrupted pass):
+          # finish the pair and drop the original; nothing is rewritten.
+          tmp_meta=""
+          if [ ! -f "$dest/$stem.meta" ]; then
+            tmp_meta="$(mktemp "$dest/.$stem.meta.XXXXXX")" \
+              && _kilix_pty_archive_meta "$meta" "$id" "$started" "$(stat -c%s -- "$file")" \
+                   "$(stat -c%s -- "$target")" "$tmp_meta" \
+              && chmod 0600 "$tmp_meta" && mv -f -- "$tmp_meta" "$dest/$stem.meta" \
+              || { [ -z "$tmp_meta" ] || rm -f -- "${tmp_meta:?}"; errors=$((errors + 1)); continue; }
+          fi
+          if rm -f -- "${file:?}" "${meta:?}"; then already=$((already + 1)); else errors=$((errors + 1)); fi
+        else
+          errors=$((errors + 1))     # a name held by something else: the original stays
+        fi
+        continue
+      fi
       tmp=""; tmp_meta=""
-      if tmp="$(mktemp "$dest/.$base.zst.XXXXXX")" \
-           && tmp_meta="$(mktemp "$dest/.$id.$started.meta.XXXXXX")" \
-           && nice -n 10 zstd -19 --long=27 -q -f -o "$tmp" "$file" 2>/dev/null \
-           && zstd -dcq --long=27 -- "$tmp" 2>/dev/null | cmp -s -- - "$file" \
+      if tmp="$(mktemp "$dest/.$stem.journal.zst.XXXXXX")" \
+           && tmp_meta="$(mktemp "$dest/.$stem.meta.XXXXXX")" \
+           && nice -n 10 timeout -k 2 "$zlimit" zstd -19 --long=27 -q -f -o "$tmp" "$file" 2>/dev/null \
+           && timeout -k 2 "$zlimit" zstd -dcq --long=27 -- "$tmp" 2>/dev/null | cmp -s -- - "$file" \
            && chmod 0600 "$tmp" "$tmp_meta" \
            && touch -r "$file" "$tmp"; then
         raw="$(stat -c%s -- "$file")"; packed="$(stat -c%s -- "$tmp")"
-        {
-          if [ -f "$meta" ]; then
-            grep -E '^(version|id|broker_pid|child_pid|started_millis|boot_id|start_ticks|reaped_millis)=[A-Za-z0-9._:-]*$' "$meta" || true
-          else
-            printf 'id=%s\nstarted_millis=%s\n' "$id" "$started"
-          fi
-          printf 'raw_bytes=%s\ncompressed_bytes=%s\narchived_millis=%s\n' \
-            "$raw" "$packed" "$(date +%s%3N)"
-        } >"$tmp_meta"
-        if mv -f -- "$tmp" "$dest/$base.zst" \
-             && mv -f -- "$tmp_meta" "$dest/$id.$started.meta" \
-             && rm -f -- "$file" "$meta"; then
+        _kilix_pty_archive_meta "$meta" "$id" "$started" "$raw" "$packed" "$tmp_meta"
+        if mv -f -- "$tmp" "$target" \
+             && mv -f -- "$tmp_meta" "$dest/$stem.meta" \
+             && rm -f -- "${file:?}" "${meta:?}"; then
           archived=$((archived + 1))
+          [ -z "$tag" ] || distinct=$((distinct + 1))
         else
           errors=$((errors + 1))
         fi
       else
         errors=$((errors + 1))
       fi
-      [ -z "$tmp" ] || rm -f -- "$tmp"
-      [ -z "$tmp_meta" ] || rm -f -- "$tmp_meta"
+      [ -z "$tmp" ] || rm -f -- "${tmp:?}"
+      [ -z "$tmp_meta" ] || rm -f -- "${tmp_meta:?}"
     done
   fi
 
-  if [ -d "$dest" ]; then
-    # A pass killed mid-compression leaves its scratch files behind.
+  # Budget. Only names the reader accepts count: ID.STARTED_MILLIS[+HASH].journal.zst
+  # with its own .meta beside it. Anything else in the directory is not ours to
+  # count or delete. The oldest SESSION (smallest started_millis) goes first,
+  # not the oldest file: a long-lived old session writes long after a younger
+  # one began. A .meta with no journal is a half-finished pair; it is removed
+  # once an hour old, never to make room.
+  if [ -d "$dest" ] && [ ! -L "$dest" ]; then
     find "$dest" -maxdepth 1 -type f \( -name '.*.zst.??????' -o -name '.*.meta.??????' \) \
       -mmin +60 -delete 2>/dev/null || true
-    used=$(find "$dest" -maxdepth 1 -type f \( -name '*.journal.zst' -o -name '*.meta' \) \
-      -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {print s+0}')
+    local -a entries=()
+    used=0
+    for file in "$dest"/*.journal.zst; do
+      [ -f "$file" ] && [ ! -L "$file" ] || continue
+      base="${file##*/}"
+      [[ "$base" =~ ^([A-Za-z0-9._-]{1,64})\.([0-9]{1,20})(\+[0-9a-f]{12})?\.journal\.zst$ ]] || continue
+      stem="${base%.journal.zst}"
+      size=$(stat -c%s -- "$file" 2>/dev/null || echo 0)
+      if [ -f "$dest/$stem.meta" ] && [ ! -L "$dest/$stem.meta" ]; then
+        size=$((size + $(stat -c%s -- "$dest/$stem.meta" 2>/dev/null || echo 0)))
+      fi
+      used=$((used + size))
+      entries+=("${BASH_REMATCH[2]} $stem $size")
+    done
     if [ "$used" -gt "$budget" ]; then
-      while IFS= read -r file; do
+      while read -r started stem size; do
         [ "$used" -gt "$budget" ] || break
-        [ -n "$file" ] || break
-        base="${file##*/}"; base="${base%.journal.zst}"
-        size=$(stat -c%s -- "$file" 2>/dev/null || echo 0)
-        if rm -f -- "$file"; then
+        if rm -f -- "${dest:?}/${stem:?}.journal.zst" "${dest:?}/${stem:?}.meta"; then
           evicted=$((evicted + 1))
           used=$((used - size))
-          size=$(stat -c%s -- "$dest/$base.meta" 2>/dev/null || echo 0)
-          if rm -f -- "$dest/$base.meta"; then used=$((used - size)); fi
         else
           errors=$((errors + 1))
         fi
-      done < <(find "$dest" -maxdepth 1 -type f -name '*.journal.zst' \
-        -printf '%T@ %p\n' 2>/dev/null | sort -n | cut -d' ' -f2-)
+      done < <(printf '%s\n' "${entries[@]}" | sort -k1,1n -k2,2)
     fi
+    for file in "$dest"/*.meta; do
+      [ -f "$file" ] && [ ! -L "$file" ] || continue
+      base="${file##*/}"
+      [[ "$base" =~ ^[A-Za-z0-9._-]{1,64}\.[0-9]{1,20}(\+[0-9a-f]{12})?\.meta$ ]] || continue
+      [ ! -e "${file%.meta}.journal.zst" ] || continue
+      if find "$file" -mmin +60 -print -quit 2>/dev/null | grep -q .; then
+        rm -f -- "${file:?}" || errors=$((errors + 1))
+      fi
+    done
   fi
 
   if [ "$quiet" != 1 ] && { [ "$report" = always ] \
-       || [ $((archived + evicted + errors)) -gt 0 ]; }; then
-    echo "archived $archived PTY journal(s), evicted $evicted, errors $errors"
+       || [ $((archived + already + evicted + errors)) -gt 0 ]; }; then
+    line="archived $archived PTY journal(s), evicted $evicted, errors $errors"
+    [ "$already" -eq 0 ] || line="$line; $already already archived"
+    [ "$distinct" -eq 0 ] || line="$line; $distinct kept under a distinct name (the archive already held a different journal with the same name)"
+    echo "$line"
   fi
   [ "$errors" -eq 0 ]
 )
@@ -840,11 +953,11 @@ _kilix_transcript_label() {
 # recompressed at zstd -9 once the recent budget fills. Level costs compression
 # time rather than recall -- every level decompresses in well under a second --
 # so the denser older tier is not a slower one to read.
-_kilix_transcript_reap() (
+_kilix_transcript_pass() (
   local dir="$1" recent_budget="$2" archive_budget="$3" quiet="${4:-0}"
   [ -d "$dir" ] || return 0
   local recent="$dir/recent" archive="$dir/archive"
-  local live compressed=0 moved=0 removed=0 errors=0 used file size name tmp jruntime
+  local live compressed=0 moved=0 removed=0 errors=0 used file size name tmp
   command -v flock >/dev/null 2>&1 || {
     [ "$quiet" = 1 ] || echo "kilix: flock is required to prune transcripts" >&2
     return 0
@@ -854,11 +967,6 @@ _kilix_transcript_reap() (
   if ! flock -n 9; then
     [ "$quiet" = 1 ] || echo "kilix: another transcript pass is already running"
     return 0
-  fi
-  # Journals the broker archived for sessions it proved dead leave the runtime
-  # now; they need no liveness answer, so a silent broker does not delay them.
-  if jruntime="$(_kilix_resolve_pty_broker_runtime 2>/dev/null)"; then
-    _kilix_pty_journal_archive "$jruntime" "$quiet" || true
   fi
   if ! live="$(_kilix_transcript_live_ids)"; then
     [ "$quiet" = 1 ] \
@@ -970,6 +1078,20 @@ _kilix_transcript_reap() (
   [ "$quiet" = 1 ] \
     || echo "compressed $compressed, recompressed $moved, removed $removed, errors $errors (live panes kept)"
 )
+
+# The transcript pass, then the journal archive. They are separate on purpose:
+# the pass holds transcript-reaper.lock only while it runs and has released it
+# by the time the archive starts, so compressing a large journal (or a stuck
+# zstd) can never keep the transcript budgets from being enforced. The archive
+# needs no liveness answer, only the runtime.
+_kilix_transcript_reap() {
+  local rc=0 quiet="${4:-0}" jruntime
+  _kilix_transcript_pass "$@" || rc=$?
+  if jruntime="$(_kilix_resolve_pty_broker_runtime 2>/dev/null)"; then
+    _kilix_pty_journal_archive "$jruntime" "$quiet" || true
+  fi
+  return "$rc"
+}
 
 _kilix_process_start_tick() {
   local pid="$1" record

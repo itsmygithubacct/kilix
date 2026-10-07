@@ -10,7 +10,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "config"))
-from test_pty_cli import (LAUNCHER, SESSION, PtyCliCase, status_json,  # noqa: E402
+from test_pty_cli import (LAUNCHER, SESSION, PtyCliCase, gone_hook, status_json,  # noqa: E402
                           reaped_pair)
 import kilix_pty_request as module  # noqa: E402
 
@@ -44,9 +44,11 @@ class RequestCase(PtyCliCase):
         return [call for call in self.calls() if " kill " in call]
 
     def vanishes(self):
-        (self.fake / "kill.hook").write_text(f'echo "[]" > "{self.fake}/list.out"\n')
+        (self.fake / "kill.hook").write_text(gone_hook(self.fake))
         self.reply("list", out=json.dumps([json.loads(status_json(OTHER))]))
         self.reply("status", out=status_json(OTHER) + "\n")
+        for leftover in ("status.rc", "status.err"):
+            (self.fake / leftover).unlink(missing_ok=True)
 
     def store(self):
         return self.state / "pty-operations"
@@ -312,6 +314,7 @@ class KillTests(RequestCase):
             stale = directory / f"op-{index:064d}.json"
             stale.write_text("{}")
             os.utime(stale, (1000 + index, 1000 + index))
+        self.vanishes()     # the first kill ended it; the second needs it back
         self.kill(None, "end-2", "--yes")
         remaining = sorted(directory.glob("op-*.json"))
         self.assertEqual(len(remaining), module.STORE_LIMIT)

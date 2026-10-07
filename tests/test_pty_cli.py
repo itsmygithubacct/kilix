@@ -39,12 +39,20 @@ timeout=""
 [ "$1" != --timeout ] || { timeout="$2"; shift 2; }
 verb="$1"
 [ ! -e "$FAKE_DIR/hang" ] || exec sleep 60
+[ ! -e "$FAKE_DIR/$verb.hang" ] || exec sleep 60
 if [ -e "$FAKE_DIR/$verb.hook" ]; then . "$FAKE_DIR/$verb.hook"; fi
 [ ! -f "$FAKE_DIR/$verb.out" ] || cat "$FAKE_DIR/$verb.out"
 [ ! -f "$FAKE_DIR/$verb.err" ] || cat "$FAKE_DIR/$verb.err" >&2
 if [ -f "$FAKE_DIR/$verb.rc" ]; then exit "$(cat "$FAKE_DIR/$verb.rc")"; fi
 exit 0
 '''
+
+
+def gone_hook(fake):
+    """What a kill does to the fake: the session leaves the listing and its status says not found."""
+    return (f'echo "[]" > "{fake}/list.out"; rm -f "{fake}/status.out"; '
+            f"echo 'kitty-pty-broker: query session: session not found' > \"{fake}/status.err\"; "
+            f'echo 1 > "{fake}/status.rc"\n')
 
 
 def status_json(session=SESSION, attached=False):
@@ -207,10 +215,10 @@ class ForwardingTests(PtyCliCase):
         self.assertEqual(self.calls(), [])
 
     def test_a_broker_failure_is_passed_on(self):
-        self.reply("status", err="kitty-pty-broker: query session: not found\n", rc=1)
+        self.reply("status", err="kitty-pty-broker: query session: something odd\n", rc=1)
         result = self.pty("status", SESSION)
         self.assertEqual(result.returncode, 1)
-        self.assertIn("not found", result.stderr)
+        self.assertIn("something odd", result.stderr)
 
     def test_unknown_options_never_reach_the_broker(self):
         for args in (["list", "--bogus"], ["frobnicate"], ["status"], ["observe"],
@@ -279,7 +287,7 @@ class KillTests(PtyCliCase):
 
     def vanishes(self):
         """After a kill request the session leaves the listing."""
-        (self.fake / "kill.hook").write_text(f'echo "[]" > "{self.fake}/list.out"\n')
+        (self.fake / "kill.hook").write_text(gone_hook(self.fake))
 
     def killed(self):
         return [call for call in self.calls() if " kill " in call]
@@ -305,8 +313,9 @@ class KillTests(PtyCliCase):
         self.assertEqual(receipt["started_millis"], 1700000000000)
         self.assertIsNone(receipt["reason"])
         self.assertEqual(len(self.killed()), 1)
-        # It verified by listing, after asking.
-        self.assertEqual(self.calls()[-1], f"--runtime-dir {self.runtime} list --json --all")
+        # It verified by asking about this session alone, after the terminate.
+        after = self.calls()[self.calls().index(self.killed()[0]) + 1:]
+        self.assertTrue(after and all(f" status {SESSION} --json" in call for call in after), after)
 
     def test_yes_works_in_either_position_and_text_says_the_verdict(self):
         self.vanishes()
@@ -759,7 +768,9 @@ class StaticTests(unittest.TestCase):
     def test_no_non_interactive_broker_call_runs_without_a_deadline(self):
         launcher = LAUNCHER.read_text()
         body = launcher[launcher.index("_kilix_pty_call() {"):launcher.index("_kilix_pty_pane_session() {")]
-        self.assertIn('timeout -k 2 "$guard" "$broker"', body)
+        self.assertIn("passthrough", body)
+        call = (ROOT / "config" / "kilix_pty.py").read_text()
+        self.assertIn("process.communicate(timeout=self.guard)", call)
         live = launcher[launcher.index("_kilix_transcript_live_ids() {"):launcher.index("# --- kilix pty")]
         self.assertIn('timeout -k 2 "$limit" "$broker"', live)
         self.assertNotIn('ids="$("$broker"', live)
