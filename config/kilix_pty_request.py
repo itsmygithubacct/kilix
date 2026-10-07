@@ -42,6 +42,12 @@ UNCERTAIN_TTL = 30 * 24 * 3600
 LINES = (1, 10000)
 BYTES = (1, 1048576)
 TIMEOUT = (0.1, 60)
+#: Seconds a caller waits for another process that is dispatching the same operation.
+WAIT_FOR_OWNER = 30.0
+#: A finished receipt cannot make room until it is older than the longest a waiter can have been
+#: waiting for it (WAIT_FOR_OWNER) plus the longest broker call (TIMEOUT's upper bound) as margin, so a
+#: caller that saw the operation in progress finds its receipt when it looks again.
+RECENT_RECEIPT = WAIT_FOR_OWNER + TIMEOUT[1]
 EXIT_BAD_REQUEST = 2
 
 EXAMPLES = {
@@ -226,6 +232,10 @@ def validate(raw: bytes) -> dict:
 
 # --- the operation store -------------------------------------------------------
 
+class DurabilityError(OSError):
+    """The record was replaced and is visible, but the directory fsync that makes it crash-safe failed."""
+
+
 class Store:
     """Receipts of sent operations: private, one small file each, bounded."""
 
@@ -285,12 +295,17 @@ class Store:
             except OSError:
                 pass
             raise
-        self.sync_directory()
+        try:
+            self.sync_directory()
+        except OSError as error:
+            # The new record is already what every reader sees; say so instead of pretending it was not written.
+            raise DurabilityError(error.errno, error.strerror or "directory fsync failed") from error
 
     def prunable(self, name: str, now: float) -> bool:
-        """May this record make room? Only a finished one: a delivered `verified_absent` receipt, or a
-        sent-`uncertain` one that has outlived UNCERTAIN_TTL. An unresolved intent, a younger uncertain
-        receipt and anything unreadable are never pruned."""
+        """May this record make room? Only a finished one: a `verified_absent` receipt older than
+        RECENT_RECEIPT (a waiter may still be about to read it), or a sent-`uncertain` one that has
+        outlived UNCERTAIN_TTL (strictly more than UNCERTAIN_TTL seconds by the record's mtime). An
+        unresolved intent, a younger uncertain receipt and anything unreadable are never pruned."""
         path = os.path.join(self.directory, name)
         try:
             with open(path, "rb") as stream:
@@ -298,9 +313,10 @@ class Store:
             receipt = record.get("receipt") if record.get("phase") == "done" else None
             if not isinstance(receipt, dict):
                 return False
+            age = now - os.path.getmtime(path)
             if receipt.get("result") == "verified_absent":
-                return True
-            return now - os.path.getmtime(path) > UNCERTAIN_TTL
+                return age > RECENT_RECEIPT
+            return age > UNCERTAIN_TTL
         except (OSError, ValueError, AttributeError):
             return False
 
@@ -479,8 +495,6 @@ def sent(document) -> bool:
     return document.get("request_sent") is True
 
 
-WAIT_FOR_OWNER = 30.0     # seconds a caller waits for another process dispatching the same operation
-
 
 def interrupted(broker, request, operation_id):
     return broker.envelope(
@@ -495,54 +509,79 @@ def reserve(broker, request, store, key):
 
     Returns (owner_fd, None) when this process now owns it, with a durable `intent` on disk
     before anything is done; or (None, (status, receipt)) for a replay or a refusal.
+
+    A caller that has seen a record for the id never dispatches it: if the record is gone when it
+    looks again (forgotten under pressure), it says so (`receipt_evicted`) instead. A waiter keeps the
+    owner lock it wins through its re-read, so capacity pruning cannot unlink it in between.
     """
     operation_id = request["operation_id"]
     deadline = time.monotonic() + WAIT_FOR_OWNER
-    while True:
-        with store.locked():
-            record = store.read(operation_id)
-            if record is None:
-                store.make_room()           # or refuse here, before anything is dispatched
-                owner = store.owner_lock(operation_id)
-                fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)      # nobody can hold it: no record
-                store.write(operation_id, {"fingerprint": key, "phase": "intent", "operation_id": operation_id,
-                                           "receipt": None, "pid": os.getpid(),
-                                           "updated_millis": int(time.time() * 1000)})
-                return owner, None
-            if record.get("fingerprint") != key:
-                raise Refusal("operation_id_reused", f"operation_id {operation_id!r} was used for a different request",
-                              "use a new operation_id for different arguments", 3)
-            receipt = record.get("receipt")
-            if record.get("phase") == "done" and isinstance(receipt, dict):
-                return None, (pty_exit(receipt), {**receipt, "duplicate": True})
-            probe = store.owner_lock(operation_id)
+    seen, held = False, None
+    try:
+        while True:
+            with store.locked():
+                record = store.read(operation_id)
+                if record is None and seen:
+                    return None, (1, {**broker.envelope(
+                        result="uncertain", id=request["args"]["id"], request_sent=None, reason="receipt_evicted",
+                        message="this operation_id was seen in progress and its record has since been forgotten, "
+                                "so whether the terminate request was sent is not known; nothing was sent now",
+                        hint="re-list with kilix pty list --json, then retry with a new operation_id if the "
+                             "session is still there", operation_id=operation_id), "duplicate": True})
+                if record is None:
+                    store.make_room()           # or refuse here, before anything is dispatched
+                    owner = store.owner_lock(operation_id)
+                    fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)      # nobody can hold it: no record
+                    store.write(operation_id, {"fingerprint": key, "phase": "intent", "operation_id": operation_id,
+                                               "receipt": None, "pid": os.getpid(),
+                                               "updated_millis": int(time.time() * 1000)})
+                    return owner, None
+                seen = True
+                if record.get("fingerprint") != key:
+                    raise Refusal("operation_id_reused",
+                                  f"operation_id {operation_id!r} was used for a different request",
+                                  "use a new operation_id for different arguments", 3)
+                receipt = record.get("receipt")
+                if record.get("phase") == "done" and isinstance(receipt, dict):
+                    return None, (pty_exit(receipt), {**receipt, "duplicate": True})
+                unowned = held is not None          # a waiter that holds the lock has found its owner gone
+                if not unowned:
+                    probe = store.owner_lock(operation_id)
+                    try:
+                        fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        unowned = True
+                    except BlockingIOError:
+                        pass                # a live process owns it: wait for it below
+                    finally:
+                        os.close(probe)
+                if unowned:                 # an intent that no process owns: its dispatcher died
+                    gone = {**interrupted(broker, request, operation_id)}
+                    store.write(operation_id, {**record, "phase": "done", "receipt": gone,
+                                               "updated_millis": int(time.time() * 1000)})
+                    return None, (1, {**gone, "duplicate": True})
+            # Another process is dispatching this very operation: let it finish, then replay its receipt.
+            waiting = store.owner_lock(operation_id)
             try:
-                fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                pass                # a live process owns it: wait for it below
-            else:               # an intent that no process owns: its dispatcher died
-                gone = {**interrupted(broker, request, operation_id)}
-                store.write(operation_id, {**record, "phase": "done", "receipt": gone,
-                                           "updated_millis": int(time.time() * 1000)})
-                return None, (1, {**gone, "duplicate": True})
+                while time.monotonic() < deadline:
+                    try:
+                        fcntl.flock(waiting, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        held = waiting          # kept open (and locked) until the next read is done
+                        break
+                    except BlockingIOError:
+                        time.sleep(0.05)
+                else:
+                    return None, (1, {**broker.envelope(
+                        result="uncertain", id=request["args"]["id"], request_sent=True, reason="in_progress",
+                        message="another call with this operation_id is still running; ask again with the same "
+                                "operation_id to get its receipt", operation_id=operation_id), "duplicate": True})
             finally:
-                os.close(probe)
-        # Another process is dispatching this very operation: let it finish, then replay its receipt.
-        waiting = store.owner_lock(operation_id)
-        try:
-            while time.monotonic() < deadline:
-                try:
-                    fcntl.flock(waiting, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    break
-                except BlockingIOError:
-                    time.sleep(0.05)
-            else:
-                return None, (1, {**broker.envelope(
-                    result="uncertain", id=request["args"]["id"], request_sent=True, reason="in_progress",
-                    message="another call with this operation_id is still running; ask again with the same "
-                            "operation_id to get its receipt", operation_id=operation_id), "duplicate": True})
-        finally:
-            os.close(waiting)
+                if held is not waiting:
+                    os.close(waiting)
+            # The next pass re-reads under the store lock while this caller still holds the owner lock, so
+            # capacity pruning (which only tries that lock, never waits for it) cannot unlink it in between.
+    finally:
+        if held is not None:
+            os.close(held)
 
 
 def execute(broker, request, yes, state):
@@ -581,6 +620,12 @@ def execute(broker, request, yes, state):
                                                "updated_millis": int(time.time() * 1000)})
                 else:
                     store.forget(operation_id)   # nothing was sent: the same id may be tried again
+        except DurabilityError:
+            # The receipt is on disk and every replay will return it; only its crash-safety is unproven.
+            document = {**document, "receipt_durable": False,
+                        "durability_note": "the receipt was saved but the directory entry could not be flushed; "
+                                           "if the machine stops before the disk catches up, a retry with this "
+                                           "operation_id may report interrupted instead"}
         except (OSError, ValueError) as error:
             if sent(document):
                 # The terminate request went out and its outcome could not be saved. The intent stays,
