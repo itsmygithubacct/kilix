@@ -11,7 +11,7 @@ its fields. Errors that are not an answer go to stderr as one `kilix pty: ...` l
 | --- | --- | --- |
 | `verified_absent` | 0 | terminated, then the listing no longer shows this ID and `started_millis` |
 | `uncertain` | 1 | re-list before retrying; `request_sent` says whether anything was sent |
-| `refused` | 3 | `own_session`, `started_mismatch` (another session now has the ID) or `declined` |
+| `refused` | 3 | `own_session`, `started_mismatch` (another session now has the ID), `cannot_bind` (an old broker cannot check the identity; nothing was done) or `declined` |
 | `not_found` | 4 | no such session; nothing was sent |
 
 Usage errors exit 2. `status` of a missing session is `not_found` with exit 4.

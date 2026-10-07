@@ -798,9 +798,17 @@ retrying), `refused` (exit 3) or `not_found` (exit 4). A terminate request that
 timed out is always `uncertain` (`terminate_timed_out`), even if the session is
 seen absent afterwards, because that absence cannot be attributed to the
 request; it is never `verified_absent` and never "nothing happened". It refuses to end the session of
-the pane it runs in (`$KITTY_PTY_BROKER_SESSION`), and with `--expect-started
-MILLIS` it refuses unless the session's `started_millis` is what the caller
-saw. On a terminal it asks first; anywhere else `--yes` is required.
+the pane it runs in (`$KITTY_PTY_BROKER_SESSION`). With `--expect-started
+MILLIS` (the `started_millis` the caller saw) the expectation travels with the
+terminate request and the session's own broker compares it with its own start
+time and ends the session only if they match, in one step: an ID that was
+reused in between is refused (`started_mismatch`, exit 3) and the replacement is
+never touched. A session whose broker predates this check cannot bind: nothing is
+done and the result is `refused` / `cannot_bind` (exit 3); a person can then end
+it with `kill ID --yes` without `--expect-started`. A plain `kill ID --yes` (no
+expectation) is the unconditional terminate it always was. `request_sent` is
+`false` in every refusal: nothing was applied. On a terminal it asks first;
+anywhere else `--yes` is required.
 
 Every command that only queries the broker is bounded: a wedged broker costs
 `--timeout` seconds, not a hang, and `list` reports it as unreachable rather
@@ -856,7 +864,7 @@ A session object, as `status` and `list` report it:
 `verify_failed`, `terminate_timed_out`, `terminate_failed`, `status_failed` or
 `status_timeout`; `request_sent` says whether a
 termination request went out); `refused` (`reason` `own_session`,
-`started_mismatch` or `declined`); `not_found`. Exit status 0, 1, 3, 4.
+`started_mismatch`, `cannot_bind` or `declined`); `not_found`. Exit status 0, 1, 3, 4.
 
 #### JSON requests
 
