@@ -690,6 +690,16 @@ def guard_seconds(text: str, default: float = 10.0) -> float:
     return value if 0 < value <= MAX_SECONDS else default      # also rejects NaN and infinity
 
 
+TIMEOUT_RANGE = (0.1, 60.0)     # seconds per broker operation, as `kilix pty --timeout` documents
+_TIMEOUT_SYNTAX = re.compile(r"[0-9]+(?:\.[0-9]+)?")
+
+
+def valid_timeout(text: str | None) -> bool:
+    """Is --timeout a plain decimal within TIMEOUT_RANGE? (Same rule as the launcher's check.)"""
+    return bool(text is not None and _TIMEOUT_SYNTAX.fullmatch(text)
+                and TIMEOUT_RANGE[0] <= float(text) <= TIMEOUT_RANGE[1])
+
+
 def main(argv: list[str]) -> int:
     if argv and argv[0] == "pane":
         return cmd_pane(argv[1:])
@@ -708,6 +718,9 @@ def main(argv: list[str]) -> int:
             or len(argv) < (1 if argv[0] in ("list", "reaped", "capabilities", "request") else 2):
         return fail("usage: kilix_pty.py [--broker B --runtime R] pane|attached|list|status|"
                     "reaped|kill|observe|journals|capabilities|request ...", EXIT_USAGE)
+    if options["--timeout"] is not None and not valid_timeout(options["--timeout"]):
+        # Every verb, including the ones that only read the disk and never reach the broker's own parser.
+        return fail(f"--timeout is in seconds, 0.1-60; got {options['--timeout']}", EXIT_USAGE)
     broker = Broker(options["--broker"] or "", options["--runtime"], options["--timeout"],
                     guard_seconds(options["--guard"]))
     return COMMANDS[argv[0]](broker, argv[1:])
