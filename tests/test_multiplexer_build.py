@@ -3,7 +3,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import tempfile
 import time
@@ -21,6 +20,12 @@ ALTERNATIVE_PARENTS=(Path('/var/tmp'),Path('/dev/shm'))
 
 def ancestor_ctimes(path):
     return [(str(parent),parent.stat().st_ctime_ns) for parent in (path,*path.parents) if parent.exists()]
+
+
+def remove_if_empty(directory):
+    """Remove a shared fixture directory only when nobody has anything in it (rmdir never removes content)."""
+    try:directory.rmdir()
+    except OSError:pass
 
 
 def quiet_fixture_parent(window=1.0):
@@ -49,15 +54,23 @@ class MultiplexerBuildTests(unittest.TestCase):
     def setUpClass(cls):
         cls.fixture_parent=quiet_fixture_parent()
         if cls.fixture_parent!=FIXTURE_PARENT:
-            cls.addClassCleanup(lambda:shutil.rmtree(cls.fixture_parent,ignore_errors=True))
+            # The directory is shared with every other class and process that falls back to it. Each test
+            # removes its own fixture; the shared directory is only removed once nothing is left in it.
+            cls.addClassCleanup(remove_if_empty,cls.fixture_parent)
 
     def setUp(self):
         # The build identity binds every parent directory of its inputs, and
         # /tmp changes whenever any process on the host adds or removes an
         # entry there, which forces a correct rebuild and hides freshness.
         # The checkout's own parents are quiet; keep the fixture below them.
-        self.fixture_parent.mkdir(mode=0o700,exist_ok=True)
-        self.temporary=tempfile.TemporaryDirectory(dir=self.fixture_parent)
+        for attempt in range(10):
+            try:
+                # Another class may remove the shared directory just after it empties; make it again.
+                self.fixture_parent.mkdir(mode=0o700,exist_ok=True)
+                self.temporary=tempfile.TemporaryDirectory(dir=self.fixture_parent)
+                break
+            except FileNotFoundError:
+                if attempt==9:raise
         self.addCleanup(self.temporary.cleanup)
         self.root=Path(self.temporary.name)
         self.trace=self.root/'trace';self.trace.touch()
