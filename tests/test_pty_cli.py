@@ -84,6 +84,7 @@ class PtyCliCase(unittest.TestCase):
         env = {key: value for key, value in sandbox_env().items() if key != "COLUMNS"}
         env.update(KILIX_STORAGE_HOME=str(self.storage), XDG_RUNTIME_DIR=str(self.xdg),
                    KITTY_PTY_BROKER_EXECUTABLE=str(self.broker), FAKE_DIR=str(self.fake),
+                   KITTY_PTY_BROKER_SESSION="aaaaaaaaaaaaaaaa",
                    HOME=str(self.tmp / "home"))
         env.update(extra)
         return env

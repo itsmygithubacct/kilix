@@ -343,7 +343,7 @@ class KillIdentityTests(PtyCliCase):
     def test_a_request_that_was_not_sent_is_not_remembered_by_the_request_route(self):
         self.reply("kill", err="x\n", rc=6)
         payload = json.dumps({"schema": "kilix.pty.request/v1", "verb": "kill", "operation_id": "e-2",
-                              "args": {"id": SESSION}})
+                              "args": {"id": SESSION, "expect_started_millis": 1700000000000}})
         result = subprocess.run(["bash", str(LAUNCHER), "pty", "request", "--yes", "--request-json", "-"],
                                 env=self.env(KITTY_PTY_BROKER_SESSION="aaaaaaaaaaaaaaaa"), input=payload,
                                 capture_output=True, text=True, timeout=60)

@@ -144,7 +144,7 @@ class RefusalTests(RequestCase):
         self.refused(request("list", bogus=1), "unknown_field")
         document = self.refused(request("status", {"id": SESSION, "color": "red"}), "unknown_field")
         self.assertIn("color", document["message"])
-        self.refused(request("kill", {"id": OTHER, "force": True}, operation_id="x"), "unknown_field")
+        self.refused(request("kill", {"id": OTHER, "expect_started_millis": 1, "force": True}, operation_id="x"), "unknown_field")
         self.refused('{"schema":"kilix.pty.request/v1","verb":"list","verb":"status"}', "not_json")
         self.refused(request("frobnicate"), "unknown_verb")
         self.refused(json.dumps({"verb": "list"}), "bad_schema")
@@ -200,7 +200,7 @@ class RefusalTests(RequestCase):
 
 class KillTests(RequestCase):
     def kill(self, args=None, operation_id="end-1", *flags, **env):
-        args = {"id": OTHER} if args is None else args
+        args = {"id": OTHER, "expect_started_millis": 1700000000000} if args is None else args
         result = self.req(request("kill", args, operation_id=operation_id), *flags, **env)
         return result.returncode, self.ok(result)
 
@@ -215,7 +215,8 @@ class KillTests(RequestCase):
         self.assertEqual((code, document["result"]), (0, "verified_absent"))
 
     def test_kill_needs_an_operation_id(self):
-        payload = json.dumps({"schema": SCHEMA, "verb": "kill", "args": {"id": OTHER}})
+        payload = json.dumps({"schema": SCHEMA, "verb": "kill",
+                              "args": {"id": OTHER, "expect_started_millis": 1700000000000}})
         document = self.ok(self.req(payload, "--yes"))
         self.assertEqual(document["reason"], "operation_id_required")
         self.assertEqual(self.calls(), [])
@@ -224,15 +225,15 @@ class KillTests(RequestCase):
         self.vanishes()
         result = subprocess.run(
             ["bash", str(LAUNCHER), "pty", "request", "--yes", "--request-json", "-"],
-            env=self.env(), capture_output=True, text=True, timeout=60,
-            input=request("kill", {"id": OTHER}, operation_id="end-1"))
+            env=self.env(KITTY_PTY_BROKER_SESSION=""), capture_output=True, text=True, timeout=60,
+            input=request("kill", {"id": OTHER, "expect_started_millis": 1700000000000}, operation_id="end-1"))
         document = self.ok(result)
         self.assertEqual((result.returncode, document["reason"]), (3, "caller_unidentified"))
         self.assertEqual(self.kills(), [])
 
     def test_the_callers_own_session_is_refused(self):
         self.vanishes()
-        code, document = self.kill({"id": ME}, "end-1", "--yes")
+        code, document = self.kill({"id": ME, "expect_started_millis": 1700000000000}, "end-1", "--yes")
         self.assertEqual((code, document["result"], document["reason"]), (3, "refused", "own_session"))
         self.assertEqual(self.kills(), [])
 
@@ -260,10 +261,10 @@ class KillTests(RequestCase):
         self.vanishes()
         self.kill(None, "end-1", "--yes")
         (self.fake / "calls").unlink()
-        code, document = self.kill({"id": OTHER, "expect_started_millis": 1700000000000}, "end-1", "--yes")
+        code, document = self.kill({"id": OTHER, "expect_started_millis": 1700000000001}, "end-1", "--yes")
         self.assertEqual((code, document["reason"]), (3, "operation_id_reused"))
         self.assertEqual(self.calls(), [])
-        code, document = self.kill({"id": "cccccccccccccccc"}, "end-1", "--yes")
+        code, document = self.kill({"id": "cccccccccccccccc", "expect_started_millis": 1700000000000}, "end-1", "--yes")
         self.assertEqual((code, document["reason"]), (3, "operation_id_reused"))
 
     def test_an_uncertain_kill_is_remembered_and_never_resent(self):

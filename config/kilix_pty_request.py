@@ -55,6 +55,10 @@ EXAMPLES = {
 }
 
 ID = {"name": "id", "type": "string", "note": "full session ID, never a prefix"}
+PANE_ID = {"name": "pane_id", "type": "integer", "min": 0, "max": 2 ** 31 - 1}
+EXPECT = {"name": "expect_started_millis", "type": "integer", "unit": "milliseconds", "min": 0,
+          "max": 2 ** 63 - 1, "required": True,
+          "note": "started_millis from the last list/status; the broker refuses if it differs"}
 BOUNDS = [{"name": "max_lines", "type": "integer", "unit": "lines", "min": LINES[0], "max": LINES[1],
            "default": 200, "note": "or max_bytes, not both"},
           {"name": "max_bytes", "type": "integer", "unit": "bytes", "min": BYTES[0], "max": BYTES[1],
@@ -62,15 +66,13 @@ BOUNDS = [{"name": "max_lines", "type": "integer", "unit": "lines", "min": LINES
           {"name": "text", "type": "boolean", "default": False, "note": "true: what the pane showed, not raw bytes"}]
 VERBS = {
     "list": ([], False),
-    "status": ([dict(ID, required="id or pane_id"), {"name": "pane_id", "type": "integer"}], False),
-    "pane": ([{"name": "pane_id", "type": "integer", "required": True}], False),
+    "status": ([dict(ID, required="id or pane_id"), dict(PANE_ID)], False),
+    "pane": ([dict(PANE_ID, required=True)], False),
     "reaped": ([], False),
     "journals": ([dict(ID, note="omit to list the archive")] + BOUNDS, False),
     "observe": ([dict(ID, required=True), {"name": "from", "type": "string", "note": "cursor EPOCH:OFFSET"}] + BOUNDS,
                 False),
-    "kill": ([dict(ID, required=True),
-              {"name": "expect_started_millis", "type": "integer", "unit": "milliseconds",
-               "note": "started_millis from the last list/status; refuses if it differs"}], True),
+    "kill": ([dict(ID, required=True), dict(EXPECT)], True),
 }
 ALLOWED_ARGS = {verb: {arg["name"] for arg in args} for verb, (args, _) in VERBS.items()}
 TOP_LEVEL = {"schema", "verb", "args", "operation_id", "timeout_seconds"}
@@ -87,7 +89,9 @@ def capabilities_document(broker) -> dict:
     return broker.envelope(
         request_schema=REQUEST_SCHEMA, max_request_bytes=MAX_REQUEST,
         top_level={"timeout_seconds": {"type": "number", "unit": "seconds", "min": TIMEOUT[0],
-                                       "max": TIMEOUT[1], "default": 2}, "operation_id": "kill only"},
+                                       "max": TIMEOUT[1], "default": 2, "default_list": 1},
+                   "operation_id": "kill only"},
+        names="args are request fields; the plain CLI's flags are --lines/--bytes/--text/--expect-started",
         command="kilix pty request [--yes] --request-json -|FILE", verbs=verbs,
         not_available=["attach", "reap"],
         rules=["identity is the full session ID from list or pane; never a prefix or a title",
@@ -159,9 +163,10 @@ def validate(raw: bytes) -> dict:
     if not isinstance(request, dict):
         raise Refusal("not_an_object", "the request must be a JSON object", heredoc())
     verb = request.get("verb")
+    known = isinstance(verb, str) and verb in VERBS      # a list or object is not even hashable
     if request.get("schema") != REQUEST_SCHEMA:
-        raise Refusal("bad_schema", f'"schema" must be "{REQUEST_SCHEMA}"', heredoc(verb if verb in VERBS else None))
-    if verb not in VERBS:
+        raise Refusal("bad_schema", f'"schema" must be "{REQUEST_SCHEMA}"', heredoc(verb if known else None))
+    if not known:
         raise Refusal("unknown_verb", f"unknown verb {json.dumps(verb)[:40]}; use one of {', '.join(VERBS)}",
                       heredoc())
     unknown = sorted(set(request) - TOP_LEVEL)
@@ -198,10 +203,12 @@ def validate(raw: bytes) -> dict:
         raise Refusal("bad_type", '"text" must be true or false', '"text": true')
     if "from" in args and not (isinstance(args["from"], str) and re.fullmatch(r"\d+:\d+", args["from"])):
         raise Refusal("bad_type", '"from" must look like EPOCH:OFFSET, from a cursor you were given', '"from": "0:28"')
-    required = {"pane": ["pane_id"], "observe": ["id"], "kill": ["id"]}.get(verb, [])
+    required = {"pane": ["pane_id"], "observe": ["id"], "kill": ["id", "expect_started_millis"]}.get(verb, [])
     for key in required:
         if key not in args:
-            raise Refusal("missing_field", f"{verb} needs args.{key}", example_for(verb))
+            raise Refusal("missing_field", f"{verb} needs args.{key}"
+                          + (" (the started_millis from your last list or status; a kill is bound to it)"
+                             if key == "expect_started_millis" else ""), example_for(verb))
     if verb == "status" and (("id" in args) == ("pane_id" in args)):
         raise Refusal("missing_field", "status needs exactly one of args.id or args.pane_id", example_for("status"))
     if verb == "kill" and "operation_id" not in request:
@@ -255,6 +262,7 @@ class Store:
         return record if isinstance(record, dict) and record.get("operation_id") == operation_id else None
 
     def write(self, operation_id: str, record: dict) -> None:
+        """Replace the record durably: the file is fsynced before the rename and the directory after."""
         path = self.path(operation_id)
         scratch = f"{path}.{os.getpid()}.tmp"
         descriptor = os.open(scratch, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
@@ -263,15 +271,37 @@ class Store:
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(scratch, path)
+        self.sync_directory()
         files = sorted((os.path.getmtime(os.path.join(self.directory, name)), name)
                        for name in os.listdir(self.directory)
                        if name.startswith("op-") and name.endswith(".json"))
         for _, name in files[:max(0, len(files) - STORE_LIMIT)]:
             if os.path.join(self.directory, name) != path:
-                try:
-                    os.unlink(os.path.join(self.directory, name))
-                except OSError:
-                    pass
+                for victim in (name, name[:-len(".json")] + ".lock"):
+                    try:
+                        os.unlink(os.path.join(self.directory, victim))
+                    except OSError:
+                        pass
+
+    def sync_directory(self) -> None:
+        descriptor = os.open(self.directory, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+    def forget(self, operation_id: str) -> None:
+        """Drop a reservation that sent nothing, so the same id can be tried again."""
+        try:
+            os.unlink(self.path(operation_id))
+        except FileNotFoundError:
+            pass
+        self.sync_directory()
+
+    def owner_lock(self, operation_id: str) -> int:
+        """The per-operation lock: held (flock) for as long as a process is dispatching it."""
+        path = self.path(operation_id)[:-len(".json")] + ".lock"
+        return os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
 
 
 def fingerprint(request: dict) -> str:
@@ -354,8 +384,8 @@ def run_verb(broker, request, state):
 
 def run_kill(broker, request, state):
     args = request["args"]
-    extra = ["--expect-started", str(args["expect_started_millis"])] if "expect_started_millis" in args else []
-    status, document, err = call(pty.cmd_kill, broker, [args["id"], "--yes", "--json", *extra])
+    status, document, err = call(pty.cmd_kill, broker, [args["id"], "--yes", "--json", "--expect-started",
+                                                         str(args["expect_started_millis"])])
     if document is None:
         status, document = failure(broker, status, err, "no_receipt", id=args["id"], request_sent=False)
     return status, document
@@ -370,6 +400,71 @@ def sent(document) -> bool:
     return document.get("request_sent") is True
 
 
+WAIT_FOR_OWNER = 30.0     # seconds a caller waits for another process dispatching the same operation
+
+
+def interrupted(broker, request, operation_id):
+    return broker.envelope(
+        result="uncertain", id=request["args"]["id"], request_sent=True, reason="interrupted",
+        message="an earlier attempt with this operation_id began and did not finish, so the terminate request "
+                "may or may not have been sent; re-list before retrying, with a new operation_id",
+        operation_id=operation_id)
+
+
+def reserve(broker, request, store, key):
+    """Take the operation, or return the receipt to replay.
+
+    Returns (owner_fd, None) when this process now owns it, with a durable `intent` on disk
+    before anything is done; or (None, (status, receipt)) for a replay or a refusal.
+    """
+    operation_id = request["operation_id"]
+    deadline = time.monotonic() + WAIT_FOR_OWNER
+    while True:
+        with store.locked():
+            record = store.read(operation_id)
+            if record is None:
+                owner = store.owner_lock(operation_id)
+                fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)      # nobody can hold it: no record
+                store.write(operation_id, {"fingerprint": key, "phase": "intent", "operation_id": operation_id,
+                                           "receipt": None, "pid": os.getpid(),
+                                           "updated_millis": int(time.time() * 1000)})
+                return owner, None
+            if record.get("fingerprint") != key:
+                raise Refusal("operation_id_reused", f"operation_id {operation_id!r} was used for a different request",
+                              "use a new operation_id for different arguments", 3)
+            receipt = record.get("receipt")
+            if record.get("phase") == "done" and isinstance(receipt, dict):
+                return None, (pty_exit(receipt), {**receipt, "duplicate": True})
+            probe = store.owner_lock(operation_id)
+            try:
+                fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                pass                # a live process owns it: wait for it below
+            else:               # an intent that no process owns: its dispatcher died
+                gone = {**interrupted(broker, request, operation_id)}
+                store.write(operation_id, {**record, "phase": "done", "receipt": gone,
+                                           "updated_millis": int(time.time() * 1000)})
+                return None, (1, {**gone, "duplicate": True})
+            finally:
+                os.close(probe)
+        # Another process is dispatching this very operation: let it finish, then replay its receipt.
+        waiting = store.owner_lock(operation_id)
+        try:
+            while time.monotonic() < deadline:
+                try:
+                    fcntl.flock(waiting, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    time.sleep(0.05)
+            else:
+                return None, (1, {**broker.envelope(
+                    result="uncertain", id=request["args"]["id"], request_sent=True, reason="in_progress",
+                    message="another call with this operation_id is still running; ask again with the same "
+                            "operation_id to get its receipt", operation_id=operation_id), "duplicate": True})
+        finally:
+            os.close(waiting)
+
+
 def execute(broker, request, yes, state):
     if request["verb"] != "kill":
         return run_verb(broker, request, state)
@@ -379,35 +474,30 @@ def execute(broker, request, yes, state):
     if not os.environ.get("KITTY_PTY_BROKER_SESSION"):
         raise Refusal("caller_unidentified", "KITTY_PTY_BROKER_SESSION is not set, so this cannot tell "
                       "whether the target is your own session; kill refuses",
-                      "run it from a Kilix pane, or end the session with: kilix pty kill ID --yes", 3)
+                      "run it from a Kilix pane; if you cannot, stop and report it: a person can end the session "
+                      "with kilix pty kill ID --yes", 3)
     operation_id, store, key = request["operation_id"], Store(state), fingerprint(request)
     try:
-        with store.locked():
-            record = store.read(operation_id)
-            if record is not None:
-                if record.get("fingerprint") != key:
-                    raise Refusal("operation_id_reused", f"operation_id {operation_id!r} was used for a different request",
-                                  "use a new operation_id for different arguments", 3)
-                receipt = record.get("receipt")
-                if record.get("phase") == "done" and isinstance(receipt, dict):
-                    return pty_exit(receipt), {**receipt, "duplicate": True}
-                # A request was recorded as begun and never finished: whether it landed is unknown.
-                return 1, {**broker.envelope(
-                    result="uncertain", id=request["args"]["id"], request_sent=True, reason="interrupted",
-                    message="an earlier attempt with this operation_id began and did not finish; "
-                            "re-list before retrying", operation_id=operation_id), "duplicate": True}
-            probe = {"fingerprint": key, "phase": "intent", "operation_id": operation_id,
-                     "receipt": None, "updated_millis": int(time.time() * 1000)}
+        owner, replay = reserve(broker, request, store, key)
     except OSError as error:
         raise Refusal("store_unavailable", f"the operation store cannot be used: {error.strerror or error}",
-                      "fix the state directory's permissions, or use: kilix pty kill ID --yes", 3)
-    # Look before recording, so a refusal that sent nothing can be retried under the same id.
-    status, document = run_kill(broker, request, state)
-    document = {**document, "operation_id": operation_id, "duplicate": False}
-    if sent(document):
+                      "fix the state directory's permissions; a person can end the session with "
+                      "kilix pty kill ID --yes", 3)
+    if replay is not None:
+        return replay
+    try:
+        # The intent is on disk before this runs; a crash from here on replays as `interrupted`.
+        status, document = run_kill(broker, request, state)
+        document = {**document, "operation_id": operation_id, "duplicate": False}
         with store.locked():
-            store.write(operation_id, {**probe, "phase": "done", "receipt": document,
-                                       "updated_millis": int(time.time() * 1000)})
+            if sent(document):
+                store.write(operation_id, {"fingerprint": key, "phase": "done", "operation_id": operation_id,
+                                           "receipt": document, "pid": os.getpid(),
+                                           "updated_millis": int(time.time() * 1000)})
+            else:
+                store.forget(operation_id)     # nothing was sent: the same id may be tried again
+    finally:
+        os.close(owner)                        # releases the per-operation lock
     return status, document
 
 

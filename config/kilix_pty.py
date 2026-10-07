@@ -311,33 +311,53 @@ def session_line(session: dict) -> str:
 
 
 def cmd_kill(broker: Broker, argv: list[str]) -> int:
-    ident, yes, as_json, expect = argv[0], False, False, None
+    ident, yes, as_json, expect, skip_caller = argv[0], False, False, None, False
     rest = argv[1:]
     while rest:
         flag = rest.pop(0)
         if flag == "--yes":
             yes = True
+        elif flag == "--no-caller-check":
+            skip_caller = True
         elif flag == "--json":
             as_json = True
         elif flag == "--expect-started" and rest and rest[0].isdecimal():
             expect = int(rest.pop(0))
         else:
-            return fail("usage: kilix pty kill ID [--yes] [--expect-started MILLIS] [--json]",
-                        EXIT_USAGE)
+            return fail("usage: kilix pty kill ID [--yes] [--expect-started MILLIS] [--json]"
+                        " [--no-caller-check]", EXIT_USAGE)
     sent = False
 
-    def done(result: str, code: int, message: str, reason: str | None = None, **extra) -> int:
+    def done(result: str, code: int, message: str, reason: str | None = None, hint: str | None = None,
+             **extra) -> int:
+        if hint:
+            extra["hint"] = hint        # every refusal says one accepted way forward
         if as_json:
             emit(broker.envelope(result=result, id=ident, request_sent=sent,
                                  reason=reason, message=message, **extra))
         else:
             print(f"kilix pty kill {ident}: {result}: {message}",
                   file=sys.stdout if code == 0 else sys.stderr)
+            if hint:
+                print(f"kilix pty kill {ident}: hint: {hint}", file=sys.stderr)
         return code
+
+    again = f"kilix pty status {ident} --json"
+    caller = os.environ.get("KITTY_PTY_BROKER_SESSION", "")
+    if not (SESSION_ID.fullmatch(caller) and caller not in (".", "..")) and not os.isatty(0) \
+            and not skip_caller:
+        # Off a terminal with no way to tell whose pane this is, the own-session check would
+        # silently not apply: an agent or script must stop here, a person at a terminal is asked.
+        return done("refused", EXIT_REFUSED, "KITTY_PTY_BROKER_SESSION is not set to this pane's session, so"
+                    " this cannot tell whether the target is your own session; kill refuses",
+                    "caller_unidentified",
+                    "run it from a Kilix pane; if you cannot, stop and report that the caller cannot be"
+                    " identified (a person can pass --no-caller-check)")
 
     if os.environ.get("KITTY_PTY_BROKER_SESSION") == ident:
         return done("refused", EXIT_REFUSED, "that is this pane's own session; ending it would"
-                    " end this program. Run the kill from another pane", "own_session")
+                    " end this program. Run the kill from another pane", "own_session",
+                    "run the kill from another pane or a plain terminal; never end your own session")
     status, out, err = broker.call("status", ident, "--json")
     if status is None:
         return done("uncertain", 1, "the broker did not answer; nothing was sent", "status_timeout")
@@ -353,6 +373,7 @@ def cmd_kill(broker: Broker, argv: list[str]) -> int:
         return done("refused", EXIT_REFUSED,
                     f"started_millis is {started}, not the expected {expect}: another session"
                     " now has this ID", "started_mismatch",
+                    f"read it again with `{again}`; kill only if the ID still names the session you meant",
                     started_millis=started, expected_started_millis=expect)
     if not yes:
         if not (os.isatty(0) and os.isatty(2)):
@@ -360,7 +381,9 @@ def cmd_kill(broker: Broker, argv: list[str]) -> int:
         sys.stderr.write(f"{session_line(seen)}\nEnd this session and the program in it? [y/N] ")
         sys.stderr.flush()
         if sys.stdin.readline().strip().lower() not in ("y", "yes"):
-            return done("refused", EXIT_REFUSED, "not ended", "declined", started_millis=started)
+            return done("refused", EXIT_REFUSED, "not ended", "declined",
+                        f"answer y at the prompt, or pass --yes: kilix pty kill {ident} --yes",
+                        started_millis=started)
     # With an expectation the broker itself compares its own start time and ends the
     # session only if it matches, in the same step: a status check followed by a plain
     # terminate cannot tell a session replaced in between. Without one, today's plain kill.
@@ -369,11 +392,13 @@ def cmd_kill(broker: Broker, argv: list[str]) -> int:
     if bound and terminate_status == BROKER_MISMATCH:
         return done("refused", EXIT_REFUSED, f"{ident} is no longer the session that started at {expect}"
                     " (it was replaced); the broker did nothing", "started_mismatch",
+                    f"read it again with `{again}`; kill only if the ID still names the session you meant",
                     started_millis=started, expected_started_millis=expect)
     if bound and terminate_status == BROKER_CANNOT_BIND:
         return done("refused", EXIT_REFUSED, "this session's broker is an older build that cannot check its"
                     " identity, so nothing was done; a person can end it with"
                     f" `kilix pty kill {ident} --yes` (without --expect-started)", "cannot_bind",
+                    f"a person can run: kilix pty kill {ident} --yes   (an agent stops here and reports)",
                     started_millis=started)
     if terminate_status == BROKER_NOT_SENT:
         return done("uncertain", 1, "the broker did not accept the connection in time, so the terminate request"

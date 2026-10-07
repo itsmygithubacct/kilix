@@ -396,8 +396,10 @@ usage: $_self pty [--timeout SECONDS] [COMMAND]
   observe ID --once [--from EPOCH:OFFSET] [--lines N | --bytes N] [--text] [--json]
                                bounded snapshot, no terminal needed (default 200 lines / 64 KiB)
   attach ID [--resume EPOCH:OFFSET]  take over a detached session (a terminal is required)
-  kill ID --yes [--expect-started MILLIS] [--json]
-                               end a session, then verify it is gone (asks on a terminal)
+  kill ID --yes [--expect-started MILLIS] [--json] [--no-caller-check]
+                               end a session, then verify it is gone (asks on a terminal); off a
+                               terminal it refuses unless the caller's own session is known
+                               (KITTY_PTY_BROKER_SESSION); only a person passes --no-caller-check
   path                         print the runtime directory
   pane PANE_ID                 print the session ID behind a kilix pane
   reaped [--json] | reaped path ID    dead sessions' journals still in the runtime
@@ -625,7 +627,7 @@ _kilix_pty_cli() {
           id=""
           while [ $# -gt 0 ]; do
             case "$1" in
-              --yes|--json) args+=("$1"); shift ;;
+              --yes|--json|--no-caller-check) args+=("$1"); shift ;;
               --expect-started)
                 [ $# -ge 2 ] && [[ "$2" =~ ^[0-9]+$ ]] || { _kilix_pty_usage >&2; return 2; }
                 args+=("$1" "$2"); shift 2 ;;
@@ -1154,7 +1156,10 @@ _kilix_refresh_managed_link() {
   if [ -L "$_target" ]; then
     ln -sfn "$_source" "$_target"
   elif [ ! -e "$_target" ]; then
-    ln -s "$_source" "$_target"
+    # Two launches on a fresh home race to create this link; the loser's `ln`
+    # fails with "File exists" and, under set -e, used to end its launch.
+    # Another launcher having made it is the outcome wanted.
+    ln -s "$_source" "$_target" 2>/dev/null || [ -e "$_target" ] || [ -L "$_target" ] || return 1
   fi
 }
 
