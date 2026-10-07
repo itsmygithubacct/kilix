@@ -854,15 +854,16 @@ A session object, as `status` and `list` report it:
 | `replay_complete` | boolean | the journal holds everything since the session started |
 | `rows`, `columns` | integer | the PTY's size |
 | `cwd` | string | the directory the session **started** in; never changes |
-| `cwd_now` | string or null | the program's current directory, read from `/proc`; null when unavailable |
+| `cwd_now` | string or null | the program's current directory, read from `/proc`; null when unavailable or when it was removed |
+| `cwd_now_deleted` | boolean | `true` when that directory was removed (then `cwd_now` is null); always present |
 | `command` | string | the command line, bounded |
 | `boot_id` | string or null | the machine's boot ID when read |
 | `start_ticks` | integer or null | the broker process's start time (`/proc/PID/stat`, field 22) |
 | `reachable` | boolean | present and `true` on entries of `list --json` |
 
 `kill` results: `verified_absent`; `uncertain` (`reason` `still_listed`,
-`verify_failed`, `terminate_timed_out`, `terminate_failed`, `status_failed` or
-`status_timeout`; `request_sent` says whether a
+`verify_failed`, `terminate_timed_out`, `terminate_failed`, `not_sent`,
+`status_failed` or `status_timeout`; `request_sent` says whether a
 termination request went out); `refused` (`reason` `own_session`,
 `started_mismatch`, `cannot_bind` or `declined`); `not_found`. Exit status 0, 1, 3, 4.
 

@@ -330,6 +330,28 @@ class KillIdentityTests(PtyCliCase):
         self.assertFalse((self.state / "pty-operations").exists()
                          and list((self.state / "pty-operations").glob("op-*.json")))
 
+    def test_a_terminate_that_never_connected_was_not_sent_plain_or_bound(self):
+        self.reply("kill", err="kitty-pty-broker: kill session: timed out before the request was sent; "
+                               "nothing was done\n", rc=6)
+        for flags in ((), ("--expect-started", "1700000000000")):
+            (self.fake / "calls").unlink(missing_ok=True)
+            result, receipt = self.kill(*flags)
+            self.assertEqual((result.returncode, receipt["result"], receipt["reason"]), (1, "uncertain", "not_sent"), flags)
+            self.assertFalse(receipt["request_sent"])
+            self.assertEqual(self.calls()[-1], self.kill_calls()[0], "nothing is verified after a request that was not sent")
+
+    def test_a_request_that_was_not_sent_is_not_remembered_by_the_request_route(self):
+        self.reply("kill", err="x\n", rc=6)
+        payload = json.dumps({"schema": "kilix.pty.request/v1", "verb": "kill", "operation_id": "e-2",
+                              "args": {"id": SESSION}})
+        result = subprocess.run(["bash", str(LAUNCHER), "pty", "request", "--yes", "--request-json", "-"],
+                                env=self.env(KITTY_PTY_BROKER_SESSION="aaaaaaaaaaaaaaaa"), input=payload,
+                                capture_output=True, text=True, timeout=60)
+        receipt = json.loads(result.stdout)
+        self.assertEqual((result.returncode, receipt["reason"], receipt["request_sent"]), (1, "not_sent", False))
+        self.assertFalse((self.state / "pty-operations").exists()
+                         and list((self.state / "pty-operations").glob("op-*.json")))
+
 
 class ContractTests(PtyCliCase):
     """F8: the exit table, the --timeout range and one-line errors hold for every verb."""

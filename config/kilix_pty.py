@@ -43,6 +43,9 @@ EXIT_USAGE, EXIT_REFUSED, EXIT_NOT_FOUND = 2, 3, 4
 #: `kill ID --expect-started MILLIS` exits 3 when the ID now names another session and 5 when
 #: the broker is too old to check; either way it did nothing.
 BROKER_MISMATCH, BROKER_CANNOT_BIND = 3, 5
+#: `kill` exits 6 when its deadline expired while the broker was still connecting: the request
+#: was never sent and nothing was done (exit 1 after sending means it may still act).
+BROKER_NOT_SENT = 6
 #: `ID.STARTED_MILLIS.journal.zst`; the ID may itself contain dots.
 #: A different journal that would have taken a name already in use gets `+HASH`
 #: (12 hex digits of its own SHA-256) after the start time; `+` is not an ID character.
@@ -372,6 +375,10 @@ def cmd_kill(broker: Broker, argv: list[str]) -> int:
                     " identity, so nothing was done; a person can end it with"
                     f" `kilix pty kill {ident} --yes` (without --expect-started)", "cannot_bind",
                     started_millis=started)
+    if terminate_status == BROKER_NOT_SENT:
+        return done("uncertain", 1, "the broker did not accept the connection in time, so the terminate request"
+                    " was not sent and nothing was done; re-list, then retry if the session is still wanted gone",
+                    "not_sent", started_millis=started)
     sent = True
     # A reply that never came (the guard, or the broker's own deadline) means the
     # request MAY have been applied: whatever is seen afterwards, this request
