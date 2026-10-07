@@ -827,7 +827,10 @@ is given, and waits at most that long for another build of the broker to finish
 before it can look the executable up; the transcript pass gives its liveness
 query 5 (`KILIX_PTY_LIST_TIMEOUT`) and its look-up 30. `--timeout` is checked
 for every command (0.1-60 seconds, exit 2 otherwise), including those that
-only read the disk. Broker errors are relayed as `kilix pty: ...` lines.
+only read the disk. Broker errors are relayed as `kilix pty: ...` lines. These
+environment settings are positive numbers of seconds; zero, a negative number,
+an empty or non-numeric value is ignored in favour of the default, because a
+zero duration would otherwise mean "no deadline" to `timeout`.
 Exit status: `0` success, `1`
 failure or uncertain, `2` usage error, `3` refused, `4` not found (`kill`,
 `status`). `kilix pty help` prints the usage to stdout.

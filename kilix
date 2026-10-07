@@ -314,6 +314,20 @@ print('archive=%d' % settings.transcript_archive_total())
 " 2>/dev/null)
 }
 
+# A positive number of seconds from the environment, else the default. Zero
+# ("0", "0.0", "00"), negatives, an empty value and garbage are all replaced by
+# the default: GNU timeout reads a duration of zero as "no deadline", and a
+# setting that exists to bound a wait must never be able to remove the bound.
+_kilix_pty_seconds() {
+  local value="${1:-}" default="$2"
+  if [[ "$value" =~ ^([0-9]+([.][0-9]*)?|[.][0-9]+)$ ]] \
+       && awk -v v="$value" 'BEGIN { exit !(v > 0) }'; then
+    printf '%s\n' "$value"
+  else
+    printf '%s\n' "$default"
+  fi
+}
+
 # The broker executable: the one a Kilix pane exported, else the pinned build.
 # `kilix pty` passes 0 so a missing build says why; the transcript pass passes 1
 # because it has nobody to tell.
@@ -328,10 +342,9 @@ _kilix_pty_broker_path() {
     # transcript pass holds a lock while it looks, and `kilix pty` promises not
     # to hang. A cold compile is allowed to take a while for a person at the
     # command line, not for the background pass.
-    if [ "$quiet" = 1 ]; then wait="${KILIX_PTY_LIST_TIMEOUT:-5}"; whole=30
-    else wait="${guard:-${KILIX_PTY_GUARD:-10}}"; whole="${KILIX_PTY_BUILD_TIMEOUT:-600}"; fi
-    case "$wait" in ''|*[!0-9.]*) wait=10 ;; esac
-    case "$whole" in ''|*[!0-9.]*) whole=600 ;; esac
+    if [ "$quiet" = 1 ]; then wait="$(_kilix_pty_seconds "${KILIX_PTY_LIST_TIMEOUT:-}" 5)"; whole=30
+    else wait="$(_kilix_pty_seconds "${guard:-${KILIX_PTY_GUARD:-}}" 10)"
+         whole="$(_kilix_pty_seconds "${KILIX_PTY_BUILD_TIMEOUT:-}" 600)"; fi
     if [ "$quiet" = 1 ]; then
       broker="$(KILIX_PTY_BUILD_LOCK_TIMEOUT="$wait" timeout -k 5 "$whole" \
         "$KILIX_HOME/scripts/build-pty-broker.sh" --print-path 2>/dev/null)" || return 1
@@ -357,10 +370,10 @@ _kilix_pty_broker_path() {
 # directory is live whether or not `list` could reach it. `list` still runs
 # first, for that reaping.
 _kilix_transcript_live_ids() {
-  local broker runtime ids session limit="${KILIX_PTY_LIST_TIMEOUT:-5}"
+  local broker runtime ids session limit
+  limit="$(_kilix_pty_seconds "${KILIX_PTY_LIST_TIMEOUT:-}" 5)"
   # A broker that never answers must not hold the reaper's lock: its list is
   # given a few seconds, and no answer means the live set is unknown.
-  case "$limit" in ''|*[!0-9.]*) limit=5 ;; esac
   broker="$(_kilix_pty_broker_path 1)" || return 1
   runtime="$(_kilix_resolve_pty_broker_runtime)" || return 1
   ids="$(timeout -k 2 "$limit" "$broker" --runtime-dir "$runtime" list --json 2>/dev/null \
@@ -467,10 +480,10 @@ _kilix_pty_reaped_count() {
 }
 
 _kilix_pty_cli() {
-  local broker runtime install_only=0 verb id guard="${KILIX_PTY_GUARD:-10}" state
+  local broker runtime install_only=0 verb id guard state
   local -a tflag=() args=()
   local tvalue="" json=0
-  case "$guard" in ''|*[!0-9.]*) guard=10 ;; esac
+  guard="$(_kilix_pty_seconds "${KILIX_PTY_GUARD:-}" 10)"
   while [ $# -gt 0 ]; do
     case "$1" in
       --install-only) install_only=1; shift ;;
@@ -683,8 +696,8 @@ _kilix_pty_cli() {
 # A journal already archived under this name: is it this very journal? Bounded
 # like every other zstd call here, so a hung decompressor cannot stall a pass.
 _kilix_pty_archive_matches() {
-  local archived="$1" original="$2" limit="${KILIX_PTY_ZSTD_TIMEOUT:-600}"
-  case "$limit" in ''|*[!0-9.]*) limit=600 ;; esac
+  local archived="$1" original="$2" limit
+  limit="$(_kilix_pty_seconds "${KILIX_PTY_ZSTD_TIMEOUT:-}" 600)"
   [ -f "$archived" ] && [ ! -L "$archived" ] || return 1
   timeout -k 2 "$limit" zstd -dcq --long=27 -- "$archived" 2>/dev/null \
     | cmp -s -- - "$original"
@@ -758,11 +771,11 @@ _kilix_pty_journal_archive() (
   local runtime="$1" quiet="${2:-0}" report="${3:-changes}"
   local reaped="$runtime/reaped" dest="$KILIX_STATE_DIRECTORY/pty-journals"
   local budget="${KILIX_PTY_JOURNAL_BUDGET:-268435456}"
-  local zlimit="${KILIX_PTY_ZSTD_TIMEOUT:-600}"
+  local zlimit
+  zlimit="$(_kilix_pty_seconds "${KILIX_PTY_ZSTD_TIMEOUT:-}" 600)"
   local have=0 file base id started meta stem target tmp tmp_meta raw packed used size tag line
-  local archived=0 already=0 distinct=0 evicted=0 errors=0 lockrc=0 variant variants
+  local archived=0 already=0 distinct=0 evicted=0 errors=0 lockrc=0 variant
   case "$budget" in ''|*[!0-9]*) budget=268435456 ;; esac
-  case "$zlimit" in ''|*[!0-9.]*) zlimit=600 ;; esac
   [ "$budget" -gt 0 ] || return 0
   if [ -d "$reaped" ] && [ ! -L "$reaped" ] \
        && [ "$(stat -c '%u' -- "$reaped" 2>/dev/null)" = "$(id -u)" ]; then
@@ -800,14 +813,17 @@ _kilix_pty_journal_archive() (
       # Is this very journal already retained under a variant name? The canonical
       # name may be vacant (the older journal that held it was evicted) and a retry
       # must still not make a second copy.
-      variants=("$dest/$stem"+*.journal.zst)
-      for variant in "${variants[@]}"; do
-        [ -f "$variant" ] && [ ! -L "$variant" ] || continue
-        if _kilix_pty_archive_matches "$variant" "$file"; then
-          target="$variant"; stem="${variant##*/}"; stem="${stem%.journal.zst}"
-          break
+      # Only the exact name this journal's own hash gives is ever considered: a neighbour such as
+      # arc.100+notes.journal.zst is not an archive and is never adopted or touched.
+      if compgen -G "$dest/$stem+*.journal.zst" >/dev/null; then
+        tag="$(sha256sum -- "$file" 2>/dev/null | cut -c1-12)"
+        variant="$dest/$stem+$tag.journal.zst"
+        if [ -n "$tag" ] && [ -f "$variant" ] && [ ! -L "$variant" ] \
+             && _kilix_pty_archive_matches "$variant" "$file"; then
+          target="$variant"; stem="$stem+$tag"
         fi
-      done
+        tag=""
+      fi
       if [ "$target" = "$dest/$id.$started.journal.zst" ] && { [ -e "$target" ] || [ -L "$target" ]; } \
            && ! _kilix_pty_archive_matches "$target" "$file"; then
         # Same name, different journal: keep both, under the new one's own hash.
@@ -984,8 +1000,8 @@ _kilix_transcript_pass() (
     [ "$quiet" = 1 ] || echo "kilix: flock is required to prune transcripts" >&2
     return 0
   }
-  local lockrc=0 zlimit="${KILIX_PTY_ZSTD_TIMEOUT:-120}"
-  case "$zlimit" in ''|*[!0-9.]*) zlimit=120 ;; esac
+  local lockrc=0 zlimit
+  zlimit="$(_kilix_pty_seconds "${KILIX_PTY_ZSTD_TIMEOUT:-}" 120)"
   _kilix_hold_lock "$KILIX_STATE_DIRECTORY/transcript-reaper.lock" || lockrc=$?
   case "$lockrc" in
     0) ;;
