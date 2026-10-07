@@ -15,6 +15,7 @@
 #   ./kilix fullscreen        # toggle this tab's OS window fullscreen
 #   ./kilix switch [--scope S] # go to a page or pane (F12; scope all|page|other)
 #   ./kilix panes [COMMAND]    # pane activity/session dashboard, CLI or TUI
+#   ./kilix pty [COMMAND]      # persistent pane sessions: list, observe, attach, kill
 #   ./kilix new-pane [DIR]    # open a pane left/right/down of this one
 #   ./kilix new-tab [--title T] # open a new page
 #   ./kilix mux [name]        # open a tmux-backed kilix tab for real attach/view
@@ -364,6 +365,199 @@ except Exception:
       printf '%s\n' "${session##*/}"
     done
   fi
+}
+
+# --- kilix pty ---------------------------------------------------------------
+#
+# The sockets belong to the broker; these are the questions people and agents
+# ask of them. Every non-interactive call is bounded twice: the broker's own
+# per-operation deadline (its --timeout) and, under that, `timeout` here, so a
+# wedged broker costs a caller seconds and never hangs it.
+
+_kilix_pty_usage() {
+  cat <<USAGE
+usage: $_self pty [--timeout SECONDS] [COMMAND]
+  (none), tui                  open the interactive session manager
+  list [--json] [--all]        sessions in this runtime; --all adds unreachable ones
+  status ID|--pane PANE_ID [--json]
+  observe ID [--from EPOCH:OFFSET]   watch read-only; Ctrl-] leaves
+  attach ID [--resume EPOCH:OFFSET]  take over a detached session
+  kill ID [--yes]              end a session and its program (asks on a terminal)
+  path                         print the runtime directory
+  pane PANE_ID                 print the session ID behind a kilix pane
+  reaped [--json] | reaped path ID    dead sessions' journals still in the runtime
+  help
+--timeout bounds each broker call (decimal seconds, 0.1-60; default 2).
+Exit status: 0 success, 1 failure or refusal, 2 usage error.
+USAGE
+}
+
+_kilix_pty_valid_id() {
+  [[ "$1" =~ ^[A-Za-z0-9._-]{1,64}$ ]] && [ "$1" != . ] && [ "$1" != .. ]
+}
+
+# A bounded, non-interactive broker call. Dynamic scope: the caller's
+# `broker`, `runtime`, `tflag` and `guard`.
+_kilix_pty_call() {
+  local rc=0
+  timeout -k 2 "$guard" "$broker" --runtime-dir "$runtime" "${tflag[@]}" "$@" || rc=$?
+  if [ "$rc" = 124 ] || [ "$rc" = 137 ]; then
+    echo "kilix pty: the broker did not answer within ${guard}s" >&2
+    return 1
+  fi
+  return "$rc"
+}
+
+# The broker session of a kilix pane, from the authenticated pane listing.
+_kilix_pty_pane_session() {
+  local kitten="${KILIX_KITTEN:-}"
+  [[ "$1" =~ ^[0-9]+$ ]] || { echo "usage: $_self pty pane PANE_ID" >&2; return 2; }
+  if [ ! -x "$kitten" ]; then
+    kitten=""
+    if [ -x "$FORK" ]; then kitten="$(dirname "$FORK")/kitten"
+    elif [ -x "$PREBUILT" ]; then kitten="$(dirname "$PREBUILT")/kitten"
+    fi
+  fi
+  [ -x "$kitten" ] || {
+    echo "kilix pty: kitten not found; build the engine first" >&2
+    return 1
+  }
+  KILIX_KITTEN="$kitten" python3 "$KILIX_HOME/config/kilix_pty.py" pane "$1"
+}
+
+_kilix_pty_reaped_count() {
+  local count=0 file
+  for file in "$1/reaped"/*.journal; do
+    [ -f "$file" ] && count=$((count + 1))
+  done
+  printf '%s\n' "$count"
+}
+
+_kilix_pty_cli() {
+  local broker runtime install_only=0 verb id guard="${KILIX_PTY_GUARD:-10}" state
+  local -a tflag=() args=()
+  case "$guard" in ''|*[!0-9.]*) guard=10 ;; esac
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --install-only) install_only=1; shift ;;
+      --timeout)
+        [ $# -ge 2 ] && [[ "$2" =~ ^[0-9]+([.][0-9]+)?$ ]] || {
+          echo "usage: $_self pty --timeout SECONDS (decimal seconds)" >&2
+          return 2
+        }
+        tflag=(--timeout "$2"); guard=75; shift 2 ;;
+      -h|--help|help) _kilix_pty_usage; return 0 ;;
+      *) break ;;
+    esac
+  done
+  verb="${1:-tui}"
+  [ $# -eq 0 ] || shift
+
+  case "$verb" in
+    tui)
+      [ $# -eq 0 ] || { _kilix_pty_usage >&2; return 2; }
+      KITTY_PTY_BROKER_EXECUTABLE="$(
+        "$KILIX_HOME/scripts/build-pty-broker.sh" --print-path
+      )" || return 1
+      [ -x "$KITTY_PTY_BROKER_EXECUTABLE" ] || {
+        echo "kilix pty: broker build did not produce an executable" >&2
+        return 1
+      }
+      [ "$install_only" = 0 ] || return 0
+      KITTY_PTY_BROKER_RUNTIME="$(_kilix_resolve_pty_broker_runtime)" || return 1
+      _kilix_ensure_private_directory \
+        "$KITTY_PTY_BROKER_RUNTIME" "pty broker runtime" || return 1
+      export KITTY_PTY_BROKER_EXECUTABLE KITTY_PTY_BROKER_RUNTIME
+      exec "$KITTY_PTY_BROKER_EXECUTABLE" \
+        --runtime-dir "$KITTY_PTY_BROKER_RUNTIME" "${tflag[@]}" tui ;;
+  esac
+  [ "$install_only" = 0 ] || { _kilix_pty_usage >&2; return 2; }
+
+  case "$verb" in
+    path)
+      [ $# -eq 0 ] || { _kilix_pty_usage >&2; return 2; }
+      _kilix_resolve_pty_broker_runtime ;;
+    pane)
+      [ $# -eq 1 ] || { _kilix_pty_usage >&2; return 2; }
+      _kilix_pty_pane_session "$1" ;;
+    list|status|observe|attach|kill|reaped)
+      broker="$(_kilix_pty_broker_path)" || return 1
+      runtime="$(_kilix_resolve_pty_broker_runtime)" || return 1
+      case "$verb" in
+        list)
+          for id in "$@"; do
+            case "$id" in --json|--all) args+=("$id") ;;
+              *) _kilix_pty_usage >&2; return 2 ;; esac
+          done
+          _kilix_pty_call list "${args[@]}" ;;
+        status)
+          id=""
+          while [ $# -gt 0 ]; do
+            case "$1" in
+              --json) args+=(--json); shift ;;
+              --pane)
+                [ $# -ge 2 ] && [ -z "$id" ] || { _kilix_pty_usage >&2; return 2; }
+                id="$(_kilix_pty_pane_session "$2")" || return $?
+                shift 2 ;;
+              -*) _kilix_pty_usage >&2; return 2 ;;
+              *) [ -z "$id" ] || { _kilix_pty_usage >&2; return 2; }
+                 id="$1"; shift ;;
+            esac
+          done
+          _kilix_pty_valid_id "$id" || { _kilix_pty_usage >&2; return 2; }
+          _kilix_pty_call status "$id" "${args[@]}" ;;
+        observe|attach)
+          [ $# -ge 1 ] && _kilix_pty_valid_id "$1" || { _kilix_pty_usage >&2; return 2; }
+          id="$1"; shift
+          if [ "$verb" = attach ]; then
+            # The broker serves one read-write client; say so before it does.
+            state="$(_kilix_pty_call status "$id" --json)" || return 1
+            if printf '%s' "$state" | python3 "$KILIX_HOME/config/kilix_pty.py" attached; then
+              echo "kilix pty: session $id is attached to a pane;" \
+                   "'$_self pty observe $id' watches it read-only" >&2
+              return 1
+            fi
+          fi
+          exec "$broker" --runtime-dir "$runtime" "${tflag[@]}" "$verb" "$id" "$@" ;;
+        kill)
+          local yes=0 reply
+          id=""
+          while [ $# -gt 0 ]; do
+            case "$1" in
+              --yes) yes=1; shift ;;
+              -*) _kilix_pty_usage >&2; return 2 ;;
+              *) [ -z "$id" ] || { _kilix_pty_usage >&2; return 2; }
+                 id="$1"; shift ;;
+            esac
+          done
+          _kilix_pty_valid_id "$id" || { _kilix_pty_usage >&2; return 2; }
+          # Looking first fails a typo'd ID cleanly, and shows what is ending.
+          state="$(_kilix_pty_call status "$id")" || return 1
+          if [ "$yes" = 0 ]; then
+            if [ ! -t 0 ] || [ ! -t 2 ]; then
+              echo "kilix pty: refusing to end $id without --yes (not a terminal)" >&2
+              return 2
+            fi
+            printf '%s\nEnd this session and the program in it? [y/N] ' "$state" >&2
+            read -r reply || reply=""
+            case "$reply" in y|Y|yes|YES) ;; *) echo "kilix pty: not ended" >&2; return 1 ;; esac
+          fi
+          _kilix_pty_call kill "$id" && echo "kilix pty: ended $id" ;;
+        reaped)
+          if [ "${1:-}" = path ]; then
+            [ $# -eq 2 ] && _kilix_pty_valid_id "$2" || { _kilix_pty_usage >&2; return 2; }
+            _kilix_pty_call reaped path "$2"
+          else
+            for id in "$@"; do
+              [ "$id" = --json ] || { _kilix_pty_usage >&2; return 2; }
+            done
+            _kilix_pty_call reaped "$@"
+          fi ;;
+      esac ;;
+    *)
+      _kilix_pty_usage >&2
+      return 2 ;;
+  esac
 }
 
 # Describe one transcript from the sidecar the fork writes when the pane is
@@ -2296,32 +2490,8 @@ case "${1:-}" in
     esac ;;
   pty|pty-manager|pty-tui)
     shift
-    _pty_install_only=0
-    case "${1:-}" in
-      --install-only) _pty_install_only=1; shift ;;
-      -h|--help|help)
-        echo "usage: $_self pty [--install-only]"
-        echo "opens the persistent PTY session manager"
-        exit 0 ;;
-    esac
-    [ $# -eq 0 ] || {
-      echo "usage: $_self pty [--install-only]" >&2
-      exit 2
-    }
-    KITTY_PTY_BROKER_EXECUTABLE="$(
-      "$KILIX_HOME/scripts/build-pty-broker.sh" --print-path
-    )" || exit 1
-    [ -x "$KITTY_PTY_BROKER_EXECUTABLE" ] || {
-      echo "kilix pty: broker build did not produce an executable" >&2
-      exit 1
-    }
-    [ "$_pty_install_only" = 0 ] || exit 0
-    KITTY_PTY_BROKER_RUNTIME="$(_kilix_resolve_pty_broker_runtime)" || exit 1
-    _kilix_ensure_private_directory \
-      "$KITTY_PTY_BROKER_RUNTIME" "pty broker runtime" || exit 1
-    export KITTY_PTY_BROKER_EXECUTABLE KITTY_PTY_BROKER_RUNTIME
-    exec "$KITTY_PTY_BROKER_EXECUTABLE" \
-      --runtime-dir "$KITTY_PTY_BROKER_RUNTIME" tui ;;
+    _kilix_pty_cli "$@"
+    exit $? ;;
   temps|temperature|temperatures)
     shift
     _temps_install_only=0

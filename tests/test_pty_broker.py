@@ -36,7 +36,7 @@ class PtyBrokerIntegrationTests(unittest.TestCase):
         self.assertIn("KILIX_PTY_BROKER_AUTO_RECOVER", launcher)
         self.assertIn("pty|pty-manager|pty-tui)", launcher)
         self.assertIn('"$KITTY_PTY_BROKER_EXECUTABLE" \\', launcher)
-        self.assertIn('--runtime-dir "$KITTY_PTY_BROKER_RUNTIME" tui', launcher)
+        self.assertIn('--runtime-dir "$KITTY_PTY_BROKER_RUNTIME" "${tflag[@]}" tui', launcher)
         self.assertIn("kitty-pty-broker", builder)
         self.assertIn("third_party/kitty-pty-broker", builder)
         self.assertIn("BUILD_DIR=", builder)
