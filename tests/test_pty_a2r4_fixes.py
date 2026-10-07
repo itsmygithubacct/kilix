@@ -139,6 +139,17 @@ class OwnedChildTests(PtyCliCase):
         self.assertIn(b"did not answer within 10s", err, "the out-of-range guard fell back to the default")
         self.assertTrue(self.gone(child), "the broker client outlived the guard")
 
+    def test_n3_the_helper_run_directly_survives_an_out_of_range_guard(self):
+        self.reply("list", out="[]")
+        for setting in ("3000000", "9" * 400, "nan", "-5"):
+            with self.subTest(setting=setting[:10]):
+                result = subprocess.run(
+                    ["python3", str(ROOT / "config" / "kilix_pty.py"), "--broker", str(self.broker),
+                     "--runtime", str(self.runtime), "--guard", setting, "list"],
+                    env=self.env(), capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+
     def test_n3_a_finite_but_too_large_guard_falls_back_instead_of_crashing(self):
         self.end_to_end("3000000")
 
