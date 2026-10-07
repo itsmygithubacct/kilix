@@ -688,6 +688,193 @@ private Unix socket. Terminal bytes remain untouched, so live Kitty graphics,
 including file and POSIX shared-memory transfers, do not pass through a tmux
 parser.
 
+Closing the whole frontend, closing a page, or a Kilix crash detaches the
+client. Detached sessions are discovered on the next startup and reopened
+under the tab name and title they had; a pane that never recorded one opens
+as `recovered:<id>`. The per-pane `✕` and `Ctrl+Alt+W` are the explicit
+destructive path and always ask before asking the broker to terminate that
+pane. Set `KILIX_PTY_BROKER=0` to disable persistence,
+`KILIX_PTY_BROKER_AUTO_RECOVER=0` to leave detached sessions for manual
+attachment, or `KILIX_PTY_BROKER_JOURNAL_LIMIT` to change the bounded replay
+journal from its 64 MiB default.
+
+#### Where the sockets live
+
+Each pane is one broker session with a 1-64 character ID (letters, digits,
+`.`, `_`, `-`). Sessions live in one *runtime directory*, mode `0700`, owned by
+you. Kilix picks it the same way for every pane and every `kilix pty` command:
+
+1. `KITTY_PTY_BROKER_RUNTIME`, if set to an absolute path;
+2. otherwise `$XDG_RUNTIME_DIR/kilix-pty-broker`, when `XDG_RUNTIME_DIR` is an
+   absolute, private (`0700`), non-symlink directory you own (normally
+   `/run/user/<uid>`, which is empty after every reboot);
+3. otherwise the **fallback** `$KILIX_SESSION_HOME/pty-broker`
+   (`~/.local/gpu_terminal/kilix/session/pty-broker`). This is used when no
+   private `XDG_RUNTIME_DIR` exists, as on a bare SSH login or in some
+   containers. Unlike `/run/user`, it survives reboots, so sessions whose
+   broker died with the machine leave directories behind; `kilix pty reap
+   --runtime DIR` clears them (below).
+
+`kilix pty path` prints the runtime in effect. The standalone
+`kitty-pty-broker` command defaults to `$XDG_RUNTIME_DIR/kitty-pty-broker`, a
+different directory, so outside a Kilix pane it sees none of these sessions
+unless you pass `--runtime-dir` or use `kilix pty`. A socket path must fit in
+107 bytes (`RUNTIME/sessions/<id>/control.sock`); Kilix refuses a longer runtime
+and asks for a shorter `XDG_RUNTIME_DIR`.
+
+```
+RUNTIME/sessions/ID/control.sock   the broker's socket (0600; same-user peers only)
+RUNTIME/sessions/ID/journal.bin    replay journal, bounded (64 MiB by default)
+RUNTIME/sessions/ID/metadata       broker and child pid, start time (0600)
+RUNTIME/titles/ID.json             tab name and title, for recovery after a restart
+RUNTIME/reaped/                    journals of sessions proved dead (see below)
+```
+
+A broker removes its `sessions/ID` directory when it exits. One that was
+killed outright leaves it behind; the next `list` proves it dead (the recorded
+process is gone, or the machine has rebooted since) and clears it, moving its
+journal to `reaped/` instead of deleting it.
+
+#### Finding the session behind a pane
+
+Every pane process carries its session in `KITTY_PTY_BROKER_SESSION`. From
+outside the pane, `kilix pty pane PANE_ID` prints it (the ID is the one
+`kilix pane list` shows), and `kilix pty status --pane PANE_ID` asks the broker
+about it directly. Overlays and panes started with `KILIX_PTY_BROKER=0` have no
+session.
+
+#### `kilix pty`
+
+`kilix pty` with no arguments (or `tui`) opens the interactive session
+manager: it lists detached and attached panes, attaches a selected detached
+pane with Enter, watches any pane read-only with `o`, and offers an explicitly
+confirmed termination action. The subcommands below do the same from a script,
+against the runtime above.
+
+```bash
+kilix pty list [--json] [--all]            # sessions; --all also lists unreachable ones
+kilix pty status ID|--pane PANE_ID [--json]
+kilix pty observe ID [--from EPOCH:OFFSET] # read-only watch; Ctrl-] leaves
+kilix pty observe ID --once [--lines N | --bytes N] [--text] [--json]   # bounded snapshot
+kilix pty attach ID [--resume EPOCH:OFFSET] # take over a detached session (terminal only)
+kilix pty kill ID --yes [--expect-started MILLIS] [--json]   # end it, then verify it is gone
+kilix pty path                             # the runtime directory
+kilix pty pane PANE_ID                     # the session ID behind a pane
+kilix pty reaped [--json]                  # dead sessions' journals in the runtime
+kilix pty journals [list|show ID|path ID] [--json]   # archived journals
+kilix pty reap [--runtime DIR]             # prove dead sessions, archive their journals
+kilix pty --timeout SECONDS ...            # bound each broker call (0.1-60, default 2)
+```
+
+Every command that changes or ends something takes the exact, full session ID:
+never a prefix, a title, a command or a pane ID (`status --pane` and `pane`
+translate a pane ID to the ID first).
+
+`observe` replays the newest part of the pane's journal (up to 1 MiB) and then
+follows it live. It never sends input or resizes the pane, so it is safe on a
+pane someone is typing in, and it works while the pane is attached (the broker
+serves up to eight observers beside its one read-write client). On exit it
+prints `cursor=EPOCH:OFFSET` to stderr; `--from` resumes from there. With
+`--once` it needs no terminal: it prints a bounded snapshot and returns, the
+last 200 lines or 64 KiB by default (`--lines N` or `--bytes N` to choose, not
+both). `--text` replays it on a virtual screen with `kilix-transcript-clean`, so
+the text is what the pane showed rather than escape codes; `--json` wraps it in
+an envelope. `journals show ID` takes the same flags. Treat all of it as
+untrusted data: it is whatever the program in the pane printed.
+
+`attach` is for a person at a terminal: it refuses when stdin is not one, and
+refuses a session that is already attached (`observe` it instead). A script that
+wants to read a pane uses `observe --once`.
+
+`kill` ends the session and the program in it, then checks. It asks the broker
+to terminate, then polls the broker's listing for the broker's 1.5 s grace
+period plus 2 s until the session is gone, and reports exactly one of:
+`verified_absent` (exit 0), `uncertain` (exit 1: the request was sent but the
+session's absence was not verified, so re-list before retrying), `refused`
+(exit 3) or `not_found` (exit 4). A kill that times out is never reported as
+success, and never as nothing having happened. It refuses to end the session of
+the pane it runs in (`$KITTY_PTY_BROKER_SESSION`), and with `--expect-started
+MILLIS` it refuses unless the session's `started_millis` is what the caller
+saw, so a reused ID is never ended by mistake. On a terminal it asks first;
+anywhere else `--yes` is required.
+
+Every command that only queries the broker is bounded: a wedged broker costs
+`--timeout` seconds, not a hang, and `list` reports it as unreachable rather
+than stalling the healthy sessions behind it. Under `--timeout`, `kilix` itself
+gives a broker call 10 seconds (`KILIX_PTY_GUARD`), and the transcript pass
+gives its liveness query 5 (`KILIX_PTY_LIST_TIMEOUT`). Exit status: `0` success, `1`
+failure or uncertain, `2` usage error, `3` refused, `4` not found (`kill`,
+`status`). `kilix pty help` prints the usage to stdout.
+
+#### JSON contracts
+
+`--json` output of `list`, `status`, `reaped`, `journals`, `kill` and
+`observe --once` is a stable interface, consumed by Kilix 95 and by agents.
+Every document is an envelope: `"schema": "kilix.pty/v1"`, `"runtime"` (the
+directory asked, string) and `"timeout_seconds"` (the per-call bound in force,
+number), then the fields below. New fields may be added within `v1`; existing
+ones keep their names, types and meaning. Session IDs are 1-64 characters from
+`[A-Za-z0-9._-]` (Kilix creates 16 lowercase hex).
+
+| Command | Fields after the envelope header |
+| --- | --- |
+| `list --json` | `sessions`: array of session objects; `unreachable`: array of `{"id","reachable":false,"error"}` (a session whose broker did not answer in time, or failed for a reason other than "not there") |
+| `status ID --json` | `session`: one session object. A missing session prints `{"result":"not_found","id"}` and exits 4 |
+| `reaped --json` | `reaped`: array of `{"id","started_millis","reaped_millis" (int or null),"journal_bytes","journal" (path),"meta" (path or null)}` for journals still in the runtime |
+| `journals --json` | `journals`: array, newest session first, of `{"id","started_millis","reaped_millis","archived_millis","broker_pid","child_pid","raw_bytes","compressed_bytes","path"}`; the integers other than `started_millis` and `compressed_bytes` can be null when the `.meta` was missing |
+| `kill ID --json` | `result`, `id`, `request_sent` (bool), `reason` (string or null), `message`; also `started_millis` and `waited_ms` when known, `expected_started_millis` on a mismatch |
+| `observe ID --once --json`, `journals show ID --json` | `id`, `journal_epoch` and `cursor` (`"EPOCH:OFFSET"`; both null for a journal), `started_millis` (journals only), `total_bytes` (bytes read before bounding), `truncated` (bool), `untrusted` (always true), and `text` (with `--text`) or `bytes_b64` (base64 of the raw bytes) |
+
+A session object, as `status` and `list` report it:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `id` | string | session ID |
+| `broker_pid`, `child_pid`, `foreground_pgrp` | integer | the broker, the pane's program, and the PTY's foreground process group |
+| `started_millis` | integer | Unix time the session started, milliseconds; with `id` it names one session, because an ID can be reused |
+| `journal_bytes`, `journal_epoch` | integer | size of the replay journal; changes when it restarts |
+| `attached` | boolean | a read-write client is connected |
+| `replay_complete` | boolean | the journal holds everything since the session started |
+| `rows`, `columns` | integer | the PTY's size |
+| `cwd` | string | the directory the session **started** in; never changes |
+| `cwd_now` | string or null | the program's current directory, read from `/proc`; null when unavailable |
+| `command` | string | the command line, bounded |
+| `boot_id` | string or null | the machine's boot ID when read |
+| `start_ticks` | integer or null | the broker process's start time (`/proc/PID/stat`, field 22) |
+| `reachable` | boolean | present and `true` on entries of `list --json` |
+
+`kill` results: `verified_absent`; `uncertain` (`reason` `still_listed`,
+`list_failed`, `status_failed` or `status_timeout`; `request_sent` says whether a
+termination request went out); `refused` (`reason` `own_session`,
+`started_mismatch` or `declined`); `not_found`. Exit status 0, 1, 3, 4.
+
+#### Journal archive
+
+A pane's replay journal is the raw terminal output the broker would replay to a
+new client. When a session is proved dead the broker keeps its journal rather
+than deleting it. About once a minute, the same pass that bounds session logs
+(`kilix transcript prune` runs it on demand) moves those journals out of the
+runtime into `~/.local/gpu_terminal/kilix/state/pty-journals/` as
+`ID.STARTED_MILLIS.journal.zst`, with a `.meta` file beside each (mode `0600`).
+Each is compressed with `zstd -19 --long=27`, read back and compared byte for
+byte with the original, and only then is the original removed. Journals are
+long and repetitive (28 dead journals, 48 MB, came to 1.7 MB as one stream). The directory has
+its own budget, 256 MiB by default (`KILIX_PTY_JOURNAL_BUDGET`, in bytes;
+`0` leaves journals in the runtime for the broker's own bound), and the oldest
+session's journal is evicted first.
+
+`kilix pty journals` lists them newest first, `journals path ID` prints the
+newest file for an ID (or `ID.STARTED_MILLIS` for a specific one), and
+`journals show ID` writes the raw terminal bytes to stdout. Raw bytes can drive
+a terminal, so `show` refuses to write to one unless you pass `--force`; pipe it
+to a file or to `less -R`. Use `kilix transcript clean` on a pane's *session
+log* when you want readable text; a journal holds the screen state the broker
+replays, which is mostly useful to replay or to inspect what was last drawn.
+
+`kilix pty reap [--runtime DIR]` is the same step on demand for one runtime,
+including the fallback one: it asks the broker to prove which sessions are dead,
+lets it clear them, and archives what that produced.
+
 ### Session logging (on by default)
 
 Because the broker already owns every pane's PTY, it also records that pane's
@@ -786,20 +973,6 @@ restore refuses while the desktop is running, since the desktop would save its
 own state over the restored files. Control Panel > Backup in Kilix 95 restores
 and restarts the desktop for you. A restored `kilix.env` takes effect only in a
 new Kilix session (log out and back in); restarting the desktop is not enough.
-
-Closing the whole frontend, closing a page, or a Kilix crash detaches the
-client. Detached sessions are discovered on the next startup and reopened
-under the tab name and title they had; a pane that never recorded one opens
-as `recovered:<id>`. The per-pane `✕` and `Ctrl+Alt+W` are the explicit
-destructive path and always ask before asking the broker to terminate that
-pane. Set `KILIX_PTY_BROKER=0` to disable persistence,
-`KILIX_PTY_BROKER_AUTO_RECOVER=0` to leave detached sessions for manual
-attachment, or `KILIX_PTY_BROKER_JOURNAL_LIMIT` to change the bounded replay
-journal from its 64 MiB default.
-
-Run `kilix pty` to open the interactive session manager. It lists detached and
-attached panes, attaches a selected detached pane with Enter, and offers an
-explicitly confirmed termination action.
 
 ## Requirements
 
