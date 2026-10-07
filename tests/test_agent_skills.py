@@ -68,7 +68,7 @@ class SkillsTests(unittest.TestCase):
             self.assertEqual(self.call("remove", agent)["state"], "not-installed")
         self.assertEqual(self.snapshot(), original)
 
-    def test_actual_bundle_has_three_distinct_names_one_version(self):
+    def test_actual_bundle_has_distinct_names_one_version(self):
         record, files, _, descriptions = skills.bundle(ROOT)
         self.assertEqual(set(descriptions), set(skills.NAMES))
         self.assertEqual(record["version"], (ROOT / "VERSION").read_text().strip())

@@ -1142,10 +1142,13 @@ To get the buttons, install the build deps and build the fork:
 
 ### Optional coding-agent skills
 
-Kilix ships three separate skills as one versioned bundle: `kilix`,
-`kilix-model-switch`, and `kilix-session-launch`. They cover pane/session
-administration, changing a model within an existing coding session, and
-creating a tab of initialized coding sessions. Installation is explicit:
+Kilix ships separate skills as one versioned bundle: `kilix`,
+`kilix-model-switch`, `kilix-session-launch`, and `kilix-pty`. They cover
+pane/session administration, changing a model within an existing coding session,
+creating a tab of initialized coding sessions, and persistent pane sessions
+(listing them, watching one read-only, ending one by exact ID, finding old
+journals). `kilix-pty` is under 3 KB with its details in a reference file the
+agent reads only when a result is unclear. Installation is explicit:
 
 ```bash
 kilix skills list --json
@@ -1186,7 +1189,7 @@ See the current [Codex skill discovery documentation](https://learn.chatgpt.com/
 [Claude configuration directory contract](https://code.claude.com/docs/en/claude-directory),
 and [Kimi skill locations](https://moonshotai.github.io/kimi-code/en/customization/skills).
 
-Codex and Kimi share the default three registrations. Installing for the second
+Codex and Kimi share the default registrations (one per skill). Installing for the second
 agent records another owner without adding duplicate directories. Removing
 one owner keeps the set available for the other. Because the directory is
 shared, either agent can discover an installed set even before it is recorded
@@ -1194,7 +1197,7 @@ as an additional owner; `status` reports this as `shared`.
 The `--agent` choice tracks registration/removal ownership, not isolation from
 the other client; both automatically discover the shared `.agents` root.
 
-The installer creates three symlinks to a private version snapshot through one
+The installer creates one symlink per skill to a private version snapshot through one
 atomic version pointer in the sibling `.kilix-skill-bundles` directory. It checks
 recorded file bytes, modes and registration inodes before changing an existing
 set. Existing user-owned agent directories may retain their normal `0775` mode;
@@ -1206,7 +1209,7 @@ Conflicts require the user to preserve/reconcile their own entries before retryi
 there is no force-overwrite option. Checks cover the named skills in the selected
 and documented alternate user roots, not arbitrary project or plugin registries.
 
-Removal unregisters the last owner's three links. Private version snapshots
+Removal unregisters the last owner's links. Private version snapshots
 and interrupted-operation recovery data remain outside discovery; automatic
 recursive deletion could erase later user additions. No background cleanup runs.
 An interrupted partial first install/removal is reported as a conflict for

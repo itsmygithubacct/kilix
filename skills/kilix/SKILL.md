@@ -85,7 +85,8 @@ of assigning a new ID to retry it.
 Follow the user's arrangement. As coordinator, give bounded assignments with owners and
 reporting places, collect acknowledgements, and route follow-ups yourself; do not impose
 the arrangement on other sessions or create workers unasked. New tabs and layouts:
-`kilix-session-launch`; model changes: `kilix-model-switch`. Report pane identities,
+`kilix-session-launch`; model changes: `kilix-model-switch`; detached, stuck or
+unreachable pane sessions, watching one read-only, ending one by ID: `kilix-pty`. Report pane identities,
 verified outcomes and what is still unverified. Sending "continue" completes nothing.
 
 ## Tmux session control
