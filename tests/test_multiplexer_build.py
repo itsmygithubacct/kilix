@@ -3,6 +3,8 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
+import stat
 import subprocess
 import tempfile
 import time
@@ -22,56 +24,85 @@ def ancestor_ctimes(path):
     return [(str(parent),parent.stat().st_ctime_ns) for parent in (path,*path.parents) if parent.exists()]
 
 
-def remove_if_empty(directory):
-    """Remove a shared fixture directory only when nobody has anything in it (rmdir never removes content)."""
-    try:directory.rmdir()
-    except OSError:pass
+def verified_base(path,private):
+    """May fixtures be allocated below this directory? It must be a real directory, never a symlink.
+
+    A directory this checkout owns (`private`) must also be ours and closed to others; a system
+    temporary directory must be root's or ours and either closed to others or sticky.
+    """
+    try:info=os.lstat(path)
+    except OSError:return False
+    if not stat.S_ISDIR(info.st_mode):return False
+    if private:return info.st_uid==os.getuid() and not info.st_mode&0o077
+    return info.st_uid in (0,os.getuid()) and (not info.st_mode&0o022 or bool(info.st_mode&stat.S_ISVTX))
+
+
+def identity(path):
+    info=os.lstat(path)
+    return (info.st_dev,info.st_ino) if stat.S_ISDIR(info.st_mode) else None
 
 
 def quiet_fixture_parent(window=1.0):
-    """The directory to build fixtures in: the first whose ancestors do not change for a moment.
+    """A new directory, created by this call and owned by this run, to build fixtures in.
 
     The build records the change time of every ancestor of an external input and refuses to reuse a
     generation if one moved while it compiled. A checkout under a busy directory (/tmp on a shared
     host gets a new entry every second) can therefore never observe "no rebuild", whatever the code
     does. The checkout's own parents are preferred; a quieter shared directory is used only when
-    those are not quiet.
+    those are not quiet. Nothing is ever allocated at a fixed shared name: the directory is made with
+    mkdtemp (which will not follow a symlink, and fails if the name exists) below a verified base.
     """
+    bases=[]
+    try:FIXTURE_PARENT.mkdir(mode=0o700,exist_ok=True)
+    except OSError:pass
+    for base,private in ((FIXTURE_PARENT,True),*((alternative,False) for alternative in ALTERNATIVE_PARENTS)):
+        if verified_base(base,private):bases.append(base)
     chosen=None
-    for candidate in (FIXTURE_PARENT,*(base/f'.kilix-test-{os.getuid()}' for base in ALTERNATIVE_PARENTS)):
-        try:
-            candidate.mkdir(mode=0o700,exist_ok=True)
-            if candidate.stat().st_uid!=os.getuid():continue
-            before=ancestor_ctimes(candidate);time.sleep(window)
-            if before==ancestor_ctimes(candidate):return candidate
-            chosen=chosen or candidate
-        except OSError:continue
-    return chosen or FIXTURE_PARENT
+    for base in bases:
+        before=ancestor_ctimes(base);time.sleep(window)
+        if before==ancestor_ctimes(base):chosen=base;break
+    base=chosen or (bases[0] if bases else None)
+    return Path(tempfile.mkdtemp(prefix='kilix-fixtures-',dir=base))
+
+
+class FixtureTampered(Exception):
+    """The run's private fixture directory is no longer the directory this class made."""
 
 
 class MultiplexerBuildTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.fixture_parent=quiet_fixture_parent()
-        if cls.fixture_parent!=FIXTURE_PARENT:
-            # The directory is shared with every other class and process that falls back to it. Each test
-            # removes its own fixture; the shared directory is only removed once nothing is left in it.
-            cls.addClassCleanup(remove_if_empty,cls.fixture_parent)
+        cls.fixture_identity=identity(cls.fixture_parent)
+        cls.addClassCleanup(cls.remove_run_directory)
+
+    @classmethod
+    def verify_run_directory(cls):
+        """The class's directory is still the one it made (not renamed, replaced or turned into a link)."""
+        try:current=identity(cls.fixture_parent)
+        except OSError:current=None
+        if current is None or current!=cls.fixture_identity:
+            raise FixtureTampered(f'{cls.fixture_parent} is not the directory this run created')
+
+    @classmethod
+    def remove_run_directory(cls):
+        """Remove what this run created, and only that: nothing if the directory is no longer ours."""
+        try:cls.verify_run_directory()
+        except FixtureTampered:return
+        shutil.rmtree(cls.fixture_parent,ignore_errors=True)
+
+    def remove_fixture(self):
+        self.verify_run_directory()      # a replaced parent would make a path-based removal hit someone else
+        self.temporary.cleanup()
 
     def setUp(self):
         # The build identity binds every parent directory of its inputs, and
         # /tmp changes whenever any process on the host adds or removes an
         # entry there, which forces a correct rebuild and hides freshness.
         # The checkout's own parents are quiet; keep the fixture below them.
-        for attempt in range(10):
-            try:
-                # Another class may remove the shared directory just after it empties; make it again.
-                self.fixture_parent.mkdir(mode=0o700,exist_ok=True)
-                self.temporary=tempfile.TemporaryDirectory(dir=self.fixture_parent)
-                break
-            except FileNotFoundError:
-                if attempt==9:raise
-        self.addCleanup(self.temporary.cleanup)
+        self.verify_run_directory()
+        self.temporary=tempfile.TemporaryDirectory(dir=self.fixture_parent)
+        self.addCleanup(self.remove_fixture)
         self.root=Path(self.temporary.name)
         self.trace=self.root/'trace';self.trace.touch()
         self.source=self.root/'source';self.source.mkdir()
