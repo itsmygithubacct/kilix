@@ -314,14 +314,17 @@ print('archive=%d' % settings.transcript_archive_total())
 " 2>/dev/null)
 }
 
-# A positive number of seconds from the environment, else the default. Zero
-# ("0", "0.0", "00"), negatives, an empty value and garbage are all replaced by
-# the default: GNU timeout reads a duration of zero as "no deadline", and a
-# setting that exists to bound a wait must never be able to remove the bound.
+# A number of seconds from the environment: greater than 0 and at most 86400 (a day), else the
+# default. Zero ("0", "0.0", "00"), negatives, an empty value, garbage and anything above a day
+# (including values too large for a float) are all replaced by the default: GNU timeout reads a
+# duration of zero as "no deadline", and Python's poll, `timeout` and `flock -w` each reject or
+# mishandle huge ones, so a setting that exists to bound a wait can neither remove the bound nor
+# crash the code that applies it. scripts/build-pty-broker.sh carries an identical copy of this
+# function (tests/test_pty_a2r4_fixes.py keeps them identical).
 _kilix_pty_seconds() {
   local value="${1:-}" default="$2"
   if [[ "$value" =~ ^([0-9]+([.][0-9]*)?|[.][0-9]+)$ ]] \
-       && awk -v v="$value" 'BEGIN { exit !(v > 0) }'; then
+       && awk -v v="$value" 'BEGIN { v += 0; exit !(v > 0 && v <= 86400) }'; then
     printf '%s\n' "$value"
   else
     printf '%s\n' "$default"

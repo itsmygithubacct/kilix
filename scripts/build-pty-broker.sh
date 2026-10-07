@@ -88,17 +88,38 @@ _ensure_private_directory "$BROKER_BUILD" broker-build
 
 exec 9>"$BROKER_BUILD/.build.lock"
 chmod 0600 "$BROKER_BUILD/.build.lock"
-# A caller with its own deadline (kilix pty, the transcript pass) sets
-# KILIX_PTY_BUILD_LOCK_TIMEOUT so waiting on another build cannot outlast it.
+# A number of seconds: greater than 0 and at most 86400, else the default. This is an identical copy of
+# `_kilix_pty_seconds` in the kilix launcher (tests/test_pty_a2r4_fixes.py keeps the two identical).
+_kilix_pty_seconds() {
+  local value="${1:-}" default="$2"
+  if [[ "$value" =~ ^([0-9]+([.][0-9]*)?|[.][0-9]+)$ ]] \
+       && awk -v v="$value" 'BEGIN { v += 0; exit !(v > 0 && v <= 86400) }'; then
+    printf '%s\n' "$value"
+  else
+    printf '%s\n' "$default"
+  fi
+}
+
+# A caller with its own deadline (kilix pty, the transcript pass) sets KILIX_PTY_BUILD_LOCK_TIMEOUT so
+# waiting on another build cannot outlast it; the launcher always passes a validated number.
+# Unset or empty means nobody supplied a deadline (a person running this script by hand): it waits for
+# the other build for as long as that takes, which is what a person at a prompt wants and what the script
+# always did. A value that is set but invalid or out of range (0, negative, "..", "1,5", " 1", 1e9 ...)
+# is never read as "no deadline": it becomes 600 s, the launcher's whole look-up bound. flock's own
+# failures (usage, timer set-up) are told apart from real contention by giving contention its own status.
 _lock_wait="${KILIX_PTY_BUILD_LOCK_TIMEOUT:-}"
-case "$_lock_wait" in
-  "") flock 9 ;;
-  *[!0-9.]*) echo "kilix pty broker: KILIX_PTY_BUILD_LOCK_TIMEOUT must be seconds" >&2; exit 2 ;;
-  *) flock -w "$_lock_wait" 9 || {
-       echo "kilix pty broker: another build holds the lock (waited ${_lock_wait}s)" >&2
-       exit 75
-     } ;;
-esac
+if [ -z "$_lock_wait" ]; then
+  flock 9
+else
+  _lock_wait="$(_kilix_pty_seconds "$_lock_wait" 600)"
+  _lock_status=0
+  flock -w "$_lock_wait" -E 75 9 || _lock_status=$?
+  case "$_lock_status" in
+    0) ;;
+    75) echo "kilix pty broker: another build holds the lock (waited ${_lock_wait}s)" >&2; exit 75 ;;
+    *) echo "kilix pty broker: could not take the build lock (flock exited $_lock_status)" >&2; exit 1 ;;
+  esac
+fi
 if ! make --silent --no-print-directory --question -C "$_source" \
      BUILD_DIR="$BROKER_BUILD" all >/dev/null 2>&1; then
   echo "kilix: building kitty-pty-broker" >&2

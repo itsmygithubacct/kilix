@@ -828,9 +828,14 @@ before it can look the executable up; the transcript pass gives its liveness
 query 5 (`KILIX_PTY_LIST_TIMEOUT`) and its look-up 30. `--timeout` is checked
 for every command (0.1-60 seconds, exit 2 otherwise), including those that
 only read the disk. Broker errors are relayed as `kilix pty: ...` lines. These
-environment settings are positive numbers of seconds; zero, a negative number,
-an empty or non-numeric value is ignored in favour of the default, because a
-zero duration would otherwise mean "no deadline" to `timeout`.
+environment settings are numbers of seconds greater than 0 and at most 86400 (a
+day), the range every consumer (Python's poll, `timeout`, `flock -w`) can take;
+zero, a negative number, an empty or non-numeric value, and anything above 86400
+(including numbers too large to represent) are ignored in favour of the default,
+because a zero duration would otherwise mean "no deadline" to `timeout` and a huge
+one makes the waiting code fail. `scripts/build-pty-broker.sh` applies the same
+rule to `KILIX_PTY_BUILD_LOCK_TIMEOUT`; when that is unset or empty (a person
+running the script by hand) it waits for another build as long as it takes.
 Exit status: `0` success, `1`
 failure or uncertain, `2` usage error, `3` refused, `4` not found (`kill`,
 `status`). `kilix pty help` prints the usage to stdout.

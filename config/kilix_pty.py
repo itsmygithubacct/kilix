@@ -238,15 +238,24 @@ class Broker:
         process = subprocess.Popen(command + list(args), stdin=subprocess.DEVNULL,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                    start_new_session=True)
+        finished = False
         try:
             out, err = process.communicate(timeout=self.guard)
+            finished = True
         except subprocess.TimeoutExpired:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except OSError:
-                pass
-            process.communicate()
             return None, b"", ""
+        finally:
+            if not finished:
+                # The guard expired, or anything else interrupted the wait: the client's process
+                # group is ended and reaped on every path, so no child outlives this call.
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except OSError:
+                    pass
+                try:
+                    process.communicate()
+                except Exception:       # a failure to reap must not hide the original exception
+                    pass
         return process.returncode, out, err.decode(errors="replace")
 
     def bounded(self, remaining: float) -> "Broker":
@@ -665,6 +674,22 @@ COMMANDS = {"list": cmd_list, "status": cmd_status, "reaped": cmd_reaped,
             "passthrough": cmd_passthrough}
 
 
+MAX_SECONDS = 86400.0       # the largest duration setting any consumer is given (a day)
+
+
+def guard_seconds(text: str, default: float = 10.0) -> float:
+    """--guard as a finite number of seconds in (0, MAX_SECONDS], else the default.
+
+    The launcher validates the setting before it gets here (`_kilix_pty_seconds`); this is the same rule
+    for a caller that runs the helper directly, so a huge or non-finite value cannot reach the wait.
+    """
+    try:
+        value = float(text)
+    except (TypeError, ValueError):
+        return default
+    return value if 0 < value <= MAX_SECONDS else default      # also rejects NaN and infinity
+
+
 def main(argv: list[str]) -> int:
     if argv and argv[0] == "pane":
         return cmd_pane(argv[1:])
@@ -684,7 +709,7 @@ def main(argv: list[str]) -> int:
         return fail("usage: kilix_pty.py [--broker B --runtime R] pane|attached|list|status|"
                     "reaped|kill|observe|journals|capabilities|request ...", EXIT_USAGE)
     broker = Broker(options["--broker"] or "", options["--runtime"], options["--timeout"],
-                    float(options["--guard"]))
+                    guard_seconds(options["--guard"]))
     return COMMANDS[argv[0]](broker, argv[1:])
 
 
