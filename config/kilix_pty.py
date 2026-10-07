@@ -712,15 +712,16 @@ def main(argv: list[str]) -> int:
     while argv and argv[0] in options and len(argv) > 1:
         flag = argv.pop(0)
         options[flag] = argv.pop(0)
+        if flag == "--timeout" and not valid_timeout(options[flag]):
+            # Every occurrence is checked as it is read, as the launcher does: an invalid one is refused
+            # even when a later one is fine. All valid: the last wins.
+            return fail(f"--timeout is in seconds, 0.1-60; got {options[flag]}", EXIT_USAGE)
     # The archive is read from disk: journals needs the runtime for its envelope, not a broker.
     if not argv or argv[0] not in COMMANDS or not options["--runtime"] \
             or (argv[0] not in ("journals", "capabilities") and not options["--broker"]) \
             or len(argv) < (1 if argv[0] in ("list", "reaped", "capabilities", "request") else 2):
         return fail("usage: kilix_pty.py [--broker B --runtime R] pane|attached|list|status|"
                     "reaped|kill|observe|journals|capabilities|request ...", EXIT_USAGE)
-    if options["--timeout"] is not None and not valid_timeout(options["--timeout"]):
-        # Every verb, including the ones that only read the disk and never reach the broker's own parser.
-        return fail(f"--timeout is in seconds, 0.1-60; got {options['--timeout']}", EXIT_USAGE)
     broker = Broker(options["--broker"] or "", options["--runtime"], options["--timeout"],
                     guard_seconds(options["--guard"]))
     return COMMANDS[argv[0]](broker, argv[1:])
