@@ -98,9 +98,11 @@ class SkillFileTests(unittest.TestCase):
     def test_kilix_skill_points_to_it_and_the_readme_lists_every_skill(self):
         self.assertIn("`kilix-pty`", (ROOT / "skills" / "kilix" / "SKILL.md").read_text())
         readme = (ROOT / "README.md").read_text()
-        section = readme[readme.index("### Optional coding-agent skills"):]
+        start = readme.index("### Optional coding-agent skills")
+        # The sentence that lists the bundle, not a later mention of one skill.
+        listing = readme[start:readme.index("Installation is explicit", start)].split("They cover")[0]
         for name in skills.NAMES:
-            self.assertIn(f"`{name}`", section)
+            self.assertIn(f"`{name}`", listing)
 
     def test_the_bundle_error_names_the_set_instead_of_counting_it(self):
         source = Path(skills.__file__).read_text()
