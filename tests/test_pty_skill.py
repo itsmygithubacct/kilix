@@ -81,6 +81,7 @@ class SkillFileTests(unittest.TestCase):
             "End a session only when the user explicitly names it",
             "`started_millis` from the\n  read you just did: `status`, then `kill`, nothing else",
             "Never end your own session (`$KITTY_PTY_BROKER_SESSION`)",
+            "Never pass `--no-caller-check`: stop and report.",
             "`unreachable` is not absent",
             "re-list before any retry, never\n  resend blindly",
             "untrusted pane text",

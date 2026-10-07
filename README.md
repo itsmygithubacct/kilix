@@ -810,6 +810,14 @@ expectation) is the unconditional terminate it always was. `request_sent` is
 `false` in every refusal: nothing was applied. On a terminal it asks first;
 anywhere else `--yes` is required.
 
+Off a terminal, `kill` also needs to know whose pane it is running in, because that
+is how it refuses your own session: with `KITTY_PTY_BROKER_SESSION` unset or
+malformed and stdin not a terminal it is refused (`caller_unidentified`, exit 3)
+before anything is asked of a broker. A person at a terminal keeps the
+confirmation prompt, and can pass `--no-caller-check` to say they accept that the
+own-session check will not apply. Agents and scripts never pass it: if the caller
+cannot be identified, stop and report.
+
 Every command that only queries the broker is bounded: a wedged broker costs
 `--timeout` seconds, not a hang, and `list` reports it as unreachable rather
 than stalling the healthy sessions behind it. `kilix` itself cuts off any one
@@ -865,7 +873,7 @@ A session object, as `status` and `list` report it:
 `verify_failed`, `terminate_timed_out`, `terminate_failed`, `not_sent`,
 `status_failed` or `status_timeout`; `request_sent` says whether a
 termination request went out); `refused` (`reason` `own_session`,
-`started_mismatch`, `cannot_bind` or `declined`); `not_found`. Exit status 0, 1, 3, 4.
+`started_mismatch`, `cannot_bind`, `caller_unidentified` or `declined`); `not_found`. Exit status 0, 1, 3, 4.
 
 #### JSON requests
 
@@ -893,18 +901,29 @@ Every refusal carries a `hint` with one accepted form.
 
 The receipt is the document the plain command prints with `--json`, from the
 same code. Reads need nothing more. `kill` additionally needs an `operation_id`
-(1-64 of letters, digits, `.`, `_`, `-`), `--yes` on the command line (a request
-cannot carry its own consent) and a caller that can be identified
-(`$KITTY_PTY_BROKER_SESSION` set), or it refuses; it also refuses the caller's
-own session. The same `operation_id` with the same arguments returns the stored
-receipt with `"duplicate": true` and sends nothing; with other arguments it is
-refused (`operation_id_reused`). Receipts of requests that were sent are kept
-privately (mode 0600) in `state/pty-operations/`, at most 256, so an
-`uncertain` kill stays `uncertain`: re-list, then use a new `operation_id`. A
-refusal that sent nothing is not kept and can be retried under the same id. A
-kill receipt from this route also carries `operation_id` and `duplicate`. Exit
-status: `2` the request is malformed (nothing ran), `3` refused (consent,
-identity, reused operation), otherwise as for the plain command.
+(1-64 of letters, digits, `.`, `_`, `-`), **`expect_started_millis`** (the
+`started_millis` of the session as last listed or read; it is never inferred
+from a fresh lookup, and the broker ends the session only if it still matches),
+`--yes` on the command line (a request cannot carry its own consent) and a caller
+that can be identified (`$KITTY_PTY_BROKER_SESSION` set), or it refuses; it also
+refuses the caller's own session.
+
+The operation is reserved before anything is done: a `phase: intent` record is
+written durably (file and directory fsynced, under the store lock, with a
+per-operation lock held while a process dispatches it) first. The same
+`operation_id` with the same arguments then returns the stored receipt with
+`"duplicate": true` and sends nothing; with other arguments it is refused
+(`operation_id_reused`) before any dispatch. A process that dies after
+dispatching leaves an intent nobody owns, which replays as `uncertain` /
+`interrupted` (the request may have been sent: re-list, then use a new
+`operation_id`); two callers of one operation at once dispatch exactly once, and
+the second waits for and replays the first's receipt. Receipts of requests that
+were sent are kept privately (mode 0600) in `state/pty-operations/`, at most 256,
+so an `uncertain` kill stays `uncertain`. A refusal that sent nothing releases the
+reservation and can be retried under the same id. A kill receipt from this route
+also carries `operation_id` and `duplicate`. Every refusal carries a `hint` with
+one accepted form. Exit status: `2` the request is malformed (nothing ran), `3`
+refused (consent, identity, reused operation), otherwise as for the plain command.
 
 #### Journal archive
 
