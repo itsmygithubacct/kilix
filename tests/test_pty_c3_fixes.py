@@ -192,6 +192,51 @@ class WaiterTests(ForkedCase):
         self.assertTrue(outcome[1]["duplicate"])
         self.assertEqual(outcome[1]["result"], "verified_absent")
 
+    def test_f1_a_waiter_whose_owner_left_only_an_intent_replays_interrupted_without_waiting_for_itself(self):
+        entered, release = self.tmp / "entered", self.tmp / "release"
+        calls = self.tmp / "dispatches"
+
+        def dispatch(broker, request, state):
+            with calls.open("a") as stream:
+                stream.write(str(os.getpid()) + "\n")
+            entered.touch()
+            self.wait_file(release)
+            return 0, broker.envelope(result="verified_absent", request_sent=True, id=TARGET)
+
+        owner = os.fork()
+        if owner == 0:
+            real = module.Store.write
+
+            def refusing(self, operation_id, record):
+                if record.get("phase") == "done":
+                    raise OSError(errno.ENOSPC, "injected")
+                return real(self, operation_id, record)
+            module.Store.write = refusing
+            self.direct("stuck", dispatch)
+            os._exit(0)
+        waiter = None
+        try:
+            self.wait_file(entered)
+            waiter = os.fork()
+            if waiter == 0:
+                result = self.direct("stuck", dispatch)
+                (self.tmp / "waiter-result").write_text(json.dumps(result))
+                os._exit(0)
+            time.sleep(0.5)                    # the waiter is waiting on the owner's lock
+            started = time.monotonic()
+            release.touch()
+            os.waitpid(owner, 0)
+            owner = None
+            os.waitpid(waiter, 0)
+            waiter = None
+            self.assertLess(time.monotonic() - started, 10, "the waiter waited on a lock it holds itself")
+            status, receipt = json.loads((self.tmp / "waiter-result").read_text())
+            self.assertEqual((status, receipt["reason"], receipt["duplicate"]), (1, "interrupted", True))
+            self.assertEqual(len(calls.read_text().splitlines()), 1)
+        finally:
+            release.touch()
+            self.reap(owner, waiter)
+
     def test_f1_a_caller_that_found_no_record_may_still_dispatch(self):
         calls = []
         self.assertEqual(self.direct("fresh", self.finished(calls))[0], 0)
