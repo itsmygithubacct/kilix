@@ -407,6 +407,7 @@ _kilix_pty_usage() {
 usage: $_self pty [--timeout SECONDS] [COMMAND]
   (none), tui                  open the interactive session manager
   list [--json] [--all]        sessions in this runtime; --all adds unreachable ones
+                               (not being listed does not prove a session is gone)
   status ID|--pane PANE_ID [--json]
   observe ID [--from EPOCH:OFFSET]   watch read-only; Ctrl-] leaves
   observe ID --once [--from EPOCH:OFFSET] [--lines N | --bytes N] [--text] [--json]

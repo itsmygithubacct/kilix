@@ -9,7 +9,7 @@ its fields. Errors that are not an answer go to stderr as one `kilix pty: ...` l
 
 | result | exit | meaning |
 | --- | --- | --- |
-| `verified_absent` | 0 | terminated, then the listing no longer shows this ID and `started_millis` |
+| `verified_absent` | 0 | terminated, then that session's `status` shows it gone, or shows a different `started_millis` (a replacement); never inferred from a listing |
 | `uncertain` | 1 | re-list before retrying; `request_sent` says whether anything was sent |
 | `refused` | 3 | `caller_unidentified` (no `KITTY_PTY_BROKER_SESSION`: stop and report), `own_session`, `started_mismatch` (another session now has the ID), `cannot_bind` (an old broker cannot check the identity; nothing was done) or `declined` |
 | `not_found` | 4 | no such session; nothing was sent |

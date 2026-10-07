@@ -152,7 +152,7 @@ session's result. A launch receipt alone does not prove successful continuation.
 
 | Command | Purpose |
 | --- | --- |
-| `kilix pty list --json` | Sessions (`sessions`) and ones that did not answer (`unreachable`). |
+| `kilix pty list --json` | Sessions (`sessions`) and ones that did not answer (`unreachable`). Not listed is not proof a session is gone; only `verified_absent` is. |
 | `kilix pty pane PANE_ID` | The full session ID behind a pane. |
 | `kilix pty status ID --json` | One session: `attached`, `cwd_now`, `started_millis`. |
 | `kilix pty observe ID --once --text --lines 50 --json` | Read-only snapshot of what a pane showed; no terminal needed. |

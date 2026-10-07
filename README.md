@@ -852,7 +852,7 @@ ones keep their names, types and meaning. Session IDs are 1-64 characters from
 
 | Command | Fields after the envelope header |
 | --- | --- |
-| `list --json` | `sessions`: array of session objects; `unreachable`: array of `{"id","reachable":false,"error"}` (a session whose broker did not answer in time, or failed for a reason other than "not there") |
+| `list --json` | `sessions`: array of session objects; `unreachable`: array of `{"id","reachable":false,"error"}` (a session whose broker did not answer in time, or failed for a reason other than "not there"). A session missing from both arrays is not proven gone: a live broker whose socket pathname was moved aside is neither listed nor reaped (`status` says not found); only a `verified_absent` kill proves absence |
 | `status ID --json` | `session`: one session object. A missing session prints `{"result":"not_found","id"}` and exits 4 |
 | `reaped --json` | `reaped`: array of `{"id","started_millis","reaped_millis" (int or null),"journal_bytes","journal" (path),"meta" (path or null)}` for journals still in the runtime |
 | `journals --json` | `journals`: array, newest session first, of `{"id","started_millis","variant" (string or null),"reaped_millis","archived_millis","broker_pid","child_pid","raw_bytes","compressed_bytes","path"}`; the integers other than `started_millis` and `compressed_bytes` can be null when the `.meta` was missing |
