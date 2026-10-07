@@ -103,15 +103,34 @@ class DurableIntentTests(C1Case):
         self.assertEqual(self.kills(), [])
 
     def test_concurrent_callers_of_one_operation_dispatch_exactly_once(self):
+        # Three processes reach reserve() at the same instant (they wait for a go file), and the
+        # dispatch takes a second, so the later ones really do meet a live owner.
         (self.fake / "kill.hook").write_text("sleep 1\n" + gone_hook(self.fake))
-        env = self.env(KITTY_PTY_BROKER_SESSION=ME)
-        command = ["bash", str(LAUNCHER), "pty", "request", "--yes", "--request-json", "-"]
-        procs = [subprocess.Popen(command, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                  stderr=subprocess.PIPE, text=True) for _ in range(3)]
+        go = self.tmp / "go"
+        program = textwrap.dedent(f'''
+            import os, sys, time
+            sys.path.insert(0, {str(ROOT / "config")!r})
+            import kilix_pty_request as m, kilix_pty as p
+            while not os.path.exists({str(go)!r}):
+                time.sleep(0.001)
+            broker = p.Broker({str(self.broker)!r}, {str(self.runtime)!r}, None, 10)
+            raise SystemExit(m.cmd_request(broker, ["--yes", "--request-json", "-"]))
+        ''')
+        env = self.env(KILIX_STATE_DIRECTORY=str(self.state))
+        procs = [subprocess.Popen([sys.executable, "-c", program], env=env, stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for _ in range(3)]
+        for process in procs:
+            process.stdin.write(kill_request())
+            process.stdin.close()
+        time.sleep(0.5)             # all three are polling for the file
+        go.write_text("")
         results = []
         for process in procs:
-            out, err = process.communicate(kill_request(), timeout=60)
+            out = process.stdout.read()
+            process.wait(timeout=60)
             results.append((process.returncode, json.loads(out)))
+            process.stdout.close()
+            process.stderr.close()
         self.assertEqual(len(self.kills()), 1, self.calls())
         self.assertEqual([code for code, _ in results], [0, 0, 0], results)
         self.assertEqual({doc["result"] for _, doc in results}, {"verified_absent"})
