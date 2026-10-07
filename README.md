@@ -812,7 +812,7 @@ failure or uncertain, `2` usage error, `3` refused, `4` not found (`kill`,
 `observe --once` is a stable interface, consumed by Kilix 95 and by agents.
 Every document is an envelope: `"schema": "kilix.pty/v1"`, `"runtime"` (the
 directory asked, string) and `"timeout_seconds"` (the per-call bound in force,
-number), then the fields below. New fields may be added within `v1`; existing
+number; 2 by default, 1 for `list`, which asks every session under one deadline), then the fields below. New fields may be added within `v1`; existing
 ones keep their names, types and meaning. Session IDs are 1-64 characters from
 `[A-Za-z0-9._-]` (Kilix creates 16 lowercase hex).
 

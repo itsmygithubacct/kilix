@@ -150,7 +150,7 @@ class ForwardingTests(PtyCliCase):
         self.assertEqual(list(document)[:3], ["schema", "runtime", "timeout_seconds"])
         self.assertEqual(document["schema"], "kilix.pty/v1")
         self.assertEqual(document["runtime"], str(self.runtime))
-        self.assertEqual(document["timeout_seconds"], 2.0)
+        self.assertEqual(document["timeout_seconds"], 1.0)  # list's overall default
         self.assertEqual([s["id"] for s in document["sessions"]], [SESSION])
         self.assertEqual(document["unreachable"], [wedged])
         # Unreachable sessions are always asked for: a caller must be able to
@@ -541,7 +541,7 @@ class JournalArchiveTests(PtyCliCase):
         self.assertEqual(fields["compressed_bytes"], str(stored.stat().st_size))
         self.assertEqual(fields["broker_pid"], "4242")
         self.assertEqual(fields["reaped_millis"], "1700000000005")
-        self.assertIn("archived_millis", fields)
+        self.assertLess(abs(int(fields["archived_millis"]) - time.time() * 1000), 120000)
 
     def test_the_original_survives_a_compression_that_does_not_read_back(self):
         # A zstd that exits 0 with the wrong bytes must not cost the journal.

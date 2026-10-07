@@ -164,10 +164,11 @@ class Broker:
 
     def __init__(self, path: str, runtime: str, timeout: str | None, guard: float):
         self.path, self.runtime, self.timeout, self.guard = path, runtime, timeout, guard
+        self.default_timeout = 2.0  # the broker's per-operation default; list lowers it
 
     @property
     def timeout_seconds(self) -> float:
-        return float(self.timeout) if self.timeout else 2.0
+        return float(self.timeout) if self.timeout else self.default_timeout
 
     def call(self, *args: str) -> tuple[int | None, bytes, str]:
         """(exit status, stdout, stderr); the status is None when the guard expired."""
@@ -218,6 +219,7 @@ def reply(broker: Broker, *args: str):
 def cmd_list(broker: Broker, argv: list[str]) -> int:
     # Always --all: the envelope's unreachable array is how a caller learns that
     # a session did not answer, instead of finding it missing.
+    broker.default_timeout = 1.0  # list asks every session under one 1 s deadline
     document, status = reply(broker, "list", "--json", "--all")
     if document is None:
         return status

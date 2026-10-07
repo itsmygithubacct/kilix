@@ -713,7 +713,7 @@ _kilix_pty_journal_archive() (
             printf 'id=%s\nstarted_millis=%s\n' "$id" "$started"
           fi
           printf 'raw_bytes=%s\ncompressed_bytes=%s\narchived_millis=%s\n' \
-            "$raw" "$packed" "$(( $(date +%s) * 1000 ))"
+            "$raw" "$packed" "$(date +%s%3N)"
         } >"$tmp_meta"
         if mv -f -- "$tmp" "$dest/$base.zst" \
              && mv -f -- "$tmp_meta" "$dest/$id.$started.meta" \
