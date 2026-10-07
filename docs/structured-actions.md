@@ -72,6 +72,42 @@ refused before connecting. Use the existing `kilix agent-control new-tab` or
 folder trust. This
 keeps parallel launches from racing writes to a client's shared trust config.
 
+## Model and reasoning effort
+
+For Codex, `agent.launch` accepts an optional typed `reasoning_effort`: `low`,
+`medium`, `high`, or `xhigh`. For example, after resolving the source and anchor,
+use these launch parameters with a fresh operation ID:
+
+```json
+{
+  "agent": "codex",
+  "cwd": "/home/pleb/research/gpu_terminal/pleb-dgm",
+  "title": "DGM controller",
+  "placement": "new-tab",
+  "model": "gpt-6.1-sol",
+  "reasoning_effort": "xhigh",
+  "prompt": "Read the assigned brief and implement its tests"
+}
+```
+
+The same field works through Needle's structured CLI and MCP action tools when
+both components include this capability. `kilix action capabilities` lists the
+accepted agents and values. `kilix agent-control new-tab` and `split` also accept
+`--reasoning-effort`. The launcher forwards the exact model and a bounded Codex
+configuration argument, including on resume. Omission preserves the client's
+existing configuration. Unsupported clients, invalid values, and misspelled
+fields are refused; arbitrary Codex `agent_arg` configuration remains refused.
+A particular model may reject an effort: Kilix never substitutes another effort
+or model, and pane creation alone does not establish provider acceptance.
+
+Created and planned agent receipts include `evidence.requested` with `agent`,
+`model`, and `reasoning_effort`. A null value means the caller left that setting
+unspecified. These are requested settings, not observations of the served model
+or effort. The receipt contains no prompt or credentials. Existing saved receipts
+without this optional evidence remain readable. A reused operation ID with a
+changed effort is a different request and is refused. Effort selection does not
+change folder trust, approval policy, or `coding_yolo` behavior.
+
 ## Results and recovery
 
 A receipt distinguishes a verified creation or submission from an uncertain

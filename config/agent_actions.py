@@ -31,8 +31,9 @@ ACTION_OPERATIONS = {
                   "optional": ["direction", "bias"], "mutation": True},
     "agent.launch": {"required": ["agent", "cwd", "title", "placement"],
                      "optional": ["direction", "bias", "model", "prompt", "resume",
-                                  "coding_yolo", "trust_folder", "agent_arg"], "mutation": True,
-                     "unsupported": {"trust_folder": True}},
+                                  "coding_yolo", "trust_folder", "agent_arg", "reasoning_effort"], "mutation": True,
+                     "unsupported": {"trust_folder": True},
+                     "reasoning_effort": {"agents": ["codex"], "values": ["low", "medium", "high", "xhigh"]}},
     "agent.deliver": {"required": ["text"], "optional": ["mode"], "mutation": True},
     "operation.status": {"required": [], "optional": [], "mutation": False},
 }
@@ -117,6 +118,8 @@ def validate(request):
     if operation == "agent.launch":
         if not isinstance(params["agent"], str) or params["agent"] not in control.AGENTS:
             raise control.ControlError("unsupported agent")
+        if "reasoning_effort" in params:
+            control.validate_reasoning_effort(params["agent"], params["reasoning_effort"])
         for name in ("model", "prompt", "resume"):
             if name in params:
                 text(params[name], name, 200 if name == "model" else 1024)
@@ -303,6 +306,11 @@ def finish(request, result):
         if not out["delivery_verified"]:
             out["status"] = "uncertain"
         out["evidence"] = {"verification": result.get("verification"), "verified_at": result.get("verified_at")}
+    if request["operation"] == "agent.launch" and status in ("created", "planned"):
+        params = request["params"]
+        out.setdefault("evidence", {})["requested"] = {
+            "agent": params["agent"], "model": params.get("model"),
+            "reasoning_effort": params.get("reasoning_effort")}
     if result.get("error"):
         out["error"] = result["error"][:240]
     return out
@@ -335,7 +343,16 @@ def validate_record(record, operation_id):
         raise control.ControlError("invalid stored action receipt")
     if saved["status"] == "created":
         evidence = saved["evidence"]
-        fields(evidence, ("pane", "prompt_passed"), label="created pane evidence")
+        fields(evidence, ("pane", "prompt_passed"), ("requested",), label="created pane evidence")
+        if "requested" in evidence:
+            requested = evidence["requested"]
+            fields(requested, ("agent", "model", "reasoning_effort"), label="requested launch settings")
+            if saved["operation"] != "agent.launch" or requested["agent"] not in control.AGENTS:
+                raise control.ControlError("invalid requested launch settings")
+            if requested["model"] is not None:
+                text(requested["model"], "requested model", 200)
+            if requested["reasoning_effort"] is not None:
+                control.validate_reasoning_effort(requested["agent"], requested["reasoning_effort"])
         pane = evidence["pane"]
         fields(pane, ("pane_id", "broker", "tab_id", "os_window_id"), label="created pane identity")
         identity({key: pane[key] for key in ("pane_id", "broker")})

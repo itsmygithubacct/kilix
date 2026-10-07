@@ -221,6 +221,9 @@ including its tail; never "repair" it by executing it in the controlling shell.
   receipts with status and the original operation ID. Timeout is in seconds,
   1–60, default 15. Creation does not prove readiness. See
   [structured actions](structured-actions.md) for request schemas and receipts.
+  Codex `agent.launch` accepts typed `reasoning_effort`: `low`, `medium`, `high`,
+  or `xhigh`, alongside the exact `model`. Omit it to keep the client default.
+  `evidence.requested` records the request, not provider acceptance.
 - For Needle automation use `--agent --json`; apps changes use
   `kilix-needle apps --agent --json --yes 'REQUEST'`, such as `hide the clock`.
   `--yes` applies to the requested change. `kilix screen-size set POINTS` sets text
