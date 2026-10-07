@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import stat
 import sys
+import time
 import unittest
 from unittest import mock
 
@@ -27,6 +28,12 @@ import kilix_pty_request as module  # noqa: E402
 
 class StaleWaiterTests(ForkedCase):
     def test_f1_a_stale_waiter_must_not_mark_a_new_live_owner_interrupted(self):
+        self.stale_schedule(patient=False)
+
+    def test_f1_a_stale_waiter_that_keeps_waiting_replays_the_new_owners_receipt_and_leaks_nothing(self):
+        self.stale_schedule(patient=True)
+
+    def stale_schedule(self, patient):
         entered, release, opened, resume, new_entered, new_release = (
             self.tmp / name for name in ("old-entered", "old-release", "waiter-opened", "waiter-resume",
                                          "new-entered", "new-release"))
@@ -66,9 +73,11 @@ class StaleWaiterTests(ForkedCase):
                     return original_flock(descriptor, mode)
                 with mock.patch.object(module.Store, "owner_lock", tracked), \
                         mock.patch.object(fcntl, "flock", paused_flock), \
-                        mock.patch.object(module, "WAIT_FOR_OWNER", 0.7):
+                        mock.patch.object(module, "WAIT_FOR_OWNER", 20 if patient else 0.7):
+                    descriptors = len(os.listdir("/proc/self/fd"))
                     result = self.direct("race", dispatch)
-                (self.tmp / "stale-result").write_text(json.dumps(result))
+                    leaked = len(os.listdir("/proc/self/fd")) - descriptors
+                (self.tmp / "stale-result").write_text(json.dumps([result, leaked]))
                 os._exit(0)
             self.wait_file(opened)
             release.touch()
@@ -94,18 +103,29 @@ class StaleWaiterTests(ForkedCase):
             current_inode = path.with_suffix(".lock").stat().st_ino
             before = json.loads(path.read_text())
             resume.touch()
+            if patient:
+                time.sleep(1.0)                 # the waiter is now waiting on the new owner, not the stale inode
+                after = json.loads(path.read_text())
+                new_release.touch()
+                os.waitpid(newer, 0)
+                newer = None
             _, status = os.waitpid(waiter, 0)
             waiter = None
             self.assertEqual(status, 0)
-            after = json.loads(path.read_text())
-            stale = json.loads((self.tmp / "stale-result").read_text())
-            new_release.touch()
-            os.waitpid(newer, 0)
-            newer = None
+            if not patient:
+                after = json.loads(path.read_text())
+                new_release.touch()
+                os.waitpid(newer, 0)
+                newer = None
+            stale, leaked = json.loads((self.tmp / "stale-result").read_text())
             self.assertNotEqual(int(opened.read_text()), current_inode, "the schedule did not replace the lock")
             self.assertEqual((before["phase"], after["phase"]), ("intent", "intent"),
                              "a stale waiter converted a live new intent")
-            self.assertEqual(stale[1]["reason"], "in_progress")
+            self.assertEqual(leaked, 0, "the stale lock descriptor leaked")
+            if patient:
+                self.assertEqual((stale[0], stale[1]["result"], stale[1]["duplicate"]), (0, "verified_absent", True))
+            else:
+                self.assertEqual(stale[1]["reason"], "in_progress")
             self.assertEqual(json.loads(path.read_text())["phase"], "done")
         finally:
             release.touch()
