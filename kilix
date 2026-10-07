@@ -381,14 +381,18 @@ usage: $_self pty [--timeout SECONDS] [COMMAND]
   list [--json] [--all]        sessions in this runtime; --all adds unreachable ones
   status ID|--pane PANE_ID [--json]
   observe ID [--from EPOCH:OFFSET]   watch read-only; Ctrl-] leaves
-  attach ID [--resume EPOCH:OFFSET]  take over a detached session
-  kill ID [--yes]              end a session and its program (asks on a terminal)
+  observe ID --once [--from EPOCH:OFFSET] [--lines N | --bytes N] [--text] [--json]
+                               bounded snapshot, no terminal needed (default 200 lines / 64 KiB)
+  attach ID [--resume EPOCH:OFFSET]  take over a detached session (a terminal is required)
+  kill ID --yes [--expect-started MILLIS] [--json]
+                               end a session, then verify it is gone (asks on a terminal)
   path                         print the runtime directory
   pane PANE_ID                 print the session ID behind a kilix pane
   reaped [--json] | reaped path ID    dead sessions' journals still in the runtime
   help
 --timeout bounds each broker call (decimal seconds, 0.1-60; default 2).
-Exit status: 0 success, 1 failure or refusal, 2 usage error.
+--json prints a {"schema":"kilix.pty/v1",...} envelope. Exit status: 0 success,
+1 failure or uncertain, 2 usage error, 3 refused, 4 not found (kill, status).
 USAGE
 }
 
@@ -406,6 +410,13 @@ _kilix_pty_call() {
     return 1
   fi
   return "$rc"
+}
+
+# The JSON and snapshot work, in kilix_pty.py. Dynamic scope as above;
+# `tvalue` is --timeout's value, empty when it was not given.
+_kilix_pty_py() {
+  python3 "$KILIX_HOME/config/kilix_pty.py" --broker "$broker" --runtime "$runtime" \
+    ${tvalue:+--timeout "$tvalue"} --guard "$guard" "$@"
 }
 
 # The broker session of a kilix pane, from the authenticated pane listing.
@@ -436,6 +447,7 @@ _kilix_pty_reaped_count() {
 _kilix_pty_cli() {
   local broker runtime install_only=0 verb id guard="${KILIX_PTY_GUARD:-10}" state
   local -a tflag=() args=()
+  local tvalue="" json=0
   case "$guard" in ''|*[!0-9.]*) guard=10 ;; esac
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -445,7 +457,7 @@ _kilix_pty_cli() {
           echo "usage: $_self pty --timeout SECONDS (decimal seconds)" >&2
           return 2
         }
-        tflag=(--timeout "$2"); guard=75; shift 2 ;;
+        tflag=(--timeout "$2"); tvalue="$2"; guard=75; shift 2 ;;
       -h|--help|help) _kilix_pty_usage; return 0 ;;
       *) break ;;
     esac
@@ -486,15 +498,15 @@ _kilix_pty_cli() {
       case "$verb" in
         list)
           for id in "$@"; do
-            case "$id" in --json|--all) args+=("$id") ;;
+            case "$id" in --json) json=1; args+=("$id") ;; --all) args+=("$id") ;;
               *) _kilix_pty_usage >&2; return 2 ;; esac
           done
-          _kilix_pty_call list "${args[@]}" ;;
+          if [ "$json" = 1 ]; then _kilix_pty_py list; else _kilix_pty_call list "${args[@]}"; fi ;;
         status)
           id=""
           while [ $# -gt 0 ]; do
             case "$1" in
-              --json) args+=(--json); shift ;;
+              --json) json=1; shift ;;
               --pane)
                 [ $# -ge 2 ] && [ -z "$id" ] || { _kilix_pty_usage >&2; return 2; }
                 id="$(_kilix_pty_pane_session "$2")" || return $?
@@ -505,53 +517,66 @@ _kilix_pty_cli() {
             esac
           done
           _kilix_pty_valid_id "$id" || { _kilix_pty_usage >&2; return 2; }
-          _kilix_pty_call status "$id" "${args[@]}" ;;
-        observe|attach)
+          if [ "$json" = 1 ]; then _kilix_pty_py status "$id"; else _kilix_pty_call status "$id"; fi ;;
+        observe)
           [ $# -ge 1 ] && _kilix_pty_valid_id "$1" || { _kilix_pty_usage >&2; return 2; }
           id="$1"; shift
-          if [ "$verb" = attach ]; then
-            # The broker serves one read-write client; say so before it does.
-            state="$(_kilix_pty_call status "$id" --json)" || return 1
-            if printf '%s' "$state" | python3 "$KILIX_HOME/config/kilix_pty.py" attached; then
-              echo "kilix pty: session $id is attached to a pane;" \
-                   "'$_self pty observe $id' watches it read-only" >&2
-              return 1
-            fi
+          local once=0 arg
+          for arg in "$@"; do [ "$arg" != --once ] || once=1; done
+          if [ "$once" = 1 ]; then
+            _kilix_pty_py observe "$id" "$@"
+          else
+            # Interactive: only a cursor to resume from; the rest is --once's.
+            [ $# -eq 0 ] || { [ $# -eq 2 ] && [ "$1" = --from ]; } \
+              || { _kilix_pty_usage >&2; return 2; }
+            exec "$broker" --runtime-dir "$runtime" "${tflag[@]}" observe "$id" "$@"
+          fi ;;
+        attach)
+          [ $# -ge 1 ] && _kilix_pty_valid_id "$1" || { _kilix_pty_usage >&2; return 2; }
+          id="$1"; shift
+          # Attach is for a person at a terminal; a script that wants the output
+          # uses observe --once, and one that wants to type uses a pane.
+          [ -t 0 ] || {
+            echo "kilix pty: attach needs a terminal; use '$_self pty observe $id --once'" \
+                 "to read a session without one" >&2
+            return 2
+          }
+          # The broker serves one read-write client; say so before it does.
+          state="$(_kilix_pty_call status "$id" --json)" || return 1
+          if printf '%s' "$state" | python3 "$KILIX_HOME/config/kilix_pty.py" attached; then
+            echo "kilix pty: session $id is attached to a pane;" \
+                 "'$_self pty observe $id' watches it read-only" >&2
+            return 1
           fi
-          exec "$broker" --runtime-dir "$runtime" "${tflag[@]}" "$verb" "$id" "$@" ;;
+          exec "$broker" --runtime-dir "$runtime" "${tflag[@]}" attach "$id" "$@" ;;
         kill)
-          local yes=0 reply
+          [ $# -ge 1 ] || { _kilix_pty_usage >&2; return 2; }
+          # The exact ID, never a prefix: it is validated here and again by the
+          # broker. A receipt (--json) or a one-line verdict says what happened.
           id=""
           while [ $# -gt 0 ]; do
             case "$1" in
-              --yes) yes=1; shift ;;
+              --yes|--json) args+=("$1"); shift ;;
+              --expect-started)
+                [ $# -ge 2 ] && [[ "$2" =~ ^[0-9]+$ ]] || { _kilix_pty_usage >&2; return 2; }
+                args+=("$1" "$2"); shift 2 ;;
               -*) _kilix_pty_usage >&2; return 2 ;;
               *) [ -z "$id" ] || { _kilix_pty_usage >&2; return 2; }
                  id="$1"; shift ;;
             esac
           done
           _kilix_pty_valid_id "$id" || { _kilix_pty_usage >&2; return 2; }
-          # Looking first fails a typo'd ID cleanly, and shows what is ending.
-          state="$(_kilix_pty_call status "$id")" || return 1
-          if [ "$yes" = 0 ]; then
-            if [ ! -t 0 ] || [ ! -t 2 ]; then
-              echo "kilix pty: refusing to end $id without --yes (not a terminal)" >&2
-              return 2
-            fi
-            printf '%s\nEnd this session and the program in it? [y/N] ' "$state" >&2
-            read -r reply || reply=""
-            case "$reply" in y|Y|yes|YES) ;; *) echo "kilix pty: not ended" >&2; return 1 ;; esac
-          fi
-          _kilix_pty_call kill "$id" && echo "kilix pty: ended $id" ;;
+          _kilix_pty_py kill "$id" "${args[@]}" ;;
         reaped)
           if [ "${1:-}" = path ]; then
             [ $# -eq 2 ] && _kilix_pty_valid_id "$2" || { _kilix_pty_usage >&2; return 2; }
             _kilix_pty_call reaped path "$2"
+          elif [ $# -eq 1 ] && [ "$1" = --json ]; then
+            _kilix_pty_py reaped
+          elif [ $# -eq 0 ]; then
+            _kilix_pty_call reaped
           else
-            for id in "$@"; do
-              [ "$id" = --json ] || { _kilix_pty_usage >&2; return 2; }
-            done
-            _kilix_pty_call reaped "$@"
+            _kilix_pty_usage >&2; return 2
           fi ;;
       esac ;;
     *)
