@@ -938,14 +938,18 @@ runtime into `~/.local/gpu_terminal/kilix/state/pty-journals/` as
 Each is compressed with `zstd -19 --long=27`, read back and compared byte for
 byte with the original, and only then is the original removed. Journals are
 long and repetitive (28 dead journals, 48 MB, came to 1.7 MB as one stream).
-Every zstd call is cut off after 10 minutes (`KILIX_PTY_ZSTD_TIMEOUT`), and the
-archive runs after the transcript pass has released its lock, with a lock of its
-own (`state/pty-journals.lock`, never created through or truncated via a
-symlink), so a stuck compressor cannot keep transcript budgets from being
-enforced.
+Every zstd call of the archive is cut off after 10 minutes
+(`KILIX_PTY_ZSTD_TIMEOUT`), and so are the transcript pass's own compress and
+recompress calls (2 minutes there; the original is kept and the lock released).
+The archive runs after the transcript pass has released its lock, with a lock of
+its own (`state/pty-journals.lock`). Both locks are opened by a helper with
+`O_NOFOLLOW`: a symlink (dangling, or to a FIFO) is refused by the open itself, and
+nothing is created or truncated through it.
 
-If the name is already taken, nothing is lost. The same journal again is a retry:
-it is not rewritten, and a missing `.meta` is finished. A *different* journal
+If the name is already taken, nothing is lost. The same journal again is a retry,
+whether it is retained under the canonical name or under its variant name (even
+when the canonical one was evicted since): it is not copied again, and a missing
+`.meta` is finished. A *different* journal
 (another runtime reaped the same ID and start time, or an ID was reused) is kept
 beside the first as `ID.STARTED_MILLIS+HASH.journal.zst`, HASH being 12 hex
 digits of its own SHA-256, and the pass says so; `journals --json` shows it with
@@ -957,8 +961,10 @@ the broker's own bound). Only names `journals` would list (an archive plus its
 the directory is left alone, and a `.meta` with no journal is removed once it is
 an hour old.
 
-`kilix pty journals` lists them newest first, `journals path ID` prints the
-newest file for an ID (or `ID.STARTED_MILLIS`, or `ID.STARTED_MILLIS+HASH` for a variant, for a specific one), and
+`kilix pty journals` lists them newest first. `journals path|show SELECTOR` takes
+exactly one of: `ID` (the newest archive of that ID), `ID.STARTED_MILLIS` (exactly
+the canonical archive of that start, never a newer variant) or
+`ID.STARTED_MILLIS+HASH` (exactly that variant); `path` prints the file and
 `journals show ID` writes the raw terminal bytes to stdout. Raw bytes can drive
 a terminal, so `show` refuses to write to one unless you pass `--force`; pipe it
 to a file or to `less -R`. Use `kilix transcript clean` on a pane's *session
