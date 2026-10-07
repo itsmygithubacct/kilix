@@ -763,6 +763,8 @@ kilix pty pane PANE_ID                     # the session ID behind a pane
 kilix pty reaped [--json]                  # dead sessions' journals in the runtime
 kilix pty journals [list|show ID|path ID] [--json]   # archived journals
 kilix pty reap [--runtime DIR]             # prove dead sessions, archive their journals
+kilix pty capabilities --json              # the verbs, arguments, units, ranges and an example each
+kilix pty request --request-json -|FILE    # the same verbs as one JSON request (below)
 kilix pty --timeout SECONDS ...            # bound each broker call (0.1-60, default 2)
 ```
 
@@ -847,6 +849,45 @@ A session object, as `status` and `list` report it:
 `list_failed`, `status_failed` or `status_timeout`; `request_sent` says whether a
 termination request went out); `refused` (`reason` `own_session`,
 `started_mismatch` or `declined`); `not_found`. Exit status 0, 1, 3, 4.
+
+#### JSON requests
+
+`kilix pty capabilities --json` prints, in about 3 KB, every verb the request
+route accepts with its arguments (type, unit, range), whether it needs consent,
+and one literal request to copy. Nothing is asked of a broker. `kilix pty request
+--request-json -` (or a file) takes one request and prints one receipt, both on a
+single line:
+
+```bash
+kilix pty request --request-json - <<'EOF'
+{"schema":"kilix.pty.request/v1","verb":"observe","args":{"id":"3fa9c2d41b7e6a05","max_lines":50,"text":true}}
+EOF
+```
+
+Verbs: `list`, `status` (`id` or `pane_id`), `pane`, `reaped`, `journals` (with an
+`id`, a bounded snapshot; without, the archive), `observe` and `kill`. `attach` and
+`reap` are not available here. A request is at most 16 KiB; unknown top-level
+fields or arguments are rejected, and an empty stdin is a one-line refusal whose
+`hint` is the example above. Units are in the names: `timeout_seconds` (0.1-60),
+`max_lines` (1-10000), `max_bytes` (1-1048576, not together with `max_lines`),
+`expect_started_millis`; a value out of range is refused with the unit and range
+in the message (`max_lines is in lines, 1-10000; got 30000`), never converted.
+Every refusal carries a `hint` with one accepted form.
+
+The receipt is the document the plain command prints with `--json`, from the
+same code. Reads need nothing more. `kill` additionally needs an `operation_id`
+(1-64 of letters, digits, `.`, `_`, `-`), `--yes` on the command line (a request
+cannot carry its own consent) and a caller that can be identified
+(`$KITTY_PTY_BROKER_SESSION` set), or it refuses; it also refuses the caller's
+own session. The same `operation_id` with the same arguments returns the stored
+receipt with `"duplicate": true` and sends nothing; with other arguments it is
+refused (`operation_id_reused`). Receipts of requests that were sent are kept
+privately (mode 0600) in `state/pty-operations/`, at most 256, so an
+`uncertain` kill stays `uncertain`: re-list, then use a new `operation_id`. A
+refusal that sent nothing is not kept and can be retried under the same id. A
+kill receipt from this route also carries `operation_id` and `duplicate`. Exit
+status: `2` the request is malformed (nothing ran), `3` refused (consent,
+identity, reused operation), otherwise as for the plain command.
 
 #### Journal archive
 
