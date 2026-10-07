@@ -69,6 +69,14 @@ class FixtureTampered(Exception):
     """The run's private fixture directory is no longer the directory this class made."""
 
 
+def remove_tree(path):
+    """rmtree that first makes writable the directories a build left read-only (as TemporaryDirectory does)."""
+    for directory,_,_ in os.walk(path,onerror=lambda error:None):
+        try:os.chmod(directory,0o700)
+        except OSError:pass
+    shutil.rmtree(path)
+
+
 class CheckedFixture:
     """A fixture directory made with mkdtemp and removed only by `cleanup`, which checks first.
 
@@ -83,7 +91,7 @@ class CheckedFixture:
 
     def cleanup(self):
         self._check()
-        shutil.rmtree(self.name)
+        remove_tree(self.name)
 
 
 class MultiplexerBuildTests(unittest.TestCase):
@@ -106,7 +114,8 @@ class MultiplexerBuildTests(unittest.TestCase):
         """Remove what this run created, and only that: nothing if the directory is no longer ours."""
         try:cls.verify_run_directory()
         except FixtureTampered:return
-        shutil.rmtree(cls.fixture_parent,ignore_errors=True)
+        try:remove_tree(cls.fixture_parent)
+        except OSError:pass
 
     def remove_fixture(self):
         self.temporary.cleanup()         # checks the run directory first: a replaced parent would make a

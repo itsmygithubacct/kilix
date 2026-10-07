@@ -208,6 +208,24 @@ class FixtureNamespaceTests(unittest.TestCase):
             self.assertTrue(sentinel.exists(), "the automatic finalizer deleted a peer fixture")
             self.assertTrue(original.exists())
 
+    def test_n9_a_fixture_the_build_left_read_only_is_still_removed_by_the_checked_cleanup(self):
+        with Fixtures(self, self.candidate, self.alternative) as f:
+            f.First.setUpClass()
+            case = f.case(f.First)
+            generation = case.root / "storage" / "generation"
+            (generation / "out").mkdir(parents=True)
+            (generation / "out" / "binary").write_text("built")
+            for path in (generation / "out", generation):
+                path.chmod(0o500)               # what the build leaves behind
+            case.doCleanups()
+            self.assertFalse(case.root.exists())
+            second = f.case(f.First)
+            (second.root / "locked").mkdir()
+            (second.root / "locked" / "file").write_text("x")
+            (second.root / "locked").chmod(0o500)
+            f.First.doClassCleanups()           # removes whatever the class left, read-only or not
+            self.assertFalse(f.First.fixture_parent.exists())
+
     def test_n9_nothing_removes_a_fixture_when_the_interpreter_exits(self):
         code = '''import pathlib, sys
 sys.path.insert(0, sys.argv[1])
