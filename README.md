@@ -947,7 +947,9 @@ the retention rule is explicit:
 
 A caller that has seen a record for its `operation_id` (in progress, or finished)
 never dispatches that id itself. A waiter keeps the per-operation lock it wins
-through its re-read, and a finished receipt younger than the 90 seconds cannot be
+through its re-read, uses it as proof that the owner is gone only while it is still
+the operation's current lock file (same device and inode; the lock of an evicted
+generation proves nothing, so it is dropped and the current owner is probed), and a finished receipt younger than the 90 seconds cannot be
 forgotten; if the record has nevertheless been forgotten when the waiter looks
 again (it stalled for longer than that), it returns `uncertain` /
 `receipt_evicted` with `request_sent: null` (unknown) and sends nothing: re-list.
@@ -958,7 +960,11 @@ exit 3).
 If the record was saved but the final directory fsync failed, the receipt is the
 real outcome with `"receipt_durable": false` and a `durability_note`: every replay
 returns the same outcome, but if the machine stops before the disk catches up a
-retry may report `interrupted` instead. If the receipt file itself could not be
+retry may report `interrupted` instead. The same holds when the failure is in the
+directory sync of recovering a crashed intent (the answer is the real `interrupted`
+receipt, `duplicate: true`, flagged). `receipt_durable` and `durability_note` are on
+that first returned document only: the saved record, and so every replay, does not
+carry them. If the receipt file itself could not be
 written, the answer is `uncertain` / `receipt_not_saved`, the intent stays and a
 retry replays `interrupted`. A refusal that sent nothing releases the
 reservation and can be retried under the same id. A kill receipt from this route
