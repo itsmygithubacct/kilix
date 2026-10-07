@@ -40,6 +40,9 @@ DEFAULT_BYTES = 64 * 1024
 #: The broker replays at most 1 MiB to an observer; a journal can be larger.
 SNAPSHOT_LIMIT = 512 * 1024 * 1024
 EXIT_USAGE, EXIT_REFUSED, EXIT_NOT_FOUND = 2, 3, 4
+#: `kill ID --expect-started MILLIS` exits 3 when the ID now names another session and 5 when
+#: the broker is too old to check; either way it did nothing.
+BROKER_MISMATCH, BROKER_CANNOT_BIND = 3, 5
 #: `ID.STARTED_MILLIS.journal.zst`; the ID may itself contain dots.
 #: A different journal that would have taken a name already in use gets `+HASH`
 #: (12 hex digits of its own SHA-256) after the start time; `+` is not an ID character.
@@ -355,7 +358,20 @@ def cmd_kill(broker: Broker, argv: list[str]) -> int:
         sys.stderr.flush()
         if sys.stdin.readline().strip().lower() not in ("y", "yes"):
             return done("refused", EXIT_REFUSED, "not ended", "declined", started_millis=started)
-    terminate_status, terminate_out, terminate_err = broker.call("kill", ident)
+    # With an expectation the broker itself compares its own start time and ends the
+    # session only if it matches, in the same step: a status check followed by a plain
+    # terminate cannot tell a session replaced in between. Without one, today's plain kill.
+    bound = ["--expect-started", str(expect)] if expect is not None else []
+    terminate_status, terminate_out, terminate_err = broker.call("kill", ident, *bound)
+    if bound and terminate_status == BROKER_MISMATCH:
+        return done("refused", EXIT_REFUSED, f"{ident} is no longer the session that started at {expect}"
+                    " (it was replaced); the broker did nothing", "started_mismatch",
+                    started_millis=started, expected_started_millis=expect)
+    if bound and terminate_status == BROKER_CANNOT_BIND:
+        return done("refused", EXIT_REFUSED, "this session's broker is an older build that cannot check its"
+                    " identity, so nothing was done; a person can end it with"
+                    f" `kilix pty kill {ident} --yes` (without --expect-started)", "cannot_bind",
+                    started_millis=started)
     sent = True
     # A reply that never came (the guard, or the broker's own deadline) means the
     # request MAY have been applied: whatever is seen afterwards, this request

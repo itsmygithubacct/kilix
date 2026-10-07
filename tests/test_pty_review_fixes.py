@@ -273,6 +273,64 @@ class KillVerificationTests(PtyCliCase):
         self.assertTrue(after and all(" status " in c for c in after), after)
 
 
+class KillIdentityTests(PtyCliCase):
+    """F1: --expect-started is handed to the broker, which compares its own start time."""
+
+    def setUp(self):
+        super().setUp()
+        self.reply("status", out=status_json() + "\n")
+        self.reply("list", out="[%s]" % status_json())
+
+    def kill(self, *flags):
+        result = self.pty("kill", SESSION, "--yes", "--json", *flags,
+                          KITTY_PTY_BROKER_SESSION="aaaaaaaaaaaaaaaa")
+        return result, json.loads(result.stdout)
+
+    def kill_calls(self):
+        return [c for c in self.calls() if " kill " in c]
+
+    def test_the_expectation_travels_with_the_terminate_request(self):
+        (self.fake / "kill.hook").write_text(gone_hook(self.fake))
+        result, receipt = self.kill("--expect-started", "1700000000000")
+        self.assertEqual((result.returncode, receipt["result"]), (0, "verified_absent"))
+        self.assertEqual(self.kill_calls(),
+                         [f"--runtime-dir {self.runtime} kill {SESSION} --expect-started 1700000000000"])
+
+    def test_a_plain_kill_stays_a_plain_terminate(self):
+        (self.fake / "kill.hook").write_text(gone_hook(self.fake))
+        result, receipt = self.kill()
+        self.assertEqual(receipt["result"], "verified_absent")
+        self.assertEqual(self.kill_calls(), [f"--runtime-dir {self.runtime} kill {SESSION}"])
+
+    def test_a_broker_that_finds_a_replacement_refuses_and_nothing_is_verified_or_sent(self):
+        self.reply("kill", err="kitty-pty-broker: kill session: refused: x is not the session that started "
+                               "at 1700000000000 (it was replaced); nothing was done\n", rc=3)
+        result, receipt = self.kill("--expect-started", "1700000000000")
+        self.assertEqual((result.returncode, receipt["result"], receipt["reason"]), (3, "refused", "started_mismatch"))
+        self.assertFalse(receipt["request_sent"])
+        self.assertEqual(self.calls()[-1], self.kill_calls()[0], "no verification after a refusal")
+
+    def test_a_broker_too_old_to_bind_is_never_killed_blind(self):
+        self.reply("kill", err="kitty-pty-broker: kill session: this broker predates identity-checked kill\n", rc=5)
+        result, receipt = self.kill("--expect-started", "1700000000000")
+        self.assertEqual((result.returncode, receipt["result"], receipt["reason"]), (3, "refused", "cannot_bind"))
+        self.assertFalse(receipt["request_sent"])
+        self.assertIn("without --expect-started", receipt["message"])
+        self.assertIn(f"kilix pty kill {SESSION} --yes", receipt["message"])
+        self.assertEqual(len(self.kill_calls()), 1, "no unconditional kill follows")
+
+    def test_a_refusal_by_the_broker_is_not_remembered_by_the_request_route(self):
+        self.reply("kill", err="x\n", rc=3)
+        payload = json.dumps({"schema": "kilix.pty.request/v1", "verb": "kill", "operation_id": "e-1",
+                              "args": {"id": SESSION, "expect_started_millis": 1700000000000}})
+        result = subprocess.run(["bash", str(LAUNCHER), "pty", "request", "--yes", "--request-json", "-"],
+                                env=self.env(KITTY_PTY_BROKER_SESSION="aaaaaaaaaaaaaaaa"), input=payload,
+                                capture_output=True, text=True, timeout=60)
+        self.assertEqual((result.returncode, json.loads(result.stdout)["reason"]), (3, "started_mismatch"))
+        self.assertFalse((self.state / "pty-operations").exists()
+                         and list((self.state / "pty-operations").glob("op-*.json")))
+
+
 class ContractTests(PtyCliCase):
     """F8: the exit table, the --timeout range and one-line errors hold for every verb."""
 
