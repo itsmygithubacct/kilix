@@ -12,6 +12,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import time
 import unittest
 import sys
 
@@ -36,7 +37,7 @@ def load_module():
     return module
 
 
-def run_launcher(*args, storage, transcript_dir=None, extra_env=None):
+def run_launcher(*args, storage, transcript_dir=None, extra_env=None, timeout=120):
     """Run the launcher against a storage root of our own.
 
     Every KILIX_/KITTY_ variable is dropped first: the suite is usually run
@@ -52,7 +53,7 @@ def run_launcher(*args, storage, transcript_dir=None, extra_env=None):
         env.update(extra_env)
     return subprocess.run(
         ["bash", str(LAUNCHER), *args],
-        env=env, capture_output=True, text=True, timeout=120)
+        env=env, capture_output=True, text=True, timeout=timeout)
 
 
 class TranscriptIndexTests(unittest.TestCase):
@@ -236,6 +237,33 @@ class TranscriptIndexTests(unittest.TestCase):
         # its sidecar has to follow the log into the recent tier, not vanish.
         self.assertTrue((self.transcripts / "livelog000000000.meta").exists())
         self.assertTrue((self.transcripts / "storedlog0000000.meta").exists())
+
+    @unittest.skipUnless(HAVE_REAPER, "prune needs zstd and flock")
+    def test_prune_gives_up_on_a_broker_that_never_answers(self):
+        # A wedged broker used to hang `list` for ever, and the pass held
+        # transcript-reaper.lock the whole time: budgets stopped being
+        # enforced and every later `prune` said another pass was running.
+        broker = self.tmp / "hung-broker"
+        broker.write_text("#!/bin/sh\nexec sleep 60\n")
+        broker.chmod(0o755)
+        self.write_log("deadpane00000000")
+
+        started = time.monotonic()
+        result = run_launcher(
+            "transcript", "prune", storage=self.storage,
+            transcript_dir=self.transcripts, timeout=40,
+            extra_env={"KITTY_PTY_BROKER_EXECUTABLE": str(broker),
+                       "KILIX_PTY_LIST_TIMEOUT": "1"})
+
+        self.assertLess(time.monotonic() - started, 30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("could not identify live panes", result.stderr)
+        # Unknown is not dead: the log is left exactly as it was.
+        self.assertTrue((self.transcripts / "deadpane00000000.log").exists())
+        self.assertFalse((self.transcripts / "recent").exists())
+        lock = self.storage / "state" / "transcript-reaper.lock"
+        released = subprocess.run(["flock", "-n", str(lock), "true"])
+        self.assertEqual(released.returncode, 0, "the reaper lock was left held")
 
 
 class TranscriptSidecarTests(unittest.TestCase):
