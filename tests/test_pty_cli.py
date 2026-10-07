@@ -688,8 +688,8 @@ class JournalViewTests(PtyCliCase):
             (SESSION, 1700000009999), ("other00000000000", 1700000005000), (SESSION, 1700000000000)])
         first = entries[0]
         self.assertEqual(sorted(first), sorted([
-            "id", "started_millis", "reaped_millis", "archived_millis", "broker_pid", "child_pid",
-            "raw_bytes", "compressed_bytes", "path"]))
+            "id", "started_millis", "variant", "reaped_millis", "archived_millis", "broker_pid",
+            "child_pid", "raw_bytes", "compressed_bytes", "path"]))
         self.assertEqual(first["raw_bytes"], 4)
         self.assertEqual(first["path"], str(
             self.state / "pty-journals" / f"{SESSION}.1700000009999.journal.zst"))
