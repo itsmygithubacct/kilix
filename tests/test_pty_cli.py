@@ -585,12 +585,15 @@ class JournalArchiveTests(PtyCliCase):
         target = self.tmp / "secret"
         target.write_text("not a journal")
         (reaped / f"{SESSION}.1.journal").symlink_to(target)
+        # With a .meta present, only the symlink check stands between it and the archive.
+        (reaped / f"{SESSION}.1.meta").write_text(f"id={SESSION}\n")
         (reaped / "no-millis.journal").write_text("x")
         (reaped / "weird name.5.journal").write_text("x")
         result = self.archive()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(sorted(p.name for p in reaped.iterdir()),
-                         sorted([f"{SESSION}.1.journal", "no-millis.journal", "weird name.5.journal"]))
+                         sorted([f"{SESSION}.1.journal", f"{SESSION}.1.meta", "no-millis.journal",
+                                 "weird name.5.journal"]))
         self.assertFalse((self.state / "pty-journals").exists())
 
     def test_the_oldest_session_is_evicted_when_over_budget(self):
