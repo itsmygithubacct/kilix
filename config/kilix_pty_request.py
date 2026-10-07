@@ -393,10 +393,26 @@ class Store:
             pass
         self.sync_directory()
 
+    def lock_path(self, operation_id: str) -> str:
+        return self.path(operation_id)[:-len(".json")] + ".lock"
+
     def owner_lock(self, operation_id: str) -> int:
         """The per-operation lock: held (flock) for as long as a process is dispatching it."""
-        path = self.path(operation_id)[:-len(".json")] + ".lock"
-        return os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        return os.open(self.lock_path(operation_id), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+
+    def lock_is_current(self, operation_id: str, descriptor: int) -> bool:
+        """Is this open descriptor the operation's lock file as it exists now (same device and inode)?
+
+        A waiter can hold the lock of an earlier generation of the operation, one that was forgotten
+        (record and lock unlinked) and has since been admitted again with a new lock file; the old
+        inode says nothing about the current owner.
+        """
+        try:
+            current = os.stat(self.lock_path(operation_id), follow_symlinks=False)
+            held = os.fstat(descriptor)
+        except OSError:
+            return False
+        return (current.st_dev, current.st_ino) == (held.st_dev, held.st_ino)
 
 
 def fingerprint(request: dict) -> str:
@@ -496,6 +512,17 @@ def sent(document) -> bool:
 
 
 
+def not_durable(document):
+    """The first answer for a receipt that is saved and visible but whose directory entry may not survive a crash.
+
+    Only this returned document carries the flag; the saved record, and so every replay, does not.
+    """
+    return {**document, "receipt_durable": False,
+            "durability_note": "the receipt was saved but the directory entry could not be flushed; "
+                               "if the machine stops before the disk catches up, a retry with this "
+                               "operation_id may report interrupted instead"}
+
+
 def interrupted(broker, request, operation_id):
     return broker.envelope(
         result="uncertain", id=request["args"]["id"], request_sent=True, reason="interrupted",
@@ -531,10 +558,14 @@ def reserve(broker, request, store, key):
                 if record is None:
                     store.make_room()           # or refuse here, before anything is dispatched
                     owner = store.owner_lock(operation_id)
-                    fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)      # nobody can hold it: no record
-                    store.write(operation_id, {"fingerprint": key, "phase": "intent", "operation_id": operation_id,
-                                               "receipt": None, "pid": os.getpid(),
-                                               "updated_millis": int(time.time() * 1000)})
+                    try:
+                        fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)      # nobody can hold it: no record
+                        store.write(operation_id, {"fingerprint": key, "phase": "intent",
+                                                   "operation_id": operation_id, "receipt": None,
+                                                   "pid": os.getpid(), "updated_millis": int(time.time() * 1000)})
+                    except BaseException:
+                        os.close(owner)         # nothing was dispatched: do not leak the lock to this process
+                        raise
                     return owner, None
                 seen = True
                 if record.get("fingerprint") != key:
@@ -544,7 +575,13 @@ def reserve(broker, request, store, key):
                 receipt = record.get("receipt")
                 if record.get("phase") == "done" and isinstance(receipt, dict):
                     return None, (pty_exit(receipt), {**receipt, "duplicate": True})
-                unowned = held is not None          # a waiter that holds the lock has found its owner gone
+                unowned = False
+                if held is not None:
+                    if store.lock_is_current(operation_id, held):
+                        unowned = True      # this waiter holds the current lock: its owner is gone
+                    else:
+                        os.close(held)      # an obsolete inode of a forgotten generation proves nothing
+                        held = None
                 if not unowned:
                     probe = store.owner_lock(operation_id)
                     try:
@@ -556,8 +593,11 @@ def reserve(broker, request, store, key):
                         os.close(probe)
                 if unowned:                 # an intent that no process owns: its dispatcher died
                     gone = {**interrupted(broker, request, operation_id)}
-                    store.write(operation_id, {**record, "phase": "done", "receipt": gone,
-                                               "updated_millis": int(time.time() * 1000)})
+                    try:
+                        store.write(operation_id, {**record, "phase": "done", "receipt": gone,
+                                                   "updated_millis": int(time.time() * 1000)})
+                    except DurabilityError:
+                        return None, (1, not_durable({**gone, "duplicate": True}))
                     return None, (1, {**gone, "duplicate": True})
             # Another process is dispatching this very operation: let it finish, then replay its receipt.
             waiting = store.owner_lock(operation_id)
@@ -622,10 +662,7 @@ def execute(broker, request, yes, state):
                     store.forget(operation_id)   # nothing was sent: the same id may be tried again
         except DurabilityError:
             # The receipt is on disk and every replay will return it; only its crash-safety is unproven.
-            document = {**document, "receipt_durable": False,
-                        "durability_note": "the receipt was saved but the directory entry could not be flushed; "
-                                           "if the machine stops before the disk catches up, a retry with this "
-                                           "operation_id may report interrupted instead"}
+            document = not_durable(document)
         except (OSError, ValueError) as error:
             if sent(document):
                 # The terminate request went out and its outcome could not be saved. The intent stays,
