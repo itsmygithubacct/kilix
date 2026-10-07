@@ -392,6 +392,8 @@ usage: $_self pty [--timeout SECONDS] [COMMAND]
   journals [list|show ID|path ID] [--json]   archived journals, newest first;
                                show takes observe --once's bounds, --text and --json
   reap [--runtime DIR]         prove dead sessions in a runtime and archive them
+  capabilities [--json]        the verbs, their arguments, units and consent, with examples
+  request [--yes] --request-json -|FILE   one JSON request, one receipt (kill needs --yes)
   help
 --timeout bounds each broker call (decimal seconds, 0.1-60; default 2).
 --json prints a {"schema":"kilix.pty/v1",...} envelope. Exit status: 0 success,
@@ -422,17 +424,24 @@ _kilix_pty_py() {
     ${tvalue:+--timeout "$tvalue"} --guard "$guard" "$@"
 }
 
-# The broker session of a kilix pane, from the authenticated pane listing.
-_kilix_pty_pane_session() {
+# The kitten that talks to the running engine, if one can be found.
+_kilix_pty_kitten() {
   local kitten="${KILIX_KITTEN:-}"
-  [[ "$1" =~ ^[0-9]+$ ]] || { echo "usage: $_self pty pane PANE_ID" >&2; return 2; }
   if [ ! -x "$kitten" ]; then
     kitten=""
     if [ -x "$FORK" ]; then kitten="$(dirname "$FORK")/kitten"
     elif [ -x "$PREBUILT" ]; then kitten="$(dirname "$PREBUILT")/kitten"
     fi
   fi
-  [ -x "$kitten" ] || {
+  [ -x "$kitten" ] || return 1
+  printf '%s\n' "$kitten"
+}
+
+# The broker session of a kilix pane, from the authenticated pane listing.
+_kilix_pty_pane_session() {
+  local kitten
+  [[ "$1" =~ ^[0-9]+$ ]] || { echo "usage: $_self pty pane PANE_ID" >&2; return 2; }
+  kitten="$(_kilix_pty_kitten)" || {
     echo "kilix pty: kitten not found; build the engine first" >&2
     return 1
   }
@@ -531,6 +540,16 @@ _kilix_pty_cli() {
           fi ;;
         *) _kilix_pty_usage >&2; return 2 ;;
       esac ;;
+    capabilities)
+      # What the verbs are, in one document; nothing is asked of a broker.
+      broker=""
+      runtime="$(_kilix_resolve_pty_broker_runtime)" || return 1
+      _kilix_pty_py capabilities "$@" ;;
+    request)
+      # One JSON request in, one receipt out (the same documents as --json).
+      broker="$(_kilix_pty_broker_path)" || return 1
+      runtime="$(_kilix_resolve_pty_broker_runtime)" || return 1
+      KILIX_KITTEN="$(_kilix_pty_kitten || true)" _kilix_pty_py request "$@" ;;
     list|status|observe|attach|kill|reaped)
       broker="$(_kilix_pty_broker_path)" || return 1
       runtime="$(_kilix_resolve_pty_broker_runtime)" || return 1

@@ -11,6 +11,7 @@ The launcher resolves the broker and the runtime and hands them over:
     kill ID [--yes] [--expect-started MILLIS] [--json]
     observe ID --once [--from C] [bounds] [--json]
     journals list DIR [--json] | path DIR ID | show DIR ID [bounds] [--json]
+    capabilities | request [--yes] --request-json -|FILE   (see kilix_pty_request.py)
 
 Every broker call is bounded by --guard and gets no stdin. Output read from a
 session is untrusted data: it is whatever the program in the pane printed.
@@ -480,8 +481,19 @@ def cmd_journals(broker: Broker, argv: list[str]) -> int:
                       journal_epoch=None, cursor=None)
 
 
+def cmd_capabilities(broker: Broker, argv: list[str]) -> int:
+    import kilix_pty_request
+    return kilix_pty_request.cmd_capabilities(broker, argv)
+
+
+def cmd_request(broker: Broker, argv: list[str]) -> int:
+    import kilix_pty_request
+    return kilix_pty_request.cmd_request(broker, argv)
+
+
 COMMANDS = {"list": cmd_list, "status": cmd_status, "reaped": cmd_reaped,
-            "kill": cmd_kill, "observe": cmd_observe, "journals": cmd_journals}
+            "kill": cmd_kill, "observe": cmd_observe, "journals": cmd_journals,
+            "capabilities": cmd_capabilities, "request": cmd_request}
 
 
 def main(argv: list[str]) -> int:
@@ -496,10 +508,10 @@ def main(argv: list[str]) -> int:
         options[flag] = argv.pop(0)
     # The archive is read from disk: journals needs the runtime for its envelope, not a broker.
     if not argv or argv[0] not in COMMANDS or not options["--runtime"] \
-            or (argv[0] != "journals" and not options["--broker"]) \
-            or len(argv) < (1 if argv[0] in ("list", "reaped") else 2):
+            or (argv[0] not in ("journals", "capabilities") and not options["--broker"]) \
+            or len(argv) < (1 if argv[0] in ("list", "reaped", "capabilities", "request") else 2):
         return fail("usage: kilix_pty.py [--broker B --runtime R] pane|attached|list|status|"
-                    "reaped|kill|observe|journals ...", EXIT_USAGE)
+                    "reaped|kill|observe|journals|capabilities|request ...", EXIT_USAGE)
     broker = Broker(options["--broker"] or "", options["--runtime"], options["--timeout"],
                     float(options["--guard"]))
     return COMMANDS[argv[0]](broker, argv[1:])
