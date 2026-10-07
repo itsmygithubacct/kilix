@@ -852,7 +852,9 @@ termination request went out); `refused` (`reason` `own_session`,
 
 A pane's replay journal is the raw terminal output the broker would replay to a
 new client. When a session is proved dead the broker keeps its journal rather
-than deleting it. About once a minute, the same pass that bounds session logs
+than deleting it (an empty journal is not worth keeping, and one that cannot be
+kept safely is deleted as before). The broker also bounds `reaped/` itself, at
+256 MiB and 64 journals, oldest first. About once a minute, the same pass that bounds session logs
 (`kilix transcript prune` runs it on demand) moves those journals out of the
 runtime into `~/.local/gpu_terminal/kilix/state/pty-journals/` as
 `ID.STARTED_MILLIS.journal.zst`, with a `.meta` file beside each (mode `0600`).
