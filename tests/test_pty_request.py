@@ -293,6 +293,14 @@ class KillTests(RequestCase):
         self.assertEqual((code, document["result"], document["reason"], document["duplicate"]),
                          (1, "uncertain", "interrupted", True))
 
+    def test_a_store_that_is_not_private_is_refused(self):
+        self.vanishes()
+        self.store().mkdir(parents=True, mode=0o755)
+        self.store().chmod(0o755)
+        code, document = self.kill(None, "end-1", "--yes")
+        self.assertEqual((code, document["reason"]), (3, "store_unavailable"))
+        self.assertEqual(self.kills(), [])
+
     def test_the_store_is_private_and_bounded(self):
         self.vanishes()
         self.kill(None, "end-1", "--yes")
