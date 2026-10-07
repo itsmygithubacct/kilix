@@ -15,7 +15,7 @@
 #   ./kilix fullscreen        # toggle this tab's OS window fullscreen
 #   ./kilix switch [--scope S] # go to a page or pane (F12; scope all|page|other)
 #   ./kilix panes [COMMAND]    # pane activity/session dashboard, CLI or TUI
-#   ./kilix pty [COMMAND]      # persistent pane sessions: list, observe, attach, kill
+#   ./kilix pty [COMMAND]      # persistent pane sessions: list, observe, attach, kill, journals
 #   ./kilix new-pane [DIR]    # open a pane left/right/down of this one
 #   ./kilix new-tab [--title T] # open a new page
 #   ./kilix mux [name]        # open a tmux-backed kilix tab for real attach/view
@@ -389,6 +389,9 @@ usage: $_self pty [--timeout SECONDS] [COMMAND]
   path                         print the runtime directory
   pane PANE_ID                 print the session ID behind a kilix pane
   reaped [--json] | reaped path ID    dead sessions' journals still in the runtime
+  journals [list|show ID|path ID] [--json]   archived journals, newest first;
+                               show takes observe --once's bounds, --text and --json
+  reap [--runtime DIR]         prove dead sessions in a runtime and archive them
   help
 --timeout bounds each broker call (decimal seconds, 0.1-60; default 2).
 --json prints a {"schema":"kilix.pty/v1",...} envelope. Exit status: 0 success,
@@ -492,6 +495,42 @@ _kilix_pty_cli() {
     pane)
       [ $# -eq 1 ] || { _kilix_pty_usage >&2; return 2; }
       _kilix_pty_pane_session "$1" ;;
+    journals)
+      local journals="$KILIX_STATE_DIRECTORY/pty-journals" action=list file bounded=0
+      [ $# -eq 0 ] || [ "${1:0:2}" = -- ] || { action="$1"; shift; }
+      broker=""   # the archive is read from disk; no broker is asked
+      runtime="$(_kilix_resolve_pty_broker_runtime)" || return 1
+      case "$action" in
+        list) _kilix_pty_py journals list "$journals" "$@" ;;
+        path) _kilix_pty_py journals path "$journals" "$@" ;;
+        show)
+          [ $# -ge 1 ] && _kilix_pty_valid_id "${1%.*}" || { _kilix_pty_usage >&2; return 2; }
+          for id in "$@"; do
+            case "$id" in --lines|--bytes|--text|--json) bounded=1 ;; esac
+          done
+          # With bounds, or as text or JSON, it is a snapshot (the same flags as
+          # observe --once). Bare, it streams the whole journal.
+          if [ "$bounded" = 1 ]; then
+            _kilix_pty_py journals show "$journals" "$@"
+          else
+            [ $# -eq 1 ] || [ "${2:-}" = --force ] && [ $# -le 2 ] \
+              || { _kilix_pty_usage >&2; return 2; }
+            # A journal is raw terminal output, escape sequences and all; into a
+            # terminal it would run them (title, clipboard, cursor) on the reader.
+            if [ -t 1 ] && [ "${2:-}" != --force ]; then
+              echo "kilix pty: journals show writes raw terminal bytes; pipe it" \
+                   "(| less -R), add --text, or pass --force" >&2
+              return 2
+            fi
+            file="$(_kilix_pty_py journals path "$journals" "$1")" || return 1
+            command -v zstd >/dev/null 2>&1 || {
+              echo "kilix pty: $file needs zstd to read" >&2
+              return 1
+            }
+            zstd -dcq --long=27 -- "$file"
+          fi ;;
+        *) _kilix_pty_usage >&2; return 2 ;;
+      esac ;;
     list|status|observe|attach|kill|reaped)
       broker="$(_kilix_pty_broker_path)" || return 1
       runtime="$(_kilix_resolve_pty_broker_runtime)" || return 1
@@ -579,11 +618,149 @@ _kilix_pty_cli() {
             _kilix_pty_usage >&2; return 2
           fi ;;
       esac ;;
+    reap)
+      local target="" before after status=0
+      case "${1:-}" in
+        '') ;;
+        --runtime) [ $# -eq 2 ] || { _kilix_pty_usage >&2; return 2; }; target="$2" ;;
+        *) _kilix_pty_usage >&2; return 2 ;;
+      esac
+      runtime="${target:-$(_kilix_resolve_pty_broker_runtime)}" || return 1
+      _kilix_validate_pty_broker_runtime "$runtime" || return 1
+      if [ ! -d "$runtime" ] || [ -L "$runtime" ] \
+           || [ "$(stat -c '%u' -- "$runtime" 2>/dev/null)" != "$(id -u)" ]; then
+        echo "kilix pty: not a directory of yours: $runtime" >&2
+        return 1
+      fi
+      broker="$(_kilix_pty_broker_path)" || return 1
+      before="$(_kilix_pty_reaped_count "$runtime")"
+      # The broker proves a dead session by itself (its pid is gone, or the boot
+      # or start time recorded for it differs) and archives its journal; list is
+      # what walks the sessions.
+      _kilix_pty_call list >/dev/null || status=1
+      after="$(_kilix_pty_reaped_count "$runtime")"
+      echo "dead sessions proved in $runtime: $((after > before ? after - before : 0))"
+      _kilix_pty_journal_archive "$runtime" 0 always || status=1
+      return "$status" ;;
     *)
       _kilix_pty_usage >&2
       return 2 ;;
   esac
 }
+
+# --- journal archive tier ----------------------------------------------------
+#
+# When the broker proves a session dead it moves the replay journal to
+# RUNTIME/reaped/ID.STARTED_MILLIS.journal beside a .meta file, and bounds that
+# directory itself. Here the journals leave the runtime for good: compressed
+# (zstd -19 --long=27, the journal is long and repetitive), checked by reading
+# the result back byte for byte against the original, and only then is the
+# original removed. The state directory keeps them under their own budget,
+# oldest session first out. KILIX_PTY_JOURNAL_BUDGET is in bytes; 0 turns the
+# tier off and leaves the journals in the runtime for the broker's own bound.
+#
+# $3 is `always` when the caller wants a line even if nothing happened.
+_kilix_pty_journal_archive() (
+  local runtime="$1" quiet="${2:-0}" report="${3:-changes}"
+  local reaped="$runtime/reaped" dest="$KILIX_STATE_DIRECTORY/pty-journals"
+  local budget="${KILIX_PTY_JOURNAL_BUDGET:-268435456}"
+  local have=0 file base id started meta tmp tmp_meta raw packed used size
+  local archived=0 evicted=0 errors=0
+  case "$budget" in ''|*[!0-9]*) budget=268435456 ;; esac
+  [ "$budget" -gt 0 ] || return 0
+  if [ -d "$reaped" ] && [ ! -L "$reaped" ] \
+       && [ "$(stat -c '%u' -- "$reaped" 2>/dev/null)" = "$(id -u)" ]; then
+    have=1
+  fi
+  [ "$have" = 1 ] || [ -d "$dest" ] || return 0
+  command -v flock >/dev/null 2>&1 && command -v zstd >/dev/null 2>&1 || {
+    [ "$quiet" = 1 ] || echo "kilix: flock and zstd are required to archive PTY journals" >&2
+    return 0
+  }
+  exec 8>"$KILIX_STATE_DIRECTORY/pty-journals.lock" || return 0
+  chmod 0600 "$KILIX_STATE_DIRECTORY/pty-journals.lock" 2>/dev/null || return 0
+  if ! flock -n 8; then
+    [ "$quiet" = 1 ] || echo "kilix: another PTY journal pass is already running"
+    return 0
+  fi
+
+  if [ "$have" = 1 ]; then
+    for file in "$reaped"/*.journal; do
+      [ -f "$file" ] && [ ! -L "$file" ] || continue
+      base="${file##*/}"
+      [[ "$base" =~ ^([A-Za-z0-9._-]{1,64})\.([0-9]{1,20})\.journal$ ]] || continue
+      id="${BASH_REMATCH[1]}"; started="${BASH_REMATCH[2]}"
+      meta="$reaped/$id.$started.meta"
+      # The broker renames the journal in and writes the .meta a moment later;
+      # a journal without one is left that moment before it is taken on trust.
+      if [ ! -f "$meta" ] \
+           && find "$file" -cmin -1 -print -quit 2>/dev/null | grep -q .; then
+        continue
+      fi
+      _kilix_ensure_private_directory "$dest" "PTY journals" || return 0
+      tmp=""; tmp_meta=""
+      if tmp="$(mktemp "$dest/.$base.zst.XXXXXX")" \
+           && tmp_meta="$(mktemp "$dest/.$id.$started.meta.XXXXXX")" \
+           && nice -n 10 zstd -19 --long=27 -q -f -o "$tmp" "$file" 2>/dev/null \
+           && zstd -dcq --long=27 -- "$tmp" 2>/dev/null | cmp -s -- - "$file" \
+           && chmod 0600 "$tmp" "$tmp_meta" \
+           && touch -r "$file" "$tmp"; then
+        raw="$(stat -c%s -- "$file")"; packed="$(stat -c%s -- "$tmp")"
+        {
+          if [ -f "$meta" ]; then
+            grep -E '^(version|id|broker_pid|child_pid|started_millis|boot_id|start_ticks|reaped_millis)=[A-Za-z0-9._:-]*$' "$meta" || true
+          else
+            printf 'id=%s\nstarted_millis=%s\n' "$id" "$started"
+          fi
+          printf 'raw_bytes=%s\ncompressed_bytes=%s\narchived_millis=%s\n' \
+            "$raw" "$packed" "$(( $(date +%s) * 1000 ))"
+        } >"$tmp_meta"
+        if mv -f -- "$tmp" "$dest/$base.zst" \
+             && mv -f -- "$tmp_meta" "$dest/$id.$started.meta" \
+             && rm -f -- "$file" "$meta"; then
+          archived=$((archived + 1))
+        else
+          errors=$((errors + 1))
+        fi
+      else
+        errors=$((errors + 1))
+      fi
+      [ -z "$tmp" ] || rm -f -- "$tmp"
+      [ -z "$tmp_meta" ] || rm -f -- "$tmp_meta"
+    done
+  fi
+
+  if [ -d "$dest" ]; then
+    # A pass killed mid-compression leaves its scratch files behind.
+    find "$dest" -maxdepth 1 -type f \( -name '.*.zst.??????' -o -name '.*.meta.??????' \) \
+      -mmin +60 -delete 2>/dev/null || true
+    used=$(find "$dest" -maxdepth 1 -type f \( -name '*.journal.zst' -o -name '*.meta' \) \
+      -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {print s+0}')
+    if [ "$used" -gt "$budget" ]; then
+      while IFS= read -r file; do
+        [ "$used" -gt "$budget" ] || break
+        [ -n "$file" ] || break
+        base="${file##*/}"; base="${base%.journal.zst}"
+        size=$(stat -c%s -- "$file" 2>/dev/null || echo 0)
+        if rm -f -- "$file"; then
+          evicted=$((evicted + 1))
+          used=$((used - size))
+          size=$(stat -c%s -- "$dest/$base.meta" 2>/dev/null || echo 0)
+          if rm -f -- "$dest/$base.meta"; then used=$((used - size)); fi
+        else
+          errors=$((errors + 1))
+        fi
+      done < <(find "$dest" -maxdepth 1 -type f -name '*.journal.zst' \
+        -printf '%T@ %p\n' 2>/dev/null | sort -n | cut -d' ' -f2-)
+    fi
+  fi
+
+  if [ "$quiet" != 1 ] && { [ "$report" = always ] \
+       || [ $((archived + evicted + errors)) -gt 0 ]; }; then
+    echo "archived $archived PTY journal(s), evicted $evicted, errors $errors"
+  fi
+  [ "$errors" -eq 0 ]
+)
 
 # Describe one transcript from the sidecar the fork writes when the pane is
 # spawned. A session ID is random, so without this the index can only offer a
@@ -648,7 +825,7 @@ _kilix_transcript_reap() (
   local dir="$1" recent_budget="$2" archive_budget="$3" quiet="${4:-0}"
   [ -d "$dir" ] || return 0
   local recent="$dir/recent" archive="$dir/archive"
-  local live compressed=0 moved=0 removed=0 errors=0 used file size name tmp
+  local live compressed=0 moved=0 removed=0 errors=0 used file size name tmp jruntime
   command -v flock >/dev/null 2>&1 || {
     [ "$quiet" = 1 ] || echo "kilix: flock is required to prune transcripts" >&2
     return 0
@@ -658,6 +835,11 @@ _kilix_transcript_reap() (
   if ! flock -n 9; then
     [ "$quiet" = 1 ] || echo "kilix: another transcript pass is already running"
     return 0
+  fi
+  # Journals the broker archived for sessions it proved dead leave the runtime
+  # now; they need no liveness answer, so a silent broker does not delay them.
+  if jruntime="$(_kilix_resolve_pty_broker_runtime 2>/dev/null)"; then
+    _kilix_pty_journal_archive "$jruntime" "$quiet" || true
   fi
   if ! live="$(_kilix_transcript_live_ids)"; then
     [ "$quiet" = 1 ] \
@@ -1001,6 +1183,7 @@ _kilix_load_env_file() {
       KILIX_RUN_BROWSER_PROFILE|KILIX_RUN_AUTO_FIT|KILIX_NO_PANE|KILIX_DEBUG|KILIX_HW|KILIX_BROWSE_BACKEND|KILIX_BROWSE_LOG|KILIX_RUN_LOG|\
       KILIX_XFONTS|KILIX_BRIDGE_TOKEN|KILIX_SHELL_INTEGRATION|\
       KILIX_PTY_BROKER|KILIX_PTY_BROKER_HOME|KILIX_PTY_BROKER_AUTO_RECOVER|KILIX_PTY_BROKER_JOURNAL_LIMIT|\
+      KILIX_PTY_JOURNAL_BUDGET|\
       KILIX_REF|KILIX_REPO|KILIX_TRUST_EXISTING_CHECKOUT|KILIX_ALLOW_MUTABLE_REF|\
       KILIX_PREBUILT_VERSION|KILIX_PREBUILT_SHA256|KILIX_ALLOW_UNVERIFIED_PREBUILT|\
       KILIX_BUILD_MODE|KILIX_KITTY_DEPS_URL|KILIX_KITTY_DEPS_SHA256|\

@@ -13,6 +13,7 @@ from pathlib import Path
 import pty
 import select
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -26,6 +27,7 @@ from _env_support import sandbox_env  # noqa: E402
 ROOT = Path(__file__).resolve().parents[1]
 LAUNCHER = ROOT / "kilix"
 FIXTURE = ROOT / "tests" / "fixtures" / "kitten_ls.json"
+HAVE_ZSTD = bool(shutil.which("zstd") and shutil.which("flock"))
 SESSION = "0123456789abcdef"
 
 FAKE_BROKER = r'''#!/bin/sh
@@ -212,7 +214,8 @@ class ForwardingTests(PtyCliCase):
 
     def test_unknown_options_never_reach_the_broker(self):
         for args in (["list", "--bogus"], ["frobnicate"], ["status"], ["observe"],
-                     ["path", "x"], ["reaped", "path"], ["observe", SESSION, "--lines", "5"]):
+                     ["path", "x"], ["reaped", "path"], ["observe", SESSION, "--lines", "5"],
+                     ["journals", "nonsense"]):
             result = self.pty(*args)
             self.assertEqual(result.returncode, 2, args)
             self.assertIn("usage:", result.stderr)
@@ -496,12 +499,256 @@ class PaneTests(PtyCliCase):
         self.assertEqual(self.calls(), [f"--runtime-dir {self.runtime} status {SESSION} --json"])
 
 
+def reaped_pair(runtime, session, started, body=b"journal bytes\n" * 500, meta=True):
+    reaped = runtime / "reaped"
+    reaped.mkdir(mode=0o700, exist_ok=True)
+    journal = reaped / f"{session}.{started}.journal"
+    journal.write_bytes(body)
+    journal.chmod(0o600)
+    sidecar = reaped / f"{session}.{started}.meta"
+    if meta:
+        sidecar.write_text(
+            f"version=1\nid={session}\nbroker_pid=4242\nchild_pid=4243\n"
+            f"started_millis={started}\nreaped_millis={started + 5}\n")
+        sidecar.chmod(0o600)
+    old = time.time() - 3600
+    os.utime(journal, (old, old))
+    return journal, sidecar
+
+
+@unittest.skipUnless(HAVE_ZSTD, "the journal archive needs zstd and flock")
+class JournalArchiveTests(PtyCliCase):
+    def archive(self, *args, **env):
+        return self.pty("reap", *args, **env)
+
+    def test_reaped_journals_are_compressed_verified_and_moved_out(self):
+        body = os.urandom(300) + b"\x1b[31mred\x1b[0m\n" * 4000
+        journal, sidecar = reaped_pair(self.runtime, SESSION, 1700000000000, body)
+        result = self.archive()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("archived 1 PTY journal(s)", result.stdout)
+        self.assertFalse(journal.exists() or sidecar.exists())
+        stored = self.state / "pty-journals" / f"{SESSION}.1700000000000.journal.zst"
+        self.assertEqual(stat.S_IMODE(stored.stat().st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(stored.parent.stat().st_mode), 0o700)
+        shown = subprocess.run(["zstd", "-dcq", "--long=27", str(stored)],
+                               capture_output=True, check=True).stdout
+        self.assertEqual(shown, body)
+        meta = (stored.parent / f"{SESSION}.1700000000000.meta")
+        self.assertEqual(stat.S_IMODE(meta.stat().st_mode), 0o600)
+        fields = dict(line.split("=", 1) for line in meta.read_text().splitlines())
+        self.assertEqual(fields["raw_bytes"], str(len(body)))
+        self.assertEqual(fields["compressed_bytes"], str(stored.stat().st_size))
+        self.assertEqual(fields["broker_pid"], "4242")
+        self.assertEqual(fields["reaped_millis"], "1700000000005")
+        self.assertIn("archived_millis", fields)
+
+    def test_the_original_survives_a_compression_that_does_not_read_back(self):
+        # A zstd that exits 0 with the wrong bytes must not cost the journal.
+        bin_dir = self.tmp / "bin"
+        bin_dir.mkdir()
+        real = shutil.which("zstd")
+        (bin_dir / "zstd").write_text(
+            "#!/bin/sh\ncase \"$*\" in\n*-19*) while [ $# -gt 0 ]; do"
+            " [ \"$1\" = -o ] && echo garbage > \"$2\"; shift; done; exit 0 ;;\n"
+            f"*) exec {real} \"$@\" ;;\nesac\n")
+        (bin_dir / "zstd").chmod(0o755)
+        journal, sidecar = reaped_pair(self.runtime, SESSION, 1700000000001)
+        result = self.archive(PATH=f"{bin_dir}:/usr/bin:/bin")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("errors 1", result.stdout)
+        self.assertTrue(journal.exists() and sidecar.exists())
+        left = [p.name for p in (self.state / "pty-journals").iterdir()]
+        self.assertEqual([n for n in left if n.endswith(".zst") or ".zst." in n], [])
+
+    def test_a_journal_without_meta_waits_a_minute_then_is_taken(self):
+        # The broker writes the .meta just after renaming the journal in, so a
+        # bare journal whose ctime is under a minute old is left that long.
+        journal, _ = reaped_pair(self.runtime, SESSION, 1700000000002, meta=False)
+        self.assertIn("archived 0", self.archive().stdout)
+        self.assertTrue(journal.exists())
+        # ctime cannot be back-dated; a find that finds nothing recent stands in.
+        bin_dir = self.tmp / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "find").write_text(
+            '#!/bin/sh\ncase "$*" in *-cmin*) exit 0 ;; esac\nexec /usr/bin/find "$@"\n')
+        (bin_dir / "find").chmod(0o755)
+        result = self.archive(PATH=f"{bin_dir}:/usr/bin:/bin")
+        self.assertIn("archived 1 PTY journal(s)", result.stdout)
+        self.assertFalse(journal.exists())
+        meta = next((self.state / "pty-journals").glob("*.meta")).read_text()
+        self.assertIn(f"id={SESSION}\nstarted_millis=1700000000002\n", meta)
+
+    def test_symlinks_and_odd_names_are_left_alone(self):
+        reaped = self.runtime / "reaped"
+        reaped.mkdir(mode=0o700)
+        target = self.tmp / "secret"
+        target.write_text("not a journal")
+        (reaped / f"{SESSION}.1.journal").symlink_to(target)
+        (reaped / "no-millis.journal").write_text("x")
+        (reaped / "weird name.5.journal").write_text("x")
+        result = self.archive()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(sorted(p.name for p in reaped.iterdir()),
+                         sorted([f"{SESSION}.1.journal", "no-millis.journal", "weird name.5.journal"]))
+        self.assertFalse((self.state / "pty-journals").exists())
+
+    def test_the_oldest_session_is_evicted_when_over_budget(self):
+        bodies = {}
+        for index, started in enumerate((1700000000100, 1700000000200, 1700000000300)):
+            body = os.urandom(20000)
+            bodies[started] = body
+            journal, _ = reaped_pair(self.runtime, f"sess{index:012d}", started, body)
+            os.utime(journal, (started / 1000, started / 1000))
+        # Room for two of the three (random data does not compress).
+        result = self.archive(KILIX_PTY_JOURNAL_BUDGET="45000")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("archived 3 PTY journal(s), evicted 1", result.stdout)
+        kept = sorted(p.name for p in (self.state / "pty-journals").glob("*.journal.zst"))
+        self.assertEqual(kept, ["sess000000000001.1700000000200.journal.zst",
+                                "sess000000000002.1700000000300.journal.zst"])
+        self.assertFalse((self.state / "pty-journals" / "sess000000000000.1700000000100.meta").exists())
+
+    def test_a_zero_budget_leaves_the_runtime_alone(self):
+        journal, _ = reaped_pair(self.runtime, SESSION, 1700000000003)
+        result = self.archive(KILIX_PTY_JOURNAL_BUDGET="0")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(journal.exists())
+        self.assertFalse((self.state / "pty-journals").exists())
+
+    def test_transcript_pass_archives_journals_even_when_the_broker_is_wedged(self):
+        # The periodic pass is what moves journals out; a silent broker neither
+        # stops that nor holds the pass's lock.
+        journal, _ = reaped_pair(self.runtime, SESSION, 1700000000004)
+        (self.fake / "hang").write_text("")
+        transcripts = self.tmp / "transcripts"
+        transcripts.mkdir()
+        result = subprocess.run(
+            ["bash", str(LAUNCHER), "transcript", "prune"],
+            env=self.env(KILIX_TRANSCRIPT_DIR=str(transcripts), KILIX_PTY_LIST_TIMEOUT="1"),
+            capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("archived 1 PTY journal(s)", result.stdout)
+        self.assertFalse(journal.exists())
+        self.assertTrue((self.state / "pty-journals" / f"{SESSION}.1700000000004.journal.zst").exists())
+
+    def test_reap_asks_the_broker_to_prove_and_reports_what_it_archived(self):
+        other = self.tmp / "fallback"
+        other.mkdir(mode=0o700)
+        (self.fake / "list.hook").write_text(
+            f'mkdir -p -m 700 "{other}/reaped"; '
+            f'echo dead > "{other}/reaped/{SESSION}.1700000000005.journal"; '
+            f'printf "id={SESSION}\\n" > "{other}/reaped/{SESSION}.1700000000005.meta"\n')
+        result = self.archive("--runtime", str(other))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"dead sessions proved in {other}: 1", result.stdout)
+        self.assertIn("archived 1 PTY journal(s)", result.stdout)
+        self.assertEqual(self.calls(), [f"--runtime-dir {other} list"])
+        self.assertEqual(list((other / "reaped").iterdir()), [])
+
+    def test_reap_refuses_a_runtime_that_is_not_yours_to_touch(self):
+        link = self.tmp / "link"
+        link.symlink_to(self.runtime)
+        for target in (str(self.tmp / "missing"), str(link), "relative/dir"):
+            result = self.archive("--runtime", target)
+            self.assertEqual(result.returncode, 1, target)
+        self.assertEqual(self.calls(), [])
+
+
+@unittest.skipUnless(HAVE_ZSTD, "the journal archive needs zstd and flock")
+class JournalViewTests(PtyCliCase):
+    def seed(self):
+        for session, started, body in ((SESSION, 1700000000000, b"old\x1b[1m\n"),
+                                       (SESSION, 1700000009999, b"new\n"),
+                                       ("other00000000000", 1700000005000, b"x\n")):
+            reaped_pair(self.runtime, session, started, body)
+        self.assertEqual(self.pty("reap").returncode, 0)
+
+    def test_list_json_is_newest_first_with_the_documented_fields(self):
+        self.seed()
+        result = self.pty("journals", "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        document = json.loads(result.stdout)
+        self.assertEqual((document["schema"], document["runtime"]),
+                         ("kilix.pty/v1", str(self.runtime)))
+        entries = document["journals"]
+        self.assertEqual([(e["id"], e["started_millis"]) for e in entries], [
+            (SESSION, 1700000009999), ("other00000000000", 1700000005000), (SESSION, 1700000000000)])
+        first = entries[0]
+        self.assertEqual(sorted(first), sorted([
+            "id", "started_millis", "reaped_millis", "archived_millis", "broker_pid", "child_pid",
+            "raw_bytes", "compressed_bytes", "path"]))
+        self.assertEqual(first["raw_bytes"], 4)
+        self.assertEqual(first["path"], str(
+            self.state / "pty-journals" / f"{SESSION}.1700000009999.journal.zst"))
+        self.assertEqual(json.loads(self.pty("journals", "list", "--json").stdout)["journals"], entries)
+
+    def test_list_with_nothing_archived_is_empty_json_and_empty_text(self):
+        self.assertEqual(json.loads(self.pty("journals", "--json").stdout)["journals"], [])
+        plain = self.pty("journals")
+        self.assertEqual((plain.returncode, plain.stdout), (0, ""))
+
+    def test_text_list_names_each_journal(self):
+        self.seed()
+        lines = self.pty("journals").stdout.splitlines()
+        self.assertEqual(len(lines), 3)
+        self.assertTrue(lines[0].endswith(f"{SESSION}.1700000009999"), lines[0])
+
+    def test_path_and_show_pick_the_newest_or_the_exact_one(self):
+        self.seed()
+        newest = self.pty("journals", "path", SESSION).stdout.strip()
+        self.assertTrue(newest.endswith(f"{SESSION}.1700000009999.journal.zst"))
+        exact = self.pty("journals", "path", f"{SESSION}.1700000000000").stdout.strip()
+        self.assertTrue(exact.endswith(f"{SESSION}.1700000000000.journal.zst"))
+        self.assertEqual(self.pty("journals", "show", SESSION).stdout, "new\n")
+        self.assertEqual(self.pty("journals", "show", f"{SESSION}.1700000000000").stdout,
+                         "old\x1b[1m\n")
+        missing = self.pty("journals", "show", "nope")
+        self.assertEqual(missing.returncode, 1)
+        self.assertIn("no archived journal", missing.stderr)
+
+    def test_show_takes_observe_once_bounds_text_and_json(self):
+        body = "".join(f"\x1b[1mrow {n}\x1b[0m\r\n" for n in range(1, 60)).encode()
+        reaped_pair(self.runtime, "big0000000000000", 1700000001000, body)
+        self.assertEqual(self.pty("reap").returncode, 0)
+        shown = self.pty("journals", "show", "big0000000000000", "--text", "--lines", "2")
+        self.assertEqual(shown.stdout.splitlines(), ["row 58", "row 59"])
+        document = json.loads(self.pty("journals", "show", "big0000000000000", "--json",
+                                       "--bytes", "12").stdout)
+        self.assertEqual((document["schema"], document["id"], document["started_millis"]),
+                         ("kilix.pty/v1", "big0000000000000", 1700000001000))
+        self.assertEqual(document["total_bytes"], len(body))
+        self.assertTrue(document["untrusted"] and document["truncated"])
+        self.assertIsNone(document["cursor"])
+        self.assertEqual(base64.b64decode(document["bytes_b64"]), body[-12:])
+        both = self.pty("journals", "show", "big0000000000000", "--lines", "1", "--bytes", "5")
+        self.assertEqual(both.returncode, 2)
+
+    def test_show_refuses_a_terminal_unless_forced(self):
+        self.seed()
+        master, slave = pty.openpty()
+        try:
+            def run(*extra):
+                return subprocess.run(
+                    ["bash", str(LAUNCHER), "pty", "journals", "show", SESSION, *extra],
+                    env=self.env(), stdin=subprocess.DEVNULL, stdout=slave,
+                    stderr=subprocess.PIPE, text=True, timeout=60)
+            refused = run()
+            self.assertEqual(run("--bogus").returncode, 2)
+            self.assertEqual(refused.returncode, 2)
+            self.assertIn("raw terminal bytes", refused.stderr)
+            self.assertEqual(run("--force").returncode, 0)
+        finally:
+            os.close(master)
+            os.close(slave)
+
+
 class StaticTests(unittest.TestCase):
     def test_every_verb_is_dispatched_and_documented(self):
         launcher = LAUNCHER.read_text()
         usage = launcher[launcher.index("_kilix_pty_usage() {"):launcher.index("_kilix_pty_valid_id()")]
         for verb in ("list", "status", "observe", "attach", "kill", "path", "pane",
-                     "reaped", "help"):
+                     "reaped", "journals", "reap", "help"):
             self.assertIn(f"  {verb}", usage, verb)
         self.assertIn("pty|pty-manager|pty-tui)", launcher)
         self.assertIn("_kilix_pty_cli", launcher)

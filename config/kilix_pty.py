@@ -10,6 +10,7 @@ The launcher resolves the broker and the runtime and hands them over:
     list|status ID|reaped --json      the broker's JSON, wrapped in the kilix.pty/v1 envelope
     kill ID [--yes] [--expect-started MILLIS] [--json]
     observe ID --once [--from C] [bounds] [--json]
+    journals list DIR [--json] | path DIR ID | show DIR ID [bounds] [--json]
 
 Every broker call is bounded by --guard and gets no stdin. Output read from a
 session is untrusted data: it is whatever the program in the pane printed.
@@ -17,6 +18,7 @@ session is untrusted data: it is whatever the program in the pane printed.
 from __future__ import annotations
 
 import base64
+import datetime
 import json
 import os
 import re
@@ -37,6 +39,10 @@ DEFAULT_BYTES = 64 * 1024
 #: The broker replays at most 1 MiB to an observer; a journal can be larger.
 SNAPSHOT_LIMIT = 512 * 1024 * 1024
 EXIT_USAGE, EXIT_REFUSED, EXIT_NOT_FOUND = 2, 3, 4
+#: `ID.STARTED_MILLIS.journal.zst`; the ID may itself contain dots.
+ARCHIVE_NAME = re.compile(r"(?P<id>[A-Za-z0-9._-]{1,64})\.(?P<started>[0-9]{1,20})\.journal\.zst")
+META_INTEGERS = ("broker_pid", "child_pid", "reaped_millis", "archived_millis",
+                 "raw_bytes", "compressed_bytes")
 
 
 def fail(message: str, code: int = 1) -> int:
@@ -73,6 +79,69 @@ def cmd_attached(argv: list[str]) -> int:
         return 0 if document["attached"] is True else 1 if document["attached"] is False else 2
     except (ValueError, KeyError, TypeError):
         return 2
+
+
+def read_meta(path: str, name: "re.Match[str]") -> dict:
+    entry = {"id": name["id"], "started_millis": int(name["started"]),
+             "reaped_millis": None, "archived_millis": None, "broker_pid": None,
+             "child_pid": None, "raw_bytes": None, "compressed_bytes": None}
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            lines = handle.read().splitlines()
+    except OSError:
+        return entry
+    for line in lines:
+        key, separator, value = line.partition("=")
+        if separator and key in META_INTEGERS and value.isdecimal():
+            entry[key] = int(value)
+    return entry
+
+
+def journals(directory: str) -> list[dict]:
+    """Archived journals, newest session first."""
+    found = []
+    try:
+        names = os.listdir(directory)
+    except OSError:
+        return found
+    for filename in names:
+        name = ARCHIVE_NAME.fullmatch(filename)
+        if not name or name["id"] in {".", ".."}:
+            continue
+        path = os.path.join(directory, filename)
+        try:
+            info = os.lstat(path)
+        except OSError:
+            continue
+        if not os.path.isfile(path) or os.path.islink(path):
+            continue
+        meta = os.path.join(directory, f"{name['id']}.{name['started']}.meta")
+        entry = read_meta(meta, name)
+        if entry["compressed_bytes"] is None:
+            entry["compressed_bytes"] = info.st_size
+        entry["path"] = path
+        found.append(entry)
+    found.sort(key=lambda entry: (entry["started_millis"], entry["id"]), reverse=True)
+    return found
+
+
+def stamp(millis: int) -> str:
+    try:
+        moment = datetime.datetime.fromtimestamp(millis / 1000)
+    except (OverflowError, OSError, ValueError):
+        return "?"
+    return moment.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def size(count) -> str:
+    if count is None:
+        return "?"
+    value = float(count)
+    for unit in ("B", "K", "M", "G"):
+        if value < 1024 or unit == "G":
+            return f"{value:.0f}{unit}" if unit == "B" else f"{value:.1f}{unit}"
+        value /= 1024
+    return "?"
 
 
 def emit(document: dict) -> None:
@@ -368,8 +437,49 @@ def cmd_observe(broker: Broker, argv: list[str]) -> int:
                       cursor=f"{found[1]}:{found[2]}" if found else None)
 
 
+def cmd_journals(broker: Broker, argv: list[str]) -> int:
+    """journals list|path|show DIR ...; DIR is the archive directory."""
+    action, directory, rest = argv[0], argv[1], argv[2:]
+    if action == "list":
+        if rest not in ([], ["--json"]):
+            return fail("usage: kilix pty journals list [--json]", EXIT_USAGE)
+        entries = journals(directory)
+        if rest:
+            emit(broker.envelope(journals=entries))
+            return 0
+        for entry in entries:
+            print(f"{stamp(entry['started_millis'])}  {size(entry['raw_bytes']):>7}"
+                  f"  {size(entry['compressed_bytes']):>7}  {entry['id']}"
+                  f".{entry['started_millis']}")
+        return 0
+    if not rest or action not in ("path", "show"):
+        return fail(f"usage: kilix pty journals {action} ID", EXIT_USAGE)
+    wanted = rest[0]
+    for entry in journals(directory):
+        if wanted in (entry["id"], f"{entry['id']}.{entry['started_millis']}"):
+            break
+    else:
+        return fail(f"no archived journal for {wanted}")
+    if action == "path":
+        print(entry["path"])
+        return 0
+    flags = Snapshot(rest[1:])
+    if flags.rest or not flags.valid:
+        return fail("usage: kilix pty journals show ID [--lines N | --bytes N] [--text] [--json]",
+                    EXIT_USAGE)
+    try:
+        data = subprocess.run(["zstd", "-dcq", "--long=27", "--", entry["path"]],
+                              capture_output=True, check=True, timeout=300).stdout
+    except (OSError, subprocess.SubprocessError) as error:
+        return fail(f"could not read {entry['path']}: {error}")
+    if len(data) > SNAPSHOT_LIMIT:
+        return fail(f"{entry['path']} is larger than {SNAPSHOT_LIMIT} bytes; use journals path")
+    return flags.emit(broker, data, id=entry["id"], started_millis=entry["started_millis"],
+                      journal_epoch=None, cursor=None)
+
+
 COMMANDS = {"list": cmd_list, "status": cmd_status, "reaped": cmd_reaped,
-            "kill": cmd_kill, "observe": cmd_observe}
+            "kill": cmd_kill, "observe": cmd_observe, "journals": cmd_journals}
 
 
 def main(argv: list[str]) -> int:
@@ -382,11 +492,13 @@ def main(argv: list[str]) -> int:
     while argv and argv[0] in options and len(argv) > 1:
         flag = argv.pop(0)
         options[flag] = argv.pop(0)
-    if not argv or argv[0] not in COMMANDS or not options["--broker"] or not options["--runtime"] \
+    # The archive is read from disk: journals needs the runtime for its envelope, not a broker.
+    if not argv or argv[0] not in COMMANDS or not options["--runtime"] \
+            or (argv[0] != "journals" and not options["--broker"]) \
             or len(argv) < (1 if argv[0] in ("list", "reaped") else 2):
         return fail("usage: kilix_pty.py [--broker B --runtime R] pane|attached|list|status|"
-                    "reaped|kill|observe ...", EXIT_USAGE)
-    broker = Broker(options["--broker"], options["--runtime"], options["--timeout"],
+                    "reaped|kill|observe|journals ...", EXIT_USAGE)
+    broker = Broker(options["--broker"] or "", options["--runtime"], options["--timeout"],
                     float(options["--guard"]))
     return COMMANDS[argv[0]](broker, argv[1:])
 

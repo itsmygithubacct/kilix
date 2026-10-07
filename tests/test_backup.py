@@ -338,7 +338,8 @@ class BackupTests(unittest.TestCase):
             "KILIX_CHROME_BATTERY", "KILIX_CHROME_CLOCK", "KILIX_CHROME_CLOCK_FORMAT",
             "KILIX_DEBUG", "KILIX_NO_SOUND", "KILIX_NO_PANE", "KILIX_SAVER_IDLE",
             "KILIX_HOST_CLIP", "KILIX_RUN_AUTO_FIT", "KILIX_PTY_BROKER_AUTO_RECOVER",
-            "KILIX_PTY_BROKER_JOURNAL_LIMIT", "KILIX_BATTERY_SUPPLY_DIR"})
+            "KILIX_PTY_BROKER_JOURNAL_LIMIT", "KILIX_PTY_JOURNAL_BUDGET",
+            "KILIX_BATTERY_SUPPLY_DIR"})
         self.assertEqual(sum(backup.launch_key(key) for key in allowed),
                          len(allowed) - len(backup.COSMETIC_KEYS))
         for key in ("KILIX_DESKTOP_COMMAND", "KILIX95_DIR", "KILIX_OBJECT_DETECTOR",
