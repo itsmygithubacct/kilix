@@ -341,6 +341,45 @@ def lan_ip():
         return _hostname()
 
 
+X11_DIR = "/tmp/.X11-unix"
+X_LOCK_DIR = "/tmp"
+
+
+def _abstract_x_socket_listening(n):
+    """Whether an X server holds the abstract socket @/tmp/.X11-unix/X<n>.
+
+    A server listens on the abstract name as well as the filesystem one, and it
+    keeps listening after something cleans /tmp; Xvfb then refuses to start on
+    that display ("server already running") although no file shows it.
+    /proc/net/unix lists the abstract names of this network namespace and
+    opens no connection; where it cannot be read, a non-blocking connect asks.
+    """
+    wanted = f"@/tmp/.X11-unix/X{n}"   # the name X clients and servers agree on
+    try:
+        with open("/proc/net/unix", encoding="utf-8", errors="replace") as handle:
+            return any(line.split()[-1:] == [wanted] for line in handle)
+    except OSError:
+        pass
+    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        probe.setblocking(False)
+        probe.connect(("\0" + wanted[1:]).encode())
+        return True
+    except BlockingIOError:
+        return True            # a full backlog: something is listening
+    except OSError:
+        return False
+    finally:
+        probe.close()
+
+
+def display_in_use(n):
+    """True when display :n looks taken by any of the three signs an X server leaves."""
+    return (os.path.exists(f"{X11_DIR}/X{n}")
+            or os.path.exists(f"{X_LOCK_DIR}/.X{n}-lock")
+            or _abstract_x_socket_listening(n))
+
+
 class StreamSupervisor:
     def __init__(self, session):
         self.session = _safe_session_name(session)
@@ -444,7 +483,7 @@ class StreamSupervisor:
     # ---- display allocation -------------------------------------------------
     def pick_display(self, lo=60, hi=120):
         for n in range(lo, hi):
-            if os.path.exists(f"/tmp/.X11-unix/X{n}"):
+            if display_in_use(n):
                 continue
             fd = os.open(os.path.join(self.lockdir, f"X{n}.lock"),
                          os.O_CREAT | os.O_RDWR, 0o600)
@@ -453,7 +492,7 @@ class StreamSupervisor:
             except OSError:
                 os.close(fd)
                 continue
-            if os.path.exists(f"/tmp/.X11-unix/X{n}"):   # raced, appeared
+            if display_in_use(n):   # raced, appeared
                 os.close(fd)
                 continue
             self._locks.append(fd)

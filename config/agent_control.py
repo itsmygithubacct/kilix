@@ -58,6 +58,7 @@ AGENT_ARG_PATTERNS = {
     "qwen-omp": (re.compile(r"--thinking=[A-Za-z0-9_-]+\Z"),),
     "kimi": (),
 }
+REASONING_EFFORTS = ("low", "medium", "high", "xhigh")
 _SUBCOMMANDS = {}
 
 
@@ -463,6 +464,15 @@ def launch(client, args, *, explicit_argv=None):
             "folder_trust": trusted}
 
 
+def validate_reasoning_effort(agent, effort):
+    """Typed Codex setting; never turn arbitrary config into launch arguments."""
+    if agent != "codex":
+        raise ControlError("reasoning_effort is supported only for codex")
+    if not isinstance(effort, str) or effort not in REASONING_EFFORTS:
+        raise ControlError("reasoning_effort must be low, medium, high or xhigh")
+    return effort
+
+
 def agent_argv(args, executable, cwd, deadline=float("inf")):
     """The client's argv: its own flags, then resume, then a prompt, each one
     literal item. Nothing here comes from a shell string."""
@@ -483,6 +493,10 @@ def agent_argv(args, executable, cwd, deadline=float("inf")):
         if model.startswith("-"):
             raise ControlError("a model name may not begin with '-'")
         argv.extend(["--model", model])
+    effort = getattr(args, "reasoning_effort", None)
+    if effort is not None:
+        validate_reasoning_effort(agent, effort)
+        argv.extend(["-c", f'model_reasoning_effort="{effort}"'])
     yolo = False
     if args.coding_yolo:
         from kilix_sdk import settings
@@ -568,6 +582,8 @@ def parser():
             command.add_argument("--cwd", required=True)
             command.add_argument("--title", required=True)
             command.add_argument("--model")
+            command.add_argument("--reasoning-effort", choices=REASONING_EFFORTS,
+                                 help="Codex only; pass this exact requested effort, without model substitution")
             command.add_argument("--agent-arg", action="append", default=[],
                                  help="one explicit agent argv item; use --agent-arg=--flag")
             command.add_argument("--prompt", help="one line of initial task text, passed as "

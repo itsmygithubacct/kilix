@@ -967,7 +967,8 @@ class TranscriptBudgetTests(unittest.TestCase):
         launcher = (ROOT / "kilix").read_text()
         self.assertIn("_kilix_transcript_reap_periodically()", launcher)
         self.assertIn('[ "$current_tick" = "$frontend_start_tick" ]', launcher)
-        self.assertIn('flock -n 9', launcher)
+        # One pass at a time, by a lock that is never opened through a symlink.
+        self.assertIn('_kilix_hold_lock "$KILIX_STATE_DIRECTORY/transcript-reaper.lock"', launcher)
 
 
 class TranscriptArchiveIntegrationTests(unittest.TestCase):

@@ -1,6 +1,6 @@
-"""Explicit installation of the three bundled skills; never edit agent config.
+"""Explicit installation of the bundled skills; never edit agent config.
 
-Three discovery links share one atomic version pointer outside the scan root.
+The discovery links, one per skill, share one atomic version pointer outside the scan root.
 Receipts bind every byte and registration inode. Old snapshots are retained:
 removing a registration must never recursively delete a user's later edits.
 """
@@ -21,7 +21,7 @@ import time
 import uuid
 
 SOURCE = Path(__file__).resolve().parent.parent
-NAMES = ("kilix", "kilix-model-switch", "kilix-session-launch")
+NAMES = ("kilix", "kilix-model-switch", "kilix-session-launch", "kilix-pty")
 AGENTS = ("codex", "claude", "kimi")
 STORE = ".kilix-skill-bundles"
 LIMIT = 1024 * 1024
@@ -192,7 +192,7 @@ def bundle(source=SOURCE):
     files = {name: (data, 0o700 if mode & 0o111 else 0o600)
              for name, (data, mode) in files.items()}
     if sorted(name for name in dirs if "/" not in name) != sorted(NAMES):
-        raise Conflict("the bundled set must contain exactly the three Kilix skills")
+        raise Conflict("the bundled set must contain exactly the Kilix skills: " + ", ".join(NAMES))
     if any(name.split("/")[0] not in NAMES for name in files):
         raise Conflict("unexpected file outside a bundled skill")
     descriptions = {}
@@ -421,7 +421,7 @@ def publish(store, root, root_path, old, owners, packaged):
         elif (pointer is None or not stat.S_ISLNK(pointer.st_mode)
               or identity(pointer) != old[3]):
             raise Conflict("current-version entry changed during preparation")
-        # Atomic set update: all three discovery names select this one pointer.
+        # Atomic set update: every discovery name selects this one pointer.
         if old is None:
             move_new(store, pending, store, "current")
         else:

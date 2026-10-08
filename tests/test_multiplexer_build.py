@@ -3,8 +3,11 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
+import stat
 import subprocess
 import tempfile
+import time
 import unittest
 import sys
 
@@ -13,17 +16,119 @@ from _env_support import sandbox_env  # noqa: E402
 
 ROOT=Path(__file__).resolve().parents[1]
 FIXTURE_PARENT=ROOT/'.test-tmp'
+#: Where else a fixture may live when the checkout's own ancestors are busy (a checkout under /tmp).
+ALTERNATIVE_PARENTS=(Path('/var/tmp'),Path('/dev/shm'))
+
+
+def ancestor_ctimes(path):
+    return [(str(parent),parent.stat().st_ctime_ns) for parent in (path,*path.parents) if parent.exists()]
+
+
+def verified_base(path,private):
+    """May fixtures be allocated below this directory? It must be a real directory, never a symlink.
+
+    A directory this checkout owns (`private`) must also be ours and closed to others; a system
+    temporary directory must be root's or ours and either closed to others or sticky.
+    """
+    try:info=os.lstat(path)
+    except OSError:return False
+    if not stat.S_ISDIR(info.st_mode):return False
+    if private:return info.st_uid==os.getuid() and not info.st_mode&0o077
+    return info.st_uid in (0,os.getuid()) and (not info.st_mode&0o022 or bool(info.st_mode&stat.S_ISVTX))
+
+
+def identity(path):
+    info=os.lstat(path)
+    return (info.st_dev,info.st_ino) if stat.S_ISDIR(info.st_mode) else None
+
+
+def quiet_fixture_parent(window=1.0):
+    """A new directory, created by this call and owned by this run, to build fixtures in.
+
+    The build records the change time of every ancestor of an external input and refuses to reuse a
+    generation if one moved while it compiled. A checkout under a busy directory (/tmp on a shared
+    host gets a new entry every second) can therefore never observe "no rebuild", whatever the code
+    does. The checkout's own parents are preferred; a quieter shared directory is used only when
+    those are not quiet. Nothing is ever allocated at a fixed shared name: the directory is made with
+    mkdtemp (which will not follow a symlink, and fails if the name exists) below a verified base.
+    """
+    bases=[]
+    try:FIXTURE_PARENT.mkdir(mode=0o700,exist_ok=True)
+    except OSError:pass
+    for base,private in ((FIXTURE_PARENT,True),*((alternative,False) for alternative in ALTERNATIVE_PARENTS)):
+        if verified_base(base,private):bases.append(base)
+    chosen=None
+    for base in bases:
+        before=ancestor_ctimes(base);time.sleep(window)
+        if before==ancestor_ctimes(base):chosen=base;break
+    base=chosen or (bases[0] if bases else None)
+    return Path(tempfile.mkdtemp(prefix='kilix-fixtures-',dir=base))
+
+
+class FixtureTampered(Exception):
+    """The run's private fixture directory is no longer the directory this class made."""
+
+
+def remove_tree(path):
+    """rmtree that first makes writable the directories a build left read-only (as TemporaryDirectory does)."""
+    for directory,_,_ in os.walk(path,onerror=lambda error:None):
+        try:os.chmod(directory,0o700)
+        except OSError:pass
+    shutil.rmtree(path)
+
+
+class CheckedFixture:
+    """A fixture directory made with mkdtemp and removed only by `cleanup`, which checks first.
+
+    Unlike tempfile.TemporaryDirectory there is no automatic finalizer: nothing removes the directory
+    when this object is collected or the interpreter exits, so every removal obeys the same identity
+    check (the class's own directory, if it was replaced, is left alone).
+    """
+
+    def __init__(self,parent,check):
+        self.name=tempfile.mkdtemp(dir=parent)
+        self._check=check
+
+    def cleanup(self):
+        self._check()
+        remove_tree(self.name)
 
 
 class MultiplexerBuildTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.fixture_parent=quiet_fixture_parent()
+        cls.fixture_identity=identity(cls.fixture_parent)
+        cls.addClassCleanup(cls.remove_run_directory)
+
+    @classmethod
+    def verify_run_directory(cls):
+        """The class's directory is still the one it made (not renamed, replaced or turned into a link)."""
+        try:current=identity(cls.fixture_parent)
+        except OSError:current=None
+        if current is None or current!=cls.fixture_identity:
+            raise FixtureTampered(f'{cls.fixture_parent} is not the directory this run created')
+
+    @classmethod
+    def remove_run_directory(cls):
+        """Remove what this run created, and only that: nothing if the directory is no longer ours."""
+        try:cls.verify_run_directory()
+        except FixtureTampered:return
+        try:remove_tree(cls.fixture_parent)
+        except OSError:pass
+
+    def remove_fixture(self):
+        self.temporary.cleanup()         # checks the run directory first: a replaced parent would make a
+                                         # path-based removal hit someone else's fixture
+
     def setUp(self):
         # The build identity binds every parent directory of its inputs, and
         # /tmp changes whenever any process on the host adds or removes an
         # entry there, which forces a correct rebuild and hides freshness.
         # The checkout's own parents are quiet; keep the fixture below them.
-        FIXTURE_PARENT.mkdir(mode=0o700,exist_ok=True)
-        self.temporary=tempfile.TemporaryDirectory(dir=FIXTURE_PARENT)
-        self.addCleanup(self.temporary.cleanup)
+        self.verify_run_directory()
+        self.temporary=CheckedFixture(self.fixture_parent,self.verify_run_directory)
+        self.addCleanup(self.remove_fixture)
         self.root=Path(self.temporary.name)
         self.trace=self.root/'trace';self.trace.touch()
         self.source=self.root/'source';self.source.mkdir()
@@ -82,7 +187,8 @@ class MultiplexerBuildTests(unittest.TestCase):
     def run_build(self,success=True):
         result=subprocess.run([str(ROOT/'scripts/build-multiplexer.sh'),'--print-path','serve'],
                               env=self.env,text=True,capture_output=True,timeout=20)
-        if success:self.assertEqual(result.returncode,0,result.stderr)
+        if success is None:pass
+        elif success:self.assertEqual(result.returncode,0,result.stderr)
         else:self.assertNotEqual(result.returncode,0,result.stdout)
         return result
 
@@ -100,21 +206,35 @@ class MultiplexerBuildTests(unittest.TestCase):
         a freshness failure: a step that must not rebuild is repeated until it
         runs with every parent unchanged, and a step that must rebuild accepts
         any extra rebuild caused by such a change.
+
+        A parent can change after a build has read it and before this test
+        looks, so a snapshot taken after the build is not what that build saw.
+        Directory ctimes only move forward: if the snapshot taken before the
+        previous build and the one taken after this build are equal, nothing
+        changed anywhere between the two builds' reads, and a rebuild then has
+        no explanation. Anything else may have changed in between.
         """
-        for _ in range(10):
-            before=self.count();settled=self._settled
-            result=self.run_build();built=self.count()-before
-            self._settled=self.parents()
+        for _ in range(40):
+            before=self.count();earlier=self._since
+            now=self.parents()
+            result=self.run_build(None);built=self.count()-before
+            after=self.parents()
+            self._since=now
+            if result.returncode:
+                # The build refuses, rather than guess, when an input moved while it checked it. That is
+                # only acceptable if a parent really did change; anything else is a failure.
+                if 'changed during' in result.stderr and after!=now:continue
+                self.fail(result.stderr)
             if rebuild:
                 self.assertGreaterEqual(built,2)
-                if built!=2:self.assertNotEqual(self._settled,settled)
+                if built!=2:self.assertNotEqual(after,earlier)
                 return result
             if built==0:return result
-            self.assertNotEqual(self._settled,settled,'rebuilt with no input change')
+            self.assertNotEqual(after,earlier,'rebuilt with no input change')
         self.fail('fixture parent directories kept changing between builds')
 
     def test_source_flags_content_and_output_bytes_control_freshness(self):
-        self._settled=self.parents()
+        self._since=self.parents()
         first=self.build_expecting(True)
         self.build_expecting(False)
         self.env['CFLAGS']='-O1'
