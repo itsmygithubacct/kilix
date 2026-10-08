@@ -1366,8 +1366,9 @@ or terminal-engine initialization.
 the pinned `third_party/kilix-ralph` module. Run `kilix ralph --help` for queue,
 loop and worker commands. A pull receiver calls `receive --idle` at its own idle
 boundary and reports completion; it does not inject terminal input. Automatic
-delivery requires an adapter with atomic idle checks and durable receipts. The
-current module does not automatically wake existing Codex/Claude TUIs. See the
+delivery supports loaded Codex shared app-server threads through their native
+idle queue and Claude streaming sessions owned by `ralph claude-serve`. It never
+steers busy turns or injects terminal keystrokes. See the
 [module README](third_party/kilix-ralph/README.md) for setup and the adapter contract.
 Developers can select a local module checkout with `KILIX_RALPH_HOME`.
 
