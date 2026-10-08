@@ -116,6 +116,9 @@ export KILIX95_CACHE_HOME KILIX95_SESSION_HOME KILIX95_DATA_HOME
 # These commands also work before engine/storage setup. Model inspection needs
 # the pinned Content package, but never initializes shared settings or receipts.
 case "${1:-}" in
+  ralph)
+    shift
+    exec python3 -B "$KILIX_HOME/config/ralph.py" "$@" ;;
   skills)
     shift
     exec python3 "$KILIX_HOME/config/agent_skills.py" "$@" ;;
@@ -177,6 +180,8 @@ Coding agent input (verify the target first):
 Structured actions with durable receipts:
   kilix action --request-json -             structured request from stdin
   kilix action capabilities                inspect available features
+Idle-only mailboxes and recurring follow-ups:
+  kilix ralph --help                        queue, receive, loops, worker
 Also: wizard, settings, status, update, install, games, screen-size, transcript,
   help-search "QUESTION". Command options: --help.
 Terminal engine (kitty) options: kilix --help-engine

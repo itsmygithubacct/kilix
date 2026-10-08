@@ -1362,6 +1362,16 @@ it is not a Kilix source installation. `kilix agent-control` dispatches to the
 bundled control helper and the new source-only commands work before submodule
 or terminal-engine initialization.
 
+`kilix ralph` provides durable one-shot mailboxes and recurring follow-ups through
+the pinned `third_party/kilix-ralph` module. Run `kilix ralph --help` for queue,
+loop and worker commands. A pull receiver calls `receive --idle` at its own idle
+boundary and reports completion; it does not inject terminal input. Automatic
+delivery supports loaded Codex shared app-server threads through their native
+idle queue and Claude streaming sessions owned by `ralph claude-serve`. It never
+steers busy turns or injects terminal keystrokes. See the
+[module README](third_party/kilix-ralph/README.md) for setup and the adapter contract.
+Developers can select a local module checkout with `KILIX_RALPH_HOME`.
+
 Then, optionally:
 
 ```bash
