@@ -294,6 +294,8 @@ def reply(broker: Broker, *args: str):
 def cmd_list(broker: Broker, argv: list[str]) -> int:
     # Always --all: the envelope's unreachable array is how a caller learns that
     # a session did not answer, instead of finding it missing.
+    # Keep each row intact: recorded spawn facts and future fields belong to
+    # the broker, including nulls and its truncation flag.
     broker.default_timeout = 1.0  # list asks every session under one 1 s deadline
     document, status = reply(broker, "list", "--json", "--all")
     if document is None:
@@ -307,6 +309,8 @@ def cmd_list(broker: Broker, argv: list[str]) -> int:
 
 
 def cmd_status(broker: Broker, argv: list[str]) -> int:
+    # Wrap the returned object intact, including any recorded field. An actual
+    # status failure remains an error; list supplies unreachable display rows.
     ident = argv[0]
     status, out, err = broker.call("status", ident, "--json")
     if status is None:

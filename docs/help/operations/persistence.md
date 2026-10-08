@@ -34,6 +34,14 @@ kill ends the session and its program, then checks that it is gone, asking about
 
 ## Why a session says unreachable
 
+For an unreachable session, `recorded` shows the command it was started with; if the recorded command does not match the user's description it is not a match; if it is null or matches, the session is ambiguous: ask.
+
+In `list --json`, `recorded.argv`, `recorded.cwd` and `recorded.started_millis`
+are the start facts (null when unavailable), and `recorded.truncated` marks
+shortened or lossy text. They do not describe current process state. Older
+brokers may omit `recorded`. A failed `status --json` still reports its error;
+use `list --json` to read the unreachable row.
+
 unreachable means the session's broker did not answer within the time limit (`--timeout SECONDS`, 0.1-60, default 2; `list` asks all sessions under one 1 second limit). The broker may be stopped, overloaded or wedged. It is not the same as gone, and a session that is not listed is not proven gone either: `kilix pty list --json` keeps unreachable sessions in their own `unreachable` array so they are never mistaken for missing ones, but a live broker whose socket pathname was moved aside or removed is neither listed nor reaped, and `status` reports it as not found. Only a `verified_absent` kill receipt proves a session is gone. status and kill on an unreachable session time out instead of hanging, and a kill that timed out may still be applied later, so list again before retrying. A session whose broker process is truly gone is proved dead and cleared by the next list.
 
 ## Where the sockets are

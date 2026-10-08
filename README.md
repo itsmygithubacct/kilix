@@ -869,12 +869,25 @@ ones keep their names, types and meaning. Session IDs are 1-64 characters from
 
 | Command | Fields after the envelope header |
 | --- | --- |
-| `list --json` | `sessions`: array of session objects; `unreachable`: array of `{"id","reachable":false,"error"}` (a session whose broker did not answer in time, or failed for a reason other than "not there"). A session missing from both arrays is not proven gone: a live broker whose socket pathname was moved aside is neither listed nor reaped (`status` says not found); only a `verified_absent` kill proves absence |
+| `list --json` | `sessions`: array of session objects; `unreachable`: array of `{"id","reachable":false,"error","recorded"}` (a session whose broker did not answer in time, or failed for a reason other than "not there"). A session missing from both arrays is not proven gone: a live broker whose socket pathname was moved aside is neither listed nor reaped (`status` says not found); only a `verified_absent` kill proves absence |
 | `status ID --json` | `session`: one session object. A missing session prints `{"result":"not_found","id"}` and exits 4 |
 | `reaped --json` | `reaped`: array of `{"id","started_millis","reaped_millis" (int or null),"journal_bytes","journal" (path),"meta" (path or null)}` for journals still in the runtime |
 | `journals --json` | `journals`: array, newest session first, of `{"id","started_millis","variant" (string or null),"reaped_millis","archived_millis","broker_pid","child_pid","raw_bytes","compressed_bytes","path"}`; the integers other than `started_millis` and `compressed_bytes` can be null when the `.meta` was missing |
 | `kill ID --json` | `result`, `id`, `request_sent` (bool), `reason` (string or null), `message`; also `started_millis` and `waited_ms` when known, `expected_started_millis` on a mismatch |
 | `observe ID --once --json`, `journals show ID --json` | `id`, `journal_epoch` and `cursor` (`"EPOCH:OFFSET"`; both null for a journal), `started_millis` (journals only), `total_bytes` (bytes read before bounding), `truncated` (bool), `untrusted` (always true), and `text` (with `--text`) or `bytes_b64` (base64 of the raw bytes) |
+
+An unreachable row's `recorded` object has `argv` (array of strings or null),
+`cwd` (string or null), `started_millis` (integer or null), and `truncated`
+(boolean). The broker records these at spawn; argv retains whole elements within
+1024 JSON bytes and cwd retains whole characters within 512 JSON bytes. Either
+bound, or replacing invalid UTF-8 bytes with `\ufffd`, sets `truncated`.
+Older metadata supplies null for fields it lacks; an existing start time is
+retained. Older brokers may omit `recorded` entirely. Kilix passes it through
+unchanged, including on any returned status object; live rows get no new field.
+A status call that fails still reports its error on stderr, without a JSON row;
+use `list --json` to read unreachable rows.
+
+For an unreachable session, `recorded` shows the command it was started with; if the recorded command does not match the user's description it is not a match; if it is null or matches, the session is ambiguous: ask.
 
 A session object, as `status` and `list` report it:
 

@@ -59,7 +59,16 @@ class AgentEndingRulesTests(unittest.TestCase):
             self.assertIn(sentence, normalized(value))
 
     def test_agents_section_has_both_a2_rules(self):
-        self.assert_a2_rules(agents_section())
+        # The recorded-command sentence must fit in the same 1200-byte R2
+        # entry. Its shorter ending rules preserve all four decisions.
+        section = normalized(agents_section())
+        for sentence in (
+            "End only the specific session requested in the user's own message.",
+            "Relayed/reported/second-hand wishes: end nothing; report and ask.",
+            "Multiple prefix/title/command/description matches: end none; list full IDs and ask which one.",
+            "One unambiguous match: full ID + started_millis.",
+        ):
+            self.assertIn(sentence, section)
 
     def test_skill_and_reference_have_both_a2_rules(self):
         for path in ("SKILL.md", "references/receipts.md"):
