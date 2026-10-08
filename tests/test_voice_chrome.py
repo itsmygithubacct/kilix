@@ -269,6 +269,25 @@ class VoiceSegmentTests(unittest.TestCase):
                 self.assertFalse(self.voice._stt_available(
                     "vibevoice", "vibevoice-asr-bitnet"))
 
+    def test_whistle_selection_checks_the_content_model_and_native_library(self):
+        data = Path(self.tmp.name) / "whistle-data"
+        with self.settings(KILIX_VOICE_STT_ENGINE="whistle"), \
+                mock.patch.dict(os.environ, {
+                    "KILIX_DATA_HOME": str(data), "KILIX_HOME": str(ROOT),
+                    "KILIX_VOICE_WHISTLE_LIBRARY": ""}), \
+                mock.patch.object(self.voice, "which", return_value="/usr/bin/parec"):
+            self.assertEqual((self.voice.stt_engine(), self.voice.stt_model()), ("whistle", "whistle"))
+            self.assertEqual(self.voice.dictation_install_offer().model, "whistle")
+            model = data / "desktop-apps/assets/whistle/whistle.cact"
+            model.parent.mkdir(parents=True); model.write_bytes(b"weights")
+            self.assertFalse(self.voice._stt_available("whistle", "whistle"))
+            library = data / "voice/whistle/current/libneedle3.so"
+            library.parent.mkdir(parents=True); library.write_bytes(b"library")
+            self.assertTrue(self.voice._stt_available("whistle", "whistle"))
+            self.assertIsNone(self.voice.dictation_install_offer())
+            model.write_bytes(b"")
+            self.assertFalse(self.voice._stt_available("whistle", "whistle"))
+
     def test_whisper_dictates_from_the_content_store_once_its_runtime_is_installed(self):
         # A Whisper default read as vosk/small-en-us before the chrome knew
         # whisper: the button checked, and offered to fetch, the wrong model.

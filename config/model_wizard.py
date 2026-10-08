@@ -40,7 +40,7 @@ SPEECH_RUNTIMES = ('piper-en-us-kristin-medium', 'qwen3-tts-0.6b-customvoice',
                    'qwen3-tts-0.6b-base', 'qwen3-tts-1.7b-voicedesign')
 STT_IDS = {'vosk-model-small-en-us-0.15': 'small-en-us',
            'vosk-model-en-us-0.22-lgraph': 'lgraph-en-us',
-           'faster-whisper-small-en': 'whisper-small-en'}
+           'faster-whisper-small-en': 'whisper-small-en', 'whistle': 'whistle'}
 RUNTIME_PAGES = {'vision', 'audio', 'image'}
 LEGACY = {'speech': 'system-voice.state', 'dictation': 'dictation-offer.state',
           'workflows': 'workflows-offer.state'}
@@ -155,7 +155,7 @@ def group(asset):
     if name.startswith('nomic-embed'): return 'embedding'
     if provider == 'kilix-pdf-conversion': return 'documents'
     if 'vision' in name: return 'visual-chat'
-    if any(word in name for word in ('whisper', 'vosk', 'vibevoice-asr')): return 'dictation'
+    if any(word in name for word in ('whisper', 'whistle', 'vosk', 'vibevoice-asr')): return 'dictation'
     if any(word in name for word in ('tts', 'piper-')): return 'speech'
     if provider in ('kilix-bonsai', 'kilix-ollama'): return 'chat'
     return provider or 'other'

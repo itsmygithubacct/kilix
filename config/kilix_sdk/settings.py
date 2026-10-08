@@ -202,16 +202,17 @@ VOICE_TTS_MAX_CHARS_DEFAULT = "4000"
 VOICE_TTS_MAX_CHARS_CHOICES = ("1000", "4000", "16000", "unlimited")
 VOICE_STT_ENGINE_KEY = "KILIX_VOICE_STT_ENGINE"
 VOICE_STT_ENGINE_DEFAULT = "vosk"
-VOICE_STT_ENGINE_CHOICES = ("vosk", "vibevoice", "whisper", "off")
+VOICE_STT_ENGINE_CHOICES = ("vosk", "vibevoice", "whisper", "whistle", "off")
 VOICE_STT_MODEL_KEY = "KILIX_VOICE_STT_MODEL"
 VOICE_STT_MODEL_DEFAULT = "small-en-us"
 VOICE_STT_MODEL_CHOICES = (
-    "small-en-us", "lgraph-en-us", "vibevoice-asr-bitnet", "whisper-small-en")
+    "small-en-us", "lgraph-en-us", "vibevoice-asr-bitnet", "whisper-small-en", "whistle")
 VOICE_STT_MODEL_ENGINES = {
     "small-en-us": "vosk",
     "lgraph-en-us": "vosk",
     "vibevoice-asr-bitnet": "vibevoice",
     "whisper-small-en": "whisper",
+    "whistle": "whistle",
 }
 
 # There is no ``always``, and adding one is not a small change.  Dictation that

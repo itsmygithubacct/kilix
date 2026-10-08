@@ -1061,6 +1061,7 @@ kilix stt --install vibevoice-asr-bitnet --default vibevoice-asr-bitnet  # weigh
 kilix voice vibeasr               # (re)build the pinned VibeASR.cpp dictation runtime
 kilix stt --install whisper-small-en --default whisper-small-en  # weights + Whisper runtime
 kilix voice whisper               # (re)install the pinned Whisper dictation runtime
+kilix voice whistle               # install the pinned Whistle native library
 kilix tts --tiers                 # hardware-aware read-aloud choices
 kilix tts --interactive --tier neural   # first-use Piper setup and session
 kilix tts --interactive --tier pocket-cpu # measured Pocket/Alba CPU audition
