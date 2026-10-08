@@ -79,6 +79,33 @@ class AgentEndingRulesTests(unittest.TestCase):
         self.assertIn("status ID --json, then kill ID --yes --expect-started MILLIS --json",
                       normalized(ending))
 
+    def test_persistence_keeps_unbound_recovery_human_only(self):
+        persistence = text("docs", "help", "operations", "persistence.md")
+        human = re.search(r"^### Human-only recovery from another terminal\n(.*?)(?=^#{1,3} |\Z)",
+                          persistence, re.M | re.S)
+        self.assertIsNotNone(human, "the whole unbound recovery procedure must be human-only")
+        self.assertIn("This entire procedure is for a person at a terminal.", human.group(1))
+        self.assertIn("without `--expect-started`", human.group(1))
+        self.assertNotRegex(human.group(1), r"(?i)\bagents?\b",
+                            "agent instructions must stay outside human-only recovery")
+        agent_text = persistence[:human.start()] + persistence[human.end():]
+        self.assertIn("On cannot_bind, agents stop and report; every agent kill must keep --expect-started.",
+                      normalized(agent_text))
+        # Presence checks alone missed review mutant M7's appended contradictory fallback.
+        self.assertNotRegex(normalized(agent_text),
+                            r"(?i)\b(?:without|drop(?:ping)?|omit(?:ting)?|remov(?:e|ing)|skip(?:ping)?|ignore)\s+"
+                            r"(?:the\s+)?--expect-started\b")
+        for command in re.findall(r"`(kilix pty kill [^`]+)`", agent_text):
+            self.assertIn("--expect-started MILLIS --json", command,
+                          "agent kill examples must bind the identity read by status")
+
+    def test_help_and_reference_recommend_exact_form_needle_route(self):
+        for name, surface in (("help", help_output()),
+                              ("reference", text("skills", "kilix-pty", "references", "receipts.md"))):
+            with self.subTest(surface=name):
+                self.assertIn("kilix-needle pty is the cheaper alternative; use only its exact accepted "
+                              "forms (see kilix-needle pty --help).", normalized(surface))
+
     @unittest.skipUnless(CONTRACT, "set KILIX_PTY_CONTRACT to check the external integration contract")
     def test_external_contract_has_both_a2_rules(self):
         self.assert_a2_rules(Path(CONTRACT).read_text())

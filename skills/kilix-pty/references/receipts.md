@@ -2,6 +2,7 @@
 
 For `kilix-pty`. Every `--json` document is `{"schema":"kilix.pty/v1","runtime":...,"timeout_seconds":...}` plus
 its fields. Errors that are not an answer go to stderr as one `kilix pty: ...` line.
+`kilix-needle pty` is the cheaper alternative; use only its exact accepted forms (see `kilix-needle pty --help`).
 
 ## kill
 
