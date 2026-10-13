@@ -363,5 +363,51 @@ class DeliveryTests(unittest.TestCase):
         self.assertEqual(done.stderr, '')
 
 
+class ModelReadinessTests(unittest.TestCase):
+    def invoke(self, terminal):
+        output, errors = io.StringIO(), io.StringIO()
+        with mock.patch.object(control, 'Client', return_value=terminal), \
+                mock.patch.object(delivery.time, 'sleep'), \
+                contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+            status = control.main(['send', '2', '--expect-broker', TARGET_BROKER,
+                                   '--text', '/model', '--allow-command', '--submit'])
+        return status, errors.getvalue()
+
+    def test_busy_empty_composer_never_receives_input(self):
+        terminal = Terminal()
+        terminal.current = screen(busy=True)
+        status, error = self.invoke(terminal)
+        self.assertEqual(status, 1)
+        self.assertIn('busy', error)
+        self.assertEqual(terminal.inputs, [])
+
+    def test_approval_unknown_and_draft_are_preserved(self):
+        for value in ('Approval required: allow command?', screen('unfinished draft'),
+                      screen().replace('? for shortcuts', 'unknown footer')):
+            with self.subTest(value=value):
+                terminal = Terminal()
+                terminal.current = value
+                self.assertEqual(self.invoke(terminal)[0], 1)
+                self.assertEqual(terminal.inputs, [])
+
+    def test_idle_command_is_submitted_once_after_fresh_checks(self):
+        terminal = Terminal()
+        self.assertEqual(self.invoke(terminal)[0], 0)
+        self.assertEqual(terminal.inputs, [b'/model', b'\r'])
+        self.assertEqual(terminal.reads, 4)
+
+    def test_busy_race_before_paste_refuses(self):
+        terminal = Terminal()
+        terminal.on_read = lambda t: setattr(t, 'current', screen(busy=t.reads >= 2))
+        self.assertEqual(self.invoke(terminal)[0], 1)
+        self.assertEqual(terminal.inputs, [])
+
+    def test_busy_race_after_paste_does_not_submit(self):
+        terminal = Terminal()
+        terminal.on_paste = lambda t: setattr(t, 'current', screen('/model', busy=True))
+        self.assertEqual(self.invoke(terminal)[0], 1)
+        self.assertEqual(terminal.inputs, [b'/model'])
+
+
 if __name__ == '__main__':
     unittest.main()

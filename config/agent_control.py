@@ -633,6 +633,7 @@ def main(argv=None):
             print(json.dumps(result, ensure_ascii=True))
             return 0 if result["delivery_verified"] else 1
         else:
+            model_control = False
             if args.action == "key":
                 payload = KEYS[args.key]
             else:
@@ -651,9 +652,18 @@ def main(argv=None):
                     raise ControlError("input beginning with '/', '!' or '#' is a client command; "
                                        "pass --allow-command only when that command is intended")
                 payload = value.encode("utf-8")
+                model_control = stripped.split(" ", 1)[0].casefold() in ("/model", "/fast")
+                if model_control:
+                    target_client = describe(client.resolve(args.pane, args.expect_broker))["agent"]
+                    model_control = target_client not in ("claude", "kimi")
+                if model_control:
+                    from agent_delivery import require_model_control_idle
+                    require_model_control_idle(client, args.pane, args.expect_broker)
             client.input(args.pane, args.expect_broker, payload)
             if args.action == "send" and args.submit:
                 time.sleep(0.3)
+                if model_control:
+                    require_model_control_idle(client, args.pane, args.expect_broker, pending=value)
                 client.input(args.pane, args.expect_broker, KEYS["enter"])
             result = {"schema": SCHEMA, "status": "request_sent", "pane_id": args.pane,
                       "delivery_verified": False, "completion_verified": False}

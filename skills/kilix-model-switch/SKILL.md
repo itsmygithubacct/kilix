@@ -31,6 +31,13 @@ an existing input draft. A requested immediate interruption may use the
 client's observed cancel control; otherwise leave working or approval-blocked
 sessions intact and report why switching is pending.
 
+For Codex, an empty composer can remain visible during a working turn. Treat
+`esc to interrupt`, Working/Thinking, an approval dialog, or an occupied draft
+as blocked. Require a fresh supported idle footer before opening `/model` or
+`/fast`. `agent-control send` checks Codex readiness twice before typing these
+commands and again before submission. A refusal is pending work: inspect once
+and report the blocker; do not bypass it with raw input or repeated sends.
+
 Read only the reference for the identified client:
 
 - [Codex](references/codex.md)

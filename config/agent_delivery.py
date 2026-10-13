@@ -96,7 +96,37 @@ def composer(screen):
     empty = all(faint for _, faint in visible)
     value = "".join(c for c, _, _ in content).strip()
     return {"empty": empty, "text": "" if empty else value,
-            "history": "\n".join(text[:start]), "screen": "\n".join(text)}
+            "history": "\n".join(text[:start]), "screen": "\n".join(text),
+            "footer": "\n".join(text[end:])}
+
+
+def require_model_control_idle(client, pane_id, expected, *, pending=None):
+    """Two fresh positive Codex idle observations before opening a model control.
+
+    An empty composer alone is not readiness: Codex keeps it during turns.
+    Unknown layouts and occupied drafts fail closed. This never sends input,
+    cancels a turn, or retries a mutation.
+    """
+    for sample in range(2):
+        client.resolve(pane_id, expected, input_target=True)
+        screen = client.run(["get-text", "--match", f"id:{pane_id}",
+                             "--extent", "screen", "--ansi"])
+        try:
+            state = composer(screen)
+        except ScreenError as error:
+            raise ControlError(f"model control readiness unverified: {error}") from error
+        recent = "\n".join(state["history"].splitlines()[-8:])
+        if (re.search(r"esc\s+to\s+interrupt|waiting\s+for\s+approval", state["footer"], re.I)
+                or re.search(r"(?:working|thinking|running).*esc\s+to\s+interrupt", recent, re.I)):
+            raise ControlError("model control blocked: Codex is busy; wait for the turn to finish")
+        if "? for shortcuts" not in state["footer"]:
+            raise ControlError("model control readiness unverified: no supported idle footer")
+        if pending is None and not state["empty"]:
+            raise ControlError("model control blocked: preserve the occupied composer")
+        if pending is not None and (state["empty"] or state["text"] != pending.strip()):
+            raise ControlError("model command changed before submission; inspect without retrying")
+        if sample == 0:
+            time.sleep(0.1)
 
 
 def read_payload(args):
