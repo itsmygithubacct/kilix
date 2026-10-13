@@ -100,7 +100,7 @@ def composer(screen):
             "footer": "\n".join(text[end:])}
 
 
-def require_model_control_idle(client, pane_id, expected, *, pending=None):
+def require_model_control_idle(client, pane_id, expected, *, pending=None, identity=None):
     """Two fresh positive Codex idle observations before opening a model control.
 
     An empty composer alone is not readiness: Codex keeps it during turns.
@@ -108,7 +108,13 @@ def require_model_control_idle(client, pane_id, expected, *, pending=None):
     cancels a turn, or retries a mutation.
     """
     for sample in range(2):
-        client.resolve(pane_id, expected, input_target=True)
+        pane = client.resolve(pane_id, expected, input_target=True)
+        observed_identity = tuple((p.get("pid"), tuple(p.get("cmdline") or []))
+                                  for p in pane.get("foreground_processes") or [])
+        if identity is None:
+            identity = observed_identity
+        if not identity or observed_identity != identity:
+            raise ControlError("coding process changed; model control readiness unverified")
         screen = client.run(["get-text", "--match", f"id:{pane_id}",
                              "--extent", "screen", "--ansi"])
         try:
@@ -117,9 +123,16 @@ def require_model_control_idle(client, pane_id, expected, *, pending=None):
             raise ControlError(f"model control readiness unverified: {error}") from error
         recent = "\n".join(state["history"].splitlines()[-8:])
         if (re.search(r"esc\s+to\s+interrupt|waiting\s+for\s+approval", state["footer"], re.I)
-                or re.search(r"(?:working|thinking|running).*esc\s+to\s+interrupt", recent, re.I)):
+                or re.search(r"(?:working|thinking|running).*esc\s+to\s+interrupt", recent, re.I)
+                or re.search(r"^\s*[•◦*]\s*(?:working|thinking|running)\b", recent, re.I | re.M)):
             raise ControlError("model control blocked: Codex is busy; wait for the turn to finish")
-        if "? for shortcuts" not in state["footer"]:
+        footer_lines = [line for line in state["footer"].splitlines() if line.strip()]
+        # Codex 0.160.0 hides the shortcuts hint in its compact idle footer.
+        # Accept that complete, single model/status row, not arbitrary extra
+        # status lines following it. Busy indicators above the composer are
+        # checked separately because the composer also exists during work.
+        compact_idle = len(footer_lines) == 1 and bool(MODEL.match(footer_lines[0]))
+        if "? for shortcuts" not in state["footer"] and not compact_idle:
             raise ControlError("model control readiness unverified: no supported idle footer")
         if pending is None and not state["empty"]:
             raise ControlError("model control blocked: preserve the occupied composer")
@@ -127,6 +140,7 @@ def require_model_control_idle(client, pane_id, expected, *, pending=None):
             raise ControlError("model command changed before submission; inspect without retrying")
         if sample == 0:
             time.sleep(0.1)
+    return identity
 
 
 def read_payload(args):

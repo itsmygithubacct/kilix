@@ -658,12 +658,13 @@ def main(argv=None):
                     model_control = target_client not in ("claude", "kimi")
                 if model_control:
                     from agent_delivery import require_model_control_idle
-                    require_model_control_idle(client, args.pane, args.expect_broker)
+                    ready_identity = require_model_control_idle(client, args.pane, args.expect_broker)
             client.input(args.pane, args.expect_broker, payload)
             if args.action == "send" and args.submit:
                 time.sleep(0.3)
                 if model_control:
-                    require_model_control_idle(client, args.pane, args.expect_broker, pending=value)
+                    require_model_control_idle(client, args.pane, args.expect_broker,
+                                               pending=value, identity=ready_identity)
                 client.input(args.pane, args.expect_broker, KEYS["enter"])
             result = {"schema": SCHEMA, "status": "request_sent", "pane_id": args.pane,
                       "delivery_verified": False, "completion_verified": False}
