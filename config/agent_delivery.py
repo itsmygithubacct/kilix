@@ -74,7 +74,7 @@ def styled_lines(screen):
     return lines
 
 
-def composer(screen):
+def composer(screen, *, pending_command=None):
     """Parse only the supported Codex layout; do not infer readiness from silence."""
     rows = styled_lines(screen)
     text = ["".join(c for c, _, _ in row) for row in rows]
@@ -84,6 +84,15 @@ def composer(screen):
         raise ScreenError("Codex composer is not visible; inspect the target")
     start = candidates[-1]
     footers = [i for i in range(start + 1, len(text)) if MODEL.match(text[i])]
+    command_menu = False
+    if not footers and pending_command is not None:
+        command = pending_command.strip().split(' ', 1)[0]
+        selected = any(re.match(r"^› " + re.escape(command) + r"\s+", row.strip())
+                       for row in text[:start])
+        if command in ('/model', '/fast') and selected:
+            footers = [i for i in range(start + 1, len(text))
+                       if re.match(r"^  tab to queue message\b", text[i])]
+            command_menu = bool(footers)
     if len(footers) != 1:
         raise ScreenError("unrecognized Codex footer; inspect the target")
     end = footers[0]
@@ -97,7 +106,7 @@ def composer(screen):
     value = "".join(c for c, _, _ in content).strip()
     return {"empty": empty, "text": "" if empty else value,
             "history": "\n".join(text[:start]), "screen": "\n".join(text),
-            "footer": "\n".join(text[end:])}
+            "footer": "\n".join(text[end:]), "model_control_menu": command_menu}
 
 
 def require_model_control_idle(client, pane_id, expected, *, pending=None, identity=None):
@@ -118,7 +127,7 @@ def require_model_control_idle(client, pane_id, expected, *, pending=None, ident
         screen = client.run(["get-text", "--match", f"id:{pane_id}",
                              "--extent", "screen", "--ansi"])
         try:
-            state = composer(screen)
+            state = composer(screen, pending_command=pending)
         except ScreenError as error:
             raise ControlError(f"model control readiness unverified: {error}") from error
         recent = "\n".join(state["history"].splitlines()[-8:])
@@ -132,7 +141,8 @@ def require_model_control_idle(client, pane_id, expected, *, pending=None, ident
         # status lines following it. Busy indicators above the composer are
         # checked separately because the composer also exists during work.
         compact_idle = len(footer_lines) == 1 and bool(MODEL.match(footer_lines[0]))
-        if "? for shortcuts" not in state["footer"] and not compact_idle:
+        if ("? for shortcuts" not in state["footer"] and not compact_idle
+                and not (pending is not None and state["model_control_menu"])):
             raise ControlError("model control readiness unverified: no supported idle footer")
         if pending is None and not state["empty"]:
             raise ControlError("model control blocked: preserve the occupied composer")

@@ -427,6 +427,17 @@ class ModelReadinessTests(unittest.TestCase):
         self.assertEqual(self.invoke(terminal)[0], 1)
         self.assertEqual(terminal.inputs, [b'/model'])
 
+    def test_real_codex_slash_menu_before_submission(self):
+        terminal = Terminal()
+        menu = ('\x1b[1;7m› /model  \x1b[22mchoose what model and reasoning effort to use\n'
+                '\x1b[0m\n\x1b[1m›\x1b[22m /model\n\n'
+                '  \x1b[1mtab\x1b[22m to queue message                 100% context left\n')
+        terminal.on_paste = lambda t: setattr(t, 'current', menu)
+        self.assertEqual(self.invoke(terminal)[0], 0)
+        self.assertEqual(terminal.inputs, [b'/model', b'\r'])
+        with self.assertRaises(delivery.ScreenError):
+            delivery.composer(menu)  # This layout never authorizes ordinary delivery.
+
     def test_busy_race_after_paste_does_not_submit(self):
         terminal = Terminal()
         terminal.on_paste = lambda t: setattr(t, 'current', screen('/model', busy=True))
