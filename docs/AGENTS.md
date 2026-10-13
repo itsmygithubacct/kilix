@@ -264,3 +264,7 @@ For experiments, redirect inherited `KILIX_*`, `GPU_TERMINAL_*`, and `XDG_*`
 storage paths to private state. Preserve unrelated sessions and settings. Inspect
 target and process before retrying: a pane may exit normally; an observation
 timeout does not prove the job stopped.
+
+## Workflow check
+
+Distinguish an explicit idempotent retry from a status lookup. If asked to resubmit the identical operation, resend its original operation ID, identities, and parameters and check the duplicate receipt. If asked only to recover a lost response, use operation.status; do not repeat the mutation.
