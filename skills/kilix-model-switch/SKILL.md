@@ -22,6 +22,10 @@ choose, inspect the client's currently available models and explain the
 choice. Do not hard-code a “best” model or silently substitute one that merely
 has a similar name. An unavailable model is a concrete limitation, not a reason
 to reconfigure authentication or upgrade the client without permission.
+If you opened a picker and the requested model is absent, use its displayed
+cancel control without selecting a replacement. Read back to verify that the
+picker closed and the same session and previous settings remain, then report
+the unavailable model.
 
 ## Switch at a safe boundary
 

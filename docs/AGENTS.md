@@ -47,6 +47,11 @@ Replace uppercase placeholders with actual values. Quote paths and titles.
 | `kilix pane send pane:ID 'TEXT'` | Place literal text without Enter. |
 | `kilix pane send pane:ID 'TEXT' --submit` | Place text, then send Enter separately. |
 | `kilix pane close pane:ID` | Close this exact pane and terminate its foreground program. |
+| `kilix pane resize pane:ID --delta-columns 5 --json` | Make this pane exactly five cells wider and return an observed receipt. |
+| `kilix pane resize pane:ID --columns 80 --json` | Set an exact width; use `--lines` or `--delta-lines` for height. |
+
+Bare `kilix pane` and `kilix tab` print help. Create explicitly with `pane right`
+or `tab new`/`new-tab`.
 
 Splits anchor to the caller. Directions are `right`, `left`, `up`, and `down`;
 older engines can reject left/up. Identify an existing spatial neighbor from

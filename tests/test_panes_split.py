@@ -85,9 +85,9 @@ class SplitDirections(unittest.TestCase):
     def split_call(self):
         return [c for c in self.panes.calls if c[0] == "split"][0]
 
-    def test_default_direction_is_right(self):
+    def test_bare_pane_is_read_only_discovery(self):
         self.assertEqual(self.remote.main(["pane"]), 0)
-        self.assertEqual(self.split_call()[1], "right")
+        self.assertEqual(self.panes.calls, [])
 
     def test_each_canonical_direction_passes_through(self):
         for direction in ("right", "left", "up", "down"):

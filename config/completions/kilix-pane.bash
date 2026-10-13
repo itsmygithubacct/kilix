@@ -72,12 +72,12 @@ _kilix_pane_complete() {
 
     if [ "$COMP_CWORD" -eq 1 ]; then
         mapfile -t COMPREPLY < <(compgen -W \
-            "right left up down above below quad list close focus read send" -- "$cur")
+            "right left up down above below quad list close focus read send resize" -- "$cur")
         return 0
     fi
 
     case "$sub" in
-        close|focus|read|send)
+        close|focus|read|send|resize)
             if [ "$COMP_CWORD" -eq 2 ]; then
                 mapfile -t COMPREPLY < <(compgen -W "$(_kilix_verb_ids pane)" -- "$cur")
                 return 0
@@ -89,6 +89,7 @@ _kilix_pane_complete() {
         list)  mapfile -t COMPREPLY < <(compgen -W "--json --tree" -- "$cur") ;;
         read)  mapfile -t COMPREPLY < <(compgen -W "--extent" -- "$cur") ;;
         send)  mapfile -t COMPREPLY < <(compgen -W "--submit" -- "$cur") ;;
+        resize) mapfile -t COMPREPLY < <(compgen -W "--columns --lines --delta-columns --delta-lines --json" -- "$cur") ;;
         close|focus) ;;
         *)     mapfile -t COMPREPLY < <(compgen -W "--cwd --hold --porcelain --" -- "$cur") ;;
     esac

@@ -165,9 +165,11 @@ Panes and tabs (directions relative to the calling pane):
   kilix pane close [TARGET]                 default: this pane and its program
   kilix pane read TARGET [--extent all]
   kilix pane focus TARGET
+  kilix pane resize TARGET (--columns N | --lines N | --delta-columns N | --delta-lines N) [--json]
   kilix pane list [--json]                  ids, titles, programs; (self) is you
   kilix new-tab [--title T] [--cwd DIR] [CMD...]
-  kilix tab list|close|rename|focus|left|right
+  kilix tab new|list|close|rename|focus|left|right
+  Bare kilix pane/tab prints help; use explicit creation verbs to open panes/tabs.
   kilix tmux --socket PATH [--json] VERB ...  no args: manager
 TARGET is a pane's unique title or pane:ID. Above is the complete syntax:
 no subcommand --help or pane list is needed first. Missing/ambiguous titles
@@ -4835,6 +4837,11 @@ _kilix_desktop_die() {
 }
 
 _kilix_remote_control() {
+  if [ "$1" = pane ] || [ "$1" = tab ]; then
+    case "${2:-}" in
+      ''|-h|--help|help) exec python3 "$KILIX_HOME/config/remote.py" "$@" ;;
+    esac
+  fi
   [ -x "$KITTEN" ] || { echo "kilix $1: kitten not found next to $BIN" >&2; exit 1; }
   if [ -z "${KITTY_LISTEN_ON:-}" ]; then
     echo "kilix $1: no live kilix remote-control socket (run this inside kilix, or set KITTY_LISTEN_ON)" >&2
