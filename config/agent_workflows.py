@@ -31,6 +31,10 @@ def read_json(path, limit=8 * 1024 * 1024):
         raw = handle.read(limit + 1)
     if len(raw) > limit:
         raise ValueError("workflow evidence exceeds the size limit")
+    return decode_json(raw), hashlib.sha256(raw).hexdigest()
+
+
+def decode_json(raw):
     def unique(pairs):
         result = {}
         for name, value in pairs:
@@ -38,10 +42,12 @@ def read_json(path, limit=8 * 1024 * 1024):
                 raise ValueError("duplicate JSON field: " + name)
             result[name] = value
         return result
-    value = json.loads(raw, object_pairs_hook=unique)
+    def constant(value):
+        raise ValueError("nonfinite JSON number: " + value)
+    value = json.loads(raw, object_pairs_hook=unique, parse_constant=constant)
     if not isinstance(value, dict):
         raise ValueError("workflow registry and evidence must be JSON objects")
-    return value, hashlib.sha256(raw).hexdigest()
+    return value
 
 
 def number(value, label, *, positive=False):
@@ -190,6 +196,7 @@ def select(registry, workflow, evidence, *, evidence_hash, objective=None, now=N
         raise ValueError("subscription meters differ; compare one account/window/unit at a time")
     eligible.sort(key=lambda c: (c["score"], c["metrics"]["p90_s"], c["profile_id"]))
     return dict(schema=SCHEMA, workflow=workflow, objective=objective,
+                contract=policy.get("contract"),
                 cost_basis=evidence["cost_basis"], evidence_sha256=evidence_hash,
                 cohort_id=evidence["cohort_id"], status="selected" if eligible else "insufficient_evidence",
                 selected=eligible[0] if eligible else None, candidates=candidates)
@@ -230,8 +237,27 @@ def main(argv=None):
     launch.add_argument("--operation-id")
     launch.add_argument("--dry-run", action="store_true")
     launch.add_argument("--caller-pane", type=control.positive)
+    launch.add_argument("--task", default="task.json", help="relative typed task contract")
+    status = commands.add_parser("status", help="read a saved workflow run without launching")
+    status.add_argument("operation_id")
+    finish = commands.add_parser("complete", help="verify a matching Codex turn and its artifacts")
+    finish.add_argument("operation_id")
+    finish.add_argument("--session", type=Path, required=True)
+    recovery = commands.add_parser("recover", help="recover the original action receipt without relaunching")
+    recovery.add_argument("operation_id")
+    commands.add_parser("report", help="summarize observed runs without changing routing policy")
     args = parser.parse_args(argv)
     try:
+        import agent_runs
+        if args.command in ("status", "complete", "recover", "report"):
+            if args.command == "report":
+                result = agent_runs.report()
+            elif args.command == "complete":
+                result = agent_runs.finish(args.operation_id, args.session)
+            else:
+                result = getattr(agent_runs, args.command)(args.operation_id)
+            print(json.dumps(result, indent=2))
+            return 0 if args.command in ("status", "report") or result["status"] in ("succeeded", "launched") else 1
         registry, _ = read_json(args.registry)
         if registry.get("schema") != SCHEMA:
             raise ValueError("unsupported workflow registry schema")
@@ -265,15 +291,16 @@ def main(argv=None):
                 if facts["caller"].get("status") != "observed":
                     raise ValueError("caller identity unavailable; no agent was launched")
                 source = {k:facts["caller"][k] for k in ("pane_id", "broker")}
-                request = launch_request(result, args.prompt, args.cwd, source, operation_id=args.operation_id)
-                request["dry_run"] = args.dry_run
-                receipt = agent_actions.dispatch(request)
-                result["launch"] = receipt
+                tracked = agent_runs.launch(result, policy, args.prompt, args.cwd, args.task, source,
+                                            operation_id=args.operation_id or "workflow-" + uuid.uuid4().hex,
+                                            dry_run=args.dry_run)
+                result.update(tracked)
                 print(json.dumps(result, indent=2))
-                return 0 if receipt["status"] in ("created", "planned") else 1
+                return 0 if (tracked.get("launch") or {}).get("status") in ("created", "planned") else 1
         print(json.dumps(result, indent=2))
         return 0 if result.get("status", "selected") == "selected" else 1
-    except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired, control.ControlError) as exc:
+    except (OSError, ValueError, KeyError, TypeError, SyntaxError, ImportError,
+            agent_runs.Conflict, subprocess.TimeoutExpired, control.ControlError) as exc:
         print(json.dumps(dict(schema=SCHEMA, status="blocked", error=str(exc)[:512])))
         return 1
 
