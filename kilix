@@ -2593,6 +2593,15 @@ case "${1:-}" in
       _kilix_voice_request dictate "$_dictate_seconds" || exit $?
     fi
     exit 0 ;;
+  voicebox|kilix-voicebox)
+    shift
+    exec /usr/bin/python3 -I -B -c '
+import sys
+sys.path.insert(0,sys.argv[1])
+from kilix_sdk.voicebox import main
+raise SystemExit(main(sys.argv[2:]))
+' "$KILIX_HOME/config" "$@"
+    ;;
   transcribe|kilix-transcribe)
     shift
     exec /usr/bin/python3 -I -B -c '

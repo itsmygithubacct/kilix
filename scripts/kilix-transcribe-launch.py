@@ -133,8 +133,11 @@ def bound_command(value, generation, arguments):
     if arguments[0] == 'serve':
         if len(arguments) != 1:
             raise ValueError('serve uses the prepared installed-model selection')
-        return ['serve', '--runtime-root', str(generation / 'runtime'), '--installed-asset', value['model'],
+        command = ['serve', '--runtime-root', str(generation / 'runtime'), '--installed-asset', value['model'],
                 '--content-root', value['content_root'], '--model-snapshot-bytes', str(value['budget'])]
+        if 'shared_voice' in value:
+            command += ['--lease-device', 'cpu']
+        return command
     return arguments
 
 
@@ -153,6 +156,8 @@ def main():
     if (file_population(generation / 'lib') != value['files']
             or file_population(generation / 'runtime') != value['runtime_files']):
         raise ValueError('transcription generation bytes changed; prepare a new generation')
+    if 'shared_voice' in value and file_population(generation / 'shared') != value['shared_voice']['files']:
+        raise ValueError('shared Voice/lease generation changed; prepare a new generation')
     python = Path(value['python'])
     python_root = Path(value['python_root'])
     if (not python.is_absolute() or not python.resolve(strict=True).is_relative_to(python_root)
@@ -167,6 +172,8 @@ def main():
     environment['KILIX_CONTENT_ROOT'] = value['content_root']
     bootstrap = ('import sys;sys.path.insert(0,sys.argv[1]);'
                  'from kilix_transcribe.cli import main;raise SystemExit(main(sys.argv[2:]))')
+    if 'shared_voice' in value:
+        bootstrap = 'import sys;sys.path.insert(0,' + repr(str(generation / 'shared')) + ');' + bootstrap
     os.execve(str(python), [str(python), '-I', '-S', '-B', '-X', 'pycache_prefix=/dev/null',
                           '-c', bootstrap, str(generation / 'lib'), *command], environment)
 

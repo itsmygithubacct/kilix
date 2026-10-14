@@ -1095,6 +1095,21 @@ and selected weights on first use, then open a foreground speech session.
 Repeating the command verifies and reuses the installation. Add `--device
 cuda:0` to select the optional GPU runtime explicitly. VoiceDesign uses the
 description to create a voice; `/description TEXT` changes it in the session.
+VoiceDesign (1.7B) has a length limit on small GPUs. On a physical 6 GiB GPU,
+generation plus decode was verified (with random weights) only to 30 s, and the
+decoder alone fit at 40 s; generation at 40 s was not established.
+Decoder-alone tests ran out of GPU memory at 48 s and 60 s, and generation to
+the 60 s cap ran out of memory. Separately, with real weights and streaming on
+an emulated 6 GiB limit (the allocator capped at 6 GiB on an 8 GiB RTX 3070),
+generation and the final decode finished without running out of memory through
+60 s, peaking at 5,712 MiB reserved. There, generation plus final decode
+reached the length bound and the worker then refused the job at that bound, so
+no job result was produced. The emulation does not stand in for the physical
+card. A request
+that runs out of memory before any audio is delivered reruns on the CPU,
+slowly. A streaming request that runs out after audio has started fails, and
+is never retried on the CPU. Keep VoiceDesign requests to 30 s or less on a
+6 GiB GPU. This is not a qualified GPU profile.
 Piper uses `--interactive --tier neural`; Pocket English/Alba uses
 `--interactive --download-pocket`. Each model presents its first-use licence
 notice before acquiring weights. `/save FILE.wav` saves the generated audio.
