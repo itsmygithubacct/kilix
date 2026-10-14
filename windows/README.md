@@ -40,6 +40,11 @@ Outputs:
 - `src\dist\kilix-0.2.2-windows-x64-dev.zip`: complete portable application.
 - `src\dist\kilix\licenses`: engine, dependency, font, and runtime notices.
 
+`install.ps1 -Archive <zip> -Sha256 <verified archive digest>` extracts a
+separate per-user copy and creates **Kilix Windows** and **Kilix WSL** shortcuts
+on the desktop and Start menu. Existing application directories are retained.
+Use `-NoShortcuts` to install only the files.
+
 Extract the entire archive before launching. `README.txt` contains profiles,
 shortcuts, and user configuration details. Launch `Kilix.exe --wsl Ubuntu` for a
 window whose subsequent splits and tabs also default to that WSL distribution.

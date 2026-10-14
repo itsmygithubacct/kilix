@@ -35,6 +35,7 @@ mkdir -p "$destination/fontconfig"
 cp -r /mingw64/etc/fonts/. "$destination/fontconfig/"
 cp __main__.py "$destination/"
 cp kitty/child.py "$destination/kitty/"
+cp kitty/fast_data_types.so kitty/fast_data_types.pyd kitty/glfw-win32.so kitty/glfw-win32.pyd "$destination/kitty/"
 cp kitty/launcher/conpty.dll kitty/launcher/OpenConsole.exe "$destination/kitty/launcher/"
 gcc -std=c11 -Wall -Wextra -Werror -municode -mwindows -static -Os \
     "$windows_source/src/launcher.c" -lshell32 -o "$destination/Kilix.exe"
