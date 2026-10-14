@@ -137,6 +137,9 @@ def bound_command(value, generation, arguments):
                 '--content-root', value['content_root'], '--model-snapshot-bytes', str(value['budget'])]
         if 'shared_voice' in value:
             command += ['--lease-device', 'cpu']
+        if 'diarization' in value:
+            selection=value['diarization']
+            command += ['--diarization-runtime',selection['root'],'--diarization-asset',selection['asset']]
         return command
     return arguments
 
@@ -158,6 +161,11 @@ def main():
         raise ValueError('transcription generation bytes changed; prepare a new generation')
     if 'shared_voice' in value and file_population(generation / 'shared') != value['shared_voice']['files']:
         raise ValueError('shared Voice/lease generation changed; prepare a new generation')
+    if 'diarization' in value:
+        selection=value['diarization'];root=Path(selection['root'])
+        trusted_chain(root)
+        if file_digest(root/'diarization.json',deadline=time.monotonic()+60,check=lambda:None).hex()!=selection['manifest_sha256']:
+            raise ValueError('diarization selection changed; prepare a new generation')
     python = Path(value['python'])
     python_root = Path(value['python_root'])
     if (not python.is_absolute() or not python.resolve(strict=True).is_relative_to(python_root)

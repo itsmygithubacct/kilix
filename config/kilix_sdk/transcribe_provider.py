@@ -17,11 +17,12 @@ import uuid
 from . import paths, qwen_provider as staging
 from ._content_runtime import apps_root
 
-PROVIDER_REF = 'f5454df4e20f7027b159043412c6f3ce44a4131a'
+PROVIDER_REF = '33fea0e54fc9dea1beab294b34989a9b1c4a1080'
 MODEL = 'whisper-tiny-ggml'
 MODEL_REVISION = '5359861c739e955e79d9a303bcbc70fb988958b1'
 MODEL_SHA256 = 'be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21'
 BUDGET = 128 * 1024**2
+DIARIZATION_MODEL = 'kilix-diarization-cpu'
 
 
 def managed_root():
@@ -96,7 +97,21 @@ def prepare(args):
             'provider="kilix-transcribe",consumer_schema="kilix.transcribe.runtime") as model:\n'
             f' model.bind({MODEL!r},{MODEL_REVISION!r},{{"model.bin":{MODEL_SHA256!r}}})\n'
             ' with model.open(lambda:None):\n  pass\n'
-            ' print(json.dumps({"receipt_root":str(model.store.root),"runtime_root":str(runtime_directory())}))\n')
+            ' effective={"receipt_root":str(model.store.root),"runtime_root":str(runtime_directory())}\n')
+        if getattr(args,'diarization',False):
+            # The optional route uses a separate asset and first-use receipt.
+            # Bind its declared manifest without copying weights into lib/.
+            preflight += ('from kilix_transcribe.diarization import DiarizationRuntime\n'
+                'import kilix_content\n'
+                f'with InstalledModel({DIARIZATION_MODEL!r},Path({apps_root()!r}),maximum_bytes={512*1024**2},'
+                'provider="kilix-transcribe",consumer_schema="kilix.transcribe.diarization-runtime") as diarization:\n'
+                f' root=Path(kilix_content.Installer({apps_root()!r}).asset_destination(diarization.spec))\n'
+                ' selected=DiarizationRuntime(root,model_source=diarization)\n'
+                ' with diarization.open(lambda:None):\n  pass\n'
+                f' effective["diarization"]={{"asset":{DIARIZATION_MODEL!r},"root":str(root),'
+                '"manifest_sha256":selected.manifest_sha256}\n'
+                )
+        preflight += 'print(json.dumps(effective))\n'
         effective = json.loads(staging.owned_run(provider, [python, '-I', '-S', '-B', '-X',
             'pycache_prefix=/dev/null', '-c', preflight], environment, timeout=150, capture=True))
         environment.update(KILIX_LICENSE_RECEIPTS=effective['receipt_root'], XDG_RUNTIME_DIR=effective['runtime_root'])
@@ -140,6 +155,8 @@ def prepare(args):
                     'XDG_RUNTIME_DIR', 'XDG_STATE_HOME') if key in environment}}
             if shared is not None:
                 binding['shared_voice'] = shared
+            if 'diarization' in effective:
+                binding['diarization']=effective['diarization']
             payload = (json.dumps(binding, sort_keys=True) + '\n').encode()
             if len(payload) > 65536:
                 raise ValueError('transcription binding exceeds its bound')
@@ -174,6 +191,8 @@ def main(argv=None):
     prep = sub.add_parser('prepare', help='prepare reviewed tools for the installed Tiny model')
     prep.add_argument('--uv', type=Path, default=Path(shutil.which('uv') or '/usr/bin/uv'))
     prep.add_argument('--offline', action='store_true')
+    prep.add_argument('--diarization',action='store_true',
+                      help='select the separately installed, receipt-covered speaker-turn model')
     from . import shared_voice
     shared_voice.arguments(prep)
     for name in ('engine', 'decoder'):

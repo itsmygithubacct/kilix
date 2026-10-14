@@ -140,6 +140,27 @@ class TranscribeRouteTests(unittest.TestCase):
                     self.assertNotEqual(result.returncode, 0)
                     self.assertEqual(result.stdout, '')
 
+    def test_bound_diarization_selection_is_forwarded_and_manifest_changes_refuse(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);generation,python_root,executable=self.fixture(root)
+            selected=root/'diarization';selected.mkdir(mode=0o700)
+            manifest=selected/'diarization.json';manifest.write_text('{}\n');manifest.chmod(0o600)
+            binding_path=generation/'binding.json';binding=json.loads(binding_path.read_text())
+            binding['diarization']={'asset':provider.DIARIZATION_MODEL,'root':str(selected),
+                                   'manifest_sha256':hashlib.sha256(manifest.read_bytes()).hexdigest()}
+            payload=(json.dumps(binding,sort_keys=True)+'\n').encode();binding_path.write_bytes(payload)
+            executable.write_text((ROOT/'scripts/kilix-transcribe-launch.py').read_text().replace(
+                '@BINDING_SHA256@',hashlib.sha256(payload).hexdigest()))
+            result=subprocess.run(['/usr/bin/python3','-I','-B',str(executable),'serve'],capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stderr)
+            command=json.loads(result.stdout)
+            self.assertEqual(command[command.index('--diarization-runtime')+1],str(selected))
+            self.assertEqual(command[command.index('--diarization-asset')+1],provider.DIARIZATION_MODEL)
+            manifest.write_text('{"changed":true}\n')
+            refused=subprocess.run(['/usr/bin/python3','-I','-B',str(executable),'serve'],capture_output=True,text=True)
+            self.assertNotEqual(refused.returncode,0)
+            self.assertEqual(refused.stdout,'')
+
     def test_hashing_checks_cancellation_and_directory_trust(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

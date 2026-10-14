@@ -1176,6 +1176,7 @@ kilix transcribe serve
 # In another terminal:
 kilix transcribe status
 kilix transcribe file speech.wav --format json
+kilix transcribe file speech.wav --stream --format json
 ```
 
 Preparation requires reviewed whisper.cpp and decoder bytes, uv 0.12.5 and
@@ -1189,6 +1190,23 @@ each job checks them again. `record --seconds N` explicitly captures a bounded
 microphone recording; file transcription requires no microphone. These tools
 provide a CPU development route; hardware, sustained-load and release
 qualification remain separate checks.
+
+`--stream` writes unstable transcript revisions to stderr and commits a
+corrected final transcript on stdout. For anonymous speaker turns, first run
+`kilix models install kilix-diarization-cpu`, then add `--diarization` to
+`transcribe prepare`. Each request must explicitly use
+`--task diarize --diarization-session --format json`. Its separate speaker
+turns preserve recognized words and timestamps; labels belong only to that
+request and are discarded with it. Live speaker clustering is unavailable.
+The first-use screen shows the exact checkpoint, segmentation licence and
+component notices. Installation converts the pinned English CAM++ checkpoint
+locally in a bounded CPU process; its optional software tool requires about
+210 MiB of compressed export dependencies and a 2 GiB memory ceiling. An
+offline converted population can instead be installed with `models install
+kilix-diarization-cpu --supplied /absolute/path/to/population` under the same
+agreement and digest checks. Runtime inference uses ONNX and does not load
+the source pickle or import Torch. Quality and sustained-load qualification
+remain separate from these commands.
 
 ## Read aloud and dictation
 
