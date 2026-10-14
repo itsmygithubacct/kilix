@@ -1,0 +1,20 @@
+{
+  "version": "0.2.2",
+  "host": {
+    "repository": "https://github.com/itsmygithubacct/kilix.git",
+    "revision": "85eb775c1ea92f2575cf8255f63d1ea767308c10",
+    "ref_observed": "refs/heads/main"
+  },
+  "engine": {
+    "repository": "https://github.com/itsmygithubacct/kitty.git",
+    "revision": "e48a502b92cb461b4cfc838e889a64b542fa1cfe",
+    "source": "host src gitlink"
+  },
+  "target": "native Windows x64 with optional WSL shell profiles",
+  "release_qualified": false,
+  "windows_backend": {
+    "repository": "https://github.com/ecstra/win-kitty",
+    "revision": "c024f6fa564072e1d040db019ee5fa00d8a90c87"
+  },
+  "validated_platform": "Windows 10 x64 build 19045; PowerShell 5.1; Ubuntu WSL2; Intel HD Graphics 620"
+}

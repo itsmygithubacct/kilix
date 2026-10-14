@@ -1,0 +1,7 @@
+/build/
+/toolchains/
+/.zig-cache/
+*.exe
+*.pdb
+*.obj
+*.o

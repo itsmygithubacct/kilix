@@ -1,0 +1,42 @@
+Kilix 0.2.2 for Windows — development build
+
+Extract the complete folder and open Kilix.exe. Windows x64 is required.
+The renderer is a native Win32/OpenGL application. WSL is optional.
+
+Launch profiles:
+  Kilix.exe                 PowerShell
+  Kilix.exe --cmd            Command Prompt
+  Kilix.exe --wsl            Default installed WSL distribution
+  Kilix.exe --wsl Ubuntu     Named installed WSL distribution
+
+Shortcuts:
+  Ctrl+Alt+R / Ctrl+Alt+D    Split right / below
+  Ctrl+Shift+T              New tab
+  Ctrl+Shift+U              New WSL tab
+  Alt+arrow                 Focus adjacent pane
+  Ctrl+Alt+Z                Maximize/restore pane
+  Ctrl+Alt+W                Close pane
+  Ctrl+Shift+C / V          Copy / paste
+  F11                       Fullscreen
+
+Use the SSH client installed in Windows, or SSH inside WSL, from any pane.
+The application does not install or enable an SSH server or a WSL distribution.
+--wsl makes WSL the default shell for subsequent splits and tabs in that window.
+
+User configuration: %LOCALAPPDATA%\Kilix\kitty.conf
+This is loaded after config\kilix.conf. No global PATH changes are required.
+The bin\kitten.exe helper can be invoked by its full path.
+
+This development port preserves the RC6-era terminal engine and pane chrome.
+Linux desktop integration, in-pane browser, voice tools, and persistent PTY
+broker/recovery are unavailable on Windows. Closing Kilix ends its Windows
+child sessions. WSL background jobs retain WSL's own lifetime rules.
+Remote control is disabled by default. The graphics pipe is local and restricted
+to the current Windows user and SYSTEM.
+
+Source baseline and runtime hashes: baseline.json and manifest.json.
+Licenses and native-port attribution: licenses\.
+Source repositories:
+  https://github.com/itsmygithubacct/kilix
+  https://github.com/itsmygithubacct/kitty
+  https://github.com/ecstra/win-kitty

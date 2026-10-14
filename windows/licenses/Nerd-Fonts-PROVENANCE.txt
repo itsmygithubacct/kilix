@@ -1,0 +1,30 @@
+Component: Symbols Nerd Font Mono
+Filename: SymbolsNerdFontMono-Regular.ttf
+Upstream project: Nerd Fonts
+Upstream repository: https://github.com/ryanoasis/nerd-fonts
+Upstream release: v3.4.0
+Release artifact: https://github.com/ryanoasis/nerd-fonts/releases/download/v3.4.0/NerdFontsSymbolsOnly.tar.xz
+Release artifact SHA-256: 7f8c090da3b0eaa7108646bf34cbbb6ed13d5358a72460522108b06c7ecd716a
+Extracted font SHA-256: f0f624d9b474bea1662cf7e862d44aebe1ae1f6c7f9cb7a0ca5d0e5ac9561c60
+Upstream license source: https://github.com/ryanoasis/nerd-fonts/blob/v3.4.0/LICENSE
+Upstream raw license SHA-256: 1f6ad4edae6479aaace3112ede5279a23284ae54b2a34db66357aef5f64df160
+Tracked license SHA-256: bede0739eb2bf948765623a7a134360a6320240f4a9e29a5a68f31e191b0f8d0
+Release artifact LICENSE member SHA-256: 84a7a98c82140fb12c37fe42b93805baa16024cb3e5acc599b7ffe612c55d847
+License: SIL Open Font License 1.1; see LICENSE in this directory.
+
+Kilix distributes the font without modification and retains its upstream name.
+The tracked license preserves the upstream text with trailing whitespace
+normalized for repository hygiene.
+
+Nerd Fonts is not licensed under a single license, so the applicable one was
+read rather than assumed. Its notice covers the project under two: the MIT
+License for source files, and the SIL Open Font License 1.1 for the fonts,
+patched fonts and glyph sets — which is the half that governs the redistributed
+SymbolsNerdFontMono-Regular.ttf. The LICENSE member inside the release archive
+carries only the MIT half of that notice, so the repository-root notice is what
+this directory tracks: it is the only upstream text that states the font's own
+terms, and OFL 1.1 clause 2 requires it to travel with every redistributed
+copy.
+
+The build records the effective configured source URL and verified digests in
+the generated font directory so a release mirror remains auditable.
