@@ -23,7 +23,7 @@ from . import paths
 from ._content_runtime import apps_root
 
 PROVIDER_REF = '95750c48f2b0aa7bc4d545f58607b3b3a2400ed1'
-CONTENT_REF = '2a4d3bdbd504063cf9bdb971a2e92825884e166d'
+CONTENT_REF = '3b30d0af66454f890160ff5d1ec1a8b0e41605ee'
 LICENSE_REF = '0566f50ac53de6d55e2c7507fd601735eb4e28f7'
 LEASE_REF = '849e35051eee81e1ad11c9b00236597409c835dd'
 LEASE_PACKAGE = 'components/kilix-device-lease/src/kilix_device_lease'

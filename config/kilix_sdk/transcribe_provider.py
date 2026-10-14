@@ -17,7 +17,7 @@ import uuid
 from . import paths, qwen_provider as staging
 from ._content_runtime import apps_root
 
-PROVIDER_REF = '0c02af063851162acf87fd6b0d071d27d8863e04'
+PROVIDER_REF = '6acee14b4b4ca75f705d31ca5d6dfbdf18876d53'
 MODEL = 'whisper-tiny-ggml'
 MODEL_REVISION = '5359861c739e955e79d9a303bcbc70fb988958b1'
 MODEL_SHA256 = 'be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21'
