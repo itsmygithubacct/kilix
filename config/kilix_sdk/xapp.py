@@ -18,6 +18,7 @@ import stat
 import sys
 import tempfile
 import time
+from threading import Lock, RLock, get_ident
 from pathlib import Path
 import subprocess
 from typing import Iterable, Mapping
@@ -27,6 +28,8 @@ import xcapture
 import xinject
 from Xlib import display as xdisplay
 from .browser_portals import prepare_browser
+from .mpv_inhibit import prepare_player
+from .private_bus import PrivateBus
 from .clipboard import _XAUTHORITY_LOCK
 from . import capture_registry
 
@@ -59,30 +62,48 @@ def _positive(value: int | None, fallback: int, label: str) -> int:
     return selected
 
 
+class SessionCleanupError(RuntimeError):
+    """Independent cleanup failures, with the session retained for retry."""
+    def __init__(self, failures, session=None):
+        self.failures = dict(failures)
+        self.session = session
+        super().__init__("X app cleanup incomplete: " + "; ".join(
+            f"{name}: {error}" for name, error in self.failures.items()))
+
+
 def _stop_process(process, timeout: float = 2.0) -> None:
     if process is None:
         return
-    if process.poll() is None:
-        try:
-            process.terminate()
-            process.wait(timeout=timeout)
-        except Exception:
+    errors = {}
+    if getattr(process, "_kilix_unpinned_gated", False):
+        retry = getattr(process, "_kilix_pin_retry", None)
+        if retry is None:
+            raise SessionCleanupError({"process": "gated primary has no immutable identity"})
+        process = retry()  # Same retained socket; never reopen a numeric PID.
+    try:
+        if process.poll() is None:
             try:
-                process.kill()
-            except Exception:
-                pass
-            try:
-                process.wait(timeout=1)
-            except Exception:
-                pass
-    for handle in (getattr(process, "stdin", None),
-                   getattr(process, "stdout", None),
-                   getattr(process, "stderr", None)):
-        if handle is not None:
+                process.terminate()
+                process.wait(timeout=timeout)
+            except Exception as term_error:
+                try:
+                    process.kill()
+                    process.wait(timeout=1)
+                except Exception as kill_error:
+                    errors["process"] = RuntimeError(f"{term_error}; {kill_error}")
+        if process.poll() is None:
+            errors["process"] = RuntimeError("owned process has no exit evidence")
+    except Exception as error:
+        errors["process"] = error
+    for name in ("stdin", "stdout", "stderr"):
+        handle = getattr(process, name, None)
+        if handle is not None and not getattr(handle, "closed", False):
             try:
                 handle.close()
-            except Exception:
-                pass
+            except Exception as error:
+                errors[name] = error
+    if errors:
+        raise SessionCleanupError(errors)
 
 
 @dataclass(frozen=True)
@@ -134,16 +155,29 @@ class XAppSession:
         self.server = None
         self.xd = None
         self.app = None
+        self._app_bus = None
         self.window_manager = None
         self.clipboard_process = None
         self.injector = None
+        self.dnd_bridge = None
+        self._dnd_starting = False
         self.capture = None
         self.capture_process = None
         self.capture_backend = "pending"
         self._capture_seq = 0
         self._closed = False
+        self._closing = False
+        self._cleanup_done = set()
+        self._cleanup_lock = RLock()
+        self._cleanup_active = None
+        self._cleanup_steps = set()
+        self._supervisor_pending = []
         self._local_capture_source = False
         self._capture_publication = None
+
+    def _require_open(self):
+        if self._closing or self._closed:
+            raise RuntimeError("X app session is closing")
 
     @property
     def xauthority(self) -> str | None:
@@ -161,6 +195,7 @@ class XAppSession:
     def start_xvfb(self, *, width: int | None = None,
                    height: int | None = None, nocursor: bool = False,
                    number: int | None = None) -> int:
+        self._require_open()
         selected_width = _positive(width, self.width, "X app width")
         selected_height = _positive(height, self.height, "X app height")
         number = self._select_number(number)
@@ -175,6 +210,7 @@ class XAppSession:
                    desktop: str = "kilix", width: int | None = None,
                    height: int | None = None,
                    number: int | None = None) -> int:
+        self._require_open()
         selected_width = _positive(width, self.width, "X app width")
         selected_height = _positive(height, self.height, "X app height")
         port = int(port)
@@ -210,6 +246,7 @@ class XAppSession:
         return env
 
     def connect(self):
+        self._require_open()
         if self.xd is None:
             if self.display is None or not self.xauthority:
                 raise RuntimeError("private X display has not started")
@@ -223,6 +260,7 @@ class XAppSession:
         A normal app fills the pane; dialogs, menus and focus remain the WM's
         responsibility. Explicit desktop sessions must not call this method.
         """
+        self._require_open()
         if self.window_manager is not None:
             return True
         mode = os.environ.get("KILIX_RUN_WM", "auto")
@@ -274,6 +312,7 @@ class XAppSession:
                    capture_label: str | None = None,
                    stdout=subprocess.DEVNULL,
                    stderr=subprocess.DEVNULL):
+        self._require_open()
         if self.app is not None:
             raise RuntimeError("private X application is already running")
         argv = list(command)
@@ -284,9 +323,9 @@ class XAppSession:
         if isolate_bus:
             # GtkApplication and other singleton apps otherwise ask the
             # host's existing process to open a native window over Kilix.
-            runner = shutil.which("dbus-run-session")
+            runner = shutil.which("dbus-daemon")
             if runner is None:
-                raise RuntimeError("pane apps need dbus-run-session (install dbus-daemon)")
+                raise RuntimeError("pane apps need dbus-daemon")
             host_bus = (app_env.get("PLEB_DESKTOP_BUS_ADDRESS") or
                         app_env.get("KILIX_PORTAL_HOST_BUS") or
                         app_env.get("DBUS_SESSION_BUS_ADDRESS"))
@@ -296,14 +335,34 @@ class XAppSession:
                 app_env["KILIX_PORTAL_HOST_BUS"] = host_bus
                 app_env.setdefault("GTK_USE_PORTAL", "1")
                 argv, app_env = prepare_browser(argv, app_env)
+                argv = prepare_player(argv, app_env)
                 bridge = Path(__file__).with_name("portal_bridge.py")
                 argv = [sys.executable, str(bridge), "--wrap", "--", *argv]
-            argv = [runner, "--", *argv]
-        if clipboard:
-            self.start_clipboard()
-        self.app = self.supervisor.spawn(
-            "app", argv, env=app_env, cwd=cwd,
-            stdout=stdout, stderr=stderr)
+            try:
+                self._app_bus = PrivateBus(self.supervisor, app_env)
+            except BaseException as error:
+                retained = getattr(error, "resource", None)
+                if isinstance(retained, PrivateBus):
+                    self._app_bus = retained
+                raise
+            app_env = self._app_bus.environment(app_env)
+        try:
+            if clipboard:
+                self.start_clipboard()
+            self.app = self.supervisor.spawn(
+                "app", argv, env=app_env, cwd=cwd,
+                _kilix_remote_launcher=self._app_bus.launch_primary if self._app_bus is not None else None,
+                stdout=stdout, stderr=stderr)
+            if self._app_bus is not None:
+                self._app_bus.bind(self.app)
+        except BaseException as launch_error:
+            if self._app_bus is not None:
+                try:
+                    self._app_bus.close()
+                except BaseException as cleanup_error:
+                    launch_error.resource = self._app_bus
+                    launch_error.cleanup_errors = (cleanup_error,)
+            raise
         if self._local_capture_source and capture_source:
             self._capture_publication = capture_registry.publish(self, label)
         return self.app
@@ -314,6 +373,7 @@ class XAppSession:
         Providers supplying their own rich hub pass clipboard=False at launch.
         Clipboard failure is logged and never prevents opening an application.
         """
+        self._require_open()
         if self.clipboard_process is not None:
             return self.clipboard_process.poll() is None
         if os.environ.get("KILIX_HOST_CLIP", "1") == "0":
@@ -362,6 +422,7 @@ class XAppSession:
 
     def make_injector(self, *, width: int | None = None,
                       height: int | None = None):
+        self._require_open()
         if self.injector is None:
             selected_width = _positive(width, self.width, "X app width")
             selected_height = _positive(height, self.height, "X app height")
@@ -377,10 +438,33 @@ class XAppSession:
         if self.injector is not None:
             self.injector.app_w, self.injector.app_h = self.width, self.height
 
+    def make_dnd_bridge(self, write, image_box, *, diagnostic=None):
+        """Connect this pane's terminal drag protocol to native private XDND."""
+        self._require_open()
+        if self.dnd_bridge is None:
+            if self._dnd_starting:
+                raise RuntimeError("XDND bridge startup is already in progress")
+            from .xdnd import NativeDndBridge
+            self._dnd_starting = True
+            try:
+                bridge = NativeDndBridge(self.display, self.xauthority,
+                    write, image_box, self.make_injector(), diagnostic=diagnostic)
+            finally:
+                self._dnd_starting = False
+            # Public callbacks can close or replace the session during startup.
+            if self._closed or self._closing or self.dnd_bridge is not None:
+                bridge.close()
+                if self._closed or self._closing:
+                    raise RuntimeError("X app session closed during XDND startup")
+            else:
+                self.dnd_bridge = bridge
+        return self.dnd_bridge
+
     def start_capture(self, *, fps: int | None = None,
                       draw_cursor: bool = True, prefer_damage: bool = True,
                       capture_name: str = "cap") -> CaptureStart:
         """Use XDamage/MIT-SHM when available, otherwise supervised ffmpeg."""
+        self._require_open()
         if self.display is None or not self.xauthority:
             raise RuntimeError("private X display has not started")
         rate = _positive(fps, self.fps, "X app capture rate")
@@ -438,43 +522,133 @@ class XAppSession:
         return CaptureStart(self.capture_backend, damage_error=damage_error)
 
     def stop_capture(self) -> None:
+        failures = {}
         if self.capture is not None:
-            capture, self.capture = self.capture, None
             try:
-                capture.close()
-            except Exception:
-                pass
+                self.capture.close()
+                self.capture = None
+            except Exception as error:
+                failures["capture"] = error
         if self.capture_process is not None:
-            process, self.capture_process = self.capture_process, None
-            _stop_process(process)
-        self.capture_backend = "stopped"
+            try:
+                _stop_process(self.capture_process)
+                self.capture_process = None
+            except Exception as error:
+                failures["capture-process"] = error
+        self.capture_backend = "cleanup-incomplete" if failures else "stopped"
+        if failures:
+            raise SessionCleanupError(failures, self)
 
     def release_input(self) -> None:
         if self.injector is not None:
-            try:
-                self.injector.release_all()
-            except Exception:
-                pass
+            self.injector.release_all()
 
-    def close(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        if self._capture_publication is not None:
-            self._capture_publication.close()
-            self._capture_publication = None
-        self.release_input()
-        self.stop_capture()
-        if self.clipboard_process is not None:
+    def _cleanup_supervisor(self) -> None:
+        # StreamSupervisor's existing best-effort cleanup can clear its direct
+        # Popen list even when wait failed. Preserve those exact handles here;
+        # they are neither a process-tree census nor authority over other apps.
+        for _name, process, handles, _path in getattr(self.supervisor, "children", ()):
+            if not any(process is p for p, _h in self._supervisor_pending):
+                self._supervisor_pending.append((process, tuple(handles)))
+        failures = {}
+        try:
+            self.supervisor.cleanup()
+        except Exception as error:
+            failures["supervisor"] = error
+        for process, handles in list(self._supervisor_pending):
+            errors = []
+            try:
+                _stop_process(process)
+            except Exception as error:
+                errors.append(error)
+            for handle in handles:
+                if not getattr(handle, "closed", False):
+                    try:
+                        handle.close()
+                    except Exception as error:
+                        errors.append(error)
+            if errors:
+                failures[f"owned-process-{id(process)}"] = RuntimeError("; ".join(map(str, errors)))
+            else:
+                self._supervisor_pending.remove((process, handles))
+        if failures:
+            raise SessionCleanupError(failures, self)
+
+    def close(self) -> dict | None:
+        """Finish cleanup, or expose pending reentry without claiming closure."""
+        caller = get_ident()
+        attempt = (caller, Lock())
+        try:
+            with attempt[1]:
+                with self._cleanup_lock:
+                    active = self._cleanup_active
+                    if (isinstance(active, tuple) and len(active) == 2 and
+                        type(active[1]) is type(attempt[1]) and not active[1].locked()):
+                        self._cleanup_active = None
+                    if self._closed:
+                        return
+                    active = self._cleanup_active
+                    if self._cleanup_active is not None:
+                        live = (not isinstance(active, tuple) or len(active) != 2 or
+                                type(active[1]) is not type(attempt[1]) or active[1].locked())
+                        if live:
+                            active_caller = active[0] if isinstance(active, tuple) else active
+                            if active_caller == caller:
+                                return {"state": "incomplete", "pending": tuple(self._cleanup_steps)}
+                            raise SessionCleanupError({"cleanup-in-progress": RuntimeError("another cleanup attempt is active")}, self)
+                    self._cleanup_active = attempt
+                    self._closing = True
+                return self._close_resources()
+        finally:
+            with self._cleanup_lock:
+                if self._cleanup_active is attempt:
+                    self._cleanup_active = None
+
+    def _close_resources(self):
+        failures = {}
+        def resource(name, attribute):
+            if name in self._cleanup_done:
+                return
+            value = getattr(self, attribute)
+            self._cleanup_steps.add(name)
+            try:
+                if value is not None:
+                    result = value.close()
+                    if isinstance(result, dict) and result.get("state") == "incomplete":
+                        raise RuntimeError("cleanup resource is still in progress")
+                if getattr(self, attribute) is not value:
+                    raise RuntimeError("cleanup resource changed during its callback")
+                setattr(self, attribute, None)
+                self._cleanup_done.add(name)
+            except Exception as error:
+                failures[name] = error
+            finally:
+                self._cleanup_steps.discard(name)
+        def action(name, callback):
+            if name in self._cleanup_done:
+                return
+            self._cleanup_steps.add(name)
+            try:
+                callback()
+                self._cleanup_done.add(name)
+            except Exception as error:
+                failures[name] = error
+            finally:
+                self._cleanup_steps.discard(name)
+        resource("XDND", "dnd_bridge")
+        resource("bus", "_app_bus")
+        resource("publication", "_capture_publication")
+        action("input", self.release_input)
+        action("capture", self.stop_capture)
+        def clipboard():
             _stop_process(self.clipboard_process)
             self.clipboard_process = None
-        if self.xd is not None:
-            try:
-                self.xd.close()
-            except Exception:
-                pass
-            self.xd = None
-        self.supervisor.cleanup()
+        action("clipboard", clipboard)
+        resource("X-connection", "xd")
+        action("supervisor", self._cleanup_supervisor)
+        if failures:
+            raise SessionCleanupError(failures, self)
+        self._closed = True
 
     def __enter__(self):
         return self
@@ -483,4 +657,4 @@ class XAppSession:
         self.close()
 
 
-__all__ = ["CaptureStart", "XAppSession"]
+__all__ = ["CaptureStart", "SessionCleanupError", "XAppSession"]

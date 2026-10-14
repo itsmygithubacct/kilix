@@ -269,6 +269,12 @@ class FakeInjector:
     def chord(self, key, mods, etype, shifted=None):
         self.keys.append((key, mods, etype))
 
+    def queue_input(self, kind, *args):
+        if kind != "chord":
+            return False
+        self.chord(*args)
+        return True
+
 
 pane = object.__new__(apprun.AppPane)
 pane._auto_fit = True

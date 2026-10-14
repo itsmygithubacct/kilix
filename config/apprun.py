@@ -60,7 +60,7 @@ from app_profiles import (APP_PROFILE_STALE_SECONDS, cleanup_app_profile,
 from kilix_sdk import xapp as xapp_sdk
 
 try:
-    from Xlib import X
+    from Xlib import X, error as xerror
     from Xlib.ext import randr, xtest
 except ImportError:
     sys.exit("kilix run: python3-xlib is required (apt install python3-xlib)")
@@ -247,6 +247,10 @@ class RunTerm(browse.Term):
         # which we enable above — turn it off or the shell gets flooded.
         self.write("\x1b[?1003l\x1b[?1004l")
         super().restore()
+
+    def _parse_osc(self, body):
+        from kilix_sdk.xdnd import parse_message
+        return parse_message(body)
 
     def _parse_csi(self, params, final):
         if not params and final in ("I", "O"):     # ?1004 focus in / out
@@ -440,6 +444,7 @@ class AppPane:
         self.capture_backend = "pending"
         self._damage_unavailable = False
         self._cursor_capture_requested = False
+        self.dnd = None
 
         self.xd = None
         self._cap_fps = fps              # current pane-capture rate (QW5)
@@ -694,6 +699,11 @@ class AppPane:
             try:
                 if c.get_attributes().map_state != X.IsViewable:
                     continue
+                if c.get_attributes().win_class == X.InputOnly:
+                    continue
+                if (c.get_attributes().override_redirect and getattr(self, 'dnd', None)
+                        and self.dnd.source is not None):
+                    continue  # A native drag icon is not the app's top-level.
                 g = c.get_geometry()
                 if g.width <= 8 or g.height <= 8:
                     continue
@@ -975,6 +985,20 @@ class AppPane:
         body = (f" kilix run — {' '.join(self.cmd)[:28]} · {self.disp} "
                 f"{self.app_w}x{self.app_h} {size_tag} · {self.frames}f"
                 f"{serve}{dbg}{fit} · Ctrl+Q")
+        notice = getattr(self, '_input_notice', None)
+        if notice:
+            action = {
+                'item too large': 'reduce or split paste',
+                'queue full': 'retry after drain',
+                'release capacity full': 'retry after drain',
+                'key capacity unavailable': 'release held keys; retry',
+                'invalid input': 'correct input',
+                'invalid Unicode': 'use valid Unicode',
+                'no accepted press': 'check press/release pair',
+            }.get(notice, 'check input')
+            body = f" input refused: {notice}; {action} · Ctrl+Q"
+        elif getattr(getattr(self, 'inj', None), 'input_capacity_pending', False):
+            body = " input waiting: key capacity; release held keys · Ctrl+Q"
         body = body[:self.term.cols].ljust(self.term.cols)
         s = f"\x1b[{self.term.rows};1H\x1b[0;7m{body}\x1b[0m"
         if s != self.prev_status:
@@ -1005,26 +1029,44 @@ class AppPane:
             return                       # Xvfb autorepeats held keys itself
         # Modifiers travel with the key that needs them and are released with
         # it; a bare modifier is never forwarded on its own (see xinject.chord).
-        self.inj.chord(ev["key"], mods, etype, ev.get("shifted"))
+        return self._queue_input("chord", ev["key"], mods, etype, ev.get("shifted"))
 
     def on_focus(self, ev):
         """Pane lost or regained focus. On focus-out nothing forwarded from
         here can be released by us any more, so release it all now rather
         than leaving a modifier latched in the private display."""
         if not ev.get("in") and getattr(self, "inj", None) is not None:
+            if getattr(self, 'dnd', None) is not None and self.dnd.source is not None:
+                if self.dnd.source.started:
+                    return  # Native physical drag completion owns the release.
+                self.dnd.cancel_source('pane focus lost')
             self.inj.release_all()
 
     def on_paste(self, text):
         self._wake_capture()
-        self.inj.paste(text)
+        return self._queue_input("paste", text)
+
+    def _queue_input(self, kind, *args):
+        accepted = self.inj.queue_input(kind, *args)
+        if not accepted:
+            self._input_notice = self.inj.last_input_refusal
+            self.prev_status = None
+        elif kind == 'paste':
+            self._input_notice = None
+            self.prev_status = None
+        return accepted
 
     def on_mouse(self, ev):
+        if (getattr(self, 'dnd', None) is not None and self.dnd.source is not None
+                and self.dnd.source.started):
+            return  # OSC 72 owns this gesture, including its eventual release.
         self._wake_capture()
-        self.inj.mouse(ev, self.box)
+        accepted = self._queue_input("mouse", ev, self.box)
         if self.capture is not None:
             # X cursors are server-side sprites and do not damage root pixels.
             # Query/composite the newest cursor once after the input batch.
             self._cursor_capture_requested = True
+        return accepted
 
     # ---- lifecycle ---------------------------------------------------------
     def do_resize(self):
@@ -1051,6 +1093,8 @@ class AppPane:
                     self.app_w, self.app_h = w, h
                     if getattr(self, "inj", None) is not None:
                         self.inj.app_w, self.inj.app_h = w, h
+                    if getattr(self, 'dnd', None) is not None:
+                        self.dnd.resize()
                     if getattr(self, "manage_windows", True):
                         self.fit_app_window(force=True)
                     log(f"pane resize -> display {w}x{h}")
@@ -1095,6 +1139,8 @@ class AppPane:
                 self.start_app_and_capture()   # display already up
             else:
                 self.start()
+            if self.term and not (self.serve or web) and os.environ.get('KILIX_NATIVE_DND', '1') != '0':
+                self.dnd = self.xapp.make_dnd_bridge(self.term.write, lambda: self.box, diagnostic=log)
             self._loop_start = time.time()
             while True:
                 # Cursor-image and other synchronous X replies can move a
@@ -1111,10 +1157,15 @@ class AppPane:
                     rlist.append(self.ff.stdout)
                 if self.term:
                     rlist.append(self.term.fd)
+                if self.dnd is not None:
+                    self.dnd.tick()
+                    rlist.append(self.dnd.fileno())
                 # write-select on encoder stdins with a queued frame, so a
                 # briefly-full pipe drains as soon as the encoder catches up
+                input_timeout = self.inj.input_timeout() if self.term else 0.25
+                dnd_timeout = 0.01 if self.dnd is not None and self.dnd.busy else 0.05
                 r, w, _ = select.select(rlist, self.feed.pending_fds(),
-                                        [], 0.25)
+                                        [], min(input_timeout, dnd_timeout))
                 if self.capture is not None and self.capture in r:
                     self.pump_damage()
                 if self.ff is not None and self.ff.stdout in r:
@@ -1129,6 +1180,10 @@ class AppPane:
                             self.on_paste(ev["text"])
                         elif ev["kind"] == "focus":
                             self.on_focus(ev)
+                        elif ev["kind"] == "dnd" and self.dnd is not None:
+                            self.dnd.handle(ev)
+                if self.term:
+                    self.inj.dispatch_pending()
                 now = time.time()
                 if self.resized:
                     self.resized = False
@@ -1170,6 +1225,13 @@ class AppPane:
         except Exception as e:
             err = f"{type(e).__name__}: {e}"
         finally:
+            if self.dnd is not None:
+                try:
+                    self.dnd.close()
+                except (OSError, xerror.ConnectionClosedError):
+                    pass
+                finally:
+                    self.dnd = None
             inj = getattr(self, "inj", None)
             if inj is not None:
                 try:

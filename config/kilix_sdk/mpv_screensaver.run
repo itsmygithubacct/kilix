@@ -1,0 +1,7 @@
+#!/usr/bin/python3
+"""mpv native subprocess script; installed with Kilix's application SDK."""
+import sys
+from mpv_inhibit import main
+
+if __name__ == '__main__':
+    raise SystemExit(main(sys.argv[1:]))

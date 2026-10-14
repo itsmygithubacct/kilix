@@ -1,0 +1,13 @@
+// Permit only the fixed own-account per-instance ancestor. No stop/restart,
+// transient properties/commands, unit-file writes, foreign user or PID API.
+polkit.addRule(function(action, subject) {
+    if (action.id !== "org.freedesktop.systemd1.manage-units") return;
+    var unit = action.lookup("unit");
+    var match = /^kilix-private-bus-supervisor@([A-Za-z0-9_.-]{1,64})-([0-9a-f]{32})\.service$/.exec(unit || "");
+    if (!match) return;
+    if (action.lookup("verb") === "start" && match[1] === subject.user &&
+        subject.user !== "root" && subject.user !== "." && subject.user !== "..") {
+        return polkit.Result.YES;
+    }
+    return polkit.Result.NO;
+});

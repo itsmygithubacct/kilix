@@ -308,6 +308,17 @@ class Term:
             pass
         events, buf = [], self.inbuf
         while buf:
+            discarded = getattr(self, '_discard_control_string', None)
+            if discarded is not None:
+                st = buf.find(b'\x1b\\')
+                bel = buf.find(b'\x07') if discarded == b']' else -1
+                if st < 0 and bel < 0:
+                    buf = b'\x1b' if buf.endswith(b'\x1b') else b''
+                    break
+                end, length = (bel, 1) if bel >= 0 and (st < 0 or bel < st) else (st, 2)
+                buf = buf[end + length:]
+                self._discard_control_string = None
+                continue
             orphan = ORPHAN_SGR_MOUSE_RE.match(buf)
             if orphan:
                 button, x, y, final = orphan.groups()
@@ -357,11 +368,20 @@ class Term:
                     st = buf.find(b"\x1b\\", 2)
                     bel = buf.find(b"\x07", 2) if c == b"]" else -1
                     if st < 0 and bel < 0:
+                        if len(buf) > 65536:
+                            self._discard_control_string = c
+                            buf = b'\x1b' if buf.endswith(b'\x1b') else b''
                         break  # wait for the terminator
                     if 0 <= bel < st or st < 0:
+                        body = buf[2:bel]
                         buf = buf[bel + 1:]
                     else:
+                        body = buf[2:st]
                         buf = buf[st + 2:]
+                    if c == b"]":
+                        event = self._parse_osc(body)
+                        if event is not None:
+                            events.append(event)
                 elif c == b"O":  # SS3: ESC O <final> (e.g. F-keys through tmux)
                     if len(buf) < 3:
                         break
@@ -387,6 +407,10 @@ class Term:
                                "text": chunk.decode("utf-8", "replace")})
         self.inbuf = buf
         return events
+
+    def _parse_osc(self, body):
+        """Providers can consume scoped protocol replies without typing them."""
+        return None
 
     def _parse_csi(self, params, final):
         if final in ("M", "m") and params.startswith("<"):

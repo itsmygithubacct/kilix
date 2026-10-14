@@ -1,0 +1,32 @@
+[Unit]
+Description=Kilix private GUI bus controller %i
+AllowIsolate=no
+CollectMode=inactive-or-failed
+
+[Service]
+Type=exec
+ExitType=main
+User=root
+Group=root
+ExecStart=/usr/bin/python3 -I @PROGRAM@ %i
+Delegate=yes
+KillMode=control-group
+SendSIGKILL=yes
+TimeoutStopSec=1500ms
+Restart=no
+RuntimeDirectory=kilix-private-bus-supervisor/%i
+RuntimeDirectoryMode=0711
+RuntimeDirectoryPreserve=no
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_KILL CAP_CHOWN
+AmbientCapabilities=
+UMask=0077
+StandardInput=null
+StandardOutput=null
+StandardError=null
+# No Install section, socket, enabling, linger, session policy or global daemon.
+# This unit contains the fixed controller only. Before any user birth its
+# fixed wait child enters a separate root-owned transient per-instance scope.
+# No stop dependency couples that scope to this service. The child owns all
+# family waits; user processes enter a nonce boundary in their physical session
+# (or the wait scope for a nonphysical caller) and exec only after UID drop.

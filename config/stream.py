@@ -28,6 +28,11 @@ import stat
 import subprocess
 import time
 
+try:
+    from kilix_sdk.bus_ownership import CheckedDescriptor, CleanupIncomplete
+except ModuleNotFoundError:
+    from .kilix_sdk.bus_ownership import CheckedDescriptor, CleanupIncomplete
+
 
 def _runtime_root():
     base = os.environ.get("KILIX_SESSION_HOME") or os.path.join(
@@ -341,6 +346,45 @@ def lan_ip():
         return _hostname()
 
 
+X11_DIR = "/tmp/.X11-unix"
+X_LOCK_DIR = "/tmp"
+
+
+def _abstract_x_socket_listening(n):
+    """Whether an X server holds the abstract socket @/tmp/.X11-unix/X<n>.
+
+    A server listens on the abstract name as well as the filesystem one, and it
+    keeps listening after something cleans /tmp; Xvfb then refuses to start on
+    that display ("server already running") although no file shows it.
+    /proc/net/unix lists the abstract names of this network namespace and
+    opens no connection; where it cannot be read, a non-blocking connect asks.
+    """
+    wanted = f"@/tmp/.X11-unix/X{n}"   # the name X clients and servers agree on
+    try:
+        with open("/proc/net/unix", encoding="utf-8", errors="replace") as handle:
+            return any(line.split()[-1:] == [wanted] for line in handle)
+    except OSError:
+        pass
+    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        probe.setblocking(False)
+        probe.connect(("\0" + wanted[1:]).encode())
+        return True
+    except BlockingIOError:
+        return True            # a full backlog: something is listening
+    except OSError:
+        return False
+    finally:
+        probe.close()
+
+
+def display_in_use(n):
+    """True when display :n looks taken by any of the three signs an X server leaves."""
+    return (os.path.exists(f"{X11_DIR}/X{n}")
+            or os.path.exists(f"{X_LOCK_DIR}/.X{n}-lock")
+            or _abstract_x_socket_listening(n))
+
+
 class StreamSupervisor:
     def __init__(self, session):
         self.session = _safe_session_name(session)
@@ -356,11 +400,77 @@ class StreamSupervisor:
         self._locks = []       # held flock fds reserving display numbers
         self._pulse_modules = []   # pactl null-sink module ids to unload
         self._cleaned = False
+        self._pending_launch_fds = []
+        self._pending_launch_allocations = []
         self.xauth = None      # per-session X authority file (MIT cookie)
         atexit.register(self.cleanup)
 
     # ---- process bookkeeping ------------------------------------------------
+    def _discharge_uncalled_allocations(self):
+        """Drop journals whose allocator was provably never entered.
+
+        The journal is appended before the allocator and `called` is set on the
+        statement just before the call. An interrupt in between has had no
+        allocator effect, so the entry holds no descriptor and may be dropped.
+        Once `called` is set an interrupted return stays unresolved: nothing
+        can say whether the descriptors exist, and a number is never guessed.
+        """
+        self._pending_launch_allocations = [
+            journal for journal in getattr(self, "_pending_launch_allocations", ())
+            if journal.get("raw") is not None or journal.get("called", True)]
+
+    def _ensure_no_pending_launch_acquisition(self):
+        self._discharge_uncalled_allocations()
+        pending = getattr(self, "_pending_launch_allocations", ())
+        live = [lease.fd for lease in getattr(self, "_pending_launch_fds", ())
+                if lease.fd is not None]
+        if pending or live:
+            raise CleanupIncomplete("stream-allocation-pending", pending=live, resource=self)
+
+    def _acquire_stream_fds(self, allocator, *args, many=False, destination, **kwargs):
+        """Journal one allocator before the leaf and publish a whole returned set."""
+        self._ensure_no_pending_launch_acquisition()
+        journal = {"raw": None, "leases": None, "called": False}
+        self._pending_launch_allocations.append(journal)
+        try:
+            journal["called"] = True
+            returned = allocator(*args, **kwargs)
+        except OSError:
+            # pipe2/open/dup report failed syscalls without a successful handle.
+            self._pending_launch_allocations = [held for held in self._pending_launch_allocations
+                                                if held is not journal]
+            raise
+        journal["raw"] = tuple(returned) if many else (returned,)
+        leases = [CheckedDescriptor(fd, os) for fd in journal["raw"]]
+        journal["leases"] = leases
+        destination.extend(leases)
+        for lease in leases:
+            lease.capture()
+        self._pending_launch_allocations = [held for held in self._pending_launch_allocations
+                                            if held is not journal]
+        return leases
+
+    def _collect_pending_stream_leases(self, destination):
+        self._discharge_uncalled_allocations()
+        unresolved = []
+        for journal in list(getattr(self, "_pending_launch_allocations", ())):
+            raw = journal.get("raw")
+            if raw is None:
+                unresolved.append(journal)
+                continue
+            leases = journal.get("leases")
+            if leases is None:
+                leases = [CheckedDescriptor(fd, os) for fd in raw]
+                journal["leases"] = leases
+            for lease in leases:
+                if not any(lease is held for held in destination):
+                    destination.append(lease)
+        return unresolved
+
     def spawn(self, name, argv, **kw):
+        self._ensure_no_pending_launch_acquisition()
+        pin_receiver = kw.pop("_kilix_pin_receiver", None)
+        remote_launcher = kw.pop("_kilix_remote_launcher", None)
         handles = []
         seen = set()
         for key in ("stdin", "stdout", "stderr"):
@@ -371,30 +481,164 @@ class StreamSupervisor:
                 continue
             seen.add(id(h))
             handles.append(h)
-        try:
-            p = subprocess.Popen(argv, **kw)
-        except Exception:
-            _close_handles(handles)
-            raise
-        pidfile = os.path.join(self.runtime_dir, f"{name}.pid")
-        self.children.append((name, p, handles, pidfile))
-        try:
-            with _private_open(pidfile, "w") as f:
-                json.dump({"pid": p.pid, "start": _proc_start_time(p.pid)}, f)
-        except OSError:
-            pass
+        if remote_launcher is None:
+            try:
+                p = subprocess.Popen(argv, **kw)
+            except Exception:
+                _close_handles(handles)
+                raise
+        else:
+            env = kw.pop("env", None)
+            cwd = kw.pop("cwd", None)
+            stdin_value = kw.pop("stdin", None)
+            stdout_value = kw.pop("stdout", None)
+            stderr_value = kw.pop("stderr", None)
+            if kw:
+                _close_handles(handles)
+                raise TypeError("unsupported option for ancestor-owned primary: " + ", ".join(sorted(kw)))
+            child_fds = []
+            child_leases = []
+            local_streams = {}
+            p = None
+            registered = False
+
+            def own_fds(allocator, *args, many=False, **kwargs):
+                return self._acquire_stream_fds(allocator, *args, many=many,
+                                                destination=child_leases, **kwargs)
+
+            def close_child_fds():
+                failures = []
+                try:
+                    unresolved = self._collect_pending_stream_leases(child_leases)
+                    if unresolved:
+                        failures.append(CleanupIncomplete("stream-allocation-outcome",
+                                                          resource=self))
+                except BaseException as error:
+                    failures.append(error)
+                unique = []
+                for lease in child_leases:
+                    if not any(lease is held for held in unique):
+                        unique.append(lease)
+                for lease in unique:
+                    try:
+                        lease.close()
+                    except BaseException as error:
+                        failures.append(error)
+                pending = [lease for lease in unique if lease.fd is not None]
+                if pending:
+                    self._pending_launch_fds.extend(lease for lease in pending
+                                                    if lease not in self._pending_launch_fds)
+                self._pending_launch_allocations = [journal for journal in
+                    getattr(self, "_pending_launch_allocations", ())
+                    if journal.get("raw") is None or journal.get("leases") is None or
+                    any(lease.fd is not None for lease in journal["leases"])]
+                return failures, pending
+
+            def close_local_streams():
+                failures = []
+                for stream in local_streams.values():
+                    try:
+                        stream.close()
+                    except BaseException as error:
+                        failures.append(error)
+                return failures
+
+            def retain_process():
+                nonlocal registered
+                if p is not None and not registered:
+                    if not any(existing is p for _, existing, _, _ in self.children):
+                        parent_handles = handles + [stream for stream in local_streams.values()
+                                                    if stream not in handles]
+                        self.children.append((name, p, parent_handles, None))
+                    registered = True
+
+            def remote_stream(value, target):
+                if value == subprocess.PIPE:
+                    read_lease, write_lease = own_fds(os.pipe2, os.O_CLOEXEC, many=True)
+                    read_fd, write_fd = read_lease.fd, write_lease.fd
+                    if target == 0:
+                        child_fd, parent_lease = read_fd, write_lease
+                        local_streams[target] = os.fdopen(parent_lease.fd, "wb", buffering=0)
+                    else:
+                        child_fd, parent_lease = write_fd, read_lease
+                        local_streams[target] = os.fdopen(parent_lease.fd, "rb", buffering=0)
+                    parent_lease.fd = None  # The file object now owns that endpoint.
+                    return child_fd
+                if value is subprocess.DEVNULL:
+                    flags = os.O_RDONLY if target == 0 else os.O_WRONLY
+                    return own_fds(os.open, os.devnull, flags | os.O_CLOEXEC)[0].fd
+                if value is subprocess.STDOUT:
+                    if target != 2 or len(child_fds) != 2:
+                        raise ValueError("STDOUT is supported only for stderr")
+                    return own_fds(os.dup, child_fds[1])[0].fd
+                if value is None:
+                    return own_fds(os.dup, target)[0].fd
+                source = value if isinstance(value, int) else value.fileno()
+                return own_fds(os.dup, source)[0].fd
+
+            try:
+                child_fds.append(remote_stream(stdin_value, 0))
+                child_fds.append(remote_stream(stdout_value, 1))
+                child_fds.append(remote_stream(stderr_value, 2))
+                p = remote_launcher(list(argv), env=dict(os.environ if env is None else env), cwd=cwd,
+                                    stream_fds=tuple(child_fds))
+                p.stdin, p.stdout, p.stderr = (local_streams.get(0), local_streams.get(1),
+                                               local_streams.get(2))
+                handles.extend(local_streams.values())
+            except BaseException as launch_error:
+                close_errors, _pending = close_child_fds()
+                if p is not None:
+                    retain_process()
+                else:
+                    close_errors.extend(close_local_streams())
+                    _close_handles(handles)
+                if close_errors:
+                    launch_error.cleanup_errors = tuple(close_errors)
+                    if getattr(launch_error, "resource", None) is None:
+                        launch_error.resource = self
+                    else:
+                        launch_error.stream_resource = self
+                raise
+            close_errors, pending = close_child_fds()
+            if close_errors:
+                retain_process()
+                raise CleanupIncomplete("stream-parent-descriptor-release", problems=close_errors,
+                                        pending=tuple(lease.fd for lease in pending), resource=self)
+        if pin_receiver is not None:
+            try:
+                p = pin_receiver(p)
+            except BaseException:
+                # Unauthenticated gated child: never reacquire/signals by its
+                # old number. Its closed exec gate/parent watchdog ends launch.
+                p._kilix_unpinned_gated = True
+                p._kilix_pin_retry = lambda p=p: pin_receiver(p)
+                self.children.append((name, p, handles, None))
+                raise
+        # The independent ancestor owns this primary's loss lifetime. A legacy
+        # numeric-PID pidfile could record a replacement after another waiter
+        # reaps it, then give kill_all authority over that unrelated process.
+        pidfile = None if getattr(p, "_kilix_primary_pin", None) is not None else os.path.join(self.runtime_dir, f"{name}.pid")
+        if remote_launcher is None or not registered:
+            self.children.append((name, p, handles, pidfile))
+        if pidfile is not None:
+            try:
+                with _private_open(pidfile, "w") as f:
+                    json.dump({"pid": p.pid, "start": _proc_start_time(p.pid)}, f)
+            except OSError:
+                pass
         return p
 
     def cleanup(self, *_):
         if self._cleaned:
             return
         self._cleaned = True
+        pending_errors = []
         try:
             atexit.unregister(self.cleanup)
         except Exception:
             pass
         for _name, p, _handles, _pidfile in reversed(self.children):
-            if p.poll() is None:
+            if not getattr(p, "_kilix_unpinned_gated", False) and p.poll() is None:
                 try:
                     p.terminate()
                 except Exception:
@@ -402,13 +646,18 @@ class StreamSupervisor:
         deadline = time.time() + 3
         for _name, p, handles, pidfile in reversed(self.children):
             try:
+                if getattr(p, "_kilix_unpinned_gated", False):
+                    p = p._kilix_pin_retry()
                 p.wait(timeout=max(0.0, deadline - time.time()))
             except Exception:
                 try:
-                    p.kill()
+                    if not getattr(p, "_kilix_unpinned_gated", False):
+                        p.kill()
                 except Exception:
                     pass
                 try:
+                    if getattr(p, "_kilix_unpinned_gated", False):
+                        raise RuntimeError("gated primary has no immutable wait authority")
                     p.wait(timeout=1)
                 except Exception:
                     pass
@@ -422,7 +671,8 @@ class StreamSupervisor:
                     pass
             _close_handles(handles)
             try:
-                os.unlink(pidfile)
+                if pidfile is not None:
+                    os.unlink(pidfile)
             except OSError:
                 pass
         self.children.clear()
@@ -440,11 +690,36 @@ class StreamSupervisor:
         self._pulse_modules.clear()
         if _safe_runtime_dir(self.runtime_root, self.runtime_dir):
             shutil.rmtree(self.runtime_dir, ignore_errors=True)
+        recovered = []
+        try:
+            unresolved = self._collect_pending_stream_leases(recovered)
+            if unresolved:
+                pending_errors.append(CleanupIncomplete("stream-allocation-outcome",
+                                                        resource=self))
+        except BaseException as error:
+            pending_errors.append(error)
+        leases = list(getattr(self, "_pending_launch_fds", ()))
+        leases.extend(lease for lease in recovered if not any(lease is held for held in leases))
+        for lease in leases:
+            try:
+                lease.close()
+            except BaseException as error:
+                pending_errors.append(error)
+        self._pending_launch_fds = [lease for lease in getattr(self, "_pending_launch_fds", ())
+                                    if lease.fd is not None]
+        self._pending_launch_allocations = [journal for journal in
+            getattr(self, "_pending_launch_allocations", ())
+            if journal.get("raw") is None or journal.get("leases") is None or
+            any(lease.fd is not None for lease in journal["leases"])]
+        if pending_errors or self._pending_launch_fds or self._pending_launch_allocations:
+            self._cleaned = False
+            raise CleanupIncomplete("stream-launch-descriptor-release", problems=pending_errors,
+                                    pending=tuple(lease.fd for lease in self._pending_launch_fds), resource=self)
 
     # ---- display allocation -------------------------------------------------
     def pick_display(self, lo=60, hi=120):
         for n in range(lo, hi):
-            if os.path.exists(f"/tmp/.X11-unix/X{n}"):
+            if display_in_use(n):
                 continue
             fd = os.open(os.path.join(self.lockdir, f"X{n}.lock"),
                          os.O_CREAT | os.O_RDWR, 0o600)
@@ -453,7 +728,7 @@ class StreamSupervisor:
             except OSError:
                 os.close(fd)
                 continue
-            if os.path.exists(f"/tmp/.X11-unix/X{n}"):   # raced, appeared
+            if display_in_use(n):   # raced, appeared
                 os.close(fd)
                 continue
             self._locks.append(fd)

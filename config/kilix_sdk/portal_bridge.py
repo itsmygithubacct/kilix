@@ -7,6 +7,8 @@ uses GIO messages so Unix file descriptors retain their handle indices.
 
 Native notifications use caller-specific identifiers and signal delivery.
 Accessibility discovery reaches the physical session's AT-SPI registry.
+ScreenSaver inhibition uses dedicated caller-owned physical connections, and
+explicit Lock reaches the physical desktop independently of those inhibitors.
 The launcher waits for ownership of the private service names before execing
 the app. Linux parent-death notification ties the relay to that app, even on SIGKILL.
 """
@@ -25,13 +27,13 @@ import threading
 
 
 if __package__:
-    from . import accessibility_bus
+    from . import accessibility_bus, screensaver_bus
     from .notifications import (
         NativeNotifications, NotificationState,
         NAME as NOTIFICATIONS, PATH as NOTIFICATION_PATH,
     )
 else:
-    import accessibility_bus
+    import accessibility_bus, screensaver_bus
     from notifications import (
         NativeNotifications, NotificationState,
         NAME as NOTIFICATIONS, PATH as NOTIFICATION_PATH,
@@ -167,6 +169,7 @@ class PortalRelay:
         self.loop = GLib.MainLoop()
         self.clients = {}
         self.notifications = NativeNotifications(self)
+        self.screensavers = screensaver_bus.ScreenSaverRelay(self)
         self.stopped = False
         self.queued = 0
         self.queue_lock = threading.Lock()
@@ -179,7 +182,7 @@ class PortalRelay:
             "org.freedesktop.DBus", "org.freedesktop.DBus", "NameOwnerChanged",
             "/org/freedesktop/DBus", None, Gio.DBusSignalFlags.NONE, self.owner_changed)
         self.filter_id = self.private.add_filter(self.filter_message, None)
-        for name in (PORTAL, NOTIFICATIONS, accessibility_bus.NAME):
+        for name in (PORTAL, NOTIFICATIONS, accessibility_bus.NAME, screensaver_bus.NAME):
             response = self.private.call_sync(
                 "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
                 "RequestName", GLib.Variant("(su)", (name, 4)), GLib.VariantType.new("(u)"),
@@ -205,7 +208,7 @@ class PortalRelay:
 
     def filter_message(self, connection, message, incoming, _data):
         if (not incoming or message.get_message_type() != self.Gio.DBusMessageType.METHOD_CALL
-                or message.get_destination() not in (PORTAL, NOTIFICATIONS, accessibility_bus.NAME,
+                or message.get_destination() not in (PORTAL, NOTIFICATIONS, accessibility_bus.NAME, screensaver_bus.NAME,
                                                      connection.get_unique_name())):
             return message
         # GIO invokes filters on its message thread. All relay state and I/O
@@ -237,9 +240,12 @@ class PortalRelay:
             return False
         name = original.get_sender() or ""
         if not _UNIQUE.fullmatch(name) or not (portal_path(original.get_path() or "")
-                or original.get_path() in (NOTIFICATION_PATH, accessibility_bus.PATH)):
+                or original.get_path() in (NOTIFICATION_PATH, accessibility_bus.PATH, *screensaver_bus.PATHS)):
             self.error(original, "Not a desktop portal object",
                        "org.freedesktop.DBus.Error.UnknownObject")
+            return False
+        if original.get_path() in screensaver_bus.PATHS:
+            self.screensavers.forward(original)
             return False
         client = self.clients.get(name)
         if client is None:
@@ -432,6 +438,8 @@ class PortalRelay:
 
     def owner_changed(self, _connection, _sender, _path, _interface, _member, body, _data=None):
         name, old, new = body.unpack()
+        if old and not new:
+            self.screensavers.caller_gone(name)
         if old and not new and name in self.clients:
             self.close_client(self.clients[name])
 
@@ -461,6 +469,7 @@ class PortalRelay:
         if self.stopped:
             return
         self.stopped = True
+        self.screensavers.close()
         for client in list(self.clients.values()):
             self.close_client(client)
         self.loop.quit()

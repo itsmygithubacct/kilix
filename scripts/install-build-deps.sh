@@ -52,9 +52,9 @@ chmod 0700 "$KILIX_STORAGE_HOME" "$KILIX_CONFIG_HOME" 2>/dev/null || true
 FORK_PC_DEPS="cairo-fc dbus-1 egl gl harfbuzz lcms2 libcrypto libdrm libpng libxxhash wayland-client wayland-cursor wayland-protocols wayland-scanner x11 x11-xcb xcursor xinerama xkbcommon xkbcommon-x11 xrandr"
 # Also required, though the build never asks pkg-config for them, so no
 # derivation can find them: it links -lz directly, includes
-# <X11/extensions/XInput2.h> and <fontconfig/fontconfig.h>, and loads
+# <X11/extensions/XInput2.h>, <X11/extensions/XRes.h> and <fontconfig/fontconfig.h>, and loads
 # libwayland-egl at run time.
-FORK_UNASKED_PC_DEPS="zlib xi fontconfig wayland-egl"
+FORK_UNASKED_PC_DEPS="zlib xi xres fontconfig wayland-egl"
 PC_DEPS="$FORK_PC_DEPS $FORK_UNASKED_PC_DEPS"
 # Installed, reported, and never required. These are kilix-amp's, the desktop
 # Media Player, which the desktop clones and builds on first use; build.sh
@@ -459,7 +459,7 @@ debian_audio_revived() {
 debian_install() {
   local jack_dev; jack_dev="$(debian_jack_dev_package)"
   local pkgs="build-essential cmake pkg-config git curl zstd golang-go python3 python3-dev python3-pil python3-venv \
-    libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxkbcommon-dev \
+    libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxres-dev libxkbcommon-dev \
     libxkbcommon-x11-dev libx11-xcb-dev libdbus-1-dev libgl1-mesa-dev libegl-dev libdrm-dev libfontconfig-dev \
     libpng-dev liblcms2-dev libcairo2-dev libharfbuzz-dev libssl-dev libxxhash-dev \
     libsimde-dev libwayland-dev wayland-protocols \
@@ -498,7 +498,7 @@ debian_install() {
 
 arch_install() {
   local pkgs="base-devel pkgconf git curl zstd go python python-pillow \
-    libx11 libxrandr libxinerama libxcursor libxi libxkbcommon mesa dbus fontconfig \
+    libx11 libxrandr libxinerama libxcursor libxi libxres libxkbcommon mesa dbus fontconfig \
     libpng lcms2 cairo harfbuzz openssl xxhash simde wayland wayland-protocols \
     sdl2 sdl2_image libsndfile zlib fluidsynth soundfont-fluid \
     libssh2 brotli"
@@ -510,7 +510,7 @@ arch_install() {
 
 suse_install() {
   local pkgs="gcc make pkg-config git curl zstd go python3 python3-devel python3-Pillow \
-    libX11-devel libXrandr-devel libXinerama-devel libXcursor-devel libXi-devel \
+    libX11-devel libXrandr-devel libXinerama-devel libXcursor-devel libXi-devel libXRes-devel \
     libxkbcommon-devel libxkbcommon-x11-devel dbus-1-devel Mesa-libGL-devel fontconfig-devel \
     libpng16-devel liblcms2-devel cairo-devel harfbuzz-devel libopenssl-devel libxxhash-devel \
     simde-devel wayland-devel wayland-protocols-devel \
