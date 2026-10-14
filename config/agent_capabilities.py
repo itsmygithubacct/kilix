@@ -23,6 +23,7 @@ REVISION = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?\Z")
 PROVENANCE_KEYS = {"PLEBIAN_OS_VERSION", "PLEBIAN_OS_COMMIT", "KILIX_DIR",
                    "KILIX_REF", "KILIX_VERSION", "KILIX_SOURCE_COMMIT"}
 COMMAND_FILES = {"agent-control": "config/agent_control.py",
+                 "agent": "config/agent_workflows.py",
                  "pane": "config/kilix_sdk/panes.py",
                  "tab": "config/kilix_sdk/panes.py",
                  "action": "config/agent_actions.py",

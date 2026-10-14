@@ -58,4 +58,4 @@ kilix-rollout-resume resume SESSION_ID --dry-run
 
 After reviewing the plan, `kilix-rollout-resume resume SESSION_ID` launches that selected conversation. The utility also exposes states such as `idle`, `cut-off`, `live`, `orphaned`, and `invalid`; exact filters and options depend on the selected version. A launch is an opened session, not evidence that the resumed model continued the task correctly. Check the new work against the saved request and expected result.
 
-See [workflow evaluation](benchmarking.md) for the distinction between shipped interfaces, deterministic fixture validation, and real continuation evidence.
+See [workflow evaluation](benchmarking.md) for the distinction between shipped interfaces, deterministic fixture validation, and real continuation evidence. [Workflow agent routing](agents.md) describes selecting a measured model and effort for an approved workflow with `kilix agent`.

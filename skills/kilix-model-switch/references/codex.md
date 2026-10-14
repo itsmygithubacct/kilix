@@ -4,6 +4,9 @@ Use `/model` in the existing interactive session. The picker can include a
 second reasoning-effort screen: selecting a model row alone may not complete
 the operation. Inspect both screens and the final confirmation. Preserve the
 previous effort unless the user specified another or delegated its selection.
+If the requested model is absent, use the picker's displayed cancel key
+(normally Esc), then verify the idle screen and unchanged model. Reporting
+unavailability alone leaves the picker open.
 
 Use `/status` and the model footer for current configuration. When already
 available, a new turn's runtime metadata is stronger evidence than a shared

@@ -14,6 +14,15 @@ Run `kilix focus pane:74` to focus pane 74, or `kilix focus tab:45` for tab 45.
 Use explicit kinds in scripts: an ID matching both a tab and a pane is
 ambiguous and is rejected. Replace example IDs with IDs from your live listing.
 
+Run `kilix pane resize 74 --delta-columns 5` to make pane 74 five columns
+wider, or `kilix pane resize 74 --columns 80` to request an exact width.
+Use `--delta-lines` or `--lines` for height. The command checks the resulting
+size and reports failure if the layout cannot reach it. Add `--json` for a
+receipt containing the requested and observed sizes.
+
+Bare `kilix pane` and `kilix tab` display help. Use `kilix pane right` or
+`kilix tab new` to create a pane or page explicitly.
+
 Run `kilix watch --once 74` for a read-only text snapshot of pane 74.
 Watching does not carry graphics, mouse state or an interactive PTY.
 Use `kilix switch` or F12 for the page/pane switcher. F2 renames the current

@@ -35,6 +35,12 @@ their named versions; they are not a current component inventory.
 For the human and agent workflows that connect terminal work, automation,
 verification and recovery, see [Kilix Workflows](docs/workflows/README.md).
 
+The RC6 candidate adds [workflow agent routing](docs/workflows/agents.md):
+`kilix agent` selects an evidence-qualified profile for an explicitly approved
+workflow, binds its task contract, and records independently verified completion,
+usage and elapsed time. Registry approval and benchmark evidence remain operator
+configuration; no account-specific winner or subscription estimate ships by default.
+
 - The three-line Start button and status widgets open floating drop-downs above
   the panes. Panes keep their size and continue updating behind the popup.
 - Popups follow the page-strip position, fit the window when resized, and

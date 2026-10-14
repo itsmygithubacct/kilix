@@ -125,6 +125,9 @@ case "${1:-}" in
   agent-control)
     shift
     exec python3 "$KILIX_HOME/config/agent_control.py" "$@" ;;
+  agent)
+    shift
+    exec python3 -B "$KILIX_HOME/config/agent_workflows.py" "$@" ;;
   action)
     shift
     if [[ "${1:-}" == capabilities ]]; then
@@ -155,29 +158,29 @@ case "${1:-}" in
   # the running session's config. The engine's options stay one flag away.
   -h|--help|help)
     cat <<'EOF'
-usage: kilix [COMMAND] [ARGS...]    (no command: open a Kilix window)
-Common tasks, complete as shown (run inside a Kilix pane):
-  kilix pane right -- bash                          open a shell right
-  kilix pane send build 'make test' --submit         type into build + Enter
-  kilix pane close build                            close the named pane
-  kilix new-tab --title Codex --cwd ~/src/app codex  start a program in a tab
-
-Panes and tabs (directions relative to the calling pane):
+usage: kilix [COMMAND] [ARGS...]    (bare: open a window)
+Examples inside a Kilix pane:
+  kilix pane right -- bash                         shell on the right
+  kilix pane send build 'make test' --submit        text + Enter
+  kilix pane close build                           close named pane
+  kilix new-tab --title Codex --cwd ~/src/app codex
+Panes and tabs (directions from caller):
   kilix pane right|left|up|down [--title T] [--cwd DIR] [--hold] [--porcelain] [-- CMD...]
   kilix pane send TARGET 'TEXT' [--submit]   --submit presses Enter
-  kilix pane close [TARGET]                 default: this pane and its program
+  kilix pane close [TARGET]                 default: caller and its program
   kilix pane read TARGET [--extent all]
   kilix pane focus TARGET
-  kilix pane list [--json]                  ids, titles, programs; (self) is you
+  kilix pane resize TARGET (--columns N | --lines N | --delta-columns N | --delta-lines N) [--json]
+  kilix pane list [--json]                  IDs, titles, programs; (self) is you
   kilix new-tab [--title T] [--cwd DIR] [CMD...]
-  kilix tab list|close|rename|focus|left|right
+  kilix tab new|list|close|rename|focus|left|right
+  Bare pane/tab prints help; create explicitly.
   kilix tmux --socket PATH [--json] VERB ...  no args: manager
-TARGET is a pane's unique title or pane:ID. Above is the complete syntax:
-no subcommand --help or pane list is needed first. Missing/ambiguous titles
-are refused without acting; each verb prints what it did.
-Coding agent input (verify the target first):
+TARGET: unique title or pane:ID. This is the complete syntax;
+no subcommand --help is needed. Ambiguous titles fail; each verb prints what it did.
+Agents (verify input targets):
+  kilix agent --help                       workflow selection and launch
   kilix agent-control context|list|dump|send|key   --help
-Structured actions with durable receipts:
   kilix action --request-json -             structured request from stdin
   kilix action capabilities                inspect available features
 Idle-only mailboxes and recurring follow-ups:
@@ -4843,6 +4846,11 @@ _kilix_desktop_die() {
 }
 
 _kilix_remote_control() {
+  if [ "$1" = pane ] || [ "$1" = tab ]; then
+    case "${2:-}" in
+      ''|-h|--help|help) exec python3 "$KILIX_HOME/config/remote.py" "$@" ;;
+    esac
+  fi
   [ -x "$KITTEN" ] || { echo "kilix $1: kitten not found next to $BIN" >&2; exit 1; }
   if [ -z "${KITTY_LISTEN_ON:-}" ]; then
     echo "kilix $1: no live kilix remote-control socket (run this inside kilix, or set KITTY_LISTEN_ON)" >&2

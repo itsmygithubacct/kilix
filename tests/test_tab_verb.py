@@ -149,10 +149,9 @@ class ShellStringVersusArgv(unittest.TestCase):
         self.assertEqual(list(kwargs["command"]), ["a && b"])
         self.assertNotIn("shell_string", kwargs)
 
-    def test_bare_tab_opens_a_tab_with_no_command(self):
+    def test_bare_tab_is_read_only_discovery(self):
         self.remote.main(["tab"])
-        kwargs = self.new_tab_kwargs()
-        self.assertEqual(list(kwargs.get("command", ())), [])
+        self.assertEqual(self.panes.calls, [])
 
 
 class TabNavigation(unittest.TestCase):

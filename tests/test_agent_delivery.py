@@ -363,5 +363,87 @@ class DeliveryTests(unittest.TestCase):
         self.assertEqual(done.stderr, '')
 
 
+class ModelReadinessTests(unittest.TestCase):
+    def invoke(self, terminal):
+        output, errors = io.StringIO(), io.StringIO()
+        with mock.patch.object(control, 'Client', return_value=terminal), \
+                mock.patch.object(delivery.time, 'sleep'), \
+                contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+            status = control.main(['send', '2', '--expect-broker', TARGET_BROKER,
+                                   '--text', '/model', '--allow-command', '--submit'])
+        return status, errors.getvalue()
+
+    def test_busy_empty_composer_never_receives_input(self):
+        terminal = Terminal()
+        terminal.current = screen(busy=True)
+        status, error = self.invoke(terminal)
+        self.assertEqual(status, 1)
+        self.assertIn('busy', error)
+        self.assertEqual(terminal.inputs, [])
+
+    def test_approval_unknown_and_draft_are_preserved(self):
+        for value in ('Approval required: allow command?', screen('unfinished draft'),
+                      screen().replace('? for shortcuts', 'unknown footer')):
+            with self.subTest(value=value):
+                terminal = Terminal()
+                terminal.current = value
+                self.assertEqual(self.invoke(terminal)[0], 1)
+                self.assertEqual(terminal.inputs, [])
+
+    def test_idle_command_is_submitted_once_after_fresh_checks(self):
+        terminal = Terminal()
+        self.assertEqual(self.invoke(terminal)[0], 0)
+        self.assertEqual(terminal.inputs, [b'/model', b'\r'])
+        self.assertEqual(terminal.reads, 4)
+
+    def test_busy_race_before_paste_refuses(self):
+        terminal = Terminal()
+        terminal.on_read = lambda t: setattr(t, 'current', screen(busy=t.reads >= 2))
+        self.assertEqual(self.invoke(terminal)[0], 1)
+        self.assertEqual(terminal.inputs, [])
+
+    def test_real_codex_compact_idle_footer(self):
+        terminal = Terminal()
+        terminal.current = screen().replace('  ? for shortcuts\n', '')
+        with mock.patch.object(delivery.time, 'sleep'):
+            delivery.require_model_control_idle(terminal, 2, TARGET_BROKER)
+        self.assertEqual(terminal.inputs, [])
+
+    def test_busy_status_above_compact_composer(self):
+        terminal = Terminal()
+        terminal.current = screen(history='• Working (2s • esc to interrupt)').replace('  ? for shortcuts\n', '')
+        with self.assertRaisesRegex(control.ControlError, 'busy'):
+            delivery.require_model_control_idle(terminal, 2, TARGET_BROKER)
+
+    def test_working_status_without_interrupt_hint_is_busy(self):
+        terminal = Terminal()
+        terminal.current = screen(history='◦ Thinking (2s)').replace('  ? for shortcuts\n', '')
+        with self.assertRaisesRegex(control.ControlError, 'busy'):
+            delivery.require_model_control_idle(terminal, 2, TARGET_BROKER)
+
+    def test_coding_process_restart_before_submission_is_blocked(self):
+        terminal = Terminal()
+        terminal.on_paste = lambda t: t.panes[1]['foreground_processes'][0].update(pid=456)
+        self.assertEqual(self.invoke(terminal)[0], 1)
+        self.assertEqual(terminal.inputs, [b'/model'])
+
+    def test_real_codex_slash_menu_before_submission(self):
+        terminal = Terminal()
+        menu = ('\x1b[1;7m› /model  \x1b[22mchoose what model and reasoning effort to use\n'
+                '\x1b[0m\n\x1b[1m›\x1b[22m /model\n\n'
+                '  \x1b[1mtab\x1b[22m to queue message                 100% context left\n')
+        terminal.on_paste = lambda t: setattr(t, 'current', menu)
+        self.assertEqual(self.invoke(terminal)[0], 0)
+        self.assertEqual(terminal.inputs, [b'/model', b'\r'])
+        with self.assertRaises(delivery.ScreenError):
+            delivery.composer(menu)  # This layout never authorizes ordinary delivery.
+
+    def test_busy_race_after_paste_does_not_submit(self):
+        terminal = Terminal()
+        terminal.on_paste = lambda t: setattr(t, 'current', screen('/model', busy=True))
+        self.assertEqual(self.invoke(terminal)[0], 1)
+        self.assertEqual(terminal.inputs, [b'/model'])
+
+
 if __name__ == '__main__':
     unittest.main()

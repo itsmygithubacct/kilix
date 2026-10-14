@@ -108,9 +108,9 @@ class InputTests(unittest.TestCase):
                 self.assertIn("client command", error)
                 self.assertEqual(self.client.calls, [])
         result, _, _ = self.invoke(["send", "2", "--expect-broker", TARGET_BROKER,
-                                    "--text", " /model", "--allow-command", "--submit"])
+                                    "--text", " /status", "--allow-command", "--submit"])
         self.assertEqual(result, 0)
-        self.assertEqual([payload for _, payload in self.client.calls], [b" /model", b"\r"])
+        self.assertEqual([payload for _, payload in self.client.calls], [b" /status", b"\r"])
 
     def test_stale_ambiguous_self_and_unknown_targets_refuse_without_input(self):
         for target, broker in ((2, "e" * 16), (9, TARGET_BROKER), (1, SOURCE_BROKER),

@@ -439,6 +439,91 @@ def snapshot(*, timeout: float = 2.0) -> Workspace:
     return parse(load_state(timeout=timeout))
 
 
+def resize(target: int | str, *, columns: int | None = None,
+           lines: int | None = None, delta_columns: int | None = None,
+           delta_lines: int | None = None) -> dict[str, Any]:
+    """Set one pane dimension or delta, then verify its exact observed cell size.
+
+    Native increments are layout-relative. Corrections preserve pane/process/
+    broker identities and tab titles, with at most five commands. No-op or
+    unobserved effects stop without a retry or a success receipt.
+    """
+    choices = [(name, value) for name, value in (
+        ('columns', columns), ('lines', lines),
+        ('delta_columns', delta_columns), ('delta_lines', delta_lines)) if value is not None]
+    if target is None or len(choices) != 1:
+        raise PaneError('resize needs an explicit target and exactly one size or delta')
+    name, value = choices[0]
+    relative = name.startswith('delta_')
+    if (isinstance(value, bool) or not isinstance(value, int)
+            or (relative and not 1 <= abs(value) <= 50)
+            or (not relative and not 1 <= value <= 10000)):
+        raise PaneError('size must be 1..10000 cells; delta must be -50..50 and nonzero')
+    field = name.removeprefix('delta_')
+    other_field = 'lines' if field == 'columns' else 'columns'
+    axis = 'horizontal' if field == 'columns' else 'vertical'
+    initial = snapshot()
+    pane = initial.find_pane(target)
+    before = getattr(pane, field)
+    expected = before + value if relative else value
+    if before <= 0 or getattr(pane, other_field) <= 0 or expected <= 0 or pane.pid <= 0:
+        raise PaneError('target geometry or process identity is unavailable, or requested size is nonpositive')
+
+    def identities(workspace):
+        return {p.id: (p.tab_id, p.os_window_id, p.pid, p.broker_session)
+                for p in workspace.panes()}
+
+    bound = identities(initial)
+    titles = {t.id: t.title for t in initial.tabs()}
+
+    def observe():
+        fresh = snapshot()
+        if identities(fresh) != bound or {t.id: t.title for t in fresh.tabs()} != titles:
+            raise PaneError('resize stopped: pane identities or tab titles changed; inspect before retrying')
+        current = fresh.find_pane(pane.id)
+        if getattr(current, other_field) != getattr(pane, other_field):
+            raise PaneError('resize stopped: the other dimension changed; inspect before retrying')
+        return getattr(current, field)
+
+    if observe() != before:
+        raise PaneError('target geometry changed; no resize attempted')
+    commands = 0
+    observed = before
+    increment = max(-50, min(50, expected - before))
+    while observed != expected and commands < 5:
+        if observe() != observed:
+            raise PaneError('target geometry changed before correction; inspect before retrying')
+        previous = observed
+        _check(['resize-window', '--match', f'id:{pane.id}', '--axis', axis,
+                '--increment', str(increment)], 'resize pane')
+        commands += 1
+        stable = 0
+        last = None
+        for _ in range(20):
+            observed = observe()
+            stable = stable + 1 if observed == last else 0
+            last = observed
+            if stable >= 2 and observed != previous:
+                break
+            time.sleep(.05)
+        if stable < 2 or observed == previous:
+            raise PaneError('resize effect was not observed or was clamped; inspect before retrying')
+        if observed == expected:
+            break
+        gain = (observed - previous) / increment
+        if gain <= 0:
+            raise PaneError('resize moved in the wrong direction; inspect before retrying')
+        remaining = expected - observed
+        correction = round(remaining / gain)
+        increment = max(1, min(50, abs(correction))) * (1 if remaining > 0 else -1)
+    if observed != expected or observe() != expected:
+        raise PaneError('exact resize was not verified; inspect before retrying')
+    return dict(schema='kilix.pane.resize/v1', pane_id=pane.id, dimension=field,
+                before=before, expected=expected, observed=observed,
+                completion_verified=True, identities_preserved=True,
+                other_tab_titles_preserved=True, commands=commands)
+
+
 # --- operations ------------------------------------------------------------
 
 def _run(args: Sequence[str], *, authenticated: bool = True,

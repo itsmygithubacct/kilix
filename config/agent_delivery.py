@@ -74,7 +74,7 @@ def styled_lines(screen):
     return lines
 
 
-def composer(screen):
+def composer(screen, *, pending_command=None):
     """Parse only the supported Codex layout; do not infer readiness from silence."""
     rows = styled_lines(screen)
     text = ["".join(c for c, _, _ in row) for row in rows]
@@ -84,6 +84,15 @@ def composer(screen):
         raise ScreenError("Codex composer is not visible; inspect the target")
     start = candidates[-1]
     footers = [i for i in range(start + 1, len(text)) if MODEL.match(text[i])]
+    command_menu = False
+    if not footers and pending_command is not None:
+        command = pending_command.strip().split(' ', 1)[0]
+        selected = any(re.match(r"^› " + re.escape(command) + r"\s+", row.strip())
+                       for row in text[:start])
+        if command in ('/model', '/fast') and selected:
+            footers = [i for i in range(start + 1, len(text))
+                       if re.match(r"^  tab to queue message\b", text[i])]
+            command_menu = bool(footers)
     if len(footers) != 1:
         raise ScreenError("unrecognized Codex footer; inspect the target")
     end = footers[0]
@@ -96,7 +105,52 @@ def composer(screen):
     empty = all(faint for _, faint in visible)
     value = "".join(c for c, _, _ in content).strip()
     return {"empty": empty, "text": "" if empty else value,
-            "history": "\n".join(text[:start]), "screen": "\n".join(text)}
+            "history": "\n".join(text[:start]), "screen": "\n".join(text),
+            "footer": "\n".join(text[end:]), "model_control_menu": command_menu}
+
+
+def require_model_control_idle(client, pane_id, expected, *, pending=None, identity=None):
+    """Two fresh positive Codex idle observations before opening a model control.
+
+    An empty composer alone is not readiness: Codex keeps it during turns.
+    Unknown layouts and occupied drafts fail closed. This never sends input,
+    cancels a turn, or retries a mutation.
+    """
+    for sample in range(2):
+        pane = client.resolve(pane_id, expected, input_target=True)
+        observed_identity = tuple((p.get("pid"), tuple(p.get("cmdline") or []))
+                                  for p in pane.get("foreground_processes") or [])
+        if identity is None:
+            identity = observed_identity
+        if not identity or observed_identity != identity:
+            raise ControlError("coding process changed; model control readiness unverified")
+        screen = client.run(["get-text", "--match", f"id:{pane_id}",
+                             "--extent", "screen", "--ansi"])
+        try:
+            state = composer(screen, pending_command=pending)
+        except ScreenError as error:
+            raise ControlError(f"model control readiness unverified: {error}") from error
+        recent = "\n".join(state["history"].splitlines()[-8:])
+        if (re.search(r"esc\s+to\s+interrupt|waiting\s+for\s+approval", state["footer"], re.I)
+                or re.search(r"(?:working|thinking|running).*esc\s+to\s+interrupt", recent, re.I)
+                or re.search(r"^\s*[•◦*]\s*(?:working|thinking|running)\b", recent, re.I | re.M)):
+            raise ControlError("model control blocked: Codex is busy; wait for the turn to finish")
+        footer_lines = [line for line in state["footer"].splitlines() if line.strip()]
+        # Codex 0.160.0 hides the shortcuts hint in its compact idle footer.
+        # Accept that complete, single model/status row, not arbitrary extra
+        # status lines following it. Busy indicators above the composer are
+        # checked separately because the composer also exists during work.
+        compact_idle = len(footer_lines) == 1 and bool(MODEL.match(footer_lines[0]))
+        if ("? for shortcuts" not in state["footer"] and not compact_idle
+                and not (pending is not None and state["model_control_menu"])):
+            raise ControlError("model control readiness unverified: no supported idle footer")
+        if pending is None and not state["empty"]:
+            raise ControlError("model control blocked: preserve the occupied composer")
+        if pending is not None and (state["empty"] or state["text"] != pending.strip()):
+            raise ControlError("model command changed before submission; inspect without retrying")
+        if sample == 0:
+            time.sleep(0.1)
+    return identity
 
 
 def read_payload(args):

@@ -388,6 +388,8 @@ usage: kilix pane COMMAND ...   (run inside a Kilix pane)
         kilix pane close build
   kilix pane read TARGET [--extent all]
   kilix pane focus TARGET
+  kilix pane resize TARGET (--columns N | --lines N | --delta-columns N | --delta-lines N) [--json]
+        set one exact cell dimension or signed change; verify the observed size
   kilix pane list [--json]          pane ids, titles, programs; (self) is you
   kilix pane quad                   four panes where this one is
 
@@ -398,8 +400,8 @@ or several, is refused without acting, and each verb prints what it did.
 
 
 def cmd_pane(argv: list[str]) -> int:
-    subcommands = ("quad", "list", "close", "focus", "read", "send")
-    if argv[:1] in (["-h"], ["--help"], ["help"]):
+    subcommands = ("quad", "list", "close", "focus", "read", "send", "resize")
+    if not argv or argv[:1] in (["-h"], ["--help"], ["help"]):
         # The whole family, not only the split's options: an agent that
         # asked here and saw only splitting opened each verb's --help next
         # (22 + 23 reads in the 2026-09-29 luna discovery runs).
@@ -455,6 +457,22 @@ def _pane_split(argv: list[str]) -> int:
 
 def _pane_subcommand(name: str, argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog=f"kilix pane {name}")
+    if name == "resize":
+        parser.description = "Resize an explicit pane and verify its exact cell size"
+        parser.add_argument("target", help="a unique pane title or pane:ID")
+        sizes = parser.add_mutually_exclusive_group(required=True)
+        for option in ('columns', 'lines', 'delta-columns', 'delta-lines'):
+            sizes.add_argument('--' + option, type=int)
+        parser.add_argument('--json', action='store_true', dest='as_json')
+        ns = parser.parse_args(argv)
+        receipt = load_panes('pane resize').resize(ns.target, columns=ns.columns,
+            lines=ns.lines, delta_columns=ns.delta_columns, delta_lines=ns.delta_lines)
+        if ns.as_json:
+            print(json.dumps(receipt, sort_keys=True))
+        else:
+            print(f"kilix pane resize: pane {receipt['pane_id']} {receipt['dimension']} "
+                  f"{receipt['before']} -> {receipt['observed']} (verified)")
+        return 0
     if name == "quad":
         parser.description = "Four panes where this one is"
         parser.add_argument("--anchor", type=int, default=None)
@@ -532,7 +550,25 @@ def _pane_subcommand(name: str, argv: list[str]) -> int:
 
     return fail("pane", f"unknown pane command '{name}'", 2)
 
+TAB_HELP = """\
+usage: kilix tab COMMAND ...
+
+  kilix tab list [--json]                   list tabs without changing them
+  kilix tab new [--title T] [--cwd DIR] [-- CMD...]
+  kilix tab rename TITLE [--target tab:ID]
+  kilix tab focus TARGET
+  kilix tab left|right
+  kilix tab move left|right
+  kilix tab close [TARGET]
+
+Bare kilix tab prints this help. Use kilix tab new or kilix new-tab to create one.
+"""
+
+
 def cmd_tab(argv: list[str]) -> int:
+    if not argv or argv[:1] in (["-h"], ["--help"], ["help"]):
+        sys.stdout.write(TAB_HELP)
+        return 0
     subcommands = ("new", "left", "right", "move", "list", "close",
                    "rename", "focus")
     head = argv[0] if argv else "new"

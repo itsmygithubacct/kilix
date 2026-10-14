@@ -17,7 +17,8 @@ class EffortActionsTests(unittest.TestCase):
     dispatch = action_tests.ActionsTests.dispatch
 
     def test_requested_models_and_efforts_reach_exact_cli_arguments(self):
-        configurations = [("gpt-6.1-sol", e) for e in ("low", "medium", "high", "xhigh")]
+        configurations = [(m, e) for m in ("gpt-6.1-sol", "gpt-6-luna")
+                          for e in ("low", "medium", "high", "xhigh", "max")]
         configurations += [("gpt-6-astra", e) for e in ("low", "medium", "high")]
         for i, (model, effort) in enumerate(configurations):
             with self.subTest(model=model, effort=effort):

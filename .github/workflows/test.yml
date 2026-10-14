@@ -26,7 +26,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             ffmpeg python3-pil python3-xlib shellcheck xvfb xauth openbox dbus-daemon tmux \
-            libsamplerate0-dev libssl-dev
+            libsamplerate0-dev libssl-dev bubblewrap python3-yaml
 
       - name: Allow unprivileged user namespaces for the X11 sandbox tests
         # tests/x11_sandbox.py and the path-guard tests enter a private
