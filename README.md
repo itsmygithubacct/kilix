@@ -2681,3 +2681,9 @@ first when checked in the interactive wizard; Avatar uses the first selected
 System-local LLM as its default. Closing setup retains saved choices and leaves
 unfinished installation available for retry. No model or licence is accepted
 by merely opening or listing the wizard.
+
+### Terminal images and video
+
+Use `kilix image -- photo.png` to display images and `kilix video FILE_OR_URL`
+to play local video or direct streams in the current terminal. See
+[terminal media](docs/terminal-media.md) for controls and renderer options.
