@@ -75,7 +75,7 @@ keeps parallel launches from racing writes to a client's shared trust config.
 ## Model and reasoning effort
 
 For Codex, `agent.launch` accepts an optional typed `reasoning_effort`: `low`,
-`medium`, `high`, or `xhigh`. For example, after resolving the source and anchor,
+`medium`, `high`, `xhigh`, or `max`. For example, after resolving the source and anchor,
 use these launch parameters with a fresh operation ID:
 
 ```json
@@ -96,7 +96,9 @@ accepted agents and values. `kilix agent-control new-tab` and `split` also accep
 `--reasoning-effort`. The launcher forwards the exact model and a bounded Codex
 configuration argument, including on resume. Omission preserves the client's
 existing configuration. Unsupported clients, invalid values, and misspelled
-fields are refused; arbitrary Codex `agent_arg` configuration remains refused.
+fields are refused. The only additional Codex configuration accepted through
+`agent_arg` is `--config=service_tier="default"` or
+`--config=service_tier="priority"`. Other arbitrary configuration remains refused.
 A particular model may reject an effort: Kilix never substitutes another effort
 or model, and pane creation alone does not establish provider acceptance.
 
@@ -107,6 +109,9 @@ or effort. The receipt contains no prompt or credentials. Existing saved receipt
 without this optional evidence remain readable. A reused operation ID with a
 changed effort is a different request and is refused. Effort selection does not
 change folder trust, approval policy, or `coding_yolo` behavior.
+
+For evidence-based model selection, see [workflow agent routing](workflows/agents.md).
+`kilix agent --workflow NAME select` compares registered profiles before a launch.
 
 ## Results and recovery
 

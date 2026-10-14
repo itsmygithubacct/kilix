@@ -52,6 +52,14 @@ class ActionLauncherTests(unittest.TestCase):
         self.assertIn("kilix action --request-json -", result.stdout)
         self.assertIn("kilix action capabilities", result.stdout)
 
+    def test_workflow_agent_discovery_does_not_initialize_desktop(self):
+        result = self.invoke(["agent", "--help"])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--workflow", result.stdout)
+        result = self.invoke(["agent", "--github", "select"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(json.loads(result.stdout)["status"], "blocked")
+
 
 if __name__ == "__main__":
     unittest.main()

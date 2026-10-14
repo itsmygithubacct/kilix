@@ -33,7 +33,7 @@ ACTION_OPERATIONS = {
                      "optional": ["direction", "bias", "model", "prompt", "resume",
                                   "coding_yolo", "trust_folder", "agent_arg", "reasoning_effort"], "mutation": True,
                      "unsupported": {"trust_folder": True},
-                     "reasoning_effort": {"agents": ["codex"], "values": ["low", "medium", "high", "xhigh"]}},
+                     "reasoning_effort": {"agents": ["codex"], "values": ["low", "medium", "high", "xhigh", "max"]}},
     "agent.deliver": {"required": ["text"], "optional": ["mode"], "mutation": True},
     "operation.status": {"required": [], "optional": [], "mutation": False},
 }

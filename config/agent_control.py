@@ -52,13 +52,13 @@ ASK_FLAGS = {"qwen-omp": ["--approval-mode=always-ask",
 # Every accepted extra is one self-contained argv item.  Values are inline so
 # a following item can never be reinterpreted as an unrestricted option value.
 AGENT_ARG_PATTERNS = {
-    "claude": (),
-    "codex": (),
+    "claude": (re.compile(r"--effort=(?:low|medium|high|xhigh|max)\Z"),),
+    "codex": (re.compile(r'--config=service_tier="(?:default|priority)"\Z'),),
     "grok": (re.compile(r"--effort=[A-Za-z0-9_-]+\Z"),),
     "qwen-omp": (re.compile(r"--thinking=[A-Za-z0-9_-]+\Z"),),
     "kimi": (),
 }
-REASONING_EFFORTS = ("low", "medium", "high", "xhigh")
+REASONING_EFFORTS = ("low", "medium", "high", "xhigh", "max")
 _SUBCOMMANDS = {}
 
 
@@ -469,7 +469,7 @@ def validate_reasoning_effort(agent, effort):
     if agent != "codex":
         raise ControlError("reasoning_effort is supported only for codex")
     if not isinstance(effort, str) or effort not in REASONING_EFFORTS:
-        raise ControlError("reasoning_effort must be low, medium, high or xhigh")
+        raise ControlError("reasoning_effort must be low, medium, high, xhigh or max")
     return effort
 
 
