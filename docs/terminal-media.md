@@ -26,3 +26,7 @@ Playback ignores mpv configuration and user scripts to keep output in-terminal.
 Run in an interactive terminal; SSH needs `-t`. Multiplexers must support passing
 through Kitty graphics, or use `--vo tct`. Video does not inherit the special
 Unicode-placeholder transfer mode of `kilix image`.
+
+The default OS mouse pointer stays visible above images and video. The optional
+`software_mouse_cursor block`/`pointer` is drawn in the text layer and can be
+covered by terminal graphics. `mouse_hide_wait 0` disables pointer auto-hide.
