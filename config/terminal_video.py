@@ -64,12 +64,14 @@ def main(argv=None):
     storage = Path(os.environ.get("KILIX_STORAGE_HOME",
                                   str(Path.home() / ".local/gpu_terminal/kilix")))
     private_player = storage / "media/mpv-0.40.0-kilix1/bin/mpv"
-    mpv = str(private_player) if os.access(private_player, os.X_OK) else shutil.which("mpv")
+    named_player = shutil.which("kilix-mpv")
+    mpv = named_player or (str(private_player) if os.access(private_player, os.X_OK)
+                           else shutil.which("mpv"))
     if not mpv:
         parser.exit(127, "kilix video: mpv is required; install the mpv package.\n")
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         parser.exit(2, "kilix video: run in an interactive terminal (SSH requires -t).\n")
-    if args.vo == "kitty" and mpv != str(private_player):
+    if args.vo == "kitty" and mpv not in (str(private_player), named_player):
         version = subprocess.run([mpv, "--version"], capture_output=True, text=True,
                                  timeout=5, check=False).stdout.splitlines()
         if version and version[0].startswith("mpv v0.40.0 "):

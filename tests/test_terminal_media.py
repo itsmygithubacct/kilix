@@ -21,7 +21,7 @@ spec.loader.exec_module(video)
 
 class TerminalMediaTests(unittest.TestCase):
     def command(self, args):
-        with patch.object(video.shutil, 'which', return_value='/usr/bin/mpv'), \
+        with patch.object(video.shutil, 'which', side_effect=lambda name: '/usr/bin/mpv' if name == 'mpv' else None), \
              patch.object(video.sys.stdin, 'isatty', return_value=True), \
              patch.object(video.sys.stdout, 'isatty', return_value=True), \
              patch.object(video.subprocess, 'run') as probe, \
@@ -30,6 +30,17 @@ class TerminalMediaTests(unittest.TestCase):
 
             video.main(args)
         return execute.call_args.args[0]
+
+    def test_named_fork_precedes_private_and_system_players(self):
+        with patch.object(video.shutil, 'which', side_effect=lambda name: '/usr/bin/kilix-mpv' if name == 'kilix-mpv' else '/usr/bin/mpv'), \
+             patch.object(video.os, 'access', return_value=True), \
+             patch.object(video.sys.stdin, 'isatty', return_value=True), \
+             patch.object(video.sys.stdout, 'isatty', return_value=True), \
+             patch.object(video.subprocess, 'run') as probe, \
+             patch.object(video, 'run_player', return_value=0) as run:
+            self.assertEqual(video.main(['clip.mp4']), 0)
+            self.assertEqual(run.call_args.args[0][0], '/usr/bin/kilix-mpv')
+            probe.assert_not_called()
 
     def test_literal_source_and_terminal_output(self):
         source = '-strange $(touch forbidden); clip.mp4'
@@ -61,7 +72,7 @@ class TerminalMediaTests(unittest.TestCase):
 
     def test_rejects_known_crashing_system_renderer(self):
         with patch.object(video.os, 'access', return_value=False), \
-             patch.object(video.shutil, 'which', return_value='/usr/bin/mpv'), \
+             patch.object(video.shutil, 'which', side_effect=lambda name: '/usr/bin/mpv' if name == 'mpv' else None), \
              patch.object(video.sys.stdin, 'isatty', return_value=True), \
              patch.object(video.sys.stdout, 'isatty', return_value=True), \
              patch.object(video.subprocess, 'run') as probe, \
@@ -71,7 +82,7 @@ class TerminalMediaTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, 2)
 
     def test_requires_terminal(self):
-        with patch.object(video.shutil, 'which', return_value='/usr/bin/mpv'), \
+        with patch.object(video.shutil, 'which', side_effect=lambda name: '/usr/bin/mpv' if name == 'mpv' else None), \
              patch.object(video.sys.stdin, 'isatty', return_value=False), \
              contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as caught:
             video.main(['clip.mp4'])
