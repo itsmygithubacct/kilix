@@ -1,0 +1,10 @@
+--- a/video/out/vo_kitty.c
++++ b/video/out/vo_kitty.c
+@@ -135,6 +135,7 @@
+     talloc_free(p->frame);
+     talloc_free(p->output);
+     talloc_free(p->cmd.start);
++    p->cmd = (bstr){0};
+ 
+     if (p->opts.use_shm) {
+         close_shm(p);
