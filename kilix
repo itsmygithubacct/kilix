@@ -133,6 +133,10 @@ fi
 case "${1:-}" in
   video)
     shift
+    if [ "${1:-}" = --install-player ]; then
+      shift
+      exec bash "$KILIX_HOME/scripts/build-terminal-mpv.sh" "$@"
+    fi
     exec python3 -B "$KILIX_HOME/config/terminal_video.py" "$@" ;;
   skills)
     shift
