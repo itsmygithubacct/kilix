@@ -34,12 +34,13 @@ desktop, GPU and WSL tests before publishing a preview. Hosted Windows CLI
 checks cannot replace those hardware tests. Windows development stays on its
 branch until Linux and Windows validation supports merging to `main`.
 
-For a source checkout:
+For a source checkout, preserve LF line endings for the MSYS2 and WSL scripts:
 
 ```sh
-git clone --branch work/windows-0.2.2 https://github.com/itsmygithubacct/kilix.git
+git clone --config core.autocrlf=false --branch work/windows-0.2.2 https://github.com/itsmygithubacct/kilix.git
 cd kilix
-git submodule update --init src
+git -c core.autocrlf=false submodule update --init src
+git -C src config core.autocrlf false
 ```
 
 ## Build on Windows
