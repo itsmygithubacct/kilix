@@ -14,7 +14,7 @@ def command():
         return b"Write-Output ('KILIX_POLICY_' + (Get-ExecutionPolicy)); kilix --version; echo KILIX_STARTUP_READY\r"
     if profile == 'cmd':
         return b"kilix --version & echo KILIX_STARTUP_READY\r"
-    return b"echo KILIX_STARTUP_READY\r"
+    return b"kilix --version; echo KILIX_STARTUP_READY\r"
 
 def on_resize(boss, window, data):
     global started

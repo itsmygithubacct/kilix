@@ -28,6 +28,11 @@ This is loaded after config\kilix.conf. No global PATH changes are required.
 Inside a Windows Kilix session, `kilix --version` and `kilix --help` print
 to the terminal. Kilix.com is the console launcher; Kilix.exe opens the GUI.
 The installation directory is added only to Kilix's child-session PATH.
+WSL sessions use the bundled extensionless `kilix` bridge to the same native
+application. This requires WSL interop and Windows PATH import to be enabled.
+It does not install Linux Kilix, its apps, or its command suite into WSL.
+Run `kilix help` for all native commands and `kilix engine --help` for all
+terminal engine options. Unsupported commands return an error in the terminal.
 The bin\kitten.exe helper can be invoked by its full path.
 
 PowerShell's execution policy is preserved. Under AllSigned or Restricted,

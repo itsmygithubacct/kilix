@@ -78,7 +78,7 @@ foreach ($profile in $profiles) {
   $text = (@($samples | ForEach-Object { $_.windows } | Where-Object { $_.id -eq $pane.id } | ForEach-Object { $_.text }) -join "`n")
   if ($text -notmatch '(?m)^KILIX_STARTUP_READY\s*$') { throw "Interactive input failed: $profile" }
   if ($text -match 'PSSecurityException|UnauthorizedAccess|CommandNotFoundException|cannot be loaded|is not digitally signed') { throw "Startup error: $profile" }
-  if ($profile -ne 'wsl' -and $text -notmatch '(?m)^Kilix 0\.2\.2 Windows development build') { throw "Console version failed: $profile" }
+  if ($text -notmatch '(?m)^Kilix 0\.2\.2 Windows development build') { throw "Console version failed: $profile" }
   if ($profile -eq 'powershell' -and $text -notmatch ('(?m)^KILIX_POLICY_'+[regex]::Escape($expectedPolicy)+'\s*$')) { throw 'PowerShell policy changed' }
  }
  "$profile PASS" | Add-Content (Join-Path $ResultDirectory 'result.txt')

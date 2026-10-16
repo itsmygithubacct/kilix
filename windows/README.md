@@ -19,6 +19,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\provision-engine-toolchain
 powershell -NoProfile -ExecutionPolicy Bypass -File .\package.ps1 -EngineDirectory ..\src
 powershell -NoProfile -ExecutionPolicy Bypass -File .\test-application.ps1 -ApplicationDirectory ..\src\dist\kilix -WslDistribution Ubuntu
 powershell -NoProfile -ExecutionPolicy Bypass -File .\test-startup.ps1 -ApplicationDirectory ..\src\dist\kilix -WslDistribution Ubuntu
+powershell -NoProfile -ExecutionPolicy Bypass -File .\test-cli.ps1 -ApplicationDirectory ..\src\dist\kilix
 ```
 
 The build uses a separate per-user MSYS2 MinGW64 toolchain under
@@ -39,6 +40,7 @@ Outputs:
 
 - `src\dist\kilix\Kilix.exe`: native graphical launcher.
 - `src\dist\kilix\Kilix.com`: native console launcher, including text help/version.
+- `src\dist\kilix\wsl-bin\kilix` and `kilix-cli.exe`: WSL command bridge and console executable.
 - `src\dist\kilix-0.2.2-windows-x64-dev.zip`: complete portable application.
 - `src\dist\kilix\licenses`: engine, dependency, font, and runtime notices.
 
@@ -51,6 +53,11 @@ Extract the entire archive before launching. `README.txt` contains profiles,
 shortcuts, and user configuration details. Launch `Kilix.exe --wsl Ubuntu` for a
 window whose subsequent splits and tabs also default to that WSL distribution.
 The Windows profile provides Ctrl+Shift+U for a new default-distribution WSL tab.
+Inside these WSL sessions, `kilix` invokes the native application using WSL
+interop and Windows PATH import. `kilix help` lists all Windows launcher verbs;
+`kilix engine --help` lists the engine's full options. Linux Kilix verbs and app
+launchers are not installed by the native package. Unsupported verbs report an
+error and exit with status 2. Existing shells need reopening after an upgrade.
 
 ## Validation
 

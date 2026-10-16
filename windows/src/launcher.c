@@ -11,8 +11,12 @@ static wchar_t command[32768];
 static size_t used;
 
 static void fail(const wchar_t *message) {
+#ifdef KILIX_CONSOLE
+    fwprintf(stderr, L"Kilix: %ls\n", message);
+#else
     MessageBoxW(NULL, message, L"Kilix 0.2.2", MB_OK | MB_ICONERROR);
-    ExitProcess(1);
+#endif
+    ExitProcess(2);
 }
 
 static void put(wchar_t c) {
@@ -47,27 +51,51 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR tail, int show
     int argc;
     wchar_t **argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     if (!argv) fail(L"Cannot read the command line.");
-    if (argc > 1 && (!wcscmp(argv[1], L"--version") || !wcscmp(argv[1], L"--help"))) {
+    const wchar_t *verb = argc > 1 ? argv[1] : L"";
+    if (!wcscmp(verb, L"--version") || !wcscmp(verb, L"version") ||
+        !wcscmp(verb, L"--help") || !wcscmp(verb, L"-h") || !wcscmp(verb, L"help")) {
+        const wchar_t *message = (!wcscmp(verb, L"--version") || !wcscmp(verb, L"version"))
+            ? L"Kilix 0.2.2 Windows development build (Kitty 0.48.2)"
+            : L"Kilix native Windows commands:\n"
+              L"  kilix                         Open PowerShell\n"
+              L"  kilix powershell              Open PowerShell\n"
+              L"  kilix cmd                     Open Command Prompt\n"
+              L"  kilix wsl [distribution]      Open WSL\n"
+              L"  kilix help                    Show this command list\n"
+              L"  kilix version                 Print the version\n"
+              L"  kilix engine [options] [program ...]\n"
+              L"                                Pass arguments to the terminal engine\n"
+              L"  kilix engine --help           List ALL engine options\n"
+              L"\nAliases: --cmd, --wsl, --help, -h, --version.\n"
+              L"Profile launches also accept engine options such as -o and --config.\n"
+              L"WSL: kilix invokes this native Windows application through WSL interop.\n"
+              L"Linux-only verbs (including needle, pane, apps, --launch) are unavailable\n"
+              L"in this Windows build; WSL support does not install the Linux Kilix suite.\n"
+              L"\nKeys: Ctrl+Alt+R/D split; Ctrl+Shift+T new tab; Ctrl+Shift+U WSL tab.\n"
+              L"Settings: %LOCALAPPDATA%\\Kilix\\kitty.conf";
 #ifdef KILIX_CONSOLE
-        if (!wcscmp(argv[1], L"--version")) {
-            puts("Kilix 0.2.2 Windows development build (Kitty 0.48.2)");
-        } else {
-            puts("Kilix                     PowerShell\n"
-                 "Kilix --wsl [distribution] WSL\n"
-                 "Kilix --cmd               Command Prompt\n"
-                 "Kilix [kitty options]     Advanced engine options\n"
-                 "Settings: %LOCALAPPDATA%\\Kilix\\kitty.conf");
-        }
+        wprintf(L"%ls\n", message);
 #else
-        MessageBoxW(NULL,
-            !wcscmp(argv[1], L"--version") ? L"Kilix 0.2.2 Windows development build\nBased on RC6-era main; Kitty engine 0.48.2."
-            : L"Kilix.exe                     PowerShell\nKilix.exe --wsl                Default WSL distribution\nKilix.exe --wsl Ubuntu         Named WSL distribution\nKilix.exe --cmd                Command Prompt\nKilix.exe [kitty options]      Advanced engine options\n\nCtrl+Alt+R/D split; Ctrl+Shift+T new tab.\nCtrl+Shift+U opens a WSL tab.\nUser settings: %LOCALAPPDATA%\\Kilix\\kitty.conf",
-            L"Kilix 0.2.2", MB_OK | MB_ICONINFORMATION);
+        MessageBoxW(NULL, message, L"Kilix 0.2.2", MB_OK | MB_ICONINFORMATION);
 #endif
         LocalFree(argv);
         return 0;
     }
+    BOOL engine = !wcscmp(verb, L"engine");
+    BOOL wsl = !wcscmp(verb, L"--wsl") || !wcscmp(verb, L"wsl");
+    BOOL cmd = !wcscmp(verb, L"--cmd") || !wcscmp(verb, L"cmd");
+    BOOL powershell = !wcscmp(verb, L"powershell");
+    if (argc > 1 && !engine && !wsl && !cmd && !powershell &&
+        wcscmp(verb, L"-o") && wcscmp(verb, L"--override") &&
+        wcscmp(verb, L"--config") && wcscmp(verb, L"--title") && wcscmp(verb, L"--directory")) {
+        wchar_t error[1024];
+        swprintf(error, 1024, L"Unsupported Windows command: %.200ls. Run kilix help for supported commands, or kilix engine --help for engine options.", verb);
+        fail(error);
+    }
     if (swprintf(path, 32768, L"%ls\\kitty\\launcher\\kitty.exe", root) < 0) fail(L"Installation path is too long.");
+#ifdef KILIX_CONSOLE
+    if (engine && swprintf(path, 32768, L"%ls\\kitty\\launcher\\kitty-console.exe", root) < 0) fail(L"Installation path is too long.");
+#endif
     argument(path);
     argument(L"--config");
     wchar_t config[32768];
@@ -83,8 +111,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR tail, int show
         argument(L"--config"); argument(user_config);
     }
     argument(L"--title"); argument(L"Kilix");
-    int first = 1;
-    if (argc > 1 && !wcscmp(argv[1], L"--wsl")) {
+    int first = engine || powershell ? 2 : 1;
+    if (wsl) {
         wchar_t shell[32768] = L"shell=wsl.exe";
         first = 2;
         if (argc > 2 && argv[2][0] != L'-') {
@@ -96,19 +124,23 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR tail, int show
             first = 3;
         }
         argument(L"-o"); argument(shell);
-    } else if (argc > 1 && !wcscmp(argv[1], L"--cmd")) {
+    } else if (cmd) {
         argument(L"-o"); argument(L"shell=cmd.exe"); first = 2;
+    } else if (powershell) {
+        argument(L"-o"); argument(L"shell=powershell.exe -NoLogo");
     }
     for (int i = first; i < argc; i++) argument(argv[i]);
     LocalFree(argv);
     // Make the native command available inside this application's sessions.
     // Do not modify the user's or machine's persistent PATH.
     DWORD path_size = GetEnvironmentVariableW(L"PATH", NULL, 0);
-    size_t env_size = wcslen(root) + 1 + path_size + 1;
+    size_t env_size = 2 * wcslen(root) + 12 + path_size + 1;
     wchar_t *session_path = calloc(env_size, sizeof(wchar_t));
     if (!session_path) fail(L"Cannot allocate the session PATH.");
     wcscpy(session_path, root);
     wcscat(session_path, L";");
+    wcscat(session_path, root);
+    wcscat(session_path, L"\\wsl-bin;");
     if (path_size) GetEnvironmentVariableW(L"PATH", session_path + wcslen(session_path), path_size);
     if (!SetEnvironmentVariableW(L"PATH", session_path)) fail(L"Cannot set the session PATH.");
     free(session_path);
@@ -120,8 +152,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR tail, int show
         fail(error);
     }
     CloseHandle(process.hThread);
+    DWORD result = 0;
+#ifdef KILIX_CONSOLE
+    if (engine) {
+        WaitForSingleObject(process.hProcess, INFINITE);
+        if (!GetExitCodeProcess(process.hProcess, &result)) result = 1;
+    }
+#endif
     CloseHandle(process.hProcess);
-    return 0;
+    return (int)result;
 }
 
 #ifdef KILIX_CONSOLE
