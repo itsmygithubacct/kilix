@@ -10,7 +10,7 @@ import termios
 from pathlib import Path
 
 
-TERMINAL_RESET = (b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l"
+TERMINAL_RESET = (b"\x1b[?2026l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l"
                   b"\x1b[?1006l\x1b[?1015l\x1b[?1049l\x1b[?25h\x1b[0m")
 
 
@@ -59,6 +59,9 @@ def main(argv=None):
                         help="terminal renderer (default: kitty; tct uses text cells)")
     parser.add_argument("--mute", action="store_true", help="disable sound")
     parser.add_argument("--loop", action="store_true", help="repeat playback")
+    parser.add_argument("--transport", choices=("inline", "shm"), default="inline",
+                        help="Kitty transport (default: inline; shm requires a local "
+                             "terminal sharing /dev/shm with kilix-mpv)")
     parser.add_argument("source", help="local file or direct HTTP(S)/RTSP stream URL")
     args = parser.parse_args(argv)
     storage = Path(os.environ.get("KILIX_STORAGE_HOME",
@@ -69,6 +72,11 @@ def main(argv=None):
                            else shutil.which("mpv"))
     if not mpv:
         parser.exit(127, "kilix video: mpv is required; install the mpv package.\n")
+    if args.transport == "shm" and (args.vo != "kitty" or not named_player):
+        parser.exit(2, "kilix video: --transport shm requires the Kitty renderer and kilix-mpv.\n")
+    if args.transport == "shm" and any(os.environ.get(key) for key in
+                                       ("SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY", "TMUX")):
+        parser.exit(2, "kilix video: use inline transport in SSH or tmux sessions.\n")
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         parser.exit(2, "kilix video: run in an interactive terminal (SSH requires -t).\n")
     if args.vo == "kitty" and mpv not in (str(private_player), named_player):
@@ -82,7 +90,9 @@ def main(argv=None):
     # -- terminates options so media names cannot become player instructions.
     command = [mpv, "--no-config", "--load-scripts=no", "--vo=" + args.vo,
                "--terminal=yes", "--input-terminal=yes", "--force-window=no",
-               "--audio-display=no"]
+               "--audio-display=no", "--term-osd=no", "--term-status-msg="]
+    if args.transport == "shm":
+        command.append("--vo-kitty-use-shm=yes")
     if args.mute:
         command.append("--mute=yes")
     if args.loop:

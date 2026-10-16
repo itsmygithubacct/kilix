@@ -71,3 +71,22 @@ closure; `kilix video` discovers it without changing `/usr/bin/mpv`. The package
 is built from the maintained kilix-mpv fork and distributed with exact source
 and checksums. This integration targets the release after RC6, provisionally
 0.2.2; it does not change the RC6 candidate.
+
+The `0.40.0+kilix.2` player adds adaptive lossless inline compression, synchronized
+image presentation, SGR mouse input and redraws while paused after a resize.
+The supervisor suppresses text status overlays and clears synchronized-update
+mode during recovery. The graphical seek bar and error messages remain available.
+
+For a local terminal that shares `/dev/shm` with the player:
+
+```sh
+kilix video --transport shm clip.mp4
+```
+
+This requires `kilix-mpv` version `0.40.0+kilix.2` or later. It uses a bounded
+three-frame shared-memory ring, bypassing base64 pixel transfer. Default
+`--transport inline` works without shared memory and is the choice for SSH;
+the wrapper rejects `shm` in known SSH/tmux sessions or with text-cell output.
+Containers with separate shared-memory namespaces must also use inline.
+Shared-memory objects are released on normal exit. Mouse targeting still uses
+terminal-cell coordinates, so very small controls can be harder to click.
