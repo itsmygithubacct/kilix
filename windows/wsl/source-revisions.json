@@ -1,0 +1,14 @@
+{
+  "needle": "177050922d191c5dd119af95a8dafee8404144ff",
+  "needle/third_party/kilix-content": "2b288ef13b9debe4135fc101113ffde85dc012e0",
+  "needle/third_party/kilix-ml": "5e784b7bf24ae7609138416dfcc4715ef9973c77",
+  "needle/third_party/kilix-tui-utils": "c33c0ee453dbdb0655c7ade41f86c0ea0d84c4f8",
+  "games": "2e11cafc36018b0bddd9c3f179fe3068c082f735",
+  "games/third_party/kilix-game-sdk": "e74c94baf75eb498a01cc3577a26db425c73d8e6",
+  "games/third_party/kilix-game-sdk/kilix-game-kit/third_party/kitty-terminal-session": "da9502913c0e07948a0e439c04b6765f2d8857bd",
+  "games/third_party/kilix-game-sdk/kilix-game-kit/third_party/kitty-terminal-session/third_party/kitty-framebuffer": "784d8aaef6b35acc2306434eb330ab9fe1787359",
+  "games/third_party/kilix-game-sdk/kilix-game-kit/third_party/kitty-terminal-session/third_party/kitty-input": "fca32e2d0f641344eeadb8f242147225d41bff55",
+  "games/third_party/kilix-game-sdk/kilix-game-kit/third_party/soft-raster": "2b0c241729dec182a87ebab78edd10b142edf828",
+  "games/third_party/kilix-game-sdk/kilix-game-kit/third_party/pcm-mixer": "fafd03fa59d13d53c27b6b4bbefb8b9c7a8d3060",
+  "games/third_party/kilix-game-sdk/kilix-game-kit/third_party/kilix-state": "35f742d6cf2f7635b43157fcf6f2e0264bf0d761"
+}

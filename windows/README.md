@@ -53,11 +53,36 @@ Extract the entire archive before launching. `README.txt` contains profiles,
 shortcuts, and user configuration details. Launch `Kilix.exe --wsl Ubuntu` for a
 window whose subsequent splits and tabs also default to that WSL distribution.
 The Windows profile provides Ctrl+Shift+U for a new default-distribution WSL tab.
-Inside these WSL sessions, `kilix` invokes the native application using WSL
-interop and Windows PATH import. `kilix help` lists all Windows launcher verbs;
-`kilix engine --help` lists the engine's full options. Linux Kilix verbs and app
-launchers are not installed by the native package. Unsupported verbs report an
-error and exit with status 2. Existing shells need reopening after an upgrade.
+Inside these WSL sessions, `kilix` runs the bundled Python companion using WSL
+interop and Windows PATH import. `kilix help` lists WSL commands;
+`kilix native help` lists Windows launcher verbs; `kilix engine --help` lists
+the engine's full options. Unsupported verbs report an error and exit with
+status 2. Existing shells need reopening after an upgrade.
+
+## WSL companion
+
+The companion supports pane/tab listing, focus, splits, new tabs, fullscreen,
+watch, authenticated `@` commands, and `--launch PROGRAM [ARGS]`. Linux programs
+run in the invoking distribution. Launch arguments remain separate arguments;
+`--cwd=current` refers to the invoking Linux process's directory. It does not
+discover another pane's Linux working directory through Windows process data.
+`kilix apps` lists games installed by companion setup. Arbitrary installed
+Linux executables can be launched with `--launch`.
+
+Needle and Pong install separately into `~/.local/share/kilix-wsl`. See
+[the companion setup instructions](wsl/README.txt). After setup:
+
+```sh
+kilix pane list
+kilix needle "split right"
+kilix needle apps "open pong"
+kilix --launch kilix-pong
+```
+
+Needle retains its confirmation, target, readiness and model-license checks.
+Prompt-sensitive typing requires shell prompt integration; it is refused when
+the native pane cannot establish prompt readiness. Linux desktop services,
+catalogue-wide app installation, and Linux session recovery are not ported.
 
 ## Validation
 
@@ -75,6 +100,11 @@ CPython 3.14.8, and Go 1.27.2.
   claim that every upstream Go/Python test or Linux-specific feature passes.
 - Engine PTY regression: repeated successful sessions and failed spawns return
   to the same process handle count; closing a session terminates its owned child.
+- WSL companion: authenticated listing, missing/wrong password rejection,
+  repeated remote requests, SDK pane launch/close, Needle model-driven split,
+  and Pong through both Needle apps and `--launch`. Inline graphics produced
+  real GPU uploads and a visible game menu. Linux model-image seals were also
+  verified with the companion's portable Python interpreter.
 - Independent transport probe: cmd exit status, PowerShell, UTF-8, input, resize,
   Windows argv edge cases, timeout cleanup, graphics escape preservation, and
   actual WSL execution. Hardware probe checks an OpenGL framebuffer readback.
@@ -110,7 +140,14 @@ broker/recovery are unavailable. Unsupported Linux chrome widgets are hidden.
 The native Windows backend still contains inherited compatibility shims that
 need further review before expanding supported capabilities.
 
-Remote control is disabled in the shipped profile. The separate graphics pipe
+The shipped profile enables authenticated WSL control on Windows loopback.
+Each native instance generates a random password, forwards it with its endpoint
+and public key through WSLENV, and rejects missing or unknown credentials.
+The companion calls the native kitten through interop; no LAN listener is used.
+The password stays in process environments and is redacted from companion
+`@ ls` output. Child programs inherit control of their terminal instance.
+Set `allow_remote_control no` in user configuration to disable this feature.
+The separate graphics pipe
 rejects network clients and restricts access to the current Windows user and
 SYSTEM. Each terminal session owns a Windows job; its descendants are terminated
 when the session closes. Background Linux jobs inside WSL follow WSL's own

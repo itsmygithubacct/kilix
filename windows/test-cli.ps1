@@ -3,7 +3,7 @@ param([Parameter(Mandatory=$true)][string]$ApplicationDirectory)
 $ErrorActionPreference='Stop'
 foreach ($case in @(
  @('--help', 0, 'kilix engine --help'),
- @('help', 0, 'Linux-only verbs'),
+ @('help', 0, 'Inside WSL, kilix help'),
  @('--version', 0, 'Kilix 0.2.2'),
  @('version', 0, 'Kilix 0.2.2'),
  @('needle --help', 2, 'Unsupported Windows command: needle'),

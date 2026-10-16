@@ -69,8 +69,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR tail, int show
               L"\nAliases: --cmd, --wsl, --help, -h, --version.\n"
               L"Profile launches also accept engine options such as -o and --config.\n"
               L"WSL: kilix invokes this native Windows application through WSL interop.\n"
-              L"Linux-only verbs (including needle, pane, apps, --launch) are unavailable\n"
-              L"in this Windows build; WSL support does not install the Linux Kilix suite.\n"
+              L"Inside WSL, kilix help lists companion commands including needle, pane,\n"
+              L"apps and --launch. Needle and games require companion dependency setup.\n"
               L"\nKeys: Ctrl+Alt+R/D split; Ctrl+Shift+T new tab; Ctrl+Shift+U WSL tab.\n"
               L"Settings: %LOCALAPPDATA%\\Kilix\\kitty.conf";
 #ifdef KILIX_CONSOLE

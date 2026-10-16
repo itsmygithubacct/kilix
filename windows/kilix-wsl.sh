@@ -2,4 +2,4 @@
 # Native Kilix command bridge for WSL. Windows adds this directory to the
 # session PATH, which WSL imports when appendWindowsPath is enabled.
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd) || exit 1
-exec "$root/kilix-cli.exe" "$@"
+exec python3 "$root/wsl/companion.py" "$@"

@@ -28,11 +28,15 @@ This is loaded after config\kilix.conf. No global PATH changes are required.
 Inside a Windows Kilix session, `kilix --version` and `kilix --help` print
 to the terminal. Kilix.com is the console launcher; Kilix.exe opens the GUI.
 The installation directory is added only to Kilix's child-session PATH.
-WSL sessions use the bundled extensionless `kilix` bridge to the same native
-application. This requires WSL interop and Windows PATH import to be enabled.
-It does not install Linux Kilix, its apps, or its command suite into WSL.
-Run `kilix help` for all native commands and `kilix engine --help` for all
-terminal engine options. Unsupported commands return an error in the terminal.
+WSL sessions use the bundled extensionless `kilix` companion. This requires
+Python 3, WSL interop and Windows PATH import. `kilix help` lists WSL commands;
+`kilix native help` lists native commands; `kilix engine --help` lists engine
+options. Pane/tab commands control the current native application. Linux
+programs launch through the current WSL distribution, preserving their argv.
+Needle and games require separate per-user companion dependency setup.
+After setup, try `kilix needle "split right"`, `kilix --launch kilix-pong`,
+`kilix pane list`, or `kilix apps`. Reopen WSL windows after an upgrade.
+Unsupported commands return an error in the terminal.
 The bin\kitten.exe helper can be invoked by its full path.
 
 PowerShell's execution policy is preserved. Under AllSigned or Restricted,
@@ -43,8 +47,10 @@ This development port preserves the RC6-era terminal engine and pane chrome.
 Linux desktop integration, in-pane browser, voice tools, and persistent PTY
 broker/recovery are unavailable on Windows. Closing Kilix ends its Windows
 child sessions. WSL background jobs retain WSL's own lifetime rules.
-Remote control is disabled by default. The graphics pipe is local and restricted
-to the current Windows user and SYSTEM.
+WSL control uses a Windows loopback listener and a random per-instance password
+passed only through child environments. Unknown or missing passwords are denied.
+Set `allow_remote_control no` in user configuration to disable WSL control.
+The graphics pipe is local and restricted to the current Windows user and SYSTEM.
 
 Source baseline and runtime hashes: baseline.json and manifest.json.
 Licenses and native-port attribution: licenses\.
