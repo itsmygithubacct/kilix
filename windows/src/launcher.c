@@ -4,6 +4,7 @@
 #include <windows.h>
 #include <shellapi.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <wchar.h>
 
 static wchar_t command[32768];
@@ -47,10 +48,22 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR tail, int show
     wchar_t **argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     if (!argv) fail(L"Cannot read the command line.");
     if (argc > 1 && (!wcscmp(argv[1], L"--version") || !wcscmp(argv[1], L"--help"))) {
+#ifdef KILIX_CONSOLE
+        if (!wcscmp(argv[1], L"--version")) {
+            puts("Kilix 0.2.2 Windows development build (Kitty 0.48.2)");
+        } else {
+            puts("Kilix                     PowerShell\n"
+                 "Kilix --wsl [distribution] WSL\n"
+                 "Kilix --cmd               Command Prompt\n"
+                 "Kilix [kitty options]     Advanced engine options\n"
+                 "Settings: %LOCALAPPDATA%\\Kilix\\kitty.conf");
+        }
+#else
         MessageBoxW(NULL,
             !wcscmp(argv[1], L"--version") ? L"Kilix 0.2.2 Windows development build\nBased on RC6-era main; Kitty engine 0.48.2."
             : L"Kilix.exe                     PowerShell\nKilix.exe --wsl                Default WSL distribution\nKilix.exe --wsl Ubuntu         Named WSL distribution\nKilix.exe --cmd                Command Prompt\nKilix.exe [kitty options]      Advanced engine options\n\nCtrl+Alt+R/D split; Ctrl+Shift+T new tab.\nCtrl+Shift+U opens a WSL tab.\nUser settings: %LOCALAPPDATA%\\Kilix\\kitty.conf",
             L"Kilix 0.2.2", MB_OK | MB_ICONINFORMATION);
+#endif
         LocalFree(argv);
         return 0;
     }
@@ -88,6 +101,17 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR tail, int show
     }
     for (int i = first; i < argc; i++) argument(argv[i]);
     LocalFree(argv);
+    // Make the native command available inside this application's sessions.
+    // Do not modify the user's or machine's persistent PATH.
+    DWORD path_size = GetEnvironmentVariableW(L"PATH", NULL, 0);
+    size_t env_size = wcslen(root) + 1 + path_size + 1;
+    wchar_t *session_path = calloc(env_size, sizeof(wchar_t));
+    if (!session_path) fail(L"Cannot allocate the session PATH.");
+    wcscpy(session_path, root);
+    wcscat(session_path, L";");
+    if (path_size) GetEnvironmentVariableW(L"PATH", session_path + wcslen(session_path), path_size);
+    if (!SetEnvironmentVariableW(L"PATH", session_path)) fail(L"Cannot set the session PATH.");
+    free(session_path);
     STARTUPINFOW startup = { .cb = sizeof(startup) };
     PROCESS_INFORMATION process;
     if (!CreateProcessW(path, command, NULL, NULL, FALSE, 0, NULL, NULL, &startup, &process)) {
@@ -99,3 +123,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR tail, int show
     CloseHandle(process.hProcess);
     return 0;
 }
+
+#ifdef KILIX_CONSOLE
+int wmain(void) {
+    return wWinMain(GetModuleHandleW(NULL), NULL, NULL, SW_SHOWNORMAL);
+}
+#endif

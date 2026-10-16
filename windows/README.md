@@ -18,6 +18,7 @@ From this directory in PowerShell 5.1 or newer:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\provision-engine-toolchain.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\package.ps1 -EngineDirectory ..\src
 powershell -NoProfile -ExecutionPolicy Bypass -File .\test-application.ps1 -ApplicationDirectory ..\src\dist\kilix -WslDistribution Ubuntu
+powershell -NoProfile -ExecutionPolicy Bypass -File .\test-startup.ps1 -ApplicationDirectory ..\src\dist\kilix -WslDistribution Ubuntu
 ```
 
 The build uses a separate per-user MSYS2 MinGW64 toolchain under
@@ -37,6 +38,7 @@ and go.sum. `manifest.json` hashes every file in the portable artifact.
 Outputs:
 
 - `src\dist\kilix\Kilix.exe`: native graphical launcher.
+- `src\dist\kilix\Kilix.com`: native console launcher, including text help/version.
 - `src\dist\kilix-0.2.2-windows-x64-dev.zip`: complete portable application.
 - `src\dist\kilix\licenses`: engine, dependency, font, and runtime notices.
 
@@ -77,7 +79,16 @@ control. The engine ownership regressions run through its launcher:
 
 ```sh
 kitty/launcher/kitty-console.exe +launch test.py --module windows_pty
+kitty/launcher/kitty-console.exe +launch test.py --module windows_shell_integration
 ```
+
+`test-startup.ps1` tests the installed native launcher, shell input, console
+version output, and default splits in PowerShell, cmd, and optionally WSL. It
+clears the runner's process execution-policy override before launching Kilix,
+so the test exercises the user's actual policy. The PowerShell regression also
+checks AllSigned, Restricted, and RemoteSigned using temporary process scopes.
+Unsigned prompt integration is skipped under AllSigned or Restricted; terminal
+input and layouts remain available. Kilix does not lower execution policies.
 
 The standalone transport/hardware probes are optional development tools, not
 the Kilix application. To build them, run `bootstrap.ps1`, then `build.ps1 -Test

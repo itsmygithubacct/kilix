@@ -25,7 +25,14 @@ The application does not install or enable an SSH server or a WSL distribution.
 
 User configuration: %LOCALAPPDATA%\Kilix\kitty.conf
 This is loaded after config\kilix.conf. No global PATH changes are required.
+Inside a Windows Kilix session, `kilix --version` and `kilix --help` print
+to the terminal. Kilix.com is the console launcher; Kilix.exe opens the GUI.
+The installation directory is added only to Kilix's child-session PATH.
 The bin\kitten.exe helper can be invoked by its full path.
+
+PowerShell's execution policy is preserved. Under AllSigned or Restricted,
+unsigned prompt integration is skipped; PowerShell, tabs and splits still
+work, but automatic prompt marks and prompt-based title updates are absent.
 
 This development port preserves the RC6-era terminal engine and pane chrome.
 Linux desktop integration, in-pane browser, voice tools, and persistent PTY
