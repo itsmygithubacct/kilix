@@ -46,8 +46,29 @@ class TerminalMediaTests(unittest.TestCase):
         source = '-strange $(touch forbidden); clip.mp4'
         command = self.command(['--', source])
         self.assertEqual(command[-2:], ['--', source])
-        for option in ['--no-config', '--load-scripts=no', '--vo=kitty', '--force-window=no']:
+        for option in ['--no-config', '--load-scripts=no', '--vo=kitty', '--force-window=no',
+                       '--term-osd=no', '--term-status-msg=']:
             self.assertIn(option, command)
+
+    def test_local_shared_memory_requires_named_player_and_direct_terminal(self):
+        with patch.dict(video.os.environ, {}, clear=True), \
+             patch.object(video.shutil, 'which', return_value='/usr/bin/kilix-mpv'), \
+             patch.object(video.sys.stdin, 'isatty', return_value=True), \
+             patch.object(video.sys.stdout, 'isatty', return_value=True), \
+             patch.object(video, 'run_player', return_value=0) as run:
+            self.assertEqual(video.main(['--transport', 'shm', 'clip.mp4']), 0)
+            self.assertIn('--vo-kitty-use-shm=yes', run.call_args.args[0])
+            for key in ('SSH_CONNECTION', 'SSH_CLIENT', 'SSH_TTY', 'TMUX'):
+                with patch.dict(video.os.environ, {key: 'test'}), \
+                     contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as caught:
+                    video.main(['--transport', 'shm', 'clip.mp4'])
+                self.assertEqual(caught.exception.code, 2)
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as caught:
+                video.main(['--vo', 'tct', '--transport', 'shm', 'clip.mp4'])
+            self.assertEqual(caught.exception.code, 2)
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as caught:
+            self.command(['--transport', 'shm', 'clip.mp4'])
+        self.assertEqual(caught.exception.code, 2)
 
     def test_stream(self):
         source = 'https://example.org/live.m3u8?a=1&b=2'
@@ -94,7 +115,7 @@ class TerminalMediaTests(unittest.TestCase):
             fake.write_text("#!/usr/bin/python3\nimport os,tty,resource,signal\n"
                             "import sys\nif '--version' in sys.argv: print('mpv test'); sys.exit(0)\n"
                             "resource.setrlimit(resource.RLIMIT_CORE,(0,0))\n"
-                            "tty.setraw(0)\nos.write(1,b'\\x1b[?1003h')\n"
+                            "tty.setraw(0)\nos.write(1,b'\\x1b[?1003h\\x1b[?2026h')\n"
                             "os.kill(os.getpid(),signal.SIGABRT)\n")
             fake.chmod(0o700)
             master, slave = pty.openpty()
@@ -110,6 +131,7 @@ class TerminalMediaTests(unittest.TestCase):
                 while select.select([master], [], [], 0.1)[0]:
                     output += os.read(master, 65536)
                 self.assertIn(video.TERMINAL_RESET, output)
+                self.assertIn(b'\x1b[?2026l', output)
             finally:
                 os.close(master)
                 os.close(slave)
