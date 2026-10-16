@@ -7,7 +7,9 @@ def game_ready(name):
     if '/' in name or '\\' in name:
         return False
     binary = name if name.startswith('kilix-') else 'kilix-' + name
-    path = Path.home() / '.local/share/kilix-wsl/bin' / binary
+    root = Path.home() / '.local/share/kilix-wsl'
+    install = (root / 'current').resolve() if (root / 'current').is_symlink() else root
+    path = install / 'bin' / binary
     return path.is_file() and os.access(path, os.X_OK)
 
 

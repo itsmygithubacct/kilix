@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import pwd
 import re
 import shutil
 import subprocess
@@ -10,14 +11,16 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 STATE = Path.home() / '.local/share/kilix-wsl'
+INSTALL = (STATE / 'current').resolve() if (STATE / 'current').is_symlink() else STATE
 BRIDGE = ROOT / 'wsl-bin/kilix'
 KITTEN = ROOT / 'kitty/launcher/kitten.exe'
-PYTHON = STATE / 'bin/python3'
+PYTHON = INSTALL / 'bin/python3'
 
 
 def environment():
     env = os.environ.copy()
-    env['PATH'] = f'{STATE}/bin:{ROOT}/wsl-bin:' + env.get('PATH', '')
+    paths = [str(INSTALL / 'bin'), str(ROOT / 'wsl-bin'), *env.get('PATH', '').split(':')]
+    env['PATH'] = ':'.join(dict.fromkeys(paths))
     env['KILIX_NEEDLE_KILIX'] = str(BRIDGE)
     env['KILIX_KITTEN'] = str(ROOT / 'wsl-bin/kitten')
     env['KILIX_CONTENT_ROOT'] = str((STATE / 'content').resolve())
@@ -35,6 +38,7 @@ def require_control():
 def translate_launch(args):
     """Preserve remote options, but start Linux argv through this distro's WSL."""
     options, program = [], []
+    linux_env = {'PATH': environment()['PATH'], 'KITTYFB_TRANSPORT': 'inline'}
     cwd = os.getcwd()
     flags = {'--hold', '--keep-focus', '--copy-colors', '--allow-remote-control',
              '--stdin-add-formatting', '--stdin-add-line-wrap-markers', '--no-response', '--self',
@@ -53,6 +57,8 @@ def translate_launch(args):
             break
         key, sep, value = item.partition('=')
         if key in flags:
+            if sep:
+                raise ValueError(f'{key} does not take a value')
             options.append(item)
         elif key in values:
             if not sep:
@@ -61,9 +67,18 @@ def translate_launch(args):
                     raise ValueError(f'{key} needs a value')
                 value = args[i]
             if key == '--cwd':
+                if value in ('oldest', 'last_reported', 'root'):
+                    raise ValueError(f'WSL launch cannot resolve --cwd={value}; use a Linux path or current')
                 if value != 'current':
                     cwd = os.path.abspath(os.path.expanduser(value))
+            elif key == '--env':
+                name, assigned, content = value.partition('=')
+                if not re.fullmatch(r'[A-Za-z_][A-Za-z_0-9]*', name):
+                    raise ValueError(f'Invalid environment variable name: {name}')
+                linux_env[name] = content if assigned else None
             else:
+                if key == '--type' and value not in ('window', 'tab', 'os-window', 'overlay', 'overlay-main', 'background'):
+                    raise ValueError(f'WSL launch does not support --type={value}')
                 options.append(key + '=' + value)
         else:
             raise ValueError(f'WSL launch does not support {key}')
@@ -71,16 +86,22 @@ def translate_launch(args):
     distro = os.environ.get('WSL_DISTRO_NAME')
     if not distro:
         raise ValueError('WSL_DISTRO_NAME is missing')
-    command = ['wsl.exe', '--distribution', distro, '--cd', cwd]
-    if program:
-        command += ['--exec', 'env', 'PATH=' + environment()['PATH'], 'KITTYFB_TRANSPORT=inline', *program]
+    user = pwd.getpwuid(os.getuid())
+    command = ['wsl.exe', '--distribution', distro, '--user', user.pw_name, '--cd', cwd]
+    # Explicit argv keeps Linux values out of both Windows and Linux shell parsing.
+    command += ['--exec', '/usr/bin/env']
+    for name, value in linux_env.items():
+        if value is None:
+            command += ['-u', name]
+    command += ['--', *(f'{name}={value}' for name, value in linux_env.items() if value is not None)]
+    command += program or [user.pw_shell or '/bin/sh', '-l']
     return options + ['--', *command]
 
 
 def remote(args):
+    if not args or args in (['--help'], ['-h']) or (len(args) == 2 and args[1] in ('--help', '-h')):
+        return subprocess.call([str(KITTEN), '@', *(args or ['--help'])], env=environment())
     require_control()
-    if not args:
-        raise ValueError('Use kilix @ COMMAND')
     if args[0].startswith('-'):
         raise ValueError('WSL control uses the current native instance; endpoint overrides are not supported.')
     if args[0] == 'launch':
@@ -110,8 +131,8 @@ def main(args):
     if not args or args[0] in ('--help', '-h', 'help'):
         print('''Kilix WSL commands:
   needle [ARGS]                 Run Needle's Linux command/model tools
-  --launch PROGRAM [ARGS]       Run a Linux app in a new native Kilix tab
-  apps                         List installed WSL apps
+  launch, --launch PROGRAM [ARGS]  Run a Linux app in a new native Kilix tab
+  apps [--json]                List installed WSL apps
   games list | play NAME        List or run an installed game
   ls [--panes]                  List native tabs/panes
   pane, tab, focus, watch       Control the current native Kilix window
@@ -121,6 +142,8 @@ def main(args):
   @ COMMAND [ARGS]              Authenticated native remote control
   help, version                 WSL help / native build version
   native [ARGS]                 Native launcher commands (native help lists them)
+  engine, powershell, cmd, wsl  Native launcher shortcuts
+Aliases: -h/--help, --version, --cmd, --wsl. Use kilix @ --help for remote verbs.
 App commands run in the current WSL distribution. --cwd=current uses the
 invoking Linux process's directory. Linux desktop services are not Windows services.''')
         return 0
@@ -132,18 +155,21 @@ invoking Linux process's directory. Linux desktop services are not Windows servi
     if verb == '@':
         return remote(rest)
     if verb == 'needle':
-        if not PYTHON.exists() or not (STATE / 'needle/needle_cli.py').exists():
+        if not PYTHON.exists() or not (INSTALL / 'needle/needle_cli.py').exists():
             raise ValueError('WSL companion dependencies are not installed; run the WSL setup script.')
-        os.execve(str(PYTHON), [str(PYTHON), '-B', str(ROOT / 'wsl/needle-run.py'), *rest], environment())
-    if verb == 'apps' or (verb == 'games' and (not rest or rest == ['list'])):
-        names = sorted(p.name for p in (STATE / 'bin').glob('kilix-*') if os.access(p, os.X_OK))
+        os.execve(str(PYTHON), [str(PYTHON), '-B', str(ROOT / 'wsl/needle-run.py'),
+                              str(INSTALL / 'needle/needle_cli.py'), *rest], environment())
+    if verb == 'apps' or (verb == 'games' and (not rest or rest[0] == 'list')):
+        if (rest if verb == 'apps' else rest[1:]) not in ([], ['--json']):
+            raise ValueError('Use kilix apps [--json] or kilix games list [--json]')
+        names = sorted(p.name for p in (INSTALL / 'bin').glob('kilix-*') if p.is_file() and os.access(p, os.X_OK))
         print('\n'.join(names) if '--json' not in rest else json.dumps(names))
         return 0
     if verb == 'games' and rest[:1] == ['play']:
         if len(rest) < 2:
             raise ValueError('Use kilix games play NAME')
         name = rest[1] if rest[1].startswith('kilix-') else 'kilix-' + rest[1]
-        app = STATE / 'bin' / name
+        app = INSTALL / 'bin' / name
         if not app.is_file() or '/' in name:
             raise ValueError(f'Game is not installed: {name}')
         os.execve(str(app), [str(app), *rest[2:]], environment())

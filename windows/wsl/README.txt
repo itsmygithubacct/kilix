@@ -1,6 +1,7 @@
 WSL companion setup
 
-Pane/tab commands need Python 3, WSL interop and Windows PATH import. Open a
+Pane/tab commands need Python 3, WSL interop and Windows PATH import. Setup uses
+uv's managed Python 3.12.14 for archive extraction and building. Open a
 fresh Kilix WSL window after installing the native package. Run `kilix help`.
 
 Needle and Pong additionally need a per-user Linux installation. On Ubuntu:
@@ -28,7 +29,10 @@ normal model/license setup. The companion never creates acceptance records.
 Agent mode fails if model readiness or existing license coverage is missing.
 
 Installation lives in ~/.local/share/kilix-wsl, with versioned source generations
-and a private Python interpreter. Existing generations remain available. Model
+and a private Python interpreter. Setup builds and checks the new generation
+before switching the current symlink atomically; failed builds leave the previous
+installation active. Existing generations remain available. Models are retained
+across source-only upgrades; conflicting imported model data is rejected. Model
 license receipts use the standard ~/.local/gpu_terminal/license-receipts store.
 
 Examples:
@@ -39,7 +43,11 @@ Examples:
   kilix pane right -- bash
   kilix native help
 
-Linux app argv and the invoking Linux cwd are passed through wsl.exe. Raw launch
+Linux app argv, Linux user and the invoking cwd are passed through wsl.exe.
+Remote launch --env NAME=value sets a Linux variable; NAME= sets it empty and
+NAME removes it. Values stay literal, including spaces, quotes and dollar signs.
+Use `kilix @ --help` or `kilix @ launch --help` for remote command help.
+Raw launch
 options that have no supported translation fail explicitly. Prompt-sensitive
 Needle typing still requires shell integration. Desktop services and the full
 Linux app installer are outside this companion's current scope.

@@ -17,7 +17,7 @@ for name, value in {'F_ADD_SEALS': 1033, 'F_GET_SEALS': 1034,
     if not hasattr(fcntl, name):
         setattr(fcntl, name, value)
 
-entry = Path.home() / '.local/share/kilix-wsl/needle/needle_cli.py'
+entry = Path(sys.argv.pop(1))
 sys.path.insert(0, str(entry.parent))
 sys.argv[0] = str(entry)
 runpy.run_path(str(entry), run_name='__main__')

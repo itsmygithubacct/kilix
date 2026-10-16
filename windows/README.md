@@ -63,13 +63,18 @@ status 2. Existing shells need reopening after an upgrade.
 
 The companion supports pane/tab listing, focus, splits, new tabs, fullscreen,
 watch, authenticated `@` commands, and `--launch PROGRAM [ARGS]`. Linux programs
-run in the invoking distribution. Launch arguments remain separate arguments;
+run in the invoking distribution as the invoking Linux user. Launch arguments
+remain separate arguments; `@ launch --env` applies to the Linux child,
+including empty values and variable removal. Remote help works without an
+active control session (`kilix @ --help`, `kilix @ launch --help`).
 `--cwd=current` refers to the invoking Linux process's directory. It does not
 discover another pane's Linux working directory through Windows process data.
 `kilix apps` lists games installed by companion setup. Arbitrary installed
 Linux executables can be launched with `--launch`.
 
-Needle and Pong install separately into `~/.local/share/kilix-wsl`. See
+Needle and Pong install separately into `~/.local/share/kilix-wsl`. Upgrades
+build a complete generation before atomically activating it, and retain the
+existing model during source-only upgrades. See
 [the companion setup instructions](wsl/README.txt). After setup:
 
 ```sh
@@ -131,6 +136,21 @@ The standalone transport/hardware probes are optional development tools, not
 the Kilix application. To build them, run `bootstrap.ps1`, then `build.ps1 -Test
 -WslDistribution Ubuntu`. They use pinned Zig 0.17.0. `test-graphics.ps1` runs
 the separate WGL probe in the logged-in desktop session.
+
+Companion regression tests run on Linux with Python 3.12 or newer:
+
+```sh
+python3 -m unittest discover -s windows/tests -p 'test_wsl*.py'
+```
+
+`tests/wsl-integration.py` runs in a dedicated, otherwise unused Kilix WSL
+instance. Set `KILIX_TEST_ISOLATED=1`, `KILIX_TEST_APP_WSL` to the Linux path
+of the native installation, and `KILIX_TEST_RESULT_WSL` to an existing output
+directory. It tests remote help, Linux user/cwd/environment transfer, denied
+credentials, pane control, Needle and both Pong launch routes, then closes its
+created panes. Failure produces a nonzero exit and an error in feature-results.json.
+Renderer GPU upload checks require a native watcher; process survival alone
+does not establish that graphics were drawn.
 
 ## Scope and remaining work
 
