@@ -10,6 +10,38 @@ The Windows backend adapts [ecstra/win-kitty](https://github.com/ecstra/win-kitt
 revision `c024f6fa564072e1d040db019ee5fa00d8a90c87`; attribution is preserved in
 `src/WINDOWS-PORT-NOTICE`. Pending private RC6 work is not included.
 
+## Repository and preview downloads
+
+Windows is developed alongside Linux in the existing Kilix repository, on
+`work/windows-0.2.2`. Native engine changes use the same branch name in the
+[Kitty fork](https://github.com/itsmygithubacct/kitty/tree/work/windows-0.2.2).
+The `src` gitlink pins the exact engine revision; builds do not track a moving
+branch tip. Shared fixes belong in these repositories so both platforms can
+receive them together.
+
+The [Windows preview workflow](https://github.com/itsmygithubacct/kilix/actions/workflows/windows.yml)
+builds the portable x64 application and checks its command interface. It also
+runs the WSL companion regression suite on Linux. Download the artifact from a
+successful run for the desired commit; artifacts are retained for 30 days.
+Each includes the application ZIP, matching host and engine source archive,
+revision record, toolchain package list, and SHA256 checksums. Check the ZIP
+against `SHA256SUMS` and extract it completely before launching `Kilix.exe`.
+
+Tags matching `windows-v*-preview.*` (for example `windows-v0.2.2-preview.1`)
+prepare a **draft prerelease** in this same repository after the Windows jobs
+pass. Maintainers review the separate Linux CI result and run the interactive
+desktop, GPU and WSL tests before publishing a preview. Hosted Windows CLI
+checks cannot replace those hardware tests. Windows development stays on its
+branch until Linux and Windows validation supports merging to `main`.
+
+For a source checkout:
+
+```sh
+git clone --branch work/windows-0.2.2 https://github.com/itsmygithubacct/kilix.git
+cd kilix
+git submodule update --init src
+```
+
 ## Build on Windows
 
 From this directory in PowerShell 5.1 or newer:

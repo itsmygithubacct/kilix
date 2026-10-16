@@ -7,6 +7,11 @@ just like Tilix's pane headers, on top of kitty's GPU-rendered speed. For Tilix
 users who want kitty underneath, and anyone who wants clickable pane chrome on
 kitty.
 
+Native Windows development lives in this repository on
+[`work/windows-0.2.2`](https://github.com/itsmygithubacct/kilix/tree/work/windows-0.2.2).
+See [Windows builds and WSL support](windows/README.md) for build instructions,
+preview downloads, and platform limitations.
+
 It runs its own kitty binary with its own config and icon, so it leaves any
 kitty you already have completely untouched. Tracked defaults stay in
 `config/`; every Kilix-owned writable file lives below
