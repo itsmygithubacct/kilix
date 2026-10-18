@@ -59,7 +59,7 @@ $child = Join-Path $ResultDirectory 'child.ps1'
 Write-Host 'KILIX_POWERSHELL_READY'
 $escape = [char]27
 [Console]::Write("${escape}_Ga=T,f=24,s=1,v=1,i=42;/wAA${escape}\")
-Start-Sleep -Seconds 18
+Start-Sleep -Seconds 24
 '@ | Set-Content -LiteralPath $child -Encoding UTF8
 $watcher = (Join-Path $PSScriptRoot 'tests\gui-session.py').Replace('\', '/')
 $arguments = '--config ' + (Quote-Arg (Join-Path $ApplicationDirectory 'config\kilix.conf')) +
@@ -82,6 +82,7 @@ try {
     if ($process.ExitCode -ne 0) { throw "Engine exit code: $($process.ExitCode)" }
     $records = @(Get-Content (Join-Path $ResultDirectory 'desktop-ui-results.jsonl') | ForEach-Object { ConvertFrom-Json $_ })
     if (@($records | Where-Object { $_.error }).Count) { throw 'A GUI watcher action failed.' }
+    if (!($records | Where-Object { $_.fullscreen_round_trips -eq 'passed' })) { throw 'Fullscreen geometry or placement restoration failed.' }
     $windows = @($records | ForEach-Object { $_.windows })
     if (!($windows | Where-Object { $_.text -match 'KILIX_POWERSHELL_READY' })) { throw 'PowerShell output was not rendered.' }
     if (!($windows | Where-Object { $_.text -match 'KILIX_CMD_READY' })) { throw 'Command Prompt output was not rendered.' }
@@ -91,6 +92,7 @@ try {
     if (!($records | Where-Object { $_.tabs -ge 2 })) { throw 'The new tab was not created.' }
     if ($WslDistribution -and !($records | Where-Object { $_.windows.Count -ge 3 })) { throw 'The split was not created.' }
     'PASS: portable native rendering, PowerShell, Command Prompt, tabs, graphics, clean shutdown' | Set-Content (Join-Path $ResultDirectory 'result.txt')
+    'PASS: native fullscreen geometry, hidden caption controls, normal and maximized restoration' | Add-Content (Join-Path $ResultDirectory 'result.txt')
     if ($WslDistribution) { "PASS: WSL distribution $WslDistribution and pane split" | Add-Content (Join-Path $ResultDirectory 'result.txt') }
 } catch {
     $_ | Out-String | Set-Content (Join-Path $ResultDirectory 'failure.txt')

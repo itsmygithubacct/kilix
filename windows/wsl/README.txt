@@ -47,6 +47,8 @@ Linux app argv, Linux user and the invoking cwd are passed through wsl.exe.
 Remote launch --env NAME=value sets a Linux variable; NAME= sets it empty and
 NAME removes it. Values stay literal, including spaces, quotes and dollar signs.
 Use `kilix @ --help` or `kilix @ launch --help` for remote command help.
+Pane/tab help and launch help after options work without a live connection.
+`kilix fullscreen` toggles the native window containing the invoking WSL pane.
 Raw launch
 options that have no supported translation fail explicitly. Prompt-sensitive
 Needle typing still requires shell integration. Desktop services and the full

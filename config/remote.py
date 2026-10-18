@@ -532,7 +532,26 @@ def _pane_subcommand(name: str, argv: list[str]) -> int:
 
     return fail("pane", f"unknown pane command '{name}'", 2)
 
+TAB_HELP = """\
+usage: kilix tab COMMAND ...   (run actions inside a Kilix pane)
+
+  kilix tab new [--title T] [--cwd DIR] [--porcelain] [-- CMD...]
+  kilix tab left|right          focus the adjacent tab
+  kilix tab move left|right     move this tab
+  kilix tab list [--json] [--tree]
+  kilix tab close [TARGET]      close a tab (default: this tab)
+  kilix tab rename TITLE [--target TARGET]
+  kilix tab focus TARGET
+
+Use kilix tab COMMAND --help for that command's options.
+Use tab:ID from kilix tab list to target a specific tab.
+"""
+
+
 def cmd_tab(argv: list[str]) -> int:
+    if argv[:1] in (["-h"], ["--help"], ["help"]):
+        sys.stdout.write(TAB_HELP)
+        return 0
     subcommands = ("new", "left", "right", "move", "list", "close",
                    "rename", "focus")
     head = argv[0] if argv else "new"

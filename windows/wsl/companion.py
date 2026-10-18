@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Linux tools and authenticated native-window control for Kilix WSL."""
+import argparse
 import json
 import os
 from pathlib import Path
@@ -31,18 +32,17 @@ def environment():
 
 def require_control():
     if (not re.fullmatch(r'tcp:127\.0\.0\.1:[0-9]+', os.environ.get('KITTY_LISTEN_ON', ''))
-            or not os.environ.get('KITTY_RC_PASSWORD') or not os.environ.get('KITTY_WINDOW_ID')):
+            or not os.environ.get('KITTY_RC_PASSWORD')
+            or not re.fullmatch(r'[1-9][0-9]*', os.environ.get('KITTY_WINDOW_ID', ''))):
         raise ValueError('Open a new Kilix WSL window with WSL control enabled first.')
 
 
-def translate_launch(args):
-    """Preserve remote options, but start Linux argv through this distro's WSL."""
+def parse_launch(args):
+    """Separate supported options from literal child argv, including help."""
     options, program = [], []
-    linux_env = {'PATH': environment()['PATH'], 'KITTYFB_TRANSPORT': 'inline'}
-    cwd = os.getcwd()
     flags = {'--hold', '--keep-focus', '--copy-colors', '--allow-remote-control',
              '--stdin-add-formatting', '--stdin-add-line-wrap-markers', '--no-response', '--self',
-             '--wait-for-child-to-exit', '--hold-after-ssh'}
+             '--wait-for-child-to-exit', '--hold-after-ssh', '--help', '-h'}
     values = {'--type', '--location', '--title', '--tab-title', '--match', '--source-window',
               '--next-to', '--bias', '--env', '--var', '--cwd', '--response-timeout',
               '--spacing', '--color', '--stdin-source', '--marker'}
@@ -59,30 +59,41 @@ def translate_launch(args):
         if key in flags:
             if sep:
                 raise ValueError(f'{key} does not take a value')
-            options.append(item)
+            options.append((key, None))
         elif key in values:
             if not sep:
                 i += 1
                 if i == len(args):
                     raise ValueError(f'{key} needs a value')
                 value = args[i]
-            if key == '--cwd':
-                if value in ('oldest', 'last_reported', 'root'):
-                    raise ValueError(f'WSL launch cannot resolve --cwd={value}; use a Linux path or current')
-                if value != 'current':
-                    cwd = os.path.abspath(os.path.expanduser(value))
-            elif key == '--env':
-                name, assigned, content = value.partition('=')
-                if not re.fullmatch(r'[A-Za-z_][A-Za-z_0-9]*', name):
-                    raise ValueError(f'Invalid environment variable name: {name}')
-                linux_env[name] = content if assigned else None
-            else:
-                if key == '--type' and value not in ('window', 'tab', 'os-window', 'overlay', 'overlay-main', 'background'):
-                    raise ValueError(f'WSL launch does not support --type={value}')
-                options.append(key + '=' + value)
+            options.append((key, value))
         else:
             raise ValueError(f'WSL launch does not support {key}')
         i += 1
+    return options, program
+
+
+def translate_launch(args):
+    """Preserve remote options, but start Linux argv through this distro's WSL."""
+    parsed, program = parse_launch(args)
+    options = []
+    linux_env = {'PATH': environment()['PATH'], 'KITTYFB_TRANSPORT': 'inline'}
+    cwd = os.getcwd()
+    for key, value in parsed:
+        if key == '--cwd':
+            if value in ('oldest', 'last_reported', 'root'):
+                raise ValueError(f'WSL launch cannot resolve --cwd={value}; use a Linux path or current')
+            if value != 'current':
+                cwd = os.path.abspath(os.path.expanduser(value))
+        elif key == '--env':
+            name, assigned, content = value.partition('=')
+            if not re.fullmatch(r'[A-Za-z_][A-Za-z_0-9]*', name):
+                raise ValueError(f'Invalid environment variable name: {name}')
+            linux_env[name] = content if assigned else None
+        else:
+            if key == '--type' and value not in ('window', 'tab', 'os-window', 'overlay', 'overlay-main', 'background'):
+                raise ValueError(f'WSL launch does not support --type={value}')
+            options.append(key if value is None else key + '=' + value)
     distro = os.environ.get('WSL_DISTRO_NAME')
     if not distro:
         raise ValueError('WSL_DISTRO_NAME is missing')
@@ -99,7 +110,9 @@ def translate_launch(args):
 
 
 def remote(args):
-    if not args or args in (['--help'], ['-h']) or (len(args) == 2 and args[1] in ('--help', '-h')):
+    launch_help = (args[:1] == ['launch'] and
+                   any(key in ('--help', '-h') for key, _ in parse_launch(args[1:])[0]))
+    if not args or args in (['--help'], ['-h']) or (len(args) == 2 and args[1] in ('--help', '-h')) or launch_help:
         return subprocess.call([str(KITTEN), '@', *(args or ['--help'])], env=environment())
     require_control()
     if args[0].startswith('-'):
@@ -181,8 +194,18 @@ invoking Linux process's directory. Linux desktop services are not Windows servi
             raise ValueError(f'Linux program is not installed: {rest[0]}')
         return remote(['launch', '--type=tab', '--tab-title=' + Path(program).name,
                        '--', program, *rest[1:]])
-    if verb in ('ls', 'pane', 'tab', 'focus', 'watch', 'fullscreen', 'new-pane', 'split', 'new-tab', 'new-page'):
+    if verb == 'fullscreen':
+        parser = argparse.ArgumentParser(prog='kilix fullscreen',
+                                         description='Toggle fullscreen for the invoking native Kilix window')
+        parser.parse_args(rest)
         require_control()
+        # The Linux SDK uses its controlling tty here, which cannot address the
+        # Windows renderer. Match the invoking pane over authenticated control.
+        return remote(['resize-os-window', '--match=id:' + os.environ['KITTY_WINDOW_ID'],
+                       '--action=toggle-fullscreen'])
+    if verb in ('ls', 'pane', 'tab', 'focus', 'watch', 'new-pane', 'split', 'new-tab', 'new-page'):
+        # Let the SDK parse help without a connection. Actual operations return
+        # through our kitten bridge, where remote() still requires control.
         os.execve(str(PYTHON if PYTHON.exists() else shutil.which('python3')),
                   [str(PYTHON if PYTHON.exists() else shutil.which('python3')), '-B',
                    str(ROOT / 'wsl-bin/config/remote.py'), *args], environment())

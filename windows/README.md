@@ -100,6 +100,9 @@ run in the invoking distribution as the invoking Linux user. Launch arguments
 remain separate arguments; `@ launch --env` applies to the Linux child,
 including empty values and variable removal. Remote help works without an
 active control session (`kilix @ --help`, `kilix @ launch --help`).
+Help also works after launch options and for pane/tab commands without a live
+connection. `kilix tab --help` lists the tab command family. `kilix fullscreen`
+targets the invoking pane's native window through authenticated control.
 `--cwd=current` refers to the invoking Linux process's directory. It does not
 discover another pane's Linux working directory through Windows process data.
 `kilix apps` lists games installed by companion setup. Arbitrary installed
@@ -131,6 +134,9 @@ CPython 3.14.8, and Go 1.27.2.
 - Packaged desktop test with a clean system PATH: real PowerShell, cmd, and WSL
   output; three panes, two tabs, GPU image uploads from both Windows and WSL;
   successful process exit after child completion.
+- Fullscreen covers the monitor, hides native caption controls, and restores
+  the previous normal or maximized placement. The desktop test measures Win32
+  window/client rectangles independently of the renderer's fullscreen flag.
 - Direct native-launcher tests: PowerShell and `--wsl Ubuntu`, input round-trip,
   new default-shell splits, and closing the owned sessions.
 - Selected native engine suites: screen, parser, graphics, layout, options, and
@@ -180,8 +186,9 @@ python3 -m unittest discover -s windows/tests -p 'test_wsl*.py'
 instance. Set `KILIX_TEST_ISOLATED=1`, `KILIX_TEST_APP_WSL` to the Linux path
 of the native installation, and `KILIX_TEST_RESULT_WSL` to an existing output
 directory. It tests remote help, Linux user/cwd/environment transfer, denied
-credentials, pane control, Needle and both Pong launch routes, then closes its
-created panes. Failure produces a nonzero exit and an error in feature-results.json.
+credentials, quoted and Unicode argv, pane control, fullscreen, Needle and both
+Pong launch routes, then closes its created panes. Failure produces a nonzero
+exit and an error in feature-results.json.
 Renderer GPU upload checks require a native watcher; process survival alone
 does not establish that graphics were drawn.
 

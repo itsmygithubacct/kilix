@@ -6,6 +6,7 @@ import errno
 import io
 import json
 import pwd
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -66,9 +67,61 @@ class CompanionTests(unittest.TestCase):
 
     def test_help_needs_no_control_and_never_parses_json(self):
         with patch.dict(os.environ, {}, clear=True), patch.object(module.subprocess, 'call', return_value=0) as call:
-            for args in ([], ['--help'], ['ls', '--help'], ['launch', '--help']):
+            for args in ([], ['--help'], ['ls', '--help'], ['launch', '--help'],
+                         ['launch', '--type=tab', '--help'], ['launch', '--cwd', '/tmp', '-h']):
                 self.assertEqual(module.remote(args), 0)
-                self.assertIn('--help', call.call_args.args[0])
+                self.assertTrue(set(call.call_args.args[0]) & {'--help', '-h'})
+
+    def test_child_help_and_option_values_do_not_bypass_control(self):
+        with patch.dict(os.environ, {}, clear=True), patch.object(module.subprocess, 'call') as call:
+            for args in (['launch', '--', 'printf', '--help'],
+                         ['launch', 'printf', '--help'],
+                         ['launch', '--title', '--help', '--', 'printf'],
+                         ['launch', '--title=--help', '--', 'printf']):
+                with self.assertRaisesRegex(ValueError, 'Open a new'):
+                    module.remote(args)
+            call.assert_not_called()
+
+    def test_fullscreen_uses_authenticated_control_and_exact_invoking_pane(self):
+        env = {'KITTY_LISTEN_ON': 'tcp:127.0.0.1:1234', 'KITTY_RC_PASSWORD': 'test', 'KITTY_WINDOW_ID': '7'}
+        with patch.dict(os.environ, env, clear=True), patch.object(module.subprocess, 'call', return_value=0) as call:
+            self.assertEqual(module.main(['fullscreen']), 0)
+            self.assertEqual(call.call_args.args[0], [str(module.KITTEN), '@', '--use-password', 'always',
+                             'resize-os-window', '--match=id:7', '--action=toggle-fullscreen'])
+            self.assertEqual(call.call_args.kwargs['env']['KITTY_LISTEN_ON'], env['KITTY_LISTEN_ON'])
+            for value in ('', '0', '-1', '7 or all'):
+                with patch.dict(os.environ, {'KITTY_WINDOW_ID': value}):
+                    with self.assertRaises(ValueError): module.main(['fullscreen'])
+            self.assertEqual(call.call_count, 1)
+
+    def test_fullscreen_help_needs_no_connection(self):
+        with patch.dict(os.environ, {}, clear=True), patch('sys.stdout', new_callable=io.StringIO) as output:
+            with self.assertRaises(SystemExit) as result: module.main(['fullscreen', '--help'])
+            self.assertEqual(result.exception.code, 0)
+            self.assertIn('invoking native Kilix window', output.getvalue())
+
+    def test_packaged_sdk_help_is_offline_but_actions_still_require_control(self):
+        source = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'wsl').mkdir()
+            (root / 'wsl-bin').mkdir()
+            shutil.copy2(source / 'windows/wsl/companion.py', root / 'wsl/companion.py')
+            shutil.copy2(source / 'windows/wsl/kitten.sh', root / 'wsl-bin/kitten')
+            (root / 'wsl-bin/kitten').chmod(0o755)
+            (root / 'wsl-bin/config').symlink_to(source / 'config', target_is_directory=True)
+            env = {'HOME': directory, 'PATH': os.defpath}
+            for args in (['pane', '--help'], ['tab', '--help'], ['tab', 'new', '--help'],
+                         ['watch', '--help'], ['new-tab', '--help']):
+                with self.subTest(args=args):
+                    result = subprocess.run([sys.executable, str(root / 'wsl/companion.py'), *args],
+                                            env=env, capture_output=True, text=True, timeout=10)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn('usage:', result.stdout)
+            result = subprocess.run([sys.executable, str(root / 'wsl/companion.py'), 'pane', 'list'],
+                                    env=env, capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('Open a new Kilix WSL window', result.stderr)
 
     def test_listing_redacts_credentials_recursively(self):
         result = subprocess.CompletedProcess([], 0, json.dumps([{'env': {'KITTY_RC_PASSWORD':'secret','KEEP':'yes'}}]), '')

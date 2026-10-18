@@ -159,6 +159,15 @@ class TabNavigation(unittest.TestCase):
     def setUp(self):
         self.remote, self.panes = install_stub(self)
 
+    def test_family_help_lists_navigation_and_actions_without_opening_a_tab(self):
+        for flag in ('--help', '-h', 'help'):
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(self.remote.main(['tab', flag]), 0)
+            for verb in ('new', 'left|right', 'move', 'list', 'close', 'rename', 'focus'):
+                self.assertIn('kilix tab ' + verb, output.getvalue())
+        self.assertEqual(self.panes.calls, [])
+
     def test_left_and_right_focus_rather_than_reorder(self):
         self.remote.main(["tab", "left"])
         self.remote.main(["tab", "right"])
