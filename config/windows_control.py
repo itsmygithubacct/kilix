@@ -117,9 +117,9 @@ def main(argv=None):
                   'Uses existing SSH authentication and ProxyJump/ProxyCommand configuration.\n'
                   'The Windows user must have one active desktop and Kilix installed.\n'
                   'Screenshot paths are on Windows; copy them with scp if needed.\n')
-            return windows.main(['--help'])
+            return windows.main(['--help'], prog='kilix windows')
         if remaining[0] == 'capabilities' or '--help' in remaining or '-h' in remaining:
-            return windows.main(remaining)
+            return windows.main(remaining, prog='kilix windows')
         parser.error('--host is required for Windows desktop control from Linux')
     try:
         transport = SSHTransport(options.host, options.windows_root)
