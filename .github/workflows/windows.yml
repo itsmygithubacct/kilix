@@ -21,11 +21,10 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      - run: git submodule update --init third_party/kitty-pty-broker
-      - run: python3 -m unittest discover -s windows/tests -p 'test_wsl*.py'
+      - run: git submodule update --init --recursive src third_party/kitty-pty-broker third_party/kilix-content third_party/kilix-transcript-clean
+      - run: python3 -m unittest discover -s windows/tests -p 'test_*.py'
         env:
           KILIX_REQUIRE_RECOVERY_TESTS: '1'
-      - run: python3 -m unittest discover -s windows/tests -p 'test_windows*.py'
       - run: pwsh -NoProfile -File windows/tests/test-install.ps1
       - run: pwsh -NoProfile -File windows/tests/test-update.ps1
 
@@ -96,6 +95,8 @@ jobs:
         run: .\windows\test-cli.ps1 -ApplicationDirectory .\src\dist\kilix
       - name: Check self-contained catalog GUI runtime
         run: .\windows\test-tk.ps1 -ApplicationDirectory .\src\dist\kilix
+      - name: Check native process recovery
+        run: .\windows\test-recovery.ps1 -ApplicationDirectory .\src\dist\kilix -EngineDirectory .\src
       - name: Record source and checksums
         run: |
           Copy-Item "$env:USERPROFILE\kilix-build\toolchain-packages.txt" .\src\dist\toolchain-packages.txt
