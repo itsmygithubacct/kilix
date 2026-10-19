@@ -30,6 +30,9 @@ class CatalogTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="catalog ' café ")
         self.addCleanup(self.temp.cleanup)
         self.home = Path(self.temp.name)
+        environment = patch.dict(os.environ, GPU_TERMINAL_SETTINGS_FILE=str(self.home / 'settings.conf'))
+        environment.start()
+        self.addCleanup(environment.stop)
         self.root = self.home / 'state'
         self.manager = catalog_store.Catalog(root=self.root)
         self.spec = dict(name='fixture', aliases=['short'], title='Fixture', category='app',
@@ -57,6 +60,40 @@ class CatalogTests(unittest.TestCase):
     def install(self):
         return self.manager.install_item(self.spec, source_bundle=self.bundle,
                                          sha256=catalog_sources.digest(self.bundle))
+
+    def test_shared_game_settings_are_authoritative_and_aliases_match(self):
+        import catalog_settings
+        settings = catalog_settings.shared_settings()
+        for spec in catalog_store.entries('games'):
+            key = catalog_settings.game_key(settings, spec)
+            self.assertIsNotNone(key, spec['name'])
+            settings.update({key: '0'})
+            self.assertFalse(self.manager.enabled(spec))
+            self.manager.set_enabled(spec, True)
+            self.assertTrue(settings.enabled(key))
+            self.assertTrue(self.manager.enabled(spec))
+            self.manager.set_enabled(spec, False)
+            self.assertFalse(settings.enabled(key))
+            # Changing the same toggle through `kilix settings` takes effect.
+            settings.update({key: '1'})
+            self.assertTrue(self.manager.enabled(spec))
+        self.assertEqual(catalog_settings.game_key(settings, catalog_store.find('lander')),
+                         settings.GAME_KEY_BY_ID['terminal-lander'])
+
+    def test_legacy_game_disables_survive_until_shared_choice_and_native_is_separate(self):
+        import catalog_settings
+        spec = catalog_store.find('pong')
+        self.root.mkdir()
+        catalog_store.write_state(self.root, dict(schema=1, disabled=[spec['name']], installed={}))
+        self.assertFalse(self.manager.enabled(spec))
+        settings = catalog_settings.shared_settings()
+        settings.update({settings.GAME_KEY_BY_ID['kilix-pong']: '1'})
+        self.assertTrue(self.manager.enabled(spec))
+        native = catalog_store.Catalog(root=self.root, runtime='native')
+        self.assertFalse(native.enabled(spec))
+        native.set_enabled(spec, True)
+        self.manager.set_enabled(spec, False)
+        self.assertTrue(native.enabled(spec))
 
     def test_source_install_launch_and_binary_relocation_keep_literal_argv(self):
         first = self.install()
@@ -248,6 +285,8 @@ class CatalogTests(unittest.TestCase):
             for item in SOURCE.glob(pattern):
                 shutil.copy2(item, package / 'wsl' / item.name)
         shutil.copy2(SOURCE / 'games.py', package / 'wsl-bin/config/games.py')
+        shutil.copytree(SOURCE.parents[1] / 'config/kilix_sdk', package / 'wsl-bin/config/kilix_sdk',
+                        ignore=shutil.ignore_patterns('__pycache__'))
         installed = self.home / '.local/share/kilix-wsl'
         (installed / 'bin').mkdir(parents=True)
         (installed / 'bin/kilix-pong').write_text('#!/bin/sh\nexit 0\n')

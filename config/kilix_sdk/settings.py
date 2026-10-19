@@ -100,6 +100,7 @@ GAME_TOGGLE_IDS = (
     ("terminal-lander", "Terminal Lander"),
     ("kitty-brokeout", "Kitty Brokeout"),
     ("kilix-land", "Kilix Land"),
+    ("pleb-plant-grower", "Plant Grower"),
     ("tictactoe-tui", "Tic-Tac-Toe"),
 )
 

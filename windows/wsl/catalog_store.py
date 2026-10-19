@@ -97,7 +97,11 @@ class Catalog:
         self.python = interpreter(self.install)
 
     def enabled(self, spec):
-        return spec['name'] not in read_state(self.root)['disabled']
+        value = spec['name'] not in read_state(self.root)['disabled']
+        if self.runtime == 'wsl' and spec['category'] == 'game':
+            import catalog_settings
+            return catalog_settings.enabled(spec, value)
+        return value
 
     def generation(self, spec):
         record = read_state(self.root)['installed'].get(spec['name'])
@@ -164,7 +168,11 @@ class Catalog:
         with locked(self.root):
             state = read_state(self.root)
             disabled = set(state['disabled'])
-            disabled.discard(spec['name']) if enabled else disabled.add(spec['name'])
+            shared = False
+            if self.runtime == 'wsl' and spec['category'] == 'game':
+                import catalog_settings
+                shared = catalog_settings.set_enabled(spec, enabled)
+            disabled.discard(spec['name']) if shared or enabled else disabled.add(spec['name'])
             state['disabled'] = sorted(disabled)
             write_state(self.root, state)
 
