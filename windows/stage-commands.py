@@ -37,8 +37,9 @@ def stage(destination):
         if (source / 'third_party').is_dir():
             copy_tree(source / 'third_party', target / 'third_party')
     (destination / 'wsl').mkdir(exist_ok=True)
-    for source in (SOURCE / 'wsl').glob('*.py'):
-        shutil.copy2(source, destination / 'wsl' / source.name)
+    for pattern in ('*.py', '*.json'):
+        for source in (SOURCE / 'wsl').glob(pattern):
+            shutil.copy2(source, destination / 'wsl' / source.name)
     shutil.copy2(SOURCE / 'native-commands.py', destination / 'native-commands.py')
 
 
