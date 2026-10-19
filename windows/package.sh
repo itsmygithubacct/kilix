@@ -62,9 +62,17 @@ cp "$tk_module" "$destination/pylib/lib/python$PYVER/lib-dynload/"
 for toolkit in tcl tk; do
     version=$(python -c "import _tkinter; print(_tkinter.${toolkit^^}_VERSION)")
     version=${version//$'\r'/}
+    # Tcl ships read-only catalog files. Make our previous staging copy writable
+    # so --stage-existing can refresh it on Windows as well as a fresh build.
+    if [[ -d "$destination/pylib/lib/$toolkit$version" ]]; then
+        chmod -R u+w "$destination/pylib/lib/$toolkit$version"
+    fi
     cp -r "/mingw64/lib/$toolkit$version" "$destination/pylib/lib/"
 done
-if [[ -d /mingw64/lib/tcl8 ]]; then cp -r /mingw64/lib/tcl8 "$destination/pylib/lib/"; fi
+if [[ -d /mingw64/lib/tcl8 ]]; then
+    if [[ -d "$destination/pylib/lib/tcl8" ]]; then chmod -R u+w "$destination/pylib/lib/tcl8"; fi
+    cp -r /mingw64/lib/tcl8 "$destination/pylib/lib/"
+fi
 python -c 'import _tkinter, json, pathlib, sys; pathlib.Path(sys.argv[1], "tk-runtime.json").write_text(json.dumps({"tcl": "pylib/lib/tcl" + _tkinter.TCL_VERSION, "tk": "pylib/lib/tk" + _tkinter.TK_VERSION}) + "\n", encoding="utf-8")' "$destination"
 declare -A tk_seen
 tk_queue=("$tk_module")
