@@ -30,12 +30,9 @@ if ($Action -in @('EnableSchedule', 'DisableSchedule')) {
         Write-Host 'Kilix scheduled update task removed.'
         return
     }
-    $arguments = @('-NoLogo', '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-File', $PSCommandPath,
-        '-Action', $ScheduleAction, '-Channel', $Channel, '-Destination', $Destination)
-    if ($NoShortcuts) { $arguments += '-NoShortcuts' }
-    if ($SignerThumbprint) { $arguments += @('-SignerThumbprint', $SignerThumbprint) }
-    if ($WslDistribution) { $arguments += @('-WslDistribution', $WslDistribution) }
-    if ($WslUser) { $arguments += @('-WslUser', $WslUser) }
+    Install-KilixUpdateDispatcher -Source (Join-Path $PSScriptRoot 'update-dispatch.ps1') -Destination $Destination
+    $arguments = Get-KilixScheduledUpdateArguments -Destination $Destination -Action $ScheduleAction -Channel $Channel `
+        -NoShortcuts:$NoShortcuts -SignerThumbprint $SignerThumbprint -WslDistribution $WslDistribution -WslUser $WslUser
     $taskAction = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
         -Argument (@($arguments | ForEach-Object { ConvertTo-KilixArgument $_ }) -join ' ')
     $principal = New-ScheduledTaskPrincipal -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Limited

@@ -1,6 +1,38 @@
 #requires -Version 5.1
 # SPDX-License-Identifier: GPL-3.0-only
-# Release selection is separated from network and installation for offline tests.
+# Release selection and schedule preparation have no network/scheduler side effects.
+function Install-KilixUpdateDispatcher([string]$Source, [string]$Destination) {
+    $target = Join-Path $Destination 'update-dispatch.ps1'
+    Assert-KilixRegularPath $target
+    $temporary = $target + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
+    $backup = $temporary + '.previous'
+    try {
+        # Copy bytes intact, including any actual publisher signature. Replace
+        # atomically so an existing task never reads a partially copied script.
+        [IO.File]::Copy($Source, $temporary)
+        if ([IO.File]::Exists($target)) { [IO.File]::Replace($temporary, $target, $backup) }
+        else { [IO.File]::Move($temporary, $target) }
+    } finally {
+        if ([IO.File]::Exists($temporary)) { [IO.File]::Delete($temporary) }
+        if ([IO.File]::Exists($backup)) { [IO.File]::Delete($backup) }
+    }
+}
+
+function Get-KilixScheduledUpdateArguments(
+    [string]$Destination, [string]$Action, [string]$Channel,
+    [switch]$NoShortcuts, [string]$SignerThumbprint, [string]$WslDistribution, [string]$WslUser
+) {
+    # Bypass applies only to this maintenance process, never a persisted policy.
+    # The managed-root dispatcher follows both upgrades and rollbacks.
+    $arguments = @('-NoLogo', '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass',
+        '-File', (Join-Path $Destination 'update-dispatch.ps1'), '-Action', $Action, '-Channel', $Channel)
+    if ($NoShortcuts) { $arguments += '-NoShortcuts' }
+    if ($SignerThumbprint) { $arguments += @('-SignerThumbprint', $SignerThumbprint) }
+    if ($WslDistribution) { $arguments += @('-WslDistribution', $WslDistribution) }
+    if ($WslUser) { $arguments += @('-WslUser', $WslUser) }
+    return $arguments
+}
+
 function Get-KilixReleaseVersion([string]$Tag) {
     if ($Tag -cmatch '^windows-v(\d+\.\d+\.\d+)(?:-preview\.(\d+))?$') {
         return [pscustomobject]@{ version = [Version]$Matches[1]; preview = $(if ($Matches[2]) { [int]$Matches[2] } else { [int]::MaxValue }) }

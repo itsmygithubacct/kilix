@@ -139,15 +139,21 @@ try {
     Expect-Failure { Invoke-KilixInstall @unlisted } 'Unlisted package file'
     $missing = Make-Package 'missing' @{} 'Kilix.exe'
     Expect-Failure { Invoke-KilixInstall @missing } 'Required package file'
-    $damaged = Make-Package 'damaged'
-    $zip = [IO.Compression.ZipFile]::Open($damaged.Archive, 'Update')
-    try {
-        $zip.GetEntry('kilix/Kilix.exe').Delete()
-        $stream = $zip.CreateEntry('kilix/Kilix.exe').Open()
-        try { $stream.WriteByte(1) } finally { $stream.Dispose() }
-    } finally { $zip.Dispose() }
-    $damaged.Sha256 = (Get-FileHash -LiteralPath $damaged.Archive).Hash
-    Expect-Failure { Invoke-KilixInstall @damaged } 'Package size mismatch'
+    # Exercise the platform's actual CreateFromDirectory output and explicit
+    # legacy backslashes. .NET Framework GetEntry does not normalize separators.
+    foreach ($damaged in @((Make-Package 'damaged'), $legacyZip)) {
+        $zip = [IO.Compression.ZipFile]::Open($damaged.Archive, 'Update')
+        try {
+            $entries = @($zip.Entries | Where-Object { $_.FullName.Replace('\', '/') -ceq 'kilix/Kilix.exe' })
+            Assert ($entries.Count -eq 1) 'Damage fixture must contain exactly one Kilix.exe entry'
+            $name = $entries[0].FullName
+            $entries[0].Delete()
+            $stream = $zip.CreateEntry($name).Open()
+            try { $stream.WriteByte(1) } finally { $stream.Dispose() }
+        } finally { $zip.Dispose() }
+        $damaged.Sha256 = (Get-FileHash -LiteralPath $damaged.Archive).Hash
+        Expect-Failure { Invoke-KilixInstall @damaged } 'Package size mismatch'
+    }
     # One-way upgrade to the same root leaves unrecognized old portable layouts alone.
     $legacy = Join-Path $destination 'kilix'
     [IO.Directory]::CreateDirectory($legacy) | Out-Null

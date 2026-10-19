@@ -1,5 +1,6 @@
 #requires -Version 5.1
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '../setup-common.ps1')
 . (Join-Path $PSScriptRoot '../update-common.ps1')
 $script:checks = 0
 function Assert($Value, [string]$Message) {
@@ -41,4 +42,72 @@ Assert (Test-KilixReleaseNewer $candidate @{ releaseTag = 'windows-v0.2.2-previe
 $selected = Select-KilixRelease @((Release 'windows-v0.2.2-preview.9'), (Release 'windows-v0.2.2-preview.10')) 'preview'
 Assert ($selected.preview -eq 10) 'Preview numbers sorted lexically'
 Assert (!(Test-KilixReleaseNewer $selected @{ releaseTag = 'windows-v0.2.2' })) 'Stable downgraded to same-version preview'
-Write-Host "PASS: $script:checks update selection assertions (offline; no release or schedule created)"
+
+# Execute the real managed-root dispatcher in child PowerShell processes. No
+# ScheduledTasks cmdlet is called and no network, install or desktop is touched.
+$root = Join-Path ([IO.Path]::GetTempPath()) ('kilix-update-test-' + [Guid]::NewGuid().ToString('N'))
+$destination = Join-Path $root ('install [with spaces] ' + [char]0x03bb)
+$fixture = @'
+param([string]$Destination, [string]$Action = 'Check', [string]$Channel = 'stable',
+    [switch]$NoShortcuts, [string]$SignerThumbprint, [string]$WslDistribution, [string]$WslUser)
+$result = @{ updater = $PSScriptRoot; destination = $Destination; action = $Action; channel = $Channel;
+    noShortcuts = [bool]$NoShortcuts; signer = $SignerThumbprint; distribution = $WslDistribution; user = $WslUser }
+[IO.File]::WriteAllText((Join-Path $Destination 'dispatched.json'), ($result | ConvertTo-Json), [Text.Encoding]::UTF8)
+'@
+$resultPath = Join-Path $destination 'dispatched.json'
+$statePath = Join-Path $destination 'install-state.json'
+function Invoke-Dispatch([string[]]$Arguments) {
+    $launchArguments = $Arguments
+    if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
+        # PowerShell on Linux cannot accept WindowStyle. Keep all other task
+        # arguments, including the process policy flag, intact for this probe.
+        $index = [Array]::IndexOf($launchArguments, '-WindowStyle')
+        $launchArguments = @($launchArguments[0..($index - 1)] + $launchArguments[($index + 2)..($launchArguments.Count - 1)])
+    }
+    return Invoke-KilixProcess (Get-Process -Id $PID).Path $launchArguments
+}
+try {
+    foreach ($relative in @('versions/aaaa/kilix', 'versions/bbbb/kilix')) {
+        $application = Join-Path $destination $relative
+        [IO.Directory]::CreateDirectory($application) | Out-Null
+        [IO.File]::WriteAllText((Join-Path $application 'update.ps1'), $fixture, [Text.Encoding]::UTF8)
+    }
+    $source = Join-Path $PSScriptRoot '../update-dispatch.ps1'
+    $dispatcher = Join-Path $destination 'update-dispatch.ps1'
+    Install-KilixUpdateDispatcher $source $destination
+    Install-KilixUpdateDispatcher $source $destination # Existing schedule can be reconfigured atomically.
+    Assert ((Get-FileHash -LiteralPath $dispatcher).Hash -eq (Get-FileHash -LiteralPath $source).Hash) 'Dispatcher bytes changed during copy'
+    Assert (@(Get-ChildItem -LiteralPath $destination -Filter '*.tmp*').Count -eq 0) 'Dispatcher replacement leaked temporary files'
+    $arguments = Get-KilixScheduledUpdateArguments -Destination $destination -Action Apply -Channel preview `
+        -NoShortcuts -SignerThumbprint ('1' * 40) -WslDistribution ('Ubuntu Test ' + [char]0x03bb) -WslUser 'test-user'
+    $policyIndex = [Array]::IndexOf($arguments, '-ExecutionPolicy')
+    Assert ($policyIndex -ge 0 -and $arguments[$policyIndex + 1] -ceq 'Bypass') 'Task must set process-scoped ExecutionPolicy Bypass'
+    $fileIndex = [Array]::IndexOf($arguments, '-File')
+    Assert ($fileIndex -ge 0 -and $arguments[$fileIndex + 1] -ceq $dispatcher) 'Task must target the managed-root dispatcher'
+    # Keep exactly the same scheduled argv across install, upgrade and rollback.
+    foreach ($relative in @('versions/aaaa/kilix', 'versions/bbbb/kilix', 'versions/aaaa/kilix')) {
+        Write-KilixJson $statePath @{ schema = 1; current = @{ path = $relative } }
+        $run = Invoke-Dispatch $arguments
+        Assert ($run.exitCode -eq 0) "Scheduled dispatcher failed: $($run.stderr)"
+        $record = Get-Content -LiteralPath $resultPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $expectedUpdater = [IO.Path]::GetFullPath((Join-Path $destination $relative))
+        Assert ($record.updater -ceq $expectedUpdater) 'Schedule executed a stale updater after upgrade/rollback'
+        Assert ($record.destination -ceq $destination) 'Dispatcher lost Unicode/spaces install destination'
+        Assert ($record.action -ceq 'Apply' -and $record.channel -ceq 'preview' -and $record.noShortcuts -and
+            $record.signer -ceq ('1' * 40) -and $record.distribution -ceq ('Ubuntu Test ' + [char]0x03bb) -and
+            $record.user -ceq 'test-user') 'Scheduled update options changed during dispatch'
+    }
+    $defaults = Get-KilixScheduledUpdateArguments -Destination $destination -Action Check -Channel stable
+    $run = Invoke-Dispatch $defaults
+    Assert ($run.exitCode -eq 0) "Default scheduled check failed: $($run.stderr)"
+    $record = Get-Content -LiteralPath $resultPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    Assert ($record.action -ceq 'Check' -and $record.channel -ceq 'stable' -and !$record.noShortcuts -and
+        !$record.signer -and !$record.distribution -and !$record.user) 'Default check gained unrequested options'
+    Write-KilixJson $statePath @{ schema = 1; current = @{ path = 'versions/cccc/kilix' } }
+    $run = Invoke-Dispatch $arguments
+    Assert ($run.exitCode -ne 0 -and $run.stderr -match 'Active Kilix updater is missing') 'Missing current updater silently fell back to a retained generation'
+    Write-KilixJson $statePath @{ schema = 1; current = @{ path = '../elsewhere' } }
+    $run = Invoke-Dispatch $arguments
+    Assert ($run.exitCode -ne 0 -and $run.stderr -match 'Invalid managed installation state') 'Dispatcher accepted a path outside the managed generations'
+    Write-Host "PASS: $script:checks update selection/schedule assertions (offline; no release or schedule created)"
+} finally { if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force } }

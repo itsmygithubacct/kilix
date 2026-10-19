@@ -8,6 +8,7 @@ export PATH="/mingw64/bin:$PATH" PYTHONUTF8=1 GOMAXPROCS=2
 export MINGW_ROOT=/mingw64
 export PYVER
 PYVER=$(python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+PYVER=${PYVER//$'\r'/}
 destination="$PWD/dist/kilix"
 if [[ ${2:-} != --stage-existing ]]; then
     bash packaging/windows/make-dist.sh
@@ -27,13 +28,14 @@ mkdir -p "$destination/config" "$destination/licenses"
 cp "$windows_source/config/kilix.conf" "$destination/config/"
 cp "$windows_source/baseline.json" "$destination/"
 cp "$windows_source/README.txt" "$destination/"
-cp "$windows_source/"{setup,setup-common,install,diagnostics,update,update-common}.ps1 "$destination/"
+cp "$windows_source/"{setup,setup-common,install,diagnostics,update,update-common,update-dispatch}.ps1 "$destination/"
 cp "$windows_source/wsl-bootstrap.sh" "$destination/"
 cp "$windows_source/"test-*.ps1 "$destination/"
 mkdir -p "$destination/tests"
 cp "$windows_source/tests/"*.py "$windows_source/tests/"*.ps1 "$destination/tests/"
 cp "$windows_source/licenses/"* "$destination/licenses/"
 cp LICENSE WINDOWS-PORT-NOTICE "$destination/licenses/"
+if [[ -f WINDOWS-PTY-BROKER-NOTICE ]]; then cp WINDOWS-PTY-BROKER-NOTICE "$destination/licenses/"; fi
 mkdir -p "$destination/licenses/mingw"
 cp -r /mingw64/share/licenses/. "$destination/licenses/mingw/"
 mkdir -p "$destination/fontconfig"
@@ -44,6 +46,10 @@ cp kitty/shell_integration.py "$destination/kitty/"
 cp kitty/cli.py "$destination/kitty/"
 cp kitty/main.py "$destination/kitty/"
 cp kitty/remote_control.py "$destination/kitty/"
+# Refresh recovery code when reusing a distribution built before these modules.
+for module in windows_pty_broker windows_pty_ipc windows_pty_protocol; do
+    if [[ -f kitty/$module.py ]]; then cp "kitty/$module.py" "$destination/kitty/"; fi
+done
 cp kitty/fast_data_types.so kitty/fast_data_types.pyd kitty/glfw-win32.so kitty/glfw-win32.pyd "$destination/kitty/"
 cp kitty/launcher/conpty.dll kitty/launcher/OpenConsole.exe "$destination/kitty/launcher/"
 # The engine's minimal distribution drops tkinter. Restore the relocatable GUI

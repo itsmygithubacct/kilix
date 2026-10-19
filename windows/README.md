@@ -154,9 +154,12 @@ missing dependencies still require the explicit setup dependency step.
 
 Schedules are never enabled by installation. `-ScheduleAction Apply` explicitly
 opts into unattended native updates (and companion updates if selected).
-Tasks use the user's existing PowerShell execution policy and run only while
-logged in; `update-status.json` records check/apply results. Re-enable a schedule
-from the active generation after changing updater options or script policy.
+Tasks run only while logged in, using `-ExecutionPolicy Bypass` for that maintenance
+process only; no persistent execution policy is changed. Enforced Group Policy
+still applies. `update-status.json` records check/apply results. The managed-root
+dispatcher reads `install-state.json` on every run and follows the active updater
+after upgrades or rollbacks, retaining the chosen schedule, channel and options.
+Re-enable to change options or to migrate a schedule created before the dispatcher.
 The updater authenticates downloads through GitHub HTTPS and release hashes;
 unsigned previews remain unsigned. A changed asset under an already installed
 release tag is not treated as a new version.
@@ -442,7 +445,8 @@ clears the runner's process execution-policy override before launching Kilix,
 so the test exercises the user's actual policy. The PowerShell regression also
 checks AllSigned, Restricted, and RemoteSigned using temporary process scopes.
 Unsigned prompt integration is skipped under AllSigned or Restricted; terminal
-input and layouts remain available. Kilix does not lower execution policies.
+input and layouts remain available. Terminal shell profiles retain their execution
+policies; scheduled maintenance uses the process-only override described above.
 
 The standalone transport/hardware probes are optional development tools, not
 the Kilix application. To build them, run `bootstrap.ps1`, then `build.ps1 -Test

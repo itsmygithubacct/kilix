@@ -112,7 +112,10 @@ Updates use published Windows releases and matching SHA256SUMS from this repo.
 Drafts are ignored; no published release means no available update. Daily checks
 are optional via update.ps1 -Action EnableSchedule; -ScheduleAction Apply opts
 into automatic installation. Disable with -Action DisableSchedule. Nothing is
-scheduled by default. Existing PowerShell execution policy remains in effect.
+scheduled by default. Scheduled maintenance uses process-only -ExecutionPolicy
+Bypass; persistent policies and terminal shell profiles are unchanged, and enforced
+Group Policy still applies. The task follows the active generation after upgrades
+or rollbacks. Re-enable older schedules once to adopt this dispatcher.
 
 signing.json records actual signing status. Unsigned previews have no trusted
 publisher signature. A checksum does not establish publisher certificate trust.
