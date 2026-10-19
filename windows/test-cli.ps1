@@ -1,6 +1,7 @@
 #requires -Version 5.1
 param([Parameter(Mandatory=$true)][string]$ApplicationDirectory)
 $ErrorActionPreference='Stop'
+. (Join-Path $PSScriptRoot 'setup-common.ps1')
 foreach ($case in @(
  @('--help', 0, 'kilix engine --help'),
  @('help', 0, 'Kilix native control commands'),
@@ -74,3 +75,18 @@ foreach ($encoding in @('cp1252','utf-8')) {
   "PASS native Unicode output with $encoding"
  } finally { $p.Dispose() }
 }
+
+# Exercise the engine's wide CRT entry point directly. The native CLI already
+# uses wide arguments; its downstream Python host must preserve them as well.
+$unicode = 'caf' + [char]0xe9 + ' ' + [char]0x03bb + [char]0x4e2d + ' ' + [char]::ConvertFromUtf32(0x1f642)
+$literal = @('', 'a b', 'quote " and ''', 'backslash\', $unicode, '$HOME;$(false)', '--help')
+$code = 'import json,sys; print(json.dumps(sys.argv[1:], ensure_ascii=True))'
+$result = Invoke-KilixProcess (Join-Path $ApplicationDirectory 'kitty/launcher/kitty-console.exe') `
+    (@('+runpy', $code) + $literal) 15
+if ($result.exitCode -ne 0) { throw "Engine argument check failed: $($result.stderr)" }
+$received = ConvertFrom-Json $result.stdout
+if ($received.Count -ne $literal.Count) { throw 'Engine argument count changed.' }
+for ($i = 0; $i -lt $literal.Count; $i++) {
+    if ($received[$i] -cne $literal[$i]) { throw "Engine argument $i changed." }
+}
+Write-Host 'PASS engine Unicode, empty, quoted and literal command arguments'
