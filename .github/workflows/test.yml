@@ -60,6 +60,7 @@ jobs:
           ref="$(sed -n "s/^PROVIDER_REF = '\([0-9a-f]\{40\}\)'$/\1/p" config/kilix_sdk/qwen_provider.py)"
           [[ "$ref" =~ ^[0-9a-f]{40}$ ]] || exit 1
           source_dir="$RUNNER_TEMP/kilix-qwen-provider"
+          mkdir -m 700 "$source_dir"
           git init -q "$source_dir"
           git -C "$source_dir" fetch -q --depth=1 \
             https://github.com/itsmygithubacct/kilix-qwen-tts.git "$ref"

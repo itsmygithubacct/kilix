@@ -54,8 +54,10 @@ def main():
                             stdout=subprocess.DEVNULL,
                             stderr=(private / 'xvfb.log').open('wb'))
     os.close(w)
-    display = ':' + os.read(r, 64).decode().strip()
-    os.close(r)
+    # Xvfb may write the display number and newline separately. Closing after a
+    # short read can give the server EPIPE before it finishes initialization.
+    with os.fdopen(r) as display_pipe:
+        display = ':' + display_pipe.readline().strip()
     env = {'HOME': str(private / 'home'), 'XDG_CONFIG_HOME': str(private / 'config'),
            'XDG_CACHE_HOME': str(private / 'cache'),
            'XDG_RUNTIME_DIR': str(private / 'runtime'),

@@ -983,9 +983,16 @@ class TranscriptArchiveIntegrationTests(unittest.TestCase):
             source.write_bytes(payload)
             source.chmod(0o600)
 
+            # A known empty broker runtime makes every fixture log dead. Never
+            # consult the runner's default runtime or an active user's broker.
+            runtime = Path(tmp) / "runtime"
+            runtime.mkdir(mode=0o700)
+            (runtime / "sessions").mkdir(mode=0o700)
+
             env = sandbox_env()
             env["GPU_TERMINAL_HOME"] = str(gpu_home)
             env["GPU_TERMINAL_SOURCE_HOME"] = str(ROOT.parent)
+            env["KITTY_PTY_BROKER_RUNTIME"] = str(runtime)
             command = [str(ROOT / "kilix"), "transcript"]
 
             subprocess.run(

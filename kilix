@@ -181,20 +181,20 @@ case "${1:-}" in
   # the running session's config. The engine's options stay one flag away.
   -h|--help|help)
     cat <<'EOF'
-usage: kilix [COMMAND] [ARGS...]    (bare: open a window)
+usage: kilix [COMMAND] [ARGS...]  (bare: open a window)
 Examples inside a Kilix pane:
-  kilix pane right -- bash                         shell on the right
-  kilix pane send build 'make test' --submit        text + Enter
-  kilix pane close build                           close named pane
+  kilix pane right -- bash  shell on the right
+  kilix pane send build 'make test' --submit  text + Enter
+  kilix pane close build  close named pane
   kilix new-tab --title Codex --cwd ~/src/app codex
 Panes and tabs (directions from caller):
   kilix pane right|left|up|down [--title T] [--cwd DIR] [--hold] [--porcelain] [-- CMD...]
-  kilix pane send TARGET 'TEXT' [--submit]   --submit presses Enter
-  kilix pane close [TARGET]                 default: caller and its program
+  kilix pane send TARGET 'TEXT' [--submit]  --submit presses Enter
+  kilix pane close [TARGET]  default: caller and its program
   kilix pane read TARGET [--extent all]
   kilix pane focus TARGET
   kilix pane resize TARGET (--columns N | --lines N | --delta-columns N | --delta-lines N) [--json]
-  kilix pane list [--json]                  IDs, titles, programs; (self) is you
+  kilix pane list [--json]  IDs, titles, programs; (self) is you
   kilix new-tab [--title T] [--cwd DIR] [CMD...]
   kilix tab new|list|close|rename|focus|left|right
   Bare pane/tab prints help; create explicitly.
@@ -202,12 +202,11 @@ Panes and tabs (directions from caller):
 TARGET: unique title or pane:ID. This is the complete syntax;
 no subcommand --help is needed. Ambiguous titles fail; each verb prints what it did.
 Agents (verify input targets):
-  kilix agent --help                       workflow selection and launch
-  kilix agent-control context|list|dump|send|key   --help
-  kilix action --request-json -             structured request from stdin
-  kilix action capabilities                inspect available features
-Idle-only mailboxes and recurring follow-ups:
-  kilix ralph --help                        queue, receive, loops, worker
+  kilix agent --help  workflow selection and launch
+  kilix agent-control context|list|dump|send|key  --help
+  kilix action --request-json -  structured request from stdin
+  kilix action capabilities  inspect available features
+  kilix ralph --help  queue, receive, loops, worker
 Also: wizard, settings, status, update, install, games, screen-size, transcript,
   help-search "QUESTION". Command options: --help.
 Terminal engine (kitty) options: kilix --help-engine
