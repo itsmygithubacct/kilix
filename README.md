@@ -7,8 +7,7 @@ just like Tilix's pane headers, on top of kitty's GPU-rendered speed. For Tilix
 users who want kitty underneath, and anyone who wants clickable pane chrome on
 kitty.
 
-Native Windows development lives in this repository on
-[`work/windows-0.2.2`](https://github.com/itsmygithubacct/kilix/tree/work/windows-0.2.2).
+Native Windows and Linux development share this repository.
 See [Windows builds and WSL support](windows/README.md) for build instructions,
 preview downloads, and platform limitations.
 
@@ -34,10 +33,10 @@ it wrote in `state/` so `--uninstall-desktop` can take exactly that back out.
 Prepared for the coordinated Plebian-OS 0.2.2 candidate. The supported upgrade
 source is 0.2.1; image, upgrade and final human acceptance remain pending.
 
-The Windows development build adds desktop automation through `kilix desktop`:
-window discovery, screenshots, UI Automation inspection/actions, keyboard and
-mouse input, application launch, and window management. Native Windows and WSL
-share SDK 1.17's `kilix_sdk.windows` client. Linux hosts can use
+The Windows preview adds desktop automation through `kilix desktop`:
+application/control selectors, condition waits, local screenshots, UI Automation
+inspection/actions, keyboard and mouse input, application launch, and window
+management. Native Windows and WSL share SDK 1.18's `kilix_sdk.windows` client. Linux hosts can use
 `kilix windows --host SSH_ALIAS` through an existing SSH connection. See the
 [Windows desktop commands](windows/README.md#windows-desktop-automation).
 

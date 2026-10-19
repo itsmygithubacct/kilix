@@ -1,4 +1,4 @@
-# Kilix 0.2.2 native Windows development build
+# Kilix 0.2.2 native Windows preview
 
 This builds the actual Kilix graphical application for Windows x64: native
 Win32/WGL windowing, the RC6-era Kitty parser and renderer, Kilix pane chrome,
@@ -12,9 +12,9 @@ revision `c024f6fa564072e1d040db019ee5fa00d8a90c87`; attribution is preserved in
 
 ## Repository and preview downloads
 
-Windows is developed alongside Linux in the existing Kilix repository, on
-`work/windows-0.2.2`. Native engine changes use the same branch name in the
-[Kitty fork](https://github.com/itsmygithubacct/kitty/tree/work/windows-0.2.2).
+Windows and Linux share `main` in the existing Kilix repository and
+[Kitty fork](https://github.com/itsmygithubacct/kitty).
+`work/windows-0.2.2` remains available for Windows development.
 The `src` gitlink pins the exact engine revision; builds do not track a moving
 branch tip. Shared fixes belong in these repositories so both platforms can
 receive them together.
@@ -31,13 +31,13 @@ Tags matching `windows-v*-preview.*` (for example `windows-v0.2.2-preview.1`)
 prepare a **draft prerelease**; stable `windows-v0.2.2` tags prepare a **draft release** in this same repository after the Windows jobs
 pass. Maintainers review the separate Linux CI result and run the interactive
 desktop, GPU and WSL tests before publishing a preview. Hosted Windows CLI
-checks cannot replace those hardware tests. Windows development stays on its
-branch until Linux and Windows validation supports merging to `main`.
+checks cannot replace those hardware tests. See [preview notes](RELEASE-NOTES.md)
+and the bundled [Notepad example](examples/README.txt).
 
 For a source checkout, preserve LF line endings for the MSYS2 and WSL scripts:
 
 ```sh
-git clone --config core.autocrlf=false --branch work/windows-0.2.2 https://github.com/itsmygithubacct/kilix.git
+git clone --config core.autocrlf=false --branch main https://github.com/itsmygithubacct/kilix.git
 cd kilix
 git -c core.autocrlf=false submodule update --init --recursive src third_party/kilix-content third_party/kilix-transcript-clean
 git -C src config core.autocrlf false
@@ -97,6 +97,7 @@ kilix desktop scroll --window 123456 --x 80 --y 100 --delta -120
 kilix desktop move --window 123456 --x -800 --y 40 --width 800 --height 600
 kilix desktop screenshot 'C:\Temp\desktop.png'
 kilix desktop screenshot --window 123456 'C:\Temp\window.png'
+kilix desktop screenshot --local '.\window.png' --window 123456
 kilix desktop launch --cwd 'C:\Temp' -- notepad.exe 'C:\Temp\notes.txt'
 ```
 
@@ -110,7 +111,30 @@ The convenient `--window HWND` resolves an exact handle with a fresh listing;
 it cannot detect reuse that happened before that listing. Use the full saved
 identity when an action must address a previously observed process.
 
-`inspect` returns flat UI Automation nodes with stable runtime `id`, `name`,
+Use `find --app editor.exe --title Notes` to discover matching windows;
+application basename/path matches exactly ignoring case, while title matches
+a substring ignoring case. Actions accept the same filters (and `--pid`) and
+resolve a unique full identity before dispatch. Multiple matches or incomplete
+discovery are refused. UIA `--name`, `--automation-id` and `--control-type`
+are exact, case-sensitive, conjunctive filters on `find`, `invoke`, `set-value`
+and `wait`. For example:
+
+```powershell
+kilix desktop find --app notepad.exe --title notes --json
+kilix desktop focus --app notepad.exe --title notes
+kilix desktop find --app notepad.exe --title notes --control-type Edit --json
+kilix desktop wait --app notepad.exe --title notes --control-type Edit --for enabled --wait-ms 5000 --json
+kilix desktop set-value --app notepad.exe --title notes --control-type Edit 'Example text'
+```
+
+These control examples require an application version that exposes a unique
+UIA Edit control; inspect/find the actual provider first. `wait` polls inside
+one read-only native invocation, including over SSH. It supports `present`,
+`visible`, `enabled` and `closed`; a condition deadline returns `wait_timeout`.
+See [targeting and waits](desktop-targeting.md) for precise state/identity
+semantics, SDK examples, completeness flags, limits and JSON response shapes.
+
+`inspect` returns flat UI Automation nodes with provider runtime `id`, `name`,
 `automation_id`, `control_type`, `rect`, `enabled`, `offscreen` and supported
 `patterns`. Ordinary ValuePattern fields include `value` (up to 4096 UTF-16
 units), `value_truncated` and `value_unavailable`. Pass the returned ID literally to `invoke ELEMENT` or
@@ -119,7 +143,8 @@ the target's current UI tree; stale or ambiguous IDs fail. Password values
 are never read or exposed, and `set-value` refuses password fields.
 
 `focus`, `move`, `minimize`, `maximize`, `restore`, `close`, `type`, `key`,
-`click`, `scroll`, `inspect`, `invoke` and `set-value` require a target.
+`click`, `scroll`, `inspect`, `invoke` and `set-value` require a target (or CLI/SDK
+window filters that uniquely resolve it).
 `screenshot` optionally takes one; `status`, `windows` and `launch` do not.
 `close` sends WM_CLOSE only: an application can show a save prompt or stay
 open. `launch` takes 1–64 literal argv entries and an optional absolute Windows
@@ -142,12 +167,27 @@ letters/digits. `capabilities` lists the complete supported set. Text and
 set-value are limited to 16384 UTF-16 code units. Inspection defaults to
 depth 3 / 200 nodes, with maxima of 8 / 500.
 
-Screenshot paths must be absolute Windows PNG paths with an existing parent
-directory. Existing files are refused unless `--overwrite` is explicit;
-responses report the path and physical capture bounds. This includes WSL:
-`/mnt/c/Temp` is written as `C:\Temp` in a request. Files saved under a Windows
-drive are then accessible through its WSL mount. Linux paths are not
-automatically translated. Desktop screenshots capture the visible desktop;
+`screenshot --local PATH` writes a PNG on the caller: the native Windows
+process, WSL filesystem, or Linux SSH caller. Paths may be relative or absolute
+and must end in `.png`, with an existing parent directory. In WSL, positional
+Linux paths automatically use local capture, including `/mnt/c/Temp/screen.png`.
+Positional Windows drive or UNC paths retain the native Windows file operation.
+For example, `screenshot 'C:\Temp\screen.png'` saves on Windows even over SSH.
+Use either a positional path or `--local PATH`.
+
+Local capture validates the destination before requesting pixels, checks the
+returned PNG header/dimensions, byte length and SHA-256, then atomically publishes
+the complete file. Existing files are refused unless `--overwrite` is explicit,
+including files created by a competing writer. Destination symlinks and special
+files are refused. Normal human and JSON command results contain metadata only:
+`path`, `byte_length`, `sha256`, physical `bounds: {x,y,width,height}`, `capture`
+and `occlusion_possible`. Local PNG payloads are bounded to 32 MiB; response
+transports allow 48 MiB for base64 and metadata. The existing Windows file
+operation retains its physical size limits without the PNG payload limit.
+On Linux/WSL, atomic no-clobber publication requires a filesystem with hard-link
+support; unsupported filesystems return an I/O error without replacing a file.
+
+Desktop screenshots capture the visible desktop;
 obscured/minimized windows and application capture restrictions can affect
 what a targeted capture can return.
 
@@ -196,6 +236,7 @@ inventory = capabilities()                # offline
 result = client.call("windows")
 # Use a target from result for subsequent calls.
 # client.call("inspect", target=target, params={"depth": 2, "limit": 100})
+# client.capture_to_local("./screen.png", target=target, overwrite=False, timeout=20)
 ```
 
 `client.execute(full_request)` returns the envelope; `client.call(...)`
@@ -204,6 +245,14 @@ Transport errors also raise `DesktopError`. The SDK neither opens an SSH
 connection nor selects a host unless the supplied runner does so. The native
 default loads exactly the packaged `desktop_transport.py` beside the entry
 point. WSL uses `kilix-cli.exe desktop` with fixed argv and JSON stdin.
+`client.capture_to_local(path, *, target=None, overwrite=False, timeout=20)`
+returns the local metadata described above, or raises `DesktopError`. Omitting
+the target captures the desktop. It uses the additive read-only `capture`
+protocol operation, whose parameters are empty and target is optional. Its
+result adds `png_base64` to the integrity/bounds metadata and has no path.
+Raw `--request-json -` and SDK callers can request that payload; there is no
+byte-printing `capture` subcommand. No persistent remote PNG is created; the
+existing private, transient dispatch response is cleaned up by the transport.
 
 On a Linux Kilix host, `desktop` remains the desktop-provider launcher. Use
 `windows --host` for a Windows computer with an existing SSH connection:
@@ -212,8 +261,7 @@ On a Linux Kilix host, `desktop` remains the desktop-provider launcher. Use
 ./kilix windows --host windows-workstation status --json
 ./kilix windows --host windows-workstation windows --json
 ./kilix windows --host windows-workstation inspect --window 123456 --json
-./kilix windows --host windows-workstation screenshot 'C:\Temp\screen.png'
-scp windows-workstation:'C:/Temp/screen.png' ./screen.png
+./kilix windows --host windows-workstation screenshot --local ./screen.png
 ```
 
 SSH uses the host's existing authentication and configuration, including
@@ -229,17 +277,24 @@ Source checks without desktop access:
 
 ```sh
 python3 -B -m unittest discover -s windows/tests -p 'test_desktop_commands.py'
+python3 -B -m unittest discover -s windows/tests -p 'test_desktop_capture.py'
+python3 -B -m unittest discover -s windows/tests -p 'test_desktop_selectors.py'
 python3 -B -m unittest discover -s windows/tests -p 'test_desktop_ssh.py'
 ```
 
-`tests/test-desktop-backend.ps1` checks native request validation without
-operating a desktop. `tests/desktop-integration.py` runs through the packaged
+`tests/test-desktop-backend.ps1` checks native request validation and the bounded
+PNG stream without operating a desktop. `tests/desktop-integration.py` runs through the packaged
 interpreter and launches its own WinForms fixture for interactive checks; it
 requires an unlocked desktop. The Windows 10 x64 qualification at 150% display
 scaling covers Unicode text, key chords, clicks/scrolling, UIA inspection and
 actions, PNG capture, focus/move/minimize/maximize/restore, stale identities,
-and closing the owned fixture. Other Windows versions and mixed-DPI monitor
-layouts still need desktop qualification.
+and closing the owned fixture. `tests/desktop-waits.py` exercises delayed
+enablement/closure, incomplete searches and ambiguous control selection.
+`tests/desktop-apps.py` verifies real Notepad Save As contents, opening a file
+through Explorer, and an accessible Chrome/Edge form in a disposable profile.
+Run these scripts with the packaged Python on an unlocked desktop; the apps
+test also takes an evidence-directory argument. Other Windows versions and
+mixed-DPI monitor layouts need separate qualification.
 
 ## Install, update and recover
 

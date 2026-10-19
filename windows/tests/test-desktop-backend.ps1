@@ -60,6 +60,24 @@ Valid (New-Request 'inspect' @{ depth = 0; limit = 1 } $true)
 Valid (New-Request 'inspect' @{ depth = 8; limit = 500 } $true)
 Valid (New-Request 'screenshot' @{ path = 'C:\captures\one.png'; overwrite = $false })
 Valid (New-Request 'screenshot' @{ path = '\\server\share\one.PNG'; overwrite = $true } $true)
+Valid (New-Request 'capture')
+Valid (New-Request 'capture' @{} $true)
+Invalid (New-Request 'capture' @{path='C:\captures\one.png'})
+Invalid (New-Request 'capture' @{overwrite=$true})
+# Exercise the actual bounded native PNG stream without accessing a desktop.
+Assert ([KilixDesktop]::MaxCaptureBytes -eq 33554432) 'PNG limit must be 32 MiB.'
+$streamType = [KilixDesktop].GetNestedType('BoundedPngStream', [Reflection.BindingFlags]::NonPublic)
+$stream = [Activator]::CreateInstance($streamType, $true)
+try {
+    $stream.Position = [KilixDesktop]::MaxCaptureBytes - 1
+    $stream.WriteByte(7)
+    Assert ($stream.Length -eq [KilixDesktop]::MaxCaptureBytes) 'Exact PNG limit should fit.'
+    Expect-Code { $stream.WriteByte(8) } 'capture_limit'
+    Assert ($stream.Exceeded) 'Stream must retain the limit failure for GDI+ exception wrapping.'
+    Expect-Code { $stream.SetLength([KilixDesktop]::MaxCaptureBytes + 1) } 'capture_limit'
+    $stream.Position = [KilixDesktop]::MaxCaptureBytes - 1
+    Expect-Code { $stream.Write([byte[]]@(1, 2), 0, 2) } 'capture_limit'
+} finally { $stream.Dispose() }
 foreach ($operation in @('focus', 'minimize', 'maximize', 'restore', 'close')) { Valid (New-Request $operation @{} $true) }
 Valid (New-Request 'move' @{ x = -2147483648; y = -200; width = 16384; height = 1 } $true)
 $unicode = [char]0x03bb + [char]::ConvertFromUtf32(0x1F642)
@@ -76,6 +94,48 @@ Valid (New-Request 'click' @{ x = 0; y = 1; button = 'middle'; count = 2 } $true
 foreach ($delta in @(-1200, 0, 1200)) { Valid (New-Request 'scroll' @{ x = 1; y = 2; delta = $delta } $true) }
 Valid (New-Request 'invoke' @{ element = '42.-2147483648.0.2147483647' } $true)
 Valid (New-Request 'set-value' @{ element = '42.1'; text = $unicode } $true)
+
+# Selector fields and condition budgets are checked before any OS/provider access.
+foreach ($app in @('Editor.exe', 'My Editor.EXE', 'C:\Apps\editor.exe', 'C:/Apps/editor.exe', '\\server\apps\editor.exe')) {
+    Valid (New-Request 'windows' @{app=$app;title='notes';pid=123})
+    Valid (New-Request 'find' @{app=$app;include_hidden=$true})
+}
+Valid (New-Request 'find')
+Valid (New-Request 'find' @{selector=@{name='Save';automation_id='save';control_type='Button'}} $true)
+Valid (New-Request 'find' @{app='editor.exe';selector=@{name='';automation_id=''};depth=64;limit=20000})
+Valid (New-Request 'invoke' @{selector=@{name='Save';control_type='Button'};depth=0;limit=1} $true)
+Valid (New-Request 'set-value' @{selector=@{automation_id='edit'};text=$unicode} $true)
+foreach ($state in @('present','visible','enabled','closed')) {
+    Valid (New-Request 'wait' @{state=$state;app='editor.exe';title='notes';pid=123;wait_ms=0;poll_ms=20})
+    Valid (New-Request 'wait' @{state=$state;selector=@{name='Save';control_type='Button'};wait_ms=19000;poll_ms=1000} $true)
+    Valid (New-Request 'wait' @{state=$state;element='42.1'} $true)
+}
+$request = New-Request 'wait' @{state='closed';wait_ms=59000} $true; $request.timeout=60; Valid $request
+$request = New-Request 'wait' @{state='closed'} $true; $request.timeout=1; Valid $request
+foreach ($app in @('', '*.exe', 'editor?', 'app|other', 'C:app.exe', 'relative\app.exe', 'C:\Apps\', 'C:\Apps\.', 'C:\Apps\..', '\\.\app.exe')) {
+    Invalid (New-Request 'find' @{app=$app})
+}
+foreach ($selector in @(@{}, @{unknown='Save'}, @{name=$null}, @{automation_id=1}, @{control_type='ControlType.Button'}, @{control_type="Button`n"}, @{control_type=''})) {
+    Invalid (New-Request 'find' @{selector=$selector} $true)
+    Invalid (New-Request 'invoke' @{selector=$selector} $true)
+}
+Invalid (New-Request 'find' @{} $true)
+Invalid (New-Request 'find' @{selector=@{name='Save'}})
+Invalid (New-Request 'find' @{selector=@{name='Save'};app='editor.exe'} $true)
+Invalid (New-Request 'find' @{selector=@{name='Save'};include_hidden=$false} $true)
+Invalid (New-Request 'find' @{include_hidden=1})
+Invalid (New-Request 'find' @{depth=3})
+Invalid (New-Request 'invoke' @{element='42.1';selector=@{name='Save'}} $true)
+foreach ($depth in @(-1,65,$true)) { Invalid (New-Request 'find' @{selector=@{name='Save'};depth=$depth} $true) }
+foreach ($limit in @(0,20001,$true)) { Invalid (New-Request 'invoke' @{selector=@{name='Save'};limit=$limit} $true) }
+Invalid (New-Request 'wait' @{state='visible'})
+Invalid (New-Request 'wait' @{state='hidden'} $true)
+Invalid (New-Request 'wait' @{state='closed';element='42.1';app='editor.exe'})
+Invalid (New-Request 'wait' @{state='closed';element='42.1';selector=@{name='Save'}} $true)
+Invalid (New-Request 'wait' @{state='visible';depth=3} $true)
+foreach ($duration in @(-1,19001,$true,1.5)) { Invalid (New-Request 'wait' @{state='visible';wait_ms=$duration} $true) }
+foreach ($interval in @(0,19,1001,$true)) { Invalid (New-Request 'wait' @{state='visible';poll_ms=$interval} $true) }
+$request = New-Request 'wait' @{state='visible';wait_ms=1} $true; $request.timeout=1; Invalid $request
 
 foreach ($json in @('', 'null', '[]', '[{}]', '{', '{} trailing', '{"x":1,}', '{"x":[1,]}', '{"x":NaN}', '{"x":01}', '{"x":1.}', '{"x":1e}', '{"x":+1}', '{"x":1e999}', '{"x":"\q"}', '{"x":"\uD800"}', '{"x":"\uDC00"}', '{"x":"\u0000"}', '{"x":1,"x":2}', '{/* comment */}', ('{"x":"a' + "`n" + 'b"}'))) {
     Expect-Code { [KilixDesktop]::ReadRequest($json) }
@@ -139,6 +199,22 @@ $unionType = $nativeType.GetNestedType('INPUTUNION', [Reflection.BindingFlags]::
 Assert ([Runtime.InteropServices.Marshal]::SizeOf([Activator]::CreateInstance($inputType)) -eq 40) 'x64 INPUT must be 40 bytes.'
 Assert ([Runtime.InteropServices.Marshal]::OffsetOf($inputType, 'Data').ToInt32() -eq 8) 'x64 INPUT union must start at offset 8.'
 Assert ([Runtime.InteropServices.Marshal]::SizeOf([Activator]::CreateInstance($unionType)) -eq 32) 'x64 INPUT union must be 32 bytes.'
+
+# Pure matching predicates run on either platform, without loading any UIA provider.
+$appMatch = [KilixDesktop].GetMethod('MatchesApp', [Reflection.BindingFlags]'NonPublic, Static')
+foreach ($pair in @(@('EDITOR.EXE','C:\Apps\editor.exe'), @('C:/Apps/Editor.exe','c:\apps\editor.exe'))) {
+    Assert ($appMatch.Invoke($null, [object[]]$pair)) 'Exact app matching must ignore case and path separators.'
+}
+foreach ($pair in @(@('edit','C:\Apps\editor.exe'), @('editor.exe','C:\Apps\other-editor.exe'), @('C:\Other\editor.exe','C:\Apps\editor.exe'))) {
+    Assert (!$appMatch.Invoke($null, [object[]]$pair)) 'App matching must not accept prefixes, substrings or another path.'
+}
+$elementMatch = [KilixDesktop].GetMethod('MatchesElementFields', [Reflection.BindingFlags]'NonPublic, Static')
+$selector = New-Object 'Collections.Generic.Dictionary[string,object]'
+$selector.Add('name','Save'); $selector.Add('automation_id','save'); $selector.Add('control_type','Button')
+Assert ($elementMatch.Invoke($null, [object[]]@($selector.PSObject.BaseObject,'Save','save','Button'))) 'Exact conjunctive selector should match.'
+foreach ($fields in @(@('save','save','Button'), @('Save','other','Button'), @('Save','save','button'), @('Save As','save','Button'), @($null,'save','Button'))) {
+    Assert (!$elementMatch.Invoke($null, [object[]]@($selector.PSObject.BaseObject,$fields[0],$fields[1],$fields[2]))) 'UIA selector fields must all match exactly; a password name cannot match.'
+}
 
 # The password guard is tested without loading UIA or calling any application provider.
 $valueMethod = [KilixDesktop].GetMethod('ReadInspectableValue', [Reflection.BindingFlags]'NonPublic, Static')

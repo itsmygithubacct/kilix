@@ -143,7 +143,7 @@ class DesktopValidationTests(unittest.TestCase):
         with patch.object(windows, '_native_execute', side_effect=AssertionError('not offline')):
             inventory = windows.capabilities()
         self.assertEqual(set(inventory['operations']), {
-            'status', 'windows', 'inspect', 'screenshot', 'focus', 'move', 'minimize', 'maximize',
+            'status', 'windows', 'find', 'wait', 'inspect', 'screenshot', 'capture', 'focus', 'move', 'minimize', 'maximize',
             'restore', 'close', 'launch', 'type', 'key', 'click', 'scroll', 'invoke', 'set-value'})
         self.assertTrue(inventory['offline'])
         for key in inventory['keys']:
@@ -192,7 +192,7 @@ class DesktopCLITests(unittest.TestCase):
     def test_every_help_and_capabilities_path_stays_offline(self):
         runner = Mock(side_effect=AssertionError('help sent a request'))
         for args in ([], ['--help'], ['help'], ['--capabilities', '--json'],
-                     ['capabilities', '--json'], *([op, '--help'] for op in windows.OPERATIONS)):
+                     ['capabilities', '--json'], *([op, '--help'] for op in windows.OPERATIONS if op != 'capture')):
             with self.subTest(args=args):
                 code, out, err = self.run_cli(args, runner=runner)
                 self.assertEqual(code, 0, err)
@@ -234,7 +234,7 @@ class DesktopCLITests(unittest.TestCase):
                         self.assertNotIn('target', sent)
 
     def test_partial_targets_bad_options_and_bad_limits_do_not_even_resolve(self):
-        examples = [['focus'], ['focus', '--hwnd', '123456'], ['focus', '--pid', '4321'],
+        examples = [['focus'], ['focus', '--hwnd', '123456'], ['focus', '--started', '123'],
                     ['focus', '--window', '123456', *IDENTITY],
                     ['type', '--window', '123456', 'x' * 16385],
                     ['inspect', '--window', '123456', '--depth', '9'],

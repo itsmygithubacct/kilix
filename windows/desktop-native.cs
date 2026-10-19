@@ -10,6 +10,7 @@ using System.Drawing.Imaging;
 using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -25,8 +26,9 @@ public sealed class KilixDesktopException : Exception
 public static class KilixDesktop
 {
     public const string Schema = "kilix.desktop/v1";
+    public const int MaxCaptureBytes = 32 * 1024 * 1024;
     private static readonly string[] Operations = {
-        "status", "windows", "inspect", "screenshot", "focus", "move", "minimize",
+        "status", "windows", "find", "wait", "inspect", "screenshot", "capture", "focus", "move", "minimize",
         "maximize", "restore", "close", "launch", "type", "key", "click", "scroll", "invoke", "set-value"
     };
     private static readonly CultureInfo Invariant = CultureInfo.InvariantCulture;
@@ -258,6 +260,41 @@ public static class KilixDesktop
         { return Map("hwnd", Hwnd.ToString(Invariant), "pid", Pid, "started", Started.ToString(Invariant)); }
     }
 
+    private static bool WindowFilters(Dictionary<string, object> p)
+    { return p.ContainsKey("app") || p.ContainsKey("title") || p.ContainsKey("pid"); }
+
+    private static void ValidateWindowFilters(Dictionary<string, object> p)
+    {
+        if (p.ContainsKey("title")) StringValue(p["title"], "title", 32767, true);
+        if (p.ContainsKey("pid")) ProcessId(p["pid"]);
+        if (!p.ContainsKey("app")) return;
+        string app = StringValue(p["app"], "app", 32760, false);
+        if (app.IndexOfAny(new char[] { '\\', '/', ':' }) >= 0)
+        {
+            AbsolutePath(app, "app");
+            if (app.StartsWith(@"\\", StringComparison.Ordinal) && app.Replace('/', '\\').Substring(2).Split('\\').Length < 3)
+                throw Fail("invalid_request", "app must include a filename after the UNC share.");
+            string basename = app.Replace('/', '\\'); basename = basename.Substring(basename.LastIndexOf('\\') + 1);
+            if (basename.Length == 0 || basename == "." || basename == "..") throw Fail("invalid_request", "app must name an executable, not a directory.");
+        }
+        else if (app == "." || app == ".." || app.IndexOfAny(new char[] { '*', '?', '"', '<', '>', '|' }) >= 0)
+            throw Fail("invalid_request", "app must be an exact executable basename or absolute Windows path.");
+        foreach (char c in app) if (c < 32) throw Fail("invalid_request", "app contains a control character.");
+    }
+
+    private static void ValidateElementSelector(object value)
+    {
+        Dictionary<string, object> selector = ObjectValue(value, "selector");
+        Fields(selector, "", "name automation_id control_type");
+        if (selector.Count == 0) throw Fail("invalid_request", "selector needs name, automation_id or control_type.");
+        foreach (string key in selector.Keys) StringValue(selector[key], key, key == "control_type" ? 128 : 32767, true);
+        if (selector.ContainsKey("control_type") && !Regex.IsMatch((string)selector["control_type"], @"\A[A-Za-z][A-Za-z0-9]*\z", RegexOptions.CultureInvariant))
+            throw Fail("invalid_request", "control_type must use the exact UIA name, e.g. Button or Edit.");
+    }
+
+    private static void ValidateSearchLimits(Dictionary<string, object> p)
+    { Number(p, "depth", 32, 0, 64); Number(p, "limit", 2000, 1, 20000); }
+
     private static Request Parse(IDictionary input)
     {
         Dictionary<string, object> r = ObjectValue(input, "request");
@@ -276,13 +313,36 @@ public static class KilixDesktop
             Fields(t, "hwnd pid started", "");
             req.Target = new Target { Hwnd = DecimalId(t["hwnd"], "hwnd"), Pid = ProcessId(t["pid"]), Started = DecimalId(t["started"], "started") };
         }
-        else if (!untargeted && op != "screenshot") throw Fail("invalid_request", "This operation requires hwnd, pid and started in target.");
+        else if (!untargeted && op != "screenshot" && op != "capture" && op != "find" && op != "wait") throw Fail("invalid_request", "This operation requires hwnd, pid and started in target.");
         switch (op)
         {
             case "windows":
-                Fields(p, "", "title pid");
-                if (p.ContainsKey("title")) StringValue(p["title"], "title", 32768, true);
-                if (p.ContainsKey("pid")) ProcessId(p["pid"]);
+                Fields(p, "", "app title pid"); ValidateWindowFilters(p);
+                break;
+            case "find": case "wait":
+                Fields(p, op == "wait" ? "state" : "", op == "wait" ? "app title pid selector element depth limit wait_ms poll_ms" : "app title pid selector depth limit include_hidden");
+                ValidateWindowFilters(p);
+                if (req.Target != null && WindowFilters(p)) throw Fail("invalid_request", "Use target or app/title/pid, not both.");
+                bool elementSearch = p.ContainsKey("selector") || p.ContainsKey("element");
+                if (p.ContainsKey("selector") && p.ContainsKey("element")) throw Fail("invalid_request", "Use element or selector, not both.");
+                if (p.ContainsKey("selector")) ValidateElementSelector(p["selector"]);
+                if (p.ContainsKey("element"))
+                {
+                    ParseRuntimeId(StringValue(p["element"], "element", 2048, false));
+                    if (req.Target == null) throw Fail("invalid_request", "A runtime element ID requires an exact target.");
+                }
+                if ((op == "wait" || elementSearch) && req.Target == null && !WindowFilters(p)) throw Fail("invalid_request", "Waits and element searches need target or app/title/pid.");
+                if (op == "find" && req.Target != null && !elementSearch) throw Fail("invalid_request", "find with target needs an element selector; use inspect for the tree.");
+                if (elementSearch) ValidateSearchLimits(p);
+                else if (p.ContainsKey("depth") || p.ContainsKey("limit")) throw Fail("invalid_request", "depth/limit apply only to UIA searches.");
+                if (p.ContainsKey("include_hidden") && (elementSearch || !(p["include_hidden"] is bool))) throw Fail("invalid_request", "include_hidden is a boolean for window searches only.");
+                if (op == "wait")
+                {
+                    string state = StringValue(p["state"], "state", 16, false);
+                    if (state != "present" && state != "visible" && state != "enabled" && state != "closed") throw Fail("invalid_request", "state must be present, visible, enabled or closed.");
+                    Number(p, "wait_ms", Math.Min(10000, (req.Timeout - 1) * 1000), 0, (req.Timeout - 1) * 1000);
+                    Number(p, "poll_ms", 100, 20, 1000);
+                }
                 break;
             case "inspect":
                 Fields(p, "", "depth limit"); Number(p, "depth", 3, 0, 8); Number(p, "limit", 200, 1, 500); break;
@@ -330,8 +390,11 @@ public static class KilixDesktop
                 Integer(p["delta"], "delta", -1200, 1200);
                 Coordinates(p); break;
             case "invoke": case "set-value":
-                Fields(p, op == "invoke" ? "element" : "element text", "");
-                ParseRuntimeId(StringValue(p["element"], "element", 2048, false));
+                Fields(p, op == "invoke" ? "" : "text", "element selector depth limit");
+                if (p.ContainsKey("element") == p.ContainsKey("selector")) throw Fail("invalid_request", "Require exactly one of element or selector.");
+                if (p.ContainsKey("element")) ParseRuntimeId(StringValue(p["element"], "element", 2048, false));
+                else ValidateElementSelector(p["selector"]);
+                ValidateSearchLimits(p);
                 if (op == "set-value") InputText(p["text"]);
                 break;
             default: Fields(p, "", ""); break;
@@ -381,9 +444,12 @@ public static class KilixDesktop
         });
         // UIA must run on an MTA thread, including when PowerShell itself runs STA.
         worker.IsBackground = true; worker.SetApartmentState(ApartmentState.MTA); worker.Start();
-        if (!worker.Join(parsed.Timeout * 1000))
+        int budget = parsed.Timeout * 1000;
+        if (parsed.Operation == "wait") budget = Math.Min(budget, Number(parsed.Params, "wait_ms", Math.Min(10000, (parsed.Timeout - 1) * 1000), 0, 59000) + 1000);
+        if (!worker.Join(budget))
         {
             runner.Cancelled = true;
+            if (parsed.Operation == "wait") throw Fail("wait_timeout", "Condition '" + (string)parsed.Params["state"] + "' was not confirmed within " + budget.ToString(Invariant) + " ms; a desktop/UIA observation did not return in time. No mutation was attempted.");
             throw Fail("timeout", "Desktop operation timed out; completion is unknown. Do not automatically retry mutations.");
         }
         if (error != null)
@@ -413,14 +479,14 @@ public static class KilixDesktop
         public Runner(Request request) { req = request; }
         private int Remaining { get { return Math.Max(0, req.Timeout * 1000 - (int)clock.ElapsedMilliseconds); } }
         private void Check()
-        { if (Cancelled || Remaining == 0) throw Fail("timeout", "Operation deadline reached; any earlier changes may have completed."); }
+        { if (Cancelled || Remaining == 0) throw Fail(req.Operation == "wait" ? "wait_timeout" : "timeout", "Operation deadline reached; the requested condition/completion was not confirmed."); }
         private void Available() { Check(); EnsureDesktop(); }
 
         public object Run()
         {
             Check();
             if (req.Operation == "status") return Status();
-            bool mutating = req.Operation != "windows" && req.Operation != "inspect" && req.Operation != "screenshot";
+            bool mutating = req.Operation != "windows" && req.Operation != "find" && req.Operation != "wait" && req.Operation != "inspect" && req.Operation != "screenshot" && req.Operation != "capture";
             using (MutationLock gate = mutating ? new MutationLock() : null) return RunAvailable();
         }
 
@@ -428,8 +494,10 @@ public static class KilixDesktop
         {
             Available();
             if (req.Operation == "windows") return Windows();
+            if (req.Operation == "find") return Find();
+            if (req.Operation == "wait") return Wait();
             if (req.Operation == "launch") return Launch();
-            if (req.Target == null) return Screenshot(null);
+            if (req.Target == null) return req.Operation == "capture" ? Capture(null) : Screenshot(null);
             using (ProcessLease lease = new ProcessLease(req.Target))
             {
                 Check();
@@ -437,6 +505,7 @@ public static class KilixDesktop
                 {
                     case "inspect": return Inspect();
                     case "screenshot": return Screenshot(req.Target);
+                    case "capture": return Capture(req.Target);
                     case "focus": case "move": case "minimize": case "maximize": case "restore": case "close":
                         lease.EnsureWritable(); return WindowAction();
                     case "type": case "key": case "click": case "scroll":
@@ -448,24 +517,163 @@ public static class KilixDesktop
             }
         }
 
-        private object Windows()
+        private sealed class WindowSearch
         {
-            List<object> windows = new List<object>(); int skipped = 0;
+            public readonly List<Dictionary<string, object>> Rows = new List<Dictionary<string, object>>();
+            public int Skipped;
+            public object Json() { return Map("windows", Rows.ToArray(), "skipped", Skipped, "incomplete", Skipped != 0); }
+        }
+
+        private WindowSearch SearchWindows(bool includeHidden)
+        {
+            WindowSearch result = new WindowSearch();
             string title = req.Params.ContainsKey("title") ? (string)req.Params["title"] : null;
+            string app = req.Params.ContainsKey("app") ? (string)req.Params["app"] : null;
             uint pid = req.Params.ContainsKey("pid") ? ProcessId(req.Params["pid"]) : 0;
             EnumerateWindows(delegate(IntPtr hwnd) {
                 Check();
-                if (!Native.IsWindowVisible(hwnd)) return true;
+                if (!includeHidden && !Native.IsWindowVisible(hwnd)) return true;
                 uint actual; Native.GetWindowThreadProcessId(hwnd, out actual);
                 if (pid != 0 && actual != pid) return true;
                 string caption = WindowTitle(hwnd);
                 if (title != null && caption.IndexOf(title, StringComparison.OrdinalIgnoreCase) < 0) return true;
-                try { windows.Add(WindowInfo(hwnd, caption)); }
-                catch (KilixDesktopException) { skipped++; }
+                try
+                {
+                    Dictionary<string, object> row = WindowInfo(hwnd);
+                    // The handle/title can change between the cheap filter and identity acquisition.
+                    if (pid != 0 && RowTarget(row).Pid != pid) return true;
+                    if (title != null && ((string)row["title"]).IndexOf(title, StringComparison.OrdinalIgnoreCase) < 0) return true;
+                    if (app != null)
+                    {
+                        string path = row["process_path"] as string;
+                        if (path == null) { result.Skipped++; return true; }
+                        if (!MatchesApp(app, path)) return true;
+                    }
+                    result.Rows.Add(row);
+                }
+                catch (KilixDesktopException) { result.Skipped++; }
                 return true;
             });
             Available();
-            return Map("windows", windows.ToArray(), "skipped", skipped);
+            return result;
+        }
+
+        private object Windows() { return SearchWindows(false).Json(); }
+
+        private static Target RowTarget(Dictionary<string, object> row)
+        {
+            Dictionary<string, object> t = (Dictionary<string, object>)row["target"];
+            return new Target { Hwnd = DecimalId(t["hwnd"], "hwnd"), Pid = ProcessId(t["pid"]), Started = DecimalId(t["started"], "started") };
+        }
+
+        private static void UniqueWindowSearch(WindowSearch search)
+        {
+            if (search.Rows.Count > 1) throw Fail("ambiguous_target", "Multiple windows match app/title/pid; narrow the selector.");
+            if (search.Skipped != 0) throw Fail("search_incomplete", "Window search could not establish uniqueness/absence; some candidate identities or executable paths were unavailable.");
+        }
+
+        private object Find()
+        {
+            if (!req.Params.ContainsKey("selector"))
+                return SearchWindows(req.Params.ContainsKey("include_hidden") && (bool)req.Params["include_hidden"]).Json();
+            if (req.Target == null)
+            {
+                WindowSearch windows = SearchWindows(false); UniqueWindowSearch(windows);
+                if (windows.Rows.Count == 0) throw Fail("window_not_found", "No visible window matches app/title/pid.");
+                req.Target = RowTarget(windows.Rows[0]);
+            }
+            using (ProcessLease lease = new ProcessLease(req.Target))
+            {
+                ElementSearch elements = SearchElements();
+                Available(); VerifyTarget(req.Target);
+                return Map("target", req.Target.Json(), "elements", elements.Rows.ToArray(), "visited", elements.Visited,
+                    "incomplete", elements.Incomplete, "truncated", elements.Truncated);
+            }
+        }
+
+        private object Wait()
+        {
+            string state = (string)req.Params["state"];
+            int wait = Number(req.Params, "wait_ms", Math.Min(10000, (req.Timeout - 1) * 1000), 0, 59000);
+            int interval = Number(req.Params, "poll_ms", 100, 20, 1000), polls = 0;
+            long start = clock.ElapsedMilliseconds, end = start + wait;
+            string last = "not_observed";
+            bool elementSearch = req.Params.ContainsKey("selector") || req.Params.ContainsKey("element");
+            do
+            {
+                Available(); polls++;
+                object window = null, element = null;
+                bool complete = true, present = false, visible = false, enabled = false;
+                try
+                {
+                    if (req.Target == null)
+                    {
+                        WindowSearch windows = SearchWindows(true);
+                        if (windows.Rows.Count > 1) throw Fail("ambiguous_target", "Multiple windows match the wait selector; narrow app/title/pid.");
+                        if (windows.Skipped != 0) { complete = false; last = "window_search_incomplete"; }
+                        else if (windows.Rows.Count == 1) req.Target = RowTarget(windows.Rows[0]);
+                    }
+                    if (complete && req.Target != null)
+                    {
+                        if (Native.IsWindow(req.Target.Handle))
+                        {
+                            // A reused handle or process identity is an error, never a replacement to follow.
+                            VerifyTarget(req.Target);
+                            Dictionary<string, object> row = WindowInfo(req.Target.Handle);
+                            window = row;
+                            present = true; visible = (bool)row["visible"] && !(bool)row["minimized"]; enabled = (bool)row["enabled"];
+                            if (elementSearch)
+                            {
+                                ElementSearch elements = SearchElements();
+                                if (elements.Rows.Count > 1) throw Fail("ambiguous_element", "Multiple UIA elements match the wait selector; narrow it.");
+                                complete = !elements.Incomplete && !elements.Truncated;
+                                if (!complete) last = "accessibility_incomplete (visited " + elements.Visited.ToString(Invariant) + ", truncated=" + elements.Truncated.ToString() + ")";
+                                present = elements.Rows.Count == 1;
+                                if (present)
+                                {
+                                    Dictionary<string, object> found = elements.Rows[0]; element = found;
+                                    visible = visible && !(bool)found["offscreen"]; enabled = enabled && (bool)found["enabled"];
+                                }
+                            }
+                            VerifyTarget(req.Target);
+                        }
+                        else if (state != "closed") throw Fail("stale_target", "The bound window disappeared while waiting; the wait will not follow a replacement.");
+                    }
+                }
+                catch (Exception e)
+                {
+                    KilixDesktopException targetError = e as KilixDesktopException;
+                    bool observationFailed = ProviderFailure(e) || (targetError != null &&
+                        (targetError.Code == "stale_target" || targetError.Code == "native_error" || targetError.Code == "access_denied"));
+                    if (state == "closed" && req.Target != null && observationFailed && !Native.IsWindow(req.Target.Handle))
+                    {
+                        // The exact target may close during enumeration/verification, too.
+                        // An existing reused HWND still fails the identity checks above.
+                        complete = true; present = false; window = null; element = null;
+                    }
+                    else
+                    {
+                        if (!ProviderFailure(e)) throw;
+                        complete = false; last = "provider_unavailable (" + e.GetType().Name + ")";
+                    }
+                }
+                if (complete)
+                {
+                    last = !present ? "absent" : !visible ? "not_visible" : !enabled ? "disabled" : "enabled";
+                    bool matched = state == "closed" ? !present : state == "present" ? present : state == "visible" ? present && visible : present && visible && enabled;
+                    if (matched)
+                    {
+                        Available();
+                        return Map("state", state, "matched", true, "polls", polls, "elapsed_ms", clock.ElapsedMilliseconds - start,
+                            "target", req.Target == null ? null : req.Target.Json(), "window", window, "element", element);
+                    }
+                }
+                long remaining = end - clock.ElapsedMilliseconds;
+                if (remaining <= 0) break;
+                Thread.Sleep((int)Math.Min(interval, remaining));
+            } while (true);
+            throw Fail("wait_timeout", "Condition '" + state + "' was not confirmed after " + (clock.ElapsedMilliseconds - start).ToString(Invariant) +
+                " ms (" + polls.ToString(Invariant) + " observations); last=" + last + ". No mutation was attempted.");
         }
 
         private object WindowAction()
@@ -685,12 +893,8 @@ public static class KilixDesktop
             return Map("target", req.Target.Json(), "submitted", true, "events", sent, "completion", "input_submitted");
         }
 
-        private object Screenshot(Target target)
+        private Native.RECT CaptureBounds(Target target)
         {
-            string path = Path.GetFullPath((string)req.Params["path"]);
-            bool overwrite = req.Params.ContainsKey("overwrite") && (bool)req.Params["overwrite"];
-            if (!Directory.Exists(Path.GetDirectoryName(path))) throw Fail("invalid_path", "Screenshot parent directory does not exist.");
-            if (!overwrite && File.Exists(path)) throw Fail("file_exists", "Screenshot already exists; choose another path or request overwrite.");
             Native.RECT bounds = DesktopRect();
             if (target != null)
             {
@@ -703,16 +907,54 @@ public static class KilixDesktop
             long width = (long)bounds.Right - bounds.Left, height = (long)bounds.Bottom - bounds.Top;
             if (width <= 0 || height <= 0) throw Fail("invalid_window_state", "The target has no visible screen bounds.");
             if (width > 16384 || height > 16384 || width * height > 67108864) throw Fail("capture_limit", "Capture exceeds 16384 pixels per dimension or 64 megapixels.");
+            return bounds;
+        }
+
+        private void CapturePng(Target target, Native.RECT bounds, Stream stream)
+        {
+            Available(); if (target != null) VerifyTarget(target);
+            using (Bitmap bitmap = new Bitmap(bounds.Right - bounds.Left, bounds.Bottom - bounds.Top, PixelFormat.Format32bppRgb))
+            {
+                CaptureScreen(bitmap, bounds);
+                Available(); if (target != null) VerifyTarget(target);
+                bitmap.Save(stream, ImageFormat.Png);
+            }
+            Available();
+        }
+
+        private object Capture(Target target)
+        {
+            Native.RECT bounds = CaptureBounds(target);
+            using (BoundedPngStream stream = new BoundedPngStream())
+            {
+                try { CapturePng(target, bounds, stream); }
+                catch (Exception)
+                {
+                    // GDI+ can wrap a Stream.Write exception as ExternalException.
+                    if (stream.Exceeded) throw Fail("capture_limit", "Encoded PNG exceeds 32 MiB.");
+                    throw;
+                }
+                if (stream.Exceeded) throw Fail("capture_limit", "Encoded PNG exceeds 32 MiB.");
+                byte[] png = stream.ToArray();
+                string hash;
+                using (SHA256 sha = SHA256.Create()) hash = BitConverter.ToString(sha.ComputeHash(png)).Replace("-", "").ToLowerInvariant();
+                Check();
+                return Map("png_base64", Convert.ToBase64String(png), "byte_length", png.Length, "sha256", hash,
+                    "bounds", RectJson(bounds), "capture", "screen", "occlusion_possible", true);
+            }
+        }
+
+        private object Screenshot(Target target)
+        {
+            string path = Path.GetFullPath((string)req.Params["path"]);
+            bool overwrite = req.Params.ContainsKey("overwrite") && (bool)req.Params["overwrite"];
+            if (!Directory.Exists(Path.GetDirectoryName(path))) throw Fail("invalid_path", "Screenshot parent directory does not exist.");
+            if (!overwrite && File.Exists(path)) throw Fail("file_exists", "Screenshot already exists; choose another path or request overwrite.");
+            Native.RECT bounds = CaptureBounds(target);
             string temporary = Path.Combine(Path.GetDirectoryName(path), ".kilix-capture-" + Guid.NewGuid().ToString("N") + ".tmp");
             try
             {
-                Available(); if (target != null) VerifyTarget(target);
-                using (Bitmap bitmap = new Bitmap((int)width, (int)height, PixelFormat.Format32bppRgb))
-                {
-                    CaptureScreen(bitmap, bounds);
-                    Available(); if (target != null) VerifyTarget(target);
-                    using (FileStream stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None)) bitmap.Save(stream, ImageFormat.Png);
-                }
+                using (FileStream stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None)) CapturePng(target, bounds, stream);
                 Available();
                 if (overwrite && File.Exists(path)) File.Replace(temporary, path, null);
                 else File.Move(temporary, path); // Atomic and fails if another writer won the destination.
@@ -779,47 +1021,92 @@ public static class KilixDesktop
                 "note", "Only provider-exposed UIA nodes are returned; some applications expose little or no accessibility tree.");
         }
 
-        private object ElementAction()
+        private sealed class ElementSearch
         {
-            string requested = (string)req.Params["element"];
-            AutomationElement root = AutomationElement.FromHandle(req.Target.Handle);
-            if (root == null) throw Fail("accessibility_unavailable", "The window has no UI Automation provider.");
-            // The same bounded raw view as inspect. Refuse if uniqueness cannot be established.
-            AutomationElement found = null; int matches = 0, visited = 0;
-            bool incomplete = false;
+            public readonly List<Dictionary<string, object>> Rows = new List<Dictionary<string, object>>();
+            public AutomationElement Element;
+            public int Visited;
+            public bool Incomplete, Truncated;
+        }
+
+        private bool MatchesElement(AutomationElement.AutomationElementInformation info, string id)
+        {
+            if (req.Params.ContainsKey("element")) return id == (string)req.Params["element"];
+            Dictionary<string, object> selector = ObjectValue(req.Params["selector"], "selector");
+            return MatchesElementFields(selector, info.IsPassword ? null : info.Name, info.AutomationId,
+                info.ControlType.ProgrammaticName.Replace("ControlType.", ""));
+        }
+
+        private ElementSearch SearchElements()
+        {
+            ElementSearch result = new ElementSearch();
+            int maxDepth = Number(req.Params, "depth", 32, 0, 64);
+            int limit = Number(req.Params, "limit", req.Operation == "invoke" || req.Operation == "set-value" ? 20000 : 2000, 1, 20000);
+            AutomationElement root;
+            try { root = AutomationElement.FromHandle(req.Target.Handle); }
+            catch (Exception e) { if (!ProviderFailure(e)) throw; result.Incomplete = true; return result; }
+            if (root == null) { result.Incomplete = true; return result; }
             Stack<Node> stack = new Stack<Node>(); stack.Push(new Node(root, 0, null));
-            while (stack.Count > 0 && visited < 20000)
+            HashSet<string> seen = new HashSet<string>(StringComparer.Ordinal);
+            while (stack.Count > 0 && result.Visited < limit)
             {
                 Available(); VerifyTarget(req.Target);
-                Node item = stack.Pop(); visited++;
+                Node item = stack.Pop(); result.Visited++;
                 try
                 {
-                    if (RuntimeId(item.Element) == requested) { found = item.Element; matches++; }
-                    if (matches > 1) throw Fail("ambiguous_element", "Multiple UIA elements have this runtime ID; inspect again.");
-                    if (item.Depth < 8)
+                    string id = RuntimeId(item.Element);
+                    if (id == null || !seen.Add(id)) { result.Incomplete = true; continue; }
+                    AutomationElement.AutomationElementInformation info = item.Element.Current;
+                    if (MatchesElement(info, id))
                     {
-                        AutomationElement child = TreeWalker.RawViewWalker.GetFirstChild(item.Element);
-                        int siblings = 0;
-                        while (child != null && siblings++ < 20000 && stack.Count + visited < 20000)
-                        { Check(); stack.Push(new Node(child, item.Depth + 1, null)); child = TreeWalker.RawViewWalker.GetNextSibling(child); }
-                        if (child != null) incomplete = true;
+                        // Read no ValuePattern/TextPattern contents during selection or waits.
+                        bool password = info.IsPassword || item.Element.Current.IsPassword;
+                        result.Rows.Add(Map("id", id, "name", password ? "" : info.Name, "automation_id", info.AutomationId,
+                            "control_type", info.ControlType.ProgrammaticName.Replace("ControlType.", ""), "depth", item.Depth,
+                            "enabled", info.IsEnabled, "offscreen", info.IsOffscreen, "password", password));
+                        result.Element = item.Element;
                     }
+                    // Check for children at the boundary: a depth limit is not proof of absence/uniqueness.
+                    AutomationElement child = TreeWalker.RawViewWalker.GetFirstChild(item.Element);
+                    if (item.Depth >= maxDepth) { if (child != null) result.Truncated = true; continue; }
+                    while (child != null && stack.Count + result.Visited < limit)
+                    { Check(); stack.Push(new Node(child, item.Depth + 1, null)); child = TreeWalker.RawViewWalker.GetNextSibling(child); }
+                    if (child != null) result.Truncated = true;
                 }
-                catch (Exception e) { if (!ProviderFailure(e)) throw; incomplete = true; }
+                catch (Exception e) { if (!ProviderFailure(e)) throw; result.Incomplete = true; }
             }
-            if (incomplete || stack.Count > 0) throw Fail("accessibility_incomplete", "The current UIA tree could not be searched completely; no element action was attempted.");
-            if (found == null) throw Fail("stale_element", "The runtime ID is no longer in this window's UIA tree; inspect again.");
+            if (stack.Count > 0) result.Truncated = true;
+            return result;
+        }
+
+        private void GuardElement(AutomationElement found, string id)
+        {
             Available(); VerifyTarget(req.Target);
-            if (RuntimeId(found) != requested) throw Fail("stale_element", "The UIA element identity changed.");
+            if (!Native.IsWindowVisible(req.Target.Handle) || Native.IsIconic(req.Target.Handle)) throw Fail("invalid_window_state", "UIA actions require a visible, restored window.");
+            if (!Native.IsWindowEnabled(req.Target.Handle)) throw Fail("element_disabled", "The target window is disabled.");
+            if (RuntimeId(found) != id) throw Fail("stale_element", "The UIA element identity changed.");
             EnsureElementInWindow(found);
             AutomationElement.AutomationElementInformation current = found.Current;
+            if (!MatchesElement(current, id)) throw Fail("stale_element", "The UIA element no longer matches the selector.");
             if (!current.IsEnabled) throw Fail("element_disabled", "The UIA element is disabled.");
+            if (current.IsOffscreen) throw Fail("element_offscreen", "The UIA element is offscreen; make it visible explicitly before acting.");
             if (current.IsPassword) throw Fail("password_element", "Password elements are not available to UIA invoke or set-value.");
+            Available(); VerifyTarget(req.Target);
+        }
+
+        private object ElementAction()
+        {
+            ElementSearch search = SearchElements();
+            if (search.Rows.Count > 1) throw Fail("ambiguous_element", "Multiple UIA elements match; narrow the selector. No action was attempted.");
+            if (search.Incomplete || search.Truncated) throw Fail("accessibility_incomplete", "The UIA search hit a limit or provider failure; uniqueness/absence is unknown. No action was attempted.");
+            if (search.Rows.Count == 0) throw Fail(req.Params.ContainsKey("element") ? "stale_element" : "element_not_found", "No UIA element matches in this window; find/inspect again.");
+            AutomationElement found = search.Element; string requested = (string)search.Rows[0]["id"];
+            GuardElement(found, requested);
             object pattern;
             if (req.Operation == "invoke")
             {
                 if (!found.TryGetCurrentPattern(InvokePattern.Pattern, out pattern)) throw Fail("unsupported_pattern", "The element does not support InvokePattern.");
-                Available(); VerifyTarget(req.Target); EnsureElementInWindow(found);
+                GuardElement(found, requested);
                 MutationStarted = true; ((InvokePattern)pattern).Invoke();
             }
             else
@@ -828,9 +1115,7 @@ public static class KilixDesktop
                 ValuePattern value = (ValuePattern)pattern;
                 if (value.Current.IsReadOnly) throw Fail("read_only_element", "The element value is read-only.");
                 // Never read ValuePattern.Value, TextPattern text, or password contents.
-                Available(); VerifyTarget(req.Target);
-                if (found.Current.IsPassword) throw Fail("password_element", "The element became a password field.");
-                EnsureElementInWindow(found);
+                GuardElement(found, requested);
                 MutationStarted = true;
                 value.SetValue((string)req.Params["text"]);
             }
@@ -840,7 +1125,7 @@ public static class KilixDesktop
         private void EnsureElementInWindow(AutomationElement element)
         {
             AutomationElement currentRoot = AutomationElement.FromHandle(req.Target.Handle);
-            for (int depth = 0; element != null && depth <= 8; depth++)
+            for (int depth = 0; element != null && depth <= 64; depth++)
             {
                 Check();
                 if (Automation.Compare(element, currentRoot)) return;
@@ -873,6 +1158,22 @@ public static class KilixDesktop
         public void Dispose() { if (mutex != null) { mutex.ReleaseMutex(); mutex.Dispose(); mutex = null; } }
     }
 
+    private sealed class BoundedPngStream : MemoryStream
+    {
+        public bool Exceeded { get; private set; }
+        private void Bound(long length)
+        {
+            if (length > MaxCaptureBytes)
+            { Exceeded = true; throw Fail("capture_limit", "Encoded PNG exceeds 32 MiB."); }
+        }
+        public override void Write(byte[] buffer, int offset, int count)
+        { Bound(Position + (long)count); base.Write(buffer, offset, count); }
+        public override void WriteByte(byte value)
+        { Bound(Position + 1); base.WriteByte(value); }
+        public override void SetLength(long value)
+        { Bound(value); base.SetLength(value); }
+    }
+
     private static void CaptureScreen(Bitmap bitmap, Native.RECT bounds)
     {
         // Graphics.CopyFromScreen rejects combined raster flags on .NET Framework.
@@ -896,6 +1197,20 @@ public static class KilixDesktop
 
     private static bool ProviderFailure(Exception e)
     { return e is ElementNotAvailableException || e is InvalidOperationException || e is COMException || e is UnauthorizedAccessException; }
+
+    private static bool MatchesApp(string app, string processPath)
+    {
+        string expected = app.Replace('/', '\\'), actual = processPath.Replace('/', '\\');
+        if (expected.IndexOf('\\') < 0) actual = actual.Substring(actual.LastIndexOf('\\') + 1);
+        return String.Equals(expected, actual, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool MatchesElementFields(Dictionary<string, object> selector, string name, string automationId, string controlType)
+    {
+        return (!selector.ContainsKey("name") || String.Equals((string)selector["name"], name, StringComparison.Ordinal)) &&
+            (!selector.ContainsKey("automation_id") || String.Equals((string)selector["automation_id"], automationId, StringComparison.Ordinal)) &&
+            (!selector.ContainsKey("control_type") || String.Equals((string)selector["control_type"], controlType, StringComparison.Ordinal));
+    }
 
     private static object NodeJson(AutomationElement element, int depth, string parent, string id)
     {
@@ -1065,7 +1380,7 @@ public static class KilixDesktop
         int length = Math.Min(32767, Math.Max(0, Native.GetWindowTextLength(hwnd)));
         StringBuilder title = new StringBuilder(length + 1); Native.GetWindowText(hwnd, title, title.Capacity); return title.ToString();
     }
-    private static object WindowInfo(IntPtr hwnd, string title)
+    private static Dictionary<string, object> WindowInfo(IntPtr hwnd)
     {
         uint pid; Native.GetWindowThreadProcessId(hwnd, out pid);
         IntPtr process = Native.OpenProcess(0x1000, false, pid);
@@ -1077,8 +1392,11 @@ public static class KilixDesktop
             StringBuilder cls = new StringBuilder(256); Native.GetClassName(hwnd, cls, cls.Capacity);
             StringBuilder path = new StringBuilder(32768); int size = path.Capacity;
             string executable = Native.QueryFullProcessImageName(process, 0, path, ref size) ? path.ToString() : null;
-            return Map("title", title, "class", cls.ToString(), "rect", RectJson(WindowRect(hwnd)),
-                "minimized", Native.IsIconic(hwnd), "target", target.Json(), "process_path", executable);
+            Dictionary<string, object> row = Map("title", WindowTitle(hwnd), "class", cls.ToString(), "rect", RectJson(WindowRect(hwnd)),
+                "minimized", Native.IsIconic(hwnd), "visible", Native.IsWindowVisible(hwnd), "enabled", Native.IsWindowEnabled(hwnd),
+                "target", target.Json(), "process_path", executable);
+            VerifyTarget(target);
+            return row;
         }
         finally { Native.CloseHandle(process); }
     }
@@ -1237,6 +1555,7 @@ public static class KilixDesktop
         [DllImport("user32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr parameter);
         [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool IsWindow(IntPtr hwnd);
         [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool IsWindowVisible(IntPtr hwnd);
+        [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool IsWindowEnabled(IntPtr hwnd);
         [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool IsIconic(IntPtr hwnd);
         [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool IsZoomed(IntPtr hwnd);
         [DllImport("user32.dll", SetLastError = true)] public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);

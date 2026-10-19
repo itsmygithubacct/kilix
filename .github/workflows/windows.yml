@@ -104,6 +104,7 @@ jobs:
           Copy-Item "$env:USERPROFILE\kilix-build\toolchain-packages.txt" .\src\dist\toolchain-packages.txt
           Copy-Item .\src\dist\kilix\signing.json .\src\dist\signing.json
           Copy-Item .\src\dist\kilix\release.json .\src\dist\release.json
+          Copy-Item .\windows\RELEASE-NOTES.md .\src\dist\RELEASE-NOTES.md
           Copy-Item "$env:RUNNER_TEMP/kilix-companion/companion.tar.gz*" .\src\dist
           python .\windows\export-source.py --output .\src\dist
           if ($LASTEXITCODE -ne 0) { throw 'Source export failed' }
@@ -120,6 +121,7 @@ jobs:
             src/dist/toolchain-packages.txt
             src/dist/signing.json
             src/dist/release.json
+            src/dist/RELEASE-NOTES.md
             src/dist/companion.tar.gz
             src/dist/companion.tar.gz.sha256
 
@@ -142,16 +144,6 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
           GH_REPO: ${{ github.repository }}
         run: |
-          cat > "$RUNNER_TEMP/notes.txt" <<'NOTES'
-          Native Windows x64 preview with PowerShell, Command Prompt and optional WSL profiles.
-
-          Includes unified per-user setup/update/rollback and pinned companion sources.
-          WSL is optional; use setup.ps1 -WslDistribution NAME for companion provisioning.
-          This workflow produces unsigned builds; signing.json records the actual status.
-          Hosted CI checks compilation and CLI behavior. Desktop, GPU and WSL integration
-          require the separate interactive hardware tests before publication.
-          Extract the complete ZIP. Source, exact revisions and SHA256 checksums are attached.
-          NOTES
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = true
             gh release upload "$RELEASE_TAG" preview/* --clobber
@@ -159,5 +151,5 @@ jobs:
             prerelease=()
             if [[ "$RELEASE_TAG" == *-preview.* ]]; then prerelease=(--prerelease); fi
             gh release create "$RELEASE_TAG" preview/* --verify-tag --draft "${prerelease[@]}" \
-              --title "Kilix $RELEASE_TAG" --notes-file "$RUNNER_TEMP/notes.txt"
+              --title "Kilix $RELEASE_TAG" --notes-file preview/RELEASE-NOTES.md
           fi

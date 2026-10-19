@@ -1,4 +1,4 @@
-Kilix 0.2.2 for Windows — development build
+Kilix 0.2.2 for Windows — preview
 
 Extract the complete folder and open Kilix.exe. Windows x64 is required.
 The renderer is a native Win32/OpenGL application. WSL is optional.
@@ -51,6 +51,17 @@ Native CLI (no WSL or separately installed Python required):
   kilix status --json
   kilix setup --help          Install/rollback/recovery script options
   kilix update --help         Release checks/apply and opt-in scheduling
+
+Windows desktop automation (also available from WSL):
+  kilix desktop --help
+  kilix desktop find --app notepad.exe --title notes --json
+  kilix desktop wait --app notepad.exe --title notes --for visible
+  kilix desktop screenshot --local .\desktop.png
+
+The desktop must be logged in and unlocked. See desktop-targeting.md for
+control selectors, condition waits and SDK examples. examples/README.txt
+shows how to run the bundled Notepad example. RELEASE-NOTES.md describes
+the preview and its qualification scope.
 
 Transcripts are explicit snapshots of retained terminal output; automatic
 recording and pruning are not enabled. Saved logs can be listed/read/replayed.

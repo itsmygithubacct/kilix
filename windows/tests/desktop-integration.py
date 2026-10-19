@@ -6,6 +6,7 @@ Requires an unlocked desktop for the invoking Windows user.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 from contextlib import contextmanager
 import os
@@ -130,6 +131,24 @@ def run(root, evidence=None):
                 check(screenshot.read_bytes() == png, 'screenshot preserves existing file')
             else:
                 raise RuntimeError('Screenshot unexpectedly overwrote existing file')
+            local_path = temporary / 'local screen 字.png'
+            local = client.capture_to_local(local_path, target=target)
+            local_png = local_path.read_bytes()
+            check(local['path'] == str(local_path.resolve()) and local['byte_length'] == len(local_png)
+                  and local['sha256'] == hashlib.sha256(local_png).hexdigest(), 'local capture integrity and caller path')
+            check(local['bounds'] == capture['bounds'] and struct.unpack('>II', local_png[16:24]) ==
+                  (local['bounds']['width'], local['bounds']['height']), 'local and native screenshot physical bounds agree')
+            check('png_base64' not in local, 'local capture returns metadata only')
+            try:
+                client.capture_to_local(local_path, target=target)
+            except DesktopError as error:
+                check(error.code == 'file_exists' and local_path.read_bytes() == local_png,
+                      'local capture refuses overwrite')
+            else:
+                raise RuntimeError('Local capture unexpectedly overwrote existing file')
+            replaced = client.capture_to_local(local_path, target=target, overwrite=True)
+            check(replaced['sha256'] == hashlib.sha256(local_path.read_bytes()).hexdigest(),
+                  'local capture explicit overwrite')
             requested = {'x': 180, 'y': 150, 'width': 700, 'height': 500}
             movement = call('move', **requested)
             moved = client.call('windows', params={'pid': target['pid']})['windows'][0]['rect']

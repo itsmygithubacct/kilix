@@ -101,6 +101,8 @@ try {
     $temporary = [IO.Path]::Combine([IO.Path]::GetDirectoryName($responseFullPath), '.kilix-response-' + [Guid]::NewGuid().ToString('N') + '.tmp')
     $json = ConvertTo-Json -InputObject $response -Depth 32 -Compress
     $bytes = [Text.UTF8Encoding]::new($false).GetBytes($json + "`n")
+    # Allow a 32 MiB PNG in base64 plus its envelope, with a bounded reply.
+    if ($bytes.Length -gt 50331648) { throw 'Desktop response exceeds 48 MiB.' }
     $stream = [IO.FileStream]::new($temporary, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
     try { $stream.Write($bytes, 0, $bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
     if ([IO.File]::Exists($responseFullPath)) {

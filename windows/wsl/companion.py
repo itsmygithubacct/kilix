@@ -154,7 +154,8 @@ def main(args):
         sys.path.insert(0, str(ROOT / 'wsl-bin/config'))
         from kilix_sdk import windows
         return windows.main(args[1:], prog='kilix ' + args[0],
-                            runner=windows.cli_runner([str(ROOT / 'kilix-cli.exe'), 'desktop']))
+                            runner=windows.cli_runner([str(ROOT / 'kilix-cli.exe'), 'desktop']),
+                            local_paths=True)
     refresh_environment()
     aliases = {'--settings': 'settings', 'transcripts': 'transcript',
                'session-log': 'transcript', 'session-logs': 'transcript'}

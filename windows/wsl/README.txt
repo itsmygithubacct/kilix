@@ -16,6 +16,9 @@ Windows desktop control (separate from terminal panes)
   kilix desktop key --window 123456 CTRL+A
   kilix desktop click --window 123456 --x 80 --y 100
   kilix desktop screenshot 'C:\Temp\desktop.png'
+  kilix desktop screenshot ./desktop.png
+  kilix desktop screenshot /mnt/c/Temp/desktop.png
+  kilix desktop screenshot --local ./window.png --window 123456
   kilix desktop launch -- notepad.exe 'C:\Temp\notes.txt'
 
 Use an HWND from windows/launch, or all three saved identity fields:
@@ -36,10 +39,16 @@ window-relative pixels. Locked sessions, UAC and elevated UI can block access.
 No login/RDP management or network server is provided. Launch reports process
 and window availability, not application task completion. Close sends WM_CLOSE.
 
-Paths in requests are Windows paths by default and are not translated. For
-example, C:\Temp\desktop.png becomes /mnt/c/Temp/desktop.png in WSL. Use an
-existing output directory; screenshot refuses overwrite unless --overwrite is
-given. --timeout is 1..60 seconds (default 20), with no automatic retry.
+Raw screenshot requests and positional Windows drive/UNC paths save on Windows.
+Positional Linux screenshot paths automatically save in WSL, including /mnt/c
+paths; --local PATH also explicitly writes on the caller. Use one path, ending
+in .png, with an existing output directory. Local capture verifies the PNG
+header/dimensions, byte length and SHA-256 and publishes atomically; no remote
+PNG file is left behind. The PNG payload limit is 32 MiB. Results contain path,
+hash, byte length and physical bounds, without image bytes. Existing files are
+refused unless --overwrite is given, including competing writes; symlinks and
+special files are refused. Linux atomic no-clobber writes need hard-link support.
+--timeout is 1..60 seconds (default 20), with no automatic retry.
 --json works before/after the operation, before literal launch argv. Full
 requests use --json --request-json - and the kilix.desktop/v1 schema documented
 in windows/README.md. Failures return a JSON error and nonzero exit status.

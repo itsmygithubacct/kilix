@@ -61,7 +61,7 @@ def export(output, host=None):
     archives = [destination, output / 'kilix-0.2.2-windows-x64-dev.zip']
     # Every shipped metadata/companion asset is covered, including signing status.
     archives += [output / name for name in ('source-revisions.json', 'toolchain-packages.txt',
-                 'companion.tar.gz', 'companion.tar.gz.sha256', 'signing.json', 'release.json')
+                 'companion.tar.gz', 'companion.tar.gz.sha256', 'signing.json', 'release.json', 'RELEASE-NOTES.md')
                  if (output / name).is_file()]
     lines = []
     for path in archives:

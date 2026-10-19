@@ -90,6 +90,8 @@ class SSHTransport:
         except OSError as error:
             return failure('transport_error', str(error))
         try:
+            if len(result.stdout.encode('utf-8')) > windows.MAX_RESPONSE_BYTES:
+                return failure('transport_error', 'Desktop response exceeds 48 MiB.')
             reply = json.loads(result.stdout.lstrip('\ufeff'))
             if (not isinstance(reply, dict) or reply.get('schema') != 'kilix.desktop/v1'
                     or reply.get('operation') != request['operation'] or type(reply.get('ok')) is not bool):
@@ -116,7 +118,7 @@ def main(argv=None):
             print('Usage: kilix windows --host SSH_ALIAS [--windows-root WINDOWS_PACKAGE_DIR] COMMAND [OPTIONS]\n'
                   'Uses existing SSH authentication and ProxyJump/ProxyCommand configuration.\n'
                   'The Windows user must have one active desktop and Kilix installed.\n'
-                  'Screenshot paths are on Windows; copy them with scp if needed.\n')
+                  'screenshot --local PATH saves on this caller; positional Windows paths save on Windows.\n')
             return windows.main(['--help'], prog='kilix windows')
         if remaining[0] == 'capabilities' or '--help' in remaining or '-h' in remaining:
             return windows.main(remaining, prog='kilix windows')

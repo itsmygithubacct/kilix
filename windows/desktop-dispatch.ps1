@@ -99,6 +99,7 @@ public static class KilixDesktopLogins {
             Start-Sleep -Milliseconds 100
         }
         if (Test-Path -LiteralPath $outputPath -PathType Leaf) {
+            if ((Get-Item -LiteralPath $outputPath).Length -gt 50331648) { throw 'Desktop response exceeds 48 MiB.' }
             $reply = ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($outputPath, $utf8))
             $received = $true
         } else {

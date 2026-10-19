@@ -12,6 +12,7 @@ import subprocess
 import sys
 
 SCHEMA = 'kilix.desktop/v1'
+MAX_RESPONSE_BYTES = 48 * 1024 * 1024  # 32 MiB PNG encoded as base64 plus metadata.
 
 
 def failure(operation, code, message):
@@ -48,6 +49,8 @@ def execute(request: dict) -> dict:
     except OSError as error:
         return failure(operation, 'transport_error', str(error))
     try:
+        if len(result.stdout.encode('utf-8')) > MAX_RESPONSE_BYTES:
+            return failure(operation, 'transport_error', 'Desktop response exceeds 48 MiB.')
         reply = json.loads(result.stdout.lstrip('\ufeff'))
         if (not isinstance(reply, dict) or reply.get('schema') != SCHEMA
                 or type(reply.get('ok')) is not bool or reply.get('operation') != operation):
