@@ -7,6 +7,7 @@ import sys
 import signal
 import subprocess
 import termios
+import threading
 from pathlib import Path
 
 
@@ -20,17 +21,26 @@ def run_player(command):
     saved = termios.tcgetattr(fd)
     previous = {}
     player = None
+    diagnostics = bytearray()
+    reader = None
+    code = None
+
+    def collect():
+        # Drain continuously so a noisy decoder cannot fill the pipe and stall.
+        while chunk := player.stderr.read(4096):
+            diagnostics.extend(chunk)
+            del diagnostics[:-65536]
+
     try:
-        player = subprocess.Popen(command)
+        player = subprocess.Popen(command, stderr=subprocess.PIPE)
+        reader = threading.Thread(target=collect, daemon=True)
+        reader.start()
         def forward(signum, frame):
             if player.poll() is None:
                 player.send_signal(signum)
         for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
             previous[signum] = signal.signal(signum, forward)
         code = player.wait()
-        if code < 0:
-            print(f"kilix video: player terminated by signal {-code}; terminal restored.",
-                  file=sys.stderr)
         return code if code >= 0 else 128 - code
     finally:
         if player is not None and player.poll() is None:
@@ -47,6 +57,18 @@ def run_player(command):
         finally:
             for signum, handler in previous.items():
                 signal.signal(signum, handler)
+        # Print after leaving the alternate screen, including native crash text.
+        if reader is not None:
+            reader.join(timeout=1)
+            if not reader.is_alive():
+                player.stderr.close()
+        if diagnostics:
+            text = diagnostics.decode('utf-8', errors='replace')
+            text = ''.join(c for c in text if c in '\n\t' or c.isprintable())
+            print(text.rstrip(), file=sys.stderr)
+        if code is not None and code < 0:
+            print(f"kilix video: player terminated by signal {-code}; terminal restored.",
+                  file=sys.stderr)
 
 
 def main(argv=None):
@@ -90,7 +112,9 @@ def main(argv=None):
     # -- terminates options so media names cannot become player instructions.
     command = [mpv, "--no-config", "--load-scripts=no", "--vo=" + args.vo,
                "--terminal=yes", "--input-terminal=yes", "--force-window=no",
-               "--audio-display=no", "--term-osd=no", "--term-status-msg="]
+               "--audio-display=no", "--term-osd=no", "--term-status-msg=",
+               "--msg-level=all=warn", "--msg-color=no",
+               "--script=" + str(Path(__file__).with_name('terminal_video_errors.lua'))]
     if args.transport == "shm":
         command.append("--vo-kitty-use-shm=yes")
     if args.mute:
