@@ -216,5 +216,56 @@ class WizardTests(unittest.TestCase):
                 system_llm.acquire(model)
         call.assert_not_called()
 
+    def test_workflows_readiness_asks_needle_through_the_selected_catalog(self):
+        calls = []
+        def run(command, **kwargs):
+            calls.append((command, kwargs))
+            status = {'schema': 'kilix.workflows/v1', 'ready': True, 'status': 'ready', 'errors': []}
+            return subprocess.CompletedProcess(command, 0, b'notice\n' + json.dumps(status).encode())
+        with patch.object(wizard, 'catalog', return_value=[asset('needle2')]):
+            wizard.apply('workflows', ['needle2'], 'yes')
+            with patch('wizard_licenses.consent_and_install', return_value=({'needle2'}, set())), \
+                    patch.object(wizard.subprocess, 'run', side_effect=run), \
+                    patch.object(wizard.subprocess, 'call') as call, \
+                    patch.object(wizard, 'legacy_state') as legacy:
+                wizard.finish()
+        call.assert_not_called()
+        self.assertEqual(calls, [([wizard.launcher(), 'app', 'run', 'kilix-needle', '--',
+                                   'workflows', 'status', '--json'],
+                                  {'stdin': subprocess.DEVNULL, 'stdout': subprocess.PIPE})])
+        legacy.assert_called_once_with('workflows', {'answer': 'yes'})
+        self.assertEqual(wizard.answers()['workflows']['models'], ['needle2'])
+        self.assertEqual(wizard.pending(), {})
+
+    def test_unready_or_unreadable_workflows_status_keeps_the_page_pending(self):
+        ready = {'schema': 'kilix.workflows/v1', 'ready': True, 'status': 'ready', 'errors': []}
+        unready = dict(ready, ready=False, status='not-ready', detail='Workflow model setup needs attention.',
+                       errors=['needle2-runtime: agreement-required'])
+        cases = {'unready': (1, unready, 'agreement-required'), 'unrouted': (1, None, 'did not report'),
+                 'mismatch': (0, unready, 'did not report'), 'schema': (0, dict(ready, schema='other'), 'did not report'),
+                 'crash': (2, ready, 'did not report')}
+        with patch.object(wizard, 'catalog', return_value=[asset('needle2')]):
+            for name, (code, status, message) in cases.items():
+                with self.subTest(name):
+                    wizard.apply('workflows', ['needle2'], 'yes')
+                    output = b'' if status is None else json.dumps(status).encode()
+                    with patch('wizard_licenses.consent_and_install', return_value=({'needle2'}, set())), \
+                            patch.object(wizard.subprocess, 'run',
+                                         return_value=subprocess.CompletedProcess([], code, output)), \
+                            patch.object(wizard, 'legacy_state') as legacy:
+                        with self.assertRaisesRegex(ValueError, message): wizard.finish()
+                    legacy.assert_not_called()
+                    self.assertIn('workflows', wizard.pending())
+
+    def test_every_launcher_verb_the_wizard_runs_is_routed_by_the_launcher(self):
+        import re
+        # An unrouted verb reaches the terminal engine as a program to open.
+        labels = {label for line in re.findall(r'^\s*([a-z][a-z0-9|-]*)\)', Path(wizard.launcher()).read_text(), re.M)
+                  for label in line.split('|')}
+        verbs = set(re.findall(r"run_command\('([a-z-]+)'", Path(wizard.__file__).read_text()))
+        verbs.add(wizard.workflows_command()[1])
+        self.assertTrue(verbs >= {'tts', 'stt', 'app'})
+        self.assertEqual(verbs - labels, set())
+
 
 if __name__ == '__main__': unittest.main()
