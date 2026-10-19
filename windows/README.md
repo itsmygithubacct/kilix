@@ -128,7 +128,73 @@ kilix --launch kilix-pong
 Needle retains its confirmation, target, readiness and model-license checks.
 Prompt-sensitive typing requires shell prompt integration; it is refused when
 the native pane cannot establish prompt readiness. Linux desktop services,
-catalogue-wide app installation, and Linux session recovery are not ported.
+catalogue-wide app installation remain separate from session recovery below.
+
+## Recoverable WSL sessions
+
+After companion setup with a current source bundle, opt a shell or program into
+persistence inside a WSL pane:
+
+```sh
+kilix session new work               # a new login shell
+kilix session new build -- make all  # or a specific program
+kilix session list --json
+kilix session detach                # inside the managed shell; or detach NAME
+kilix session attach work            # in a fresh WSL pane after closing a window
+kilix session restore                # detached live sessions in new native tabs
+kilix session kill work              # deliberately terminate its processes
+```
+
+`sessions` is an alias for `session`. Names contain 1–32 letters, digits,
+underscores or hyphens and start with a letter or digit. Sessions belong to one
+WSL distribution and Linux user. Creating/attaching needs an interactive
+terminal; listing, detaching and terminating also work from a WSL command line.
+`restore` needs an authenticated Kilix control connection and skips attached
+sessions. A second attachment is refused until the first disconnects.
+
+This reuses the pinned [kitty-pty-broker](https://github.com/itsmygithubacct/kitty-pty-broker).
+Its independent process owns the real Linux PTY: closing a Kilix pane/window
+disconnects the client and preserves the shell, working directory, in-memory
+state and running programs. `attach` and `restore` reconnect existing processes;
+they never rerun an exited command. Ordinary panes are unchanged. Native
+PowerShell/cmd sessions **are not persistent**: the renderer owns their ConPTY
+and kill-on-close Windows job. Retaining native sessions requires a separate
+ConPTY owner, which this implementation does not provide.
+The [Windows pseudoconsole API](https://learn.microsoft.com/en-us/windows/console/creating-a-pseudoconsole-session)
+requires its host to retain and service the communication pipes.
+
+The broker forwards inline graphics unchanged. It retains at most 64 MiB of
+replay; overflow discards older screen history and attach reports truncation.
+Replayed file/shared-memory images may no longer exist; use inline transfers
+and redraw the application if necessary. Native tab layout, renderer-only
+scrollback, and exact historical screen/image reconstruction are not saved.
+This protects against frontend loss, not Windows reboot/logoff, WSL shutdown or
+termination, OOM, or loss of the broker. WSL still controls distribution/VM
+lifetime; Kilix does not change WSL configuration or install a keep-alive service.
+
+Private broker data lives in `/tmp/kilix-wsl-UID` (mode 0700). Each live
+attachment records its native control context, including password and WSL
+interop route, in a mode 0600 file. Companion commands in the surviving shell
+refresh that context on every invocation; detached or stale attachments fail
+closed. Existing application environments cannot be rewritten: direct Windows
+executables or long-running tools that cache old control credentials may need
+restarting. Use the `kilix` companion for native control after reconnecting.
+Retain the installation used by a live session until its work has finished.
+
+The Linux regression suite builds the pinned broker and destroys a real client
+PTY, then verifies unchanged process identity/state, output while detached,
+graphics bytes, credential refresh, detach/kill behavior and exact child exit
+status. Initialize `third_party/kitty-pty-broker` before running it; set
+`KILIX_REQUIRE_RECOVERY_TESTS=1` to treat missing build prerequisites as failure.
+Native window-close/reopen and WSL interop checks still need a dedicated Windows
+desktop instance; the Linux tests do not establish those hardware results.
+`tests/wsl-recovery.py` provides the two-phase desktop probe: set
+`KILIX_TEST_ISOLATED=1` and `KILIX_TEST_APP_WSL`, run `start RESULT_DIRECTORY`
+inside the first dedicated WSL pane, wait for `ready.json`, close its native
+window, and verify `heartbeat.json` advances. In a new dedicated WSL pane run
+`attach RESULT_DIRECTORY`; `result.json` records the preserved PID/token and
+native pane listing, new-tab and fullscreen checks. On failure, run
+`cleanup RESULT_DIRECTORY` to terminate only that probe's session.
 
 ## Validation
 
@@ -212,8 +278,9 @@ catalog on Linux; native rendering and WSLg audio remain hardware tests.
 ## Scope and remaining work
 
 This is a usable development port, not a fully qualified Windows release.
-Linux desktop services, in-pane browser, voice tools, and the persistent PTY
-broker/recovery are unavailable. Unsupported Linux chrome widgets are hidden.
+Linux desktop services, in-pane browser, voice tools, and native PowerShell/cmd
+process recovery are unavailable. WSL recovery is opt-in as described above.
+Unsupported Linux chrome widgets are hidden.
 The native Windows backend still contains inherited compatibility shims that
 need further review before expanding supported capabilities.
 
@@ -221,8 +288,9 @@ The shipped profile enables authenticated WSL control on Windows loopback.
 Each native instance generates a random password, forwards it with its endpoint
 and public key through WSLENV, and rejects missing or unknown credentials.
 The companion calls the native kitten through interop; no LAN listener is used.
-The password stays in process environments and is redacted from companion
-`@ ls` output. Child programs inherit control of their terminal instance.
+The password stays in process environments and, for managed WSL sessions, the
+private attachment file described above. It is redacted from companion `@ ls`
+output. Child programs inherit control of their terminal instance.
 Set `allow_remote_control no` in user configuration to disable this feature.
 The separate graphics pipe
 rejects network clients and restricts access to the current Windows user and

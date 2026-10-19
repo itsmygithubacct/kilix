@@ -109,6 +109,7 @@ class CompanionTests(unittest.TestCase):
             (root / 'wsl-bin').mkdir()
             shutil.copy2(source / 'windows/wsl/companion.py', root / 'wsl/companion.py')
             shutil.copy2(source / 'windows/wsl/games.py', root / 'wsl/games.py')
+            shutil.copy2(source / 'windows/wsl/recovery.py', root / 'wsl/recovery.py')
             shutil.copy2(source / 'windows/wsl/kitten.sh', root / 'wsl-bin/kitten')
             (root / 'wsl-bin/kitten').chmod(0o755)
             (root / 'wsl-bin/config').symlink_to(source / 'config', target_is_directory=True)

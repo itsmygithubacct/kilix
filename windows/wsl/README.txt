@@ -77,3 +77,38 @@ Raw launch
 options that have no supported translation fail explicitly. Prompt-sensitive
 Needle typing still requires shell integration. Desktop services and the full
 Linux app installer are outside this companion's current scope.
+
+Recoverable WSL sessions (current companion bundle required):
+  kilix session new work                 # start a persistent login shell
+  kilix session new build -- make all    # or a specific program
+  kilix session list [--json]            # this Linux user and distribution
+  kilix session detach                  # inside work; or detach NAME elsewhere
+  kilix session attach work             # in a fresh WSL pane
+  kilix session restore                 # detached sessions in new native tabs
+  kilix session kill work               # terminate its process tree
+
+`kilix sessions` is an alias. Names are 1-32 letters/digits/_/-, starting with
+a letter or digit. Closing a managed pane/window detaches; ordinary panes do
+not become persistent. A second attachment is refused until the first detaches.
+Exit ends the shell normally. Attach/restore never rerun an exited command.
+Restore requires native control; attach also works from another WSL terminal.
+Explicit detach requires Linux pidfd support (WSL2); on older kernels, close
+the attached pane instead.
+
+The same pinned kitty-pty-broker used by Linux Kilix owns the PTY and live
+processes. There is no tmux parser in this path; inline graphics are forwarded
+unchanged. At most 64 MiB of raw replay is retained. Overflow loses older
+history and attach reports it; applications may need a redraw. File/shared
+memory images, native tab layouts and exact renderer state are not restored.
+Reboot/logoff, WSL shutdown/termination, OOM or broker death ends the work.
+WSL controls VM lifetime; setup does not change it or install a keep-alive.
+Native PowerShell/cmd sessions are not persistent.
+
+Runtime files are private under /tmp/kilix-wsl-UID. The active attachment keeps
+native control credentials and WSL_INTEROP in a mode 0600 file. The companion
+refreshes them on every call, so pane/tab/fullscreen commands target the new
+window after reconnect. Detached/stale attachments cannot use old credentials.
+Existing process environments are otherwise unchanged; direct Windows exe
+calls or applications caching control details may need restarting. Use kilix
+for native control after reconnect. Retain the old native installation while
+sessions created from it are still running.

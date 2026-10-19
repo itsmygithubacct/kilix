@@ -44,11 +44,19 @@ unsigned prompt integration is skipped; PowerShell, tabs and splits still
 work, but automatic prompt marks and prompt-based title updates are absent.
 
 This development port preserves the RC6-era terminal engine and pane chrome.
-Linux desktop integration, in-pane browser, voice tools, and persistent PTY
-broker/recovery are unavailable on Windows. Closing Kilix ends its Windows
-child sessions. WSL background jobs retain WSL's own lifetime rules.
+Linux desktop integration, in-pane browser and voice tools are unavailable.
+Closing Kilix ends its native PowerShell/cmd sessions. To preserve WSL work,
+install the current companion bundle, then run `kilix session new work` in WSL.
+Close the pane/window or run `kilix session detach` inside that managed shell.
+In a fresh WSL pane use `kilix session list`, `kilix session attach work`, or
+`kilix session restore` (detached sessions in new tabs). `session kill work`
+terminates the live processes. This reconnects real processes; it cannot bring
+back work after reboot, WSL shutdown or broker termination. Ordinary panes are
+unchanged. See wsl/README.txt for limits, replay and native control after attach.
 WSL control uses a Windows loopback listener and a random per-instance password
-passed only through child environments. Unknown or missing passwords are denied.
+passed through child environments. Managed WSL sessions also keep the current
+attachment's control context in a private Linux file for reconnection.
+Unknown or missing passwords are denied.
 Set `allow_remote_control no` in user configuration to disable WSL control.
 The graphics pipe is local and restricted to the current Windows user and SYSTEM.
 

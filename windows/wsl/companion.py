@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 from games import game_path, installed_games
+from recovery import refresh_environment
 
 ROOT = Path(__file__).resolve().parents[1]
 STATE = Path.home() / '.local/share/kilix-wsl'
@@ -20,6 +21,7 @@ PYTHON = INSTALL / 'bin/python3'
 
 
 def environment():
+    refresh_environment()
     env = os.environ.copy()
     paths = [str(INSTALL / 'bin'), str(ROOT / 'wsl-bin'), *env.get('PATH', '').split(':')]
     env['PATH'] = ':'.join(dict.fromkeys(paths))
@@ -32,6 +34,7 @@ def environment():
 
 
 def require_control():
+    refresh_environment()
     if (not re.fullmatch(r'tcp:127\.0\.0\.1:[0-9]+', os.environ.get('KITTY_LISTEN_ON', ''))
             or not os.environ.get('KITTY_RC_PASSWORD')
             or not re.fullmatch(r'[1-9][0-9]*', os.environ.get('KITTY_WINDOW_ID', ''))):
@@ -142,12 +145,14 @@ def remote(args):
 
 
 def main(args):
+    refresh_environment()
     if not args or args[0] in ('--help', '-h', 'help'):
         print('''Kilix WSL commands:
   needle [ARGS]                 Run Needle's Linux command/model tools
   launch, --launch PROGRAM [ARGS]  Run a Linux app in a new native Kilix tab
   apps [--json]                List installed WSL apps
   games list | play NAME [ARGS]  List or run an installed game in this pane
+  session, sessions            WSL live sessions: new/list/detach/attach/restore/kill
   ls [--panes]                  List native tabs/panes
   pane, tab, focus, watch       Control the current native Kilix window
   fullscreen                   Toggle native fullscreen
@@ -162,6 +167,9 @@ App commands run in the current WSL distribution. --cwd=current uses the
 invoking Linux process's directory. Linux desktop services are not Windows services.''')
         return 0
     verb, rest = args[0], args[1:]
+    if verb in ('session', 'sessions'):
+        from recovery import main as sessions
+        return sessions(rest, install=INSTALL, env=environment(), remote=remote)
     if verb == 'native':
         return subprocess.call([str(ROOT / 'kilix-cli.exe'), *rest])
     if verb in ('version', '--version', 'engine', 'cmd', 'powershell', 'wsl', '--cmd', '--wsl'):
@@ -224,6 +232,6 @@ solitaire and lander. Use kilix --launch NAME [ARGS] for a new tab.''')
 if __name__ == '__main__':
     try:
         raise SystemExit(main(sys.argv[1:]))
-    except (ValueError, OSError) as error:
+    except (ValueError, OSError, subprocess.SubprocessError) as error:
         print(f'kilix: {error}', file=sys.stderr)
         raise SystemExit(2)
