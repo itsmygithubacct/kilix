@@ -2,6 +2,21 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Shared by setup, diagnostics and offline transaction tests. No actions on import.
 
+function ConvertTo-KilixFileSystemPath([string]$Path) {
+    if ($env:OS -ne 'Windows_NT') { return [IO.Path]::GetFullPath($Path) }
+    $path = $Path.Replace('/', '\')
+    if ($path.StartsWith('\\?\', [StringComparison]::Ordinal)) { return $path }
+    # Resolve relative/dot segments before adding the extended prefix. Package
+    # paths are already absolute with validated relative entry names, so avoid
+    # legacy GetFullPath's MAX_PATH check on those complete file paths.
+    if ($path -notmatch '^(?:[A-Za-z]:\\|\\\\[^\\]+\\[^\\]+(?:\\|$))' -or
+        $path -match '(?:^|\\)\.\.?(?:\\|$)') {
+        $path = [IO.Path]::GetFullPath($path)
+    }
+    if ($path.StartsWith('\\', [StringComparison]::Ordinal)) { return '\\?\UNC\' + $path.Substring(2) }
+    return '\\?\' + $path
+}
+
 function Write-KilixJson([string]$Path, $Value) {
     $temporary = $Path + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
     $backup = $temporary + '.previous'
@@ -18,7 +33,7 @@ function Write-KilixJson([string]$Path, $Value) {
 }
 
 function Assert-KilixRegularPath([string]$Path) {
-    $item = [IO.Path]::GetFullPath($Path)
+    $item = [IO.Path]::GetFullPath((ConvertTo-KilixFileSystemPath $Path))
     while ($item) {
         if (Test-Path -LiteralPath $item) {
             if ((Get-Item -Force -LiteralPath $item).Attributes -band [IO.FileAttributes]::ReparsePoint) {
@@ -42,12 +57,12 @@ function Assert-KilixRelativePath([string]$Name) {
 
 function Test-KilixHash([string]$Path, [string]$Expected) {
     if ($Expected -notmatch '^[a-fA-F0-9]{64}$') { throw 'Pass the published SHA256 (64 hexadecimal characters).' }
-    if ((Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash -ne $Expected) { throw "SHA256 mismatch: $Path" }
+    if ((Get-FileHash -LiteralPath (ConvertTo-KilixFileSystemPath $Path) -Algorithm SHA256).Hash -ne $Expected) { throw "SHA256 mismatch: $Path" }
 }
 
 function Expand-KilixArchive([string]$Archive, [string]$Destination) {
     Add-Type -AssemblyName System.IO.Compression.FileSystem
-    $zip = [IO.Compression.ZipFile]::OpenRead($Archive)
+    $zip = [IO.Compression.ZipFile]::OpenRead((ConvertTo-KilixFileSystemPath $Archive))
     try {
         $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
         [long]$size = 0
@@ -71,7 +86,9 @@ function Expand-KilixArchive([string]$Archive, [string]$Destination) {
         }
         foreach ($entry in $zip.Entries) {
             $name = $entry.FullName.Replace('\', '/')
-            $path = Join-Path $Destination $name
+            # PS5.1 Join-Path cannot join an extended path. Keep ordinary paths
+            # for joining/state/launchers and convert only at the I/O boundary.
+            $path = ConvertTo-KilixFileSystemPath (Join-Path $Destination $name)
             if ($name.EndsWith('/')) { [IO.Directory]::CreateDirectory($path) | Out-Null }
             else {
                 [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($path)) | Out-Null
@@ -82,11 +99,13 @@ function Expand-KilixArchive([string]$Archive, [string]$Destination) {
 }
 
 function Test-KilixPackage([string]$ApplicationDirectory, [string]$SignerThumbprint, [switch]$Installed) {
+    $ApplicationDirectory = [IO.Path]::GetFullPath($ApplicationDirectory)
+    $filesystemDirectory = ConvertTo-KilixFileSystemPath $ApplicationDirectory
     Assert-KilixRegularPath $ApplicationDirectory
     if ($SignerThumbprint) {
         # A signed hash binds the entire file manifest, including Python and vendor files,
         # rather than trusting a package that merely contains some signed executables.
-        $proofPath = Join-Path $ApplicationDirectory 'manifest-signature.ps1'
+        $proofPath = ConvertTo-KilixFileSystemPath (Join-Path $ApplicationDirectory 'manifest-signature.ps1')
         Assert-KilixRegularPath $proofPath
         $proof = Get-AuthenticodeSignature -LiteralPath $proofPath
         if ($proof.Status -ne 'Valid' -or $proof.SignerCertificate.Thumbprint -ne $SignerThumbprint) { throw 'Trusted manifest signature check failed.' }
@@ -94,23 +113,24 @@ function Test-KilixPackage([string]$ApplicationDirectory, [string]$SignerThumbpr
         if ($header -cnotmatch '^# Kilix manifest SHA256: ([a-f0-9]{64})$') { throw 'Invalid signed manifest digest.' }
         Test-KilixHash (Join-Path $ApplicationDirectory 'manifest.json') $Matches[1]
     }
-    $manifest = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $ApplicationDirectory 'manifest.json') | ConvertFrom-Json
+    $manifestPath = ConvertTo-KilixFileSystemPath (Join-Path $ApplicationDirectory 'manifest.json')
+    $manifest = Get-Content -Raw -Encoding UTF8 -LiteralPath $manifestPath | ConvertFrom-Json
     if (!$manifest.version -or !$manifest.files) { throw 'Missing package version or file manifest.' }
     $expected = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
     foreach ($property in $manifest.files.PSObject.Properties) {
         $name = $property.Name
         Assert-KilixRelativePath $name
         if ($name -ieq 'manifest.json' -or !$expected.Add($name)) { throw "Duplicate manifest entry: $name" }
-        $path = Join-Path $ApplicationDirectory $name
+        $path = ConvertTo-KilixFileSystemPath (Join-Path $ApplicationDirectory $name)
         Assert-KilixRegularPath $path
         if (!(Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing package file: $name" }
         if ((Get-Item -LiteralPath $path).Length -ne $property.Value.size) { throw "Package size mismatch: $name" }
         Test-KilixHash $path $property.Value.sha256
     }
-    foreach ($file in Get-ChildItem -LiteralPath $ApplicationDirectory -Recurse -Force) {
+    foreach ($file in Get-ChildItem -LiteralPath $filesystemDirectory -Recurse -Force) {
         if ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Package contains a reparse point.' }
         if (!$file.PSIsContainer) {
-            $relative = $file.FullName.Substring($ApplicationDirectory.TrimEnd('\', '/').Length + 1).Replace('\', '/')
+            $relative = $file.FullName.Substring($filesystemDirectory.TrimEnd('\', '/').Length + 1).Replace('\', '/')
             if ($relative -notin @('manifest.json', 'manifest-signature.ps1') -and !$expected.Contains($relative)) {
                 # Older installed runtimes wrote caches. Permit only caches of manifested Python
                 # sources during rollback; fresh ZIP validation still rejects every unlisted file.
@@ -127,7 +147,7 @@ function Test-KilixPackage([string]$ApplicationDirectory, [string]$SignerThumbpr
     if ($SignerThumbprint) {
         if ($SignerThumbprint -notmatch '^[a-fA-F0-9]{40}$') { throw 'SignerThumbprint must be the certificate SHA1 thumbprint.' }
         foreach ($name in @('Kilix.exe', 'Kilix.com', 'kilix-cli.exe')) {
-            $signature = Get-AuthenticodeSignature -LiteralPath (Join-Path $ApplicationDirectory $name)
+            $signature = Get-AuthenticodeSignature -LiteralPath (ConvertTo-KilixFileSystemPath (Join-Path $ApplicationDirectory $name))
             if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Thumbprint -ne $SignerThumbprint) {
                 throw "Trusted publisher signature check failed: $name"
             }
@@ -301,7 +321,11 @@ function Invoke-KilixInstall {
         }
         throw $failure
     } finally {
-        if ($stage -and (Test-Path -LiteralPath $stage)) { Remove-Item -LiteralPath $stage -Recurse -Force }
-        if ($lock) { $lock.Dispose() }
+        try {
+            if ($stage) {
+                $filesystemStage = ConvertTo-KilixFileSystemPath $stage
+                if (Test-Path -LiteralPath $filesystemStage) { Remove-Item -LiteralPath $filesystemStage -Recurse -Force }
+            }
+        } finally { if ($lock) { $lock.Dispose() } }
     }
 }

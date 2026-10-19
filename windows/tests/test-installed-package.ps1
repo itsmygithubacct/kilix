@@ -2,6 +2,9 @@
 param([Parameter(Mandatory=$true)][string]$Archive)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '../setup-common.ps1')
+# Retain this deep Unicode/space layout: full source closures can cross MAX_PATH.
+# The small regression also checks integrity and cleanup beyond that boundary.
+& (Join-Path $PSScriptRoot 'test-setup-longpaths.ps1')
 $root = Join-Path ([IO.Path]::GetTempPath()) ('kilix-installed-test-' + [Guid]::NewGuid().ToString('N'))
 $savedLocal = $env:LOCALAPPDATA
 try {
@@ -21,5 +24,6 @@ try {
     Write-Host 'PASS: actual archive install, Unicode/spaces paths, CLI health, upgrade, rollback and config retention'
 } finally {
     $env:LOCALAPPDATA = $savedLocal
-    if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
+    $filesystemRoot = ConvertTo-KilixFileSystemPath $root
+    if (Test-Path -LiteralPath $filesystemRoot) { Remove-Item -LiteralPath $filesystemRoot -Recurse -Force }
 }
