@@ -275,6 +275,28 @@ class CatalogTests(unittest.TestCase):
             key = catalog_sources.repository(prefix) + '/' + pin
             self.assertRegex(hashes[key], r'^[0-9a-f]{64}$')
 
+    def test_dependency_revision_change_requires_update_and_rejects_old_binary(self):
+        self.install()
+        binary = self.home / 'binary.tar.gz'
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.manager.export(self.spec, binary)
+        with patch.object(catalog_build, 'dependency_pins', return_value={'library': 'b' * 64}):
+            self.assertTrue(self.manager.status(self.spec)['update_available'])
+            with self.assertRaisesRegex(ValueError, 'source revision'):
+                self.manager.install_item(self.spec, binary=binary, sha256=catalog_sources.digest(binary))
+        self.assertTrue(self.manager.status(self.spec)['ready'])
+
+    def test_media_dependencies_are_pinned_and_dont_require_system_media_versions(self):
+        import catalog_mpv
+        spec = catalog_store.find('kilix-mpv')
+        self.assertFalse(any('libav' in module or 'libplacebo' in module
+                             for module in spec['build_modules']))
+        self.assertNotIn('meson', spec['build_commands'])
+        for dependency in catalog_mpv.dependencies().values():
+            self.assertTrue(dependency['url'].startswith('https://'))
+            self.assertRegex(dependency['sha256'], r'^[0-9a-f]{64}$')
+        self.assertEqual(catalog_mpv.dependencies()['ffmpeg']['version'], '6.1.4')
+
     def test_needle_readiness_shim_works_in_packaged_isolated_python(self):
         # Needle imports games from wsl-bin/config with python -I, rather
         # than inheriting the companion process's Python import path.

@@ -486,8 +486,8 @@ catalog on Linux; native rendering and WSLg audio remain hardware tests.
 This is a usable development port, not a fully qualified Windows release.
 Linux desktop services and most public app integrations remain unavailable.
 The WSL catalog provides pinned source builds for Chawan, the PDF viewer,
-graphs, eSpeak voice tools and the mpv fork. The media fork needs newer
-FFmpeg/libplacebo than Ubuntu 22.04 supplies. Native Windows supports portable
+graphs, eSpeak voice tools and the mpv fork. The media build provides pinned
+private FFmpeg/libplacebo dependencies on Ubuntu 22.04. Native Windows supports portable
 graphs and explicit system browser/PDF/media/SAPI handlers; Linux app/game
 binaries remain WSL-only. See [catalog setup and limitations](wsl/README.txt).
 WSL recovery is opt-in; native PowerShell/cmd recovery remains unavailable.

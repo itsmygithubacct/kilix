@@ -1,0 +1,44 @@
+{
+  "ffmpeg": {
+    "version": "6.1.4",
+    "url": "https://ffmpeg.org/releases/ffmpeg-6.1.4.tar.xz",
+    "sha256": "a231e3d5742c44b1cdaebfb98ad7b6200d12763e0b6db9e1e2c5891f2c083a18",
+    "suffix": ".tar.xz"
+  },
+  "libplacebo": {
+    "version": "6.338.2",
+    "url": "https://codeload.github.com/haasn/libplacebo/tar.gz/64c1954570f1cd57f8570a57e51fb0249b57bb90",
+    "sha256": "3144bb66bc9e286da37f17f71886d65a6d1baf9e45e4efa5ac8bd61ffa935487",
+    "suffix": ".tar.gz"
+  },
+  "fast_float": {
+    "version": "2b2395f9ac836ffca6404424bcc252bff7aa80e4",
+    "url": "https://codeload.github.com/fastfloat/fast_float/tar.gz/2b2395f9ac836ffca6404424bcc252bff7aa80e4",
+    "sha256": "230d20e4e4ac1f6a9df92c4d746c6ec536cdb0c085bc8635d4b88cead5dc22cb",
+    "suffix": ".tar.gz"
+  },
+  "meson": {
+    "version": "1.8.5",
+    "url": "https://files.pythonhosted.org/packages/22/a3/9b9ca250146b2eace017d7931cabb44a65c04b79f6f046d74e9c94bd5da3/meson-1.8.5-py3-none-any.whl",
+    "sha256": "15ab2cca08271bc055bc33a4929b7c58f15ad67df4c1fa65dc223e822b882bef",
+    "suffix": ".whl"
+  },
+  "jinja2": {
+    "version": "3.1.6",
+    "url": "https://files.pythonhosted.org/packages/df/bf/f7da0350254c0ed7c72f3e33cef02e048281fec7ecec5f032d4aac52226b/jinja2-3.1.6.tar.gz",
+    "sha256": "0137fb05990d35f1275a587e9aee6d56da821fc83491a0fb838183be43f66d6d",
+    "suffix": ".tar.gz"
+  },
+  "markupsafe": {
+    "version": "3.0.3",
+    "url": "https://files.pythonhosted.org/packages/7e/99/7690b6d4034fffd95959cbe0c02de8deb3098cc577c67bb6a24fe5d7caa7/markupsafe-3.0.3.tar.gz",
+    "sha256": "722695808f4b6457b320fdc131280796bdceb04ab50fe1795cd540799ebe1698",
+    "suffix": ".tar.gz"
+  },
+  "vulkan-headers": {
+    "version": "d732b2de303ce505169011d438178191136bfb00",
+    "url": "https://codeload.github.com/KhronosGroup/Vulkan-Headers/tar.gz/d732b2de303ce505169011d438178191136bfb00",
+    "sha256": "570f9ae1e65466dbaf5fcab667abd079dd0a61c4ab86cf535efd492bf70a5b74",
+    "suffix": ".tar.gz"
+  }
+}

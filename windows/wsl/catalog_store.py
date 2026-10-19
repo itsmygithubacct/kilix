@@ -161,7 +161,8 @@ class Catalog:
             if not isinstance(receipt, dict) or not isinstance(receipt.get('revisions'), dict):
                 raise ValueError('Invalid installed catalog manifest: ' + spec['name'])
             result['installed_revisions'] = receipt['revisions']
-            result['update_available'] = receipt['revisions'] != revisions([prefix(spec)])
+            result['update_available'] = (receipt['revisions'] != revisions([prefix(spec)]) or
+                                          receipt.get('dependencies', {}) != catalog_build.dependency_pins(spec))
         return result
 
     def set_enabled(self, spec, enabled):
@@ -222,7 +223,8 @@ class Catalog:
                         if (not isinstance(record, dict) or record.get('schema') != 1 or record.get('name') != spec['name']
                                 or record.get('runtime') != self.runtime
                                 or record.get('architecture') != platform.machine().lower()
-                                or record.get('revisions') != pins):
+                                or record.get('revisions') != pins
+                                or record.get('dependencies', {}) != catalog_build.dependency_pins(spec)):
                             raise ValueError('Binary bundle does not match this catalog, platform and source revision')
                     else:
                         with tarfile.open(path) as bundle:

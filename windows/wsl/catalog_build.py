@@ -77,10 +77,8 @@ def build(spec, generation, cache, python=None):
         # The runtime does not need the compiler. Keep source and notices.
         shutil.rmtree(toolchain)
     elif recipe == 'mpv':
-        run(['meson', 'setup', source / 'build', source, '--buildtype=release',
-             '-Dauto_features=disabled', '-Dzlib=enabled', '-Dgl=disabled',
-             '-Dlibmpv=false', '-Dlua=luajit', '-Dpulse=enabled'], env=env)
-        run(['ninja', '-C', source / 'build', '-j2'], env=env)
+        import catalog_mpv
+        catalog_mpv.build(source, generation, cache, python)
     else:
         raise ValueError('No build recipe for ' + spec['name'])
     binary = source / spec['executable']
@@ -105,6 +103,14 @@ def smoke(spec, generation, python=None):
 
 def manifest(spec, generation, runtime, pins):
     data = {'schema': 1, 'name': spec['name'], 'runtime': runtime,
-            'architecture': platform.machine().lower(), 'revisions': pins}
+            'architecture': platform.machine().lower(), 'revisions': pins,
+            'dependencies': dependency_pins(spec)}
     (generation / 'catalog-install.json').write_text(json.dumps(data, indent=2) + '\n')
     return data
+
+
+def dependency_pins(spec):
+    if spec.get('recipe') == 'mpv':
+        import catalog_mpv
+        return {name: data['sha256'] for name, data in catalog_mpv.dependencies().items()}
+    return {}

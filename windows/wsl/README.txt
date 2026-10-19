@@ -142,12 +142,24 @@ eSpeak/en-us by default, without changing saved settings. --voice overrides a
 request. Neural voices, dictation and the voice daemon require separate setup;
 no model weights or acceptance receipts are installed by the catalog.
 Graphs: Python 3.12+; optional raster output is not bundled.
-Media: meson ninja-build pkg-config and the FFmpeg, libplacebo, libass, LuaJIT,
-PulseAudio and zlib development packages listed by info. The pinned fork needs
-FFmpeg 6.1+ and libplacebo 6.338.2+. Ubuntu 22.04's default versions are too old:
-use a newer distribution or provide compatible development packages explicitly.
-Dependency checks run before downloading source. Binary compatibility still
-depends on the receiving distribution's shared libraries.
+Media on Ubuntu 22.04: install these prerequisites explicitly, then build:
+
+  sudo apt install build-essential ninja-build nasm pkg-config patchelf \
+    libass-dev libluajit-5.1-dev libpulse-dev libgnutls28-dev zlib1g-dev
+  kilix apps install kilix-mpv
+  kilix apps launch kilix-mpv -- /path/to/video.mp4
+
+The catalog uses the companion's managed Python 3.12+, downloads SHA256-pinned
+FFmpeg 6.1.4, libplacebo 6.338.2, Meson and generator sources, and builds two jobs
+at a time into its private generation. System FFmpeg/libplacebo/Meson packages
+are not used or upgraded. Allow several minutes and about 2 GiB temporary space.
+Original sources and license notices remain with the installed private runtime
+and binary exports. Inline video uses CPU decoding; OpenGL, Vulkan, hardware
+decoding and optional external codecs are disabled. Built-in FFmpeg decoders,
+HTTPS through GnuTLS, subtitles and PulseAudio are enabled. A working WSL audio
+server is required for playback; installation never configures one. Dependency
+checks run before source downloads. Binary exports need a matching distribution
+ABI even though their private media libraries relocate with the executable.
 
 The terminal chooser accepts a number and an action (launch/install/update,
 enable/disable/details). --gui uses tkinter/Tk and a display, including WSLg;

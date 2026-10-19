@@ -104,22 +104,17 @@
     "requirements": [],
     "packages": [
       "build-essential",
-      "meson",
       "ninja-build",
+      "nasm",
       "pkg-config",
-      "libavcodec-dev",
-      "libavfilter-dev",
-      "libavformat-dev",
-      "libavutil-dev",
-      "libswresample-dev",
-      "libswscale-dev",
-      "libplacebo-dev",
+      "patchelf",
       "libass-dev",
       "libluajit-5.1-dev",
       "libpulse-dev",
+      "libgnutls28-dev",
       "zlib1g-dev"
     ],
-    "description": "Kilix mpv fork with inline terminal video and PulseAudio. Requires FFmpeg 6.1+ and libplacebo 6.338.2+; older distributions need newer development packages.",
+    "description": "Inline terminal media player with PulseAudio. Builds pinned private FFmpeg 6.1.4/libplacebo 6.338.2 and Meson; works with Ubuntu 22.04 development packages. CPU decoding; OpenGL/Vulkan and optional external codecs are disabled.",
     "probe": [
       "--version"
     ],
@@ -132,25 +127,22 @@
       "--really-quiet"
     ],
     "build_commands": [
-      "meson",
-      "ninja",
       "cc",
-      "pkg-config"
+      "c++",
+      "make",
+      "ninja",
+      "nasm",
+      "pkg-config",
+      "patchelf"
     ],
     "build_modules": [
-      "libavcodec >= 60.31.102",
-      "libavfilter >= 9.12.100",
-      "libavformat >= 60.16.100",
-      "libavutil >= 58.29.100",
-      "libswresample >= 4.12.100",
-      "libswscale >= 7.5.100",
-      "libplacebo >= 6.338.2",
       "libass",
       "luajit",
       "libpulse",
+      "gnutls",
       "zlib"
     ],
-    "build_note": "Ubuntu 22.04 default FFmpeg/libplacebo are too old. Use a newer distribution or explicitly provide compatible development packages; a binary bundle must match the receiving distribution ABI."
+    "build_note": "Uses managed Python 3.12+ and a private dependency prefix. No system FFmpeg/libplacebo/Meson upgrade. Source build uses two jobs; allow several minutes and about 2 GiB of temporary space. Binary imports must match the distribution ABI."
   },
   {
     "runtime": [
