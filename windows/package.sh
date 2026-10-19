@@ -107,6 +107,10 @@ cp "$windows_source/wsl/games.py" "$destination/wsl-bin/config/"
 if [[ -f "$windows_source/stage-commands.py" ]]; then
     python "$windows_source/stage-commands.py" "$destination"
 fi
+# Qualification commands can create bytecode when reusing a staging tree.
+# Ship sources and rebuild caches at runtime, without stale code or build paths.
+find "$destination" -type d -name __pycache__ -prune -exec rm -rf {} +
+find "$destination" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
 printf '0.2.2-windows-dev\n' > "$destination/VERSION"
 # package.ps1 creates the final manifest after optional source provisioning/signing.
 echo "Portable application: $destination/Kilix.exe"
