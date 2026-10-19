@@ -161,7 +161,6 @@ Common tasks, complete as shown (run inside a Kilix pane):
   kilix pane send build 'make test' --submit         type into build + Enter
   kilix pane close build                            close the named pane
   kilix new-tab --title Codex --cwd ~/src/app codex  start a program in a tab
-
 Panes and tabs (directions relative to the calling pane):
   kilix pane right|left|up|down [--title T] [--cwd DIR] [--hold] [--porcelain] [-- CMD...]
   kilix pane send TARGET 'TEXT' [--submit]   --submit presses Enter
@@ -172,15 +171,15 @@ Panes and tabs (directions relative to the calling pane):
   kilix new-tab [--title T] [--cwd DIR] [CMD...]
   kilix tab list|close|rename|focus|left|right
   kilix tmux --socket PATH [--json] VERB ...  no args: manager
-TARGET is a pane's unique title or pane:ID. Above is the complete syntax:
-no subcommand --help or pane list is needed first. Missing/ambiguous titles
-are refused without acting; each verb prints what it did.
-Coding agent input (verify the target first):
+TARGET: unique title or pane:ID. This is the complete syntax:
+no subcommand --help or pane list needed. Missing/ambiguous titles
+are refused; each verb prints what it did.
+Coding agent input (verify target first):
   kilix agent-control context|list|dump|send|key   --help
-Structured actions with durable receipts:
-  kilix action --request-json -             structured request from stdin
-  kilix windows --host SSH_ALIAS COMMAND    Windows desktop automation over SSH
+Structured actions:
+  kilix action --request-json -             JSON on stdin
   kilix action capabilities                inspect available features
+  kilix windows --host HOST COMMAND         Windows desktop via SSH
 Also: wizard, settings, status, update, install, games, screen-size, transcript,
   help-search "QUESTION". Command options: --help.
 Terminal engine (kitty) options: kilix --help-engine
