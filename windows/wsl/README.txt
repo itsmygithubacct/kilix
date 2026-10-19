@@ -146,6 +146,11 @@ providers have been qualified. info and the chooser display those capabilities.
   kilix apps install tmux-browse
   kilix apps launch tmux-dashboard serve --port 8096
 
+Keep Techno projects in a private directory on the Linux filesystem, such as
+~/Music/kilix. Its state library checks Unix ownership and permissions; a Windows
+drive mounted without Unix metadata can reject a project with security-error.
+Completed WAV exports can be copied to the Windows filesystem.
+
 Amp and Techno need the sndfile/FluidSynth development packages listed by info;
 Amp also needs SDL2/SDL2_image. They do not fetch optional SoundFonts, soundbanks
 or EnCodec models. Amp defaults to the existing Music terminal UI; --desktop

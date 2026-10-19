@@ -473,6 +473,17 @@ CPython 3.14.8, and Go 1.27.2.
 - Independent transport probe: cmd exit status, PowerShell, UTF-8, input, resize,
   Windows argv edge cases, timeout cleanup, graphics escape preservation, and
   actual WSL execution. Hardware probe checks an OpenGL framebuffer readback.
+- All fifteen games rebuilt from the public source bundle and passed a native
+  desktop run covering GPU uploads, input, audio streams and exit behavior.
+  The media adapter also passed GPU uploads, pause/seek and owned audio-stream
+  checks. These checks do not establish speaker audibility.
+- Native and WSL managed sessions retained their child PID, in-memory state and
+  continuing output across actual window closure and reattachment. Native
+  recovery also passed malformed-client, duplicate-name, full exit-code and
+  blocked-I/O teardown checks.
+- Packaged CLI, Tcl/Tk with a clean PATH, Unicode arguments/cwd/input, AltGr and
+  synthetic IME positioning passed. The observed display was one monitor at
+  150% scaling; clipboard content was preserved by skipping that optional test.
 
 `test-application.ps1` creates a temporary, limited interactive scheduled task,
 starts only its own test window, records screen-model/GPU results, and removes
