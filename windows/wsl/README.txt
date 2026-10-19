@@ -163,6 +163,44 @@ ttyd1.6 is supported by adapting its older writable-by-default interface. The
 dashboard defaults to loopback and disables the unbundled federation extension.
 Explicit --bind selects another interface. Optional extension installers and
 standalone tb web features are upstream tools, not catalog-qualified features.
+Distribution ttyd packages can start a system service; manage that separately
+if installing ttyd solely for the catalog's own loopback dashboard process.
+
+Additional WSL runtimes
+
+  kilix apps install dosbox
+  kilix apps launch dosbox
+  kilix apps install land-agent
+  kilix apps launch land-agent resident --provider deterministic --headless
+  kilix apps install multiplexer
+  kilix apps launch multiplexer serve --socket /path/to/owned.sock -- bash
+  kilix apps install playalong
+  kilix apps launch playalong --list
+  kilix apps install nvr
+  kilix apps launch nvr cameras
+
+DOSBox builds the public terminal-enabled DOSBox-X and needs a TTY for interactive
+Kitty graphics; DOS software is user supplied. Land Agent provides its studio and
+deterministic resident. Its MIT code and CC BY-NC-SA4.0 assets retain their notices.
+Resident speech is off by default; resident --enable-speech explicitly enables an
+installed provider. Qwen needs an explicitly approved SSH/Ollama host. The Plant
+Grower handoff requires upstream Linux terminal ownership and remains unavailable
+across the WSL/native bridge; launch the game directly with kilix games play.
+
+Multiplexer provides standalone serve/attach/bench sessions with PCM audio. It
+does not capture native panes or build the optional EnCodec provider. Playalong's
+native player and offline renderer work with existing projects. Its explicit
+setup-pipeline command uses existing uv0.12.x/Python3.10 to install only the locked
+base packages, with no interpreter downloads or ML extras. pipeline then exposes
+upstream commands and media-rights/model-download choices. ML providers and
+approved weights are separate. The optional Python runtime stays outside exported
+generations; run setup-pipeline again after a source update or binary relocation.
+
+NVR provides its recorder core; recording needs FFmpeg and your camera settings.
+The adapter blocks default model loading and requires explicit approved provider
+commands in KILIX_OBJECT_DETECTOR/KILIX_SOUND_CLASSIFIER for detection. It does not
+connect to cameras during install/check. Use foreground run: upstream service
+installation bypasses this provider gate and is refused. No service is installed.
 
 Document and model provider commands
 

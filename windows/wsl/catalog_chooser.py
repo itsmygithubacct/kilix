@@ -9,6 +9,14 @@ import threading
 from catalog_store import entries
 
 
+def capability_details(reported):
+    if isinstance(reported, dict):
+        return '\n'.join(name + ': ' + (('available' if value else 'unavailable')
+                         if isinstance(value, bool) else str(value))
+                         for name, value in reported.items())
+    return '\n'.join(item['name'] + ': ' + item['reason'] for item in reported)
+
+
 def split_arguments(value):
     if os.name != 'nt':
         return shlex.split(value)
@@ -124,11 +132,7 @@ def graphical(catalog, kind, execute=None):
         try:
             spec = selected()
             status = catalog.status(spec)
-            reported = status.get('capabilities', [])
-            capabilities = '\n'.join(
-                name + ': ' + ('available' if ready else 'unavailable') for name, ready in reported.items()
-            ) if isinstance(reported, dict) else '\n'.join(
-                item['name'] + ': ' + item['reason'] for item in reported)
+            capabilities = capability_details(status.get('capabilities', []))
             detail.set(status['reason'] + '\n' + spec.get('repository', '') +
                        ('\nBuild packages: ' + ', '.join(spec['packages']) if spec.get('packages') else '') +
                        ('\n' + capabilities if capabilities else ''))

@@ -10,11 +10,17 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'wsl'))
 import catalog_build
+import catalog_chooser
 import catalog_launch
 import catalog_store
 
 
 class ExtraAppsTests(unittest.TestCase):
+    def test_chooser_keeps_provider_limits_instead_of_treating_text_as_available(self):
+        details = catalog_chooser.capability_details({'core': True, 'inference': False,
+                                                     'camera': 'not inspected or connected'})
+        self.assertEqual(details, 'core: available\ninference: unavailable\ncamera: not inspected or connected')
+
     def test_dashboard_defaults_are_loopback_and_explicit_arguments_stay_literal(self):
         with patch.object(catalog_launch, 'dashboard', return_value=0) as run:
             catalog_launch.main('tmux-browse', '/source', [])

@@ -207,12 +207,46 @@
   },
   {
     "name": "dosbox-kilix",
-    "title": "dosbox-kilix",
-    "aliases": [],
+    "title": "DOSBox",
+    "aliases": [
+      "dosbox"
+    ],
     "category": "app",
-    "runtime": [],
+    "runtime": [
+      "wsl"
+    ],
     "repository": "https://github.com/itsmygithubacct/dosbox-kilix",
-    "unsupported": "DOSBox terminal fork needs a dedicated SDL/backend build and Windows/WSL validation."
+    "source": "apps/dosbox-kilix",
+    "recipe": "runtime-app",
+    "executable": "src/dosbox-x",
+    "build_commands": [
+      "make",
+      "cc",
+      "g++",
+      "pkg-config",
+      "autoconf",
+      "automake"
+    ],
+    "build_modules": [
+      "sdl2",
+      "freetype2",
+      "libpng",
+      "zlib"
+    ],
+    "packages": [
+      "build-essential",
+      "autoconf",
+      "automake",
+      "pkg-config",
+      "libsdl2-dev",
+      "libfreetype6-dev",
+      "libpng-dev",
+      "zlib1g-dev"
+    ],
+    "requirements": [],
+    "description": "Terminal-enabled DOSBox-X. Supply licensed DOS software; interactive output requires a TTY and WSL audio.",
+    "build_note": "Large C++ source build; optional host graphics/network/MIDI-codec backends disabled.",
+    "native_reason": "This adapter builds the public Linux/POSIX source and runs it inside WSL."
   },
   {
     "name": "kilix-amp",
@@ -324,30 +358,106 @@
   },
   {
     "name": "kilix-land-agent",
-    "title": "kilix-land-agent",
-    "aliases": [],
+    "title": "Land Agent",
+    "aliases": [
+      "land-agent"
+    ],
     "category": "app",
-    "runtime": [],
+    "runtime": [
+      "wsl"
+    ],
     "repository": "https://github.com/itsmygithubacct/kilix-land-agent",
-    "unsupported": "Studio room runtime and separately licensed assets are not integrated."
+    "source": "apps/kilix-land-agent",
+    "recipe": "runtime-app",
+    "executable": "kilix-land-agent",
+    "build_commands": [
+      "make",
+      "cc",
+      "pkg-config"
+    ],
+    "build_modules": [
+      "zlib"
+    ],
+    "packages": [
+      "build-essential",
+      "pkg-config",
+      "zlib1g-dev"
+    ],
+    "requirements": [],
+    "description": "Studio room and deterministic resident. MIT code; CC BY-NC-SA 4.0 assets. Plant handoff unavailable across the WSL/native bridge.",
+    "build_note": "Launch studio or resident; resident speech off unless explicitly enabled; Qwen requires an approved SSH/Ollama host.",
+    "native_reason": "This adapter builds the public Linux/POSIX source and runs it inside WSL."
   },
   {
     "name": "kilix-multiplexer",
-    "title": "kilix-multiplexer",
-    "aliases": [],
+    "title": "Multiplexer",
+    "aliases": [
+      "multiplexer"
+    ],
     "category": "app",
-    "runtime": [],
+    "runtime": [
+      "wsl"
+    ],
     "repository": "https://github.com/itsmygithubacct/kilix-multiplexer",
-    "unsupported": "Remote-session server/client lifecycle is not integrated with the Windows host."
+    "source": "apps/kilix-multiplexer",
+    "recipe": "runtime-app",
+    "executable": "build/kmx-serve",
+    "build_commands": [
+      "make",
+      "cc",
+      "pkg-config"
+    ],
+    "build_modules": [
+      "libzstd",
+      "zlib",
+      "openssl"
+    ],
+    "packages": [
+      "build-essential",
+      "pkg-config",
+      "libzstd-dev",
+      "zlib1g-dev",
+      "libssl-dev"
+    ],
+    "requirements": [],
+    "description": "Standalone WSL serve/attach tools; explicit endpoints and credentials. PCM build, no EnCodec models or automatic native pane tap.",
+    "build_note": "Invoke serve, attach or bench with upstream arguments. No server/session starts merely by listing or installing.",
+    "native_reason": "This adapter builds the public Linux/POSIX source and runs it inside WSL."
   },
   {
     "name": "kilix-nvr",
-    "title": "kilix-nvr",
-    "aliases": [],
+    "title": "NVR",
+    "aliases": [
+      "nvr"
+    ],
     "category": "app",
-    "runtime": [],
+    "runtime": [
+      "wsl"
+    ],
     "repository": "https://github.com/itsmygithubacct/kilix-nvr",
-    "unsupported": "Camera, storage and detector providers are not provisioned by this catalog."
+    "source": "apps/kilix-nvr",
+    "recipe": "runtime-app",
+    "executable": "build/kilix-nvr",
+    "build_commands": [
+      "make",
+      "cc",
+      "pkg-config"
+    ],
+    "build_modules": [
+      "sqlite3",
+      "zlib"
+    ],
+    "packages": [
+      "build-essential",
+      "pkg-config",
+      "libsqlite3-dev",
+      "zlib1g-dev",
+      "ffmpeg"
+    ],
+    "requirements": [],
+    "description": "NVR recorder/motion core. FFmpeg and user camera setup required for capture; approved model commands must be selected explicitly.",
+    "build_note": "Default launch lists cameras. No camera discovery or service install. Object/sound providers are gated by default; select KILIX_OBJECT_DETECTOR and KILIX_SOUND_CLASSIFIER only after provider/model approval.",
+    "native_reason": "This adapter builds the public Linux/POSIX source and runs it inside WSL."
   },
   {
     "name": "kilix-ollama",
@@ -393,12 +503,39 @@
   },
   {
     "name": "kilix-playalong",
-    "title": "kilix-playalong",
-    "aliases": [],
+    "title": "Playalong",
+    "aliases": [
+      "playalong"
+    ],
     "category": "app",
-    "runtime": [],
+    "runtime": [
+      "wsl"
+    ],
     "repository": "https://github.com/itsmygithubacct/kilix-playalong",
-    "unsupported": "Guitar/audio capture and native presentation need a companion adapter."
+    "source": "apps/kilix-playalong",
+    "recipe": "runtime-app",
+    "executable": "build/native/kilix-playalong-native",
+    "build_commands": [
+      "make",
+      "cc",
+      "pkg-config"
+    ],
+    "build_modules": [
+      "sdl2",
+      "sndfile",
+      "zlib"
+    ],
+    "packages": [
+      "build-essential",
+      "pkg-config",
+      "libsdl2-dev",
+      "libsndfile1-dev",
+      "zlib1g-dev"
+    ],
+    "requirements": [],
+    "description": "Native project player and offline rendering. Optional locked Python base setup; media rights, ML runtimes and weights remain separate.",
+    "build_note": "setup-pipeline requires uv0.12.x and an existing Python3.10; installs base dependencies only. Native playback needs WSL audio and an existing project; pipeline create retains upstream explicit rights/model-download controls.",
+    "native_reason": "This adapter builds the public Linux/POSIX source and runs it inside WSL."
   },
   {
     "name": "kilix-techno",
