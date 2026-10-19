@@ -59,7 +59,7 @@ build dependencies before pixel video can be used with its mpv 0.40 package.
 For a shell left in mouse-reporting mode by an older launcher, run:
 
 ```sh
-printf '\033[?1000l\033[?1002l\033[?1003l\033[?1006l\033[?25h'
+printf '\033[?1000l\033[?1002l\033[?1003l\033[?1006l\033[?1016l\033[?25h'
 ```
 
 ## Next-release named player
@@ -104,10 +104,26 @@ For a local terminal that shares `/dev/shm` with the player:
 kilix video --transport shm clip.mp4
 ```
 
-This requires `kilix-mpv` version `0.40.0+kilix.2` or later. It uses a bounded
-three-frame shared-memory ring, bypassing base64 pixel transfer. Default
-`--transport inline` works without shared memory and is the choice for SSH;
-the wrapper rejects `shm` in known SSH/tmux sessions or with text-cell output.
-Containers with separate shared-memory namespaces must also use inline.
-Shared-memory objects are released on normal exit. Mouse targeting still uses
-terminal-cell coordinates, so very small controls can be harder to click.
+Shared memory requires `kilix-mpv` version `0.40.0+kilix.2` or later. It uses a
+bounded three-frame ring, bypassing base64 pixel transfer. The launcher defaults
+to `--transport auto`: it verifies a local Kitty process owned by the current
+user and the same `/dev/shm` directory before choosing shared memory. Unknown
+terminals, inaccessible process information, separate namespaces, SSH and tmux
+fall back to inline. `--transport inline` explicitly forces portable transfer.
+Explicit `shm` is rejected for known SSH/tmux sessions and text-cell output.
+Shared-memory objects are released on normal exit.
+
+Player `0.40.0+kilix.4` negotiates pixel mouse reporting (DEC mode 1016), making
+small controls targetable without terminal-cell rounding. Terminals without
+support retain cell coordinates. Click the speaker to mute; scroll over it to
+adjust volume. Click or drag the seek bar; click play/pause to toggle playback.
+The fullscreen button and `f` use Kilix's existing tty-only fullscreen permission,
+with requests serialized with the video packets. The launcher probes support so
+older installed forks remain usable. Fullscreen changes made outside mpv are not
+reflected in mpv's option state.
+
+An A/V desynchronisation warning means mpv observed more than half a second of
+drift. Inline transfer can fall behind at large pixel sizes or under CPU load.
+For local Kilix, automatic shared-memory selection avoids the base64 and PTY
+pixel copies. On an inline-only connection, reducing the terminal window size
+reduces transfer load. The warning stays visible; it is not suppressed.
