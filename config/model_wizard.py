@@ -44,6 +44,7 @@ STT_IDS = {'vosk-model-small-en-us-0.15': 'small-en-us',
 RUNTIME_PAGES = {'vision', 'audio', 'image'}
 LEGACY = {'speech': 'system-voice.state', 'dictation': 'dictation-offer.state',
           'workflows': 'workflows-offer.state'}
+WORKFLOWS_SCHEMA = 'kilix.workflows/v1'
 
 
 def launcher():
@@ -317,6 +318,34 @@ def run_command(*args):
         raise ValueError(f'Setup exited with status {code}. This page is still unanswered; retry or decline.')
 
 
+def workflows_command():
+    """Needle's readiness probe through the selected catalog, as Kilix 95 runs it.
+
+    The launcher has no `workflows` verb; an unrouted first argument becomes the
+    program of a new terminal window. Needle owns `workflows status`.
+    """
+    return [launcher(), 'app', 'run', 'kilix-needle', '--', 'workflows', 'status', '--json']
+
+
+def check_workflows():
+    """The page is answered only when Needle verifies the acquired assets."""
+    result = subprocess.run(workflows_command(), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE)
+    try:
+        status = json.loads(result.stdout.decode('utf-8').strip().splitlines()[-1])
+    except (UnicodeError, ValueError, IndexError):
+        status = None
+    if not isinstance(status, dict) or status.get('schema') != WORKFLOWS_SCHEMA \
+            or type(status.get('ready')) is not bool or result.returncode not in (0, 1) \
+            or (result.returncode == 0) != status['ready']:
+        raise ValueError(f'Needle did not report workflow readiness (status {result.returncode}). '
+                         'This page is still unanswered; retry or decline.')
+    if not status['ready']:
+        errors = status.get('errors') if isinstance(status.get('errors'), list) else []
+        raise ValueError('\n'.join([str(status.get('detail', 'Workflow model setup needs attention.')),
+                                    *(str(error)[:500] for error in errors[:10]),
+                                    'This page is still unanswered; retry or decline.']))
+
+
 def pending():
     return {key: value for key, value in answers().items()
             if value.get('answer') == 'yes' and value.get('phase') == 'planned'}
@@ -383,7 +412,7 @@ def finish(*, input_fn=input):
             elif segment == 'workflows' and 'needle2' in models:
                 # Assets were acquired with their batch receipts. Readiness must
                 # not silently pull an unchecked additional model here.
-                run_command('workflows', 'status', '--json')
+                check_workflows()
                 legacy_state(segment, {'answer': 'yes'})
             record(segment, 'yes', models)
         print('Model setup complete. Declined licences were not installed.')
