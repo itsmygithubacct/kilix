@@ -292,7 +292,8 @@ SYSTEM, with peer identity checks. The terminal frame layouts reuse
 kitty-pty-broker; an explicit Windows attach extension preserves full DWORD
 exit codes. Up to 64 MiB of output is replayed on reconnect. Overflow discards
 older history, and a stalled renderer is disconnected instead of blocking the
-broker. Exact screen state after truncated history, tab layouts and images
+broker. Replay omits answered ConPTY cursor/status/device queries while keeping
+requests that still need a reply. Exact screen state after truncated history, tab layouts and images
 outside the replay are not saved. Windows logoff/reboot, broker termination and
 external job policies can still end the session.
 

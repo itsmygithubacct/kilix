@@ -77,6 +77,52 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(decoder.feed(b'\x1b'), [])
         self.assertEqual(decoder.flush(), b'\x1b')
 
+    def test_cursor_reports_and_keys_are_not_split_into_escape_key_writes(self):
+        for packet in (b'\x1b[1;1R', b'\x1b[?1;2c', b'\x1b[A', b'\x1b[1;5D', b'\x1bOA'):
+            for boundary in range(len(packet) + 1):
+                with self.subTest(packet=packet, boundary=boundary):
+                    decoder = wire.ResizeDecoder()
+                    result = decoder.feed(packet[:boundary]) + decoder.feed(packet[boundary:])
+                    self.assertEqual(result, [(wire.INPUT, packet)])
+                    self.assertEqual(decoder.flush(), b'')
+            decoder = wire.ResizeDecoder()
+            result = [frame for value in packet for frame in decoder.feed(bytes([value]))]
+            self.assertEqual(result, [(wire.INPUT, packet)])
+        decoder = wire.ResizeDecoder()
+        ordinary = b'abc\x1b[1;1R\x1b[A\x03'
+        self.assertEqual(decoder.feed(ordinary), [(wire.INPUT, ordinary)])
+        self.assertEqual(decoder.feed(b'\x1b[' + b'1;' * 200), [(wire.INPUT, b'\x1b[' + b'1;' * 200)])
+
+    def test_replay_skips_answered_queries_and_keeps_pending_requests_and_graphics(self):
+        decoration = b'\x1b[32mrender\x1b[0m\x1b[?25h'
+        # CSI-looking bytes inside a control string are opaque, not requests.
+        graphics = b'\x1b_Ga=T;opaque\x1b[6n\x1b\\'
+        title = b'\x1b]0;title\x1b[6n\x07'
+        raw = b'\x1b[c' + decoration + graphics + title + b'\x1b[6n'
+        for boundary in range(len(raw) + 1):
+            chunks = (raw[:boundary], raw[boundary:])
+            queries = wire.TerminalQueries()
+            for chunk in chunks:
+                queries.output.feed(chunk)
+            queries.input.feed(b'\x1b[?62;')
+            queries.input.feed(b'4c')
+            unanswered = frozenset(queries.pending.values())
+            self.assertEqual(b''.join(queries.replay(chunks, 0, unanswered)),
+                             decoration + graphics + title + b'\x1b[6n')
+            queries.input.feed(b'\x1b[1;1R')
+            self.assertEqual(b''.join(queries.replay(chunks, 0, frozenset(queries.pending.values()))),
+                             decoration + graphics + title)
+        # Preserve only the newest pending query, even after journal eviction.
+        raw = b'\x1b[6nold\x1b[6nnew'
+        queries = wire.TerminalQueries()
+        queries.output.feed(raw)
+        self.assertEqual(b''.join(queries.replay([raw], 0, frozenset(queries.pending.values()))),
+                         b'old\x1b[6nnew')
+        self.assertEqual(b''.join(queries.replay([raw[7:]], 7, frozenset(queries.pending.values()))),
+                         b'\x1b[6nnew')
+        # A partial sequence at the snapshot boundary still joins live bytes.
+        self.assertEqual(b''.join(queries.replay([b'abc\x1b['], 0, frozenset())), b'abc\x1b[')
+
 
 @unittest.skipIf(os.name == 'nt', 'Portable server exercise uses a real POSIX PTY; see engine Windows tests')
 class ServerProcessTests(unittest.TestCase):
@@ -95,6 +141,7 @@ class ServerProcessTests(unittest.TestCase):
                 code = ("import os,sys; n=0; print('READY',flush=True)\n"
                         "for line in sys.stdin:\n"
                         " if line.strip()=='inc': n+=1; print('INCREMENTED',flush=True)\n"
+                        " elif line.strip()=='query': print('\\x1b[6nQUERY_END',flush=True)\n"
                         " elif line.strip()=='state': print('STATE',os.getpid(),n,flush=True)\n"
                         " elif line.strip()=='exit': sys.exit(17)\n")
                 self.child = subprocess.Popen([sys.executable, '-u', '-c', code],
@@ -153,11 +200,15 @@ class ServerProcessTests(unittest.TestCase):
                 output_until(first, b'READY')
                 wire.send(first, wire.INPUT, b'inc\n')
                 output_until(first, b'INCREMENTED')
+                wire.send(first, wire.INPUT, b'query\n')
+                self.assertIn(b'\x1b[6n', output_until(first, b'QUERY_END'))
+                wire.send(first, wire.INPUT, b'\x1b[1;1R\n')
+                eventually(lambda: not session.queries.pending)
                 first.close()
                 eventually(lambda: session.attached is None)
                 self.assertIsNone(process.poll())
                 second = client()
-                output_until(second, b'INCREMENTED')
+                self.assertNotIn(b'\x1b[6n', output_until(second, b'QUERY_END'))
                 wire.send(second, wire.INPUT, b'state\n')
                 output_until(second, f'STATE {process.pid} 1'.encode())
                 # A malformed client must not kill the shared input worker.
