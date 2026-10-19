@@ -9,7 +9,9 @@ import re
 import shutil
 import subprocess
 import sys
-from games import game_path, installed_games
+import tarfile
+import catalog as app_catalog
+from catalog_store import Catalog, find
 from recovery import refresh_environment
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -150,8 +152,8 @@ def main(args):
         print('''Kilix WSL commands:
   needle [ARGS]                 Run Needle's Linux command/model tools
   launch, --launch PROGRAM [ARGS]  Run a Linux app in a new native Kilix tab
-  apps [--json]                List installed WSL apps
-  games list | play NAME [ARGS]  List or run an installed game in this pane
+  apps list|info|install|update|choose  Public app catalog and chooser
+  games list|play|install|update|enable|disable|choose  Manage public games
   session, sessions            WSL live sessions: new/list/detach/attach/restore/kill
   ls [--panes]                  List native tabs/panes
   pane, tab, focus, watch       Control the current native Kilix window
@@ -181,32 +183,23 @@ invoking Linux process's directory. Linux desktop services are not Windows servi
             raise ValueError('WSL companion dependencies are not installed; run the WSL setup script.')
         os.execve(str(PYTHON), [str(PYTHON), '-B', str(ROOT / 'wsl/needle-run.py'),
                               str(INSTALL / 'needle/needle_cli.py'), *rest], environment())
-    if verb == 'games' and (rest in (['help'], ['--help'], ['-h']) or
-                            (len(rest) == 2 and rest[0] in ('list', 'play') and rest[1] in ('--help', '-h'))):
-        print('''Usage: kilix games list [--json]
-       kilix games play NAME [ARGS]
-Lists installed public catalog games or runs one in the current pane.
-Names and aliases from the catalog are accepted, such as pong, chess,
-solitaire and lander. Use kilix --launch NAME [ARGS] for a new tab.''')
-        return 0
-    if verb == 'apps' or (verb == 'games' and (not rest or rest[0] == 'list')):
-        if (rest if verb == 'apps' else rest[1:]) not in ([], ['--json']):
-            raise ValueError('Use kilix apps [--json] or kilix games list [--json]')
-        names = installed_games(INSTALL)
-        print('\n'.join(names) if '--json' not in rest else json.dumps(names))
-        return 0
-    if verb == 'games' and rest[:1] == ['play']:
-        if len(rest) < 2:
-            raise ValueError('Use kilix games play NAME')
-        app = game_path(rest[1], INSTALL)
-        if app is None:
-            raise ValueError(f'Game is not installed: {rest[1]}. Run kilix games list.')
-        os.execve(str(app), [str(app), *rest[2:]], environment())
+    if verb in ('apps', 'app', 'games'):
+        # Keep module dispatch small; shared catalog owns parsing and state.
+        return app_catalog.main(rest, kind='games' if verb == 'games' else 'apps',
+                                install=INSTALL, runtime='wsl',
+                                execute=lambda argv: os.execve(argv[0], argv, environment()))
     if verb in ('--launch', 'launch'):
         if not rest:
             raise ValueError('Use kilix --launch PROGRAM [ARGS]')
-        game = game_path(rest[0], INSTALL)
-        program = str(game) if game else shutil.which(rest[0], path=environment()['PATH'])
+        try:
+            spec = find(rest[0])
+        except ValueError:
+            spec = None
+        if spec is not None:
+            argv = Catalog(install=INSTALL, runtime='wsl').argv(spec)
+            return remote(['launch', '--type=tab', '--tab-title=' + spec['title'],
+                           '--', *argv, *rest[1:]])
+        program = shutil.which(rest[0], path=environment()['PATH'])
         if not program:
             raise ValueError(f'Linux program is not installed: {rest[0]}')
         return remote(['launch', '--type=tab', '--tab-title=' + Path(program).name,
@@ -232,6 +225,6 @@ solitaire and lander. Use kilix --launch NAME [ARGS] for a new tab.''')
 if __name__ == '__main__':
     try:
         raise SystemExit(main(sys.argv[1:]))
-    except (ValueError, OSError, subprocess.SubprocessError) as error:
+    except (ValueError, OSError, tarfile.TarError, subprocess.SubprocessError) as error:
         print(f'kilix: {error}', file=sys.stderr)
         raise SystemExit(2)

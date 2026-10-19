@@ -36,5 +36,14 @@
   "super-kilix/third_party/kilix-game-sdk/kilix-game-kit/third_party/kitty-terminal-session/third_party/kitty-framebuffer": "784d8aaef6b35acc2306434eb330ab9fe1787359",
   "super-kilix/third_party/kilix-game-sdk/kilix-game-kit/third_party/kitty-terminal-session/third_party/kitty-input": "fca32e2d0f641344eeadb8f242147225d41bff55",
   "super-kilix/third_party/kilix-game-sdk/kilix-game-kit/third_party/pcm-mixer": "fafd03fa59d13d53c27b6b4bbefb8b9c7a8d3060",
-  "super-kilix/third_party/kilix-game-sdk/kilix-game-kit/third_party/soft-raster": "2b0c241729dec182a87ebab78edd10b142edf828"
+  "super-kilix/third_party/kilix-game-sdk/kilix-game-kit/third_party/soft-raster": "2b0c241729dec182a87ebab78edd10b142edf828",
+  "apps/kilix-chawan": "13fa8f59f45e210096e6922ca6182a7627532590",
+  "apps/kilix-pdf": "20ff247a5956406f71b12f0c365a48aa179a7aa5",
+  "apps/kilix-pdf/third_party/kitty-terminal-session": "b6b4e1e4b6933d60bfc919a90d8e1f6f86b20e77",
+  "apps/kilix-pdf/third_party/kitty-terminal-session/third_party/kitty-framebuffer": "43277b4339133c473763fad28ef6057f2819fb9a",
+  "apps/kilix-pdf/third_party/kitty-terminal-session/third_party/kitty-input": "fca32e2d0f641344eeadb8f242147225d41bff55",
+  "apps/kilix-graphs": "720af007c0246f93d0b0e2309f7340a46d667faf",
+  "apps/kilix-voice": "cba6048cc7d8b6f33a1af5cc3cf84e5c1c34e802",
+  "apps/kilix-mpv": "a8069f9bb53bcbe8c5ce73222106e176825b6f8e",
+  "kitty-pty-broker": "8cf3eb3671458370e57539be6b7bd6f4a1b8f615"
 }

@@ -82,7 +82,7 @@ class GamesTests(unittest.TestCase):
             for args in (['--help'], ['list', '--help'], ['play', '--help']):
                 with patch('sys.stdout', new_callable=io.StringIO) as out:
                     self.assertEqual(companion.main(['games', *args]), 0)
-                    self.assertIn('Usage:', out.getvalue())
+                    self.assertIn('usage:', out.getvalue())
 
     def test_built_launcher_finds_assets_and_preserves_literal_arguments(self):
         source = self.root / 'fixture'

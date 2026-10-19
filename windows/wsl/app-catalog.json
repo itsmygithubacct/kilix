@@ -1,0 +1,463 @@
+[
+  {
+    "runtime": [
+      "wsl"
+    ],
+    "category": "app",
+    "models": "none",
+    "native_reason": "Requires its Linux runtime; no Windows build is supplied.",
+    "name": "kilix-chawan",
+    "title": "Chawan web browser",
+    "aliases": [
+      "browser",
+      "chawan",
+      "cha"
+    ],
+    "source": "apps/kilix-chawan",
+    "repository": "https://github.com/itsmygithubacct/kilix-chawan",
+    "recipe": "chawan",
+    "executable": "target/release/bin/cha",
+    "requirements": [],
+    "packages": [
+      "build-essential",
+      "pkg-config",
+      "libssl-dev",
+      "libbrotli-dev",
+      "xz-utils"
+    ],
+    "description": "Terminal web browser. Builds a pinned Nim compiler toolchain; SFTP is disabled.",
+    "probe": [
+      "--version"
+    ],
+    "build_commands": [
+      "make",
+      "cc",
+      "pkg-config"
+    ],
+    "build_modules": [
+      "libssl",
+      "libcrypto",
+      "libbrotlidec",
+      "libbrotlicommon"
+    ]
+  },
+  {
+    "runtime": [
+      "wsl"
+    ],
+    "category": "app",
+    "models": "none",
+    "native_reason": "Requires its Linux runtime; no Windows build is supplied.",
+    "name": "kilix-pdf",
+    "title": "PDF viewer",
+    "aliases": [
+      "pdf",
+      "pdf-viewer",
+      "kilix-pdf-viewer"
+    ],
+    "source": "apps/kilix-pdf",
+    "repository": "https://github.com/itsmygithubacct/kilix-pdf",
+    "recipe": "pdf",
+    "executable": "build/kilix-pdf-core",
+    "requirements": [],
+    "packages": [
+      "build-essential",
+      "pkg-config",
+      "libpoppler-glib-dev",
+      "libcairo2-dev",
+      "zlib1g-dev"
+    ],
+    "description": "In-pane Poppler PDF viewer with inline graphics.",
+    "probe": [
+      "--probe"
+    ],
+    "build_commands": [
+      "make",
+      "cc",
+      "pkg-config"
+    ],
+    "build_modules": [
+      "poppler-glib",
+      "cairo",
+      "glib-2.0",
+      "gobject-2.0",
+      "zlib"
+    ]
+  },
+  {
+    "runtime": [
+      "wsl"
+    ],
+    "category": "app",
+    "models": "none",
+    "native_reason": "Requires its Linux runtime; no Windows build is supplied.",
+    "name": "kilix-mpv",
+    "title": "Media player",
+    "aliases": [
+      "media",
+      "video"
+    ],
+    "source": "apps/kilix-mpv",
+    "repository": "https://github.com/itsmygithubacct/kilix-mpv",
+    "recipe": "mpv",
+    "executable": "build/mpv",
+    "requirements": [],
+    "packages": [
+      "build-essential",
+      "meson",
+      "ninja-build",
+      "pkg-config",
+      "libavcodec-dev",
+      "libavfilter-dev",
+      "libavformat-dev",
+      "libavutil-dev",
+      "libswresample-dev",
+      "libswscale-dev",
+      "libplacebo-dev",
+      "libass-dev",
+      "libluajit-5.1-dev",
+      "libpulse-dev",
+      "zlib1g-dev"
+    ],
+    "description": "Kilix mpv fork with inline terminal video and PulseAudio. Requires FFmpeg 6.1+ and libplacebo 6.338.2+; older distributions need newer development packages.",
+    "probe": [
+      "--version"
+    ],
+    "launch_args": [
+      "--no-config",
+      "--vo=kitty",
+      "--vo-kitty-use-shm=no",
+      "--vo-kitty-config-clear=no",
+      "--ao=pulse",
+      "--really-quiet"
+    ],
+    "build_commands": [
+      "meson",
+      "ninja",
+      "cc",
+      "pkg-config"
+    ],
+    "build_modules": [
+      "libavcodec >= 60.31.102",
+      "libavfilter >= 9.12.100",
+      "libavformat >= 60.16.100",
+      "libavutil >= 58.29.100",
+      "libswresample >= 4.12.100",
+      "libswscale >= 7.5.100",
+      "libplacebo >= 6.338.2",
+      "libass",
+      "luajit",
+      "libpulse",
+      "zlib"
+    ],
+    "build_note": "Ubuntu 22.04 default FFmpeg/libplacebo are too old. Use a newer distribution or explicitly provide compatible development packages; a binary bundle must match the receiving distribution ABI."
+  },
+  {
+    "runtime": [
+      "wsl"
+    ],
+    "category": "app",
+    "models": "Optional neural voices and dictation require separate runtime, model and license setup; not installed by this catalog.",
+    "native_reason": "Requires its Linux runtime; no Windows build is supplied.",
+    "name": "kilix-voice",
+    "title": "Voice read-aloud",
+    "aliases": [
+      "voice",
+      "tts",
+      "kilix-tts"
+    ],
+    "source": "apps/kilix-voice",
+    "repository": "https://github.com/itsmygithubacct/kilix-voice",
+    "recipe": "voice",
+    "executable": "kilix-tts",
+    "requirements": [
+      "espeak-ng"
+    ],
+    "packages": [
+      "espeak-ng",
+      "pulseaudio-utils"
+    ],
+    "description": "Read-aloud settings and WAV export with eSpeak (en-us by default). Use --speak TEXT --output FILE.wav; --interactive enables direct playback. Arguments may override the request voice. Daemon/dictation and neural providers require separate setup. No model is downloaded.",
+    "probe": [
+      "--help"
+    ],
+    "launch_args": [
+      "--model",
+      "espeak",
+      "--voice",
+      "en-us"
+    ]
+  },
+  {
+    "runtime": [
+      "wsl",
+      "native"
+    ],
+    "category": "app",
+    "models": "none",
+    "native_reason": "",
+    "name": "kilix-graphs",
+    "title": "Graphs and charts",
+    "aliases": [
+      "graphs",
+      "charts"
+    ],
+    "source": "apps/kilix-graphs",
+    "repository": "https://github.com/itsmygithubacct/kilix-graphs",
+    "recipe": "python",
+    "executable": "kilix-graphs",
+    "requirements": [],
+    "packages": [],
+    "description": "DOT/JSON graphs and CSV charts to text or SVG. Portable Python; optional raster backend is not bundled.",
+    "probe": [
+      "--help"
+    ]
+  },
+  {
+    "name": "dosbox-kilix",
+    "title": "dosbox-kilix",
+    "aliases": [],
+    "category": "app",
+    "runtime": [],
+    "repository": "https://github.com/itsmygithubacct/dosbox-kilix",
+    "unsupported": "DOSBox terminal fork needs a dedicated SDL/backend build and Windows/WSL validation."
+  },
+  {
+    "name": "kilix-amp",
+    "title": "kilix-amp",
+    "aliases": [],
+    "category": "app",
+    "runtime": [],
+    "repository": "https://github.com/itsmygithubacct/kilix-amp",
+    "unsupported": "Player/editor provider closure and audio integration have not been ported into this companion."
+  },
+  {
+    "name": "kilix-background-remover",
+    "title": "kilix-background-remover",
+    "aliases": [],
+    "category": "app",
+    "runtime": [],
+    "repository": "https://github.com/itsmygithubacct/kilix-background-remover",
+    "unsupported": "Requires a separately selected inference runtime and licensed model; no companion adapter yet."
+  },
+  {
+    "name": "kilix-bonsai",
+    "title": "kilix-bonsai",
+    "aliases": [],
+    "category": "app",
+    "runtime": [],
+    "repository": "https://github.com/itsmygithubacct/kilix-bonsai",
+    "unsupported": "BitNet runtime and model-store setup are not integrated; model acquisition remains explicit."
+  },
+  {
+    "name": "kilix-image-shop",
+    "title": "kilix-image-shop",
+    "aliases": [],
+    "category": "app",
+    "runtime": [],
+    "repository": "https://github.com/itsmygithubacct/kilix-image-shop",
+    "unsupported": "Public editor core has no production provider adapters in the inventoried checkout."
+  },
+  {
+    "name": "kilix-land-agent",
+    "title": "kilix-land-agent",
+    "aliases": [],
+    "category": "app",
+    "runtime": [],
+    "repository": "https://github.com/itsmygithubacct/kilix-land-agent",
+    "unsupported": "Studio room runtime and separately licensed assets are not integrated."
+  },
+  {
+    "name": "kilix-multiplexer",
+    "title": "kilix-multiplexer",
+    "aliases": [],
+    "category": "app",
+    "runtime": [],
+    "repository": "https://github.com/itsmygithubacct/kilix-multiplexer",
+    "unsupported": "Remote-session server/client lifecycle is not integrated with the Windows host."
+  },
+  {
+    "name": "kilix-nvr",
+    "title": "kilix-nvr",
+    "aliases": [],
+    "category": "app",
+    "runtime": [],
+    "repository": "https://github.com/itsmygithubacct/kilix-nvr",
+    "unsupported": "Camera, storage and detector providers are not provisioned by this catalog."
+  },
+  {
+    "name": "kilix-ollama",
+    "title": "kilix-ollama",
+    "aliases": [],
+    "category": "app",
+    "runtime": [],
+    "repository": "https://github.com/itsmygithubacct/kilix-ollama",
+    "unsupported": "Ollama service lifecycle and model acceptance are not integrated with this catalog."
+  },
+  {
+    "name": "kilix-pdf-conversion",
+    "title": "kilix-pdf-conversion",
+    "aliases": [],
+    "category": "app",
+    "runtime": [],
+    "repository": "https://github.com/itsmygithubacct/kilix-pdf-conversion",
+    "unsupported": "Document-conversion runtime and optional model closure are not bundled; use the supported PDF viewer for reading."
+  },
+  {
+    "name": "kilix-playalong",
+    "title": "kilix-playalong",
+    "aliases": [],
+    "category": "app",
+    "runtime": [],
+    "repository": "https://github.com/itsmygithubacct/kilix-playalong",
+    "unsupported": "Guitar/audio capture and native presentation need a companion adapter."
+  },
+  {
+    "name": "kilix-techno",
+    "title": "kilix-techno",
+    "aliases": [],
+    "category": "app",
+    "runtime": [],
+    "repository": "https://github.com/itsmygithubacct/kilix-techno",
+    "unsupported": "Workstation audio/soundbank installation and terminal integration are not yet qualified here."
+  },
+  {
+    "name": "kilix-voicebox",
+    "title": "kilix-voicebox",
+    "aliases": [],
+    "category": "app",
+    "runtime": [],
+    "repository": "https://github.com/itsmygithubacct/kilix-voicebox",
+    "unsupported": "Voicebox frontend and speech providers require a separate application runtime."
+  },
+  {
+    "name": "kilix-voicegen",
+    "title": "kilix-voicegen",
+    "aliases": [],
+    "category": "app",
+    "runtime": [],
+    "repository": "https://github.com/itsmygithubacct/kilix-voicegen",
+    "unsupported": "Speech engine build and voice provisioning are not integrated with this companion."
+  },
+  {
+    "name": "kilix-waydroid",
+    "title": "kilix-waydroid",
+    "aliases": [],
+    "category": "app",
+    "runtime": [],
+    "repository": "https://github.com/itsmygithubacct/kilix-waydroid",
+    "unsupported": "Requires an Android container and Linux desktop services; WSL/native Windows support is unavailable."
+  },
+  {
+    "name": "python-sound-generator",
+    "title": "python-sound-generator",
+    "aliases": [],
+    "category": "app",
+    "runtime": [],
+    "repository": "https://github.com/itsmygithubacct/python-sound-generator",
+    "unsupported": "Authoring toolkit has no selected companion installation or interactive entrypoint."
+  },
+  {
+    "name": "tmux-browse",
+    "title": "tmux-browse",
+    "aliases": [],
+    "category": "app",
+    "runtime": [],
+    "repository": "https://github.com/itsmygithubacct/tmux-browse",
+    "unsupported": "Web dashboard/server lifecycle is not packaged; tmux CLI support is separate."
+  },
+  {
+    "name": "tmux-cli",
+    "title": "tmux-cli",
+    "aliases": [],
+    "category": "app",
+    "runtime": [],
+    "repository": "https://github.com/itsmygithubacct/tmux-cli",
+    "unsupported": "Standalone repository is not installed by this catalog; the host tmux command is a separate integration."
+  },
+  {
+    "name": "tmux-tui",
+    "title": "tmux-tui",
+    "aliases": [],
+    "category": "app",
+    "runtime": [],
+    "repository": "https://github.com/itsmygithubacct/tmux-tui",
+    "unsupported": "Requires a selected tmux session manager build; not installed by this catalog."
+  },
+  {
+    "name": "kilix-needle",
+    "title": "Needle",
+    "aliases": [
+      "needle"
+    ],
+    "category": "app",
+    "runtime": [
+      "wsl"
+    ],
+    "recipe": "companion",
+    "repository": "https://github.com/itsmygithubacct/kilix-needle",
+    "description": "Installed with companion setup. Use kilix needle; its existing model readiness and license checks remain authoritative.",
+    "native_reason": "Linux sealing and pane-control runtime is required.",
+    "models": "Needle model and owner acceptance required for model-driven requests. Grammar jobs do not need weights."
+  },
+  {
+    "name": "windows-browser",
+    "title": "Windows browser",
+    "aliases": [
+      "system-browser"
+    ],
+    "category": "app",
+    "runtime": [
+      "native"
+    ],
+    "recipe": "builtin",
+    "repository": "https://github.com/itsmygithubacct/kilix",
+    "description": "Open an HTTP(S) address in the registered Windows browser. Runs outside the terminal.",
+    "unsupported": "Requires native Windows; invoke from a PowerShell or cmd tab."
+  },
+  {
+    "name": "windows-pdf",
+    "title": "Windows PDF handler",
+    "aliases": [
+      "system-pdf"
+    ],
+    "category": "app",
+    "runtime": [
+      "native"
+    ],
+    "recipe": "builtin",
+    "repository": "https://github.com/itsmygithubacct/kilix",
+    "description": "Open a PDF in the registered Windows application. Runs outside the terminal.",
+    "unsupported": "Requires native Windows; invoke from a PowerShell or cmd tab."
+  },
+  {
+    "name": "windows-media",
+    "title": "Windows media handler",
+    "aliases": [
+      "system-media"
+    ],
+    "category": "app",
+    "runtime": [
+      "native"
+    ],
+    "recipe": "builtin",
+    "repository": "https://github.com/itsmygithubacct/kilix",
+    "description": "Open a media file in the registered Windows application. Runs outside the terminal.",
+    "unsupported": "Requires native Windows; invoke from a PowerShell or cmd tab."
+  },
+  {
+    "name": "windows-voice",
+    "title": "Windows speech",
+    "aliases": [
+      "system-voice"
+    ],
+    "category": "app",
+    "runtime": [
+      "native"
+    ],
+    "recipe": "builtin",
+    "repository": "https://github.com/itsmygithubacct/kilix",
+    "description": "Read text aloud using the installed Windows SAPI voice; no model download. Runs outside the terminal.",
+    "unsupported": "Requires native Windows; invoke from a PowerShell or cmd tab."
+  }
+]

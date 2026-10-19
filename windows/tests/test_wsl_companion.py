@@ -107,9 +107,9 @@ class CompanionTests(unittest.TestCase):
             root = Path(directory)
             (root / 'wsl').mkdir()
             (root / 'wsl-bin').mkdir()
-            shutil.copy2(source / 'windows/wsl/companion.py', root / 'wsl/companion.py')
-            shutil.copy2(source / 'windows/wsl/games.py', root / 'wsl/games.py')
-            shutil.copy2(source / 'windows/wsl/recovery.py', root / 'wsl/recovery.py')
+            for pattern in ('*.py', '*.json'):
+                for item in (source / 'windows/wsl').glob(pattern):
+                    shutil.copy2(item, root / 'wsl' / item.name)
             shutil.copy2(source / 'windows/wsl/kitten.sh', root / 'wsl-bin/kitten')
             (root / 'wsl-bin/kitten').chmod(0o755)
             (root / 'wsl-bin/config').symlink_to(source / 'config', target_is_directory=True)

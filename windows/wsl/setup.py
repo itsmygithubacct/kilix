@@ -14,11 +14,42 @@ import tarfile
 import tempfile
 
 
-def build_games(generation, python):
-    catalog = json.loads(Path(__file__).with_name('game-catalog.json').read_text())
+def write_game_launchers(generation, python, catalog):
     bindir = generation / 'bin'
     bindir.mkdir(exist_ok=True)
-    (bindir / 'python3').symlink_to(python)
+    interpreter = bindir / 'python3'
+    if interpreter.is_symlink():
+        interpreter.unlink()
+    if not interpreter.exists():
+        interpreter.symlink_to(python)
+    for game in catalog:
+        wrapper = bindir / game['name']
+        wrapper.write_text('#!/bin/sh\nset -eu\n'
+                           'export KITTYFB_TRANSPORT=inline\n'
+                           'bindir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\n'
+                           'export PATH="$bindir:$PATH"\n'
+                           'cd -- "$bindir/../"' + shlex.quote(game['source']) + '\n'
+                           'exec ' + shlex.quote('./' + game['executable']) + ' "$@"\n')
+        wrapper.chmod(0o755)
+        for alias in game['aliases']:
+            link = bindir / alias
+            if link.is_symlink():
+                link.unlink()
+            link.symlink_to(game['name'])
+
+
+def build_games(generation, python, names=None):
+    catalog = json.loads(Path(__file__).with_name('game-catalog.json').read_text())
+    if names is not None:
+        unknown = set(names) - {game['name'] for game in catalog}
+        if unknown:
+            raise ValueError('Unknown games: ' + ', '.join(sorted(unknown)))
+        catalog = [game for game in catalog if game['name'] in names]
+    bindir = generation / 'bin'
+    bindir.mkdir(exist_ok=True)
+    interpreter = bindir / 'python3'
+    if not interpreter.exists():
+        interpreter.symlink_to(python)
     env = dict(os.environ, PATH=str(bindir) + os.pathsep + os.environ.get('PATH', ''))
     for game in catalog:
         source = generation / game['source']
@@ -28,19 +59,9 @@ def build_games(generation, python):
         binary = source / game['executable']
         if not binary.is_file() or not os.access(binary, os.X_OK):
             raise ValueError('Game build did not produce ' + game['name'])
-        # Some games find assets relative to cwd, others relative to their
-        # executable. Retain the complete source layout for both conventions.
-        # Inline graphics is needed even when launching a game directly.
-        wrapper = bindir / game['name']
-        wrapper.write_text('#!/bin/sh\nset -eu\n'
-                           'export KITTYFB_TRANSPORT=inline\n'
-                           'export PATH=' + shlex.quote(str(bindir)) + ':"$PATH"\n'
-                           'cd -- ' + shlex.quote(str(source)) + '\n'
-                           'exec ' + shlex.quote(str(binary)) + ' "$@"\n')
-        wrapper.chmod(0o755)
-        for alias in game['aliases']:
-            (bindir / alias).symlink_to(game['name'])
-        subprocess.run([str(wrapper), '--version'], env=env, stdout=subprocess.DEVNULL,
+    write_game_launchers(generation, python, catalog)
+    for game in catalog:
+        subprocess.run([str(bindir / game['name']), '--version'], env=env, stdout=subprocess.DEVNULL,
                        timeout=30, check=True)
     (generation / 'game-catalog.json').write_text(json.dumps(catalog, indent=2) + '\n')
 
@@ -97,6 +118,12 @@ def install(archive, expected, root=None):
             # Do not point a new generation back through the mutable current link.
             python = str(Path(sys.executable).resolve())
             build_games(generation, python)
+            if (generation / 'needle/apps.py').is_file():
+                from needle_catalog import patch_needle
+                patch_needle(generation)
+            if (generation / 'kitty-pty-broker').is_dir():
+                from recovery import build_backend
+                build_backend(generation)
             subprocess.run([python, str(generation / 'needle/needle_cli.py'), '--help'],
                            stdout=subprocess.DEVNULL, check=True)
 

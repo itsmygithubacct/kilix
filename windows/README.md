@@ -228,8 +228,10 @@ connection. `kilix tab --help` lists the tab command family. `kilix fullscreen`
 targets the invoking pane's native window through authenticated control.
 `--cwd=current` refers to the invoking Linux process's directory. It does not
 discover another pane's Linux working directory through Windows process data.
-`kilix apps` lists games installed by companion setup. Arbitrary installed
-Linux executables can be launched with `--launch`.
+`kilix apps` lists the public application catalog with readiness and platform
+limits. `kilix games list` lists installed enabled games. Both support
+install/update, enable/disable and a terminal or optional Tk chooser. Arbitrary
+installed Linux executables can be launched with `--launch`.
 
 Needle and all fifteen public catalog games install separately into
 `~/.local/share/kilix-wsl`. The catalog includes all twelve `kilix-games`
@@ -250,8 +252,10 @@ kilix --launch kilix-pong
 
 Needle retains its confirmation, target, readiness and model-license checks.
 Prompt-sensitive typing requires shell prompt integration; it is refused when
-the native pane cannot establish prompt readiness. Linux desktop services,
-catalogue-wide app installation remain separate from session recovery below.
+the native pane cannot establish prompt readiness. Linux desktop services and
+unintegrated catalog apps remain unavailable.
+Catalog source installs cover the browser, PDF viewer, graphs, eSpeak voice
+tools and media player; each reports its prerequisites and platform limits.
 
 ## Recoverable WSL sessions
 
@@ -401,8 +405,13 @@ catalog on Linux; native rendering and WSLg audio remain hardware tests.
 ## Scope and remaining work
 
 This is a usable development port, not a fully qualified Windows release.
-Linux desktop services, in-pane browser, voice tools, and native PowerShell/cmd
-process recovery are unavailable. WSL recovery is opt-in as described above.
+Linux desktop services and most public app integrations remain unavailable.
+The WSL catalog provides pinned source builds for Chawan, the PDF viewer,
+graphs, eSpeak voice tools and the mpv fork. The media fork needs newer
+FFmpeg/libplacebo than Ubuntu 22.04 supplies. Native Windows supports portable
+graphs and explicit system browser/PDF/media/SAPI handlers; Linux app/game
+binaries remain WSL-only. See [catalog setup and limitations](wsl/README.txt).
+WSL recovery is opt-in; native PowerShell/cmd recovery remains unavailable.
 Unsupported Linux chrome widgets are hidden.
 The native Windows backend still contains inherited compatibility shims that
 need further review before expanding supported capabilities.

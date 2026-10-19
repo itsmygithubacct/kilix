@@ -5,6 +5,23 @@
     "executable": "bin/solitaire-tui",
     "aliases": [
       "solitaire"
+    ],
+    "category": "game",
+    "runtime": [
+      "wsl"
+    ],
+    "recipe": "game",
+    "title": "solitaire-tui",
+    "native_reason": "Uses POSIX terminal/game SDK APIs. Install and run in a WSL distribution; no native Windows binary is supplied.",
+    "repository": "https://github.com/itsmygithubacct/kilix-games",
+    "build_commands": [
+      "make",
+      "cc"
+    ],
+    "packages": [
+      "build-essential",
+      "zlib1g-dev",
+      "pulseaudio-utils"
     ]
   },
   {
@@ -14,6 +31,23 @@
     "aliases": [
       "lander",
       "terminal-lander"
+    ],
+    "category": "game",
+    "runtime": [
+      "wsl"
+    ],
+    "recipe": "game",
+    "title": "kilix-lander",
+    "native_reason": "Uses POSIX terminal/game SDK APIs. Install and run in a WSL distribution; no native Windows binary is supplied.",
+    "repository": "https://github.com/itsmygithubacct/kilix-games",
+    "build_commands": [
+      "make",
+      "cc"
+    ],
+    "packages": [
+      "build-essential",
+      "zlib1g-dev",
+      "pulseaudio-utils"
     ]
   },
   {
@@ -22,6 +56,23 @@
     "executable": "joustix",
     "aliases": [
       "joust"
+    ],
+    "category": "game",
+    "runtime": [
+      "wsl"
+    ],
+    "recipe": "game",
+    "title": "joustix",
+    "native_reason": "Uses POSIX terminal/game SDK APIs. Install and run in a WSL distribution; no native Windows binary is supplied.",
+    "repository": "https://github.com/itsmygithubacct/kilix-games",
+    "build_commands": [
+      "make",
+      "cc"
+    ],
+    "packages": [
+      "build-essential",
+      "zlib1g-dev",
+      "pulseaudio-utils"
     ]
   },
   {
@@ -32,6 +83,23 @@
       "brokeout",
       "breakout",
       "kitty-brokeout"
+    ],
+    "category": "game",
+    "runtime": [
+      "wsl"
+    ],
+    "recipe": "game",
+    "title": "kilix-brokeout",
+    "native_reason": "Uses POSIX terminal/game SDK APIs. Install and run in a WSL distribution; no native Windows binary is supplied.",
+    "repository": "https://github.com/itsmygithubacct/kilix-games",
+    "build_commands": [
+      "make",
+      "cc"
+    ],
+    "packages": [
+      "build-essential",
+      "zlib1g-dev",
+      "pulseaudio-utils"
     ]
   },
   {
@@ -40,6 +108,23 @@
     "executable": "bashed-earth",
     "aliases": [
       "earth"
+    ],
+    "category": "game",
+    "runtime": [
+      "wsl"
+    ],
+    "recipe": "game",
+    "title": "bashed-earth",
+    "native_reason": "Uses POSIX terminal/game SDK APIs. Install and run in a WSL distribution; no native Windows binary is supplied.",
+    "repository": "https://github.com/itsmygithubacct/kilix-games",
+    "build_commands": [
+      "make",
+      "cc"
+    ],
+    "packages": [
+      "build-essential",
+      "zlib1g-dev",
+      "pulseaudio-utils"
     ]
   },
   {
@@ -48,6 +133,23 @@
     "executable": "bin/kilix-lights",
     "aliases": [
       "lights"
+    ],
+    "category": "game",
+    "runtime": [
+      "wsl"
+    ],
+    "recipe": "game",
+    "title": "kilix-lights",
+    "native_reason": "Uses POSIX terminal/game SDK APIs. Install and run in a WSL distribution; no native Windows binary is supplied.",
+    "repository": "https://github.com/itsmygithubacct/kilix-games",
+    "build_commands": [
+      "make",
+      "cc"
+    ],
+    "packages": [
+      "build-essential",
+      "zlib1g-dev",
+      "pulseaudio-utils"
     ]
   },
   {
@@ -56,6 +158,23 @@
     "executable": "kilix-jpak",
     "aliases": [
       "jpak"
+    ],
+    "category": "game",
+    "runtime": [
+      "wsl"
+    ],
+    "recipe": "game",
+    "title": "kilix-jpak",
+    "native_reason": "Uses POSIX terminal/game SDK APIs. Install and run in a WSL distribution; no native Windows binary is supplied.",
+    "repository": "https://github.com/itsmygithubacct/kilix-games",
+    "build_commands": [
+      "make",
+      "cc"
+    ],
+    "packages": [
+      "build-essential",
+      "zlib1g-dev",
+      "pulseaudio-utils"
     ]
   },
   {
@@ -64,6 +183,23 @@
     "executable": "kilix-pong",
     "aliases": [
       "pong"
+    ],
+    "category": "game",
+    "runtime": [
+      "wsl"
+    ],
+    "recipe": "game",
+    "title": "kilix-pong",
+    "native_reason": "Uses POSIX terminal/game SDK APIs. Install and run in a WSL distribution; no native Windows binary is supplied.",
+    "repository": "https://github.com/itsmygithubacct/kilix-games",
+    "build_commands": [
+      "make",
+      "cc"
+    ],
+    "packages": [
+      "build-essential",
+      "zlib1g-dev",
+      "pulseaudio-utils"
     ]
   },
   {
@@ -72,6 +208,23 @@
     "executable": "chess-bash",
     "aliases": [
       "chess"
+    ],
+    "category": "game",
+    "runtime": [
+      "wsl"
+    ],
+    "recipe": "game",
+    "title": "chess-bash",
+    "native_reason": "Uses POSIX terminal/game SDK APIs. Install and run in a WSL distribution; no native Windows binary is supplied.",
+    "repository": "https://github.com/itsmygithubacct/kilix-games",
+    "build_commands": [
+      "make",
+      "cc"
+    ],
+    "packages": [
+      "build-essential",
+      "zlib1g-dev",
+      "pulseaudio-utils"
     ]
   },
   {
@@ -80,6 +233,23 @@
     "executable": "kilix-rancher",
     "aliases": [
       "rancher"
+    ],
+    "category": "game",
+    "runtime": [
+      "wsl"
+    ],
+    "recipe": "game",
+    "title": "kilix-rancher",
+    "native_reason": "Uses POSIX terminal/game SDK APIs. Install and run in a WSL distribution; no native Windows binary is supplied.",
+    "repository": "https://github.com/itsmygithubacct/kilix-games",
+    "build_commands": [
+      "make",
+      "cc"
+    ],
+    "packages": [
+      "build-essential",
+      "zlib1g-dev",
+      "pulseaudio-utils"
     ]
   },
   {
@@ -88,6 +258,23 @@
     "executable": "kilix-fishtank",
     "aliases": [
       "fishtank"
+    ],
+    "category": "game",
+    "runtime": [
+      "wsl"
+    ],
+    "recipe": "game",
+    "title": "kilix-fishtank",
+    "native_reason": "Uses POSIX terminal/game SDK APIs. Install and run in a WSL distribution; no native Windows binary is supplied.",
+    "repository": "https://github.com/itsmygithubacct/kilix-games",
+    "build_commands": [
+      "make",
+      "cc"
+    ],
+    "packages": [
+      "build-essential",
+      "zlib1g-dev",
+      "pulseaudio-utils"
     ]
   },
   {
@@ -97,6 +284,23 @@
     "aliases": [
       "tictactoe",
       "tic-tac-toe"
+    ],
+    "category": "game",
+    "runtime": [
+      "wsl"
+    ],
+    "recipe": "game",
+    "title": "Tic-tac-toe",
+    "native_reason": "Uses POSIX terminal/game SDK APIs. Install and run in a WSL distribution; no native Windows binary is supplied.",
+    "repository": "https://github.com/itsmygithubacct/kilix-games",
+    "build_commands": [
+      "make",
+      "cc"
+    ],
+    "packages": [
+      "build-essential",
+      "zlib1g-dev",
+      "pulseaudio-utils"
     ]
   },
   {
@@ -105,6 +309,23 @@
     "executable": "super-kilix",
     "aliases": [
       "super"
+    ],
+    "category": "game",
+    "runtime": [
+      "wsl"
+    ],
+    "recipe": "game",
+    "title": "super-kilix",
+    "native_reason": "Uses POSIX terminal/game SDK APIs. Install and run in a WSL distribution; no native Windows binary is supplied.",
+    "repository": "https://github.com/itsmygithubacct/super-kilix",
+    "build_commands": [
+      "make",
+      "cc"
+    ],
+    "packages": [
+      "build-essential",
+      "zlib1g-dev",
+      "pulseaudio-utils"
     ]
   },
   {
@@ -113,6 +334,23 @@
     "executable": "pleb-plant-grower",
     "aliases": [
       "plant-grower"
+    ],
+    "category": "game",
+    "runtime": [
+      "wsl"
+    ],
+    "recipe": "game",
+    "title": "Plant Grower",
+    "native_reason": "Uses POSIX terminal/game SDK APIs. Install and run in a WSL distribution; no native Windows binary is supplied.",
+    "repository": "https://github.com/itsmygithubacct/pleb-plant-grower",
+    "build_commands": [
+      "make",
+      "cc"
+    ],
+    "packages": [
+      "build-essential",
+      "zlib1g-dev",
+      "pulseaudio-utils"
     ]
   },
   {
@@ -121,6 +359,23 @@
     "executable": "kilix-land",
     "aliases": [
       "land"
+    ],
+    "category": "game",
+    "runtime": [
+      "wsl"
+    ],
+    "recipe": "game",
+    "title": "kilix-land",
+    "native_reason": "Uses POSIX terminal/game SDK APIs. Install and run in a WSL distribution; no native Windows binary is supplied.",
+    "repository": "https://github.com/itsmygithubacct/kilix-land",
+    "build_commands": [
+      "make",
+      "cc"
+    ],
+    "packages": [
+      "build-essential",
+      "zlib1g-dev",
+      "pulseaudio-utils"
     ]
   }
 ]
