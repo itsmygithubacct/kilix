@@ -77,6 +77,27 @@ image presentation, SGR mouse input and redraws while paused after a resize.
 The supervisor suppresses text status overlays and clears synchronized-update
 mode during recovery. The graphical seek bar and error messages remain available.
 
+With Kitty graphics, warnings and errors stay in a panel at the top of the video
+for the rest of the session, including while paused, seeking, or resizing. The
+first four distinct messages stay pinned; repeats are collapsed and additional
+messages are indicated.
+Long messages are shortened in the panel. After playback, diagnostics are printed
+again on the restored terminal (up to the last 64 KiB), so quitting or a player
+crash does not erase them. This uses the bundled Lua overlay, supported by the
+packaged player, and does not change the seek bar's normal timeout. Text-cell
+output retains diagnostics after exit but cannot draw the graphical panel.
+Player version `0.40.0+kilix.3` also defers clearing during a resize until the
+replacement frame is ready, keeping the video and panel visible while paused.
+
+The private display regression check requires Pillow, Xvfb, xdotool and
+ImageMagick. Supply a video at least two seconds long:
+
+```sh
+python3 -B tests/check_terminal_video_errors.py /path/to/kilix-mpv \
+  /path/to/kitty /path/to/video.mkv /path/to/evidence
+# Repeat with --transport shm for local shared-memory playback.
+```
+
 For a local terminal that shares `/dev/shm` with the player:
 
 ```sh
