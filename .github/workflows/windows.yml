@@ -23,6 +23,40 @@ jobs:
           persist-credentials: false
       - run: python3 -m unittest discover -s windows/tests -p 'test_wsl*.py'
 
+  games:
+    name: Build the pinned public game catalog
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Fetch exact companion sources
+        shell: python
+        run: |
+          import json, os, pathlib, subprocess
+          pins = json.loads(pathlib.Path('windows/wsl/source-revisions.json').read_text())
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'companion-sources'
+          repositories = {'needle': 'kilix-needle', 'games': 'kilix-games',
+                          'super-kilix': 'super-kilix', 'kilix-land': 'kilix-land',
+                          'pleb-plant-grower': 'pleb-plant-grower'}
+          for name, repository in repositories.items():
+              target = root / name
+              subprocess.run(['git', 'clone', '--no-checkout',
+                              'https://github.com/itsmygithubacct/' + repository + '.git', str(target)], check=True)
+              subprocess.run(['git', '-C', str(target), 'checkout', '--detach', pins[name]], check=True)
+              subprocess.run(['git', '-C', str(target), 'submodule', 'update', '--init', '--recursive'], check=True)
+      - name: Export and install all games
+        run: |
+          set -euo pipefail
+          source_root="$RUNNER_TEMP/companion-sources"
+          python3 windows/wsl/bundle.py --needle "$source_root/needle" --games "$source_root/games" \
+            --super-kilix "$source_root/super-kilix" --kilix-land "$source_root/kilix-land" \
+            --plant-grower "$source_root/pleb-plant-grower" --output "$RUNNER_TEMP/companion.tar.gz"
+          digest=$(sha256sum "$RUNNER_TEMP/companion.tar.gz")
+          python3 windows/wsl/setup.py "$RUNNER_TEMP/companion.tar.gz" "${digest%% *}"
+          python3 windows/tests/check-games.py --output "$RUNNER_TEMP/game-checks.json"
+
   windows:
     name: Native Windows build and CLI
     runs-on: windows-2022
@@ -68,7 +102,7 @@ jobs:
   preview:
     name: Prepare Windows preview release
     if: startsWith(github.ref, 'refs/tags/windows-v')
-    needs: [companion, windows]
+    needs: [companion, games, windows]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

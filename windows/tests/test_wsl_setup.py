@@ -35,6 +35,15 @@ class SetupTests(unittest.TestCase):
         (self.root / 'content/model').write_bytes(b'accepted model')
         self.archive = self.home / 'bundle.tar.gz'
         self.write_archive({'needle/needle_cli.py': b'pass'})
+        # Keep publication/rollback tests independent of game compilation.
+        self.builder = patch.object(setup, 'build_games', side_effect=self.build_games)
+        self.builder.start()
+        self.addCleanup(self.builder.stop)
+
+    def build_games(self, generation, python):
+        subprocess.run(['make', '-C', str(generation)], check=True)
+        (generation / 'bin').mkdir()
+        (generation / 'bin/python3').symlink_to(python)
 
     def write_archive(self, entries):
         with tarfile.open(self.archive, 'w:gz') as archive:

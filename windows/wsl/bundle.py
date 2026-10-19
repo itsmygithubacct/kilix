@@ -13,14 +13,16 @@ import tempfile
 
 def write_bundle(args, output):
     pins = json.loads(Path(__file__).with_name('source-revisions.json').read_text())
-    roots = {'needle': args.needle, 'games': args.games}
+    roots = {'needle': args.needle, 'games': args.games,
+             'super-kilix': args.super_kilix, 'kilix-land': args.kilix_land,
+             'pleb-plant-grower': args.plant_grower}
     with tarfile.open(output, 'w:gz') as archive:
         for prefix, revision in pins.items():
             name, _, relative = prefix.partition('/')
             repo = roots[name] / relative
-            # Export only the installed game and its separately pinned SDK.
-            paths = ['kilix-pong', 'LICENSE', 'README.md'] if prefix == 'games' else []
-            data = subprocess.check_output(['git', '-C', str(repo), 'archive', revision, *paths])
+            # Include each game's assets and notices, and the exact dependency
+            # revisions recorded below it. No working-tree build products.
+            data = subprocess.check_output(['git', '-C', str(repo), 'archive', revision])
             with tarfile.open(fileobj=io.BytesIO(data)) as source:
                 for member in source:
                     contents = source.extractfile(member) if member.isfile() else None
@@ -65,6 +67,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--needle', type=Path, required=True, help='Initialized kilix-needle checkout')
     parser.add_argument('--games', type=Path, required=True, help='Initialized kilix-games checkout')
+    parser.add_argument('--super-kilix', type=Path, required=True, help='Initialized super-kilix checkout')
+    parser.add_argument('--kilix-land', type=Path, required=True, help='Initialized kilix-land checkout')
+    parser.add_argument('--plant-grower', type=Path, required=True, help='Initialized pleb-plant-grower checkout')
     parser.add_argument('--needle-model', type=Path, help='Already installed needle2 asset directory')
     parser.add_argument('--receipt', type=Path, action='append', default=[],
                         help='Existing owner acceptance receipt; makes this a personal bundle')

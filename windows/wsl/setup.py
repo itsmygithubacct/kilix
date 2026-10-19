@@ -7,10 +7,42 @@ import json
 import os
 from pathlib import Path
 import shutil
+import shlex
 import subprocess
 import sys
 import tarfile
 import tempfile
+
+
+def build_games(generation, python):
+    catalog = json.loads(Path(__file__).with_name('game-catalog.json').read_text())
+    bindir = generation / 'bin'
+    bindir.mkdir(exist_ok=True)
+    (bindir / 'python3').symlink_to(python)
+    env = dict(os.environ, PATH=str(bindir) + os.pathsep + os.environ.get('PATH', ''))
+    for game in catalog:
+        source = generation / game['source']
+        print('Building ' + game['name'], flush=True)
+        subprocess.run(['make', '-C', str(source), '-j2', 'all', 'PYTHON=' + python],
+                       env=env, check=True)
+        binary = source / game['executable']
+        if not binary.is_file() or not os.access(binary, os.X_OK):
+            raise ValueError('Game build did not produce ' + game['name'])
+        # Some games find assets relative to cwd, others relative to their
+        # executable. Retain the complete source layout for both conventions.
+        # Inline graphics is needed even when launching a game directly.
+        wrapper = bindir / game['name']
+        wrapper.write_text('#!/bin/sh\nset -eu\n'
+                           'export KITTYFB_TRANSPORT=inline\n'
+                           'export PATH=' + shlex.quote(str(bindir)) + ':"$PATH"\n'
+                           'cd -- ' + shlex.quote(str(source)) + '\n'
+                           'exec ' + shlex.quote(str(binary)) + ' "$@"\n')
+        wrapper.chmod(0o755)
+        for alias in game['aliases']:
+            (bindir / alias).symlink_to(game['name'])
+        subprocess.run([str(wrapper), '--version'], env=env, stdout=subprocess.DEVNULL,
+                       timeout=30, check=True)
+    (generation / 'game-catalog.json').write_text(json.dumps(catalog, indent=2) + '\n')
 
 
 def digest(path):
@@ -64,11 +96,7 @@ def install(archive, expected, root=None):
                 bundle.extractall(generation, filter='data')
             # Do not point a new generation back through the mutable current link.
             python = str(Path(sys.executable).resolve())
-            subprocess.run(['make', '-C', str(generation / 'games/kilix-pong'), '-j2'], check=True)
-            subprocess.run(['make', '-C', str(generation / 'games/kilix-pong'), 'install',
-                            'PREFIX=' + str(generation)], check=True)
-            (generation / 'bin').mkdir(exist_ok=True)
-            (generation / 'bin/python3').symlink_to(python)
+            build_games(generation, python)
             subprocess.run([python, str(generation / 'needle/needle_cli.py'), '--help'],
                            stdout=subprocess.DEVNULL, check=True)
 
@@ -113,5 +141,5 @@ if __name__ == '__main__':
     args = parser.parse_args()
     try:
         install(args.archive, args.sha256)
-    except (ValueError, OSError, tarfile.TarError, subprocess.CalledProcessError) as error:
+    except (ValueError, OSError, tarfile.TarError, subprocess.SubprocessError) as error:
         parser.exit(1, f'WSL setup: {error}\n')

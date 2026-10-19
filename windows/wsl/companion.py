@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import sys
+from games import game_path, installed_games
 
 ROOT = Path(__file__).resolve().parents[1]
 STATE = Path.home() / '.local/share/kilix-wsl'
@@ -146,7 +147,7 @@ def main(args):
   needle [ARGS]                 Run Needle's Linux command/model tools
   launch, --launch PROGRAM [ARGS]  Run a Linux app in a new native Kilix tab
   apps [--json]                List installed WSL apps
-  games list | play NAME        List or run an installed game
+  games list | play NAME [ARGS]  List or run an installed game in this pane
   ls [--panes]                  List native tabs/panes
   pane, tab, focus, watch       Control the current native Kilix window
   fullscreen                   Toggle native fullscreen
@@ -172,24 +173,32 @@ invoking Linux process's directory. Linux desktop services are not Windows servi
             raise ValueError('WSL companion dependencies are not installed; run the WSL setup script.')
         os.execve(str(PYTHON), [str(PYTHON), '-B', str(ROOT / 'wsl/needle-run.py'),
                               str(INSTALL / 'needle/needle_cli.py'), *rest], environment())
+    if verb == 'games' and (rest in (['help'], ['--help'], ['-h']) or
+                            (len(rest) == 2 and rest[0] in ('list', 'play') and rest[1] in ('--help', '-h'))):
+        print('''Usage: kilix games list [--json]
+       kilix games play NAME [ARGS]
+Lists installed public catalog games or runs one in the current pane.
+Names and aliases from the catalog are accepted, such as pong, chess,
+solitaire and lander. Use kilix --launch NAME [ARGS] for a new tab.''')
+        return 0
     if verb == 'apps' or (verb == 'games' and (not rest or rest[0] == 'list')):
         if (rest if verb == 'apps' else rest[1:]) not in ([], ['--json']):
             raise ValueError('Use kilix apps [--json] or kilix games list [--json]')
-        names = sorted(p.name for p in (INSTALL / 'bin').glob('kilix-*') if p.is_file() and os.access(p, os.X_OK))
+        names = installed_games(INSTALL)
         print('\n'.join(names) if '--json' not in rest else json.dumps(names))
         return 0
     if verb == 'games' and rest[:1] == ['play']:
         if len(rest) < 2:
             raise ValueError('Use kilix games play NAME')
-        name = rest[1] if rest[1].startswith('kilix-') else 'kilix-' + rest[1]
-        app = INSTALL / 'bin' / name
-        if not app.is_file() or '/' in name:
-            raise ValueError(f'Game is not installed: {name}')
+        app = game_path(rest[1], INSTALL)
+        if app is None:
+            raise ValueError(f'Game is not installed: {rest[1]}. Run kilix games list.')
         os.execve(str(app), [str(app), *rest[2:]], environment())
     if verb in ('--launch', 'launch'):
         if not rest:
             raise ValueError('Use kilix --launch PROGRAM [ARGS]')
-        program = shutil.which(rest[0], path=environment()['PATH'])
+        game = game_path(rest[0], INSTALL)
+        program = str(game) if game else shutil.which(rest[0], path=environment()['PATH'])
         if not program:
             raise ValueError(f'Linux program is not installed: {rest[0]}')
         return remote(['launch', '--type=tab', '--tab-title=' + Path(program).name,

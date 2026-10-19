@@ -1,0 +1,126 @@
+[
+  {
+    "name": "solitaire-tui",
+    "source": "games/solitaire-tui",
+    "executable": "bin/solitaire-tui",
+    "aliases": [
+      "solitaire"
+    ]
+  },
+  {
+    "name": "kilix-lander",
+    "source": "games/kilix-lander",
+    "executable": "terminal-lander",
+    "aliases": [
+      "lander",
+      "terminal-lander"
+    ]
+  },
+  {
+    "name": "joustix",
+    "source": "games/joustix",
+    "executable": "joustix",
+    "aliases": [
+      "joust"
+    ]
+  },
+  {
+    "name": "kilix-brokeout",
+    "source": "games/kilix-brokeout",
+    "executable": "kitty-brokeout",
+    "aliases": [
+      "brokeout",
+      "breakout",
+      "kitty-brokeout"
+    ]
+  },
+  {
+    "name": "bashed-earth",
+    "source": "games/bashed-earth",
+    "executable": "bashed-earth",
+    "aliases": [
+      "earth"
+    ]
+  },
+  {
+    "name": "kilix-lights",
+    "source": "games/kilix-lights",
+    "executable": "bin/kilix-lights",
+    "aliases": [
+      "lights"
+    ]
+  },
+  {
+    "name": "kilix-jpak",
+    "source": "games/kilix-jpak",
+    "executable": "kilix-jpak",
+    "aliases": [
+      "jpak"
+    ]
+  },
+  {
+    "name": "kilix-pong",
+    "source": "games/kilix-pong",
+    "executable": "kilix-pong",
+    "aliases": [
+      "pong"
+    ]
+  },
+  {
+    "name": "chess-bash",
+    "source": "games/chess-bash",
+    "executable": "chess-bash",
+    "aliases": [
+      "chess"
+    ]
+  },
+  {
+    "name": "kilix-rancher",
+    "source": "games/kilix-rancher",
+    "executable": "kilix-rancher",
+    "aliases": [
+      "rancher"
+    ]
+  },
+  {
+    "name": "kilix-fishtank",
+    "source": "games/kilix-fishtank",
+    "executable": "kilix-fishtank",
+    "aliases": [
+      "fishtank"
+    ]
+  },
+  {
+    "name": "tictactoe-tui",
+    "source": "games/tictactoe-tui",
+    "executable": "tictactoe-tui",
+    "aliases": [
+      "tictactoe",
+      "tic-tac-toe"
+    ]
+  },
+  {
+    "name": "super-kilix",
+    "source": "super-kilix",
+    "executable": "super-kilix",
+    "aliases": [
+      "super"
+    ]
+  },
+  {
+    "name": "pleb-plant-grower",
+    "source": "pleb-plant-grower",
+    "executable": "pleb-plant-grower",
+    "aliases": [
+      "plant-grower"
+    ]
+  },
+  {
+    "name": "kilix-land",
+    "source": "kilix-land",
+    "executable": "kilix-land",
+    "aliases": [
+      "land"
+    ]
+  }
+]

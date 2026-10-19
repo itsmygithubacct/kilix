@@ -14,7 +14,8 @@ from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('companion', Path(__file__).resolve().parents[1] / 'wsl/companion.py')
 module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
+with patch.object(sys, 'path', [str(Path(spec.origin).parent), *sys.path]):
+    spec.loader.exec_module(module)
 
 class CompanionTests(unittest.TestCase):
     def test_arguments_and_linux_directory_are_preserved(self):
@@ -107,6 +108,7 @@ class CompanionTests(unittest.TestCase):
             (root / 'wsl').mkdir()
             (root / 'wsl-bin').mkdir()
             shutil.copy2(source / 'windows/wsl/companion.py', root / 'wsl/companion.py')
+            shutil.copy2(source / 'windows/wsl/games.py', root / 'wsl/games.py')
             shutil.copy2(source / 'windows/wsl/kitten.sh', root / 'wsl-bin/kitten')
             (root / 'wsl-bin/kitten').chmod(0o755)
             (root / 'wsl-bin/config').symlink_to(source / 'config', target_is_directory=True)

@@ -4,7 +4,7 @@ Pane/tab commands need Python 3, WSL interop and Windows PATH import. Setup uses
 uv's managed Python 3.12.14 for archive extraction and building. Open a
 fresh Kilix WSL window after installing the native package. Run `kilix help`.
 
-Needle and Pong additionally need a per-user Linux installation. On Ubuntu:
+Needle and the public game catalog need a per-user Linux installation. On Ubuntu:
   sudo apt-get install build-essential zlib1g-dev pulseaudio-utils
 pulseaudio-utils provides the audio client for WSLg sound. Graphics use inline
 transfers because Windows cannot access Linux shared-memory buffers.
@@ -13,6 +13,8 @@ in the Windows Python environment.
 
 Create the companion source bundle from initialized source checkouts on Linux:
   python3 bundle.py --needle /path/to/kilix-needle --games /path/to/kilix-games \
+    --super-kilix /path/to/super-kilix --kilix-land /path/to/kilix-land \
+    --plant-grower /path/to/pleb-plant-grower \
     --output companion.tar.gz
 
 The exporter uses source-revisions.json, including each nested dependency pin;
@@ -35,10 +37,32 @@ installation active. Existing generations remain available. Models are retained
 across source-only upgrades; conflicting imported model data is rejected. Model
 license receipts use the standard ~/.local/gpu_terminal/license-receipts store.
 
+All fifteen games in game-catalog.json are installed: Solitaire, Lander,
+Joustix, Brokeout, Bashed Earth, Lights, Jpak, Pong, Chess Bash, Rancher,
+Fishtank, Tic-tac-toe, Super Kilix, Plant Grower, and Kilix Land. The twelve
+small games come from kilix-games; the other three retain their own pinned
+repositories and SDK dependencies. Sources, assets and license notices remain
+in each generation. Launchers use the game's source directory so assets resolve
+from any calling directory; relative file arguments are relative to that game.
+User saves remain in the game's normal Linux user directories.
+
+`kilix games list` (or `kilix apps`) lists installed canonical names, with
+`--json` for scripts. `kilix games play NAME [ARGS]` runs in the current pane;
+`kilix --launch NAME [ARGS]` opens a new tab. Both accept catalog aliases, such
+as pong, chess, solitaire, lander, and plant-grower. Original binary names
+terminal-lander and kitty-brokeout also work. Needle can launch the games its
+apps vocabulary recognizes and uses this same installed-game readiness check.
+Games outside this catalog and the full Linux app installer are not included.
+Lights and Fishtank support Q to quit. Plant Grower's current upstream input
+map has no quit key; close its Kilix pane when finished.
+
 Examples:
   kilix needle "split right"
   kilix needle apps "open pong"
   kilix --launch kilix-pong
+  kilix games list
+  kilix --launch chess
+  kilix games play solitaire --seed 7
   kilix pane list
   kilix pane right -- bash
   kilix native help

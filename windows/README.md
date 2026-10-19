@@ -108,7 +108,12 @@ discover another pane's Linux working directory through Windows process data.
 `kilix apps` lists games installed by companion setup. Arbitrary installed
 Linux executables can be launched with `--launch`.
 
-Needle and Pong install separately into `~/.local/share/kilix-wsl`. Upgrades
+Needle and all fifteen public catalog games install separately into
+`~/.local/share/kilix-wsl`. The catalog includes all twelve `kilix-games`
+components plus Super Kilix, Plant Grower and Kilix Land, with pinned assets
+and dependencies. `kilix games list` lists canonical names; `games play NAME`
+runs in this pane and `--launch NAME` opens a new tab. Both accept aliases
+such as `chess`, `solitaire`, `lander` and `pong`. Upgrades
 build a complete generation before atomically activating it, and retain the
 existing model during source-only upgrades. See
 [the companion setup instructions](wsl/README.txt). After setup:
@@ -191,6 +196,18 @@ Pong launch routes, then closes its created panes. Failure produces a nonzero
 exit and an error in feature-results.json.
 Renderer GPU upload checks require a native watcher; process survival alone
 does not establish that graphics were drawn.
+
+`tests/check-games.py --output checks.json` runs bounded logic, input and
+audio checks against the installed catalog. `tests/wsl-games.py` tests each
+game in an isolated native WSL instance with `tests/games-session.py` as its
+watcher. In addition to the variables above, set `KILIX_TEST_RESULT_DIR` to
+the native output directory and `KILIX_TEST_SCRIPT_WSL` to the WSL path of
+`wsl-games.py`. Both output paths must refer to the same directory. The test
+records actual GPU uploads (or text changes for the two text games), exit via
+keyboard or pane closure, and PulseAudio streams, with temporary game profiles. The watcher closes
+only its isolated instance. Speaker audibility still requires listening.
+The Windows preview workflow also builds and checks the complete pinned
+catalog on Linux; native rendering and WSLg audio remain hardware tests.
 
 ## Scope and remaining work
 
