@@ -2,6 +2,7 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor
 import importlib.machinery
 import importlib.util
+import json
 import os
 from pathlib import Path
 import pathlib
@@ -238,6 +239,10 @@ class SharedSettingsTests(unittest.TestCase):
             if spec.kind == "game" or spec.content_id == "dosbox"
         }
         configured_games = set(settings.GAME_KEY_BY_ID)
+        for spec in json.loads((ROOT / "windows/wsl/game-catalog.json").read_text()):
+            shared_ids = configured_games.intersection([spec["name"], *spec.get("aliases", [])])
+            self.assertTrue(shared_ids, "WSL game has no shared setting: " + spec["name"])
+            catalog_games.update(shared_ids)
         self.assertEqual(
             configured_games - {"minesweeper"}, catalog_games)
         self.assertTrue(all(

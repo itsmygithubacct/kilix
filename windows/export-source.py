@@ -36,8 +36,10 @@ def source_closure(host):
     for name in selected:
         add(host / name, name, git(host, 'rev-parse', 'HEAD:' + name).decode().strip())
     for path, prefix, _ in result:
-        if git(path, 'status', '--porcelain', '--untracked-files=normal', '--ignore-submodules=none'):
-            raise ValueError(f'Source export requires a clean checkout: {prefix or "host"}')
+        dirty = git(path, 'status', '--porcelain', '--untracked-files=normal', '--ignore-submodules=none')
+        if dirty:
+            raise ValueError(f'Source export requires a clean checkout: {prefix or "host"}\n'
+                             + dirty.decode(errors='replace'))
     return result
 
 

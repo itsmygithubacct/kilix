@@ -49,7 +49,7 @@ chmod 0700 "$KILIX_STORAGE_HOME" "$KILIX_CONFIG_HOME" 2>/dev/null || true
 # from the pinned fork's own build files and fails if verify() passes with any
 # one of them missing, so a module the build starts asking for fails the suite
 # until it is added here.
-FORK_PC_DEPS="cairo-fc dbus-1 egl gl harfbuzz lcms2 libcrypto libdrm libpng libxxhash wayland-client wayland-cursor wayland-protocols wayland-scanner x11 x11-xcb xcursor xinerama xkbcommon xkbcommon-x11 xrandr"
+FORK_PC_DEPS="cairo cairo-fc dbus-1 egl freetype2 gl harfbuzz lcms2 libcrypto libdrm libpng libxxhash wayland-client wayland-cursor wayland-protocols wayland-scanner x11 x11-xcb xcursor xinerama xkbcommon xkbcommon-x11 xrandr"
 # Also required, though the build never asks pkg-config for them, so no
 # derivation can find them: it links -lz directly, includes
 # <X11/extensions/XInput2.h> and <fontconfig/fontconfig.h>, and loads
