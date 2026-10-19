@@ -64,7 +64,9 @@ unsigned prompt integration is skipped; PowerShell, tabs and splits still
 work, but automatic prompt marks and prompt-based title updates are absent.
 
 This development port preserves the RC6-era terminal engine and pane chrome.
-Linux desktop integration, in-pane browser and voice tools are unavailable.
+Linux desktop integration is not part of the native application. Browser, media
+and voice adapters are available through the optional WSL catalog; use
+`kilix apps info NAME` for each adapter's prerequisites and supported operations.
 Closing Kilix ends ordinary native PowerShell/cmd sessions. To preserve native
 work, run `kilix session new work` (PowerShell) or
 `kilix session new work -- cmd.exe` inside a native Kilix pane. It opens a

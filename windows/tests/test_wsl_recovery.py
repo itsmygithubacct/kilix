@@ -258,7 +258,8 @@ descendant = subprocess.Popen(['sleep', '120'])
 print('READY:' + token, flush=True)
 while True:
     tick += 1
-    (root / 'heartbeat').write_text(str(tick))
+    (root / 'heartbeat.next').write_text(str(tick))
+    (root / 'heartbeat.next').replace(root / 'heartbeat')
     if tick % 5 == 0:
         print('TICK:' + str(tick), flush=True)
     if not select.select([0], [], [], .03)[0]:
