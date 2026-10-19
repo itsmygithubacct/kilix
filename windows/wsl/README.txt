@@ -116,13 +116,86 @@ check runs a bounded launch probe; list/readiness never downloads anything.
 --launch opens a new native tab; apps launch and games play run in this pane.
 Known disabled/unsupported names fail explicitly, even if PATH has that name.
 Enable/disable changes catalog availability; it is not an executable access rule.
+WSL games share the game toggles used by kilix settings and Needle, including
+legacy aliases and GPU_TERMINAL_SETTINGS_FILE. Native/app selections remain in
+their catalog state. Existing disabled games stay disabled until an explicit
+shared preference or catalog enable changes them.
 
 The implemented WSL app sources are Chawan (text browser), kilix-pdf (in-pane
 viewer), kilix-graphs (text/SVG), kilix-voice (eSpeak settings/export/interactive
-read-aloud), and kilix-mpv (terminal media). Needle remains part of companion
-setup, including its independent model/license readiness. Other public apps
-from the inventory are visible with specific unsupported reasons; listing them
-is not a claim that they can be installed or run here.
+read-aloud), and kilix-mpv (terminal media). Additional source adapters provide
+Amp's shared terminal player, Techno, the three tmux tools, procedural Soundgen,
+and Voicegen's developer frontend. Needle remains part of companion setup,
+including its independent model/license readiness. The document/model providers
+below expose usable core commands with explicit limitations. Readiness "limited"
+means the named core works; it does not mean that inference, hardware or optional
+providers have been qualified. info and the chooser display those capabilities.
+
+  kilix apps install amp
+  kilix apps launch amp /path/to/music.wav
+  kilix apps launch amp --desktop
+  kilix apps install techno
+  kilix apps launch techno --new --headless --save /path/to/set.ktech
+  kilix apps launch techno --export /path/to/set.ktech /path/to/set.wav --bars 4
+  kilix apps install soundgen
+  kilix apps launch soundgen car-engine /path/to/engine.wav --duration 2
+  kilix apps install tmux-cli
+  kilix apps launch tb ls --json
+  kilix apps install tmux-tui
+  kilix apps launch tmux-manager
+  kilix apps install tmux-browse
+  kilix apps launch tmux-dashboard serve --port 8096
+
+Amp and Techno need the sndfile/FluidSynth development packages listed by info;
+Amp also needs SDL2/SDL2_image. They do not fetch optional SoundFonts, soundbanks
+or EnCodec models. Amp defaults to the existing Music terminal UI; --desktop
+opens a separate Linux SDL editor and requires WSLg/X11. Ubuntu22 libsndfile1.0
+cannot decode MP3; use mpv for that format. WSL audio must already work.
+Soundgen's standard-library WAV generators also run natively on Windows. Its
+NumPy/SciPy transforms require separately installed dependencies; doctor reports
+each provider. No model is used. Voicegen needs CMake3.24+ (Ubuntu22's3.22 is too
+old), Git and a C++17 compiler, and builds its exact public utf8proc dependency.
+Use `voicegen frontend --profile prose --text TEXT` for the lexical trace. It has
+no published production voice and this build excludes neural research synthesis.
+
+The tmux tools require Linux tmux. tmux-browse also requires ttyd; Ubuntu22's
+ttyd1.6 is supported by adapting its older writable-by-default interface. The
+dashboard defaults to loopback and disables the unbundled federation extension.
+Explicit --bind selects another interface. Optional extension installers and
+standalone tb web features are upstream tools, not catalog-qualified features.
+
+Document and model provider commands
+
+  kilix apps install kilix-pdf-conversion
+  kilix apps launch kilix-pdf-conversion convert /path/to/input.pdf --profile fast --output-root /path/to/output --json
+  kilix apps install kilix-image-shop
+  kilix apps launch kilix-image-shop --help
+  kilix apps install kilix-background-remover
+  kilix apps launch kilix-background-remover inspect /path/to/image.png
+  kilix apps install kilix-bonsai
+  kilix apps launch kilix-bonsai pull bonsai-8b --dry-run
+  kilix apps install kilix-ollama
+  kilix apps launch kilix-ollama library --json
+
+PDF Conversion installs only its hash-locked native-text extraction runtime.
+OCR/vision engines are excluded. Image Shop provides checked project storage,
+document edits and export presets; no pixel renderer, GUI or production model
+provider is supplied. Background Remover provides bounded image inspection;
+its public source has no production cutout profile. These are limited source
+adapters, including tested Python3.12 core paths for the image projects whose
+published wheel metadata requires3.13. Their metadata is retained unchanged.
+Bonsai provides store tools; its inference runtime is separate. Ollama provides
+the public private-service client, requiring a separately running approved
+daemon and matching model manifests. Installing either app starts no service.
+Each provider exposes --capabilities and model-setup, which delegates to the
+same Content license/receipt authority as kilix models. Model acquisition is an
+explicit operation; existing models and receipts remain in their original store.
+Ambient Python/model packages cannot turn ordinary launch into a model download.
+
+Waydroid needs Linux Android-container/desktop services unavailable through this
+companion. Voicebox needs its Tauri/WebKit desktop and ML service; its automatic
+upstream model loading has no shared receipt adapter here. Both remain explicitly
+unsupported, with their public source links retained for inspection.
 
 Source installs use the catalog's reviewed commit, never a moving branch.
 Update rebuilds that pin; newer pins arrive with a companion update. Only the

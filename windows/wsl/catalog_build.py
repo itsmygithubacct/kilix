@@ -1,9 +1,11 @@
 """Small, explicit build recipes for the public companion catalog."""
 import compileall
+import importlib
 import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -13,12 +15,31 @@ from catalog_sources import download
 from catalog_runtime import python_argv
 
 
+def adapter(spec):
+    module = {'extra': 'catalog_extra', 'provider': 'catalog_providers',
+              'runtime-app': 'catalog_runtime_apps'}.get(spec.get('recipe'))
+    return importlib.import_module(module) if module else None
+
+
 def run(argv, **kwargs):
     subprocess.run([str(item) for item in argv], check=True, **kwargs)
 
 
 def missing_build_dependencies(spec):
     missing = [name for name in spec.get('build_commands', []) if not shutil.which(name)]
+    for command, version in spec.get('minimum_versions', {}).items():
+        if not shutil.which(command):
+            continue
+        try:
+            output = subprocess.check_output([command, '--version'], text=True,
+                                             stderr=subprocess.STDOUT, timeout=5)
+            found = re.search(r'\b(\d+)\.(\d+)(?:\.(\d+))?', output)
+            actual = tuple(int(value or 0) for value in found.groups()) if found else ()
+            required = tuple(int(value) for value in version.split('.'))
+            if actual[:len(required)] < required:
+                missing.append(command + ' >= ' + version)
+        except (OSError, subprocess.SubprocessError):
+            missing.append(command + ' >= ' + version)
     if shutil.which('pkg-config'):
         for module in spec.get('build_modules', []):
             try:
@@ -46,6 +67,10 @@ def build(spec, generation, cache, python=None):
     source = generation / spec['source']
     recipe = spec['recipe']
     env = dict(os.environ, KITTYFB_TRANSPORT='inline')
+    implementation = adapter(spec)
+    if implementation:
+        implementation.build(spec, generation, cache, python=python)
+        return
     if recipe == 'game':
         # Same build/launcher as full companion setup, limited to one game.
         from setup import build_games
@@ -55,7 +80,11 @@ def build(spec, generation, cache, python=None):
         if not compileall.compile_dir(source, quiet=1):
             raise ValueError('Python application compilation failed')
     elif recipe == 'pdf':
-        run(['make', '-C', source, '-j2', 'native'], env=env)
+        # The pinned terminal-session cleanup deliberately ignores a final
+        # write() result. Ubuntu 22.04's fortified libc diagnoses it even with
+        # the explicit void cast. Keep the warning and every other -Werror.
+        flags = env.get('CFLAGS', '-O2 -g') + ' -Wno-error=unused-result'
+        run(['make', '-C', source, '-j2', 'CFLAGS=' + flags, 'native'], env=env)
     elif recipe == 'chawan':
         # These are nim-lang.org's published 2.2.10 toolchain checksums,
         # also pinned by the shared Kilix Chawan installer.
@@ -88,6 +117,9 @@ def build(spec, generation, cache, python=None):
 
 def command(spec, generation, python=None, probe=False):
     python = python or str(Path(sys.executable).resolve())
+    implementation = adapter(spec)
+    if implementation:
+        return implementation.command(spec, generation, python=python, probe=probe)
     if spec['recipe'] == 'game':
         return [str(generation / 'bin' / spec['name'])]
     binary = generation / spec['source'] / spec['executable']
@@ -96,6 +128,9 @@ def command(spec, generation, python=None, probe=False):
 
 
 def smoke(spec, generation, python=None):
+    implementation = adapter(spec)
+    if implementation and hasattr(implementation, 'smoke'):
+        return implementation.smoke(spec, generation, python=python)
     env = dict(os.environ, KITTYFB_TRANSPORT='inline')
     run(command(spec, generation, python=python, probe=True) + spec.get('probe', ['--version']),
         env=env, stdout=subprocess.DEVNULL, timeout=60, cwd=generation)
@@ -113,4 +148,7 @@ def dependency_pins(spec):
     if spec.get('recipe') == 'mpv':
         import catalog_mpv
         return {name: data['sha256'] for name, data in catalog_mpv.dependencies().items()}
+    implementation = adapter(spec)
+    if implementation and hasattr(implementation, 'dependency_pins'):
+        return implementation.dependency_pins(spec)
     return {}

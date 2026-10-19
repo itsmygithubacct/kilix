@@ -138,7 +138,8 @@ class Catalog:
         if generation:
             path = generation / ('bin/' + spec['name'] if spec['recipe'] == 'game'
                                  else spec['source'] + '/' + spec['executable'])
-            present = path.is_file() and (spec['recipe'] in ('python', 'voice') or os.access(path, os.X_OK))
+            present = path.is_file() and (spec['recipe'] in ('python', 'voice', 'provider') or
+                                         spec.get('python_entry') or os.access(path, os.X_OK))
         result['installed'] = present
         missing = [exe for exe in spec.get('requirements', []) if not shutil.which(exe)]
         if not present:
@@ -156,6 +157,9 @@ class Catalog:
             result.update(status='missing-dependencies', reason='Install runtime commands: ' + ', '.join(missing))
         else:
             result.update(status='ready', ready=True, reason=spec.get('description', 'Installed and enabled'))
+            implementation = catalog_build.adapter(spec)
+            if generation and implementation and hasattr(implementation, 'readiness'):
+                result.update(implementation.readiness(spec, generation, python=self.python))
         if generation and (generation / 'catalog-install.json').is_file():
             receipt = json.loads((generation / 'catalog-install.json').read_text())
             if not isinstance(receipt, dict) or not isinstance(receipt.get('revisions'), dict):

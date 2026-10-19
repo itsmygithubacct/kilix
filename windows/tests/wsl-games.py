@@ -49,7 +49,10 @@ def samples(pane):
 try:
     expected = sorted(g['name'] for g in catalog)
     assert json.loads(run(['games', 'list', '--json'])) == expected
-    assert json.loads(run(['apps', '--json'])) == expected
+    app_catalog = json.loads((root / 'wsl/app-catalog.json').read_text())
+    apps = json.loads(run(['apps', '--json']))
+    assert sorted(item['name'] for item in apps) == sorted(item['name'] for item in app_catalog)
+    assert all(item['category'] == 'app' and 'status' in item and 'ready' in item for item in apps)
     for game in catalog:
         name = game['name']
         item = {'name': name}

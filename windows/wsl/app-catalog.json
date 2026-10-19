@@ -216,39 +216,111 @@
   },
   {
     "name": "kilix-amp",
-    "title": "kilix-amp",
-    "aliases": [],
+    "title": "Amp music player",
+    "aliases": [
+      "amp",
+      "music"
+    ],
     "category": "app",
-    "runtime": [],
+    "runtime": [
+      "wsl"
+    ],
     "repository": "https://github.com/itsmygithubacct/kilix-amp",
-    "unsupported": "Player/editor provider closure and audio integration have not been ported into this companion."
+    "source": "apps/kilix-amp",
+    "recipe": "extra",
+    "adapter": "amp",
+    "executable": "kilix-amp",
+    "probe": [
+      "--help"
+    ],
+    "description": "Terminal Music UI backed by the existing Amp decoder and playlist. --desktop opens the SDL editor through WSLg/X11; --backend serves the upstream headless control socket. Requires working WSL audio. MIDI/SoundFonts and EnCodec models remain separate.",
+    "packages": [
+      "build-essential",
+      "pkg-config",
+      "libsdl2-dev",
+      "libsdl2-image-dev",
+      "libsndfile1-dev",
+      "libfluidsynth-dev",
+      "zlib1g-dev"
+    ],
+    "requirements": [],
+    "build_commands": [
+      "make",
+      "cc",
+      "pkg-config"
+    ],
+    "build_modules": [
+      "sdl2",
+      "SDL2_image",
+      "sndfile",
+      "fluidsynth",
+      "zlib"
+    ],
+    "models": "none",
+    "native_reason": "This is a Linux application. Use a WSL tab."
   },
   {
     "name": "kilix-background-remover",
-    "title": "kilix-background-remover",
-    "aliases": [],
+    "title": "Background Remover",
+    "aliases": [
+      "background-remover"
+    ],
     "category": "app",
-    "runtime": [],
+    "runtime": [
+      "wsl"
+    ],
     "repository": "https://github.com/itsmygithubacct/kilix-background-remover",
-    "unsupported": "Requires a separately selected inference runtime and licensed model; no companion adapter yet."
+    "source": "apps/kilix-background-remover",
+    "recipe": "provider",
+    "executable": ".catalog-provider.json",
+    "probe": [
+      "--capabilities"
+    ],
+    "description": "Bounded image inspection. Public source has no production cutout provider; inference remains unavailable.",
+    "native_reason": "This source adapter uses the managed WSL Python runtime.",
+    "build_note": "Uses managed Python 3.12/3.13; Python dependencies are wheel-only and hash-locked. No model download during installation."
   },
   {
     "name": "kilix-bonsai",
-    "title": "kilix-bonsai",
-    "aliases": [],
+    "title": "Bonsai",
+    "aliases": [
+      "bonsai"
+    ],
     "category": "app",
-    "runtime": [],
+    "runtime": [
+      "wsl"
+    ],
     "repository": "https://github.com/itsmygithubacct/kilix-bonsai",
-    "unsupported": "BitNet runtime and model-store setup are not integrated; model acquisition remains explicit."
+    "source": "apps/kilix-bonsai",
+    "recipe": "provider",
+    "executable": ".catalog-provider.json",
+    "probe": [
+      "--capabilities"
+    ],
+    "description": "BitNet model catalog, store inspection and explicit receipt-gated Content setup; inference runtime is separate.",
+    "native_reason": "This source adapter uses the managed WSL Python runtime.",
+    "build_note": "Uses managed Python 3.12/3.13; Python dependencies are wheel-only and hash-locked. No model download during installation."
   },
   {
     "name": "kilix-image-shop",
-    "title": "kilix-image-shop",
-    "aliases": [],
+    "title": "Image Shop",
+    "aliases": [
+      "image-shop"
+    ],
     "category": "app",
-    "runtime": [],
+    "runtime": [
+      "wsl"
+    ],
     "repository": "https://github.com/itsmygithubacct/kilix-image-shop",
-    "unsupported": "Public editor core has no production provider adapters in the inventoried checkout."
+    "source": "apps/kilix-image-shop",
+    "recipe": "provider",
+    "executable": ".catalog-provider.json",
+    "probe": [
+      "--capabilities"
+    ],
+    "description": "Toolkit-free project storage, document edits and export presets; native rendering and model providers are unavailable.",
+    "native_reason": "This source adapter uses the managed WSL Python runtime.",
+    "build_note": "Uses managed Python 3.12/3.13; Python dependencies are wheel-only and hash-locked. No model download during installation."
   },
   {
     "name": "kilix-land-agent",
@@ -279,21 +351,45 @@
   },
   {
     "name": "kilix-ollama",
-    "title": "kilix-ollama",
-    "aliases": [],
+    "title": "Ollama",
+    "aliases": [
+      "ollama"
+    ],
     "category": "app",
-    "runtime": [],
+    "runtime": [
+      "wsl"
+    ],
     "repository": "https://github.com/itsmygithubacct/kilix-ollama",
-    "unsupported": "Ollama service lifecycle and model acceptance are not integrated with this catalog."
+    "source": "apps/kilix-ollama",
+    "recipe": "provider",
+    "executable": ".catalog-provider.json",
+    "probe": [
+      "--capabilities"
+    ],
+    "description": "Private-runtime client, local model catalog, diagnostics and conversations; no daemon or models start on launch.",
+    "native_reason": "This source adapter uses the managed WSL Python runtime.",
+    "build_note": "Uses managed Python 3.12/3.13; Python dependencies are wheel-only and hash-locked. No model download during installation."
   },
   {
     "name": "kilix-pdf-conversion",
-    "title": "kilix-pdf-conversion",
-    "aliases": [],
+    "title": "PDF Conversion",
+    "aliases": [
+      "pdf-conversion"
+    ],
     "category": "app",
-    "runtime": [],
+    "runtime": [
+      "wsl"
+    ],
     "repository": "https://github.com/itsmygithubacct/kilix-pdf-conversion",
-    "unsupported": "Document-conversion runtime and optional model closure are not bundled; use the supported PDF viewer for reading."
+    "source": "apps/kilix-pdf-conversion",
+    "recipe": "provider",
+    "executable": ".catalog-provider.json",
+    "probe": [
+      "--capabilities"
+    ],
+    "description": "Model-free native-text PDF conversion, inspection and validation; optional OCR/vision engines are not installed.",
+    "native_reason": "This source adapter uses the managed WSL Python runtime.",
+    "build_note": "Uses managed Python 3.12/3.13; Python dependencies are wheel-only and hash-locked. No model download during installation."
   },
   {
     "name": "kilix-playalong",
@@ -306,12 +402,44 @@
   },
   {
     "name": "kilix-techno",
-    "title": "kilix-techno",
-    "aliases": [],
+    "title": "Techno music workstation",
+    "aliases": [
+      "techno"
+    ],
     "category": "app",
-    "runtime": [],
+    "runtime": [
+      "wsl"
+    ],
     "repository": "https://github.com/itsmygithubacct/kilix-techno",
-    "unsupported": "Workstation audio/soundbank installation and terminal integration are not yet qualified here."
+    "source": "apps/kilix-techno",
+    "recipe": "extra",
+    "adapter": "make",
+    "executable": "build/kilix-techno",
+    "probe": [
+      "--help"
+    ],
+    "description": "Terminal sequencer, native synthesizers and deterministic WAV/MIDI export. Optional soundbanks are not downloaded; existing owner assets are retained.",
+    "packages": [
+      "build-essential",
+      "pkg-config",
+      "libsndfile1-dev",
+      "libfluidsynth-dev",
+      "zlib1g-dev",
+      "pulseaudio-utils"
+    ],
+    "requirements": [],
+    "build_commands": [
+      "make",
+      "cc",
+      "pkg-config"
+    ],
+    "build_modules": [
+      "sndfile",
+      "fluidsynth",
+      "zlib"
+    ],
+    "models": "none",
+    "native_reason": "This is a Linux application. Use a WSL tab."
   },
   {
     "name": "kilix-voicebox",
@@ -320,16 +448,46 @@
     "category": "app",
     "runtime": [],
     "repository": "https://github.com/itsmygithubacct/kilix-voicebox",
-    "unsupported": "Voicebox frontend and speech providers require a separate application runtime."
+    "unsupported": "Tauri/WebKit desktop studio and a separate Python/ML service. Its upstream model loading is not integrated with shared consent receipts; no safe managed inference path is provided by this catalog."
   },
   {
     "name": "kilix-voicegen",
-    "title": "kilix-voicegen",
-    "aliases": [],
+    "title": "Voicegen developer tools",
+    "aliases": [
+      "voicegen"
+    ],
     "category": "app",
-    "runtime": [],
+    "runtime": [
+      "wsl"
+    ],
     "repository": "https://github.com/itsmygithubacct/kilix-voicegen",
-    "unsupported": "Speech engine build and voice provisioning are not integrated with this companion."
+    "source": "apps/kilix-voicegen",
+    "recipe": "extra",
+    "adapter": "voicegen",
+    "executable": "runtime/bin/kilix-voicegen",
+    "probe": [
+      "--version"
+    ],
+    "description": "Native lexical frontend and strict voice-package verification. The public source has no release-approved production voice; neural research synthesis is excluded. No models or acceptance receipts are downloaded.",
+    "packages": [
+      "build-essential",
+      "git",
+      "cmake"
+    ],
+    "requirements": [],
+    "build_commands": [
+      "cc",
+      "c++",
+      "git",
+      "cmake"
+    ],
+    "build_modules": [],
+    "models": "No production voice is published. Developer frontend works without a model.",
+    "native_reason": "This is a Linux application. Use a WSL tab.",
+    "minimum_versions": {
+      "cmake": "3.24"
+    },
+    "build_note": "Ubuntu22 default CMake3.22 is too old; explicitly provide CMake3.24+ in PATH. Fetches the exact upstream utf8proc Git commit required by the public source."
   },
   {
     "name": "kilix-waydroid",
@@ -342,39 +500,125 @@
   },
   {
     "name": "python-sound-generator",
-    "title": "python-sound-generator",
-    "aliases": [],
+    "title": "Procedural sound generator",
+    "aliases": [
+      "soundgen"
+    ],
     "category": "app",
-    "runtime": [],
+    "runtime": [
+      "wsl",
+      "native"
+    ],
     "repository": "https://github.com/itsmygithubacct/python-sound-generator",
-    "unsupported": "Authoring toolkit has no selected companion installation or interactive entrypoint."
+    "source": "apps/python-sound-generator",
+    "recipe": "extra",
+    "adapter": "soundgen",
+    "executable": "python_sound_generator/__main__.py",
+    "probe": [
+      "--help"
+    ],
+    "description": "Procedural game sounds to WAV. Standard-library providers work without models; NumPy/SciPy recording transforms are optional and not installed. Use list, PROVIDER --help and doctor for the selected provider.",
+    "packages": [],
+    "requirements": [],
+    "build_commands": [],
+    "build_modules": [],
+    "models": "none",
+    "native_reason": "",
+    "python_entry": true
   },
   {
     "name": "tmux-browse",
-    "title": "tmux-browse",
-    "aliases": [],
+    "title": "Tmux browser dashboard",
+    "aliases": [
+      "tmux-dashboard"
+    ],
     "category": "app",
-    "runtime": [],
+    "runtime": [
+      "wsl"
+    ],
     "repository": "https://github.com/itsmygithubacct/tmux-browse",
-    "unsupported": "Web dashboard/server lifecycle is not packaged; tmux CLI support is separate."
+    "source": "apps/tmux-browse",
+    "recipe": "extra",
+    "adapter": "tmux-browse",
+    "executable": "tmux_browse.py",
+    "probe": [
+      "--help"
+    ],
+    "description": "Local browser dashboard using the bundled tmux CLI. Launch defaults to loopback; ttyd is an explicit prerequisite. Optional extensions and federation are not bundled.",
+    "packages": [
+      "tmux",
+      "ttyd",
+      "zstd"
+    ],
+    "requirements": [
+      "tmux",
+      "ttyd"
+    ],
+    "build_commands": [],
+    "build_modules": [],
+    "models": "none",
+    "native_reason": "This is a Linux application. Use a WSL tab.",
+    "python_entry": true
   },
   {
     "name": "tmux-cli",
-    "title": "tmux-cli",
-    "aliases": [],
+    "title": "Tmux command tools",
+    "aliases": [
+      "tb"
+    ],
     "category": "app",
-    "runtime": [],
+    "runtime": [
+      "wsl"
+    ],
     "repository": "https://github.com/itsmygithubacct/tmux-cli",
-    "unsupported": "Standalone repository is not installed by this catalog; the host tmux command is a separate integration."
+    "source": "apps/tmux-cli",
+    "recipe": "python",
+    "executable": "tb.py",
+    "probe": [
+      "--help"
+    ],
+    "description": "Existing upstream tmux commands and management UI. Requires Linux tmux; session/log state remains in its existing per-user store.",
+    "packages": [
+      "tmux",
+      "zstd"
+    ],
+    "requirements": [
+      "tmux"
+    ],
+    "build_commands": [],
+    "build_modules": [],
+    "models": "none",
+    "native_reason": "This is a Linux application. Use a WSL tab."
   },
   {
     "name": "tmux-tui",
-    "title": "tmux-tui",
-    "aliases": [],
+    "title": "Tmux terminal manager",
+    "aliases": [
+      "tmux-manager"
+    ],
     "category": "app",
-    "runtime": [],
+    "runtime": [
+      "wsl"
+    ],
     "repository": "https://github.com/itsmygithubacct/tmux-tui",
-    "unsupported": "Requires a selected tmux session manager build; not installed by this catalog."
+    "source": "apps/tmux-tui",
+    "recipe": "python",
+    "executable": "tmux_tui.py",
+    "probe": [
+      "--help"
+    ],
+    "description": "Existing upstream tmux commands and management UI. Requires Linux tmux; session/log state remains in its existing per-user store.",
+    "packages": [
+      "tmux",
+      "zstd"
+    ],
+    "requirements": [
+      "tmux"
+    ],
+    "build_commands": [],
+    "build_modules": [],
+    "models": "none",
+    "native_reason": "This is a Linux application. Use a WSL tab."
   },
   {
     "name": "kilix-needle",

@@ -41,7 +41,7 @@ def check_app(catalog, name, output, env):
     spec = find(name, 'apps')
     argv = catalog.argv(spec)
     source = catalog.generation(spec) / spec['source']
-    if spec['recipe'] == 'python':
+    if spec['name'] == 'kilix-graphs':
         example = next((source / 'examples').glob('*.dot'))
         target = output / 'graph.svg'
         subprocess.run(argv + ['draw', str(example), '-o', str(target)], env=env, check=True, timeout=30)

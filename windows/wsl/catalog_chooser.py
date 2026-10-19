@@ -124,8 +124,14 @@ def graphical(catalog, kind, execute=None):
         try:
             spec = selected()
             status = catalog.status(spec)
+            reported = status.get('capabilities', [])
+            capabilities = '\n'.join(
+                name + ': ' + ('available' if ready else 'unavailable') for name, ready in reported.items()
+            ) if isinstance(reported, dict) else '\n'.join(
+                item['name'] + ': ' + item['reason'] for item in reported)
             detail.set(status['reason'] + '\n' + spec.get('repository', '') +
-                       ('\nBuild packages: ' + ', '.join(spec['packages']) if spec.get('packages') else ''))
+                       ('\nBuild packages: ' + ', '.join(spec['packages']) if spec.get('packages') else '') +
+                       ('\n' + capabilities if capabilities else ''))
         except ValueError:
             pass
 
