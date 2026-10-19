@@ -3,7 +3,7 @@ name: Windows preview
 on:
   push:
     branches: [main, work/windows-0.2.2]
-    tags: ['windows-v*-preview.*']
+    tags: ['windows-v*']
     paths: ['windows/**', 'config/**', 'src', '.github/workflows/windows.yml']
   pull_request:
     paths: ['windows/**', 'config/**', 'src', '.github/workflows/windows.yml']
@@ -21,7 +21,13 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
+      - run: git submodule update --init third_party/kitty-pty-broker
       - run: python3 -m unittest discover -s windows/tests -p 'test_wsl*.py'
+        env:
+          KILIX_REQUIRE_RECOVERY_TESTS: '1'
+      - run: python3 -m unittest discover -s windows/tests -p 'test_windows*.py'
+      - run: pwsh -NoProfile -File windows/tests/test-install.ps1
+      - run: pwsh -NoProfile -File windows/tests/test-update.ps1
 
   games:
     name: Build the pinned public game catalog
@@ -31,34 +37,27 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      - name: Fetch exact companion sources
-        shell: python
-        run: |
-          import json, os, pathlib, subprocess
-          pins = json.loads(pathlib.Path('windows/wsl/source-revisions.json').read_text())
-          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'companion-sources'
-          repositories = {'needle': 'kilix-needle', 'games': 'kilix-games',
-                          'super-kilix': 'super-kilix', 'kilix-land': 'kilix-land',
-                          'pleb-plant-grower': 'pleb-plant-grower'}
-          for name, repository in repositories.items():
-              target = root / name
-              subprocess.run(['git', 'clone', '--no-checkout',
-                              'https://github.com/itsmygithubacct/' + repository + '.git', str(target)], check=True)
-              subprocess.run(['git', '-C', str(target), 'checkout', '--detach', pins[name]], check=True)
-              subprocess.run(['git', '-C', str(target), 'submodule', 'update', '--init', '--recursive'], check=True)
-      - name: Export and install all games
+      - name: Export the pinned public companion (no personal models or receipts)
+        run: python3 windows/wsl/provision.py --output "$RUNNER_TEMP/companion.tar.gz"
+      - name: Install and check all games
         run: |
           set -euo pipefail
-          source_root="$RUNNER_TEMP/companion-sources"
-          python3 windows/wsl/bundle.py --needle "$source_root/needle" --games "$source_root/games" \
-            --super-kilix "$source_root/super-kilix" --kilix-land "$source_root/kilix-land" \
-            --plant-grower "$source_root/pleb-plant-grower" --output "$RUNNER_TEMP/companion.tar.gz"
           digest=$(sha256sum "$RUNNER_TEMP/companion.tar.gz")
           python3 windows/wsl/setup.py "$RUNNER_TEMP/companion.tar.gz" "${digest%% *}"
           python3 windows/tests/check-games.py --output "$RUNNER_TEMP/game-checks.json"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: kilix-companion-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            ${{ runner.temp }}/companion.tar.gz
+            ${{ runner.temp }}/companion.tar.gz.sha256
+
 
   windows:
     name: Native Windows build and CLI
+    needs: [games]
     runs-on: windows-2022
     timeout-minutes: 60
     defaults:
@@ -74,19 +73,37 @@ jobs:
           submodules: false
       - name: Fetch the pinned engine
         run: |
-          git submodule update --init src
+          git submodule update --init --recursive src third_party/kilix-content third_party/kilix-transcript-clean
           if ($LASTEXITCODE -ne 0) { throw 'Engine checkout failed' }
       - name: Provision isolated toolchain
         run: .\windows\provision-engine-toolchain.ps1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: kilix-companion-${{ github.sha }}
+          path: ${{ runner.temp }}/kilix-companion
+      - name: Check installer transaction failures
+        run: |
+          .\windows\tests\test-install.ps1
+          .\windows\tests\test-update.ps1
       - name: Build portable application
-        run: .\windows\package.ps1
+        run: |
+          $digest = ((Get-Content -Raw -Encoding UTF8 "$env:RUNNER_TEMP/kilix-companion/companion.tar.gz.sha256").Trim() -split '\s+')[0]
+          $channel = if ($env:GITHUB_REF -match '^refs/tags/windows-v.*-preview\.') { 'preview' } elseif ($env:GITHUB_REF -match '^refs/tags/windows-v') { 'release' } else { 'development' }
+          .\windows\package.ps1 -Channel $channel -CompanionArchive "$env:RUNNER_TEMP/kilix-companion/companion.tar.gz" -CompanionSha256 $digest
+      - name: Check real install upgrade and rollback
+        run: .\windows\tests\test-installed-package.ps1 -Archive .\src\dist\kilix-0.2.2-windows-x64-dev.zip
       - name: Check packaged command interface
         run: .\windows\test-cli.ps1 -ApplicationDirectory .\src\dist\kilix
+      - name: Check self-contained catalog GUI runtime
+        run: .\windows\test-tk.ps1 -ApplicationDirectory .\src\dist\kilix
       - name: Record source and checksums
         run: |
+          Copy-Item "$env:USERPROFILE\kilix-build\toolchain-packages.txt" .\src\dist\toolchain-packages.txt
+          Copy-Item .\src\dist\kilix\signing.json .\src\dist\signing.json
+          Copy-Item .\src\dist\kilix\release.json .\src\dist\release.json
+          Copy-Item "$env:RUNNER_TEMP/kilix-companion/companion.tar.gz*" .\src\dist
           python .\windows\export-source.py --output .\src\dist
           if ($LASTEXITCODE -ne 0) { throw 'Source export failed' }
-          Copy-Item "$env:USERPROFILE\kilix-build\toolchain-packages.txt" .\src\dist\toolchain-packages.txt
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: kilix-windows-x64-${{ github.sha }}
@@ -98,9 +115,13 @@ jobs:
             src/dist/SHA256SUMS
             src/dist/source-revisions.json
             src/dist/toolchain-packages.txt
+            src/dist/signing.json
+            src/dist/release.json
+            src/dist/companion.tar.gz
+            src/dist/companion.tar.gz.sha256
 
   preview:
-    name: Prepare Windows preview release
+    name: Prepare Windows draft release
     if: startsWith(github.ref, 'refs/tags/windows-v')
     needs: [companion, games, windows]
     runs-on: ubuntu-24.04
@@ -112,7 +133,7 @@ jobs:
         with:
           name: kilix-windows-x64-${{ github.sha }}
           path: preview
-      - name: Create draft prerelease
+      - name: Create draft release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
@@ -121,7 +142,9 @@ jobs:
           cat > "$RUNNER_TEMP/notes.txt" <<'NOTES'
           Native Windows x64 preview with PowerShell, Command Prompt and optional WSL profiles.
 
-          Includes the WSL control companion; Needle and game dependencies install separately.
+          Includes unified per-user setup/update/rollback and pinned companion sources.
+          WSL is optional; use setup.ps1 -WslDistribution NAME for companion provisioning.
+          This workflow produces unsigned builds; signing.json records the actual status.
           Hosted CI checks compilation and CLI behavior. Desktop, GPU and WSL integration
           require the separate interactive hardware tests before publication.
           Extract the complete ZIP. Source, exact revisions and SHA256 checksums are attached.
@@ -130,6 +153,8 @@ jobs:
             test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = true
             gh release upload "$RELEASE_TAG" preview/* --clobber
           else
-            gh release create "$RELEASE_TAG" preview/* --verify-tag --draft --prerelease \
+            prerelease=()
+            if [[ "$RELEASE_TAG" == *-preview.* ]]; then prerelease=(--prerelease); fi
+            gh release create "$RELEASE_TAG" preview/* --verify-tag --draft "${prerelease[@]}" \
               --title "Kilix $RELEASE_TAG" --notes-file "$RUNNER_TEMP/notes.txt"
           fi

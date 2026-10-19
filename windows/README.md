@@ -28,7 +28,7 @@ revision record, toolchain package list, and SHA256 checksums. Check the ZIP
 against `SHA256SUMS` and extract it completely before launching `Kilix.exe`.
 
 Tags matching `windows-v*-preview.*` (for example `windows-v0.2.2-preview.1`)
-prepare a **draft prerelease** in this same repository after the Windows jobs
+prepare a **draft prerelease**; stable `windows-v0.2.2` tags prepare a **draft release** in this same repository after the Windows jobs
 pass. Maintainers review the separate Linux CI result and run the interactive
 desktop, GPU and WSL tests before publishing a preview. Hosted Windows CLI
 checks cannot replace those hardware tests. Windows development stays on its
@@ -77,10 +77,133 @@ Outputs:
 - `src\dist\kilix-0.2.2-windows-x64-dev.zip`: complete portable application.
 - `src\dist\kilix\licenses`: engine, dependency, font, and runtime notices.
 
-`install.ps1 -Archive <zip> -Sha256 <verified archive digest>` extracts a
-separate per-user copy and creates **Kilix Windows** and **Kilix WSL** shortcuts
-on the desktop and Start menu. Existing application directories are retained.
-Use `-NoShortcuts` to install only the files.
+## Install, update and recover
+
+After checking the downloaded archive against the release's `SHA256SUMS`, extract
+it and run the bundled `setup.ps1` from PowerShell 5.1 or later. Source-checkout
+users run the same script in `windows/`:
+
+```powershell
+.\setup.ps1 -Archive C:\Downloads\kilix-0.2.2-windows-x64-dev.zip -Sha256 VERIFIED_SHA256
+# Optional companion, targeting your existing distribution and normal Linux user:
+.\setup.ps1 -Action Wsl -WslDistribution Ubuntu -InstallWslDependencies
+```
+
+`-WslDistribution Ubuntu` can also accompany the initial install command.
+WSL is optional. `-InstallWsl` explicitly requests Microsoft's `wsl --install`
+if that distribution is unavailable; Windows may require administrator access,
+a reboot and first-run Linux account creation. Setup then reports the exact
+retry step. It never creates a root default account or changes existing WSL
+configuration. `-WslUser NAME` selects a nondefault Linux user.
+
+The default native destination is `%LOCALAPPDATA%\Programs\Kilix`. Each update
+has its own directory under `versions/`; shortcuts point directly at its
+`Kilix.exe`. Open windows continue using their retained versions. Setup verifies
+the archive digest, safe ZIP paths, every manifested file, and bounded native
+CLI health checks before changing active state. Shortcut changes have a recovery
+journal. State replacement is the commit point; interrupted changes are repaired
+on the next install or explicit recovery. No administrator privileges, permanent
+PATH changes, or execution-policy changes are needed for native installation.
+If your script policy blocks an unsigned preview, use your normal approved
+script-review/unblocking process; setup does not lower that policy.
+
+Use the same destination for upgrades. `-Destination PATH` can point to a prior
+installer's directory: its legacy `kilix/` files are retained alongside the new
+managed generations. Legacy and extracted portable directories are never moved
+or pruned automatically. User configuration remains in
+`%LOCALAPPDATA%\Kilix\kitty.conf`; WSL models, receipts, catalog state and saves
+stay in their Linux user directories. Generation cleanup is deliberately manual:
+close old sessions and retain the active and previous generations listed in
+`install-state.json`. Allow disk space for the old installation and the complete
+new generation. `-NoShortcuts` suppresses all shortcut writes, including rollback.
+
+```powershell
+.\setup.ps1 -Action Status
+.\setup.ps1 -Action Rollback
+.\setup.ps1 -Action Recover
+.\diagnostics.ps1 -VerifyFiles -WslDistribution Ubuntu -OutputPath diagnostics.json
+```
+
+Rollback validates and reactivates the previous **managed native** generation;
+it does not roll back user data or WSL companion generations. Retrying
+`setup.ps1 -Action Wsl -WslDistribution Ubuntu` handles a failed optional companion
+step without reinstalling Windows files. The companion retains its own previous
+generation if its build fails. Checksums establish integrity against the chosen
+release; they do not themselves establish a trusted code-signing identity.
+
+Published updates are available through the installed `update.ps1`:
+
+```powershell
+.\update.ps1 -Action Check -Channel stable
+.\update.ps1 -Action Apply -Channel preview
+# Explicit opt-in only; daily while this Windows user is logged in:
+.\update.ps1 -Action EnableSchedule -Channel stable -ScheduleAction Check -DailyAt 09:00
+.\update.ps1 -Action DisableSchedule
+```
+
+Stable accepts published stable Windows tags; preview accepts stable and preview
+Windows tags, ordered by version and preview number. Drafts, unrelated Linux
+releases and missing Windows releases produce no available update. Apply fetches
+only this repository's release assets, requires one matching ZIP digest in
+`SHA256SUMS`, and uses the same transactional installer. It rejects version
+regressions and concurrent installation changes during download. It preserves a
+previously selected signer thumbprint; `-SignerThumbprint THUMBPRINT` can require
+Windows signature validation against an actual trusted publisher certificate.
+`-WslDistribution NAME` also updates that companion after the native update;
+missing dependencies still require the explicit setup dependency step.
+
+Schedules are never enabled by installation. `-ScheduleAction Apply` explicitly
+opts into unattended native updates (and companion updates if selected).
+Tasks use the user's existing PowerShell execution policy and run only while
+logged in; `update-status.json` records check/apply results. Re-enable a schedule
+from the active generation after changing updater options or script policy.
+The updater authenticates downloads through GitHub HTTPS and release hashes;
+unsigned previews remain unsigned. A changed asset under an already installed
+release tag is not treated as a new version.
+
+## Companion provisioning and signing
+
+CI exports `companion.tar.gz` from committed public source pins, includes its
+SHA256 sidecar in the application, and also publishes it as a separate artifact.
+No model files or personal acceptance receipts are included. For manual builds,
+use `python3 windows/wsl/provision.py --output companion.tar.gz`, then pass
+`-CompanionArchive PATH -CompanionSha256 HASH` to `package.ps1`. The catalog's
+optional `--with-apps` export includes additional pinned application sources.
+Setup never fetches a moving branch for application/game sources.
+
+On Ubuntu/Debian, `-InstallWslDependencies` explicitly installs signed distribution
+build packages and PulseAudio clients using sudo. Python >=3.12 is used when
+available; Ubuntu 22.04 bootstraps checksum-pinned uv 0.12.5 and managed Python
+3.12.14 without manually copying uv. Those runtime downloads require network
+access; the source bundle and existing managed Python can be used offline through
+`wsl/setup.py ARCHIVE SHA256`. Model/license consent remains interactive when
+needed and is never manufactured by setup.
+
+`package.ps1 -CertificateThumbprint THUMBPRINT -TimestampServer URL` supports an
+actual code-signing certificate with a private key in `Cert:\CurrentUser\My`.
+It signs project launchers and PowerShell scripts with SHA256, verifies each
+signature and timestamp, then generates the final manifest and ZIP hashes. A
+separate signed `manifest-signature.ps1` binds the complete manifest digest, so
+signer-pinned installation validates every packaged file, including Python and
+vendor runtimes. This proof file is read and verified, never executed.
+Vendor signatures and license notices are preserved. Import your certificate
+using Windows certificate tooling; passwords/private keys are never accepted on
+the package command line or written into artifacts. No certificate is provided
+by this repository. Default CI builds are unsigned, and `signing.json` records
+that explicitly. A valid signature on the build host does not promise public
+SmartScreen reputation or trust on every user's machine. See Microsoft's
+[Authenticode signing reference](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.security/set-authenticodesignature?view=powershell-5.1).
+
+The native package includes tkinter, its Tcl/Tk DLL dependencies and data for the
+catalog GUI chooser. `test-tk.ps1 -ApplicationDirectory PATH` creates and destroys
+a hidden ttk widget with a clean system PATH. WSL GUI availability depends on
+the selected Linux interpreter; installing system `python3-tk` alone does not
+guarantee Tk in uv-managed Python. The terminal chooser remains available.
+
+The source archive includes the pinned engine and the recursive Content and
+transcript-clean source/license closure used by command staging. Export refuses
+dirty or mismatched checkouts. Source revisions, companion hashes, toolchain list,
+channel metadata and signing status are all covered by the release checksum file.
 
 Extract the entire archive before launching. `README.txt` contains profiles,
 shortcuts, and user configuration details. Launch `Kilix.exe --wsl Ubuntu` for a
@@ -306,5 +429,49 @@ the pinned runtime passed handle-balance checks. `conpty.dll` and
 
 Further release qualification includes additional Windows versions/GPUs,
 keyboard layouts and IME, accessibility, clipboard/drag-and-drop coverage,
-long-running output/input pressure, and packaging/signing. The application does
-not install WSL distributions, SSH clients/servers, or modify machine-wide policy.
+long-running output/input pressure, and packaging/signing. WSL installation is
+an explicit setup option; SSH clients/servers and machine-wide security policy
+are not changed.
+
+
+## Windows integration qualification
+
+`diagnostics.ps1` is read-only apart from an explicitly requested JSON output.
+It records OS build, GPU driver, display bounds, shell profile existence and
+execution policies, signature status, install state, Windows volume free space,
+and optionally WSL tools/filesystem space. WSL virtual disk free space alone is
+insufficient: its Windows backing volume can be full. It never collects profile
+or configuration contents, history, clipboard text or environment credentials.
+Review paths and distribution names before sharing a report.
+
+Run the packaged qualification tools in a dedicated desktop test session:
+
+```powershell
+.\test-integration.ps1 -ApplicationDirectory . -ResultDirectory C:\Temp\kilix-qualification
+.\test-integration.ps1 -ApplicationDirectory . -AllMonitors -Clipboard
+.\test-startup.ps1 -ApplicationDirectory . -WslDistribution Ubuntu
+```
+
+The integration runner owns one new window and an input receiver that never
+executes pasted text. It checks Unicode input, spaces/Unicode in the child cwd,
+and the text-drop handler through ConPTY. It observes native window/display/DPI
+and UI Automation capabilities. `-AllMonitors` moves only that test window;
+`-Clipboard` tests Unicode clipboard round trips only when the clipboard starts
+empty, then restores that empty state unless another application changed it.
+Without the flag, or with existing clipboard data, the check is marked skipped.
+Startup tests exercise PowerShell/cmd/optional WSL profiles and execution-policy
+behavior separately. No global keyboard/mouse input or existing user window is
+targeted by the integration runner.
+
+The JSON result deliberately distinguishes observations/skips from passed checks.
+Explorer/OLE file drag/drop, keyboard layouts and interactive IME candidate UI,
+visual sharpness during mixed-DPI moves, and screen-reader access to terminal text
+still need manual acceptance. A UIA window name is not screen-reader support.
+The separate input test, when present, exercises the native keyboard path.
+
+The new installer failure/rollback and release-selection fixtures run on Linux
+PowerShell and Windows CI; actual package install/upgrade/rollback runs in Windows
+CI. These are not hardware qualifications. The recorded hardware baseline remains
+Windows 10 build 19045 with Intel HD620 and Ubuntu WSL2. **Windows 11, other GPUs,
+mixed-DPI multi-monitor use and accessibility are not claimed tested.** Run and
+retain the new qualification results before extending that matrix.

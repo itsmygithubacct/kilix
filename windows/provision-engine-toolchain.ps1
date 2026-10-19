@@ -33,7 +33,7 @@ $packages = @('base-devel','mingw-w64-x86_64-gcc','mingw-w64-x86_64-pkgconf',
     'mingw-w64-x86_64-python','mingw-w64-x86_64-go','mingw-w64-x86_64-harfbuzz',
     'mingw-w64-x86_64-freetype','mingw-w64-x86_64-fontconfig','mingw-w64-x86_64-cairo',
     'mingw-w64-x86_64-libpng','mingw-w64-x86_64-xxhash','mingw-w64-x86_64-openssl',
-    'mingw-w64-x86_64-ncurses','mingw-w64-x86_64-lcms2')
+    'mingw-w64-x86_64-ncurses','mingw-w64-x86_64-lcms2','mingw-w64-x86_64-tk')
 & $bash -lc ('pacman --noconfirm --noprogressbar --needed -S ' + ($packages -join ' '))
 if ($LASTEXITCODE -ne 0) { throw "Engine dependencies failed: $LASTEXITCODE" }
 & $bash -lc 'pacman -Q' | Set-Content -LiteralPath (Join-Path $BuildRoot 'toolchain-packages.txt')

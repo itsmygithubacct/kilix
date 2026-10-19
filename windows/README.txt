@@ -20,7 +20,7 @@ Shortcuts:
   F11                       Fullscreen
 
 Use the SSH client installed in Windows, or SSH inside WSL, from any pane.
-The application does not install or enable an SSH server or a WSL distribution.
+The application does not install or enable an SSH server. WSL setup is optional.
 --wsl makes WSL the default shell for subsequent splits and tabs in that window.
 
 User configuration: %LOCALAPPDATA%\Kilix\kitty.conf
@@ -66,3 +66,35 @@ Source repositories:
   https://github.com/itsmygithubacct/kilix
   https://github.com/itsmygithubacct/kitty
   https://github.com/ecstra/win-kitty
+
+
+Managed setup and updates:
+  setup.ps1 -Archive ZIP -Sha256 VERIFIED_SHA256
+  setup.ps1 -Action Wsl -WslDistribution Ubuntu -InstallWslDependencies
+  setup.ps1 -Action Rollback
+  setup.ps1 -Action Recover
+  update.ps1 -Action Check -Channel stable
+  update.ps1 -Action Apply -Channel preview
+  diagnostics.ps1 -VerifyFiles -OutputPath diagnostics.json
+
+Run these from PowerShell using .\ before the script name. WSL is optional;
+-InstallWsl explicitly requests Microsoft WSL installation if needed, which can
+require elevation/reboot and initial Linux account setup. The Ubuntu/Debian
+-InstallWslDependencies option explicitly uses sudo for build/audio packages.
+
+Managed installs use %LOCALAPPDATA%\Programs\Kilix by default. Use the same
+-Destination for updates/rollback. Old generations and open windows are retained;
+configuration, WSL models, receipts and user work are not removed. If optional
+WSL setup fails, native Kilix remains usable; retry -Action Wsl separately.
+Rollback changes only the native application, not WSL or user data.
+
+Updates use published Windows releases and matching SHA256SUMS from this repo.
+Drafts are ignored; no published release means no available update. Daily checks
+are optional via update.ps1 -Action EnableSchedule; -ScheduleAction Apply opts
+into automatic installation. Disable with -Action DisableSchedule. Nothing is
+scheduled by default. Existing PowerShell execution policy remains in effect.
+
+signing.json records actual signing status. Unsigned previews have no trusted
+publisher signature. A checksum does not establish publisher certificate trust.
+Integration tools test owned windows only; read windows/README.md in the matching
+source archive for scope and manual checks. Windows11 is not claimed tested.

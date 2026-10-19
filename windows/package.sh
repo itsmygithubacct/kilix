@@ -27,6 +27,11 @@ mkdir -p "$destination/config" "$destination/licenses"
 cp "$windows_source/config/kilix.conf" "$destination/config/"
 cp "$windows_source/baseline.json" "$destination/"
 cp "$windows_source/README.txt" "$destination/"
+cp "$windows_source/"{setup,setup-common,install,diagnostics,update,update-common}.ps1 "$destination/"
+cp "$windows_source/wsl-bootstrap.sh" "$destination/"
+cp "$windows_source/"test-*.ps1 "$destination/"
+mkdir -p "$destination/tests"
+cp "$windows_source/tests/"*.py "$windows_source/tests/"*.ps1 "$destination/tests/"
 cp "$windows_source/licenses/"* "$destination/licenses/"
 cp LICENSE WINDOWS-PORT-NOTICE "$destination/licenses/"
 mkdir -p "$destination/licenses/mingw"
@@ -41,6 +46,33 @@ cp kitty/main.py "$destination/kitty/"
 cp kitty/remote_control.py "$destination/kitty/"
 cp kitty/fast_data_types.so kitty/fast_data_types.pyd kitty/glfw-win32.so kitty/glfw-win32.pyd "$destination/kitty/"
 cp kitty/launcher/conpty.dll kitty/launcher/OpenConsole.exe "$destination/kitty/launcher/"
+# The engine's minimal distribution drops tkinter. Restore the relocatable GUI
+# runtime for the catalog chooser, including _tkinter on --stage-existing builds.
+cp -r "/mingw64/lib/python$PYVER/tkinter" "$destination/pylib/lib/python$PYVER/"
+tk_module=$(python -c 'import _tkinter; print(_tkinter.__file__)')
+tk_module=$(cygpath -u "${tk_module//$'\r'/}")
+mkdir -p "$destination/pylib/lib/python$PYVER/lib-dynload"
+cp "$tk_module" "$destination/pylib/lib/python$PYVER/lib-dynload/"
+for toolkit in tcl tk; do
+    version=$(python -c "import _tkinter; print(_tkinter.${toolkit^^}_VERSION)")
+    version=${version//$'\r'/}
+    cp -r "/mingw64/lib/$toolkit$version" "$destination/pylib/lib/"
+done
+if [[ -d /mingw64/lib/tcl8 ]]; then cp -r /mingw64/lib/tcl8 "$destination/pylib/lib/"; fi
+python -c 'import _tkinter, json, pathlib, sys; pathlib.Path(sys.argv[1], "tk-runtime.json").write_text(json.dumps({"tcl": "pylib/lib/tcl" + _tkinter.TCL_VERSION, "tk": "pylib/lib/tk" + _tkinter.TK_VERSION}) + "\n", encoding="utf-8")' "$destination"
+declare -A tk_seen
+tk_queue=("$tk_module")
+for ((i=0; i<${#tk_queue[@]}; i++)); do
+    while IFS= read -r dll; do
+        key=${dll,,}
+        [[ -n ${tk_seen[$key]:-} ]] && continue
+        tk_seen[$key]=1
+        if [[ -f /mingw64/bin/$dll ]]; then
+            cp "/mingw64/bin/$dll" "$destination/kitty/launcher/"
+            tk_queue+=("/mingw64/bin/$dll")
+        fi
+    done < <(objdump -p "${tk_queue[$i]}" | awk '/DLL Name/{print $3}')
+done
 gcc -std=c11 -Wall -Wextra -Werror -municode -mwindows -static -Os \
     "$windows_source/src/launcher.c" -lshell32 -o "$destination/Kilix.exe"
 gcc -std=c11 -Wall -Wextra -Werror -municode -DKILIX_CONSOLE -static -Os \
@@ -57,6 +89,10 @@ chmod +x "$destination/wsl-bin/kitten"
 cp -r "$windows_source/../config/kilix_sdk" "$destination/wsl-bin/config/"
 cp "$windows_source/../config/remote.py" "$destination/wsl-bin/config/"
 cp "$windows_source/wsl/games.py" "$destination/wsl-bin/config/"
+# The command adapter has its own pinned, licensed source closure.
+if [[ -f "$windows_source/stage-commands.py" ]]; then
+    python "$windows_source/stage-commands.py" "$destination"
+fi
 printf '0.2.2-windows-dev\n' > "$destination/VERSION"
-python "$windows_source/package-manifest.py" "$destination"
+# package.ps1 creates the final manifest after optional source provisioning/signing.
 echo "Portable application: $destination/Kilix.exe"
