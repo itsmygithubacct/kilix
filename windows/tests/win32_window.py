@@ -3,7 +3,8 @@ import ctypes
 from ctypes import wintypes
 import os
 
-user32 = ctypes.WinDLL('user32', use_last_error=True)
+# ShowWindow can synchronously re-enter the engine's Python window callbacks.
+user32 = ctypes.PyDLL('user32', use_last_error=True)
 callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
 

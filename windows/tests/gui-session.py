@@ -16,12 +16,18 @@ phases = set()
 saved = {}
 
 
+def check(condition, detail):
+    # The packaged engine runs Python with optimization=2.
+    if not condition:
+        raise AssertionError(detail)
+
+
 def check_fullscreen(window):
     state = native.snapshot()
-    assert is_os_window_fullscreen(window.os_window_id), state
-    assert state['rect'] == state['monitor'], state
-    assert state['client'][2:] == [state['rect'][2] - state['rect'][0], state['rect'][3] - state['rect'][1]], state
-    assert state['visible_captions'] == 0, state
+    check(is_os_window_fullscreen(window.os_window_id), state)
+    check(state['rect'] == state['monitor'], state)
+    check(state['client'][2:] == [state['rect'][2] - state['rect'][0], state['rect'][3] - state['rect'][1]], state)
+    check(state['visible_captions'] == 0, state)
     write({'fullscreen': state})
 
 def write(event):
@@ -60,14 +66,14 @@ def on_resize(boss, window, data):
             if elapsed > 12 and 'maximize' not in phases:
                 phases.add('maximize')
                 state = native.snapshot()
-                assert not is_os_window_fullscreen(window.os_window_id), state
-                assert state['rect'] == saved['normal']['rect'], (saved['normal'], state)
-                assert state['visible_captions'] == saved['normal']['visible_captions'], state
+                check(not is_os_window_fullscreen(window.os_window_id), state)
+                check(state['rect'] == saved['normal']['rect'], (saved['normal'], state))
+                check(state['visible_captions'] == saved['normal']['visible_captions'], state)
                 native.maximize()
             if elapsed > 14 and 'max-fullscreen' not in phases:
                 phases.add('max-fullscreen')
                 saved['maximized'] = native.snapshot()
-                assert saved['maximized']['maximized'], saved['maximized']
+                check(saved['maximized']['maximized'], saved['maximized'])
                 toggle_fullscreen(window.os_window_id)
             if elapsed > 16 and 'max-restore' not in phases:
                 phases.add('max-restore')
@@ -76,9 +82,9 @@ def on_resize(boss, window, data):
             if elapsed > 17 and 'fullscreen-pass' not in phases:
                 phases.add('fullscreen-pass')
                 state = native.snapshot()
-                assert not is_os_window_fullscreen(window.os_window_id), state
-                assert state['maximized'], state
-                assert state['rect'] == saved['maximized']['rect'], (saved['maximized'], state)
+                check(not is_os_window_fullscreen(window.os_window_id), state)
+                check(state['maximized'], state)
+                check(state['rect'] == saved['maximized']['rect'], (saved['maximized'], state))
                 write({'fullscreen_round_trips': 'passed'})
         except Exception as e:
             write({'error': repr(e)})
