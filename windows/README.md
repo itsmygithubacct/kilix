@@ -260,6 +260,54 @@ unintegrated catalog apps remain unavailable.
 Catalog source installs cover the browser, PDF viewer, graphs, eSpeak voice
 tools and media player; each reports its prerequisites and platform limits.
 
+## Recoverable native sessions
+
+In a native Kilix PowerShell or Command Prompt pane:
+
+```powershell
+kilix session new work                  # persistent PowerShell in a new tab
+kilix session new build -- cmd.exe      # persistent Command Prompt
+kilix session list --json
+kilix session detach                    # or detach NAME from another pane
+kilix session attach work               # in a new Kilix window after closing one
+kilix session restore                   # detached sessions in new tabs
+kilix session kill work                 # terminate the session's process tree
+```
+
+Persistence is opt-in. New/attach/restore use the invoking instance's
+authenticated native control connection; list/detach/kill also work outside
+Kilix. Named sessions are shared by the current Windows user. Ordinary panes
+retain their original close behavior. A second attachment is refused until the
+first disconnects. Exit ends the live shell; attach never starts it again.
+
+An independent user process owns each persistent ConPTY and its Windows job.
+The renderer starts it before creating the pane's job, which owns only a byte
+relay. Closing a pane/window or losing that relay disconnects the frontend;
+the shell keeps its PID, memory, directory and running children. Explicit kill
+closes the broker's job and ends its owned process tree. No scheduled task,
+system service, administrator access or network listener is installed.
+
+Communication uses local named pipes restricted to the current user's SID and
+SYSTEM, with peer identity checks. The terminal frame layouts reuse
+kitty-pty-broker; an explicit Windows attach extension preserves full DWORD
+exit codes. Up to 64 MiB of output is replayed on reconnect. Overflow discards
+older history, and a stalled renderer is disconnected instead of blocking the
+broker. Exact screen state after truncated history, tab layouts and images
+outside the replay are not saved. Windows logoff/reboot, broker termination and
+external job policies can still end the session.
+
+Private metadata lives under `%LOCALAPPDATA%\Kilix\native-sessions`, including
+the current relay's native control context. `kilix` refreshes that context in
+surviving shells after reattachment. Programs that directly cache old instance
+credentials may need restarting; retain the installation used by a live broker
+until its work has finished. WSL sessions use the separate Linux backend below.
+
+Native process tests run with
+`kitty/launcher/kitty-console.exe +launch test.py --module windows_recovery`.
+They create only their own sessions and check creator/relay loss, PowerShell
+state and output, cmd environment, resize, control refresh, duplicate requests,
+malformed frames, deliberate termination and full native exit codes.
+
 ## Recoverable WSL sessions
 
 After companion setup with a current source bundle, opt a shell or program into
@@ -286,12 +334,8 @@ This reuses the pinned [kitty-pty-broker](https://github.com/itsmygithubacct/kit
 Its independent process owns the real Linux PTY: closing a Kilix pane/window
 disconnects the client and preserves the shell, working directory, in-memory
 state and running programs. `attach` and `restore` reconnect existing processes;
-they never rerun an exited command. Ordinary panes are unchanged. Native
-PowerShell/cmd sessions **are not persistent**: the renderer owns their ConPTY
-and kill-on-close Windows job. Retaining native sessions requires a separate
-ConPTY owner, which this implementation does not provide.
-The [Windows pseudoconsole API](https://learn.microsoft.com/en-us/windows/console/creating-a-pseudoconsole-session)
-requires its host to retain and service the communication pipes.
+they never rerun an exited command. Ordinary panes are unchanged. This Linux
+backend is separate from native ConPTY persistence above.
 
 The broker forwards inline graphics unchanged. It retains at most 64 MiB of
 replay; overflow discards older screen history and attach reports truncation.
@@ -490,7 +534,7 @@ graphs, eSpeak voice tools and the mpv fork. The media build provides pinned
 private FFmpeg/libplacebo dependencies on Ubuntu 22.04. Native Windows supports portable
 graphs and explicit system browser/PDF/media/SAPI handlers; Linux app/game
 binaries remain WSL-only. See [catalog setup and limitations](wsl/README.txt).
-WSL recovery is opt-in; native PowerShell/cmd recovery remains unavailable.
+Native and WSL recovery are opt-in as described above.
 Unsupported Linux chrome widgets are hidden.
 The native Windows backend still contains inherited compatibility shims that
 need further review before expanding supported capabilities.
@@ -499,14 +543,16 @@ The shipped profile enables authenticated WSL control on Windows loopback.
 Each native instance generates a random password, forwards it with its endpoint
 and public key through WSLENV, and rejects missing or unknown credentials.
 The companion calls the native kitten through interop; no LAN listener is used.
-The password stays in process environments and, for managed WSL sessions, the
+The password stays in process environments and, for managed sessions, the
 private attachment file described above. It is redacted from companion `@ ls`
 output. Child programs inherit control of their terminal instance.
 Set `allow_remote_control no` in user configuration to disable this feature.
 The separate graphics pipe
 rejects network clients and restricts access to the current Windows user and
-SYSTEM. Each terminal session owns a Windows job; its descendants are terminated
-when the session closes. Background Linux jobs inside WSL follow WSL's own
+SYSTEM. Ordinary terminal sessions own Windows jobs whose descendants are
+terminated when their panes close. Persistent native brokers retain their own
+jobs until the program exits or the user kills the session. Background Linux
+jobs inside WSL follow WSL's own
 lifetime rules. WSL file-based graphics transfers do not translate Linux paths
 into Windows paths; use inline/stream graphics transfers across that boundary.
 

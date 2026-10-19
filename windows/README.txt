@@ -65,7 +65,14 @@ work, but automatic prompt marks and prompt-based title updates are absent.
 
 This development port preserves the RC6-era terminal engine and pane chrome.
 Linux desktop integration, in-pane browser and voice tools are unavailable.
-Closing Kilix ends its native PowerShell/cmd sessions. To preserve WSL work,
+Closing Kilix ends ordinary native PowerShell/cmd sessions. To preserve native
+work, run `kilix session new work` (PowerShell) or
+`kilix session new work -- cmd.exe` inside a native Kilix pane. It opens a
+persistent tab. In a fresh Kilix window use `kilix session attach work` or
+`kilix session restore`. `session list`, `detach` and `kill` manage live work.
+The independent broker runs as this user, with private local IPC and bounded
+64 MiB replay. No Windows service or scheduled task is installed.
+To preserve WSL work,
 install the current companion bundle, then run `kilix session new work` in WSL.
 Close the pane/window or run `kilix session detach` inside that managed shell.
 In a fresh WSL pane use `kilix session list`, `kilix session attach work`, or
@@ -75,7 +82,9 @@ back work after reboot, WSL shutdown or broker termination. Ordinary panes are
 unchanged. See wsl/README.txt for limits, replay and native control after attach.
 WSL control uses a Windows loopback listener and a random per-instance password
 passed through child environments. Managed WSL sessions also keep the current
-attachment's control context in a private Linux file for reconnection.
+attachment's control context in a private file for reconnection. Native
+recovery metadata is under %LOCALAPPDATA%\Kilix\native-sessions; WSL metadata
+is under /tmp/kilix-wsl-UID inside that distribution.
 Unknown or missing passwords are denied.
 Set `allow_remote_control no` in user configuration to disable WSL control.
 The graphics pipe is local and restricted to the current Windows user and SYSTEM.

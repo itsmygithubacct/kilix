@@ -229,7 +229,7 @@ history and attach reports it; applications may need a redraw. File/shared
 memory images, native tab layouts and exact renderer state are not restored.
 Reboot/logoff, WSL shutdown/termination, OOM or broker death ends the work.
 WSL controls VM lifetime; setup does not change it or install a keep-alive.
-Native PowerShell/cmd sessions are not persistent.
+Native PowerShell/cmd persistence uses a separate backend: `kilix native session`.
 
 Runtime files are private under /tmp/kilix-wsl-UID. The active attachment keeps
 native control credentials and WSL_INTEROP in a mode 0600 file. The companion

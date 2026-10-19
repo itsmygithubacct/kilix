@@ -308,8 +308,8 @@ class Sessions:
 
 def parser():
     result = argparse.ArgumentParser(prog='kilix session', description=(
-        'Keep opt-in WSL processes alive across Kilix window closure. Native PowerShell/cmd '
-        'sessions are not persistent. Reboot, WSL shutdown or broker termination ends live work.'))
+        'Keep opt-in WSL processes alive across Kilix window closure. Use kilix native session '
+        'for native Windows sessions. Reboot, WSL shutdown or broker termination ends live work.'))
     commands = result.add_subparsers(dest='action')
     new = commands.add_parser('new', help='Create and attach a named live WSL session')
     new.add_argument('name', type=session_name)
