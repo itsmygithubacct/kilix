@@ -26,6 +26,14 @@ import companion
 
 
 class CatalogTests(unittest.TestCase):
+    def test_windows_archive_extraction_does_not_use_unix_ownership_shims(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            with catalog_sources.PublicArchive.open(self.bundle) as archive:
+                with patch.object(sys, 'platform', 'win32'), patch.object(tarfile.TarFile, 'chown') as chown:
+                    archive.extractall(temporary, filter='data')
+            chown.assert_not_called()
+            self.assertEqual((Path(temporary) / 'apps/fixture/LICENSE').read_text(), 'Fixture license notice\n')
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="catalog ' café ")
         self.addCleanup(self.temp.cleanup)

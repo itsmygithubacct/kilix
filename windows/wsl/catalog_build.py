@@ -77,6 +77,17 @@ def build(spec, generation, cache, python=None):
         build_games(generation, python, [spec['name']])
         return
     if recipe in ('python', 'voice'):
+        if spec['name'] == 'kilix-graphs':
+            # Windows exclusive creation already refuses an existing target,
+            # including symlinks, and has no O_NOFOLLOW constant. Keep upstream's
+            # O_EXCL creation and atomic --force replacement on every platform.
+            output = source / 'src/kilix_graphs/output.py'
+            original = 'os.O_EXCL | os.O_NOFOLLOW |'
+            replacement = 'os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) |'
+            text = output.read_text(encoding='utf-8')
+            if text.count(original) != 1:
+                raise ValueError('Graph output source differs from the Windows compatibility patch')
+            output.write_text(text.replace(original, replacement), encoding='utf-8')
         if not compileall.compile_dir(source, quiet=1):
             raise ValueError('Python application compilation failed')
     elif recipe == 'pdf':

@@ -9,7 +9,7 @@ import sys
 import tarfile
 import tempfile
 
-from catalog_sources import HERE, digest, download, materialize, revisions
+from catalog_sources import HERE, PublicArchive, digest, download, materialize, revisions
 import catalog_build
 from catalog_runtime import interpreter, python_argv
 
@@ -214,7 +214,7 @@ class Catalog:
                         path = Path(archive)
                     if digest(path) != sha256.lower():
                         raise ValueError('Archive SHA256 mismatch')
-                    with tarfile.open(path) as bundle:
+                    with PublicArchive.open(path) as bundle:
                         if binary:
                             bundle.extractall(generation, filter='data')
                         else:

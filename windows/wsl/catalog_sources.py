@@ -5,11 +5,20 @@ import os
 from pathlib import Path
 import re
 import shutil
+import sys
 import tarfile
 import tempfile
 import urllib.request
 
 HERE = Path(__file__).resolve().parent
+
+
+class PublicArchive(tarfile.TarFile):
+    def chown(self, tarinfo, targetpath, numeric_owner):
+        # The embedded Windows engine supplies geteuid() for Unix-only callers.
+        # That shim must not make tarfile attempt nonexistent Unix ownership APIs.
+        if sys.platform != 'win32':
+            super().chown(tarinfo, targetpath, numeric_owner)
 
 
 def digest(path):
@@ -66,7 +75,7 @@ def materialize(prefixes, destination, cache):
                  archive, hashes[repo + '/' + pin])
         target = destination / prefix
         target.mkdir(parents=True, exist_ok=True)
-        with tarfile.open(archive, 'r:gz') as source:
+        with PublicArchive.open(archive, 'r:gz') as source:
             members = source.getmembers()
             top = repo + '-' + pin
             for member in members:
