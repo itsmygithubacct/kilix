@@ -158,6 +158,9 @@ function Test-KilixPackage([string]$ApplicationDirectory, [string]$SignerThumbpr
 
 function ConvertTo-KilixArgument([AllowEmptyString()][string]$Value) {
     # Windows CRT quoting, including empty values and trailing backslashes.
+    # wsl.exe treats a quoted option name as the Linux command. Leave simple
+    # arguments unquoted; ProcessStartInfo invokes the program without a shell.
+    if ($Value.Length -gt 0 -and $Value -notmatch '[\s"]') { return $Value }
     return '"' + [regex]::Replace([regex]::Replace($Value, '(\\*)"', '$1$1\"'), '(\\+)$', '$1$1') + '"'
 }
 

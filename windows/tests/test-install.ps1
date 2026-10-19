@@ -177,7 +177,8 @@ try {
     # Real subprocess argument preservation (Windows CI uses the same code under PS5.1).
     $python = (Get-Command python -ErrorAction SilentlyContinue).Source
     if (!$python) { $python = (Get-Command python3).Source }
-    $values = @('', 'two words', 'C:\trailing\', 'an"embedded"quote', '$literal; &', ([string][char]0x03bb))
+    Assert ((ConvertTo-KilixArgument '--distribution') -ceq '--distribution') 'WSL option must remain unquoted'
+    $values = @('', '--distribution', 'Ubuntu', 'two words', 'C:\trailing\', 'an"embedded"quote', '$literal; &', ([string][char]0x03bb))
     $result = Invoke-KilixProcess $python (@('-c', 'import json,sys; print(json.dumps(sys.argv[1:]))') + $values)
     # PS5.1 emits the JSON array as one pipeline object; @() would nest it.
     $roundTrip = $result.stdout | ConvertFrom-Json
