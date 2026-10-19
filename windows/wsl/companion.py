@@ -32,6 +32,7 @@ def environment():
     env['KILIX_CONTENT_ROOT'] = str((STATE / 'content').resolve())
     # The Windows renderer cannot open Linux /dev/shm objects.
     env['KITTYFB_TRANSPORT'] = 'inline'
+    env['PYTHONDONTWRITEBYTECODE'] = '1'
     return env
 
 
@@ -148,6 +149,12 @@ def remote(args):
 
 def main(args):
     refresh_environment()
+    aliases = {'--settings': 'settings', 'transcripts': 'transcript',
+               'session-log': 'transcript', 'session-logs': 'transcript'}
+    if args and args[0] in aliases:
+        args = [aliases[args[0]], *args[1:]]
+    if args[:1] == ['help'] and len(args) > 1:
+        return main([*args[1:], '--help'])
     if not args or args[0] in ('--help', '-h', 'help'):
         print('''Kilix WSL commands:
   needle [ARGS]                 Run Needle's Linux command/model tools
@@ -158,15 +165,36 @@ def main(args):
   ls [--panes]                  List native tabs/panes
   pane, tab, focus, watch       Control the current native Kilix window
   fullscreen                   Toggle native fullscreen
+  settings [--print|--set CONTROL=VALUE]  Shared Linux companion settings
+  models list|show|verify|install  Receipt-gated Linux model management
+  agent-control context|list|dump|send|deliver|key|new-tab|split
+  action capabilities | --request-json -  Structured actions and receipts
+  tmux --socket PATH [--json] list|new|read|send|type|key|rename|close
+  transcript list|path|show|view|clean|capture  Logs and explicit pane snapshots
   split, new-pane               Start Linux shells/programs in native panes
   new-tab, new-page             Start a Linux tab
   @ COMMAND [ARGS]              Authenticated native remote control
   help, version                 WSL help / native build version
   native [ARGS]                 Native launcher commands (native help lists them)
+  status, setup, update [ARGS]   Native installation management (Windows paths)
   engine, powershell, cmd, wsl  Native launcher shortcuts
 Aliases: -h/--help, --version, --cmd, --wsl. Use kilix @ --help for remote verbs.
+Also: --settings, transcripts, session-log, session-logs.
+Use kilix help COMMAND [SUBCOMMAND] or COMMAND --help for offline options.
+Pane verbs: list, right, left, up, down, above, below, quad, close, focus, read, send.
+Tab verbs: list, new, left, right, move, close, focus, rename.
 App commands run in the current WSL distribution. --cwd=current uses the
-invoking Linux process's directory. Linux desktop services are not Windows services.''')
+invoking Linux process's directory. Agent identities are native instance/pane
+tokens, not persistent PTY sessions. Input needs known foreground/prompt readiness.
+Native renderer settings: kilix native settings. No automatic ConPTY recording.
+Linux desktop services are not Windows services.''')
+        if (ROOT / 'wsl/catalog.py').is_file():
+            print('Catalog: apps (alias app), games\n'
+                  '  list, info, check, install, update, enable, disable, launch, run, play, choose, export\n'
+                  '  Use apps --help or games --help for options and runtime availability.')
+        if (ROOT / 'wsl/recovery.py').is_file():
+            print('Persistent WSL sessions: session (alias sessions)\n'
+                  '  new, list, attach, detach, restore, kill. Use session --help.')
         return 0
     verb, rest = args[0], args[1:]
     if verb in ('session', 'sessions'):
@@ -174,12 +202,23 @@ invoking Linux process's directory. Linux desktop services are not Windows servi
         return sessions(rest, install=INSTALL, env=environment(), remote=remote)
     if verb == 'native':
         return subprocess.call([str(ROOT / 'kilix-cli.exe'), *rest])
-    if verb in ('version', '--version', 'engine', 'cmd', 'powershell', 'wsl', '--cmd', '--wsl'):
+    if verb in ('version', '--version', 'engine', 'cmd', 'powershell', 'wsl', '--cmd', '--wsl',
+                'status', 'setup', 'update'):
         return subprocess.call([str(ROOT / 'kilix-cli.exe'), *args])
     if verb == '@':
         return remote(rest)
+    if verb in ('settings', 'models', 'agent-control', 'action', 'tmux', 'transcript'):
+        python = str(PYTHON if PYTHON.exists() else sys.executable)
+        os.execve(python, [python, '-B', str(ROOT / 'wsl/commands.py'), verb, *rest], environment())
     if verb == 'needle':
         if not PYTHON.exists() or not (INSTALL / 'needle/needle_cli.py').exists():
+            if rest in (['--help'], ['-h']):
+                print('Usage: kilix needle [OPTIONS] REQUEST\n'
+                      '       kilix needle apps REQUEST\n'
+                      'Control panes and installed Linux apps using Needle. '
+                      'Install companion dependencies for the full Needle CLI/model tools.\n'
+                      'See the bundled wsl/README.txt and setup.sh. No setup is performed by help.')
+                return 0
             raise ValueError('WSL companion dependencies are not installed; run the WSL setup script.')
         os.execve(str(PYTHON), [str(PYTHON), '-B', str(ROOT / 'wsl/needle-run.py'),
                               str(INSTALL / 'needle/needle_cli.py'), *rest], environment())
@@ -189,6 +228,10 @@ invoking Linux process's directory. Linux desktop services are not Windows servi
                                 install=INSTALL, runtime='wsl',
                                 execute=lambda argv: os.execve(argv[0], argv, environment()))
     if verb in ('--launch', 'launch'):
+        if rest in (['--help'], ['-h']):
+            print('Usage: kilix launch PROGRAM [ARGS]\nRun literal Linux argv in a new native tab. '
+                  'For launch options use kilix @ launch --help.')
+            return 0
         if not rest:
             raise ValueError('Use kilix --launch PROGRAM [ARGS]')
         try:

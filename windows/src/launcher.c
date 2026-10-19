@@ -40,6 +40,43 @@ static void argument(const wchar_t *value) {
     put(L'"');
 }
 
+static BOOL is_command(const wchar_t *verb) {
+    static const wchar_t *verbs[] = {
+        L"help", L"--help", L"-h", L"@", L"ls", L"pane", L"tab", L"focus", L"watch",
+        L"new-pane", L"split", L"new-tab", L"new-page", L"launch", L"--launch",
+        L"fullscreen", L"settings", L"--settings", L"status", L"transcript", L"transcripts",
+        L"session-log", L"session-logs", L"apps", L"app", L"games", L"setup", L"update",
+        L"session", L"sessions"
+    };
+    for (size_t i = 0; i < sizeof(verbs) / sizeof(*verbs); i++)
+        if (!wcscmp(verb, verbs[i])) return TRUE;
+    return FALSE;
+}
+
+static int run_command(const wchar_t *root, int argc, wchar_t **argv) {
+    wchar_t path[32768], script[32768];
+    if (swprintf(path, 32768, L"%ls\\kitty\\launcher\\kitty-console.exe", root) < 0 ||
+        swprintf(script, 32768, L"%ls\\native-commands.py", root) < 0)
+        fail(L"Installation path is too long.");
+    argument(path);
+    argument(L"+runpy");
+    // The path and every user argument remain separate Windows argv items.
+    // No user text is inserted into Python or shell source.
+    argument(L"import runpy,sys; p=sys.argv.pop(1); sys.argv[0]=p; runpy.run_path(p,run_name='__main__')");
+    argument(script);
+    for (int i = 1; i < argc; i++) argument(argv[i]);
+    STARTUPINFOW startup = { .cb = sizeof(startup) };
+    PROCESS_INFORMATION process;
+    if (!CreateProcessW(path, command, NULL, NULL, TRUE, 0, NULL, NULL, &startup, &process))
+        fail(L"Cannot start the bundled native command runtime.");
+    CloseHandle(process.hThread);
+    WaitForSingleObject(process.hProcess, INFINITE);
+    DWORD result = 1;
+    GetExitCodeProcess(process.hProcess, &result);
+    CloseHandle(process.hProcess);
+    return (int)result;
+}
+
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR tail, int show) {
     (void)instance; (void)previous; (void)tail; (void)show;
     wchar_t root[32768], path[32768], user_config[32768];
@@ -51,28 +88,22 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR tail, int show
     int argc;
     wchar_t **argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     if (!argv) fail(L"Cannot read the command line.");
+    // Portable/managed generations remain immutable while commands execute.
+    if (!SetEnvironmentVariableW(L"PYTHONDONTWRITEBYTECODE", L"1"))
+        fail(L"Cannot configure the command runtime.");
     const wchar_t *verb = argc > 1 ? argv[1] : L"";
-    if (!wcscmp(verb, L"--version") || !wcscmp(verb, L"version") ||
-        !wcscmp(verb, L"--help") || !wcscmp(verb, L"-h") || !wcscmp(verb, L"help")) {
-        const wchar_t *message = (!wcscmp(verb, L"--version") || !wcscmp(verb, L"version"))
-            ? L"Kilix 0.2.2 Windows development build (Kitty 0.48.2)"
-            : L"Kilix native Windows commands:\n"
-              L"  kilix                         Open PowerShell\n"
-              L"  kilix powershell              Open PowerShell\n"
-              L"  kilix cmd                     Open Command Prompt\n"
-              L"  kilix wsl [distribution]      Open WSL\n"
-              L"  kilix help                    Show this command list\n"
-              L"  kilix version                 Print the version\n"
-              L"  kilix engine [options] [program ...]\n"
-              L"                                Pass arguments to the terminal engine\n"
-              L"  kilix engine --help           List ALL engine options\n"
-              L"\nAliases: --cmd, --wsl, --help, -h, --version.\n"
-              L"Profile launches also accept engine options such as -o and --config.\n"
-              L"WSL: kilix invokes this native Windows application through WSL interop.\n"
-              L"Inside WSL, kilix help lists companion commands including needle, pane,\n"
-              L"apps and --launch. Needle and games require companion dependency setup.\n"
-              L"\nKeys: Ctrl+Alt+R/D split; Ctrl+Shift+T new tab; Ctrl+Shift+U WSL tab.\n"
-              L"Settings: %LOCALAPPDATA%\\Kilix\\kitty.conf";
+    if (is_command(verb)) {
+#ifndef KILIX_CONSOLE
+        // CLI verbs invoked through the graphical launcher need somewhere to
+        // display their result. Console launchers retain redirected I/O.
+        if (!AttachConsole(ATTACH_PARENT_PROCESS)) AllocConsole();
+#endif
+        int result = run_command(root, argc, argv);
+        LocalFree(argv);
+        return result;
+    }
+    if (!wcscmp(verb, L"--version") || !wcscmp(verb, L"version")) {
+        const wchar_t *message = L"Kilix 0.2.2 Windows development build (Kitty 0.48.2)";
 #ifdef KILIX_CONSOLE
         wprintf(L"%ls\n", message);
 #else

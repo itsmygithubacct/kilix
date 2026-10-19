@@ -39,6 +39,26 @@ After setup, try `kilix needle "split right"`, `kilix --launch kilix-pong`,
 Unsupported commands return an error in the terminal.
 The bin\kitten.exe helper can be invoked by its full path.
 
+Native CLI (no WSL or separately installed Python required):
+  kilix help pane             Offline pane command reference
+  kilix pane list             List native panes
+  kilix launch PROGRAM ARGS    Literal native program argv in a new tab
+  kilix settings --path       Native user configuration location
+  kilix settings --set font_size=13.5
+  kilix settings --reload     Reload in the current authenticated instance
+  kilix transcript capture --pane ID
+  kilix transcript clean --pane ID --format json
+  kilix status --json
+  kilix setup --help          Install/rollback/recovery script options
+  kilix update --help         Release checks/apply and opt-in scheduling
+
+Transcripts are explicit snapshots of retained terminal output; automatic
+recording and pruning are not enabled. Saved logs can be listed/read/replayed.
+Native settings edit kitty.conf; WSL settings use Linux companion storage.
+WSL also exposes models, agent-control, action and explicit-socket tmux verbs.
+Use kilix help COMMAND for the full offline command reference. Agent input
+requires an exact instance/pane identity and observed foreground/prompt readiness.
+
 PowerShell's execution policy is preserved. Under AllSigned or Restricted,
 unsigned prompt integration is skipped; PowerShell, tabs and splits still
 work, but automatic prompt marks and prompt-based title updates are absent.

@@ -3,11 +3,22 @@ param([Parameter(Mandatory=$true)][string]$ApplicationDirectory)
 $ErrorActionPreference='Stop'
 foreach ($case in @(
  @('--help', 0, 'kilix engine --help'),
- @('help', 0, 'Inside WSL, kilix help'),
+ @('help', 0, 'Kilix native control commands'),
  @('--version', 0, 'Kilix 0.2.2'),
  @('version', 0, 'Kilix 0.2.2'),
  @('needle --help', 2, 'Unsupported Windows command: needle'),
- @('--launch kilix-pong', 2, 'Unsupported Windows command: --launch'),
+ @('launch --help', 0, 'literal native argv'),
+ @('@ launch --type=tab --help', 0, '--title'),
+ @('@ launch --cwd current -h', 0, '--title'),
+ @('@ launch -- fixture --help', 2, 'authenticated control'),
+ @('@ launch --title --help -- fixture', 2, 'authenticated control'),
+ @('help pane', 0, 'kilix pane'),
+ @('help tab', 0, 'kilix tab'),
+ @('settings --help', 0, 'kitty.conf'),
+ @('transcript --help', 0, 'capture'),
+ @('status --json', 0, 'native-windows'),
+ @('setup --help', 0, 'rollback'),
+ @('update --help', 0, 'enable-schedule'),
  @('--nonexistent', 2, 'Unsupported Windows command: --nonexistent'),
  @('engine --help', 0, '--config')
 )) {
@@ -17,6 +28,12 @@ foreach ($case in @(
  $p.StartInfo.UseShellExecute=$false
  $p.StartInfo.RedirectStandardOutput=$true
  $p.StartInfo.RedirectStandardError=$true
+ $p.StartInfo.StandardOutputEncoding=[Text.Encoding]::UTF8
+ $p.StartInfo.StandardErrorEncoding=[Text.Encoding]::UTF8
+ # Offline checks must not inherit control of the invoking user's window.
+ foreach ($key in @('KITTY_LISTEN_ON','KITTY_RC_PASSWORD','KITTY_WINDOW_ID')) {
+  $p.StartInfo.EnvironmentVariables.Remove($key)
+ }
  try {
   if (!$p.Start()) { throw 'Could not start CLI' }
   $stdout=$p.StandardOutput.ReadToEndAsync()
@@ -27,5 +44,33 @@ foreach ($case in @(
    throw "CLI failed: $($case[0]); exit=$($p.ExitCode); output=$output"
   }
   "PASS $($case[0])"
+ } finally { $p.Dispose() }
+}
+
+# Both an ACP-like Python stream and UTF-8 must produce the same Unicode
+# command output through redirected native launcher handles. No real user
+# configuration directory is opened or written by --path.
+foreach ($encoding in @('cp1252','utf-8')) {
+ $p=New-Object System.Diagnostics.Process
+ $p.StartInfo.FileName=Join-Path $ApplicationDirectory 'kilix-cli.exe'
+ $p.StartInfo.Arguments='settings --path'
+ $p.StartInfo.UseShellExecute=$false
+ $p.StartInfo.RedirectStandardOutput=$true
+ $p.StartInfo.RedirectStandardError=$true
+ $p.StartInfo.StandardOutputEncoding=[Text.Encoding]::UTF8
+ $p.StartInfo.StandardErrorEncoding=[Text.Encoding]::UTF8
+ $directory=Join-Path ([IO.Path]::GetTempPath()) ('Kilix-CLI-' + [char]0xE9 + '-' + [Guid]::NewGuid().ToString('N'))
+ $p.StartInfo.EnvironmentVariables['LOCALAPPDATA']=$directory
+ $p.StartInfo.EnvironmentVariables['PYTHONIOENCODING']=$encoding
+ try {
+  if (!$p.Start()) { throw 'Could not start Unicode CLI test' }
+  $stdout=$p.StandardOutput.ReadToEndAsync()
+  $stderr=$p.StandardError.ReadToEndAsync()
+  if (!$p.WaitForExit(15000)) { $p.Kill(); throw 'Unicode CLI test hung' }
+  if ($p.ExitCode -ne 0 -or $stdout.Result.Trim() -ne (Join-Path $directory 'Kilix\kitty.conf')) {
+   throw "Unicode CLI failed with $encoding`: $($stdout.Result) $($stderr.Result)"
+  }
+  if (Test-Path -LiteralPath $directory) { throw 'Read-only settings path created state' }
+  "PASS native Unicode output with $encoding"
  } finally { $p.Dispose() }
 }

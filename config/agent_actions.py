@@ -239,7 +239,10 @@ class GuardedClient:
         return self.bounded(self.client.resolve, *args, **kwargs)
 
     def run(self, args, payload=None):
-        mutation = args[0] == "send-text" or (args[0] == "launch" and "--help" not in args)
+        # launch() uses exactly this help probe, and always separates child
+        # argv with --. A child's literal --help is still a pane creation and
+        # must record intent before the terminal receives it.
+        mutation = args[0] == "send-text" or (args[0] == "launch" and tuple(args) != ("launch", "--help"))
         if mutation:
             self.verify()
             self.before_mutation()

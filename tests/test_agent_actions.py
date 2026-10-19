@@ -140,6 +140,25 @@ class ActionsTests(unittest.TestCase):
         self.assertIn("no action was repeated", status["error"])
         self.assertEqual(self.client.calls, [])
 
+    def test_literal_help_in_child_or_title_still_records_mutation_intent(self):
+        value = request()
+        value['params'].update(argv=['/bin/printf', '--help'], title='--help')
+        original_run = self.client.run
+
+        def run(args, payload=None):
+            result = original_run(args, payload)
+            if args[0] == 'launch' and '--' in args:
+                raise control.ControlError('lost launch response')
+            return result
+
+        self.client.run = run
+        result = self.dispatch(value)
+        self.assertEqual(result['status'], 'uncertain')
+        repeated = self.dispatch(value)
+        self.assertTrue(repeated['duplicate'])
+        self.assertEqual(repeated['status'], 'uncertain')
+        self.assertEqual(len(self.client.panes), 3)
+
     def test_status_reads_intent_while_operation_lock_is_held(self):
         value = request()
         with actions.ledger(self.client, value["operation_id"]) as store:

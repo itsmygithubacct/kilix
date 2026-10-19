@@ -39,7 +39,7 @@ For a source checkout, preserve LF line endings for the MSYS2 and WSL scripts:
 ```sh
 git clone --config core.autocrlf=false --branch work/windows-0.2.2 https://github.com/itsmygithubacct/kilix.git
 cd kilix
-git -c core.autocrlf=false submodule update --init src
+git -c core.autocrlf=false submodule update --init --recursive src third_party/kilix-content third_party/kilix-transcript-clean
 git -C src config core.autocrlf false
 ```
 
@@ -322,6 +322,81 @@ window, and verify `heartbeat.json` advances. In a new dedicated WSL pane run
 `attach RESULT_DIRECTORY`; `result.json` records the preserved PID/token and
 native pane listing, new-tab and fullscreen checks. On failure, run
 `cleanup RESULT_DIRECTORY` to terminate only that probe's session.
+
+## Command interfaces
+
+The command adapters reuse the host's settings, model installer, agent-control,
+structured action, transcript replay and tmux modules. `kilix help COMMAND`
+and `COMMAND --help` work offline. Native remote help uses the engine's own
+parser, including help after launch options; child arguments after `--` remain
+literal. The portable package includes the pinned Content/licence and transcript
+reader source with their notices.
+
+Inside WSL:
+
+```sh
+kilix settings --print
+kilix settings --set pane_memory=off
+kilix models list
+kilix models show needle2
+kilix agent-control context
+kilix agent-control list
+kilix action capabilities
+kilix tmux --socket /absolute/path/to/owned.sock --json list
+kilix transcript capture --pane 2
+kilix transcript list --json
+```
+
+`settings` edits the shared **Linux** companion settings. It cannot signal a
+Windows PID or reconfigure the native renderer; use `kilix native settings`
+for that. Model list/show/verify do not install anything. `models install`
+uses the existing explicit licence agreement and receipt checks, with models
+under `~/.local/share/kilix-wsl/content` unless `--root` is supplied.
+Tmux commands require an explicit socket and never discover a server or
+install a manager implicitly. With no arguments, `tmux` shows its available
+headless verbs.
+
+Agent-control and action keep their shared JSON schemas and validation. In
+their `broker` field the Windows adapter reports an opaque **instance/pane
+token**, identified by `identity_kind: windows-instance-pane` in pane listings.
+It is not a persistent broker session; reacquire it after a native restart.
+Inputs recheck caller/target identity and require a reported shell prompt or
+a recognized foreground coding process. The adapter can observe same-user
+Linux processes in the invoking distribution when their inherited native
+route matches exactly and their controlling tty has one unambiguous foreground
+group. Missing process metadata, nested ambiguous ttys and other distributions
+remain unknown. Verified delivery additionally retains the shared supported
+Codex composer checks. Creation and input acceptance never imply task completion.
+
+From PowerShell or cmd, the bundled native interpreter provides `pane`, `tab`,
+`ls`, `focus`, `watch`, `launch`, `fullscreen`, `@`, `status`, `settings`, and
+`transcript` without WSL or a system Python installation:
+
+```powershell
+kilix help pane
+kilix settings --path
+kilix settings --set font_size=13.5
+kilix settings --reload
+kilix launch powershell.exe -NoLogo
+kilix transcript clean --pane 2 --format json
+```
+
+Native settings validate scalar options with the running package's engine
+parser and atomically update `%LOCALAPPDATA%\Kilix\kitty.conf`; `--edit`
+opens Notepad for mappings, includes and compound options. Changes apply to
+new windows, or to the current authenticated instance with `--reload`.
+`setup` and `update` forward literal arguments to the packaged PowerShell
+maintenance scripts using process-scoped `ExecutionPolicy Bypass`; persistent
+user/machine policy and ordinary shell startup are unchanged. Their help lists
+installation, rollback, recovery, update and scheduling actions.
+
+Transcripts support `list`, `path`, `show`, `view`, `clean`, and explicit
+`capture`. Capture and `clean --pane ID` see only output the native terminal
+still retains. They do not enable continuous ConPTY recording or recover
+expired scrollback. Retained `.log` and `.log.zst` files can be read;
+compressed files require `zstd`, and interactive `view` requires `less`.
+No automatic recording, archive or prune support is claimed. Native models,
+agent actions and tmux still require the Linux companion.
 
 ## Validation
 

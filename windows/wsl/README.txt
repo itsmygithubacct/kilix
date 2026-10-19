@@ -227,3 +227,40 @@ Existing process environments are otherwise unchanged; direct Windows exe
 calls or applications caching control details may need restarting. Use kilix
 for native control after reconnect. Retain the old native installation while
 sessions created from it are still running.
+
+Shared command tools (no live terminal needed for --help):
+  kilix help settings
+  kilix settings --print
+  kilix settings --set pane_memory=off
+  kilix models list
+  kilix models show needle2
+  kilix agent-control context
+  kilix agent-control list
+  kilix action capabilities
+  kilix tmux --socket /absolute/path/to/owned.sock --json list
+  kilix transcript capture --pane 2
+  kilix transcript list --json
+
+Settings here are Linux companion settings, not native renderer configuration.
+Use kilix native settings --help for %LOCALAPPDATA%\Kilix\kitty.conf.
+The model command uses the companion content directory and the normal explicit
+licence/receipt checks; list/show/verify perform no installation. An explicit
+models --root /absolute/path overrides the default store.
+
+Agent-control/action use authenticated native control and the shared parsers.
+The broker field in their schemas contains an instance/pane token on Windows,
+not a persistent PTY session. Take a new list/context snapshot after restarting
+the renderer. Input requires a reported shell prompt or a recognized foreground
+coding agent. Same-user Linux foreground groups are observed only in this
+distribution with an exact inherited native route; missing or ambiguous metadata
+does not establish readiness. Verified delivery still requires the supported
+Codex composer and an empty input field. Receipt retries never repeat an uncertain
+action, and input acceptance is not task completion.
+
+Tmux requires its explicit --socket and a separately installed Linux tmux.
+No arguments prints the available headless verbs. Text/file/stdin input remains
+literal; type sends Enter separately. It never selects an unrelated tmux server.
+Transcript captures are explicit snapshots of retained pane output. list/path/
+show/view/clean also read saved logs; clean --pane reads a live snapshot. There
+is no automatic ConPTY recording or pruning. Archived .zst files need zstd;
+interactive view uses less. Expired output cannot be reconstructed.
