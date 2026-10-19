@@ -36,6 +36,7 @@ class TerminalMediaTests(unittest.TestCase):
              patch.object(video.os, 'access', return_value=True), \
              patch.object(video.sys.stdin, 'isatty', return_value=True), \
              patch.object(video.sys.stdout, 'isatty', return_value=True), \
+             patch.object(video, 'supports_terminal_fullscreen', return_value=False), \
              patch.object(video.subprocess, 'run') as probe, \
              patch.object(video, 'run_player', return_value=0) as run:
             self.assertEqual(video.main(['clip.mp4']), 0)
@@ -69,6 +70,59 @@ class TerminalMediaTests(unittest.TestCase):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as caught:
             self.command(['--transport', 'shm', 'clip.mp4'])
         self.assertEqual(caught.exception.code, 2)
+
+    def test_auto_transport_proves_locality_and_keeps_explicit_override(self):
+        with patch.dict(video.os.environ, {}, clear=True), \
+             patch.object(video.shutil, 'which', return_value='/usr/bin/kilix-mpv'), \
+             patch.object(video.sys.stdin, 'isatty', return_value=True), \
+             patch.object(video.sys.stdout, 'isatty', return_value=True), \
+             patch.object(video, 'local_shared_memory_terminal', return_value=True) as local, \
+             patch.object(video, 'run_player', return_value=0) as run:
+            video.main(['clip.mp4'])
+            self.assertIn('--vo-kitty-use-shm=yes', run.call_args.args[0])
+            local.return_value = False
+            video.main(['clip.mp4'])
+            self.assertNotIn('--vo-kitty-use-shm=yes', run.call_args.args[0])
+            local.return_value = True
+            video.main(['--transport', 'inline', 'clip.mp4'])
+            self.assertNotIn('--vo-kitty-use-shm=yes', run.call_args.args[0])
+            video.main(['--vo', 'tct', 'clip.mp4'])
+            self.assertNotIn('--vo-kitty-use-shm=yes', run.call_args.args[0])
+
+    def test_local_terminal_proof_fails_closed(self):
+        with patch.dict(video.os.environ, {'KITTY_PID': str(os.getpid())}, clear=True):
+            self.assertFalse(video.local_shared_memory_terminal())  # this process is Python
+            with patch.object(Path, 'read_text', return_value='kitty\n'), \
+                 patch.object(video.os.path, 'samefile', return_value=True):
+                self.assertTrue(video.local_shared_memory_terminal())
+                for key in ('SSH_CONNECTION', 'SSH_CLIENT', 'SSH_TTY', 'TMUX'):
+                    with patch.dict(video.os.environ, {key: 'set'}):
+                        self.assertFalse(video.local_shared_memory_terminal())
+                with patch.object(video.os.path, 'samefile', return_value=False):
+                    self.assertFalse(video.local_shared_memory_terminal())
+                with patch.object(video.os.path, 'samefile', side_effect=PermissionError):
+                    self.assertFalse(video.local_shared_memory_terminal())
+            for pid in ('', '0', '1', '../self', '999999999999', '１２'):
+                with patch.dict(video.os.environ, {'KITTY_PID': pid}):
+                    self.assertFalse(video.local_shared_memory_terminal())
+
+    def test_fullscreen_requires_support_and_kilix_context(self):
+        with patch.dict(video.os.environ, {'KILIX_STORAGE_HOME': '/private/test'}, clear=True), \
+             patch.object(video.shutil, 'which', return_value='/usr/bin/kilix-mpv'), \
+             patch.object(video.sys.stdin, 'isatty', return_value=True), \
+             patch.object(video.sys.stdout, 'isatty', return_value=True), \
+             patch.object(video.subprocess, 'run') as probe, \
+             patch.object(video, 'run_player', return_value=0) as run:
+            probe.return_value.returncode = 0
+            probe.return_value.stdout = ' --vo-kitty-terminal-fullscreen Flag\n'
+            video.main(['clip.mp4'])
+            self.assertIn('--vo-kitty-terminal-fullscreen=yes', run.call_args.args[0])
+            probe.return_value.stdout = ' --vo-kitty-use-shm Flag\n'
+            video.main(['clip.mp4'])
+            self.assertNotIn('--vo-kitty-terminal-fullscreen=yes', run.call_args.args[0])
+            probe.side_effect = subprocess.TimeoutExpired('probe', 5)
+            video.main(['clip.mp4'])
+            self.assertNotIn('--vo-kitty-terminal-fullscreen=yes', run.call_args.args[0])
 
     def test_stream(self):
         source = 'https://example.org/live.m3u8?a=1&b=2'

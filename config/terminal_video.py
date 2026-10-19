@@ -12,7 +12,7 @@ from pathlib import Path
 
 
 TERMINAL_RESET = (b"\x1b[?2026l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l"
-                  b"\x1b[?1006l\x1b[?1015l\x1b[?1049l\x1b[?25h\x1b[0m")
+                  b"\x1b[?1006l\x1b[?1016l\x1b[?1015l\x1b[?1049l\x1b[?25h\x1b[0m")
 
 
 def run_player(command):
@@ -71,6 +71,34 @@ def run_player(command):
                   file=sys.stderr)
 
 
+def local_shared_memory_terminal():
+    """Prove that a local Kitty process sees the same /dev/shm directory."""
+    if any(os.environ.get(key) for key in ('SSH_CONNECTION', 'SSH_CLIENT', 'SSH_TTY', 'TMUX')):
+        return False
+    pid = os.environ.get('KITTY_PID', '')
+    if not pid.isascii() or not pid.isdigit() or len(pid) > 10 or int(pid) <= 1:
+        return False
+    process = Path('/proc') / pid
+    try:
+        if process.stat().st_uid != os.getuid():
+            return False
+        if (process / 'comm').read_text().strip() != 'kitty':
+            return False
+        return os.path.samefile('/dev/shm', process / 'root/dev/shm')
+    except (OSError, ValueError):
+        return False
+
+
+def supports_terminal_fullscreen(player):
+    # An older separately installed fork must remain usable with a newer host.
+    try:
+        result = subprocess.run([player, '--no-config', '--list-options'],
+                                capture_output=True, text=True, timeout=5, check=False)
+        return result.returncode == 0 and '--vo-kitty-terminal-fullscreen ' in result.stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="kilix video",
@@ -81,9 +109,9 @@ def main(argv=None):
                         help="terminal renderer (default: kitty; tct uses text cells)")
     parser.add_argument("--mute", action="store_true", help="disable sound")
     parser.add_argument("--loop", action="store_true", help="repeat playback")
-    parser.add_argument("--transport", choices=("inline", "shm"), default="inline",
-                        help="Kitty transport (default: inline; shm requires a local "
-                             "terminal sharing /dev/shm with kilix-mpv)")
+    parser.add_argument("--transport", choices=("auto", "inline", "shm"), default="auto",
+                        help="Kitty transport (default: auto; use shm for a verified local "
+                             "Kitty/Kilix terminal, otherwise inline)")
     parser.add_argument("source", help="local file or direct HTTP(S)/RTSP stream URL")
     args = parser.parse_args(argv)
     storage = Path(os.environ.get("KILIX_STORAGE_HOME",
@@ -115,7 +143,12 @@ def main(argv=None):
                "--audio-display=no", "--term-osd=no", "--term-status-msg=",
                "--msg-level=all=warn", "--msg-color=no",
                "--script=" + str(Path(__file__).with_name('terminal_video_errors.lua'))]
-    if args.transport == "shm":
+    if (args.vo == "kitty" and named_player and os.environ.get("KILIX_STORAGE_HOME")
+            and supports_terminal_fullscreen(mpv)):
+        command.append("--vo-kitty-terminal-fullscreen=yes")
+    if (args.transport == "shm" or
+            (args.transport == "auto" and args.vo == "kitty" and named_player
+             and local_shared_memory_terminal())):
         command.append("--vo-kitty-use-shm=yes")
     if args.mute:
         command.append("--mute=yes")
