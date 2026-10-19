@@ -28,9 +28,36 @@ $OutputEncoding=New-Object Text.UTF8Encoding($false)
 try {
 """ + locate + r"""$exe=Join-Path $root 'kilix-cli.exe'
 if(!(Test-Path -LiteralPath $exe -PathType Leaf)){throw 'Kilix native installation not found; use --windows-root for a portable package'}
-$payload=[Console]::In.ReadToEnd()
-$payload | & $exe desktop --request-json - --json
-exit $LASTEXITCODE
+$payload=[Console]::In.ReadLine()
+if($null -eq $payload){throw 'Missing desktop request line'}
+$process=New-Object Diagnostics.Process
+$process.StartInfo.FileName=$exe
+$process.StartInfo.Arguments='desktop --request-json - --json'
+$process.StartInfo.UseShellExecute=$false
+$process.StartInfo.CreateNoWindow=$true
+$process.StartInfo.RedirectStandardInput=$true
+$process.StartInfo.RedirectStandardOutput=$true
+$process.StartInfo.RedirectStandardError=$true
+$process.StartInfo.StandardOutputEncoding=$OutputEncoding
+$process.StartInfo.StandardErrorEncoding=$OutputEncoding
+try {
+    if(!$process.Start()){throw 'Could not start Kilix desktop command'}
+    $stdout=$process.StandardOutput.ReadToEndAsync()
+    $stderr=$process.StandardError.ReadToEndAsync()
+    $process.StandardInput.WriteLine($payload)
+    $process.StandardInput.Close()
+    $request=ConvertFrom-Json -InputObject $payload
+    $seconds=20
+    if($null -ne $request.timeout){$seconds=[Math]::Max(1,[Math]::Min(60,[int]$request.timeout))}
+    if(!$process.WaitForExit(($seconds+25)*1000)){
+        $process.Kill()
+        throw 'Native desktop command timed out. It may have run; inspect before retrying.'
+    }
+    [Console]::Out.Write($stdout.Result)
+    [Console]::Error.Write($stderr.Result)
+    $code=$process.ExitCode
+} finally {$process.Dispose()}
+exit $code
 } catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }
 """
     encoded = base64.b64encode(script.encode('utf-16-le')).decode('ascii')
@@ -53,7 +80,9 @@ class SSHTransport:
             result = subprocess.run(
                 ['ssh', '-T', '-oBatchMode=yes', '-oConnectTimeout=10', '--',
                  self.host, remote_script(self.root)],
-                input=json.dumps(request, ensure_ascii=True, allow_nan=False),
+                # A complete JSON line avoids waiting for Windows OpenSSH's
+                # stdin EOF propagation before dispatching the request.
+                input=json.dumps(request, ensure_ascii=True, allow_nan=False) + '\n',
                 text=True, encoding='utf-8', capture_output=True,
                 timeout=request.get('timeout', 20) + 35)
         except subprocess.TimeoutExpired:

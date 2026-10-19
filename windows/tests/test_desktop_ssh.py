@@ -21,7 +21,7 @@ class DesktopSSHTests(unittest.TestCase):
     def test_host_is_one_literal_ssh_argument_and_request_is_stdin(self):
         request = {'schema': 'kilix.desktop/v1', 'operation': 'type',
                    'target': {'hwnd': '17', 'pid': 41, 'started': '123'},
-                   'params': {'text': 'é 字 😀 ; $(untrusted) "'}, 'timeout': 4}
+                   'params': {'text': 'é 字 😀 \n ; $(untrusted) "'}, 'timeout': 4}
         reply = {'schema': request['schema'], 'operation': 'type', 'ok': True, 'result': {}}
         completed = subprocess.CompletedProcess([], 0, json.dumps(reply), '')
         with patch.object(self.module.subprocess, 'run', return_value=completed) as run:
@@ -29,6 +29,8 @@ class DesktopSSHTests(unittest.TestCase):
         args, kwargs = run.call_args
         self.assertEqual(args[0][:7], ['ssh', '-T', '-oBatchMode=yes', '-oConnectTimeout=10', '--', 'fixture-alias', self.module.remote_script()])
         self.assertEqual(json.loads(kwargs['input']), request)
+        self.assertTrue(kwargs['input'].endswith('\n'))
+        self.assertEqual(kwargs['input'].count('\n'), 1)
         self.assertNotIn('untrusted', args[0][-1])
         self.assertEqual(kwargs['timeout'], 39)
 
