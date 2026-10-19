@@ -179,7 +179,8 @@ try {
     if (!$python) { $python = (Get-Command python3).Source }
     $values = @('', 'two words', 'C:\trailing\', 'an"embedded"quote', '$literal; &', ([string][char]0x03bb))
     $result = Invoke-KilixProcess $python (@('-c', 'import json,sys; print(json.dumps(sys.argv[1:]))') + $values)
-    $roundTrip = @($result.stdout | ConvertFrom-Json)
+    # PS5.1 emits the JSON array as one pipeline object; @() would nest it.
+    $roundTrip = $result.stdout | ConvertFrom-Json
     Assert ($result.exitCode -eq 0 -and $roundTrip.Count -eq $values.Count) 'Subprocess argument count failed'
     for ($i = 0; $i -lt $values.Count; $i++) { Assert ($roundTrip[$i] -ceq $values[$i]) "Subprocess argument $i changed" }
     Write-Host "PASS: $script:checks transaction assertions"
