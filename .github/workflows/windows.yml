@@ -84,6 +84,8 @@ jobs:
         run: |
           .\windows\tests\test-install.ps1
           .\windows\tests\test-update.ps1
+      - name: Check native desktop request validation
+        run: .\windows\tests\test-desktop-backend.ps1
       - name: Build portable application
         run: |
           $digest = ((Get-Content -Raw -Encoding UTF8 "$env:RUNNER_TEMP/kilix-companion/companion.tar.gz.sha256").Trim() -split '\s+')[0]

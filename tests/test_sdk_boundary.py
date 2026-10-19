@@ -65,8 +65,9 @@ class KilixSdkBoundaryTests(unittest.TestCase):
         # 1.13 adds the shared pane CPU-load visibility policy.
         # 1.14 exposes the pinned shared telemetry ring and client contract.
         # 1.15 adds the pane/tab/workspace model and operations (panes).
-        self.assertEqual(kilix_sdk.SDK_API_VERSION, (1, 16))
-        self.assertEqual(kilix_sdk.SDK_VERSION, "1.16.0")
+        # 1.17 adds the shared Windows desktop automation client.
+        self.assertEqual(kilix_sdk.SDK_API_VERSION, (1, 17))
+        self.assertEqual(kilix_sdk.SDK_VERSION, "1.17.0")
         kilix_sdk.require_compatible("1.0")
         kilix_sdk.require_compatible("1.5")
         kilix_sdk.require_compatible("1.6")
@@ -80,8 +81,9 @@ class KilixSdkBoundaryTests(unittest.TestCase):
         kilix_sdk.require_compatible("1.14")
         kilix_sdk.require_compatible("1.15")
         kilix_sdk.require_compatible("1.16")
+        kilix_sdk.require_compatible("1.17")
         with self.assertRaises(kilix_sdk.IncompatibleSDKError):
-            kilix_sdk.require_compatible("1.17")
+            kilix_sdk.require_compatible("1.18")
         with self.assertRaises(kilix_sdk.IncompatibleSDKError):
             kilix_sdk.require_compatible("2.0")
         for malformed in (

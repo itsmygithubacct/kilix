@@ -4,6 +4,46 @@ Pane/tab commands need Python 3, WSL interop and Windows PATH import. Setup uses
 uv's managed Python 3.12.14 for archive extraction and building. Open a
 fresh Kilix WSL window after installing the native package. Run `kilix help`.
 
+Windows desktop control (separate from terminal panes)
+
+  kilix desktop --help
+  kilix windows capabilities --json
+  kilix desktop status --json
+  kilix desktop windows --title Editor --json
+  kilix desktop inspect --window 123456 --depth 3 --limit 200 --json
+  kilix desktop focus --window 123456
+  kilix desktop type --window 123456 'Hello, 世界'
+  kilix desktop key --window 123456 CTRL+A
+  kilix desktop click --window 123456 --x 80 --y 100
+  kilix desktop screenshot 'C:\Temp\desktop.png'
+  kilix desktop launch -- notepad.exe 'C:\Temp\notes.txt'
+
+Use an HWND from windows/launch, or all three saved identity fields:
+--hwnd DECIMAL --pid PID --started FILETIME. --window resolves a fresh exact
+handle; a full identity protects a previously observed target against process
+reuse. All targeted operations require the complete identity in raw JSON.
+inspect returns flat UI Automation nodes; invoke ELEMENT and set-value ELEMENT
+TEXT use the returned runtime ID and reject stale/ambiguous IDs and password
+values. focus/move/minimize/maximize/restore/close/type/key/click/scroll are
+also available. Use each operation's --help for its parameters and limits.
+
+Help and capabilities are local/offline; desktop commands do not need pane
+control credentials or companion app/model setup. Requests are validated on
+Linux, then sent as UTF-8 JSON stdin to native kilix-cli.exe desktop with
+literal argv. The backend uses the same Windows user's interactive desktop.
+Input requires the exact foreground target; mouse coordinates are physical
+window-relative pixels. Locked sessions, UAC and elevated UI can block access.
+No login/RDP management or network server is provided. Launch reports process
+and window availability, not application task completion. Close sends WM_CLOSE.
+
+Paths in requests are Windows paths by default and are not translated. For
+example, C:\Temp\desktop.png becomes /mnt/c/Temp/desktop.png in WSL. Use an
+existing output directory; screenshot refuses overwrite unless --overwrite is
+given. --timeout is 1..60 seconds (default 20), with no automatic retry.
+--json works before/after the operation, before literal launch argv. Full
+requests use --json --request-json - and the kilix.desktop/v1 schema documented
+in windows/README.md. Failures return a JSON error and nonzero exit status.
+
 Needle and the public game catalog need a per-user Linux installation. On Ubuntu:
   sudo apt-get install build-essential zlib1g-dev pulseaudio-utils
 pulseaudio-utils provides the audio client for WSLg sound. Graphics use inline

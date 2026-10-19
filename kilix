@@ -60,6 +60,7 @@
 #   ./kilix update            # verified-origin, clean, fast-forward/ref update
 #   ./kilix update --stack    # most complete updater present, then kilix
 #   ./kilix desktop           # launch the configured desktop provider
+#   ./kilix windows --host H ... # control a Windows desktop over SSH
 #   ./kilix cap               # launch/install the Kilix Cap mansion desktop
 #   ./kilix tui               # launch/install the Kilix TUI desktop
 #   ./kilix land              # launch/install the Kilix Land desktop
@@ -115,6 +116,9 @@ export KILIX95_CACHE_HOME KILIX95_SESSION_HOME KILIX95_DATA_HOME
 # These commands also work before engine/storage setup. Model inspection needs
 # the pinned Content package, but never initializes shared settings or receipts.
 case "${1:-}" in
+  windows)
+    shift
+    exec python3 -B "$KILIX_HOME/config/windows_control.py" "$@" ;;
   skills)
     shift
     exec python3 "$KILIX_HOME/config/agent_skills.py" "$@" ;;
@@ -175,6 +179,7 @@ Coding agent input (verify the target first):
   kilix agent-control context|list|dump|send|key   --help
 Structured actions with durable receipts:
   kilix action --request-json -             structured request from stdin
+  kilix windows --host SSH_ALIAS COMMAND    Windows desktop automation over SSH
   kilix action capabilities                inspect available features
 Also: wizard, settings, status, update, install, games, screen-size, transcript,
   help-search "QUESTION". Command options: --help.

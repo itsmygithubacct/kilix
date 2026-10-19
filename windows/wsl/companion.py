@@ -148,13 +148,18 @@ def remote(args):
 
 
 def main(args):
+    if args[:1] == ['help'] and len(args) > 1:
+        return main([*args[1:], '--help'])
+    if args and args[0] in ('desktop', 'windows'):
+        sys.path.insert(0, str(ROOT / 'wsl-bin/config'))
+        from kilix_sdk import windows
+        return windows.main(args[1:], prog='kilix ' + args[0],
+                            runner=windows.cli_runner([str(ROOT / 'kilix-cli.exe'), 'desktop']))
     refresh_environment()
     aliases = {'--settings': 'settings', 'transcripts': 'transcript',
                'session-log': 'transcript', 'session-logs': 'transcript'}
     if args and args[0] in aliases:
         args = [aliases[args[0]], *args[1:]]
-    if args[:1] == ['help'] and len(args) > 1:
-        return main([*args[1:], '--help'])
     if not args or args[0] in ('--help', '-h', 'help'):
         print('''Kilix WSL commands:
   needle [ARGS]                 Run Needle's Linux command/model tools
@@ -165,6 +170,7 @@ def main(args):
   ls [--panes]                  List native tabs/panes
   pane, tab, focus, watch       Control the current native Kilix window
   fullscreen                   Toggle native fullscreen
+  desktop, windows OPERATION    Windows desktop apps; desktop capabilities is offline
   settings [--print|--set CONTROL=VALUE]  Shared Linux companion settings
   models list|show|verify|install  Receipt-gated Linux model management
   agent-control context|list|dump|send|deliver|key|new-tab|split

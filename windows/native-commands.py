@@ -32,6 +32,7 @@ HELP = '''Kilix native control commands (no WSL required):
   new-tab, new-page [OPTIONS] [-- PROGRAM ARGS]
   launch, --launch PROGRAM [ARGS]  Launch literal native argv in a new tab
   fullscreen                   Toggle the invoking native window
+  desktop, windows OPERATION   Windows desktop apps; desktop capabilities is offline
   @ COMMAND [ARGS]             Authenticated engine control; @ --help lists verbs
   settings [--path|--print|--set OPTION=VALUE|--edit|--reload]
   transcript list|path|show|view|clean|capture
@@ -39,8 +40,9 @@ HELP = '''Kilix native control commands (no WSL required):
   setup [ACTION] [OPTIONS]     Install, WSL setup, rollback, recover, status, diagnose
   update [ACTION] [OPTIONS]    Check/apply published releases or manage scheduled checks
   help [COMMAND ...]          Offline command help
-Use COMMAND --help for options. Control requires an inherited authenticated
-Kilix session. Native settings edit kitty.conf; new windows load saved changes.
+Use COMMAND --help for options. Pane/tab control requires an inherited
+authenticated Kilix session. Desktop control uses the current Windows user's
+interactive desktop. Native settings edit kitty.conf; new windows load saved changes.
 Transcripts capture retained output explicitly; no automatic recording broker.
 The WSL companion adds Linux settings, models, agent-control, action and tmux.
 Profile launches: powershell, cmd, wsl [distribution]; engine [OPTIONS].
@@ -266,6 +268,11 @@ def settings(args):
 
 
 def main(args):
+    if args[:1] == ['help'] and len(args) > 1:
+        return main([*args[1:], '--help'])
+    if args and args[0] in ('desktop', 'windows'):
+        from kilix_sdk import windows
+        return windows.main(args[1:], root=ROOT, prog='kilix ' + args[0])
     # Freeze the inherited route for this invocation. Refreshing again between
     # resolving a pane ID and sending its command could address a replacement
     # instance with an ID from the old one.
@@ -279,8 +286,6 @@ def main(args):
                   '  list, new, attach, detach, kill, restore. Use session --help.')
         return 0
     verb, rest = args[0], args[1:]
-    if verb == 'help':
-        return main([*rest, '--help'])
     if verb == '@':
         return remote(rest)
     if verb in ('apps', 'app', 'games'):

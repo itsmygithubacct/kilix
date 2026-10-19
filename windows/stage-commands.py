@@ -40,7 +40,9 @@ def stage(destination):
     for pattern in ('*.py', '*.json'):
         for source in (SOURCE / 'wsl').glob(pattern):
             shutil.copy2(source, destination / 'wsl' / source.name)
-    shutil.copy2(SOURCE / 'native-commands.py', destination / 'native-commands.py')
+    for name in ('native-commands.py', 'desktop_transport.py', 'desktop.ps1',
+                 'desktop-native.cs', 'desktop-dispatch.ps1'):
+        shutil.copy2(SOURCE / name, destination / name)
 
 
 if __name__ == '__main__':

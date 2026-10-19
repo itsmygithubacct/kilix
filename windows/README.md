@@ -77,6 +77,170 @@ Outputs:
 - `src\dist\kilix-0.2.2-windows-x64-dev.zip`: complete portable application.
 - `src\dist\kilix\licenses`: engine, dependency, font, and runtime notices.
 
+## Windows desktop automation
+
+`kilix desktop` (alias `kilix windows`) controls Windows applications. Terminal
+pane and tab commands remain separate. The native command and WSL companion
+share the `kilix_sdk.windows` client, validation and offline help:
+
+```powershell
+kilix desktop --help
+kilix desktop capabilities --json
+kilix desktop status --json
+kilix desktop windows --title "Editor" --json
+kilix desktop inspect --window 123456 --depth 3 --limit 200 --json
+kilix desktop focus --window 123456
+kilix desktop type --window 123456 'Hello, 世界'
+kilix desktop key --window 123456 CTRL A
+kilix desktop click --window 123456 --x 80 --y 100 --button left --count 1
+kilix desktop scroll --window 123456 --x 80 --y 100 --delta -120
+kilix desktop move --window 123456 --x -800 --y 40 --width 800 --height 600
+kilix desktop screenshot 'C:\Temp\desktop.png'
+kilix desktop screenshot --window 123456 'C:\Temp\window.png'
+kilix desktop launch --cwd 'C:\Temp' -- notepad.exe 'C:\Temp\notes.txt'
+```
+
+Replace example HWNDs with handles returned by `windows` or `launch`. Window
+listings include title, class, physical rectangle, minimized state, process
+path when available, and `target: {hwnd, pid, started}`. `started` is the
+process creation FILETIME as a decimal string. For a saved identity, supply
+all three flags: `--hwnd 123456 --pid 4321 --started 134000000000000000`.
+The native worker checks that identity before acting, including PID reuse.
+The convenient `--window HWND` resolves an exact handle with a fresh listing;
+it cannot detect reuse that happened before that listing. Use the full saved
+identity when an action must address a previously observed process.
+
+`inspect` returns flat UI Automation nodes with stable runtime `id`, `name`,
+`automation_id`, `control_type`, `rect`, `enabled`, `offscreen` and supported
+`patterns`. Ordinary ValuePattern fields include `value` (up to 4096 UTF-16
+units), `value_truncated` and `value_unavailable`. Pass the returned ID literally to `invoke ELEMENT` or
+`set-value ELEMENT TEXT`, together with the target flags. IDs are scoped to
+the target's current UI tree; stale or ambiguous IDs fail. Password values
+are never read or exposed, and `set-value` refuses password fields.
+
+`focus`, `move`, `minimize`, `maximize`, `restore`, `close`, `type`, `key`,
+`click`, `scroll`, `inspect`, `invoke` and `set-value` require a target.
+`screenshot` optionally takes one; `status`, `windows` and `launch` do not.
+`close` sends WM_CLOSE only: an application can show a save prompt or stay
+open. `launch` takes 1–64 literal argv entries and an optional absolute Windows
+cwd. It reports the PID and a matching target when available; a started
+process or an absent window does not establish application task completion.
+Use `--` before launch argv so child options such as `--help` stay literal.
+There is no shell expansion or implicit shell invocation.
+
+Input requires the target to already be foreground; use `focus` explicitly
+when needed. Mouse points must belong to that target, so an overlapping
+window is refused. Coordinates are physical pixels: `move` uses signed
+desktop coordinates; `click` and `scroll` use offsets from the target window.
+Move dimensions are 1–16384 pixels; the result reports actual bounds and
+accepts one-pixel rounding by legacy applications at fractional display scales.
+Wheel delta is an integer from -1200 to
+1200; positive values scroll upward. `key` accepts a chord such as `CTRL A`
+or `CTRL+A`, and named keys including ENTER, SHIFT, ALT, WIN, TAB, ESC,
+BACKSPACE, DELETE, HOME, END, PAGEUP, PAGEDOWN, arrows and F1–F12, plus ASCII
+letters/digits. `capabilities` lists the complete supported set. Text and
+set-value are limited to 16384 UTF-16 code units. Inspection defaults to
+depth 3 / 200 nodes, with maxima of 8 / 500.
+
+Screenshot paths must be absolute Windows PNG paths with an existing parent
+directory. Existing files are refused unless `--overwrite` is explicit;
+responses report the path and physical capture bounds. This includes WSL:
+`/mnt/c/Temp` is written as `C:\Temp` in a request. Files saved under a Windows
+drive are then accessible through its WSL mount. Linux paths are not
+automatically translated. Desktop screenshots capture the visible desktop;
+obscured/minimized windows and application capture restrictions can affect
+what a targeted capture can return.
+
+The backend runs a bounded, own-user interactive scheduled task, writes an
+atomic UTF-8 JSON response, and cleans up its owned task. There is no network
+server. Its worker starts through Kilix's bundled graphical interpreter without
+a console, so starting a command does not take focus away from the target.
+`status` reports session/user and interactive/locked availability.
+Locked sessions, UAC secure desktops and elevated UI can prevent access;
+the command does not manage logins or RDP sessions. Help and `capabilities`
+need no live session and never create a task. `--timeout` is 1–60 seconds
+(default 20); an uncertain operation is never retried automatically.
+
+Human output is the default. `--json` works before or after the subcommand
+(before literal launch argv) and emits the response envelope. Full requests
+use `kilix desktop --json --request-json -` with UTF-8 JSON on stdin:
+
+```json
+{"schema":"kilix.desktop/v1","operation":"inspect","params":{"depth":3,"limit":200},"target":{"hwnd":"123456","pid":4321,"started":"134000000000000000"},"timeout":20}
+```
+
+The exact top-level fields are `schema`, `operation`, `params`, optional
+`target`, and optional `timeout`. Unknown fields, incomplete identities and
+invalid types/limits fail before transport. Raw requests never resolve bare
+handles. Success is `{"schema":"kilix.desktop/v1","ok":true,"operation":OP,
+"result":...}`; failure replaces `result` with `"error":{"code":...,"message":...}`
+and exits nonzero. CLI usage/validation failures exit 2; execution failures
+exit 1. Put the timeout inside a full JSON request. Per-command `--help`
+describes its parameters; `capabilities` is a local discovery command, not
+a native protocol operation.
+
+The standard-library SDK imports on Windows and Linux without POSIX-only
+dependencies. A native caller passes the package root when it is not running
+through `native-commands.py`. An external transport supplies a callback taking
+one request dict and returning one response dict, including an SSH adapter:
+
+```python
+from kilix_sdk.windows import DesktopClient, capabilities, cli_runner
+
+# The SSH endpoint/executable is configured by the caller. Request data goes
+# through stdin; it is never interpolated into a remote shell command.
+client = DesktopClient(runner=cli_runner([
+    "ssh", "windows-workstation", "kilix-cli.exe", "desktop",
+]))
+inventory = capabilities()                # offline
+result = client.call("windows")
+# Use a target from result for subsequent calls.
+# client.call("inspect", target=target, params={"depth": 2, "limit": 100})
+```
+
+`client.execute(full_request)` returns the envelope; `client.call(...)`
+returns its result or raises `DesktopError` with a machine-readable `code`.
+Transport errors also raise `DesktopError`. The SDK neither opens an SSH
+connection nor selects a host unless the supplied runner does so. The native
+default loads exactly the packaged `desktop_transport.py` beside the entry
+point. WSL uses `kilix-cli.exe desktop` with fixed argv and JSON stdin.
+
+On a Linux Kilix host, `desktop` remains the desktop-provider launcher. Use
+`windows --host` for a Windows computer with an existing SSH connection:
+
+```sh
+./kilix windows --host windows-workstation status --json
+./kilix windows --host windows-workstation windows --json
+./kilix windows --host windows-workstation inspect --window 123456 --json
+./kilix windows --host windows-workstation screenshot 'C:\Temp\screen.png'
+scp windows-workstation:'C:/Temp/screen.png' ./screen.png
+```
+
+SSH uses the host's existing authentication and configuration, including
+`ProxyJump` or `ProxyCommand` for an intermediary. The Windows user's managed
+Kilix installation is discovered from its install state; for a portable
+package, put `--windows-root 'C:\Apps\Kilix'` before the operation. Requests
+travel as JSON on stdin. Only one active desktop for that Windows user is
+selected; disconnected or ambiguous logins produce an availability error.
+The reusable `windows_control.SSHTransport(host, root=None)` callback can also
+be passed to `DesktopClient(runner=...)`.
+
+Source checks without desktop access:
+
+```sh
+python3 -B -m unittest discover -s windows/tests -p 'test_desktop_commands.py'
+python3 -B -m unittest discover -s windows/tests -p 'test_desktop_ssh.py'
+```
+
+`tests/test-desktop-backend.ps1` checks native request validation without
+operating a desktop. `tests/desktop-integration.py` runs through the packaged
+interpreter and launches its own WinForms fixture for interactive checks; it
+requires an unlocked desktop. The Windows 10 x64 qualification at 150% display
+scaling covers Unicode text, key chords, clicks/scrolling, UIA inspection and
+actions, PNG capture, focus/move/minimize/maximize/restore, stale identities,
+and closing the owned fixture. Other Windows versions and mixed-DPI monitor
+layouts still need desktop qualification.
+
 ## Install, update and recover
 
 After checking the downloaded archive against the release's `SHA256SUMS`, extract

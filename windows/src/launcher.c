@@ -46,7 +46,7 @@ static BOOL is_command(const wchar_t *verb) {
         L"new-pane", L"split", L"new-tab", L"new-page", L"launch", L"--launch",
         L"fullscreen", L"settings", L"--settings", L"status", L"transcript", L"transcripts",
         L"session-log", L"session-logs", L"apps", L"app", L"games", L"setup", L"update",
-        L"session", L"sessions"
+        L"session", L"sessions", L"desktop", L"windows"
     };
     for (size_t i = 0; i < sizeof(verbs) / sizeof(*verbs); i++)
         if (!wcscmp(verb, verbs[i])) return TRUE;

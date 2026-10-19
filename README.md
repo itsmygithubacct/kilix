@@ -34,6 +34,13 @@ it wrote in `state/` so `--uninstall-desktop` can take exactly that back out.
 Prepared for the coordinated Plebian-OS 0.2.2 candidate. The supported upgrade
 source is 0.2.1; image, upgrade and final human acceptance remain pending.
 
+The Windows development build adds desktop automation through `kilix desktop`:
+window discovery, screenshots, UI Automation inspection/actions, keyboard and
+mouse input, application launch, and window management. Native Windows and WSL
+share SDK 1.17's `kilix_sdk.windows` client. Linux hosts can use
+`kilix windows --host SSH_ALIAS` through an existing SSH connection. See the
+[Windows desktop commands](windows/README.md#windows-desktop-automation).
+
 See the [0.2.2 help guide](docs/help/README.md) for current commands, storage,
 model setup, speech and troubleshooting. Older release sections below describe
 their named versions; they are not a current component inventory.
