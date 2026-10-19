@@ -15,7 +15,10 @@ def dependency_pins(spec):
     if spec.get('adapter') == 'amp':
         import catalog_amp
         return {'sndfile-compat': catalog_amp.REVISION}
-    return {'utf8proc': UTF8PROC} if spec.get('adapter') == 'voicegen' else {}
+    if spec.get('adapter') == 'voicegen':
+        import catalog_cmake
+        return {'utf8proc': UTF8PROC, 'cmake': catalog_cmake.pinned()['sha256']}
+    return {}
 
 
 def build(spec, generation, cache, python=None):
@@ -40,11 +43,13 @@ def build(spec, generation, cache, python=None):
         git('init', '--template=', unicode_source)
         git('-C', unicode_source, 'fetch', '--depth=1', 'https://github.com/JuliaStrings/utf8proc.git', UTF8PROC)
         git('-C', unicode_source, 'checkout', '--detach', UTF8PROC)
-        run(['cmake', '-S', source, '-B', source / 'build', '-DCMAKE_BUILD_TYPE=Release',
-             '-DBUILD_TESTING=OFF', '-DCMAKE_INSTALL_LIBDIR=lib',
-             '-DKGV_UTF8PROC_SOURCE_DIR=' + str(unicode_source)])
-        run(['cmake', '--build', source / 'build', '-j2'])
-        run(['cmake', '--install', source / 'build', '--prefix', source / 'runtime'])
+        import catalog_cmake
+        with catalog_cmake.toolchain(generation, cache) as cmake:
+            run([cmake, '-S', source, '-B', source / 'build', '-G', 'Unix Makefiles', '-DCMAKE_BUILD_TYPE=Release',
+                 '-DBUILD_TESTING=OFF', '-DCMAKE_INSTALL_LIBDIR=lib',
+                 '-DKGV_UTF8PROC_SOURCE_DIR=' + str(unicode_source)])
+            run([cmake, '--build', source / 'build', '-j2'])
+            run([cmake, '--install', source / 'build', '--prefix', source / 'runtime'])
     else:
         options = []
         if spec['adapter'] == 'amp':

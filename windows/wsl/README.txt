@@ -153,9 +153,12 @@ opens a separate Linux SDL editor and requires WSLg/X11. Ubuntu22 libsndfile1.0
 cannot decode MP3; use mpv for that format. WSL audio must already work.
 Soundgen's standard-library WAV generators also run natively on Windows. Its
 NumPy/SciPy transforms require separately installed dependencies; doctor reports
-each provider. No model is used. Voicegen needs CMake3.24+ (Ubuntu22's3.22 is too
-old), Git and a C++17 compiler, and builds its exact public utf8proc dependency.
-Use `voicegen frontend --profile prose --text TEXT` for the lexical trace. It has
+each provider. No model is used. Voicegen needs Git and a C++17 compiler; it uses
+hash-pinned private CMake3.31.6 and builds its exact public utf8proc dependency.
+Ubuntu22 needs only `sudo apt install build-essential git ca-certificates`, then
+`kilix apps install voicegen`; no system CMake upgrade is required. The temporary
+build tool is removed after use, retaining its notices and verified cached wheel.
+Use `kilix apps launch voicegen frontend --profile prose --text TEXT` for the trace. It has
 no published production voice and this build excludes neural research synthesis.
 
 The tmux tools require Linux tmux. tmux-browse also requires ttyd; Ubuntu22's

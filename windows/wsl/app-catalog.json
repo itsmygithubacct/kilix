@@ -609,22 +609,19 @@
     "packages": [
       "build-essential",
       "git",
-      "cmake"
+      "ca-certificates"
     ],
     "requirements": [],
     "build_commands": [
+      "make",
       "cc",
       "c++",
-      "git",
-      "cmake"
+      "git"
     ],
     "build_modules": [],
     "models": "No production voice is published. Developer frontend works without a model.",
     "native_reason": "This is a Linux application. Use a WSL tab.",
-    "minimum_versions": {
-      "cmake": "3.24"
-    },
-    "build_note": "Ubuntu22 default CMake3.22 is too old; explicitly provide CMake3.24+ in PATH. Fetches the exact upstream utf8proc Git commit required by the public source."
+    "build_note": "Uses SHA256-pinned private CMake 3.31.6 and a clean pinned utf8proc checkout. No system CMake upgrade, ONNX backend or model download."
   },
   {
     "name": "kilix-waydroid",
