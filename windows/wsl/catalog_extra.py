@@ -12,6 +12,9 @@ UTF8PROC = '0075ed7d0adba45682ee6bf7a83b10f8fd110163'
 
 
 def dependency_pins(spec):
+    if spec.get('adapter') == 'amp':
+        import catalog_amp
+        return {'sndfile-compat': catalog_amp.REVISION}
     return {'utf8proc': UTF8PROC} if spec.get('adapter') == 'voicegen' else {}
 
 
@@ -43,7 +46,20 @@ def build(spec, generation, cache, python=None):
         run(['cmake', '--build', source / 'build', '-j2'])
         run(['cmake', '--install', source / 'build', '--prefix', source / 'runtime'])
     else:
-        run(['make', '-j2', *spec.get('make_targets', ['all'])])
+        options = []
+        if spec['adapter'] == 'amp':
+            import catalog_amp
+            catalog_amp.patch(source)
+            # MPEG identifiers are enums, not preprocessor macros. Probe the
+            # installed development version before compiling the guarded arm.
+            mpeg = subprocess.call(['pkg-config', '--atleast-version=1.1.0', 'sndfile']) == 0
+            env['CFLAGS'] = env.get('CFLAGS', '-O2') + ' -DKILIX_HAVE_SNDFILE_MPEG=' + str(int(mpeg))
+            options.append('ENCODEC=0')
+        elif spec['name'] == 'kilix-techno':
+            # Propagate through recursive makes while retaining all other
+            # warnings/errors, as for the PDF terminal-session dependency.
+            options.append('CFLAGS=' + env.get('CFLAGS', '-O2 -g') + ' -Wno-error=unused-result')
+        run(['make', '-j2', *options, *spec.get('make_targets', ['all'])])
 
 
 def command(spec, generation, python=None, probe=False):
