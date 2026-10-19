@@ -190,3 +190,6 @@ try {
     Assert ($response.error.code -eq 'invalid_request') 'UTF-16 request reached the backend.'
 } finally { [IO.Directory]::Delete($temp, $true) }
 Write-Output "PASS: $script:checks offline desktop backend checks; no valid desktop operation executed."
+# The negative subprocess checks deliberately leave a nonzero LASTEXITCODE.
+# GitHub's PowerShell wrapper propagates it unless successful completion resets it.
+$global:LASTEXITCODE = 0
