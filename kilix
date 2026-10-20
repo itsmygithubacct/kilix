@@ -34,6 +34,8 @@
 #   ./kilix temps [args]       # run the pinned graphical thermal dashboard
 #   ./kilix memory [args]      # run the graphical RAM/pressure dashboard
 #   ./kilix tmux [args]        # install/run the pinned Tmux Manager
+#   ./kilix image FILE        # display images in this terminal (icat options supported)
+#   ./kilix video FILE_OR_URL # play a video or direct stream in this terminal
 #   ./kilix amp [args]         # install/run the pinned Media Player
 #   ./kilix amp --headless     # run its control-socket backend, no windows
 #   ./kilix pdf-view PDF       # install/run the terminal-native PDF viewer
@@ -113,12 +115,33 @@ export KILIX_BUILD_DIRECTORY KILIX_PREBUILT_HOME
 export KILIX95_STORAGE_HOME KILIX95_CONFIG_HOME KILIX95_STATE_HOME
 export KILIX95_CACHE_HOME KILIX95_SESSION_HOME KILIX95_DATA_HOME
 
+# Friendly image verb retains the active engine's icat and streamed-session mode.
+if [ "${1:-}" = image ]; then
+  shift
+  case "${1:-}" in
+    ""|-h|--help|help)
+      echo "usage: kilix image [ICAT_OPTIONS] FILE..."
+      echo "Display images in this terminal. Use -- before filenames starting with -."
+      echo "Example: kilix image -- photo.png"
+      echo "For all renderer options: kilix icat --help"
+      exit 0 ;;
+  esac
+  set -- icat "$@"
+fi
+
 # These commands also work before engine/storage setup. Model inspection needs
 # the pinned Content package, but never initializes shared settings or receipts.
 case "${1:-}" in
   windows)
     shift
     exec python3 -B "$KILIX_HOME/config/windows_control.py" "$@" ;;
+  video)
+    shift
+    if [ "${1:-}" = --install-player ]; then
+      shift
+      exec bash "$KILIX_HOME/scripts/build-terminal-mpv.sh" "$@"
+    fi
+    exec python3 -B "$KILIX_HOME/config/terminal_video.py" "$@" ;;
   skills)
     shift
     exec python3 "$KILIX_HOME/config/agent_skills.py" "$@" ;;

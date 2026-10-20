@@ -1,0 +1,4 @@
+--- a/video/out/vo_kitty.c
++++ b/video/out/vo_kitty.c
+@@ -137,0 +138 @@
++    p->cmd = (bstr){0};
