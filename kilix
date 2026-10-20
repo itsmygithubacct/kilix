@@ -2422,12 +2422,15 @@ case "${1:-}" in
       case "$_ask_arg" in --hold) _ask_hold=1 ;; --|[!-]*|'') break ;; esac
     done
     _ask_close() {
+      _ask_out=$1
       if [ "$_ask_hold" = 1 ] && [ -t 0 ]; then
+        # An interrupt here closes with the status already decided.
+        trap 'echo >&2; exit "$_ask_out"' INT
         read -r -p "Press Enter to close. " _ || true
       fi
-      exit "$1"
+      exit "$_ask_out"
     }
-    trap 'echo >&2; exit 1' INT
+    trap 'echo >&2; _ask_close 1' INT
     while :; do
       case "${1:-}" in
         --voice) _ask_voice=1; shift ;;
@@ -2441,7 +2444,7 @@ case "${1:-}" in
           echo
           echo "With no request, it asks for one. Exit status: 0 acted, 1 not acted"
           echo "(declined, refused or unsure), 2 usage."
-          exit 0 ;;
+          _ask_close 0 ;;
         --) shift; break ;;
         -*) echo "$_ask_usage" >&2; _ask_close 2 ;;
         *) break ;;

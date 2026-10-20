@@ -4,6 +4,7 @@ import os
 import pathlib
 import select
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -80,7 +81,8 @@ class AskLauncherTests(unittest.TestCase):
 
     def run_tty(self, arguments, keys, **env):
         """Run with a terminal on stdin and stdout; returns (status, output).
-        `keys` answers "Press Enter", or is [(prompt, keys), ...] in order."""
+        `keys` answers "Press Enter", or is [(prompt, keys), ...] in order; a
+        callable answer is given the process instead of written."""
         answers = list(keys) if isinstance(keys, list) else [(b"Press Enter", keys)]
         master, slave = os.openpty()
         process = subprocess.Popen([str(self.launcher), "ask", *arguments], env={**self.env, **env},
@@ -102,7 +104,10 @@ class AskLauncherTests(unittest.TestCase):
                 if answers and answers[0][0] in output[seen:]:
                     prompt, reply = answers.pop(0)
                     seen = output.index(prompt, seen) + len(prompt)
-                    os.write(master, reply)
+                    if callable(reply):
+                        reply(process)
+                    else:
+                        os.write(master, reply)
                 if process.poll() is not None and not ready:
                     break
             status = process.wait(timeout=10)
@@ -168,6 +173,24 @@ class AskLauncherTests(unittest.TestCase):
                 self.assertEqual(status, code, output)
                 self.assertEqual(output.count("Press Enter to close."), 1, output)
         self.assertEqual([call.get("needle") for call in self.calls()], [None])
+
+    def test_hold_waits_for_enter_after_help_and_an_interrupt_too(self):
+        for arguments in (["--hold", "--help"], ["--help", "--hold"]):
+            with self.subTest(arguments):
+                status, output = self.run_tty(arguments, b"\n")
+                self.assertEqual(status, 0, output)
+                self.assertIn("acts only on a typed yes", output)
+                self.assertEqual(output.count("Press Enter to close."), 1, output)
+        interrupt = lambda process: process.send_signal(signal.SIGINT)  # noqa: E731
+        # Interrupted at the request prompt: held, then closed by Enter or by a
+        # second interrupt, with the interrupt's status either way.
+        for second in (b"\n", interrupt):
+            with self.subTest(second):
+                status, output = self.run_tty(["--hold"], [(b"Ask Kilix: ", interrupt),
+                                                           (b"Press Enter", second)])
+                self.assertEqual(status, 1, output)
+                self.assertEqual(output.count("Press Enter to close."), 1, output)
+        self.assertEqual(self.calls(), [])
 
     def test_only_0_1_and_2_come_back(self):
         for code, expected in (("2", 2), ("130", 1), ("9", 1)):
