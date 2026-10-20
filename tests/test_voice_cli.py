@@ -6,11 +6,13 @@ import json
 import os
 from pathlib import Path
 import pathlib
+import signal
 import socket
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 
 # The suite runs both as `discover -s tests` (bare module names) and as
@@ -646,6 +648,229 @@ class VoiceCliTests(unittest.TestCase):
         self.assertEqual(set(requests[0]), {"op", "sock"})
         self.assertEqual(requests[1], {"op": "stop-dictation"})
         self.assertFalse(any(voice_session.glob("cli-*.sock")))
+
+
+    def fake_voice_daemon(self, final_after=None, reply_delay=0.0, stop_reply_delay=0.0):
+        """Answer the control socket as kilix-voiced does, recording each request.
+
+        `dictate` is accepted and every stop acknowledged. With `final_after`,
+        the final "slow words" reaches the caller that many seconds after a
+        finish-mode stop; `reply_delay` holds the reply to `dictate` and
+        `stop_reply_delay` the reply to each stop. Returns
+        the requests, an event set once a turn is accepted, and a close
+        function; `self.received` is set once a `dictate` has been read.
+        """
+        self.received = threading.Event()
+        self.voice_session = Path(self.environment["KILIX_SESSION_HOME"]) / "voice"
+        self.voice_session.mkdir(parents=True, mode=0o700, exist_ok=True)
+        control_path = self.voice_session / "control.sock"
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+        server.bind(str(control_path))
+        server.listen(4)
+        server.settimeout(0.1)
+        requests = []
+        accepted = threading.Event()
+        stopping = threading.Event()
+
+        def send_final(path):
+            out = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+            try:
+                out.sendto(json.dumps({"final": "slow words"}).encode(), path)
+            except OSError:
+                pass
+            finally:
+                out.close()
+
+        def serve():
+            receiver = None
+            while not stopping.is_set():
+                try:
+                    client, _address = server.accept()
+                except socket.timeout:
+                    continue
+                except OSError:
+                    return
+                with client:
+                    request = json.loads(client.recv(65536))
+                    requests.append(request)
+                    if request["op"] == "dictate":
+                        receiver = request["sock"]
+                        self.received.set()
+                        time.sleep(reply_delay)
+                        try:
+                            client.send(json.dumps({
+                                "ok": True, "id": "", "turn": "listen-1"}).encode())
+                        except OSError:
+                            continue
+                        # Let the reply land, so a signal sent on `accepted`
+                        # reaches the client waiting for words, not for this.
+                        time.sleep(0.3)
+                        accepted.set()
+                        continue
+                    mode = request.get("mode", "finish")
+                    time.sleep(stop_reply_delay)
+                    try:
+                        client.send(json.dumps({
+                            "ok": True, "id": "", "stopped": True, "mode": mode}).encode())
+                    except OSError:
+                        pass  # the caller gave up on this reply; keep serving
+                    if final_after is not None and mode == "finish" and receiver:
+                        timer = threading.Timer(final_after, send_final, (receiver,))
+                        timer.daemon = True
+                        timer.start()
+
+        worker = threading.Thread(target=serve, daemon=True)
+        worker.start()
+
+        def close():
+            if stopping.is_set():
+                return
+            stopping.set()
+            worker.join(timeout=2)
+            server.close()
+            control_path.unlink(missing_ok=True)
+
+        self.addCleanup(close)
+        return requests, accepted, close
+
+    def start_dictate(self, *arguments):
+        """`kilix dictate` in its own process group, as a terminal would run it."""
+        return subprocess.Popen(
+            [KILIX, "dictate", *arguments], env=self.environment, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+
+    def test_discard_on_interrupt_aborts_the_turn_at_once(self):
+        # Through `kilix ask --voice` Ctrl-C cancels the request, but a
+        # finish-mode stop had Whisper decode the words anyway: the recogniser
+        # and the microphone lease were held 4.1 s for a transcript ask threw
+        # away (live N-STOP check, 2026-10-20).
+        self.install_fake_daemon()
+        requests, accepted, _close = self.fake_voice_daemon(final_after=0.2)
+        proc = self.start_dictate("--seconds", "30", "--discard-on-interrupt")
+        self.assertTrue(accepted.wait(10))
+        started = time.monotonic()
+        os.killpg(proc.pid, signal.SIGINT)
+        out, err = proc.communicate(timeout=10)
+        self.assertLess(time.monotonic() - started, 3.0)
+        self.assertEqual(proc.returncode, 1, err)
+        self.assertEqual(out, "")
+        self.assertIn("dictation cancelled", err)
+        self.assertEqual(requests[1:], [{"op": "stop-dictation", "mode": "abort"}])
+        self.assertFalse(any(self.voice_session.glob("cli-*.sock")))
+
+    def test_an_interrupt_without_discard_still_finishes_and_prints(self):
+        self.install_fake_daemon()
+        requests, accepted, _close = self.fake_voice_daemon(final_after=0.2)
+        proc = self.start_dictate("--seconds", "30")
+        self.assertTrue(accepted.wait(10))
+        os.killpg(proc.pid, signal.SIGINT)
+        out, err = proc.communicate(timeout=15)
+        self.assertEqual(proc.returncode, 0, err)
+        self.assertEqual(out, "slow words\n")
+        self.assertEqual(requests[1:], [{"op": "stop-dictation"}])
+
+    def test_discard_on_interrupt_does_not_apply_to_a_pane(self):
+        result = self.run_kilix(
+            "dictate", "--pane", "3", "--discard-on-interrupt", check=False)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("does not apply to --pane", result.stderr)
+
+    def test_a_hangup_or_terminate_aborts_the_turn(self):
+        # Closing an "Ask Kilix by voice" tab mid-utterance killed the client
+        # without a stop, and the daemon recorded on until the 30 s cap.
+        self.install_fake_daemon()
+        for sig in (signal.SIGHUP, signal.SIGTERM):
+            with self.subTest(sig.name):
+                requests, accepted, close = self.fake_voice_daemon()
+                proc = self.start_dictate("--seconds", "30")
+                self.assertTrue(accepted.wait(10))
+                os.killpg(proc.pid, sig)
+                proc.communicate(timeout=10)
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline and (
+                        len(requests) < 2 or any(self.voice_session.glob("cli-*.sock"))):
+                    time.sleep(0.05)
+                self.assertEqual(requests[1:], [{"op": "stop-dictation", "mode": "abort"}])
+                self.assertFalse(any(self.voice_session.glob("cli-*.sock")))
+                close()
+
+    def test_a_second_terminate_does_not_turn_the_abort_into_a_finish(self):
+        # kitty-pty-broker ends a session with SIGTERM to each process in it
+        # and again to the group. The second landed while the client waited
+        # for its abort to be confirmed, and the stop it then left behind was
+        # a finish: the words were decoded for 4 s after the pane closed.
+        self.install_fake_daemon()
+        requests, accepted, _close = self.fake_voice_daemon(stop_reply_delay=0.5)
+        proc = self.start_dictate("--seconds", "30")
+        self.assertTrue(accepted.wait(10))
+        os.killpg(proc.pid, signal.SIGTERM)
+        time.sleep(0.2)
+        os.killpg(proc.pid, signal.SIGTERM)
+        proc.communicate(timeout=10)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and any(self.voice_session.glob("cli-*.sock")):
+            time.sleep(0.05)
+        time.sleep(1.0)
+        self.assertEqual(requests[1:], [{"op": "stop-dictation", "mode": "abort"}])
+
+    def test_a_cancel_before_the_turn_is_confirmed_aborts_it_too(self):
+        # The signal can land while the client still waits for the daemon to
+        # confirm the turn; the compensating stop must then abort as well.
+        self.install_fake_daemon()
+        cases = ((signal.SIGHUP, ()), (signal.SIGINT, ("--discard-on-interrupt",)))
+        for sig, extra in cases:
+            with self.subTest(sig.name):
+                requests, _accepted, close = self.fake_voice_daemon(reply_delay=1.0)
+                proc = self.start_dictate("--seconds", "30", *extra)
+                self.assertTrue(self.received.wait(10))
+                os.killpg(proc.pid, sig)
+                proc.communicate(timeout=15)
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline and len(requests) < 2:
+                    time.sleep(0.05)
+                self.assertEqual(requests[1:], [{"op": "stop-dictation", "mode": "abort"}])
+                close()
+
+    def test_a_final_is_awaited_longer_than_five_seconds_after_the_cap(self):
+        # Whisper decodes only once recording stops; a full 30 s turn took 11 s
+        # under load, and the client gave up 5 s after its stop with "heard
+        # nothing before the dictation timed out" (2026-10-20).
+        self.install_fake_daemon()
+        requests, accepted, _close = self.fake_voice_daemon(final_after=6.0)
+        proc = self.start_dictate("--seconds", "2")
+        self.assertTrue(accepted.wait(10))
+        out, err = proc.communicate(timeout=30)
+        self.assertEqual(proc.returncode, 0, err)
+        self.assertEqual(out, "slow words\n")
+        self.assertEqual(requests[1:], [{"op": "stop-dictation"}])
+
+    def test_voice_doctor_finds_a_model_kilix_content_keeps(self):
+        # kilix-voice reads whisper-small-en where `kilix models install` put
+        # it. Doctor looked only under voice/models and called a working,
+        # licensed model "not installed" (2026-10-20).
+        self.hermetic_path()
+        data = Path(self.environment["KILIX_DATA_HOME"])
+        content = data / "desktop-apps" / "assets" / "faster-whisper-small-en"
+        local = data / "voice" / "models" / "whisper-small-en"
+
+        def model_line():
+            lines = [line for line in self.run_kilix("voice", "doctor").stdout.splitlines()
+                     if line.startswith("speech model:")]
+            self.assertEqual(len(lines), 1)
+            return lines[0]
+
+        self._configure_devices(KILIX_VOICE_STT_ENGINE="whisper",
+                                KILIX_VOICE_STT_MODEL="whisper-small-en")
+        self.assertEqual(model_line(), f"speech model: not installed ({content})")
+        content.mkdir(parents=True)
+        self.assertEqual(model_line(), f"speech model: {content}")
+        local.mkdir(parents=True)
+        self.assertEqual(model_line(), f"speech model: {local}")
+        # A model kilix-content does not keep is still looked for under voice/models.
+        self._configure_devices(KILIX_VOICE_STT_ENGINE="vosk",
+                                KILIX_VOICE_STT_MODEL="small-en-us")
+        self.assertEqual(model_line(), "speech model: not installed (%s)"
+                         % (data / "voice" / "models" / "small-en-us"))
 
 
 if __name__ == "__main__":

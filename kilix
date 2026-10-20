@@ -1306,6 +1306,7 @@ _kilix_voice_client() {
 import json
 import os
 import re
+import signal
 import socket
 import subprocess
 import sys
@@ -1443,19 +1444,19 @@ def exchange_existing(message):
         client.close()
 
 
-def best_effort_stop(op):
+def best_effort_stop(op, **fields):
     try:
-        exchange_existing({"op": op})
+        exchange_existing({"op": op, **fields})
     except (AmbiguousRequest, RefusedRequest):
         pass
 
 
-def stop_with_retry(op):
+def stop_with_retry(op, **fields):
     """Return an error string unless one of two idempotent stops is confirmed."""
     error = "the voice daemon is no longer reachable"
     for _attempt in range(2):
         try:
-            exchange_existing({"op": op})
+            exchange_existing({"op": op, **fields})
         except AmbiguousRequest as failure:
             error = str(failure)
             continue
@@ -1465,8 +1466,11 @@ def stop_with_retry(op):
     return error
 
 
-def one_request(message, ambiguous_stop=None):
-    """Use one connection for one request; kilix-voiced closes after reply."""
+def one_request(message, ambiguous_stop=None, abort_on=()):
+    """Use one connection for one request; kilix-voiced closes after reply.
+
+    An exception in `abort_on` makes the compensating stop an abort.
+    """
     client = None
     try:
         client = connect()
@@ -1478,9 +1482,12 @@ def one_request(message, ambiguous_stop=None):
             die(str(error))
         except RefusedRequest as error:
             die(str(error))
-        except BaseException:
+        except BaseException as error:
             if ambiguous_stop is not None:
-                best_effort_stop(ambiguous_stop)
+                if isinstance(error, abort_on):
+                    best_effort_stop(ambiguous_stop, mode="abort")
+                else:
+                    best_effort_stop(ambiguous_stop)
             raise
     finally:
         if client is not None:
@@ -1533,11 +1540,28 @@ def cmd_dictate_pane(pane, seconds):
           % (pane, reply.get("id", "?")), file=sys.stderr)
 
 
-def cmd_dictate(seconds):
+class HungUp(Exception):
+    """SIGHUP or SIGTERM: the terminal or the caller has gone."""
+
+
+def hung_up(_signum, _frame):
+    # One is enough. kitty-pty-broker's kill sends SIGTERM to each process in
+    # the session and again to the group; a second one must not interrupt the
+    # abort the first started, or the stop left behind is a finish.
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    raise HungUp()
+
+
+def cmd_dictate(seconds, discard_on_interrupt=False):
     path = os.path.join(SESSION, "cli-%d.sock" % os.getpid())
     server = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
     interactive = sys.stderr.isatty()
     accepted = False
+    # A closed tab or a kill must not leave the microphone open until the cap:
+    # nobody is left to read the words, so the turn is aborted, not finished.
+    signal.signal(signal.SIGHUP, hung_up)
+    signal.signal(signal.SIGTERM, hung_up)
     try:
         if os.path.lexists(path):
             os.unlink(path)
@@ -1545,11 +1569,16 @@ def cmd_dictate(seconds):
         os.chmod(path, 0o600)
         one_request(
             {"op": "dictate", "sock": path},
-            ambiguous_stop="stop-dictation")
+            ambiguous_stop="stop-dictation",
+            abort_on=(HungUp, KeyboardInterrupt) if discard_on_interrupt else (HungUp,))
         accepted = True
         server.settimeout(0.25)
         deadline = time.monotonic() + seconds
-        final_deadline = deadline + 5.0
+        # Whisper decodes the whole utterance only after recording stops, and
+        # a full-length turn took 11 s to decode on a loaded laptop, so the
+        # wait for the final grows with the cap instead of a flat five seconds.
+        grace = 5.0 + seconds
+        final_deadline = deadline + grace
         final = None
         stop_requested = False
         while final is None and time.monotonic() < final_deadline:
@@ -1562,12 +1591,14 @@ def cmd_dictate(seconds):
             except socket.timeout:
                 continue
             except KeyboardInterrupt:
+                if discard_on_interrupt:
+                    raise
                 if stop_requested:
                     die("dictation interrupted while waiting for the final result")
                 if error := stop_with_retry("stop-dictation"):
                     die("could not stop dictation: %s" % error)
                 stop_requested = True
-                final_deadline = min(final_deadline, time.monotonic() + 5.0)
+                final_deadline = min(final_deadline, time.monotonic() + grace)
                 continue
             except OSError:
                 continue
@@ -1593,6 +1624,23 @@ def cmd_dictate(seconds):
         if not final:
             die("heard nothing")
         print(final)
+    except HungUp:
+        # Nothing is printed: the terminal this would go to may be gone.
+        if accepted:
+            stop_with_retry("stop-dictation", mode="abort")
+            accepted = False
+        raise SystemExit(1)
+    except KeyboardInterrupt:
+        if not discard_on_interrupt:
+            raise
+        # The caller asked for an interrupt to cancel: abort, which discards
+        # the words and skips decoding them, rather than finish and wait.
+        if accepted:
+            error = stop_with_retry("stop-dictation", mode="abort")
+            accepted = False
+            if error:
+                die("could not cancel dictation: %s" % error)
+        die("dictation cancelled")
     finally:
         if accepted:
             best_effort_stop("stop-dictation")
@@ -1613,7 +1661,7 @@ elif operation == "status":
 elif operation == "dictate-pane":
     cmd_dictate_pane(sys.argv[2], int(sys.argv[3]))
 elif operation == "dictate":
-    cmd_dictate(int(sys.argv[2]))
+    cmd_dictate(int(sys.argv[2]), sys.argv[3:4] == ["discard"])
 else:
     die("unknown voice request: %s" % operation, 2)
 PY
@@ -1684,6 +1732,15 @@ _kilix_voice_doctor() {
   [ "$cap" = unlimited ] || cap="$cap characters"
   library="$_KILIX_VOICE_DATA/lib/current/libvosk.so"
   model="$_KILIX_VOICE_DATA/models/$_KILIX_VOICE_STT_MODEL"
+  # kilix-voice reads a model kilix-content keeps from where `kilix models
+  # install` put it, unless a copy exists under voice/models (voicelib
+  # paths.model_dir; the fork's kilix_voice._model_directory mirrors it).
+  if [ ! -d "$model" ]; then
+    case "$_KILIX_VOICE_STT_MODEL" in
+      whisper-small-en) model="$KILIX_DATA_HOME/desktop-apps/assets/faster-whisper-small-en" ;;
+      whistle) model="$KILIX_DATA_HOME/desktop-apps/assets/whistle" ;;
+    esac
+  fi
   # pactl is the probe rather than opening a device: doctor must never be the
   # thing that turns the microphone on.
   info="$(command -v pactl >/dev/null 2>&1 && LC_ALL=C pactl info 2>/dev/null || true)"
@@ -2478,7 +2535,10 @@ case "${1:-}" in
       [ -z "$_ask_text" ] || { echo "kilix ask: --voice takes no request text" >&2; _ask_close 2; }
       [ -t 0 ] || { echo "kilix ask: --voice needs a terminal to confirm in" >&2; _ask_close 2; }
       echo "Listening: say one request. Silence ends it."
-      if ! _ask_text="$("$_self" dictate)" || [ -z "${_ask_text//[[:space:]]/}" ]; then
+      # Ctrl-C cancels the request, so it discards the utterance rather than
+      # finishing it: no transcript to wait for, and no decode to hold the lease.
+      if ! _ask_text="$("$_self" dictate --discard-on-interrupt)" \
+        || [ -z "${_ask_text//[[:space:]]/}" ]; then
         echo "kilix ask: nothing was transcribed." >&2
         echo "kilix ask: '$_self voice doctor' shows what dictation is missing;" \
           "'$_self voice whisper' or '$_self stt --install MODEL' installs a runtime." >&2
@@ -2645,7 +2705,8 @@ print(apps_root())
     shift
     _dictate_pane=""
     _dictate_seconds=""
-    _dictate_usage="usage: $_self dictate [--pane ID] [--seconds N]"
+    _dictate_interrupt=finish
+    _dictate_usage="usage: $_self dictate [--pane ID] [--seconds N] [--discard-on-interrupt]"
     while :; do
       case "${1:-}" in
         --pane)
@@ -2654,6 +2715,7 @@ print(apps_root())
         --seconds)
           [ $# -ge 2 ] || { echo "$_dictate_usage" >&2; exit 2; }
           _dictate_seconds="$2"; shift 2 ;;
+        --discard-on-interrupt) _dictate_interrupt=discard; shift ;;
         -h|--help|help)
           echo "$_dictate_usage"
           echo "records one utterance and writes what it heard to standard output"
@@ -2661,6 +2723,9 @@ print(apps_root())
           echo "             instead of printing it"
           echo "  --seconds  hard stop (default: the KILIX_VOICE_STT_MAX_SECONDS"
           echo "             setting); silence ends the utterance sooner"
+          echo "  --discard-on-interrupt"
+          echo "             Ctrl-C cancels and prints nothing, instead of"
+          echo "             stopping and printing what was heard so far"
           echo
           echo "The microphone opens when this command runs and closes when it"
           echo "returns. Dictation never submits: nothing here presses Enter."
@@ -2674,6 +2739,12 @@ print(apps_root())
       '') ;;
       *[!0-9]*) echo "kilix dictate: --pane takes a numeric pane ID" >&2; exit 2 ;;
     esac
+    # A pane's dictation returns as soon as the fork is listening, so there is
+    # no interrupt here to cancel; the pane's own microphone button stops it.
+    [ -z "$_dictate_pane" ] || [ "$_dictate_interrupt" = finish ] || {
+      echo "kilix dictate: --discard-on-interrupt does not apply to --pane" >&2
+      exit 2
+    }
     if [ -z "$_dictate_seconds" ]; then
       _kilix_read_voice_config
       _dictate_seconds="$_KILIX_VOICE_STT_MAX_SECONDS"
@@ -2699,7 +2770,7 @@ print(apps_root())
         }
       _kilix_voice_request dictate-pane "$_dictate_pane" "$_dictate_seconds" || exit $?
     else
-      _kilix_voice_request dictate "$_dictate_seconds" || exit $?
+      _kilix_voice_request dictate "$_dictate_seconds" "$_dictate_interrupt" || exit $?
     fi
     exit 0 ;;
   transcribe|kilix-transcribe)

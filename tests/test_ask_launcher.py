@@ -198,13 +198,18 @@ class AskLauncherTests(unittest.TestCase):
                 self.assertEqual(self.run_ask("close tab 2", ASK_TEST_STATUS=code).returncode, expected)
 
     def dictation(self, script):
-        """The copied launcher with `kilix dictate` replaced by `script`."""
+        """The copied launcher with its `kilix dictate` call replaced by `script`.
+
+        The call must discard on interrupt: Ctrl-C cancels the request, so the
+        utterance is aborted rather than decoded for nothing.
+        """
         launch = self.launcher.read_text()
-        self.assertEqual(launch.count('$("$_self" dictate)'), 1)
+        call = '$("$_self" dictate --discard-on-interrupt)'
+        self.assertEqual(launch.count(call), 1)
         dictate = self.root / "dictate"
         dictate.write_text("#!/bin/sh\n" + script)
         dictate.chmod(0o755)
-        self.launcher.write_text(launch.replace('$("$_self" dictate)', f'$("{dictate}")'))
+        self.launcher.write_text(launch.replace(call, f'$("{dictate}")'))
 
     def test_failed_dictation_stops_even_with_a_partial_transcript(self):
         self.dictation('printf "%s\\n" "close tab"\nexit 9\n')
