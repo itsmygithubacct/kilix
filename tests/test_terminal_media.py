@@ -210,6 +210,7 @@ class TerminalMediaTests(unittest.TestCase):
                             "import sys\nif '--version' in sys.argv: print('mpv test'); sys.exit(0)\n"
                             "resource.setrlimit(resource.RLIMIT_CORE,(0,0))\n"
                             "tty.setraw(0)\nos.write(1,b'\\x1b[?1003h\\x1b[?2026h')\n"
+                            "os.write(1,b'\\x1b_Ga=T,f=24,s=2,v=2,m=1;AAAA')\n"
                             "os.write(2,b'decoder failed\\n')\n"
                             "os.kill(os.getpid(),signal.SIGABRT)\n")
             fake.chmod(0o700)
@@ -227,6 +228,9 @@ class TerminalMediaTests(unittest.TestCase):
                     output += os.read(master, 65536)
                 self.assertIn(video.TERMINAL_RESET, output)
                 self.assertIn(b'\x1b[?2026l', output)
+                # The image command the player left open is terminated before the reset.
+                opened = output.index(b'\x1b_Ga=T')
+                self.assertEqual(output.index(b'\x1b\\', opened), output.index(video.TERMINAL_RESET))
                 restored = output.index(video.TERMINAL_RESET) + len(video.TERMINAL_RESET)
                 self.assertIn(b'decoder failed', output[restored:])
                 self.assertIn(b'player terminated by signal 6', output[restored:])

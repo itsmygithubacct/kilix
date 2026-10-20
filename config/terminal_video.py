@@ -11,7 +11,10 @@ import threading
 from pathlib import Path
 
 
-TERMINAL_RESET = (b"\x1b[?2026l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l"
+# A player killed while sending an image leaves its graphics command (an APC
+# string) open, and the terminal then swallows everything up to the next ST.
+# Close it first so the reset and later output are not consumed as image data.
+TERMINAL_RESET = (b"\x1b\\\x1b[?2026l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l"
                   b"\x1b[?1006l\x1b[?1016l\x1b[?1015l\x1b[?1049l\x1b[?25h\x1b[0m")
 # mpv warns about this deliberate WSL setting on every run; it is not a fault.
 STREAM_SILENCE_NOTICE = "The --audio-stream-silence option is set."
