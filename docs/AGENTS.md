@@ -2,7 +2,8 @@
 
 Use the interface the user requests. Otherwise use direct Kilix verbs for panes,
 shell tools for files and system queries, and Needle's apps job for interpreted
-game/settings requests. Keep the user's chosen model and reasoning effort.
+game/settings requests. For a plain-words request whose Needle job is unclear,
+use Needle's `ask` router (below). Keep the user's chosen model and reasoning effort.
 
 Execute requests for action. For facts about this machine, a file, or a log, run
 the relevant read tool and answer from its output. Do not guess a package, version,
@@ -103,6 +104,20 @@ Read the returned status and items, including a nonzero inner status even when
 the outer tool call succeeded. If a response is truncated or uncertain, inspect
 actual state through an available read tool before any retry. Do not send a
 second instruction to a mutation parser merely to ask what happened.
+
+### Needle ask: requests whose job is unclear
+
+`ask` picks the Needle job (panes, apps, agents, files or system) from the request
+text alone, then hands the request to that job unchanged. MCP `kilix_ask_plan`
+returns the route and that job's plan without acting; `kilix_ask_act` acts under
+the chosen job's own consent rules (`confirm_risky` as for `kilix_act`; an agents
+request is its own consent). CLI: `kilix-needle ask --agent --json [--plan] [--yes]
+'REQUEST'`. Read `route.job` and `route.stage` in the result.
+
+An unsure route never acts: it returns `clarify` with candidate jobs and one
+accepted phrasing each. Choose one and call that job's own tool; do not rephrase
+until something acts. A route to tmux, logs, pty or desktop names that job's tool
+and runs nothing. When the job is known, call its tool directly.
 
 For a supported Codex composer, prefer verified delivery:
 

@@ -10,7 +10,7 @@ Kilix remains the terminal and pane manager. Workflows connect its visible contr
 | --- | --- |
 | Work directly in the terminal | Use Kilix's pane and page controls, or the basic `kilix ls`, `kilix ls --panes`, `kilix focus`, `kilix new-pane`, and `kilix watch` verbs. |
 | Run a known terminal operation | Use a direct Kilix verb. For a child command, `--` separates its argument vector: `kilix new-pane down -- htop`. |
-| Express an operation in words | Use the relevant Needle CLI job or MCP tool when that component is selected. Each job has its own grammar and target rules. |
+| Express an operation in words | When Needle is selected, use its `ask` router if the job is unclear (`kilix ask` for people; `kilix-needle ask` or MCP `kilix_ask_plan`/`kilix_ask_act` for agents), or the relevant job's CLI or MCP tool if it is known. Each job has its own grammar and target rules. |
 | Automate a known Kilix action | Use the structured action CLI or its MCP tools. Supply one versioned request with exact identities and keep its receipt. |
 | Work with an existing tmux server | Use `kilix tmux` or Needle's tmux job with that server's explicit socket on every request. |
 | Find and resume a saved agent conversation | Use the rollout-resume picker or CLI to list candidates, inspect one exact session, then resume it. |
@@ -25,7 +25,7 @@ An agent should first identify the selected stack and its current pane context. 
 
 For a known structured action, pass the complete JSON body in the same invocation, for example `kilix action --request-json - < action.json`. A request names its schema, unique operation ID, operation, exact source and target pane/broker identities, and parameters. Titles are labels, not selectors. The controller rechecks identities before a side effect; a preview is optional. Needle's structured MCP surface is `kilix_action_plan`, `kilix_action_act`, and `kilix_action_status`; `kilix-needle mcp --tools actions` selects only those tools. Tool selection does not change identity checks or receipt guarantees.
 
-For a request phrased in natural language, use its matching Needle job rather than treating every request as one shared grammar. MCP plan tools resolve a request without mutation; act tools perform it subject to their consent rules. Ambiguous or unsupported targets should be resolved explicitly before the action is retried.
+For a request phrased in natural language, use its matching Needle job rather than treating every request as one shared grammar. When the job is unclear, Needle's `ask` router chooses one from the request text alone and hands the request to it unchanged; the job's own grammar, target checks and consent still apply. An unsure route never acts: it names candidate jobs with one accepted phrasing each. `kilix ask` shows a person the route and plan and acts only on a typed yes; `kilix ask --voice` dictates the request first and lets the person correct the transcript. MCP plan tools resolve a request without mutation; act tools perform it subject to their consent rules. Ambiguous or unsupported targets should be resolved explicitly before the action is retried.
 
 ## Select exact targets
 

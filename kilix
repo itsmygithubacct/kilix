@@ -40,6 +40,7 @@
 #   ./kilix pdf [PDF]          # install/run pinned PDF-to-Markdown conversion
 #   ./kilix speak [TEXT...]    # read a pane, or the given text, aloud
 #   ./kilix dictate           # recognize one spoken utterance
+#   ./kilix ask [REQUEST]     # route a plain request to Needle; acts on yes
 #   ./kilix tts | stt [args]  # run the read-aloud / dictation TUIs
 #   ./kilix voice status      # voice status, install, doctor, stop
 #   ./kilix avatar [args]     # conversational avatar and private Codex setup
@@ -180,8 +181,8 @@ Structured actions:
   kilix action --request-json -             JSON on stdin
   kilix action capabilities                inspect available features
   kilix windows --host HOST COMMAND         Windows desktop via SSH
-Also: wizard, settings, status, update, install, games, screen-size, transcript,
-  help-search "QUESTION". Command options: --help.
+Also: ask 'REQUEST', wizard, settings, status, update, install, games,
+  screen-size, transcript, help-search "QUESTION". Command options: --help.
 Terminal engine (kitty) options: kilix --help-engine
 EOF
     printf 'Agent guide: %s/docs/AGENTS.md\n' "$KILIX_HOME"
@@ -2406,6 +2407,74 @@ case "${1:-}" in
   app|application)
     shift
     exec python3 "$KILIX_HOME/config/content_app.py" "$@" ;;
+  ask)
+    # One plain request, routed to the Needle job that runs it. Needle shows the
+    # route and the plan and acts only on a typed yes; an unsure route never
+    # offers one. Voice adds a transcript to correct before routing; it never
+    # removes a confirmation. Nothing here installs Needle or a speech runtime.
+    shift
+    _ask_voice=0
+    _ask_hold=0
+    _ask_usage="usage: $_self ask [--voice] [--hold] [--] [REQUEST...]"
+    while :; do
+      case "${1:-}" in
+        --voice) _ask_voice=1; shift ;;
+        --hold) _ask_hold=1; shift ;;
+        -h|--help|help)
+          echo "$_ask_usage"
+          echo "routes one plain request to the Needle job that runs it (panes, apps,"
+          echo "agents, files or system), shows the plan, and acts only on a typed yes"
+          echo "  --voice  dictate the request; the transcript can be edited first"
+          echo "  --hold   wait for Enter before returning, so a tab stays readable"
+          echo
+          echo "With no request, it asks for one. Exit status: 0 acted, 1 not acted"
+          echo "(declined, refused or unsure), 2 usage."
+          exit 0 ;;
+        --) shift; break ;;
+        -*) echo "$_ask_usage" >&2; exit 2 ;;
+        *) break ;;
+      esac
+    done
+    _ask_text="$*"
+    _ask_close() {
+      if [ "$_ask_hold" = 1 ] && [ -t 0 ]; then
+        read -r -p "Press Enter to close. " _ || true
+      fi
+      exit "$1"
+    }
+    if [ "$_ask_voice" = 1 ]; then
+      [ -z "$_ask_text" ] || { echo "kilix ask: --voice takes no request text" >&2; exit 2; }
+      [ -t 0 ] || { echo "kilix ask: --voice needs a terminal to confirm in" >&2; exit 2; }
+      echo "Listening: say one request. Silence ends it."
+      if ! _ask_text="$("$_self" dictate)" || [ -z "${_ask_text//[[:space:]]/}" ]; then
+        echo "kilix ask: nothing was transcribed." >&2
+        echo "kilix ask: '$_self voice doctor' shows what dictation is missing;" \
+          "'$_self voice whisper' or '$_self stt --install MODEL' installs a runtime." >&2
+        _ask_close 1
+      fi
+      read -r -e -i "$_ask_text" -p "Request (edit, then Enter): " _ask_text || _ask_close 1
+    elif [ -z "${_ask_text//[[:space:]]/}" ] && [ -t 0 ]; then
+      read -r -e -p "Ask Kilix: " _ask_text || exit 1
+    fi
+    [ -n "${_ask_text//[[:space:]]/}" ] || { echo "$_ask_usage" >&2; _ask_close 2; }
+    # The installed app, not `app run`: that pauses on any nonzero status, and a
+    # declined plan is not an error to dismiss. Missing, it is reported, not built.
+    _ask_needle="$(KILIX_APP_AUTO_INSTALL=0 \
+      python3 "$KILIX_HOME/config/content_app.py" install kilix-needle)" || {
+      echo "kilix ask: Needle is not installed; '$_self app install kilix-needle' installs it" >&2
+      _ask_close 1
+    }
+    KILIX_CONTENT_ROOT="$(python3 -B -c '
+import sys
+sys.path.insert(0, sys.argv[1])
+from kilix_sdk._content_runtime import apps_root
+print(apps_root())
+' "$KILIX_HOME/config")" || exit 1
+    export KILIX_CONTENT_ROOT
+    _ask_status=0
+    KILIX_APP_ID=kilix-needle KILIX_APP_SURFACE=current \
+      "$_ask_needle" ask --interactive -- "$_ask_text" || _ask_status=$?
+    _ask_close "$_ask_status" ;;
   pdf-view|pdf-viewer)
     # Viewer and converter are separate catalog applications. The viewer
     # keeps Poppler/Cairo as the complete CPU raster fallback while Kilix
