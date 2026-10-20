@@ -28,11 +28,17 @@ class DesktopSSHTests(unittest.TestCase):
         reply = {'schema': request['schema'], 'operation': 'type', 'ok': True, 'result': {}}
         completed = subprocess.CompletedProcess([], 0, json.dumps(reply), '')
         with patch.object(self.module.subprocess, 'run', return_value=completed) as run:
-            self.assertEqual(self.module.SSHTransport('fixture-alias')(request), reply)
+            result = self.module.SSHTransport('fixture-alias')(request)
+        transport = result.pop('transport')
+        self.assertEqual(result, reply)
         args, kwargs = run.call_args
         self.assertEqual(args[0][:7], ['ssh', '-T', '-oBatchMode=yes', '-oConnectTimeout=10', '--', 'fixture-alias', self.module.remote_script()])
         lines = kwargs['input'].splitlines()
-        self.assertEqual(json.loads(lines[0]), request)
+        packet = json.loads(lines[0])
+        self.assertEqual(json.loads(packet['request']), request)
+        self.assertEqual(set(packet), {'id', 'request'})
+        self.assertEqual(transport['request_id'], packet['id'])
+        self.assertRegex(packet['id'], r'^[0-9a-f]{16}$')
         self.assertEqual(json.loads(lines[1]), (CONFIG / '_windows_process.cs').read_text())
         self.assertNotIn('untrusted', lines[1])
         self.assertTrue(kwargs['input'].endswith('\n'))
@@ -50,7 +56,8 @@ class DesktopSSHTests(unittest.TestCase):
         reply = dict(schema=request['schema'], operation='status', ok=True, result={})
         with patch.object(self.module.subprocess, 'run', return_value=subprocess.CompletedProcess(
                 [], 0, json.dumps(reply), '')) as run:
-            self.assertEqual(self.module.SSHTransport('fixture', root)(request), reply)
+            result = self.module.SSHTransport('fixture', root)(request)
+        self.assertEqual({k: v for k, v in result.items() if k != 'transport'}, reply)
         packet = json.loads(run.call_args.kwargs['input'].splitlines()[0])
         self.assertEqual(packet['root'], root)
         self.assertEqual(json.loads(packet['request']), request)
@@ -99,12 +106,48 @@ class DesktopSSHTests(unittest.TestCase):
                 result = self.module.SSHTransport('fixture')(request)
             self.assertFalse(result['ok'])
 
+    def test_remote_phase_times_are_reported_and_belong_to_this_request(self):
+        request = {'schema': 'kilix.desktop/v1', 'operation': 'status', 'params': {}}
+        reply = {'schema': request['schema'], 'operation': 'status', 'ok': True, 'result': {}}
+
+        def remote(argv, input, **kw):
+            ident = json.loads(input.splitlines()[0])['id'] if not remote.foreign else 'f' * 16
+            timing = json.dumps({'id': ident, 'setup_ms': 300, 'native_ms': 2600, 'remote_ms': 3000})
+            return subprocess.CompletedProcess(argv, 0, json.dumps(reply), 'native note\n' + self.module.TIMING + timing + '\n')
+        remote.foreign = False
+        with patch.object(self.module.subprocess, 'run', side_effect=remote):
+            result = self.module.SSHTransport('fixture')(request)
+        transport = result['transport']
+        self.assertTrue(result['ok'])
+        self.assertEqual((transport['host'], transport['setup_ms'], transport['native_ms'], transport['remote_ms']),
+                         ('fixture', 300, 2600, 3000))
+        self.assertEqual(transport['ssh_ms'], max(0, transport['total_ms'] - 3000))
+        remote.foreign = True  # a reply carrying another request's identity is not ours
+        with patch.object(self.module.subprocess, 'run', side_effect=remote):
+            result = self.module.SSHTransport('fixture')(request)
+        self.assertEqual(result['error']['code'], 'transport_error')
+        self.assertIn(result['transport']['request_id'], result['error']['message'])
+        with patch.object(self.module.subprocess, 'run', return_value=subprocess.CompletedProcess(
+                [], 1, '', 'Kilix native installation not found\n' + self.module.TIMING + '{"id":"x"}')):
+            result = self.module.SSHTransport('fixture')(request)
+        self.assertIn('another request', result['error']['message'])
+
     def test_wrapper_keeps_launched_program_host_option_literal(self):
         argv = ['--host', 'fixture', 'launch', '--', 'app.exe', '--host', 'literal']
         with patch.object(self.module.windows, 'main', return_value=0) as main:
             self.assertEqual(self.module.main(argv), 0)
         self.assertEqual(main.call_args.args[0], ['launch', '--', 'app.exe', '--host', 'literal'])
         self.assertEqual(main.call_args.kwargs['runner'].host, 'fixture')
+
+    def test_raw_request_options_follow_the_host(self):
+        for argv in (['--host', 'fixture', '--json', '--request-json', '-'],
+                     ['--host=fixture', '--windows-root', 'C:\\Kilix', '--json', '--request-json', '-']):
+            with self.subTest(argv=argv), patch.object(self.module.windows, 'main', return_value=0) as main:
+                self.assertEqual(self.module.main(argv), 0)
+                self.assertEqual(main.call_args.args[0], ['--json', '--request-json', '-'])
+                self.assertEqual(main.call_args.kwargs['runner'].host, 'fixture')
+        with self.assertRaises(SystemExit):
+            self.module.main(['--host'])
 
 
 @unittest.skipUnless(os.name == 'nt', 'requires Windows PowerShell and native pipe inheritance')

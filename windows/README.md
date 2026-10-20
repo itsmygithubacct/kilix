@@ -195,6 +195,10 @@ The backend runs a bounded, own-user interactive scheduled task, writes an
 atomic UTF-8 JSON response, and cleans up its owned task. There is no network
 server. Its worker starts through Kilix's bundled graphical interpreter without
 a console, so starting a command does not take focus away from the target.
+The worker compiles its native backend once per source version into
+`%LOCALAPPDATA%\Kilix\desktop-cache` (one small DLL, safe to delete) and loads
+that build afterwards, saving about 0.75 seconds per request; if the cache cannot
+be written or loaded it compiles in memory as before.
 `status` reports session/user and interactive/locked availability.
 Locked sessions, UAC secure desktops and elevated UI can prevent access;
 the command does not manage logins or RDP sessions. Help and `capabilities`
@@ -279,6 +283,13 @@ the native request timeout. Request writes, process execution and output reads
 share that deadline; errors identify the phase when possible. Partial SSH
 diagnostics are retained on a timeout. A failed request may already have acted:
 inspect the desktop before retrying. Requests are never automatically replayed.
+
+Each SSH reply, including a failure, carries `transport`: a random
+`request_id` (also appended to error messages), the host, `total_ms`, and the
+phases that ran: `ssh_ms` (connection and remote PowerShell start), `setup_ms`
+(the remote helper), `native_ms` (the native desktop command) and `remote_ms`.
+The remote side echoes the identifier, and a reply naming another request is
+refused.
 
 Source checks without desktop access:
 
@@ -813,9 +824,13 @@ are not changed.
 It records OS build, GPU driver, display bounds, shell profile existence and
 execution policies, signature status, install state, Windows volume free space,
 and optionally WSL tools/filesystem space. WSL virtual disk free space alone is
-insufficient: its Windows backing volume can be full. It never collects profile
-or configuration contents, history, clipboard text or environment credentials.
-Review paths and distribution names before sharing a report.
+insufficient: its Windows backing volume can be full. With `-WslDistribution`,
+`wslCompanion` also names the active companion generation and its Needle source
+revision, and runs `kilix needle workflows status --json` through the package's
+WSL bridge to report whether Needle's model assets are verified. It never
+collects profile or configuration contents, history, clipboard text or
+environment credentials. Review paths and distribution names before sharing a
+report.
 
 Run the packaged qualification tools in a dedicated desktop test session:
 

@@ -64,7 +64,33 @@ try {
                 Add-Type -AssemblyName $name -ErrorAction Stop
                 ([AppDomain]::CurrentDomain.GetAssemblies() | Where-Object { $_.GetName().Name -eq $name } | Select-Object -First 1).Location
             }
-            Add-Type -LiteralPath (Join-Path $PSScriptRoot 'desktop-native.cs') -ReferencedAssemblies $references -ErrorAction Stop
+            $source = Join-Path $PSScriptRoot 'desktop-native.cs'
+            # Compiling the backend took about a second of every request. Reuse a
+            # per-user build keyed by the exact source, references and runtime;
+            # any cache failure falls back to compiling in memory as before.
+            $cached = $null
+            try {
+                $identity = [IO.File]::ReadAllText($source) + "`n" + ($references -join '|') + "`n" +
+                    [Environment]::Version + "`n" + $PSVersionTable.PSVersion
+                $digest = [Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($identity))
+                $directory = Join-Path $env:LOCALAPPDATA 'Kilix\desktop-cache'
+                $cached = Join-Path $directory ('KilixDesktop-' + [BitConverter]::ToString($digest).Replace('-', '').ToLowerInvariant() + '.dll')
+                if (!(Test-Path -LiteralPath $cached -PathType Leaf)) {
+                    [IO.Directory]::CreateDirectory($directory) | Out-Null
+                    $build = Join-Path $directory ('build-' + [Guid]::NewGuid().ToString('N') + '.dll')
+                    try {
+                        Add-Type -LiteralPath $source -ReferencedAssemblies $references -OutputAssembly $build -OutputType Library -ErrorAction Stop
+                        # A concurrent request may publish the same build first.
+                        if (!(Test-Path -LiteralPath $cached -PathType Leaf)) { [IO.File]::Move($build, $cached) }
+                    } finally { Remove-Item -LiteralPath $build -Force -ErrorAction SilentlyContinue }
+                }
+                if (-not ('KilixDesktop' -as [type])) { Add-Type -LiteralPath $cached -ErrorAction Stop }
+            } catch {
+                if ($cached) { Remove-Item -LiteralPath $cached -Force -ErrorAction SilentlyContinue }
+            }
+            if (-not ('KilixDesktop' -as [type])) {
+                Add-Type -LiteralPath $source -ReferencedAssemblies $references -ErrorAction Stop
+            }
         }
         $phase = 'read'
         $request = [KilixDesktop]::ReadRequest($raw)
