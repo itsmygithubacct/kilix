@@ -1242,9 +1242,9 @@ nothing when that pinned generation is already current. The provider holds no
 model and never downloads one; `kilix stt --install whisper-small-en` installs
 the licence-gated weights and then runs it.
 
-`kilix voice install` installs the immutable `kilix-voice` 0.1.6 source at
-commit `ae18f4d079e9d32d6a3f471b1969a6bda8af668d`, the official Vosk 0.3.45
-wheel for the host (x86_64 or aarch64, each pinned by its own digest), and
+`kilix voice install` installs the immutable `kilix-voice` source revision
+pinned by `KILIX_VOICE_REF` in `scripts/install-kilix-voice.sh`, the official
+Vosk 0.3.45 wheel for the host (x86_64 or aarch64, each pinned by its own digest), and
 either the default `vosk-model-small-en-us-0.15` or the
 `--model lgraph-en-us` dynamic-graph model. Downloads are SHA-256 verified.
 The installer extracts only the wheel's fixed `vosk/libvosk.so` member, checks

@@ -1,6 +1,31 @@
-# Kilix 0.2.2 Windows preview 3
+# Kilix 0.2.2 Windows preview 5
 
-This preview bounds SSH request writes, native process execution and output
+In WSL panes, `kilix video FILE` now sizes frames to the pane. WSL panes report
+no pixel size, so the launcher asks the terminal for its cell size and the
+catalog player, updated to `kilix-mpv` 0.40.0+kilix.5, uses it. Run
+`kilix apps update kilix-mpv` after updating the companion; an older player
+still assumes 9x18-pixel cells. If the player is killed or crashes while
+sending a frame, the terminal now returns to the normal screen; in preview 4 it
+could stay on a blank alternate screen until `reset`.
+
+Preview 4 added `kilix image FILE` and `kilix video FILE` in WSL panes, with
+the catalog `kilix-mpv` build (`kilix apps install kilix-mpv`). The companion
+carries a Linux `kitten` built from the pinned engine source and checked by
+SHA-256 at setup. The player streams silence while paused, because WSLg's audio
+server can otherwise hang playback after a pause of five seconds or more.
+
+The WSL companion installs Needle 84ac35d. `kilix needle ask REQUEST` shows how
+a request is routed and its plan, and a request without a job verb is routed.
+
+Desktop requests over SSH report a request ID, the host and the time spent in
+each phase; the ID is also appended to error messages. The compiled desktop
+backend is cached per user, which cut the native part of a status request from
+2.65 s to 1.90 s on the test laptop. `kilix windows --host HOST` accepts raw
+`--json --request-json -` requests. `diagnostics.ps1 -WslDistribution NAME`
+records the active companion generation, its Needle revision and Needle's
+workflow readiness.
+
+Earlier previews bound SSH request writes, native process execution and output
 completion under one deadline. Native children receive their redirected pipes
 without inheriting the caller's SSH handles. Portable installation paths travel
 as JSON data, so Unicode paths do not enlarge the remote shell command. A failed

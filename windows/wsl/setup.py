@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import platform
 import shutil
 import shlex
 import subprocess
@@ -74,6 +75,20 @@ def digest(path):
     return result.hexdigest()
 
 
+def check_kitten(generation):
+    """A bundled static Linux kitten (kilix image) must match its build record and run."""
+    binary = generation / 'kitten/kitten'
+    if not binary.exists() and not binary.is_symlink():
+        return
+    record = json.loads((generation / 'kitten/kitten.json').read_text())
+    if binary.is_symlink() or not binary.is_file() or digest(binary) != record.get('sha256'):
+        raise ValueError('The bundled kitten does not match its build record')
+    binary.chmod(0o755)
+    # The kitten is linux/amd64; on another architecture kilix image says so.
+    if platform.machine() == 'x86_64':
+        subprocess.run([str(binary), '--version'], stdout=subprocess.DEVNULL, timeout=30, check=True)
+
+
 def import_plan(source, destination):
     """Check all existing data before copying anything; never overwrite it."""
     plan = []
@@ -115,6 +130,7 @@ def install(archive, expected, root=None):
         try:
             with tarfile.open(archive, 'r:gz') as bundle:
                 bundle.extractall(generation, filter='data')
+            check_kitten(generation)
             # Do not point a new generation back through the mutable current link.
             python = str(Path(sys.executable).resolve())
             build_games(generation, python)

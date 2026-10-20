@@ -15,7 +15,8 @@ in the calling terminal. Use `kilix icat --help` for renderer options.
 
 `video` runs mpv in the calling terminal with Kitty graphics. Space pauses,
 arrows seek when supported, and `q` quits. Sound is enabled unless `--mute` is
-specified. Local files and direct network media streams are supported; websites
+specified. In WSL, mpv streams silence while paused: WSLg's audio server can
+otherwise hang playback on resume or quit after a pause of five seconds or more. Local files and direct network media streams are supported; websites
 that need URL extraction may additionally require yt-dlp. Use `--` before media
 names beginning with `-`. One source is accepted per invocation.
 
@@ -123,6 +124,11 @@ The fullscreen button and `f` use Kilix's existing tty-only fullscreen permissio
 with requests serialized with the video packets. The launcher probes support so
 older installed forks remain usable. Fullscreen changes made outside mpv are not
 reflected in mpv's option state.
+
+Some terminals report a size in cells but not in pixels, including WSL panes in
+Windows Kilix. The launcher then asks the terminal for its cell size (CSI 16 t)
+and player `0.40.0+kilix.5` sizes frames from it. Older players, and terminals
+that do not answer within a second, assume 9x18-pixel cells.
 
 An A/V desynchronisation warning means mpv observed more than half a second of
 drift. Inline transfer can fall behind at large pixel sizes or under CPU load.
