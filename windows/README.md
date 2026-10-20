@@ -484,8 +484,11 @@ use a Linux x86_64 `kitten` that CI builds from the pinned engine source
 checks it before activating a generation. WSL ptys report no pixel size, so the
 companion asks the terminal for its window size and sends image data inline.
 The player streams silence while paused, muted or not, because WSLg's audio
-server can otherwise hang playback after a pause of five seconds or more. Video frames are sized for an assumed 9x18-pixel cell and
-fill only part of a large pane.
+server can otherwise hang playback after a pause of five seconds or more.
+`kilix video` also asks the terminal for its cell size, which the catalog
+player (0.40.0+kilix.5 or later) uses to size frames to the pane. After a
+companion update, run `kilix apps update kilix-mpv`; an older player still
+assumes 9x18-pixel cells and fills only part of a large pane.
 
 Needle and all fifteen public catalog games install separately into
 `~/.local/share/kilix-wsl`. The catalog includes all twelve `kilix-games`

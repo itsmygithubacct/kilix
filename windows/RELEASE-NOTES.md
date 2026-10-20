@@ -1,13 +1,18 @@
-# Kilix 0.2.2 Windows preview 4
+# Kilix 0.2.2 Windows preview 5
 
-In WSL panes, `kilix image FILE` shows images inline and `kilix video FILE`
-plays media with the catalog `kilix-mpv` build (`kilix apps install kilix-mpv`).
-The companion now carries a Linux `kitten` built from the pinned engine source
-and checked by SHA-256 at setup. The player streams silence while paused,
-because WSLg's audio server can otherwise hang playback after a pause of five
-seconds or more. Video frames are
-sized for an assumed 9x18-pixel cell, since WSL panes report no pixel size, so
-they fill only part of a large pane.
+In WSL panes, `kilix video FILE` now sizes frames to the pane. WSL panes report
+no pixel size, so the launcher asks the terminal for its cell size and the
+catalog player, updated to `kilix-mpv` 0.40.0+kilix.5, uses it. Run
+`kilix apps update kilix-mpv` after updating the companion; an older player
+still assumes 9x18-pixel cells. If the player is killed or crashes while
+sending a frame, the terminal now returns to the normal screen; in preview 4 it
+could stay on a blank alternate screen until `reset`.
+
+Preview 4 added `kilix image FILE` and `kilix video FILE` in WSL panes, with
+the catalog `kilix-mpv` build (`kilix apps install kilix-mpv`). The companion
+carries a Linux `kitten` built from the pinned engine source and checked by
+SHA-256 at setup. The player streams silence while paused, because WSLg's audio
+server can otherwise hang playback after a pause of five seconds or more.
 
 The WSL companion installs Needle 84ac35d. `kilix needle ask REQUEST` shows how
 a request is routed and its plan, and a request without a job verb is routed.

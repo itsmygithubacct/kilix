@@ -151,8 +151,10 @@ catalog kilix-mpv build. Space pauses, arrows seek and q quits; the terminal is
 restored after the player exits, is quit or crashes. The player streams
 silence while paused, muted or not, because WSLg's audio server can otherwise
 hang playback after a pause of five seconds or more.
-Frames are sized for an assumed 9x18-pixel cell, so they fill only part of a
-large pane.
+kilix video also asks the terminal for its cell size, which the catalog player
+(0.40.0+kilix.5 or later) uses to size frames to the pane. After a companion
+update, run kilix apps update kilix-mpv; an older player still assumes
+9x18-pixel cells and fills only part of a large pane.
 
 Public application catalog and individual games
 

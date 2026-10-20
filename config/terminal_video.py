@@ -1,23 +1,33 @@
 #!/usr/bin/env python3
 """Play media in the caller's terminal with an explicitly selected mpv output."""
 import argparse
+import fcntl
 import os
+import re
+import select
 import shutil
+import struct
 import sys
 import signal
 import subprocess
 import termios
 import threading
+import time
+import tty
 from pathlib import Path
 
 
-TERMINAL_RESET = (b"\x1b[?2026l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l"
+# A player killed while sending an image leaves its graphics command (an APC
+# string) open, and the terminal then swallows everything up to the next ST.
+# Close it first so the reset and later output are not consumed as image data.
+TERMINAL_RESET = (b"\x1b\\\x1b[?2026l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l"
                   b"\x1b[?1006l\x1b[?1016l\x1b[?1015l\x1b[?1049l\x1b[?25h\x1b[0m")
 # mpv warns about this deliberate WSL setting on every run; it is not a fault.
 STREAM_SILENCE_NOTICE = "The --audio-stream-silence option is set."
+CELL_SIZE_REPLY = re.compile(rb'\x1b\[6;([0-9]{1,4});([0-9]{1,4})t')
 
 
-def run_player(command):
+def run_player(command, environment=None):
     """Keep a parent alive to restore the calling tty even when mpv aborts."""
     fd = sys.stdin.fileno()
     saved = termios.tcgetattr(fd)
@@ -34,7 +44,7 @@ def run_player(command):
             del diagnostics[:-65536]
 
     try:
-        player = subprocess.Popen(command, stderr=subprocess.PIPE)
+        player = subprocess.Popen(command, stderr=subprocess.PIPE, env=environment)
         reader = threading.Thread(target=collect, daemon=True)
         reader.start()
         def forward(signum, frame):
@@ -74,6 +84,54 @@ def run_player(command):
         if code is not None and code < 0:
             print(f"kilix video: player terminated by signal {-code}; terminal restored.",
                   file=sys.stderr)
+
+
+def cell_size(device='/dev/tty', timeout=1):
+    """Ask the terminal for its cell size (CSI 16 t) when the pty has no pixels.
+
+    The Windows console gives WSL's pty only cell counts, and kilix-mpv would
+    otherwise assume 9x18-pixel cells. Returns WIDTHxHEIGHT or None."""
+    try:
+        fd = os.open(device, os.O_RDWR | os.O_NOCTTY)
+    except OSError:
+        return None
+    match = None
+    try:
+        rows, columns, width, height = struct.unpack('HHHH', fcntl.ioctl(fd, termios.TIOCGWINSZ, bytes(8)))
+        if (width and height) or not (rows and columns) or background(fd):
+            return None
+        saved = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd, termios.TCSANOW)
+            os.write(fd, b'\x1b[16t')
+            deadline = time.monotonic() + timeout
+            reply = b''
+            # Typed-ahead bytes can arrive first, so wait for the reply itself.
+            while not (match := CELL_SIZE_REPLY.search(reply)) and len(reply) < 1024:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not select.select([fd], [], [], remaining)[0]:
+                    break
+                chunk = os.read(fd, 64)
+                if not chunk:
+                    break
+                reply += chunk
+        finally:
+            termios.tcsetattr(fd, termios.TCSANOW, saved)
+    except (OSError, termios.error):
+        return None
+    finally:
+        os.close(fd)
+    if not match or not (0 < int(match[1]) <= 1024 and 0 < int(match[2]) <= 1024):
+        return None
+    return f'{int(match[2])}x{int(match[1])}'
+
+
+def background(fd):
+    """A background job that touches its terminal is stopped by SIGTTOU."""
+    try:
+        return os.tcgetpgrp(fd) != os.getpgrp()
+    except OSError:
+        return False  # not this process's controlling terminal: no job control
 
 
 def local_shared_memory_terminal():
@@ -177,7 +235,11 @@ def main(argv=None):
     if args.loop:
         command.append("--loop-file=inf")
     command.extend(["--", args.source])
-    return run_player(command)
+    environment = None
+    if args.vo == "kitty" and (size := cell_size()):
+        # kilix-mpv sizes frames from it when the pty reports no pixels.
+        environment = dict(os.environ, KILIX_MPV_CELL_SIZE=size)
+    return run_player(command, environment)
 
 
 if __name__ == "__main__":
