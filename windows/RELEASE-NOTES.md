@@ -1,6 +1,6 @@
-# Kilix 0.2.2 Windows preview 2
+# Kilix 0.2.2 Windows preview 3
 
-Preview 2 bounds SSH request writes, native process execution and output
+This preview bounds SSH request writes, native process execution and output
 completion under one deadline. Native children receive their redirected pipes
 without inheriting the caller's SSH handles. Portable installation paths travel
 as JSON data, so Unicode paths do not enlarge the remote shell command. A failed

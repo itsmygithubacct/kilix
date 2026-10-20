@@ -217,12 +217,15 @@ class WizardTests(unittest.TestCase):
         call.assert_not_called()
 
     def test_workflows_readiness_asks_needle_through_the_selected_catalog(self):
+        environment = {'KILIX95_STATE_HOME': self.directory.name,
+                       'KILIX_APP_AUTO_INSTALL': '1', 'NEEDLE_PROBE_CANARY': 'preserved'}
         calls = []
         def run(command, **kwargs):
             calls.append((command, kwargs))
             status = {'schema': 'kilix.workflows/v1', 'ready': True, 'status': 'ready', 'errors': []}
             return subprocess.CompletedProcess(command, 0, b'notice\n' + json.dumps(status).encode())
-        with patch.object(wizard, 'catalog', return_value=[asset('needle2')]):
+        with patch.dict(os.environ, environment, clear=True), \
+                patch.object(wizard, 'catalog', return_value=[asset('needle2')]):
             wizard.apply('workflows', ['needle2'], 'yes')
             with patch('wizard_licenses.consent_and_install', return_value=({'needle2'}, set())), \
                     patch.object(wizard.subprocess, 'run', side_effect=run), \
@@ -233,7 +236,7 @@ class WizardTests(unittest.TestCase):
         self.assertEqual(calls, [([wizard.launcher(), 'app', 'run', 'kilix-needle', '--',
                                    'workflows', 'status', '--json'],
                                   {'stdin': subprocess.DEVNULL, 'stdout': subprocess.PIPE,
-                                   'env': dict(os.environ, KILIX_APP_AUTO_INSTALL='0')})])
+                                   'env': dict(environment, KILIX_APP_AUTO_INSTALL='0')})])
         legacy.assert_called_once_with('workflows', {'answer': 'yes'})
         self.assertEqual(wizard.answers()['workflows']['models'], ['needle2'])
         self.assertEqual(wizard.pending(), {})
