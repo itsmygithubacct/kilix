@@ -410,7 +410,9 @@ class VoiceCliTests(unittest.TestCase):
         requests, failures = [], []
         done = threading.Event()
         retained = [{"turn": "listen-7", "kind": "capture", "age_seconds": 12.5},
-                    {"turn": "listen-7", "kind": "provider", "age_seconds": 11.0}]
+                    {"turn": "listen-7", "kind": "provider", "age_seconds": 11.0,
+                     "state": "quarantined", "reason": "acknowledgement-failed",
+                     "recovery": "private-command-argument", "extra": "private-transcript"}]
 
         def serve():
             while not done.is_set():
@@ -439,6 +441,10 @@ class VoiceCliTests(unittest.TestCase):
                     self.assertIn("capture", result.stdout)
                     self.assertIn("provider", result.stdout)
                     self.assertIn("12.5s", result.stdout)
+                    self.assertIn("acknowledgement failed", result.stdout)
+                    self.assertIn("manual recovery", result.stdout)
+                    self.assertIn("namespace and its anchor", result.stdout)
+                    self.assertNotIn("private-", result.stdout)
             self.assertTrue(requests)
             self.assertEqual({r["op"] for r in requests}, {"status"})
             self.assertEqual(failures, [])

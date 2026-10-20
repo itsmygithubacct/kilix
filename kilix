@@ -1566,6 +1566,11 @@ def cmd_status():
             print("; cleanup retained: " + "; ".join(
                 "%s %s (%ss)" % (row["turn"], row["kind"], row["age_seconds"])
                 for row in retained), end="")
+        if any(row.get("state") == "quarantined" for row in retained):
+            print("; accelerator acknowledgement failed: quarantine requires manual recovery. "
+                  "Stop all cooperating providers, prove owned jobs are gone, then reset the "
+                  "shared lease namespace and its anchor together; see kilix-voice README, "
+                  "Accelerator quarantine", end="")
         print()
         return
     for key in ("speaking", "listening", "engines", "model", "device", "version", "retained_cleanup"):
