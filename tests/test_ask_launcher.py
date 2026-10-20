@@ -79,13 +79,15 @@ class AskLauncherTests(unittest.TestCase):
                               timeout=60)
 
     def run_tty(self, arguments, keys, **env):
-        """Run with a terminal on stdin and stdout; returns (status, output)."""
+        """Run with a terminal on stdin and stdout; returns (status, output).
+        `keys` answers "Press Enter", or is [(prompt, keys), ...] in order."""
+        answers = list(keys) if isinstance(keys, list) else [(b"Press Enter", keys)]
         master, slave = os.openpty()
         process = subprocess.Popen([str(self.launcher), "ask", *arguments], env={**self.env, **env},
                                    stdin=slave, stdout=slave, stderr=slave, close_fds=True)
         os.close(slave)
         output, deadline = b"", time.monotonic() + 60
-        sent = False
+        seen = 0
         try:
             while time.monotonic() < deadline:
                 ready, _w, _x = select.select([master], [], [], 0.2)
@@ -97,9 +99,10 @@ class AskLauncherTests(unittest.TestCase):
                     if not chunk:
                         break
                     output += chunk
-                if not sent and b"Press Enter" in output:
-                    os.write(master, keys)
-                    sent = True
+                if answers and answers[0][0] in output[seen:]:
+                    prompt, reply = answers.pop(0)
+                    seen = output.index(prompt, seen) + len(prompt)
+                    os.write(master, reply)
                 if process.poll() is not None and not ready:
                     break
             status = process.wait(timeout=10)
@@ -154,6 +157,47 @@ class AskLauncherTests(unittest.TestCase):
                 self.assertEqual(status, int(code), output)
                 self.assertIn("route: panes", output)
                 self.assertEqual(output.count("Press Enter to close."), 1, output)
+
+    def test_hold_waits_for_enter_on_usage_and_setup_errors_too(self):
+        cases = ((["--hold", "--voice", "split right"], {}, 2),
+                 (["--bogus", "--hold", "x"], {}, 2),
+                 (["--hold", "--", "split right"], {"ASK_TEST_MISSING": "1"}, 1))
+        for arguments, env, code in cases:
+            with self.subTest(arguments):
+                status, output = self.run_tty(arguments, b"\n", **env)
+                self.assertEqual(status, code, output)
+                self.assertEqual(output.count("Press Enter to close."), 1, output)
+        self.assertEqual([call.get("needle") for call in self.calls()], [None])
+
+    def test_only_0_1_and_2_come_back(self):
+        for code, expected in (("2", 2), ("130", 1), ("9", 1)):
+            with self.subTest(code):
+                self.assertEqual(self.run_ask("close tab 2", ASK_TEST_STATUS=code).returncode, expected)
+
+    def dictation(self, script):
+        """The copied launcher with `kilix dictate` replaced by `script`."""
+        launch = self.launcher.read_text()
+        self.assertEqual(launch.count('$("$_self" dictate)'), 1)
+        dictate = self.root / "dictate"
+        dictate.write_text("#!/bin/sh\n" + script)
+        dictate.chmod(0o755)
+        self.launcher.write_text(launch.replace('$("$_self" dictate)', f'$("{dictate}")'))
+
+    def test_failed_dictation_stops_even_with_a_partial_transcript(self):
+        self.dictation('printf "%s\\n" "close tab"\nexit 9\n')
+        status, output = self.run_tty(["--voice", "--hold"], b"\n")
+        self.assertEqual(status, 1, output)
+        self.assertIn("nothing was transcribed", output)
+        self.assertNotIn("Request (edit, then Enter)", output)
+        self.assertEqual(self.calls(), [])
+
+    def test_a_dictated_request_can_be_corrected_and_goes_as_one_argument(self):
+        self.dictation('printf "%s\\n" "close tab 2"\n')
+        status, output = self.run_tty(
+            ["--voice"], [(b"Request (edit, then Enter): ", b"\x15split right; rm -rf ~\n")])
+        self.assertEqual(status, 0, output)
+        self.assertEqual(self.calls()[-1]["needle"],
+                         ["ask", "--interactive", "--", "split right; rm -rf ~"])
 
     def test_voice_without_a_transcript_names_the_setup_and_runs_nothing(self):
         status, output = self.run_tty(["--voice", "--hold"], b"\n")
