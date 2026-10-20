@@ -62,15 +62,17 @@ For a shell left in mouse-reporting mode by an older launcher, run:
 printf '\033[?1000l\033[?1002l\033[?1003l\033[?1006l\033[?1016l\033[?25h'
 ```
 
-## Next-release named player
+## Plebian-OS 0.2.2 named player
 
 The next-release integration prefers the separately packaged `kilix-mpv` on
 PATH, then the earlier private patched player, then supported system mpv.
-Install the verified `kilix-mpv` Debian package through the stack package
-closure; `kilix video` discovers it without changing `/usr/bin/mpv`. The package
+The 0.2.2 stack package closure must install the verified `kilix-mpv` Debian
+package; `kilix video` discovers it without changing `/usr/bin/mpv`. The package
 is built from the maintained kilix-mpv fork and distributed with exact source
-and checksums. This integration targets the release after RC6, provisionally
-0.2.2; it does not change the RC6 candidate.
+and checksums. Inclusion is required for Plebian-OS 0.2.2 after the frozen RC6
+candidate. The `0.40.0+kilix.4` controls and transport fixes are the current
+candidate; publication, coordinated OS integration, and target-image playback
+acceptance remain pending.
 
 The `0.40.0+kilix.2` player adds adaptive lossless inline compression, synchronized
 image presentation, SGR mouse input and redraws while paused after a resize.
