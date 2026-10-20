@@ -104,6 +104,25 @@ def error_detail(error):
         error = error.__cause__
     return ': '.join(messages)
 
+def record_failure(error, *, phase, directory=None):
+    """Persist failures before a worker starts or when it exits without a result."""
+    result = {'ok': False, 'error': error_detail(error), 'phase': phase}
+    try:
+        directory = Path(directory) if directory is not None else new_run_directory()
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        diagnostic = directory / 'error.log'
+        fd = os.open(diagnostic, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, 'w') as stream:
+            print(f'Phase: {phase}', file=stream)
+            traceback.print_exception(type(error), error, error.__traceback__, file=stream)
+        result.update(error_log=str(diagnostic), run_directory=str(directory))
+        atomic_json(directory / 'result.json', result)
+        atomic_json(state_root() / 'model-wizard-last-result.json', result)
+    except OSError as log_error:
+        result['error'] += f'; could not save diagnostic log: {log_error}'
+        print(result['error'], file=sys.stderr)
+    return result
+
 
 @contextmanager
 def exclusive():

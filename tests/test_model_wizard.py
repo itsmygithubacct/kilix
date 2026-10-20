@@ -228,6 +228,19 @@ class WizardTests(unittest.TestCase):
         self.assertEqual(wizard.memory_text({'ram_bytes': None, 'vram_bytes': 1024**3,
                                             'fit': 'unknown'}), 'VRAM 1.00 GiB; unknown')
 
+    def test_frontend_failure_has_private_persistent_diagnostics(self):
+        error = RuntimeError('installer could not start')
+        outcome = wizard.record_failure(error, phase='start installer')
+        self.assertFalse(outcome['ok'])
+        log = Path(outcome['error_log'])
+        self.assertIn('installer could not start', log.read_text())
+        self.assertEqual(log.stat().st_mode & 0o777, 0o600)
+        latest = wizard.read_json(wizard.state_root() / 'model-wizard-last-result.json')
+        self.assertEqual(latest['phase'], 'start installer')
+        with patch.object(wizard, 'new_run_directory', side_effect=OSError('disk full')):
+            outcome = wizard.record_failure(error, phase='start installer')
+        self.assertIn('disk full', outcome['error'])
+
     def test_no_acquisition_on_nonterminal_accept(self):
         with patch.object(wizard.sys.stdin, 'isatty', return_value=False), patch.object(wizard, 'apply') as apply:
             self.assertEqual(wizard.main(['finish']), 1)
