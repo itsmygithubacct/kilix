@@ -74,6 +74,20 @@ if ($WslDistribution) {
         Invoke-KilixProcess (Get-Command wsl.exe).Source @('--distribution', $WslDistribution, '--exec', '/bin/sh', '-c',
             'df -Pk "$HOME"; for t in python3 make cc pactl; do command -v "$t" || true; done; test -e "$HOME/.local/share/kilix-wsl/current" && echo companion-present')
     }
+    if ($ApplicationDirectory) {
+        Record 'wslCompanion' {
+            # The active companion generation, its Needle source, and Needle's own
+            # workflow-model readiness through this package's bridge. Read-only.
+            $bridge = Join-Path (Resolve-Path -LiteralPath $ApplicationDirectory).Path 'wsl-bin\kilix'
+            $script = 'r="$HOME/.local/share/kilix-wsl"; test -e "$r/current" || { echo companion: absent; exit 0; }; ' +
+                'echo "generation: $(basename "$(readlink -f "$r/current")")"; ' +
+                'sed -n ''s/^  .needle.: .\([0-9a-f]\{40\}\).*/needle: \1/p'' "$r/current/source-revisions.json"; ' +
+                'exec "$(wslpath -u "$1")" needle workflows status --json'
+            $result = Invoke-KilixProcess (Get-Command wsl.exe).Source @('--distribution', $WslDistribution, '--exec', '/bin/sh', '-c',
+                $script, 'sh', $bridge) -TimeoutSeconds 90
+            @{ exitCode = $result.exitCode; output = $result.stdout; errors = $result.stderr }
+        }
+    }
 }
 $report.qualification = @{
     hardware = 'Published baseline: Windows 10 build 19045, Intel HD620, Ubuntu WSL2. New changes require target validation.'

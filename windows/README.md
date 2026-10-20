@@ -820,9 +820,13 @@ are not changed.
 It records OS build, GPU driver, display bounds, shell profile existence and
 execution policies, signature status, install state, Windows volume free space,
 and optionally WSL tools/filesystem space. WSL virtual disk free space alone is
-insufficient: its Windows backing volume can be full. It never collects profile
-or configuration contents, history, clipboard text or environment credentials.
-Review paths and distribution names before sharing a report.
+insufficient: its Windows backing volume can be full. With `-WslDistribution`,
+`wslCompanion` also names the active companion generation and its Needle source
+revision, and runs `kilix needle workflows status --json` through the package's
+WSL bridge to report whether Needle's model assets are verified. It never
+collects profile or configuration contents, history, clipboard text or
+environment credentials. Review paths and distribution names before sharing a
+report.
 
 Run the packaged qualification tools in a dedicated desktop test session:
 
