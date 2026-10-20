@@ -106,6 +106,16 @@ class DesktopSSHTests(unittest.TestCase):
         self.assertEqual(main.call_args.args[0], ['launch', '--', 'app.exe', '--host', 'literal'])
         self.assertEqual(main.call_args.kwargs['runner'].host, 'fixture')
 
+    def test_raw_request_options_follow_the_host(self):
+        for argv in (['--host', 'fixture', '--json', '--request-json', '-'],
+                     ['--host=fixture', '--windows-root', 'C:\\Kilix', '--json', '--request-json', '-']):
+            with self.subTest(argv=argv), patch.object(self.module.windows, 'main', return_value=0) as main:
+                self.assertEqual(self.module.main(argv), 0)
+                self.assertEqual(main.call_args.args[0], ['--json', '--request-json', '-'])
+                self.assertEqual(main.call_args.kwargs['runner'].host, 'fixture')
+        with self.assertRaises(SystemExit):
+            self.module.main(['--host'])
+
 
 @unittest.skipUnless(os.name == 'nt', 'requires Windows PowerShell and native pipe inheritance')
 class NativeDesktopSSHTests(unittest.TestCase):

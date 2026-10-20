@@ -131,15 +131,37 @@ class SSHTransport:
             return failure('transport_error', result.stderr.strip()[-2000:] or 'SSH did not return a valid desktop response.')
 
 
+def leading_options(arguments):
+    """Split the leading --host/--windows-root options from the desktop command.
+
+    Everything after them belongs to the desktop CLI, including an option-first
+    raw request such as `--json --request-json -`, which argparse's REMAINDER
+    would reject. Later --host words stay literal command data.
+    """
+    options, rest = {'host': None, 'windows_root': None}, list(arguments)
+    while rest:
+        key, sep, value = rest[0].partition('=')
+        if key not in ('--host', '--windows-root'):
+            break
+        if sep:
+            rest = rest[1:]
+        elif len(rest) > 1:
+            value, rest = rest[1], rest[2:]
+        else:
+            raise ValueError(f'{key} needs a value')
+        options[key[2:].replace('-', '_')] = value
+    return argparse.Namespace(**options, command=rest)
+
+
 def main(argv=None):
-    parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument('--host')
-    parser.add_argument('--windows-root')
-    parser.add_argument('command', nargs=argparse.REMAINDER)
+    parser = argparse.ArgumentParser(prog='kilix windows', add_help=False)
     arguments = list(sys.argv[1:] if argv is None else argv)
     if arguments in (['--help'], ['-h']):
         arguments = ['help']
-    options = parser.parse_args(arguments)
+    try:
+        options = leading_options(arguments)
+    except ValueError as error:
+        parser.error(str(error))
     remaining = options.command
     if not options.host:
         if not remaining or remaining in (['help'], ['--help'], ['-h']):
