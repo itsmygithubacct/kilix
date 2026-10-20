@@ -136,6 +136,24 @@ Raw launch
 options that have no supported translation fail explicitly. Prompt-sensitive
 Needle typing still requires shell integration. Linux desktop services remain outside the companion's scope.
 
+Images and video in this pane
+
+  kilix image /path/to/photo.png
+  kilix apps install kilix-mpv
+  kilix video --mute /path/to/clip.mp4
+  kilix video --help
+
+kilix image (alias icat) runs the companion's Linux kitten, built from the
+pinned engine source for x86_64 distributions; setup checks its recorded
+SHA-256 before activating a generation. WSL panes report no pixel size, so the companion asks the terminal
+for its window size and sends image data inline. kilix video plays with the
+catalog kilix-mpv build. Space pauses, arrows seek and q quits; the terminal is
+restored after the player exits, is quit or crashes. The player streams
+silence while paused, muted or not, because WSLg's audio server can otherwise
+hang playback after a pause of five seconds or more.
+Frames are sized for an assumed 9x18-pixel cell, so they fill only part of a
+large pane.
+
 Public application catalog and individual games
 
   kilix apps list

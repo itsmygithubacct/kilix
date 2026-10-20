@@ -13,6 +13,8 @@ from pathlib import Path
 
 TERMINAL_RESET = (b"\x1b[?2026l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l"
                   b"\x1b[?1006l\x1b[?1016l\x1b[?1015l\x1b[?1049l\x1b[?25h\x1b[0m")
+# mpv warns about this deliberate WSL setting on every run; it is not a fault.
+STREAM_SILENCE_NOTICE = "The --audio-stream-silence option is set."
 
 
 def run_player(command):
@@ -65,7 +67,10 @@ def run_player(command):
         if diagnostics:
             text = diagnostics.decode('utf-8', errors='replace')
             text = ''.join(c for c in text if c in '\n\t' or c.isprintable())
-            print(text.rstrip(), file=sys.stderr)
+            text = '\n'.join(line for line in text.splitlines()
+                              if STREAM_SILENCE_NOTICE not in line)
+            if text.strip():
+                print(text.rstrip(), file=sys.stderr)
         if code is not None and code < 0:
             print(f"kilix video: player terminated by signal {-code}; terminal restored.",
                   file=sys.stderr)
@@ -86,6 +91,13 @@ def local_shared_memory_terminal():
             return False
         return os.path.samefile('/dev/shm', process / 'root/dev/shm')
     except (OSError, ValueError):
+        return False
+
+
+def wsl_kernel():
+    try:
+        return 'microsoft' in Path('/proc/sys/kernel/osrelease').read_text().lower()
+    except OSError:
         return False
 
 
@@ -117,7 +129,10 @@ def main(argv=None):
     storage = Path(os.environ.get("KILIX_STORAGE_HOME",
                                   str(Path.home() / ".local/gpu_terminal/kilix")))
     private_player = storage / "media/mpv-0.40.0-kilix1/bin/mpv"
-    named_player = shutil.which("kilix-mpv")
+    # The WSL companion names its catalog build of the same fork.
+    configured = os.environ.get("KILIX_VIDEO_PLAYER", "")
+    named_player = (configured if os.path.isabs(configured) and os.access(configured, os.X_OK)
+                    else shutil.which("kilix-mpv"))
     mpv = named_player or (str(private_player) if os.access(private_player, os.X_OK)
                            else shutil.which("mpv"))
     if not mpv:
@@ -127,6 +142,9 @@ def main(argv=None):
     if args.transport == "shm" and any(os.environ.get(key) for key in
                                        ("SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY", "TMUX")):
         parser.exit(2, "kilix video: use inline transport in SSH or tmux sessions.\n")
+    if args.transport == "shm" and wsl_kernel():
+        parser.exit(2, "kilix video: use inline transport in WSL; Windows Kilix cannot "
+                    "read Linux shared memory.\n")
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         parser.exit(2, "kilix video: run in an interactive terminal (SSH requires -t).\n")
     if args.vo == "kitty" and mpv not in (str(private_player), named_player):
@@ -152,6 +170,10 @@ def main(argv=None):
         command.append("--vo-kitty-use-shm=yes")
     if args.mute:
         command.append("--mute=yes")
+    if wsl_kernel():
+        # WSLg's PulseAudio suspends a corked sink after 5 s and can then hang
+        # mpv on resume or quit. Streaming silence while paused keeps it awake.
+        command.append("--audio-stream-silence=yes")
     if args.loop:
         command.append("--loop-file=inf")
     command.extend(["--", args.source])

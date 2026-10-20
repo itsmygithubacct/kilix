@@ -15,7 +15,8 @@ in the calling terminal. Use `kilix icat --help` for renderer options.
 
 `video` runs mpv in the calling terminal with Kitty graphics. Space pauses,
 arrows seek when supported, and `q` quits. Sound is enabled unless `--mute` is
-specified. Local files and direct network media streams are supported; websites
+specified. In WSL, mpv streams silence while paused: WSLg's audio server can
+otherwise hang playback on resume or quit after a pause of five seconds or more. Local files and direct network media streams are supported; websites
 that need URL extraction may additionally require yt-dlp. Use `--` before media
 names beginning with `-`. One source is accepted per invocation.
 
