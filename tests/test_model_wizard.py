@@ -1,5 +1,6 @@
 """Wizard choices persist across interfaces; only checked models are acquired."""
 import json
+import io
 import os
 from pathlib import Path
 import subprocess
@@ -59,6 +60,30 @@ class WizardTests(unittest.TestCase):
             with self.assertRaises(ValueError): wizard.finish()
         self.assertIn('image', wizard.pending())
         self.assertNotIn('image', [p['id'] for p in wizard.pages(measure=False)])
+
+    def test_wrapped_installer_error_survives_temporary_result_cleanup(self):
+        wizard.apply('audio', ['encodec-24khz-stateful'], 'yes')
+        cause = FileNotFoundError(2, 'No such file or directory', '/missing/converter')
+        error = RuntimeError('Could not install encodec-24khz-stateful')
+        error.__cause__ = cause
+        with tempfile.TemporaryDirectory() as transient:
+            ipc = Path(transient) / 'result.json'
+            with patch.object(wizard, 'finish', side_effect=error), \
+                    patch.object(wizard.sys.stdin, 'isatty', return_value=True), \
+                    patch.object(wizard.sys, 'stderr', io.StringIO()):
+                self.assertEqual(wizard.main(['finish', '--result', str(ipc)]), 1)
+            result = json.loads(ipc.read_text())
+            self.assertIn('encodec-24khz-stateful', result['error'])
+            self.assertIn('/missing/converter', result['error'])
+        log = Path(result['error_log'])
+        self.assertTrue(log.is_file())
+        self.assertEqual(log.stat().st_mode & 0o777, 0o600)
+        self.assertIn('FileNotFoundError', log.read_text())
+        self.assertIn('/missing/converter', log.read_text())
+        self.assertFalse(json.loads((log.parent / 'result.json').read_text())['ok'])
+        self.assertIn('audio', wizard.pending())
+        latest = wizard.read_json(wizard.state_root() / 'model-wizard-last-result.json')
+        self.assertEqual(latest['error_log'], str(log))
 
     def test_final_batch_commits_accepted_and_declined_model_results(self):
         wizard.apply('vision', ['yolox_s', 'yolox_nano'], 'yes')
