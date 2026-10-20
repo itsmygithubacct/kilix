@@ -195,6 +195,10 @@ The backend runs a bounded, own-user interactive scheduled task, writes an
 atomic UTF-8 JSON response, and cleans up its owned task. There is no network
 server. Its worker starts through Kilix's bundled graphical interpreter without
 a console, so starting a command does not take focus away from the target.
+The worker compiles its native backend once per source version into
+`%LOCALAPPDATA%\Kilix\desktop-cache` (one small DLL, safe to delete) and loads
+that build afterwards, saving about 0.75 seconds per request; if the cache cannot
+be written or loaded it compiles in memory as before.
 `status` reports session/user and interactive/locked availability.
 Locked sessions, UAC secure desktops and elevated UI can prevent access;
 the command does not manage logins or RDP sessions. Help and `capabilities`
