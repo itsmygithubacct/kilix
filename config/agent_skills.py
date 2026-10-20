@@ -21,7 +21,7 @@ import time
 import uuid
 
 SOURCE = Path(__file__).resolve().parent.parent
-NAMES = ("kilix", "kilix-model-switch", "kilix-session-launch")
+NAMES = ("kilix", "kilix-model-switch", "kilix-session-launch", "kilix-desktop")
 AGENTS = ("codex", "claude", "kimi")
 STORE = ".kilix-skill-bundles"
 LIMIT = 1024 * 1024

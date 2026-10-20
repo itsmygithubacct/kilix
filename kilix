@@ -62,6 +62,7 @@
 #   ./kilix update            # verified-origin, clean, fast-forward/ref update
 #   ./kilix update --stack    # most complete updater present, then kilix
 #   ./kilix desktop           # launch the configured desktop provider
+#   ./kilix desktop-action ... # typed X11 input/window actions; preview by default
 #   ./kilix cap               # launch/install the Kilix Cap mansion desktop
 #   ./kilix tui               # launch/install the Kilix TUI desktop
 #   ./kilix land              # launch/install the Kilix Land desktop
@@ -138,6 +139,9 @@ case "${1:-}" in
       exec bash "$KILIX_HOME/scripts/build-terminal-mpv.sh" "$@"
     fi
     exec python3 -B "$KILIX_HOME/config/terminal_video.py" "$@" ;;
+  desktop-action)
+    shift
+    exec python3 -B "$KILIX_HOME/config/desktop_control.py" "$@" ;;
   skills)
     shift
     exec python3 "$KILIX_HOME/config/agent_skills.py" "$@" ;;
@@ -191,6 +195,7 @@ Panes and tabs (relative to this pane):
   kilix new-tab [--title T] [--cwd DIR] [CMD...]
   kilix tab list|close|rename|focus|left|right
   kilix tmux --socket PATH [--json] VERB ...  no args: manager
+  kilix desktop-action --help             typed X11 windows, pointer, keys, scroll
 TARGET is a pane's unique title or pane:ID. Above is the complete syntax:
 no subcommand --help or pane list is needed first. Missing/ambiguous titles
 are refused without acting; each verb prints what it did.
