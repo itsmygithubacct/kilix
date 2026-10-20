@@ -340,7 +340,7 @@ class CaptureCLITests(CaptureFixture):
             with patch.object(subprocess, 'run', return_value=completed) as run, patch('sys.stdout', out), \
                     patch.object(companion, 'refresh_environment', side_effect=AssertionError('refresh')):
                 self.assertEqual(main(args), 0)
-            sent = json.loads(run.call_args.kwargs['input'])
+            sent = json.loads(run.call_args.kwargs['input'].splitlines()[0])
             self.assertEqual(sent['operation'], 'capture')
             self.assertEqual(sent['params'], {})
             self.assertNotIn(str(self.destination), run.call_args.kwargs['input'].decode() if isinstance(run.call_args.kwargs['input'], bytes) else run.call_args.kwargs['input'])

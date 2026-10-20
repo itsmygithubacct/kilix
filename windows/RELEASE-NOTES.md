@@ -1,4 +1,15 @@
-# Kilix 0.2.2 Windows preview 1
+# Kilix 0.2.2 Windows preview 2
+
+Preview 2 bounds SSH request writes, native process execution and output
+completion under one deadline. Native children receive their redirected pipes
+without inheriting the caller's SSH handles. Portable installation paths travel
+as JSON data, so Unicode paths do not enlarge the remote shell command. A failed
+or timed-out action is never automatically retried.
+
+The shared model wizard checks workflow readiness through the selected Needle
+application. An unavailable or unready app keeps the page pending; this status
+probe never installs a missing app. Completing setup again can retry the saved
+choice after the app and its existing licensed assets are ready.
 
 Native Windows x64 Kilix with PowerShell, Command Prompt and optional WSL
 profiles. This preview includes the terminal renderer, tabs and splits,

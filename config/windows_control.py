@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+from pathlib import Path
 import re
 import subprocess
 import sys
@@ -14,13 +15,18 @@ from kilix_sdk import windows
 
 def remote_script(root=None):
     if root is None:
-        locate = r"""$install=Join-Path $env:LOCALAPPDATA 'Programs\Kilix'
+        locate = r"""$payload=[Console]::In.ReadLine()
+$install=Join-Path $env:LOCALAPPDATA 'Programs\Kilix'
 $state=ConvertFrom-Json -InputObject ([IO.File]::ReadAllText((Join-Path $install 'install-state.json')))
 $root=Join-Path $install $state.current.path
 """
     else:
-        encoded = base64.b64encode(root.encode('utf-8')).decode('ascii')
-        locate = "$root=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" + encoded + "'))\n"
+        # Keep portable paths in stdin: embedding UTF-8/base64 paths in the
+        # encoded command can exceed the default Windows SSH shell's limit.
+        locate = r"""$packet=ConvertFrom-Json -InputObject ([Console]::In.ReadLine())
+$root=[string]$packet.root
+$payload=[string]$packet.request
+"""
     script = r"""$ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
 $OutputEncoding=New-Object Text.UTF8Encoding($false)
@@ -28,40 +34,56 @@ $OutputEncoding=New-Object Text.UTF8Encoding($false)
 try {
 """ + locate + r"""$exe=Join-Path $root 'kilix-cli.exe'
 if(!(Test-Path -LiteralPath $exe -PathType Leaf)){throw 'Kilix native installation not found; use --windows-root for a portable package'}
-$payload=[Console]::In.ReadLine()
 if($null -eq $payload){throw 'Missing desktop request line'}
-$process=New-Object Diagnostics.Process
-$process.StartInfo.FileName=$exe
-$process.StartInfo.Arguments='desktop --request-json - --json'
-$process.StartInfo.UseShellExecute=$false
-$process.StartInfo.CreateNoWindow=$true
-$process.StartInfo.RedirectStandardInput=$true
-$process.StartInfo.RedirectStandardOutput=$true
-$process.StartInfo.RedirectStandardError=$true
-$process.StartInfo.StandardOutputEncoding=$OutputEncoding
-$process.StartInfo.StandardErrorEncoding=$OutputEncoding
+$request=ConvertFrom-Json -InputObject $payload
+$seconds=20
+if($null -ne $request.timeout){$seconds=[Math]::Max(1,[Math]::Min(60,[int]$request.timeout))}
+$limit=($seconds+25)*1000
+$clock=[Diagnostics.Stopwatch]::StartNew()
+function Remaining { [int][Math]::Max(0,$limit-$clock.ElapsedMilliseconds) }
+function Await($task,[string]$phase) {
+    if(!$task.Wait((Remaining))){throw "Native desktop command timed out during $phase. It may have run; inspect before retrying."}
+}
+# The second input line is our local process helper, sent outside cmd.exe's limit.
+Add-Type -TypeDefinition (ConvertFrom-Json -InputObject ([Console]::In.ReadLine()))
+$process=[KilixSshProcess]::Start($exe,'desktop --request-json - --json')
 try {
-    if(!$process.Start()){throw 'Could not start Kilix desktop command'}
     $stdout=$process.StandardOutput.ReadToEndAsync()
     $stderr=$process.StandardError.ReadToEndAsync()
-    $process.StandardInput.WriteLine($payload)
+    $process.StandardInput.AutoFlush=$true
+    Await ($process.StandardInput.WriteLineAsync($payload)) 'request input'
     $process.StandardInput.Close()
-    $request=ConvertFrom-Json -InputObject $payload
-    $seconds=20
-    if($null -ne $request.timeout){$seconds=[Math]::Max(1,[Math]::Min(60,[int]$request.timeout))}
-    if(!$process.WaitForExit(($seconds+25)*1000)){
-        $process.Kill()
-        throw 'Native desktop command timed out. It may have run; inspect before retrying.'
+    if(!$process.WaitForExit((Remaining))){
+        throw 'Native desktop command timed out during process exit. It may have run; inspect before retrying.'
     }
+    Await $stdout 'stdout'
+    Await $stderr 'stderr'
     [Console]::Out.Write($stdout.Result)
     [Console]::Error.Write($stderr.Result)
     $code=$process.ExitCode
-} finally {$process.Dispose()}
+} finally {
+    try {if(!$process.HasExited){$process.Kill()}} catch {}
+    $process.Dispose()
+}
 exit $code
 } catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }
 """
+    # The default Windows SSH shell runs this through cmd.exe's 8191-character
+    # command limit. Formatting/comments need not consume that budget.
+    script = '\n'.join(line.strip() for line in script.splitlines()
+                       if line.strip() and not line.lstrip().startswith('#'))
     encoded = base64.b64encode(script.encode('utf-16-le')).decode('ascii')
     return 'powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ' + encoded
+
+
+def request_line(request, root=None):
+    payload = json.dumps(request, ensure_ascii=True, allow_nan=False)
+    if root is not None:
+        payload = json.dumps({'root': root, 'request': payload}, ensure_ascii=True)
+    # Only this fixed local source is compiled remotely; request values remain
+    # JSON data. Line framing avoids waiting for Windows OpenSSH to deliver EOF.
+    helper = Path(__file__).with_name('_windows_process.cs').read_text(encoding='utf-8')
+    return payload + '\n' + json.dumps(helper, ensure_ascii=True) + '\n'
 
 
 class SSHTransport:
@@ -80,13 +102,19 @@ class SSHTransport:
             result = subprocess.run(
                 ['ssh', '-T', '-oBatchMode=yes', '-oConnectTimeout=10', '--',
                  self.host, remote_script(self.root)],
-                # A complete JSON line avoids waiting for Windows OpenSSH's
-                # stdin EOF propagation before dispatching the request.
-                input=json.dumps(request, ensure_ascii=True, allow_nan=False) + '\n',
+                # Complete lines avoid waiting for Windows OpenSSH's stdin EOF
+                # propagation before dispatching the request.
+                input=request_line(request, self.root),
                 text=True, encoding='utf-8', capture_output=True,
                 timeout=request.get('timeout', 20) + 35)
-        except subprocess.TimeoutExpired:
-            return failure('timeout', 'SSH timed out. The action may have run; inspect before retrying.')
+        except subprocess.TimeoutExpired as error:
+            message = 'SSH timed out. The action may have run; inspect before retrying.'
+            diagnostic = error.stderr or ''
+            if isinstance(diagnostic, bytes):
+                diagnostic = diagnostic.decode('utf-8', errors='replace')
+            if diagnostic.strip():
+                message += '\n' + diagnostic.strip()[-2000:]
+            return failure('timeout', message)
         except OSError as error:
             return failure('transport_error', str(error))
         try:

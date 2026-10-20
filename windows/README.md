@@ -273,6 +273,13 @@ selected; disconnected or ambiguous logins produce an availability error.
 The reusable `windows_control.SSHTransport(host, root=None)` callback can also
 be passed to `DesktopClient(runner=...)`.
 
+Portable installation paths also travel as JSON data, keeping Unicode paths
+out of the remote shell command. SSH reserves startup and cleanup time beyond
+the native request timeout. Request writes, process execution and output reads
+share that deadline; errors identify the phase when possible. Partial SSH
+diagnostics are retained on a timeout. A failed request may already have acted:
+inspect the desktop before retrying. Requests are never automatically replayed.
+
 Source checks without desktop access:
 
 ```sh

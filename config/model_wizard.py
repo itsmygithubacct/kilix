@@ -329,7 +329,9 @@ def workflows_command():
 
 def check_workflows():
     """The page is answered only when Needle verifies the acquired assets."""
-    result = subprocess.run(workflows_command(), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE)
+    environment = dict(os.environ, KILIX_APP_AUTO_INSTALL='0')
+    result = subprocess.run(workflows_command(), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                            env=environment)
     try:
         status = json.loads(result.stdout.decode('utf-8').strip().splitlines()[-1])
     except (UnicodeError, ValueError, IndexError):

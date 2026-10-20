@@ -232,7 +232,8 @@ class WizardTests(unittest.TestCase):
         call.assert_not_called()
         self.assertEqual(calls, [([wizard.launcher(), 'app', 'run', 'kilix-needle', '--',
                                    'workflows', 'status', '--json'],
-                                  {'stdin': subprocess.DEVNULL, 'stdout': subprocess.PIPE})])
+                                  {'stdin': subprocess.DEVNULL, 'stdout': subprocess.PIPE,
+                                   'env': dict(os.environ, KILIX_APP_AUTO_INSTALL='0')})])
         legacy.assert_called_once_with('workflows', {'answer': 'yes'})
         self.assertEqual(wizard.answers()['workflows']['models'], ['needle2'])
         self.assertEqual(wizard.pending(), {})
@@ -256,6 +257,38 @@ class WizardTests(unittest.TestCase):
                         with self.assertRaisesRegex(ValueError, message): wizard.finish()
                     legacy.assert_not_called()
                     self.assertIn('workflows', wizard.pending())
+
+    def test_workflows_probe_never_installs_a_missing_app(self):
+        root = Path(self.directory.name)
+        bin_dir = root / 'bin'
+        bin_dir.mkdir()
+        marker = root / 'unexpected-install'
+        for command in ('git', 'make'):
+            sentinel = bin_dir / command
+            sentinel.write_text('#!/bin/sh\nprintf "%s\\n" "$0 $*" >> "$INSTALL_SENTINEL"\nexit 79\n')
+            sentinel.chmod(0o700)
+        environment = {
+            'HOME': os.environ['HOME'], 'PATH': str(bin_dir) + os.pathsep + os.defpath,
+            'GPU_TERMINAL_HOME': str(root / 'stack'),
+            'GPU_TERMINAL_SOURCE_HOME': str(root / 'sources'),
+            'KILIX95_STATE_HOME': str(root / 'wizard'),
+            'XDG_CONFIG_HOME': str(root / 'config'), 'XDG_DATA_HOME': str(root / 'data'),
+            'XDG_CACHE_HOME': str(root / 'cache'), 'XDG_RUNTIME_DIR': str(root),
+            'KILIX_APP_AUTO_INSTALL': '1', 'INSTALL_SENTINEL': str(marker),
+            'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_SYSTEM': os.devnull,
+            'PYTHONDONTWRITEBYTECODE': '1',
+        }
+        with patch.dict(os.environ, environment, clear=True), \
+                patch.object(wizard, 'catalog', return_value=[asset('needle2')]), \
+                patch('wizard_licenses.consent_and_install', return_value=({'needle2'}, set())):
+            wizard.apply('workflows', ['needle2'], 'yes')
+            with self.assertRaisesRegex(ValueError, 'did not report workflow readiness'):
+                wizard.finish()
+            self.assertIn('workflows', wizard.pending())
+            self.assertFalse((wizard.state_root() / wizard.LEGACY['workflows']).exists())
+            self.assertEqual(os.environ['KILIX_APP_AUTO_INSTALL'], '1')
+        self.assertFalse(marker.exists(), marker.read_text() if marker.exists() else '')
+        self.assertFalse((root / 'stack/kilix/data/desktop-apps/kilix-needle').exists())
 
     def test_every_launcher_verb_the_wizard_runs_is_routed_by_the_launcher(self):
         import re
