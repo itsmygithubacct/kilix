@@ -1367,7 +1367,12 @@ namespace["cmd_dictate"](int(seconds), discard == "1")
         self.assertEqual(requests[1:], [{"op": "stop-dictation", "mode": "abort"}] * 2)
 
     TOSTOP_LEADER = r"""
-import os, subprocess, sys, termios
+import os, signal, subprocess, sys, termios
+# The job meets the kernel's default. A SIGTTOU this test inherited ignored or
+# blocked would let every write through, so a client that wrote without
+# blocking it would pass (round 9, R9-2).
+signal.signal(signal.SIGTTOU, signal.SIG_DFL)
+signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTTOU})
 # A session leader's first terminal becomes its controlling terminal, with the
 # leader's group in the foreground. `stty tostop` is set on it.
 tty = os.open(sys.argv[1], os.O_RDWR)
@@ -1391,7 +1396,23 @@ job.wait()
         self.addCleanup(os.close, master)
         terminal = os.ttyname(slave)
         os.close(slave)
-        requests, accepted, _close = self.fake_voice_daemon(partial_on_accept="word " * 40)
+        sigttou = []
+
+        def record_sigttou(request):
+            # The client waits for this request's reply, outside any status
+            # write, so its mask here is the one it was started with.
+            pid = int(Path(request["sock"]).stem.split("-")[1])
+            bit = 1 << (signal.SIGTTOU - 1)
+            try:
+                fields = dict(line.split(":\t", 1) for line in
+                              Path("/proc/%d/status" % pid).read_text().splitlines()
+                              if ":\t" in line)
+                sigttou.append((int(fields["SigIgn"], 16) & bit, int(fields["SigBlk"], 16) & bit))
+            except (OSError, KeyError, ValueError) as error:
+                sigttou.append(error)
+
+        requests, accepted, _close = self.fake_voice_daemon(
+            partial_on_accept="word " * 40, on_dictate=record_sigttou)
         leader = subprocess.Popen(
             [sys.executable, "-c", self.TOSTOP_LEADER, terminal, str(KILIX), "dictate",
              "--seconds", "30"],
@@ -1420,9 +1441,44 @@ job.wait()
             except ProcessLookupError:
                 pass
             leader.communicate(timeout=10)
+        self.assertEqual(sigttou, [(0, 0)])  # neither ignored nor blocked
         self.assertTrue(cleaned)
         self.assertIn(b"word", screen)
         self.assertEqual(requests[1:], [{"op": "stop-dictation", "mode": "abort"}])
+
+    # Leaves a closed receiver at the client's own `cli-<pid>.sock`, as a
+    # killed process that had this PID before would, then runs the launcher's
+    # voice client in this process, so the PIDs match.
+    STALE_RECEIVER_CHILD = r"""
+import os, socket, sys
+launcher, session = sys.argv[1:3]
+stale = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+stale.bind(os.path.join(session, "cli-%d.sock" % os.getpid()))
+stale.close()
+source = open(launcher).read().split("_kilix_voice_client() {\n  cat <<'PY'\n", 1)[1]
+source = source.split("\noperation = sys.argv[1]", 1)[0]
+os.environ["KILIX_VOICE_SESSION"] = session
+os.environ["KILIX_VOICE_SPAWN"] = "0"
+namespace = {"__name__": "kilix_voice_client"}
+exec(compile(source, "kilix-voice-client", "exec"), namespace)
+namespace["cmd_dictate"](30)
+"""
+
+    def test_a_receiver_left_by_an_earlier_process_is_replaced(self):
+        # A client killed outright leaves its receiver behind, and a later one
+        # can get the same PID. Unless the client removes the stale socket
+        # first, its bind fails with EADDRINUSE and no turn is asked for
+        # (round 9, R9-1).
+        self.install_fake_daemon()
+        requests, _accepted, _close = self.fake_voice_daemon(final_on_accept="recycled words")
+        result = subprocess.run(
+            [sys.executable, "-c", self.STALE_RECEIVER_CHILD, str(KILIX),
+             str(self.voice_session)],
+            env=self.environment, text=True, capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "recycled words\n")
+        self.assertEqual([request["op"] for request in requests], ["dictate"])
+        self.assertFalse(self.receiver_present())
 
     def test_a_second_ctrl_c_gives_up_words_blocked_on_a_full_pipe(self):
         # A first Ctrl-C asks for the words. A second gives them up, even while
