@@ -55,20 +55,27 @@ class ClipboardTransportTests(unittest.TestCase):
         self.sessions = []
         self.hubs = []
         self.bridges = []
-        for name in ('first', 'second'):
-            session = xapp.XAppSession('clip-'+name+'-'+str(os.getpid()), 64, 48)
-            self.sessions.append(session)
-            session.start_xvfb()
-            session.connect()
-        self.hub = clip.Hub()
-        self.hubs.append(self.hub)
-        for session in self.sessions:
-            self.bridges.append(clip.SelectionBridge(self.hub, session.display,
-                                                     session.xauthority))
-        # Each endpoint claims its empty display asynchronously. A test owner
-        # created before that claim lands would lose CLIPBOARD to it.
-        self.pump(lambda: all(not bridge._claim and bridge._owns_selection()
-                              for bridge in self.bridges))
+        try:
+            for name in ('first', 'second'):
+                session = xapp.XAppSession('clip-'+name+'-'+str(os.getpid()), 64, 48)
+                self.sessions.append(session)
+                session.start_xvfb()
+                session.connect()
+            self.hub = clip.Hub()
+            self.hubs.append(self.hub)
+            for session in self.sessions:
+                self.bridges.append(clip.SelectionBridge(self.hub, session.display,
+                                                         session.xauthority))
+            # Each endpoint claims its empty display asynchronously. A test owner
+            # created before that claim lands would lose CLIPBOARD to it.
+            self.pump(lambda: all(not bridge._claim and bridge._owns_selection()
+                                  for bridge in self.bridges))
+        except BaseException:
+            # tearDown does not run when setUp fails. An Xvfb that refused its
+            # cookie under load once left this patched environment, and its
+            # deleted session directory, to every later test in the run.
+            self.tearDown()
+            raise
 
     def tearDown(self):
         for bridge in reversed(self.bridges):
