@@ -1,15 +1,22 @@
 #!/usr/bin/env python3
 """Linux tools and authenticated native-window control for Kilix WSL."""
 import argparse
+import fcntl
 import json
 import os
 from pathlib import Path
+import platform
 import pwd
 import re
+import select
 import shutil
+import struct
 import subprocess
 import sys
 import tarfile
+import termios
+import time
+import tty
 import catalog as app_catalog
 from catalog_store import Catalog, find
 from recovery import refresh_environment
@@ -19,7 +26,9 @@ STATE = Path.home() / '.local/share/kilix-wsl'
 INSTALL = (STATE / 'current').resolve() if (STATE / 'current').is_symlink() else STATE
 BRIDGE = ROOT / 'wsl-bin/kilix'
 KITTEN = ROOT / 'kitty/launcher/kitten.exe'
+LINUX_KITTEN = INSTALL / 'kitten/kitten'
 PYTHON = INSTALL / 'bin/python3'
+WINDOW_SIZE_REPLY = re.compile(rb'\x1b\[4;([0-9]{1,5});([0-9]{1,5})t')
 
 
 def environment():
@@ -34,6 +43,100 @@ def environment():
     env['KITTYFB_TRANSPORT'] = 'inline'
     env['PYTHONDONTWRITEBYTECODE'] = '1'
     return env
+
+
+def window_size(device='/dev/tty', timeout=2):
+    """Ask Kilix for the pane's pixel size (CSI 14 t) when the pty has none.
+
+    The Windows console gives WSL's pty only cell counts, and Linux kitten reads
+    the size from the kernel. kitten.exe asks the terminal the same way."""
+    try:
+        fd = os.open(device, os.O_RDWR | os.O_NOCTTY)
+    except OSError:
+        return None
+    match = None
+    try:
+        rows, columns, width, height = struct.unpack('HHHH', fcntl.ioctl(fd, termios.TIOCGWINSZ, bytes(8)))
+        if (width and height) or not (rows and columns) or background(fd):
+            return None
+        saved = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd, termios.TCSANOW)
+            os.write(fd, b'\x1b[14t')
+            deadline = time.monotonic() + timeout
+            reply = b''
+            # Typed-ahead bytes can arrive first, so wait for the reply itself.
+            while not (match := WINDOW_SIZE_REPLY.search(reply)) and len(reply) < 1024:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not select.select([fd], [], [], remaining)[0]:
+                    break
+                chunk = os.read(fd, 64)
+                if not chunk:
+                    break
+                reply += chunk
+        finally:
+            termios.tcsetattr(fd, termios.TCSANOW, saved)
+    except (OSError, termios.error):
+        return None
+    finally:
+        os.close(fd)
+    if not match or int(match[2]) < columns or int(match[1]) < rows:
+        return None
+    return f'{columns},{rows},{int(match[2])},{int(match[1])}'
+
+
+def background(fd):
+    """A background job that touches its terminal is stopped by SIGTTOU."""
+    try:
+        return os.tcgetpgrp(fd) != os.getpgrp()
+    except OSError:
+        return False  # not this process's controlling terminal: no job control
+
+
+def image(verb, args):
+    """kilix image/icat with the companion's static Linux kitten."""
+    if verb == 'image' and args[:1] in ([], ['-h'], ['--help'], ['help']):
+        print('usage: kilix image [ICAT_OPTIONS] FILE...\n'
+              'Display images in this terminal. Use -- before filenames starting with -.\n'
+              'Example: kilix image -- photo.png\n'
+              'For all renderer options: kilix icat --help')
+        return 0
+    if platform.machine() != 'x86_64':
+        raise ValueError('kilix image needs an x86_64 WSL distribution; the bundled kitten is linux/amd64.')
+    if not os.access(LINUX_KITTEN, os.X_OK):
+        raise ValueError('This WSL companion has no Linux kitten for images; '
+                         'run the WSL setup from Kilix 0.2.2 preview 4 or later.')
+    options = args[:args.index('--')] if '--' in args else args
+    argv = [str(LINUX_KITTEN), 'icat']
+    # The Windows renderer cannot open Linux files or shared memory, and
+    # ConPTY cannot return icat's support query, so images go in-band.
+    if not any(item.startswith('--transfer-mode') for item in options):
+        argv.append('--transfer-mode=stream')
+    if not set(options) & {'-h', '--help'} and not any(
+            item.startswith(('--use-window-size', '--print-window-size')) for item in options):
+        size = window_size()
+        if size:
+            argv.append('--use-window-size=' + size)
+    os.execve(argv[0], argv + args, environment())
+
+
+def video(args):
+    """kilix video with the catalog's kilix-mpv, which the Linux launcher also prefers."""
+    if args[:1] == ['--install-player']:
+        raise ValueError('In WSL the player is the catalog application: kilix apps install kilix-mpv')
+    env = environment()
+    options = args[:args.index('--')] if '--' in args else args
+    if not set(options) & {'-h', '--help'}:
+        catalog = Catalog(install=INSTALL, runtime='wsl')
+        spec = find('kilix-mpv')
+        status = catalog.status(spec)
+        if not status['ready']:
+            fix = ('kilix apps install kilix-mpv' if not status['installed'] else
+                   'kilix apps enable kilix-mpv' if not status['enabled'] else status['reason'])
+            raise ValueError('kilix video needs the media player: ' + fix)
+        env['KILIX_VIDEO_PLAYER'] = str(catalog.generation(spec) / spec['source'] / spec['executable'])
+    python = str(PYTHON if PYTHON.exists() else sys.executable)
+    os.execve(python, [python, '-B', str(ROOT / 'wsl-bin/config/terminal_video.py'), *args], env)
 
 
 def require_control():
@@ -172,6 +275,8 @@ def main(args):
   pane, tab, focus, watch       Control the current native Kilix window
   fullscreen                   Toggle native fullscreen
   desktop, windows OPERATION    Windows desktop apps; desktop capabilities is offline
+  image, icat FILE...           Display images in this pane
+  video FILE|URL                Play media in this pane (kilix apps install kilix-mpv)
   settings [--print|--set CONTROL=VALUE]  Shared Linux companion settings
   models list|show|verify|install  Receipt-gated Linux model management
   agent-control context|list|dump|send|deliver|key|new-tab|split
@@ -214,6 +319,10 @@ Linux desktop services are not Windows services.''')
         return subprocess.call([str(ROOT / 'kilix-cli.exe'), *args])
     if verb == '@':
         return remote(rest)
+    if verb in ('image', 'icat'):
+        return image(verb, rest)
+    if verb == 'video':
+        return video(rest)
     if verb in ('settings', 'models', 'agent-control', 'action', 'tmux', 'transcript'):
         python = str(PYTHON if PYTHON.exists() else sys.executable)
         os.execve(python, [python, '-B', str(ROOT / 'wsl/commands.py'), verb, *rest], environment())

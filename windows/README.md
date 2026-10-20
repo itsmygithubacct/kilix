@@ -405,7 +405,11 @@ release tag is not treated as a new version.
 
 CI exports `companion.tar.gz` from committed public source pins, includes its
 SHA256 sidecar in the application, and also publishes it as a separate artifact.
-No model files or personal acceptance receipts are included. For manual builds,
+No model files or personal acceptance receipts are included. CI first builds the
+Linux x86_64 `kitten` from the pinned engine with
+`sh windows/build-kitten.sh src "$(git rev-parse HEAD:src)" OUTPUT` and adds it
+with `provision.py --kitten OUTPUT`, which refuses a kitten built from another
+engine revision. For manual builds,
 use `python3 windows/wsl/provision.py --output companion.tar.gz`, then pass
 `-CompanionArchive PATH -CompanionSha256 HASH` to `package.ps1`. The catalog's
 optional `--with-apps` export includes additional pinned application sources.
@@ -472,6 +476,16 @@ discover another pane's Linux working directory through Windows process data.
 limits. `kilix games list` lists installed enabled games. Both support
 install/update, enable/disable and a terminal or optional Tk chooser. Arbitrary
 installed Linux executables can be launched with `--launch`.
+
+`kilix image FILE` (alias `icat`) shows an image in the invoking pane and
+`kilix video FILE` plays media there with the catalog `kilix-mpv` build. Images
+use a Linux x86_64 `kitten` that CI builds from the pinned engine source
+(`windows/build-kitten.sh`); the companion bundle records its SHA-256 and setup
+checks it before activating a generation. WSL ptys report no pixel size, so the
+companion asks the terminal for its window size and sends image data inline.
+The player streams silence while paused, muted or not, because WSLg's audio
+server can otherwise hang playback after a pause of five seconds or more. Video frames are sized for an assumed 9x18-pixel cell and
+fill only part of a large pane.
 
 Needle and all fifteen public catalog games install separately into
 `~/.local/share/kilix-wsl`. The catalog includes all twelve `kilix-games`

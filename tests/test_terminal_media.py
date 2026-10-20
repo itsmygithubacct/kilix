@@ -43,6 +43,26 @@ class TerminalMediaTests(unittest.TestCase):
             self.assertEqual(run.call_args.args[0][0], '/usr/bin/kilix-mpv')
             probe.assert_not_called()
 
+    def test_configured_fork_build_is_the_named_player(self):
+        with tempfile.TemporaryDirectory() as directory:
+            player = Path(directory) / 'mpv'
+            player.write_text('#!/bin/sh\n')
+            for configured, mode, expected in ((str(player), 0o755, str(player)),
+                                               (str(player), 0o644, '/usr/bin/kilix-mpv'),
+                                               ('mpv', 0o755, '/usr/bin/kilix-mpv')):
+                player.chmod(mode)
+                with self.subTest(configured=configured, mode=oct(mode)), \
+                     patch.dict(video.os.environ, {'KILIX_VIDEO_PLAYER': configured}, clear=True), \
+                     patch.object(video.shutil, 'which', return_value='/usr/bin/kilix-mpv'), \
+                     patch.object(video.sys.stdin, 'isatty', return_value=True), \
+                     patch.object(video.sys.stdout, 'isatty', return_value=True), \
+                     patch.object(video.subprocess, 'run') as probe, \
+                     patch.object(video, 'run_player', return_value=0) as run:
+                    self.assertEqual(video.main(['clip.mp4']), 0)
+                    self.assertEqual(run.call_args.args[0][0], expected)
+                    # A named fork build skips the system mpv 0.40 resize check.
+                    probe.assert_not_called()
+
     def test_literal_source_and_terminal_output(self):
         source = '-strange $(touch forbidden); clip.mp4'
         command = self.command(['--', source])
@@ -133,6 +153,26 @@ class TerminalMediaTests(unittest.TestCase):
         for option in ['--vo=tct', '--mute=yes', '--loop-file=inf']:
             self.assertIn(option, command)
 
+    def test_wsl_streams_silence_while_paused_muted_or_not(self):
+        for wsl in (False, True):
+            for args in (['--mute', 'clip.mp4'], ['clip.mp4']):
+                with self.subTest(wsl=wsl, args=args), patch.object(video, 'wsl_kernel', return_value=wsl):
+                    command = self.command(args)
+                    self.assertEqual('--audio-stream-silence=yes' in command, wsl)
+                    self.assertEqual('--mute=yes' in command, '--mute' in args)
+                    self.assertFalse([o for o in command if o.startswith('--ao')])
+
+    def test_wsl_kernel_reads_the_release(self):
+        for release, expected in (('5.15.167.4-microsoft-standard-WSL2\n', True),
+                                  ('4.4.0-19041-Microsoft\n', True),
+                                  ('6.12.0-amd64\n', False)):
+            with self.subTest(release=release), \
+                 patch.object(video.Path, 'read_text', autospec=True, return_value=release) as read:
+                self.assertEqual(video.wsl_kernel(), expected)
+                self.assertEqual(read.call_args.args[0], Path('/proc/sys/kernel/osrelease'))
+        with patch.object(video.Path, 'read_text', side_effect=FileNotFoundError):
+            self.assertFalse(video.wsl_kernel())
+
     def test_no_gui_renderer(self):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as caught:
             video.main(['--vo', 'gpu', 'clip.mp4'])
@@ -193,6 +233,46 @@ class TerminalMediaTests(unittest.TestCase):
             finally:
                 os.close(master)
                 os.close(slave)
+
+    def test_stream_silence_notice_is_not_replayed(self):
+        notice = b'[ao/pulse] The --audio-stream-silence option is set. This will break certain player behavior.'
+        for extra in (b'[vd] decoder warning', b''):
+            payload = notice + b'\n' + extra
+            with self.subTest(extra=extra), tempfile.TemporaryDirectory() as tmp:
+                fake = Path(tmp) / 'mpv'
+                fake.write_text("#!/usr/bin/python3\nimport os,sys\n"
+                                "if '--version' in sys.argv: print('mpv test'); sys.exit(0)\n"
+                                f"os.write(2,{payload!r})\n")
+                fake.chmod(0o700)
+                master, slave = pty.openpty()
+                try:
+                    proc = subprocess.Popen(
+                        ['/usr/bin/python3', '-B', str(ROOT / 'config/terminal_video.py'), 'clip.mp4'],
+                        stdin=slave, stdout=slave, stderr=slave,
+                        env={'PATH': tmp + ':/usr/bin:/bin', 'HOME': tmp})
+                    self.assertEqual(proc.wait(timeout=5), 0)
+                    output = b''
+                    while select.select([master], [], [], 0.1)[0]:
+                        output += os.read(master, 65536)
+                    self.assertNotIn(b'audio-stream-silence', output)
+                    after = output[output.index(video.TERMINAL_RESET) + len(video.TERMINAL_RESET):]
+                    # Nothing left to report prints nothing, not a blank line.
+                    self.assertEqual(after, extra + b'\r\n' if extra else b'')
+                finally:
+                    os.close(master)
+                    os.close(slave)
+
+    def test_wsl_refuses_shared_memory_transport(self):
+        with patch.object(video, 'wsl_kernel', return_value=True), \
+             patch.object(video.shutil, 'which', return_value='/usr/bin/kilix-mpv'), \
+             patch.object(video.sys.stdin, 'isatty', return_value=True), \
+             patch.object(video.sys.stdout, 'isatty', return_value=True), \
+             patch.object(video, 'run_player', return_value=0) as run, \
+             contextlib.redirect_stderr(io.StringIO()) as error, self.assertRaises(SystemExit) as caught:
+            video.main(['--transport', 'shm', 'clip.mp4'])
+        self.assertEqual(caught.exception.code, 2)
+        self.assertIn('inline transport in WSL', error.getvalue())
+        run.assert_not_called()
 
     def test_wrapper_help_needs_no_engine_or_storage(self):
         with tempfile.TemporaryDirectory() as home:

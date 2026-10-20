@@ -71,6 +71,10 @@ mp.register_event('log-message', function(event)
     if event.level ~= 'warn' and event.level ~= 'error' and event.level ~= 'fatal' then
         return
     end
+    -- terminal_video.py enables this on WSL on purpose; mpv warns every run.
+    if event.text:find('The --audio-stream-silence option is set.', 1, true) then
+        return
+    end
     local text = clean('[' .. event.prefix .. '] ' .. event.text)
     -- Bound memory and suppress repeated decoder complaints. Pin the first four
     -- distinct messages: later errors must not erase the original explanation.

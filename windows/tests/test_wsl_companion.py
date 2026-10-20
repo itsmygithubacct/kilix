@@ -132,6 +132,127 @@ class CompanionTests(unittest.TestCase):
             module.remote(['ls'])
         self.assertEqual(json.loads(output.getvalue()), [{'env': {'KEEP':'yes'}}])
 
+    def kitten(self, directory):
+        binary = Path(directory) / 'kitten'
+        binary.write_text('#!/bin/sh\n')
+        binary.chmod(0o755)
+        return patch.object(module, 'LINUX_KITTEN', binary)
+
+    def test_image_streams_in_band_with_the_renderer_size(self):
+        with tempfile.TemporaryDirectory() as directory, self.kitten(directory), \
+             patch.object(module, 'window_size', return_value='80,24,800,480') as size, \
+             patch.object(module.os, 'execve', side_effect=SystemExit(0)) as execve:
+            for verb in ('image', 'icat'):
+                with self.assertRaises(SystemExit):
+                    module.main([verb, '--', 'photo.png'])
+                self.assertEqual(execve.call_args.args[1], [str(Path(directory) / 'kitten'), 'icat',
+                                 '--transfer-mode=stream', '--use-window-size=80,24,800,480', '--', 'photo.png'])
+            # Explicit choices are the user's; help needs no terminal query.
+            size.reset_mock()
+            for args, absent in ((['--transfer-mode=file', 'a.png'], '--transfer-mode=stream'),
+                                 (['--use-window-size=1,1,9,9', 'a.png'], '--use-window-size=80,24,800,480'),
+                                 (['icat', '--help'], '--use-window-size=80,24,800,480')):
+                with self.assertRaises(SystemExit):
+                    module.main(args if args[0] == 'icat' else ['image', *args])
+                self.assertNotIn(absent, execve.call_args.args[1])
+            self.assertEqual(size.call_count, 1)
+            # Names after -- are files, not options.
+            with self.assertRaises(SystemExit):
+                module.main(['image', '--', '--help', '--transfer-mode=file'])
+            self.assertIn('--transfer-mode=stream', execve.call_args.args[1])
+            self.assertEqual(size.call_count, 2)
+
+    def test_image_without_a_kitten_names_the_fix_and_help_is_offline(self):
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.object(module, 'LINUX_KITTEN', Path(directory) / 'missing'), \
+             patch.object(module.os, 'execve') as execve:
+            with self.assertRaisesRegex(ValueError, 'preview 4'):
+                module.main(['image', 'photo.png'])
+            with patch.object(module.platform, 'machine', return_value='aarch64'), \
+                 self.assertRaisesRegex(ValueError, 'x86_64 WSL distribution'):
+                module.main(['image', 'photo.png'])
+            with patch('sys.stdout', new_callable=io.StringIO) as output:
+                self.assertEqual(module.main(['image']), 0)
+            self.assertIn('usage: kilix image', output.getvalue())
+            execve.assert_not_called()
+
+    def test_window_size_asks_the_terminal_only_without_pixels(self):
+        import fcntl, pty, select, struct, termios, threading
+        master, slave = pty.openpty()
+        self.addCleanup(os.close, master)
+        self.addCleanup(os.close, slave)
+        name = os.ttyname(slave)
+        written = []
+        def answer(reply):
+            data = b''
+            while not data.endswith(b'[14t'):
+                data += os.read(master, 64)
+            written.append(data)
+            os.write(master, reply)
+        original = termios.tcgetattr(slave)
+        # Typeahead ending in t, and a reply smaller than the cell grid, are not sizes.
+        for reply, expected in ((b'\x1b[4;480;800t', '80,24,800,480'), (b'\x1b[4;0;0t', None),
+                                (b'\x1b[4;480;800', None), (b'exit\x1b[4;480;800t', '80,24,800,480'),
+                                (b'\x1b[4;23;79t', None)):
+            with self.subTest(reply=reply):
+                fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 80, 0, 0))
+                worker = threading.Thread(target=answer, args=(reply,))
+                worker.start()
+                self.assertEqual(module.window_size(name, timeout=0.5), expected)
+                worker.join(5)
+                self.assertEqual(termios.tcgetattr(slave), original)
+        self.assertEqual(written, [b'\x1b[14t'] * 5)
+        # No cell grid, or a background job (SIGTTOU would stop it): never queried.
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 0, 0, 0, 0))
+        self.assertIsNone(module.window_size(name, timeout=0.5))
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 80, 0, 0))
+        with patch.object(module.os, 'tcgetpgrp', return_value=os.getpgrp() + 1):
+            self.assertIsNone(module.window_size(name, timeout=0.5))
+        self.assertEqual(select.select([master], [], [], 0.2)[0], [])
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 80, 800, 480))
+        self.assertIsNone(module.window_size(name, timeout=0.5))
+        # A pty that already carries pixels is never queried.
+        self.assertEqual(select.select([master], [], [], 0.2)[0], [])
+        self.assertIsNone(module.window_size(str(Path(name).parent / 'missing-tty')))
+        self.assertEqual(len(written), 5)
+
+    def test_video_runs_the_shared_launcher_with_the_catalog_player(self):
+        class Catalog:
+            ready = installed = enabled = False
+            def __init__(self, **kwargs):
+                Catalog.kwargs = kwargs
+            def status(self, spec):
+                self.assertion(spec['name'])
+                return {'ready': self.ready, 'installed': self.installed, 'enabled': self.enabled, 'reason': 'r'}
+            def generation(self, spec):
+                return Path('/generation')
+        Catalog.assertion = lambda _, name: self.assertEqual(name, 'kilix-mpv')
+        with patch.object(module, 'Catalog', Catalog), \
+             patch.object(module.os, 'execve', side_effect=SystemExit(0)) as execve:
+            with self.assertRaisesRegex(ValueError, 'kilix apps install kilix-mpv'):
+                module.main(['video', 'clip.mp4'])
+            self.assertEqual(Catalog.kwargs, {'install': module.INSTALL, 'runtime': 'wsl'})
+            with self.assertRaisesRegex(ValueError, 'kilix apps install kilix-mpv'):
+                module.main(['video', '--install-player'])
+            # A name after -- is a file, so it needs the player too.
+            with self.assertRaisesRegex(ValueError, 'kilix apps install kilix-mpv'):
+                module.main(['video', '--', '--help'])
+            Catalog.installed = True
+            with self.assertRaisesRegex(ValueError, 'kilix apps enable kilix-mpv'):
+                module.main(['video', 'clip.mp4'])
+            execve.assert_not_called()
+            with self.assertRaises(SystemExit):
+                module.main(['video', '--help'])
+            self.assertEqual(execve.call_args.args[1][-2:],
+                             [str(module.ROOT / 'wsl-bin/config/terminal_video.py'), '--help'])
+            self.assertNotIn('KILIX_VIDEO_PLAYER', execve.call_args.args[2])
+            Catalog.ready = True
+            with self.assertRaises(SystemExit):
+                module.main(['video', '--mute', '--', 'clip.mp4'])
+            self.assertEqual(execve.call_args.args[1][-3:], ['--mute', '--', 'clip.mp4'])
+            self.assertEqual(execve.call_args.args[2]['KILIX_VIDEO_PLAYER'], '/generation/apps/kilix-mpv/build/mpv')
+            self.assertEqual(execve.call_args.args[2]['KITTYFB_TRANSPORT'], 'inline')
+
     def test_bad_options_fail_instead_of_succeeding_silently(self):
         for args in (['apps','typo'], ['games','list','typo']):
             with self.assertRaises(ValueError): module.main(args)

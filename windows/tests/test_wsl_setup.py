@@ -1,8 +1,11 @@
 import argparse
+import hashlib
 import importlib.util
 import io
+import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -20,6 +23,12 @@ def load(name):
 
 setup = load('setup')
 export = load('bundle')
+
+
+def load_provision():
+    # provision imports its sibling modules by name.
+    with patch.object(sys, 'path', [str(Path(__file__).resolve().parents[1] / 'wsl'), *sys.path]):
+        return load('provision')
 
 
 class SetupTests(unittest.TestCase):
@@ -103,6 +112,109 @@ class SetupTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'hash mismatch'):
                 setup.install(self.archive, '0' * 64, self.root)
             run.assert_not_called()
+
+    def kitten_archive(self, record_digest=None):
+        binary = b'#!/bin/sh\necho kitten\n'
+        digest = record_digest or hashlib.sha256(binary).hexdigest()
+        self.write_archive({'needle/needle_cli.py': b'pass', 'kitten/kitten': binary,
+                            'kitten/kitten.json': json.dumps({'sha256': digest}).encode()})
+
+    def test_bundled_kitten_is_checked_and_run_before_activation(self):
+        self.kitten_archive()
+        with patch.object(setup.subprocess, 'run') as run, patch.object(setup.subprocess, 'check_output', return_value=sys.executable):
+            self.install()
+        active = (self.root / 'current').resolve()
+        self.assertEqual(run.call_args_list[0].args[0], [str(active / 'kitten/kitten'), '--version'])
+        self.assertTrue(os.access(active / 'kitten/kitten', os.X_OK))
+
+    def test_bundled_kitten_that_differs_from_its_record_is_refused(self):
+        self.kitten_archive('0' * 64)
+        with patch.object(setup.subprocess, 'run') as run:
+            with self.assertRaisesRegex(ValueError, 'build record'): self.install()
+            run.assert_not_called()
+        self.assertEqual((self.root / 'current').resolve(), self.old)
+        self.assertEqual(list((self.root / 'sources').iterdir()), [self.old])
+
+    def test_kitten_that_cannot_run_aborts_setup(self):
+        self.kitten_archive()
+        def run(args, **kwargs):
+            if args[-1] == '--version':
+                raise subprocess.CalledProcessError(1, args)
+        with patch.object(setup.subprocess, 'run', side_effect=run):
+            with self.assertRaises(subprocess.CalledProcessError): self.install()
+        self.assertEqual((self.root / 'current').resolve(), self.old)
+
+    def test_check_kitten_refuses_a_link_and_runs_only_on_x86_64(self):
+        generation = self.home / 'generation'
+        (generation / 'kitten').mkdir(parents=True)
+        real = self.home / 'real-kitten'
+        real.write_bytes(b'binary')
+        (generation / 'kitten/kitten.json').write_text(json.dumps({'sha256': hashlib.sha256(b'binary').hexdigest()}))
+        (generation / 'kitten/kitten').symlink_to(real)
+        with patch.object(setup.subprocess, 'run') as run:
+            with self.assertRaisesRegex(ValueError, 'build record'): setup.check_kitten(generation)
+            (generation / 'kitten/kitten').unlink()
+            shutil.copyfile(real, generation / 'kitten/kitten')
+            with patch.object(setup.platform, 'machine', return_value='aarch64'):
+                setup.check_kitten(generation)
+            run.assert_not_called()
+            self.assertTrue(os.access(generation / 'kitten/kitten', os.X_OK))
+            with patch.object(setup.platform, 'machine', return_value='x86_64'):
+                setup.check_kitten(generation)
+            self.assertEqual(run.call_args.args[0], [str(generation / 'kitten/kitten'), '--version'])
+            self.assertTrue(run.call_args.kwargs['check'])
+
+    def test_provision_bundles_the_kitten_it_is_given(self):
+        provision = load_provision()
+        built = self.home / 'built'
+        built.mkdir()
+        (built / 'kitten').write_bytes(b'binary')
+        (built / 'LICENSE').write_text('GPL')
+        (built / 'kitten.json').write_text(json.dumps(
+            {'engine': 'a' * 40, 'target': 'linux/amd64', 'sha256': hashlib.sha256(b'binary').hexdigest()}))
+        pinned = subprocess.CompletedProcess([], 0, 'a' * 40 + '\n', '')
+        for kitten, expected in ((built, True), (None, False)):
+            output = self.home / ('with' if kitten else 'without') / 'companion.tar.gz'
+            with self.subTest(kitten=kitten), patch.object(provision, 'materialize', return_value={'needle': 'b' * 40}), \
+                 patch.object(provision, 'patch_needle'), patch.object(provision.subprocess, 'run', return_value=pinned), \
+                 patch('sys.stdout', io.StringIO()):
+                provision.provision(output, self.home / 'cache', kitten=kitten)
+            with tarfile.open(output) as bundle:
+                names = bundle.getnames()
+                self.assertEqual('kitten/kitten' in names, expected)
+                if expected:
+                    self.assertEqual(bundle.extractfile('kitten/kitten').read(), b'binary')
+                    self.assertEqual(bundle.getmember('kitten/kitten').mode & 0o777, 0o755)
+
+    def test_provision_adds_only_a_kitten_built_from_the_engine_pin(self):
+        provision = load_provision()
+        built = self.home / 'built'
+        built.mkdir()
+        (built / 'kitten').write_bytes(b'binary')
+        (built / 'LICENSE').write_text('GPL')
+        engine = 'a' * 40
+        def record(**changes):
+            (built / 'kitten.json').write_text(json.dumps(dict(
+                {'engine': engine, 'target': 'linux/amd64', 'sha256': hashlib.sha256(b'binary').hexdigest()}, **changes)))
+        pinned = subprocess.CompletedProcess([], 0, engine + '\n', '')
+        for number, (changes, message) in enumerate((({'engine': 'b' * 40}, 'not the pinned'),
+                                                     ({'sha256': '0' * 64}, 'build record'),
+                                                     ({'target': 'windows/amd64'}, 'build record'))):
+            record(**changes)
+            tree = self.home / f'refused-{number}'
+            tree.mkdir()
+            with self.subTest(changes=changes), patch.object(provision.subprocess, 'run', return_value=pinned):
+                with self.assertRaisesRegex(ValueError, message): provision.add_kitten(tree, built)
+            self.assertFalse((tree / 'kitten').exists())
+        record()
+        tree = self.home / 'tree'
+        tree.mkdir()
+        with patch.object(provision.subprocess, 'run', return_value=pinned) as run:
+            provision.add_kitten(tree, built)
+        self.assertEqual(run.call_args.args[0][-2:], ['rev-parse', 'HEAD:src'])
+        self.assertEqual((tree / 'kitten/kitten').read_bytes(), b'binary')
+        self.assertEqual((tree / 'kitten/kitten').stat().st_mode & 0o777, 0o755)
+        self.assertEqual(sorted(item.name for item in (tree / 'kitten').iterdir()), ['LICENSE', 'kitten', 'kitten.json'])
 
     def test_failed_export_preserves_existing_archive(self):
         output = self.home / 'export.tar.gz'
