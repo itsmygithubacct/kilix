@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import pathlib
+import pty
 import signal
 import socket
 import subprocess
@@ -648,14 +649,17 @@ class VoiceCliTests(unittest.TestCase):
         self.assertEqual(set(requests[0]), {"op", "sock"})
         # The client leaves without reading the words, so the turn it may have
         # started is aborted: a finish would only have them decoded for nobody.
-        self.assertEqual(requests[1], {"op": "stop-dictation", "mode": "abort"})
+        # The abort names the receiver, so a kilix-voice that scopes stops
+        # cannot end another caller's turn with it.
+        self.assertEqual(requests[1], {
+            "op": "stop-dictation", "mode": "abort", "sock": requests[0]["sock"]})
         self.assertFalse(any(voice_session.glob("cli-*.sock")))
 
 
     def fake_voice_daemon(self, final_after=None, reply_delay=0.0, stop_reply_delay=0.0,
                           echo_mode=True, on_stop=None, on_dictate=None, drop_dictate_reply=False,
                           error_after=None, refuse_dictate=False, drop_first_abort_reply=False,
-                          final_on_accept=None):
+                          final_on_accept=None, partial_on_accept=None):
         """Answer the control socket as kilix-voiced does, recording each request.
 
         `dictate` is accepted and every stop acknowledged. With `final_after`,
@@ -668,10 +672,12 @@ class VoiceCliTests(unittest.TestCase):
         `drop_dictate_reply` that request is never answered. With
         `error_after`, the turn ends with an error datagram that many seconds
         after it is accepted, and with `final_on_accept` its text is the final
-        straight away. `refuse_dictate` refuses the turn, and
-        `drop_first_abort_reply` closes the first abort unanswered. Returns the requests, an event set once a turn is accepted,
-        and a close function; `self.received` is set once a `dictate` has
-        been read.
+        straight away, after the partial `partial_on_accept`. `refuse_dictate`
+        refuses the turn, and `drop_first_abort_reply` closes the first abort
+        unanswered, after that many seconds if it is a number. Each stop's
+        `sock` is taken out of its recorded request into `self.stop_scopes`.
+        Returns the requests, an event set once a turn is accepted, and a
+        close function; `self.received` is set once a `dictate` has been read.
         """
         previous = getattr(self, "_close_fake_voice_daemon", None)
         if previous is not None:
@@ -685,6 +691,7 @@ class VoiceCliTests(unittest.TestCase):
         server.listen(4)
         server.settimeout(0.1)
         requests = []
+        self.stop_scopes = []
         accepted = threading.Event()
         stopping = threading.Event()
 
@@ -733,6 +740,8 @@ class VoiceCliTests(unittest.TestCase):
                         # The client acts on a signal at the same points
                         # whether it lands before or after this reply is read.
                         accepted.set()
+                        if partial_on_accept is not None:
+                            send_final(receiver, {"partial": partial_on_accept})
                         if final_on_accept is not None:
                             send_final(receiver, {"final": final_on_accept})
                         if error_after is not None:
@@ -741,11 +750,14 @@ class VoiceCliTests(unittest.TestCase):
                             timer.daemon = True
                             timer.start()
                         continue
+                    self.stop_scopes.append(request.pop("sock", None))
                     mode = request.get("mode", "finish") if echo_mode else "finish"
                     if on_stop is not None:
                         on_stop(request)
                     if (drop_first_abort_reply and mode == "abort"
                             and sum(r.get("mode") == "abort" for r in requests) == 1):
+                        if drop_first_abort_reply is not True:
+                            time.sleep(drop_first_abort_reply)
                         continue  # closed unanswered; the client retries
                     time.sleep(stop_reply_delay)
                     reply = {"ok": True, "id": "", "stopped": True}
@@ -957,8 +969,9 @@ namespace["cmd_dictate"](int(seconds), discard == "1")
             ("acknowledged:SIGINT,aborting:SIGTERM", "1", 30, 1, abort, ""),
             ("acknowledged:SIGTERM,aborting:SIGINT", "0", 30, 1, abort, ""),
             ("acknowledged:SIGTERM+SIGINT", "0", 30, 1, abort, ""),
-            # Held past its whole budget before the abort: one is still sent.
-            ("acknowledged:SIGTERM,cancelling:STALL2.5", "0", 30, 1, abort, ""),
+            # Held past its whole budget before the abort: none is sent. A late
+            # abort can end the turn another caller started since (round 7, V2).
+            ("acknowledged:SIGTERM,cancelling:STALL2.5", "0", 30, 1, [], ""),
             ("acknowledged:SIGINT", "0", 30, 0, finish, "slow words\n"),
             # Once the words are being written, a cancel exits at once and the
             # dictation fails, so `kilix ask` throws away anything written.
@@ -1169,6 +1182,138 @@ namespace["cmd_dictate"](int(seconds), discard == "1")
                 proc.communicate(timeout=10)
                 self.assertEqual([request["op"] for request in requests], ["dictate"])
                 close()
+
+    def test_every_stop_names_its_own_receiver(self):
+        # stop-dictation names no turn. With the receiver named, a kilix-voice
+        # that scopes stops cannot end another caller's turn with a late one;
+        # an older one drops the field (round 7, V2).
+        self.install_fake_daemon()
+        for extra, mode in (((), None), (("--discard-on-interrupt",), "abort")):
+            with self.subTest(mode or "finish"):
+                requests, accepted, close = self.fake_voice_daemon(final_after=0.1)
+                proc = self.start_dictate("--seconds", "30", *extra)
+                self.assertTrue(accepted.wait(10))
+                os.killpg(proc.pid, signal.SIGINT)
+                proc.communicate(timeout=15)
+                self.assertEqual(len(requests), 2)
+                self.assertEqual(requests[1].get("mode"), mode)
+                self.assertEqual(self.stop_scopes, [requests[0]["sock"]])
+                close()
+
+    def test_a_ctrl_c_once_the_finish_is_asked_for_gives_up_at_once(self):
+        # The finish comes from a first Ctrl-C or from the cap. A Ctrl-C while
+        # it is unanswered gives up and aborts; it waited out both finish
+        # attempts, 10 s (round 7, V3).
+        self.install_fake_daemon()
+        for phase, seconds in (("after ctrl-c", "30"), ("after the cap", "1")):
+            with self.subTest(phase):
+                finishing = threading.Event()
+                requests, accepted, close = self.fake_voice_daemon(
+                    stop_reply_delay=6.0, on_stop=lambda request: finishing.set())
+                proc = self.start_dictate("--seconds", seconds)
+                self.assertTrue(accepted.wait(10))
+                if seconds == "30":
+                    os.killpg(proc.pid, signal.SIGINT)
+                self.assertTrue(finishing.wait(10))
+                started = time.monotonic()
+                os.killpg(proc.pid, signal.SIGINT)
+                self.assertTrue(self.wait_for(lambda: not self.receiver_present(), 3.0))
+                out, _err = proc.communicate(timeout=15)
+                self.assertLess(time.monotonic() - started, 4.5)
+                self.assertEqual((proc.returncode, out), (1, ""))
+                self.assertTrue(self.wait_for(lambda: len(requests) >= 3, 15))
+                self.assertEqual(requests[1:], [{"op": "stop-dictation"},
+                                                {"op": "stop-dictation", "mode": "abort"}])
+                close()
+
+    def read_screen(self, master):
+        os.set_blocking(master, False)
+        screen = b""
+        while True:
+            try:
+                chunk = os.read(master, 65536)
+            except (BlockingIOError, OSError):
+                return screen
+            if not chunk:
+                return screen
+            screen += chunk
+
+    def test_a_partial_is_shown_but_cannot_drive_the_terminal(self):
+        # Partials go to the terminal; a recogniser's control characters must
+        # not (round 7, V4).
+        self.install_fake_daemon()
+        master, slave = pty.openpty()
+        self.addCleanup(os.close, master)
+        try:
+            self.fake_voice_daemon(
+                partial_on_accept="half \x1b[2J heard", final_on_accept="all words")
+            proc = subprocess.Popen(
+                [KILIX, "dictate", "--seconds", "30"], env=self.environment,
+                stdout=subprocess.PIPE, stderr=slave, start_new_session=True)
+        finally:
+            os.close(slave)
+        out, _err = proc.communicate(timeout=15)
+        screen = self.read_screen(master)
+        self.assertEqual((proc.returncode, out), (0, b"all words\n"))
+        self.assertIn(b"half [2J heard", screen)
+        self.assertNotIn(b"\x1b[2J", screen)
+
+    def test_a_full_terminal_cannot_hold_a_cancel(self):
+        # A partial written to a terminal nobody reads blocked the client while
+        # its turn recorded: a hangup removed nothing and aborted nothing before
+        # the broker's SIGKILL 1.5 s later (round 7, V1). A failure's message
+        # must not hold its abort either: the dictate reply is lost, so the
+        # turn may be recording, and the client fails.
+        self.install_fake_daemon()
+        for sig, extra in ((signal.SIGTERM, ()), (signal.SIGINT, ("--discard-on-interrupt",)),
+                           (None, ())):
+            with self.subTest(sig.name if sig else "failure"):
+                master, slave = pty.openpty()
+                filler = os.open(os.ttyname(slave), os.O_WRONLY | os.O_NONBLOCK | os.O_NOCTTY)
+                try:
+                    until = time.monotonic() + 0.5
+                    while time.monotonic() < until:
+                        try:
+                            os.write(filler, b"x" * 4096)
+                        except BlockingIOError:
+                            time.sleep(0.005)
+                    requests, accepted, close = self.fake_voice_daemon(
+                        partial_on_accept="word " * 40, drop_dictate_reply=sig is None)
+                    proc = subprocess.Popen(
+                        [KILIX, "dictate", "--seconds", "30", *extra], env=self.environment,
+                        stdout=subprocess.PIPE, stderr=slave, start_new_session=True)
+                    if sig is None:
+                        self.assertTrue(self.received.wait(10))
+                    else:
+                        self.assertTrue(accepted.wait(10))
+                        time.sleep(0.3)  # the partial reaches the full terminal
+                        os.killpg(proc.pid, sig)
+                    cleaned = self.wait_for(
+                        lambda: not self.receiver_present() and len(requests) >= 2, 1.5)
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)  # the broker's deadline
+                    except ProcessLookupError:
+                        pass
+                    proc.communicate(timeout=10)
+                    self.assertTrue(cleaned)
+                    self.assertEqual(requests[1:], [{"op": "stop-dictation", "mode": "abort"}])
+                    self.assertFalse(self.receiver_present())
+                    close()
+                finally:
+                    for fd in (master, slave, filler):
+                        os.close(fd)
+
+    def test_cleanup_without_a_signal_still_retries_the_abort(self):
+        # An unanswered dictate request leaves the client unsure whether a turn
+        # started, so it aborts on the way out with no signal recorded. That
+        # abort's 2 s run from then: a first attempt lost after 0.4 s is
+        # retried (round 7, V4).
+        self.install_fake_daemon()
+        requests, _accepted, _close = self.fake_voice_daemon(
+            drop_dictate_reply=True, drop_first_abort_reply=0.4)
+        result = self.run_kilix("dictate", "--seconds", "30", check=False)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertEqual(requests[1:], [{"op": "stop-dictation", "mode": "abort"}] * 2)
 
     def test_a_refused_turn_is_not_stopped(self):
         # A refusal means no turn of ours exists; a stop names no turn, so it

@@ -1342,6 +1342,10 @@ class Cancelled(Exception):
     """Raised by `dictate` itself when a cancel is recorded, never by a handler."""
 
 
+class Failed(Exception):
+    """A `dictate` failure, reported once the turn is cleaned up."""
+
+
 def die(message, code=1):
     print("kilix voice: %s" % message, file=sys.stderr)
     raise SystemExit(code)
@@ -1398,8 +1402,9 @@ def connect(signals=None):
 def request(client, message, signals=None):
     """Send one request and read its reply.
 
-    With `signals`, an abort recorded while the reply is awaited ends the wait:
-    a dictation cancel must not sit out a wedged daemon's reply timeout.
+    With `signals`, an abort, or a Ctrl-C once a finish was asked for, ends
+    the wait: a dictation cancel must not sit out a wedged daemon's reply
+    timeout.
     """
     payload = (json.dumps(
         message, ensure_ascii=False, separators=(",", ":")) + "\n"
@@ -1419,7 +1424,7 @@ def request(client, message, signals=None):
         if signals is not None:
             deadline = time.monotonic() + (client.gettimeout() or REPLY_TIMEOUT)
             while not signals.wait(client, deadline - time.monotonic()):
-                if signals.abort:
+                if signals.giving_up():
                     raise Cancelled()
                 if time.monotonic() >= deadline:
                     raise TimeoutError()
@@ -1477,12 +1482,19 @@ def best_effort_stop(op):
         pass
 
 
-def stop_with_retry(op, signals=None):
-    """Return an error string unless one of two idempotent stops is confirmed."""
+def stop_with_retry(op, signals=None, sock=None):
+    """Return an error string unless one of two idempotent stops is confirmed.
+
+    `sock` names the receiver of the turn to stop. A kilix-voice that scopes
+    stops leaves another caller's turn alone; an older one drops the field.
+    """
+    message = {"op": op}
+    if sock is not None:
+        message["sock"] = sock
     error = "the voice daemon is no longer reachable"
     for _attempt in range(2):
         try:
-            exchange_existing({"op": op}, signals=signals)
+            exchange_existing(message, signals=signals)
         except AmbiguousRequest as failure:
             error = str(failure)
             continue
@@ -1582,6 +1594,7 @@ class Signals:
         self.abort_at = None    # when the abort was recorded; its budget runs from here
         self.hangup = False     # the terminal or the caller has gone
         self.interrupts = 0     # plain Ctrl-C: finish, and print the words
+        self.finish_from = None # interrupts already acted on when a finish was asked for
         self.leaving = False    # only the words are left to write
         self.wake, wake_write = os.pipe()
         os.set_blocking(self.wake, False)
@@ -1609,6 +1622,11 @@ class Signals:
     def cancelled(self):
         return self.abort or self.interrupts > 0
 
+    def giving_up(self):
+        """True on an abort, or on a Ctrl-C after a finish was asked for."""
+        return self.abort or (
+            self.finish_from is not None and self.interrupts > self.finish_from)
+
     def _drain(self, readable):
         if self.wake in readable:
             try:
@@ -1631,18 +1649,22 @@ class Signals:
         return (self.abort_at or time.monotonic()) + CANCEL_TIMEOUT
 
 
-def abort_turn(deadline):
-    """Abort the dictation turn by `deadline`; return an error or None."""
+def abort_turn(deadline, sock):
+    """Abort the turn whose receiver is `sock` by `deadline`; return an error or None.
+
+    Nothing is sent once the budget is spent. stop-dictation names no turn to
+    a kilix-voice that does not scope stops by `sock`, so a late abort could
+    end the turn another caller started since.
+    """
     error = "the voice daemon did not answer in time"
-    for attempt in range(2):
+    for _attempt in range(2):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            if attempt:
-                break
-            remaining = 0.25  # one short try, even if the budget ran out first
+            break
         try:
             reply = exchange_existing(
-                {"op": "stop-dictation", "mode": "abort"}, timeout=remaining)
+                {"op": "stop-dictation", "mode": "abort", "sock": sock},
+                timeout=remaining)
         except AmbiguousRequest as failure:
             error = str(failure)
             continue
@@ -1657,16 +1679,41 @@ def abort_turn(deadline):
     return error
 
 
+def open_status_line():
+    """A nonblocking description of the terminal, for the partial transcript.
+
+    It is a separate open of the same terminal, so the blocking flags every
+    other writer of stderr shares are unchanged. A partial that does not fit
+    is dropped rather than waited for: a cancel must never sit behind a full
+    terminal while a turn is still recording.
+    """
+    try:
+        return os.open(os.ttyname(2), os.O_WRONLY | os.O_NONBLOCK | os.O_NOCTTY)
+    except OSError:
+        return None
+
+
 def cmd_dictate(seconds, discard_on_interrupt=False):
     path = os.path.join(SESSION, "cli-%d.sock" % os.getpid())
     server = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
-    interactive = sys.stderr.isatty()
+    status_line = open_status_line() if sys.stderr.isatty() else None
     # A closed tab or a kill must not leave the microphone open until the cap:
     # nobody is left to read the words, so the turn is aborted, not finished.
     signals = Signals(discard_on_interrupt)
     # True from the moment the dictate request is sent until a final or an
     # error ends the turn: while it is true, every way out aborts the turn.
     owned = False
+    # A failure is reported only once the turn is cleaned up, so a terminal
+    # that is not being read cannot hold the abort.
+    failure = None
+
+    def show(text):
+        if status_line is None:
+            return
+        try:
+            os.write(status_line, text.encode("utf-8", "replace"))
+        except OSError:
+            pass
 
     def remove_receiver():
         server.close()
@@ -1688,9 +1735,9 @@ def cmd_dictate(seconds, discard_on_interrupt=False):
             request(client, {"op": "dictate", "sock": path}, signals)
         except RefusedRequest as error:
             owned = False
-            die(str(error))
+            raise Failed(str(error))
         except AmbiguousRequest as error:
-            die(str(error))
+            raise Failed(str(error))
         finally:
             client.close()
         deadline = time.monotonic() + seconds
@@ -1701,16 +1748,14 @@ def cmd_dictate(seconds, discard_on_interrupt=False):
         final_deadline = deadline + grace
         final = None
         stop_requested = False
-        interrupts = 0
         while final is None:
-            if signals.abort:
+            # An abort, or a Ctrl-C once the finish is asked for: give up.
+            if signals.giving_up():
                 raise Cancelled()
-            if signals.interrupts > interrupts:
-                interrupts = signals.interrupts
-                if stop_requested:
-                    die("dictation interrupted while waiting for the final result")
-                if error := stop_with_retry("stop-dictation", signals):
-                    die("could not stop dictation: %s" % error)
+            if signals.interrupts and not stop_requested:
+                signals.finish_from = signals.interrupts
+                if error := stop_with_retry("stop-dictation", signals, path):
+                    raise Failed("could not stop dictation: %s" % error)
                 stop_requested = True
                 final_deadline = min(final_deadline, time.monotonic() + grace)
                 continue
@@ -1718,8 +1763,9 @@ def cmd_dictate(seconds, discard_on_interrupt=False):
             if now >= final_deadline:
                 break
             if not stop_requested and now >= deadline:
-                if error := stop_with_retry("stop-dictation", signals):
-                    die("could not stop dictation: %s" % error)
+                signals.finish_from = signals.interrupts
+                if error := stop_with_retry("stop-dictation", signals, path):
+                    raise Failed("could not stop dictation: %s" % error)
                 stop_requested = True
                 continue
             if not signals.wait(server, min(0.25, final_deadline - now)):
@@ -1734,23 +1780,19 @@ def cmd_dictate(seconds, discard_on_interrupt=False):
                 continue
             if "error" in event:
                 owned = False
-                die(str(event["error"]))
+                raise Failed(str(event["error"]))
             if "final" in event:
                 final = str(event["final"])
                 owned = False
-            elif "partial" in event and interactive:
-                sys.stderr.write("\r\033[2K%s" % clean(str(event["partial"]))[:200])
-                sys.stderr.flush()
-        if signals.abort:
+            elif "partial" in event:
+                show("\r\033[2K%s" % clean(str(event["partial"]))[:200])
+        if signals.giving_up():
             raise Cancelled()
-        if interactive:
-            sys.stderr.write("\r\033[2K")
-            sys.stderr.flush()
         if final is None:
-            die("heard nothing before the dictation timed out")
+            raise Failed("heard nothing before the dictation timed out")
         final = clean(final).strip()
         if not final:
-            die("heard nothing")
+            raise Failed("heard nothing")
         # The turn is over, so the receiver goes now. From here a cancel exits
         # at once, even from a write blocked on a full pipe; a cancel recorded
         # just before this point is caught by the check after it.
@@ -1758,30 +1800,39 @@ def cmd_dictate(seconds, discard_on_interrupt=False):
         signals.leaving = True
         if signals.abort:
             raise Cancelled()
+        show("\r\033[2K")
         print(final)
         sys.stdout.flush()
+    except Failed as error:
+        show("\r\033[2K")
+        failure = str(error)
     except Cancelled:
         # The receiver goes first: nothing will read the words, and the broker
         # SIGKILLs a session 1.5 s after its SIGTERM.
         remove_receiver()
-        error = abort_turn(signals.abort_deadline()) if owned else None
+        error = abort_turn(signals.abort_deadline(), path) if owned else None
         owned = False
         if signals.hangup:
             # Nothing is printed: the terminal this would go to may be gone.
             raise SystemExit(1)
-        if interactive:
-            sys.stderr.write("\r\033[2K")
-            sys.stderr.flush()
+        show("\r\033[2K")
         if error:
-            die("could not cancel dictation: %s" % error)
-        die("dictation cancelled")
+            failure = "could not cancel dictation: %s" % error
+        elif not signals.abort and signals.finish_from is not None:
+            failure = "dictation interrupted while waiting for the final result"
+        else:
+            failure = "dictation cancelled"
     finally:
         if owned:
             # Leaving with a turn that may still be recording, and nobody to
             # read its words: the receiver goes and the turn is aborted.
             remove_receiver()
-            abort_turn(signals.abort_deadline())
+            abort_turn(signals.abort_deadline(), path)
         remove_receiver()
+        if status_line is not None:
+            os.close(status_line)
+    if failure is not None:
+        die(failure)
 
 operation = sys.argv[1]
 if operation == "speak":
