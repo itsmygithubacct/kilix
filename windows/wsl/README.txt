@@ -116,6 +116,7 @@ map has no quit key; close its Kilix pane when finished.
 
 Examples:
   kilix needle "split right"
+  kilix needle ask "split right"
   kilix needle apps "open pong"
   kilix --launch kilix-pong
   kilix games list
