@@ -1557,7 +1557,18 @@ def cmd_stop():
 
 def cmd_status():
     reply = daemon_status()
-    for key in ("speaking", "listening", "engines", "model", "device", "version"):
+    if sys.argv[2:3] == ["summary"]:
+        print("running", end="")
+        retained = reply.get("retained_cleanup", [])
+        if retained:
+            # Only the public cleanup fields; never render command arguments
+            # or an arbitrary daemon error here. Status performs no cleanup.
+            print("; cleanup retained: " + "; ".join(
+                "%s %s (%ss)" % (row["turn"], row["kind"], row["age_seconds"])
+                for row in retained), end="")
+        print()
+        return
+    for key in ("speaking", "listening", "engines", "model", "device", "version", "retained_cleanup"):
         value = reply.get(key)
         if isinstance(value, (dict, list)):
             value = json.dumps(value, separators=(",", ":"))
@@ -1895,8 +1906,9 @@ _kilix_voice_request() {
 
 # Never spawns: reporting that the daemon is stopped must not start it.
 _kilix_voice_daemon_state() {
-  if _kilix_voice_request status >/dev/null 2>&1; then
-    echo running
+  local state
+  if state="$(_kilix_voice_request status summary 2>/dev/null)"; then
+    printf '%s\n' "$state"
   elif [ -S "$_KILIX_VOICE_CONTROL" ]; then
     echo unresponsive
   else

@@ -398,6 +398,55 @@ class VoiceCliTests(unittest.TestCase):
         self.assertIn(str(Path(self.environment["KILIX_VOICE_PREFIX"]) / "bin"),
                       stt[0])
 
+    def test_doctor_and_summary_report_retained_cleanup_read_only(self):
+        self.hermetic_path()
+        self._stub_pactl("fixture_sink", "fixture_source")
+        session = Path(self.environment["KILIX_SESSION_HOME"]) / "voice"
+        session.mkdir(parents=True, mode=0o700)
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+        server.bind(str(session / "control.sock"))
+        server.listen(4)
+        server.settimeout(.1)
+        requests, failures = [], []
+        done = threading.Event()
+        retained = [{"turn": "listen-7", "kind": "capture", "age_seconds": 12.5},
+                    {"turn": "listen-7", "kind": "provider", "age_seconds": 11.0}]
+
+        def serve():
+            while not done.is_set():
+                try:
+                    client, _ = server.accept()
+                except socket.timeout:
+                    continue
+                with client:
+                    try:
+                        request = json.loads(client.recv(65536))
+                        requests.append(request)
+                        client.send(json.dumps({"ok": True, "status": {
+                            "listening": False, "speaking": False,
+                            "retained_cleanup": retained}}).encode())
+                    except Exception as error:
+                        failures.append(type(error).__name__)
+
+        worker = threading.Thread(target=serve, daemon=True)
+        worker.start()
+        try:
+            for args in (("voice", "doctor"), ("voice",)):
+                with self.subTest(command=args):
+                    result = self.run_kilix(*args)
+                    self.assertIn("cleanup retained", result.stdout)
+                    self.assertIn("listen-7", result.stdout)
+                    self.assertIn("capture", result.stdout)
+                    self.assertIn("provider", result.stdout)
+                    self.assertIn("12.5s", result.stdout)
+            self.assertTrue(requests)
+            self.assertEqual({r["op"] for r in requests}, {"status"})
+            self.assertEqual(failures, [])
+        finally:
+            done.set()
+            worker.join(2)
+            server.close()
+
     def _stub_pactl(self, default_sink, default_source=None):
         if default_source is None:
             default_source = default_sink + ".monitor"
