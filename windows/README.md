@@ -280,6 +280,13 @@ share that deadline; errors identify the phase when possible. Partial SSH
 diagnostics are retained on a timeout. A failed request may already have acted:
 inspect the desktop before retrying. Requests are never automatically replayed.
 
+Each SSH reply, including a failure, carries `transport`: a random
+`request_id` (also appended to error messages), the host, `total_ms`, and the
+phases that ran: `ssh_ms` (connection and remote PowerShell start), `setup_ms`
+(the remote helper), `native_ms` (the native desktop command) and `remote_ms`.
+The remote side echoes the identifier, and a reply naming another request is
+refused.
+
 Source checks without desktop access:
 
 ```sh
