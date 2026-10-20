@@ -1475,9 +1475,9 @@ def exchange_existing(message, timeout=REPLY_TIMEOUT, signals=None):
         client.close()
 
 
-def best_effort_stop(op):
+def best_effort_stop(message):
     try:
-        exchange_existing({"op": op})
+        exchange_existing(message)
     except (AmbiguousRequest, RefusedRequest):
         pass
 
@@ -1505,7 +1505,11 @@ def stop_with_retry(op, signals=None, sock=None):
 
 
 def one_request(message, ambiguous_stop=None):
-    """Use one connection for one request; kilix-voiced closes after reply."""
+    """Use one connection for one request; kilix-voiced closes after reply.
+
+    `ambiguous_stop` is the stop request sent when the reply is lost, since
+    the request may have started something.
+    """
     client = None
     try:
         client = connect()
@@ -1537,7 +1541,7 @@ def daemon_status():
 def cmd_speak():
     text = sys.stdin.read()
     one_request(
-        {"op": "speak", "text": text}, ambiguous_stop="stop-speech")
+        {"op": "speak", "text": text}, ambiguous_stop={"op": "stop-speech"})
 
 
 def cmd_stop():
@@ -1565,9 +1569,11 @@ def cmd_dictate_pane(pane, seconds):
     # user clicked its microphone and is the only thing that writes to the PTY.
     sock = os.path.join(SESSION, "dictate-%s.sock" % pane)
     del seconds  # the daemon reads the shared max-seconds setting
+    # The compensating stop names the pane's receiver, so a kilix-voice that
+    # scopes stops cannot finish a turn another caller started since.
     reply = one_request(
         {"op": "dictate", "sock": sock},
-        ambiguous_stop="stop-dictation")
+        ambiguous_stop={"op": "stop-dictation", "sock": sock})
     print("kilix dictate: listening for pane %s (id %s)"
           % (pane, reply.get("id", "?")), file=sys.stderr)
 
@@ -1606,6 +1612,10 @@ class Signals:
     def record(self, signum, _frame):
         if signum == signal.SIGINT and not self.discard_on_interrupt:
             self.interrupts += 1
+            if self.leaving and self.giving_up():
+                # A Ctrl-C once the finish was asked for gives the words up,
+                # even when they are blocked on a full pipe.
+                os._exit(1)
             return
         # Once set, nothing turns an abort back into a finish.
         if not self.abort:
@@ -1685,12 +1695,30 @@ def open_status_line():
     It is a separate open of the same terminal, so the blocking flags every
     other writer of stderr shares are unchanged. A partial that does not fit
     is dropped rather than waited for: a cancel must never sit behind a full
-    terminal while a turn is still recording.
+    terminal while a turn is still recording. `write_status` keeps SIGTTOU
+    from stopping the client there too.
     """
     try:
         return os.open(os.ttyname(2), os.O_WRONLY | os.O_NONBLOCK | os.O_NOCTTY)
     except OSError:
         return None
+
+
+def write_status(fd, text):
+    """Write to the status line; drop what the terminal will not take now.
+
+    In a background job with `stty tostop` set, a write to the terminal stops
+    the whole job with SIGTTOU, and a stopped client acts on no cancel while
+    its turn records. With SIGTTOU blocked the kernel lets the write through
+    instead.
+    """
+    blocked = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTTOU})
+    try:
+        os.write(fd, text.encode("utf-8", "replace"))
+    except OSError:
+        pass
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, blocked)
 
 
 def cmd_dictate(seconds, discard_on_interrupt=False):
@@ -1707,13 +1735,19 @@ def cmd_dictate(seconds, discard_on_interrupt=False):
     # that is not being read cannot hold the abort.
     failure = None
 
-    def show(text):
-        if status_line is None:
-            return
-        try:
-            os.write(status_line, text.encode("utf-8", "replace"))
-        except OSError:
-            pass
+    shown = False
+
+    def show(partial):
+        nonlocal shown
+        if status_line is not None:
+            write_status(status_line, "\r\033[2K%s" % partial)
+            shown = True
+
+    def clear_status():
+        nonlocal shown
+        if shown:
+            write_status(status_line, "\r\033[2K")
+            shown = False
 
     def remove_receiver():
         server.close()
@@ -1723,12 +1757,14 @@ def cmd_dictate(seconds, discard_on_interrupt=False):
             pass
 
     try:
-        if os.path.lexists(path):
-            os.unlink(path)
-        server.bind(path)
-        os.chmod(path, 0o600)
+        # Connected first: a daemon that cannot be started is reported while
+        # there is no receiver yet to remove.
         client = connect(signals)
         try:
+            if os.path.lexists(path):
+                os.unlink(path)
+            server.bind(path)
+            os.chmod(path, 0o600)
             if signals.cancelled():
                 raise Cancelled()
             owned = True
@@ -1785,7 +1821,7 @@ def cmd_dictate(seconds, discard_on_interrupt=False):
                 final = str(event["final"])
                 owned = False
             elif "partial" in event:
-                show("\r\033[2K%s" % clean(str(event["partial"]))[:200])
+                show(clean(str(event["partial"]))[:200])
         if signals.giving_up():
             raise Cancelled()
         if final is None:
@@ -1798,13 +1834,12 @@ def cmd_dictate(seconds, discard_on_interrupt=False):
         # just before this point is caught by the check after it.
         remove_receiver()
         signals.leaving = True
-        if signals.abort:
+        if signals.giving_up():
             raise Cancelled()
-        show("\r\033[2K")
+        clear_status()
         print(final)
         sys.stdout.flush()
     except Failed as error:
-        show("\r\033[2K")
         failure = str(error)
     except Cancelled:
         # The receiver goes first: nothing will read the words, and the broker
@@ -1815,7 +1850,6 @@ def cmd_dictate(seconds, discard_on_interrupt=False):
         if signals.hangup:
             # Nothing is printed: the terminal this would go to may be gone.
             raise SystemExit(1)
-        show("\r\033[2K")
         if error:
             failure = "could not cancel dictation: %s" % error
         elif not signals.abort and signals.finish_from is not None:
@@ -1830,6 +1864,8 @@ def cmd_dictate(seconds, discard_on_interrupt=False):
             abort_turn(signals.abort_deadline(), path)
         remove_receiver()
         if status_line is not None:
+            if not signals.hangup:
+                clear_status()
             os.close(status_line)
     if failure is not None:
         die(failure)

@@ -556,6 +556,44 @@ class VoiceCliTests(unittest.TestCase):
             {"op": "stop-dictation"},
         ])
 
+    def test_voice_stop_reports_a_refused_channel_and_still_stops_the_other(self):
+        # A refused stop is not retried and does not keep the other channel's
+        # stop from being sent, and an unconfirmed stop fails (round 8, R8-5).
+        self.install_fake_daemon()
+        voice_session = Path(self.environment["KILIX_SESSION_HOME"]) / "voice"
+        voice_session.mkdir(parents=True, mode=0o700)
+        control_path = voice_session / "control.sock"
+        for refused in ("stop-speech", "stop-dictation"):
+            with self.subTest(refused):
+                server = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+                server.bind(str(control_path))
+                server.listen(3)
+                requests = []
+
+                def serve():
+                    for _stop in range(2):
+                        client, _address = server.accept()
+                        with client:
+                            request = json.loads(client.recv(65536))
+                            requests.append(request)
+                            reply = ({"ok": False, "id": "", "error": "busy elsewhere"}
+                                     if request["op"] == refused
+                                     else {"ok": True, "id": "", "stopped": True})
+                            client.send(json.dumps(reply).encode())
+
+                worker = threading.Thread(target=serve, daemon=True)
+                worker.start()
+                try:
+                    result = self.run_kilix("voice", "stop", check=False)
+                finally:
+                    server.close()
+                    control_path.unlink(missing_ok=True)
+                worker.join(timeout=2)
+                self.assertFalse(worker.is_alive())
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn("%s: busy elsewhere" % refused, result.stderr)
+                self.assertEqual(requests, [{"op": "stop-speech"}, {"op": "stop-dictation"}])
+
     def test_speak_uses_compact_unicode_packet_and_rejects_oversize_text(self):
         self.install_fake_daemon()
         voice_session = Path(self.environment["KILIX_SESSION_HOME"]) / "voice"
@@ -659,7 +697,8 @@ class VoiceCliTests(unittest.TestCase):
     def fake_voice_daemon(self, final_after=None, reply_delay=0.0, stop_reply_delay=0.0,
                           echo_mode=True, on_stop=None, on_dictate=None, drop_dictate_reply=False,
                           error_after=None, refuse_dictate=False, drop_first_abort_reply=False,
-                          final_on_accept=None, partial_on_accept=None):
+                          final_on_accept=None, partial_on_accept=None,
+                          final_words="slow words", refuse_stop=()):
         """Answer the control socket as kilix-voiced does, recording each request.
 
         `dictate` is accepted and every stop acknowledged. With `final_after`,
@@ -672,9 +711,11 @@ class VoiceCliTests(unittest.TestCase):
         `drop_dictate_reply` that request is never answered. With
         `error_after`, the turn ends with an error datagram that many seconds
         after it is accepted, and with `final_on_accept` its text is the final
-        straight away, after the partial `partial_on_accept`. `refuse_dictate`
-        refuses the turn, and `drop_first_abort_reply` closes the first abort
-        unanswered, after that many seconds if it is a number. Each stop's
+        straight away, after the partial `partial_on_accept`. `final_words` is
+        the final a finish delivers. `refuse_dictate` refuses the turn,
+        `refuse_stop` refuses stops in those modes, and `drop_first_abort_reply`
+        closes the first abort unanswered, after that many seconds if it is a
+        number. Each stop's
         `sock` is taken out of its recorded request into `self.stop_scopes`.
         Returns the requests, an event set once a turn is accepted, and a
         close function; `self.received` is set once a `dictate` has been read.
@@ -698,7 +739,7 @@ class VoiceCliTests(unittest.TestCase):
         def send_final(path, event=None):
             out = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
             try:
-                out.sendto(json.dumps(event or {"final": "slow words"}).encode(), path)
+                out.sendto(json.dumps(event or {"final": final_words}).encode(), path)
             except OSError:
                 pass
             finally:
@@ -760,6 +801,11 @@ class VoiceCliTests(unittest.TestCase):
                             time.sleep(drop_first_abort_reply)
                         continue  # closed unanswered; the client retries
                     time.sleep(stop_reply_delay)
+                    if mode in refuse_stop:
+                        client.send(json.dumps({
+                            "ok": False, "id": "",
+                            "error": "the turn could not be stopped"}).encode())
+                        continue
                     reply = {"ok": True, "id": "", "stopped": True}
                     if echo_mode:
                         reply["mode"] = mode
@@ -977,13 +1023,18 @@ namespace["cmd_dictate"](int(seconds), discard == "1")
             # dictation fails, so `kilix ask` throws away anything written.
             ("printing:SIGTERM", "0", 1, 1, finish, ""),
             ("printing:SIGINT", "1", 1, 1, finish, ""),
-            ("printing:SIGINT", "0", 1, 0, finish, "slow words\n"),
+            # The cap (1 s) asked for the finish, so a Ctrl-C gives the words
+            # up, as it does while the finish is unanswered; so does a second
+            # Ctrl-C after a first asked for it (round 8, R8-3).
+            ("printing:SIGINT", "0", 1, 1, finish, ""),
+            ("acknowledged:SIGINT,printing:SIGINT", "0", 30, 1, finish, ""),
             # The receiver goes as soon as the final is in, before any word is
             # written; a cancel then still discards the words.
             ("cleanup:SIGTERM", "0", 1, 1, finish, ""),
             ("cleanup:SIGHUP", "1", 1, 1, finish, ""),
             ("cleanup:SIGINT", "1", 1, 1, finish, ""),
-            ("cleanup:SIGINT", "0", 1, 0, finish, "slow words\n"),
+            ("cleanup:SIGINT", "0", 1, 1, finish, ""),
+            ("acknowledged:SIGINT,cleanup:SIGINT", "0", 30, 1, finish, ""),
         )
         for steps, discard, seconds, status, stops, words in cases:
             with self.subTest(steps=steps, discard=discard):
@@ -1314,6 +1365,170 @@ namespace["cmd_dictate"](int(seconds), discard == "1")
         result = self.run_kilix("dictate", "--seconds", "30", check=False)
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertEqual(requests[1:], [{"op": "stop-dictation", "mode": "abort"}] * 2)
+
+    TOSTOP_LEADER = r"""
+import os, subprocess, sys, termios
+# A session leader's first terminal becomes its controlling terminal, with the
+# leader's group in the foreground. `stty tostop` is set on it.
+tty = os.open(sys.argv[1], os.O_RDWR)
+attributes = termios.tcgetattr(tty)
+attributes[3] |= termios.TOSTOP
+termios.tcsetattr(tty, termios.TCSANOW, attributes)
+# The job gets a group of its own: a background job, and not an orphaned one
+# while this leader, in another group of the same session, waits for it.
+job = subprocess.Popen(sys.argv[2:], stdout=subprocess.DEVNULL, stderr=tty, process_group=0)
+print(job.pid, flush=True)
+job.wait()
+"""
+
+    def test_a_background_job_is_not_stopped_by_a_partial(self):
+        # With `stty tostop`, a background job that writes to its terminal is
+        # stopped by SIGTTOU. A partial did that while the turn recorded, and
+        # the stopped client acted on no cancel: the broker's SIGKILL left the
+        # receiver and the turn behind (round 8, R8-1).
+        self.install_fake_daemon()
+        master, slave = pty.openpty()
+        self.addCleanup(os.close, master)
+        terminal = os.ttyname(slave)
+        os.close(slave)
+        requests, accepted, _close = self.fake_voice_daemon(partial_on_accept="word " * 40)
+        leader = subprocess.Popen(
+            [sys.executable, "-c", self.TOSTOP_LEADER, terminal, str(KILIX), "dictate",
+             "--seconds", "30"],
+            env=self.environment, stdout=subprocess.PIPE, text=True, start_new_session=True)
+        job = int(leader.stdout.readline())
+        screen = b""
+
+        def shown_or_stopped():
+            nonlocal screen
+            screen += self.read_screen(master)
+            try:
+                stat = Path("/proc/%d/stat" % job).read_text()
+            except OSError:
+                return True
+            return b"word" in screen or stat.rsplit(")", 1)[1].split()[0] == "T"
+
+        try:
+            self.assertTrue(accepted.wait(10))
+            self.assertTrue(self.wait_for(shown_or_stopped, 5))
+            os.killpg(job, signal.SIGTERM)
+            cleaned = self.wait_for(
+                lambda: not self.receiver_present() and len(requests) >= 2, 1.5)
+        finally:
+            try:
+                os.killpg(job, signal.SIGKILL)  # the broker's deadline
+            except ProcessLookupError:
+                pass
+            leader.communicate(timeout=10)
+        self.assertTrue(cleaned)
+        self.assertIn(b"word", screen)
+        self.assertEqual(requests[1:], [{"op": "stop-dictation", "mode": "abort"}])
+
+    def test_a_second_ctrl_c_gives_up_words_blocked_on_a_full_pipe(self):
+        # A first Ctrl-C asks for the words. A second gives them up, even while
+        # they are blocked on a pipe nobody drains (round 8, R8-3).
+        self.install_fake_daemon()
+        pids = []
+        requests, accepted, _close = self.fake_voice_daemon(
+            final_after=0.1, final_words="word " * 6000,
+            on_dictate=lambda request: pids.append(
+                int(Path(request["sock"]).stem.split("-")[1])))
+        proc = subprocess.Popen(
+            [KILIX, "dictate", "--seconds", "30"], env=self.environment,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
+            pipesize=4096)
+        self.assertTrue(accepted.wait(10))
+        os.killpg(proc.pid, signal.SIGINT)
+        client = Path("/proc/%d" % pids[0])
+        self.assertTrue(self.wait_for(lambda: "pipe" in (client / "wchan").read_text(), 10))
+        os.killpg(proc.pid, signal.SIGINT)
+        gone = self.wait_for(lambda: not client.exists(), 3.0)
+        proc.communicate(timeout=10)
+        self.assertTrue(gone)
+        self.assertEqual(proc.returncode, 1)
+        self.assertEqual(requests[1:], [{"op": "stop-dictation"}])
+        self.assertFalse(self.receiver_present())
+
+    def waits_on_a_terminal(self, group):
+        """True when a process of `group` is blocked writing to a terminal."""
+        for stat in Path("/proc").glob("[0-9]*/stat"):
+            try:
+                fields = stat.read_text().rsplit(")", 1)[1].split()
+                if int(fields[2]) == group and (
+                        stat.parent / "wchan").read_text() == "wait_woken":
+                    return True
+            except (OSError, IndexError, ValueError):
+                continue
+        return False
+
+    def test_a_startup_failure_is_not_held_by_a_full_terminal(self):
+        # No daemon is installed, so the client fails before asking for a turn.
+        # Its message went to a full terminal after the receiver was bound, so
+        # a cancel freed nothing and the broker's SIGKILL left the receiver
+        # (round 8, R8-4).
+        session = Path(self.environment["KILIX_SESSION_HOME"]) / "voice"
+        master, slave = pty.openpty()
+        filler = os.open(os.ttyname(slave), os.O_WRONLY | os.O_NONBLOCK | os.O_NOCTTY)
+        try:
+            until = time.monotonic() + 0.5
+            while time.monotonic() < until:
+                try:
+                    os.write(filler, b"x" * 4096)
+                except BlockingIOError:
+                    time.sleep(0.005)
+            proc = subprocess.Popen(
+                [KILIX, "dictate", "--seconds", "30"], env=self.environment,
+                stdout=subprocess.PIPE, stderr=slave, start_new_session=True)
+            blocked = self.wait_for(lambda: self.waits_on_a_terminal(proc.pid), 10)
+            os.killpg(proc.pid, signal.SIGTERM)
+            time.sleep(1.5)
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)  # the broker's deadline
+            except ProcessLookupError:
+                pass
+            proc.communicate(timeout=10)
+        finally:
+            for fd in (master, slave, filler):
+                os.close(fd)
+        self.assertTrue(blocked)
+        self.assertFalse(any(session.glob("cli-*.sock")))
+
+    def test_a_pane_compensation_names_the_pane_receiver(self):
+        # A lost reply to a pane's dictate is compensated with a stop. Naming
+        # no receiver, it finished whatever turn was current, another caller's
+        # on a kilix-voice that scopes stops (round 8, R8-2).
+        self.install_fake_daemon()
+        requests, _accepted, _close = self.fake_voice_daemon(drop_dictate_reply=True)
+        pane = self.voice_session / "dictate-3.sock"
+        receiver = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        self.addCleanup(receiver.close)
+        receiver.bind(str(pane))
+        os.chmod(pane, 0o600)
+        result = self.run_kilix("dictate", "--pane", "3", check=False)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertEqual(requests, [{"op": "dictate", "sock": str(pane)},
+                                    {"op": "stop-dictation"}])
+        self.assertEqual(self.stop_scopes, [str(pane)])
+
+    def test_a_refused_finish_fails_and_aborts_the_turn(self):
+        # A refused finish leaves the turn recording, with nobody to read its
+        # words: the client fails and aborts it, rather than waiting for a
+        # final that will not come (round 8, R8-5).
+        self.install_fake_daemon()
+        requests, accepted, _close = self.fake_voice_daemon(refuse_stop=("finish",))
+        proc = self.start_dictate("--seconds", "30")
+        try:
+            self.assertTrue(accepted.wait(10))
+            os.killpg(proc.pid, signal.SIGINT)
+            self.assertTrue(self.wait_for(lambda: proc.poll() is not None, 5))
+        finally:
+            if proc.poll() is None:
+                os.killpg(proc.pid, signal.SIGKILL)
+            out, err = proc.communicate(timeout=10)
+        self.assertEqual((proc.returncode, out), (1, ""))
+        self.assertIn("could not stop dictation: the turn could not be stopped", err)
+        self.assertEqual(requests[1:], [{"op": "stop-dictation"},
+                                        {"op": "stop-dictation", "mode": "abort"}])
 
     def test_a_refused_turn_is_not_stopped(self):
         # A refusal means no turn of ours exists; a stop names no turn, so it
