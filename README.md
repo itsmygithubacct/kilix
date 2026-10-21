@@ -35,6 +35,11 @@ their named versions; they are not a current component inventory.
 For the human and agent workflows that connect terminal work, automation,
 verification and recovery, see [Kilix Workflows](docs/workflows/README.md).
 
+`kilix session` launches managed Codex, Claude or Grok runs with explicit folder
+trust, native UI or headless logging, and lifecycle inspection. New panes preserve
+focus. See [managed coding sessions](docs/session.md) for commands, the importable
+`kilix_session` library and the installed `kilix-session` entry.
+
 - The three-line Start button and status widgets open floating drop-downs above
   the panes. Panes keep their size and continue updating behind the popup.
 - Popups follow the page-strip position, fit the window when resized, and

@@ -116,8 +116,8 @@ def read_payload(args):
 
 class Ledger:
     """Private durable receipts, locked per terminal/broker across senders."""
-    def __init__(self, fd, name):
-        self.fd, self.name = fd, name
+    def __init__(self, fd, name, *, limit=16384):
+        self.fd, self.name, self.limit = fd, name, limit
 
     def read(self):
         try:
@@ -130,8 +130,8 @@ class Ledger:
             if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
                     or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) != 0o600):
                 raise ControlError("delivery receipt must be a private owned regular file")
-            raw = stream.read(16385)
-            if len(raw) > 16384:
+            raw = stream.read(self.limit + 1)
+            if len(raw) > self.limit:
                 raise ControlError("delivery receipt exceeds its size limit")
             record = json.loads(raw)
             if not isinstance(record, dict):

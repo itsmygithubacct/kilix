@@ -20,10 +20,13 @@ settings file is refused rather than replaced.
 from __future__ import annotations
 
 import errno
+from contextlib import contextmanager
+import fcntl
 import json
 import os
 from pathlib import Path
 import re
+import stat
 import tempfile
 import time
 import tomllib
@@ -85,6 +88,7 @@ def _claude(directory: str, home: Path) -> str:
     path = Path(base) / ".claude.json" if base else home / ".claude.json"
     if path.is_symlink():
         raise TrustError(f"{path} is a symbolic link; it is left as it is")
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     with _ClaudeLock(path):
         try:
             data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
@@ -101,9 +105,43 @@ def _claude(directory: str, home: Path) -> str:
     return "trusted"
 
 
+@contextmanager
+def _codex_lock(path):
+    """Serialize Kilix's concurrent grants without locking Codex out of its UI."""
+    from agent_skills import Conflict, directory
+    try:
+        with directory(path.parent, create=True) as parent:
+            fd = os.open(".kilix-trust.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
+                         0o600, dir_fd=parent)
+            try:
+                info = os.fstat(fd)
+                if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                        or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) != 0o600):
+                    raise TrustError("Codex trust lock must be a private owned regular file")
+                deadline = time.monotonic() + 5
+                while True:
+                    try:
+                        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break
+                    except BlockingIOError:
+                        if time.monotonic() >= deadline:
+                            raise TrustError("Codex folder trust is busy; try again")
+                        time.sleep(0.05)
+                yield
+            finally:
+                os.close(fd)
+    except (OSError, Conflict) as exc:
+        raise TrustError(f"cannot lock Codex folder trust: {exc}") from exc
+
+
 def _codex(directory: str, home: Path) -> str:
     base = os.environ.get("CODEX_HOME")
     path = (Path(base) if base else home / ".codex") / "config.toml"
+    with _codex_lock(path):
+        return _codex_unlocked(directory, path)
+
+
+def _codex_unlocked(directory: str, path: Path) -> str:
     if path.is_symlink():
         raise TrustError(f"{path} is a symbolic link; it is left as it is")
     try:

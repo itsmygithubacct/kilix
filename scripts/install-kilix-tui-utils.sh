@@ -97,6 +97,10 @@ install_checkout() {
   if [ ! -f "$launcher" ] || [ -L "$launcher" ] || [ ! -x "$launcher" ]; then
     die "install did not produce a regular executable: $launcher"
   fi
+  # The session manager belongs to the host closure. Pleb install/update and
+  # Plebian-OS provisioning already use this command-installation path.
+  python3 -B "$KILIX_HOME/scripts/install-kilix-session.py" \
+    --prefix "$KILIX_TUI_UTILS_PREFIX" >&2 || die "kilix-session entry installation failed"
 }
 
 checkout_ref() {

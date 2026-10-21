@@ -10,6 +10,7 @@ creating, finding, reading and controlling pages and panes, logs and sessions.
 - [Release status and versions](release.md)
 - [Start menu and settings](settings.md)
 - [Pages and panes](panes.md)
+- [Managed coding sessions, trusted folders and run logs](../session.md)
 - [Explicit model setup](models.md)
 - [Read aloud and dictation](speech.md)
 - [Contained browsers](browsers.md)

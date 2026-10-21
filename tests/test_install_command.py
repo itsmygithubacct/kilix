@@ -21,6 +21,24 @@ import install as installer  # noqa: E402
 
 
 class ListingTests(unittest.TestCase):
+    def test_bundled_session_tool_is_visible_in_text_and_json_catalogs(self):
+        import contextlib
+        import io
+        row = next(r for r in installer.rows() if r["id"] == "kilix-session")
+        self.assertEqual(row["kind"], "tool")
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            installer._print_table([row])
+        self.assertIn("kilix-session", output.getvalue())
+
+    def test_session_install_and_update_use_selected_host_entry_installer(self):
+        with mock.patch.object(installer.subprocess, "run", return_value=mock.Mock(returncode=0)) as run:
+            self.assertEqual(installer.install("kilix-session"), 0)
+            self.assertEqual(installer.update("kilix-session"), 0)
+        self.assertEqual(run.call_count, 2)
+        for call in run.call_args_list:
+            self.assertEqual(Path(call.args[0][-1]), Path(ROOT) / "scripts/install-kilix-session.py")
+
     def test_the_three_coding_agents_are_listed(self):
         ids = {row["id"] for row in installer.rows()}
         for agent in ("claude", "codex", "kimi"):

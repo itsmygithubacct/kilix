@@ -26,6 +26,7 @@
 #   ./kilix launcher          # catalog TUI: stack programs, apps, launchers
 #   ./kilix skills ...        # explicitly install/list/remove bundled agent skills
 #   ./kilix agent-control ... # bounded coding-session inspection and control
+#   ./kilix session ...       # managed coding runs, trust, logs and lifecycle
 #   ./kilix action ...        # structured actions and compact verified receipts
 #   ./kilix app run ID        # install/run one pinned catalog application
 #   ./kilix app window ID     # render a terminal app in a desktop window
@@ -148,6 +149,9 @@ case "${1:-}" in
   agent-control)
     shift
     exec python3 "$KILIX_HOME/config/agent_control.py" "$@" ;;
+  session)
+    shift
+    exec python3 -B "$KILIX_HOME/kilix-session" "$@" ;;
   action)
     shift
     if [[ "${1:-}" == capabilities ]]; then
@@ -200,6 +204,9 @@ TARGET: unique title or pane:ID. Above is the complete syntax; no subcommand --h
 or pane list needed first. Ambiguous targets fail; each verb prints what it did.
 Coding agent input (verify the target first):
   kilix agent-control context|list|dump|send|key   --help
+Managed coding runs (new panes preserve focus):
+  kilix session launch codex --cwd DIR --trust-folder --model MODEL
+  kilix session list|show|logs|wait|stop|batch|providers --help
 Structured actions with durable receipts:
   kilix action --request-json -             structured request from stdin
   kilix action capabilities                inspect available features

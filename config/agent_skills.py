@@ -84,7 +84,10 @@ def directory(path, *, create=False, require_user=True):
             except FileNotFoundError:
                 if not create:
                     raise
-                os.mkdir(part, 0o700, dir_fd=fd)
+                try:
+                    os.mkdir(part, 0o700, dir_fd=fd)
+                except FileExistsError:
+                    pass  # Another cooperating creator won; verify below.
                 child = os.open(part, DIR_FLAGS, dir_fd=fd)
             os.close(fd)
             fd = child
