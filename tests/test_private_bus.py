@@ -28,6 +28,7 @@ if sys.argv[1]=='resist':signal.signal(signal.SIGTERM,signal.SIG_IGN)
 while True:time.sleep(.03)
 '''
 OWNER = '''import json,os,subprocess,sys,time
+from pathlib import Path
 sys.path.insert(0,sys.argv[1])
 sys.path.insert(0,os.path.join(sys.argv[1],'..','tests'))
 from _env_support import sandbox_env
@@ -38,7 +39,9 @@ bus=PrivateBus(supervisor,sandbox_env())
 app=supervisor.spawn('app',['/usr/bin/python3','-c','import time;time.sleep(30)'],
  env=bus.environment(sandbox_env()),_kilix_remote_launcher=bus.launch_primary)
 if sys.argv[3]!='unbound':bus.bind(app)
-print(json.dumps({'primary':app.pid,'guardian':bus.guardian_pid,'daemon':bus.daemon_pid,'bus-owner':bus.owner_process.pid}),flush=True)
+owner_pid=int(Path(f'/proc/{bus.guardian_pid}/stat').read_text().rsplit(')',1)[1].split()[1])
+print(json.dumps({'primary':app.pid,'guardian':bus.guardian_pid,'daemon':bus.daemon_pid,'bus-owner':owner_pid,
+ 'wait-owner':bus.platform.wait_owner[1],'supervisor':bus.owner_process.pid}),flush=True)
 while True:time.sleep(.03)
 '''
 
@@ -73,8 +76,12 @@ class PrivateBusOwnership(unittest.TestCase):
         app = supervisor.spawn("app", command, env=private, stdout=subprocess.PIPE,
                                _kilix_remote_launcher=bus.launch_primary)
         # Pin every identity before opening the gate, including fast exits.
+        owner_pid = int(Path(f"/proc/{bus.guardian_pid}/stat").read_text().rsplit(")", 1)[1].split()[1])
         identities = {}
-        for role, pid in (("primary", app.pid), ("guardian", bus.guardian_pid), ("daemon", bus.daemon_pid), ("bus-owner", bus.owner_process.pid)):
+        for role, pid in (("primary", app.pid), ("guardian", bus.guardian_pid),
+                          ("daemon", bus.daemon_pid), ("bus-owner", owner_pid),
+                          ("wait-owner", bus.platform.wait_owner[1]),
+                          ("supervisor", bus.owner_process.pid)):
             fd = os.pidfd_open(pid)
             self.pidfds.append((pid, fd))
             stat = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
@@ -133,9 +140,10 @@ class PrivateBusOwnership(unittest.TestCase):
         supervisor, bus, app, owned, ready = self.start("activated-" + mode, "resist", env)
         client, owned["activated-service"] = self.activate(bus, name)
         self.assertEqual(owned["guardian"]["pid"], int(Path(f"/proc/{bus.daemon_pid}/stat").read_text().rsplit(")", 1)[1].split()[1]))
-        self.assertEqual(int(Path(f"/proc/{bus.guardian_pid}/stat").read_text().rsplit(")", 1)[1].split()[1]), bus.owner_process.pid)
+        self.assertEqual(int(Path(f"/proc/{bus.guardian_pid}/stat").read_text().rsplit(")", 1)[1].split()[1]), owned["bus-owner"]["pid"])
+        self.assertEqual(int(Path(f"/proc/{owned['bus-owner']['pid']}/stat").read_text().rsplit(")", 1)[1].split()[1]), owned["wait-owner"]["pid"])
         if daemonize:
-            self.assertEqual(owned["activated-service"]["parent"], bus.owner_process.pid)
+            self.assertEqual(owned["activated-service"]["parent"], owned["bus-owner"]["pid"])
         print(json.dumps({"activation_started": {role: {k: v for k, v in row.items() if k != "fd"}
                                                 for role, row in owned.items()}}), flush=True)
         started = time.monotonic()
@@ -181,7 +189,7 @@ class PrivateBusOwnership(unittest.TestCase):
 
     def test_sdk_hard_death_reaps_resistant_activated_service_and_primary(self):
         env, name = self.activation_environment("sdk-death")
-        command = OWNER.replace("'bus-owner':bus.owner_process.pid}", "'bus-owner':bus.owner_process.pid,'address':bus.address}")
+        command = OWNER.replace("'supervisor':bus.owner_process.pid}", "'supervisor':bus.owner_process.pid,'address':bus.address}")
         command = command.replace("import time;time.sleep(30)", "import signal,time;signal.signal(signal.SIGTERM,signal.SIG_IGN);time.sleep(30)")
         parent = subprocess.Popen([sys.executable, "-c", command, str(ROOT / "config"),
                                    str(ROOT / "config/kilix_sdk/private_bus.py"), "bound"],

@@ -178,6 +178,8 @@ finally:
 
 class FakeAttrs:
     map_state = apprun.X.IsViewable
+    win_class = apprun.X.InputOutput
+    override_redirect = False
 
 
 class FakeGeom:
