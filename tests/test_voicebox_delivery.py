@@ -53,6 +53,21 @@ class DeliveryTests(unittest.TestCase):
         v.install(self.root, path, digest)
         return digest
 
+    def test_cli_prepare_dispatches_without_a_terminal_engine(self):
+        from _env_support import sandbox_env
+        host = Path(__file__).resolve().parents[1]
+        package, digest = self.package()
+        env = sandbox_env(HOME=str(self.base), GPU_TERMINAL_HOME=str(self.base / 'gpu'))
+        for command in ('voicebox', 'kilix-voicebox'):
+            with self.subTest(command=command):
+                root = self.base / command
+                result = subprocess.run([str(host / 'kilix'), command, 'prepare',
+                    '--root', str(root), '--package', str(package), '--sha256', digest],
+                    env=env, capture_output=True, text=True, timeout=15)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(v.selection(root)['current'], digest)
+        self.preserved()
+
     def preserved(self):
         self.assertEqual(self.sentinel.read_bytes(), b'owned synthetic sample')
 
