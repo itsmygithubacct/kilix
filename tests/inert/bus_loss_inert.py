@@ -484,7 +484,7 @@ class LossTests(unittest.TestCase):
         boundary=types.SimpleNamespace(outer=types.SimpleNamespace(join_fd=492001),inner=types.SimpleNamespace(join_fd=492002))
         n.delegation=types.SimpleNamespace(open=lambda path,pid:calls.append(('open',path,pid)) or 492000,boundary=lambda fd,token:boundary)
         with H.replace(module,os=types.SimpleNamespace(fchown=lambda fd,uid,gid:calls.append(('grant',fd,uid,gid)),fchmod=lambda fd,mode:calls.append(('mode',fd,mode)))):self.assertIs(n.allocate(),boundary)
-        self.assertEqual(calls,[('open',IDENTITY[2],IDENTITY[1]),('grant',492001,1000,0),('mode',492001,0o660),('grant',492002,1000,0),('mode',492002,0o660)])
+        self.assertEqual(calls,[('open',IDENTITY[2],IDENTITY[1]),('mode',492001,0o660),('grant',492001,1000,0),('mode',492002,0o660),('grant',492002,1000,0)])
     def test_primary_request_rejects_unbound_command_env_and_stale_instance(self):
         module=self.candidate.server;valid=dict(version=2,op='primary-launch',instance=TOKEN,request='d'*32,
             argv=['/usr/bin/inert-app'],env={'PLEB_DESKTOP_SESSION_ID':'42','XDG_SESSION_ID':'42'},cwd='/inert')

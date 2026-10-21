@@ -21,12 +21,16 @@ import stat
 import struct
 import sys
 import time
+import traceback
 
 
 def report_failure(phase, error):
     """Retain one bounded diagnostic without exposing caller environment data."""
     message = str(error).replace('\n', ' ').replace('\r', ' ')[:512]
-    print(f'private-bus {phase}: {type(error).__name__}: {message}',
+    frames = traceback.extract_tb(error.__traceback__)
+    location = '; '.join(f'{Path(frame.filename).name}:{frame.lineno}:{frame.name}'
+                         for frame in frames[-4:])
+    print(f'private-bus {phase}: {type(error).__name__}: {message} [{location}]',
           file=sys.stderr, flush=True)
 
 if not __package__:
@@ -362,8 +366,11 @@ class NativeAncestor:
         for leaf in (self.boundary.outer, self.boundary.inner):
             # Root's fixed birth prelude retains group-0 write permission.
             # The caller owns only these leaves; no common ancestor is altered.
-            os.fchown(leaf.join_fd, self.uid, 0)
+            # Set permissions while root still owns the file. This fixed
+            # service has CAP_CHOWN but deliberately no CAP_FOWNER, so chmod
+            # after handing ownership to the caller would fail with EPERM.
             os.fchmod(leaf.join_fd, 0o660)
+            os.fchown(leaf.join_fd, self.uid, 0)
         return self.boundary
 
     def exec_owner(self, hello, fds, ancestor, gate, limit):
