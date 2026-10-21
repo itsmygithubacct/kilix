@@ -294,10 +294,17 @@ class QwenProviderRouteTests(unittest.TestCase):
 
     def staged_preparation(self, ready, requested_device, capable=False):
         selected = self.provider_source()
-        builder = Path(selected)/'tools'
         scratch = tempfile.TemporaryDirectory()
         self.addCleanup(scratch.cleanup)
         root = Path(scratch.name)
+        # A source supplied by CI is a shared input, not a managed private
+        # checkout. Stage an owned copy just as preparation normally does.
+        staged = root / 'provider'
+        subprocess.run(['git', 'clone', '--shared', selected, str(staged)],
+                       check=True, capture_output=True, env=provider.clean_environment())
+        staged.chmod(0o700)
+        selected = str(staged)
+        builder = staged / 'tools'
         managed,previous = self.previous(root)
         calls = []
         def run(source,command,_environment,**kwargs):

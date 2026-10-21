@@ -10,6 +10,9 @@ import tempfile
 import threading
 import time
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _env_support import sandbox_env
+
 from gi.repository import Gio, GLib
 
 NAME = 'org.freedesktop.ScreenSaver'
@@ -422,7 +425,7 @@ def host(bridge_path):
     thread = threading.Thread(target=loop.run, daemon=True)
     thread.start()
     process = subprocess.Popen(['dbus-run-session', '--', '/usr/bin/python3', __file__, 'client', bridge_path],
-                                env={**os.environ, 'KILIX_PORTAL_HOST_BUS': os.environ['DBUS_SESSION_BUS_ADDRESS']},
+                                env=sandbox_env(KILIX_PORTAL_HOST_BUS=os.environ['DBUS_SESSION_BUS_ADDRESS']),
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
         output, errors = process.communicate(timeout=40)
@@ -435,7 +438,7 @@ def host(bridge_path):
         proof = json.loads(output.strip().splitlines()[-1])
         primary = subprocess.Popen(['dbus-run-session', '--', '/usr/bin/python3', bridge_path,
                                     '--wrap', '--', '/usr/bin/python3', __file__, 'primary-app'],
-                                   env={**os.environ, 'KILIX_PORTAL_HOST_BUS': os.environ['DBUS_SESSION_BUS_ADDRESS']},
+                                   env=sandbox_env(KILIX_PORTAL_HOST_BUS=os.environ['DBUS_SESSION_BUS_ADDRESS']),
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             assert select.select([primary.stdout], [], [], 6)[0]
@@ -463,7 +466,7 @@ def host(bridge_path):
                 dead_fixture = Host()
                 restart_client = subprocess.Popen(['dbus-run-session', '--', '/usr/bin/python3', __file__,
                                                    'deadbus-client', bridge_path],
-                                                  env={**os.environ, 'KILIX_PORTAL_HOST_BUS': address},
+                                                  env=sandbox_env(KILIX_PORTAL_HOST_BUS=address),
                                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                                   stderr=subprocess.PIPE, text=True)
                 assert select.select([restart_client.stdout], [], [], 5)[0]

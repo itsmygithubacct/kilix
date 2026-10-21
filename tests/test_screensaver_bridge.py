@@ -6,6 +6,7 @@ import subprocess
 import sys
 from types import SimpleNamespace
 import unittest
+from _env_support import sandbox_env
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'config'))
@@ -59,9 +60,7 @@ class ScreenSaverTests(unittest.TestCase):
             self.assertEqual(prepare_player(command, environment), command)
 
     def test_installed_native_script_executes_without_touching_non_private_players(self):
-        import os
-        env = {name: value for name, value in os.environ.items()
-               if name not in ('KILIX_PRIVATE_XAPP', 'KILIX_PORTAL_HOST_BUS')}
+        env = sandbox_env()
         result = subprocess.run([str(ROOT / 'config/kilix_sdk/mpv_screensaver.run')],
                                 env=env, capture_output=True, text=True, timeout=3)
         self.assertEqual(result.returncode, 0, result.stderr)

@@ -1,5 +1,6 @@
 """Scratch candidates come from actual owned-X keymap responses."""
 import os
+from _env_support import sandbox_env
 import subprocess
 from unittest.mock import patch
 
@@ -10,7 +11,7 @@ from Xlib import XK
 
 class ScratchKeymap(fixture.NativeInputFixture):
     def test_private_x_refuses_a_child_without_its_cookie(self):
-        env = dict(os.environ,XAUTHORITY=str(self.root/'absent-auth'))
+        env = sandbox_env(XAUTHORITY=str(self.root/'absent-auth'))
         r = subprocess.run(['/usr/bin/python3','-I','-c',
                             'from Xlib import display;display.Display()'],env=env,
                            capture_output=True,text=True,timeout=3)

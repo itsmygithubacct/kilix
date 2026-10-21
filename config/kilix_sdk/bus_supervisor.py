@@ -22,6 +22,13 @@ import struct
 import sys
 import time
 
+
+def report_failure(phase, error):
+    """Retain one bounded diagnostic without exposing caller environment data."""
+    message = str(error).replace('\n', ' ').replace('\r', ' ')[:512]
+    print(f'private-bus {phase}: {type(error).__name__}: {message}',
+          file=sys.stderr, flush=True)
+
 if not __package__:
     # -I excludes the script directory. Install only into this fixed root-owned
     # location, and verify every component before allowing a local import.
@@ -934,9 +941,10 @@ class SupervisorServer:
         except BaseException as error:
             failure = error
             self.trigger = "protocol-fault" if self.started else "bootstrap-fault"
+            report_failure(self.trigger, error)
         # Cancellation/SDK EOF/owner death cannot relinquish a live family.
         # Expired attempts retain this ancestor and its real child registry.
-        notified = sent_receipt = False
+        notified = sent_receipt = reported_cleanup = False
         while True:
             try:
                 value = self.finish()
@@ -951,6 +959,9 @@ class SupervisorServer:
                 return 0 if self.started else 1
             except BaseException as error:
                 failure = failure or error
+                if not reported_cleanup:
+                    report_failure("wait-owner-cleanup", error)
+                    reported_cleanup = True
                 if not notified and n.control is not None:
                     notified = True
                     try: send(n.control, {"op": "pending", "instance": n.token})
@@ -1192,13 +1203,17 @@ class RootController:
         try:
             self.bootstrap()
             self.native.collect_wait_owner()
-        except BaseException:
-            pass
+        except BaseException as error:
+            report_failure("controller-startup", error)
+        reported_cleanup = False
         while True:
             try:
                 self.finish()
                 return 0 if self.handed else 1
-            except BaseException:
+            except BaseException as error:
+                if not reported_cleanup:
+                    report_failure("controller-cleanup", error)
+                    reported_cleanup = True
                 self.native.ops.sleep(.05)
 
 

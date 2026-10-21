@@ -74,7 +74,8 @@ _V3, _ORIGIN = asset_v3_available()
 # One place, so a catalog move changes one line: the rc2 content adds
 # pocket-tts-english-python-alba, needle2, needle2-runtime and needle2-train
 # (OD-BV) to rc1's 27; rc3 adds faster-whisper-small-en (owner, 2026-09-29).
-PACKAGED_ASSETS = 32
+# The selected release also includes the diarization model and CPU runtime.
+PACKAGED_ASSETS = 34
 
 
 class _Handler(http.server.BaseHTTPRequestHandler):

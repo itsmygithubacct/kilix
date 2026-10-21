@@ -2,7 +2,7 @@
 import ast, hashlib, json, sys, unittest
 from pathlib import Path
 ROOT, OLD, PLEB, OS_ROOT, OUT = map(Path, sys.argv[1:6])
-fixture = ROOT / 'tests/test_bus_loss_inert.py'
+fixture = ROOT / 'tests/inert/bus_loss_inert.py'
 tree = ast.parse(fixture.read_bytes(), filename=str(fixture))
 selected = []
 for node in tree.body:

@@ -23,7 +23,7 @@ AmbientCapabilities=
 UMask=0077
 StandardInput=null
 StandardOutput=null
-StandardError=null
+StandardError=journal
 # No Install section, socket, enabling, linger, session policy or global daemon.
 # This unit contains the fixed controller only. Before any user birth its
 # fixed wait child enters a separate root-owned transient per-instance scope.

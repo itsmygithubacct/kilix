@@ -2,6 +2,7 @@
 import ctypes
 import json
 import os
+from _env_support import sandbox_env
 from pathlib import Path
 import select
 import signal
@@ -28,12 +29,14 @@ while True:time.sleep(.03)
 '''
 OWNER = '''import json,os,subprocess,sys,time
 sys.path.insert(0,sys.argv[1])
+sys.path.insert(0,os.path.join(sys.argv[1],'..','tests'))
+from _env_support import sandbox_env
 import stream
 from kilix_sdk.private_bus import PrivateBus
 supervisor=stream.StreamSupervisor('killed-sdk-owner')
-bus=PrivateBus(supervisor,dict(os.environ))
+bus=PrivateBus(supervisor,sandbox_env())
 app=supervisor.spawn('app',[sys.executable,sys.argv[2],'--app',str(os.getpid()),str(bus.app_fd),'--',
- '/usr/bin/python3','-c','import time;time.sleep(30)'],env=bus.environment(os.environ),pass_fds=(bus.app_fd,))
+ '/usr/bin/python3','-c','import time;time.sleep(30)'],env=bus.environment(sandbox_env() if env is None else env),pass_fds=(bus.app_fd,))
 if sys.argv[3]!='unbound':bus.bind(app)
 print(json.dumps({'primary':app.pid,'guardian':bus.guardian_pid,'daemon':bus.daemon_pid,'bus-owner':bus.owner_process.pid}),flush=True)
 while True:time.sleep(.03)
@@ -41,6 +44,16 @@ while True:time.sleep(.03)
 
 
 class PrivateBusOwnership(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from kilix_sdk.bus_supervision import installed_program
+        program = Path(installed_program(ROOT / 'config/kilix_sdk'))
+        if not program.is_file():
+            message = 'install this checkout with scripts/install-private-bus-supervisor.py --install'
+            if os.environ.get('KILIX_REQUIRE_PRIVATE_BUS_TESTS') == '1':
+                raise AssertionError(message)
+            raise unittest.SkipTest(message)
+
     def setUp(self):
         self.assertEqual(ctypes.CDLL(None).prctl(36, 1, 0, 0, 0), 0)
         self.resources = []
@@ -53,9 +66,9 @@ class PrivateBusOwnership(unittest.TestCase):
     def start(self, name, mode="hold", env=None, bind=True):
         supervisor = stream.StreamSupervisor(name)
         self.resources.append([supervisor, None])
-        bus = PrivateBus(supervisor, dict(os.environ) if env is None else env)
+        bus = PrivateBus(supervisor, sandbox_env() if env is None else env)
         self.resources[-1][1] = bus
-        private = bus.environment(os.environ)
+        private = bus.environment(sandbox_env() if env is None else env)
         command = [sys.executable, str(ROOT / "config/kilix_sdk/private_bus.py"), "--app", str(os.getpid()), str(bus.app_fd), "--",
                    "/usr/bin/python3", "-c", PRIMARY, mode]
         app = supervisor.spawn("app", command, env=private, stdout=subprocess.PIPE, text=True, pass_fds=(bus.app_fd,))
@@ -100,7 +113,7 @@ class PrivateBusOwnership(unittest.TestCase):
                           "while True:time.sleep(.03)\n")
         (services / (name + ".service")).write_text(
             "[D-BUS Service]\nName=" + name + "\nExec=/usr/bin/python3 " + str(script) + "\n")
-        return dict(os.environ, XDG_DATA_HOME=str(root)), name
+        return sandbox_env( XDG_DATA_HOME=str(root)), name
 
     def activate(self, bus, name):
         client = dbus.bus.BusConnection(bus.address)
@@ -304,7 +317,7 @@ class PrivateBusOwnership(unittest.TestCase):
                           "while True:time.sleep(.03)\n")
         (services / "org.example.OwnedBusService.service").write_text(
             "[D-BUS Service]\nName=org.example.OwnedBusService\nExec=/usr/bin/python3 " + str(script) + "\n")
-        supervisor, bus, app, owned, ready = self.start("activated-owned-bus", env=dict(os.environ, XDG_DATA_HOME=str(root)))
+        supervisor, bus, app, owned, ready = self.start("activated-owned-bus", env=sandbox_env( XDG_DATA_HOME=str(root)))
         client = dbus.bus.BusConnection(bus.address)
         self.addCleanup(client.close)
         client.start_service_by_name("org.example.OwnedBusService")
