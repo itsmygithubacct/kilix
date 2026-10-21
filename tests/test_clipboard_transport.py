@@ -467,7 +467,8 @@ class ClipboardTransportTests(unittest.TestCase):
 
     def test_ready_format_pastes_while_another_format_is_still_being_collected(self):
         self.hub.set_clipboard_content(clip.Content.from_text('previous value'))
-        self.pump(lambda: all(bridge._owns_selection() for bridge in self.bridges))
+        self.pump(lambda: all(not bridge._claim and bridge._owns_selection()
+                              for bridge in self.bridges))
         source, destination = (session.xd for session in self.sessions)
         owner = source.screen().root.create_window(-10, -10, 1, 1, 0, X.CopyFromParent,
             window_class=X.InputOnly, visual=X.CopyFromParent)
@@ -526,7 +527,11 @@ class ClipboardTransportTests(unittest.TestCase):
     def _pending_copy_paste(self, *, abort, previous=True):
         if previous:
             self.hub.set_clipboard_content(clip.Content.from_text('previous value'))
-            self.pump(lambda: all(bridge._owns_selection() for bridge in self.bridges))
+            # The endpoints already own the initial empty clipboard. Wait for
+            # the new value's asynchronous timestamp/claim as well, or it can
+            # steal ownership back from the fixture before TARGETS arrives.
+            self.pump(lambda: all(not bridge._claim and bridge._owns_selection()
+                                  for bridge in self.bridges))
         else:
             deadline=time.monotonic()+.05
             self.pump(lambda:time.monotonic()>=deadline)
@@ -605,7 +610,8 @@ class ClipboardTransportTests(unittest.TestCase):
 
     def test_pending_paste_expires_without_returning_previous_content(self):
         self.hub.set_clipboard_content(clip.Content.from_text('previous value'))
-        self.pump(lambda: all(bridge._owns_selection() for bridge in self.bridges))
+        self.pump(lambda: all(not bridge._claim and bridge._owns_selection()
+                              for bridge in self.bridges))
         source,destination=(session.xd for session in self.sessions)
         owner=source.screen().root.create_window(-10,-10,1,1,0,X.CopyFromParent,
             window_class=X.InputOnly,visual=X.CopyFromParent)

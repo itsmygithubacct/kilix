@@ -60,6 +60,7 @@ class NativeWindowIntegration(unittest.TestCase):
             children = []
             d = None
             stderr = None
+            logger = None
             try:
                 r, w = os.pipe()
                 xvfb = subprocess.Popen(['Xvfb', '-displayfd', str(w), '-screen', '0', '800x600x24', '-nolisten', 'tcp'],
@@ -81,8 +82,18 @@ class NativeWindowIntegration(unittest.TestCase):
                     while time.monotonic() < deadline:
                         if predicate():
                             return
+                        if any(child.poll() is not None for child in children):
+                            break
                         time.sleep(.03)
-                    self.fail('timed out waiting for X11/logger state')
+                    diagnostics = []
+                    for child in children:
+                        diagnostics.append(f'{child.args!r}: exit={child.poll()!r}')
+                    if stderr:
+                        stderr.seek(0)
+                        diagnostics.append(stderr.read().decode(errors='replace'))
+                    if (state / 'native-windows.jsonl').exists():
+                        diagnostics.append((state / 'native-windows.jsonl').read_text())
+                    self.fail('timed out waiting for X11/logger state\n' + '\n'.join(diagnostics))
                 wait_for(lambda: root.get_full_property(atom('_NET_SUPPORTING_WM_CHECK'), X.AnyPropertyType))
                 cmd = ['/usr/bin/python3', str(SCRIPT), '--state-dir', str(state)]
                 stderr = tempfile.TemporaryFile()
