@@ -736,6 +736,8 @@ class NativeAncestor:
 
     def wait_event(self):
         watched = [self.sdk_fd, self.owner_fd, self.control]
+        if self.primary_fd is not None:
+            watched.append(self.primary_fd)
         if self.stopping or getattr(self, "controller_fd", None) is not None and self.ops.ready(self.controller_fd):
             return "supervisor-stop"
         # A close already queued at this observation wins primary exit,
@@ -746,10 +748,16 @@ class NativeAncestor:
             self.collect_primary()
             return "primary-exit"
         ready, _, _ = select.select(watched, [], [], .05)
-        if self.sdk_fd in ready:
-            return "sdk-loss"
         if self.control in ready:
             return "packet"  # A queued intentional close wins an owner-exit race.
+        # The primary can exit while select blocks; its bus owner then also
+        # completes normally. Apply the same precedence to the fresh state as
+        # above instead of misclassifying that completion as owner loss.
+        if self.primary_fd is not None and self.ops.ready(self.primary_fd):
+            self.collect_primary()
+            return "primary-exit"
+        if self.sdk_fd in ready:
+            return "sdk-loss"
         if self.owner_fd in ready:
             return "owner-loss"
         return None

@@ -300,13 +300,19 @@ class SelectionBridge:
         self._claim = False
         self._content = None
         if self._timestamp:
-            # Release at this endpoint's own claim time, never CurrentTime: X
-            # ignores an older SetSelectionOwner, so a copy another client
-            # made since (even one this endpoint has not yet heard about) is
-            # never taken away.
-            xrequest.SetSelectionOwner(display=self.d.display, window=X.NONE,
-                                       selection=self.atoms['CLIPBOARD'],
-                                       time=self._timestamp)
+            # Two ownership changes can share a server millisecond, so even
+            # our old timestamp can clear a newer owner. Check and release
+            # atomically with respect to other X clients. Only this short
+            # owner query and conditional request run while the server is held.
+            self.d.grab_server()
+            try:
+                if self._owns_selection():
+                    xrequest.SetSelectionOwner(display=self.d.display, window=X.NONE,
+                                               selection=self.atoms['CLIPBOARD'],
+                                               time=self._timestamp)
+            finally:
+                self.d.ungrab_server()
+                self.d.flush()
         if self._selection_owner == self.win.id:
             self._selection_owner = 0
         self.d.flush()
