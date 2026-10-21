@@ -266,8 +266,11 @@ class PrivateBusOwnership(unittest.TestCase):
             parent.stdout.close()
         for pid, fd in self.pidfds:
             try:
-                signal.pidfd_send_signal(fd, signal.SIGKILL)
-                select.select([fd], [], [], 2)
+                # Root-owned supervisors are observation-only fixtures. All
+                # identities already proven exited need no further signal.
+                if not select.select([fd], [], [], 0)[0]:
+                    signal.pidfd_send_signal(fd, signal.SIGKILL)
+                    select.select([fd], [], [], 2)
                 os.waitpid(pid, os.WNOHANG)
             except (ChildProcessError, ProcessLookupError):
                 pass

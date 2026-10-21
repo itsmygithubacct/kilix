@@ -147,7 +147,10 @@ class RemoteProcess:
                         return self.returncode
                     if len(self._status) > 4:
                         raise CleanupIncomplete("primary-status-invalid", resource=self)
-            if self.ops.reaped(self.fd):
+            # The ancestor reaps before publishing the four-byte status. A
+            # still-open writer means that publication can legitimately be
+            # pending even after the pidfd reports a collected process.
+            if self.status_fd is None and self.ops.reaped(self.fd):
                 raise CleanupIncomplete("primary-detached-without-status", resource=self)
             return None
 
@@ -160,8 +163,10 @@ class RemoteProcess:
             remaining = None if deadline is None else deadline - time.monotonic()
             if remaining is not None and remaining <= 0:
                 raise subprocess.TimeoutExpired(self.args, timeout)
-            watched = [fd for fd in (self.status_fd, self.fd) if fd is not None]
-            select.select(watched, [], [], remaining)
+            # An exited pidfd stays readable and would spin while the ancestor
+            # publishes status. The pipe reports either that result or EOF.
+            watched = [self.status_fd] if self.status_fd is not None else [self.fd]
+            select.select([fd for fd in watched if fd is not None], [], [], remaining)
 
     def send_signal(self, sig):
         with self._lock:
