@@ -860,7 +860,8 @@ class AgentHelpTests(unittest.TestCase):
                               "unique title", "no subcommand --help",
                               "prints what it did",
                               "complete syntax", "kilix new-tab --title Codex",
-                              "kilix agent-control", "kilix --help-engine"):
+                              "kilix agent-control", "kilix session --help",
+                              "kilix --help-engine"):
                     self.assertIn(usage, text)
                 self.assertNotIn("Usage: kitty", text)
 
