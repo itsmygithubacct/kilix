@@ -251,6 +251,9 @@ class AgentArgvTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory(prefix="kilix-agents-")
         self.addCleanup(self.directory.cleanup)
+        # A developer's temporary directory may itself be inside a checkout.
+        # Give this fixture its own trust boundary rather than inheriting it.
+        subprocess.run(["git", "init", "-q", self.directory.name], check=True)
 
     def argv(self, agent, *extra, yolo_setting=False):
         client = FakeClient()
@@ -429,6 +432,7 @@ class AgentArgvTests(unittest.TestCase):
                 control.grok_trust_is_exact(nested)
         workspace = Path(self.directory.name) / "jjws"
         (workspace / ".jj").mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", str(workspace)], check=True)
         (workspace / "inner").mkdir()
         with self.assertRaisesRegex(control.ControlError, "jj workspace"):
             control.grok_trust_is_exact(workspace / "inner")

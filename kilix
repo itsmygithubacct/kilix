@@ -175,13 +175,13 @@ case "${1:-}" in
   -h|--help|help)
     cat <<'EOF'
 usage: kilix [COMMAND] [ARGS...]    (no command: open a Kilix window)
-Common tasks, complete as shown (run inside a Kilix pane):
+Common tasks (inside a Kilix pane):
   kilix pane right -- bash                          open a shell right
   kilix pane send build 'make test' --submit         type into build + Enter
   kilix pane close build                            close the named pane
   kilix new-tab --title Codex --cwd ~/src/app codex  start a program in a tab
 
-Panes and tabs (directions relative to the calling pane):
+Panes and tabs (relative to this pane):
   kilix pane right|left|up|down [--title T] [--cwd DIR] [--hold] [--porcelain] [-- CMD...]
   kilix pane send TARGET 'TEXT' [--submit]   --submit presses Enter
   kilix pane close [TARGET]                 default: this pane and its program

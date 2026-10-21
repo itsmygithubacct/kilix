@@ -121,6 +121,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends python3-dbus python3-pil python3-xlib dbus-daemon polkitd
+          # Hosted images make /usr/share writable to their runner group.
+          # The installed service requires the distribution's root-owned,
+          # non-writable parent chain, including its authorization rules.
+          sudo chown root:root /usr/share
+          sudo chmod go-w /usr/share
           sudo /usr/bin/python3 scripts/install-private-bus-supervisor.py --install
       - name: Exercise installed private-bus ownership
         run: |
