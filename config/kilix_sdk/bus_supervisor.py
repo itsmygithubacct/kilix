@@ -849,6 +849,20 @@ class NativeAncestor:
             value = getattr(self, key)
             if value is not None:
                 try:
+                    if key == "control":
+                        # A late close request can arrive after the final
+                        # certificate was sent. Closing a Unix seqpacket socket
+                        # with unread input resets the peer and discards that
+                        # certificate. Seal writes first, then discard the finite
+                        # queued input without interpreting any new commands.
+                        # recv supplies no ancillary buffer: Linux closes any
+                        # accompanying SCM_RIGHTS instead of acquiring them.
+                        try:
+                            value.shutdown(socket.SHUT_RD)
+                            while value.recv(1, socket.MSG_DONTWAIT):
+                                pass
+                        except (BrokenPipeError, ConnectionResetError):
+                            pass  # The peer has already gone away.
                     value.close()
                     setattr(self, key, None)
                 except Exception as error:

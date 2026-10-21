@@ -288,6 +288,13 @@ class PrivateBusOwnership(unittest.TestCase):
         self.assertEqual(app.wait(timeout=2), 7)
         self.exited(owned)
 
+    def test_immediate_close_after_normal_exit_keeps_the_cleanup_receipt(self):
+        supervisor, bus, app, owned, ready = self.start("early-close-bus", "early")
+        self.assertEqual(app.wait(timeout=2), 7)
+        bus.close()
+        self.exited(owned)
+        supervisor.cleanup()
+
     def test_hard_primary_death_ends_its_exact_bus(self):
         supervisor, bus, app, owned, ready = self.start("primary-kill")
         signal.pidfd_send_signal(owned["primary"]["fd"], signal.SIGKILL)
