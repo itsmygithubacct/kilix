@@ -24,7 +24,7 @@ Examples:
   kilix desktop-action --yes pointer move --x 300 --y 200
   kilix desktop-action --yes batch actions.json
 
-Requires kilix-desktop from kilix-needle on PATH. KILIX_DESKTOP_CLI selects an
+Requires kilix-desktop or kilix-needle on PATH. KILIX_DESKTOP_CLI selects an
 executable; KILIX_DESKTOP_MODULE_ROOT selects its source directory. An explicit
 selection is never replaced with another implementation. No automatic install.
 Natural language: kilix-needle desktop --parser grammar|needle|hybrid REQUEST.
@@ -50,7 +50,10 @@ def main(argv=None):
         executable = shutil.which("kilix-desktop")
         if executable:
             os.execv(executable, [executable, *args])
-    print("kilix desktop-action: selected desktop executor is unavailable; install kilix-desktop or set KILIX_DESKTOP_MODULE_ROOT", file=sys.stderr)
+        executable = shutil.which("kilix-needle")
+        if executable:
+            os.execv(executable, [executable, "desktop-action", *args])
+    print("kilix desktop-action: selected desktop executor is unavailable; install kilix-needle or set KILIX_DESKTOP_MODULE_ROOT", file=sys.stderr)
     return 7
 
 
