@@ -5,6 +5,7 @@ import os
 import signal
 import subprocess
 import tempfile
+from types import SimpleNamespace
 
 import harness as H          # noqa: sets up sys.path for the imports below
 import theme as T
@@ -19,6 +20,11 @@ class FakeStdout:
     def fileno(self):
         return self._fd
 
+    def close(self):
+        if self._fd is not None:
+            os.close(self._fd)
+            self._fd = None
+
 
 class FakeProc:
     """Stands in for a Popen: poll() returns rc, .stdout wraps a real pipe fd."""
@@ -27,6 +33,17 @@ class FakeProc:
         self.stdout = FakeStdout(fd) if fd is not None else None
 
     def poll(self):
+        return self._rc
+
+    def terminate(self):
+        self._rc = -signal.SIGTERM
+
+    def kill(self):
+        self._rc = -signal.SIGKILL
+
+    def wait(self, timeout=None):
+        if self._rc is None:
+            raise subprocess.TimeoutExpired('inert fixture', timeout)
         return self._rc
 
 
@@ -185,8 +202,27 @@ class CaptureSup:
         self.fds.clear()
 
 
+class CaptureBus:
+    """Only record the bus contract in this display/environment unit fixture."""
+    def __init__(self, supervisor, env):
+        self.bound = self.closed = False
+
+    def environment(self, env):
+        return dict(env, DBUS_SESSION_BUS_ADDRESS="unix:path=/fixture/bus")
+
+    def launch_primary(self, *args, **kwargs):
+        raise AssertionError("the inert supervisor must not launch a process")
+
+    def bind(self, app):
+        self.bound = True
+
+    def close(self):
+        self.closed = True
+
+
 d = H.make_desk()
 orig_sup = xpane.stream.StreamSupervisor
+orig_bus = xpane.xapp_sdk.PrivateBus
 orig_display = xpane.xdisplay.Display
 orig_injector = xpane.xinject.Injector
 orig_bridge = xpane.clipboard.SelectionBridge
@@ -194,8 +230,9 @@ orig_paint = xpane.XPane._paint_root_chroma
 orig_damage = xpane.xcapture.XDamageCapture
 old_wm = os.environ.get("KILIX_XPANE_WM")
 xpane.stream.StreamSupervisor = CaptureSup
-xpane.xdisplay.Display = lambda *_: object()
-xpane.xinject.Injector = lambda *_: object()
+xpane.xdisplay.Display = lambda *_: SimpleNamespace(close=lambda: None)
+xpane.xapp_sdk.PrivateBus = CaptureBus
+xpane.xinject.Injector = lambda *_: SimpleNamespace(release_all=lambda: None)
 xpane.clipboard.SelectionBridge = lambda *_: None
 xpane.XPane._paint_root_chroma = lambda self: None
 
@@ -212,6 +249,9 @@ try:
     calls = CaptureSup.instances[-1].spawns
     app_env = calls["app"]["kwargs"]["env"]
     cap_env = calls["cap"]["kwargs"]["env"]
+    assert pane.xapp._app_bus.bound
+    assert calls["app"]["kwargs"]["_kilix_remote_launcher"].__self__ is pane.xapp._app_bus
+    assert app_env["DBUS_SESSION_BUS_ADDRESS"] == "unix:path=/fixture/bus"
     assert app_env["DISPLAY"] == ":77"
     assert app_env["XAUTHORITY"] == "/tmp/kilix-private-xauth"
     assert cap_env["DISPLAY"] == ":77"
@@ -220,6 +260,7 @@ finally:
     if pane is not None:
         pane._teardown()
     xpane.stream.StreamSupervisor = orig_sup
+    xpane.xapp_sdk.PrivateBus = orig_bus
     xpane.xdisplay.Display = orig_display
     xpane.xinject.Injector = orig_injector
     xpane.clipboard.SelectionBridge = orig_bridge

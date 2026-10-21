@@ -6,6 +6,7 @@ personal data.
 """
 import os
 import tempfile
+from types import SimpleNamespace
 
 import harness  # noqa: F401  (sets sys.path for the desktop package)
 import xdgapps
@@ -239,12 +240,17 @@ def hot_cache_skips_recursive_metadata_walk():
     expected = xdgapps.scan()
     shared = xdgapps._shared
     original = shared._snapshot
+    watcher = shared._cache_watcher
     try:
-        shared._snapshot = lambda _dirs: (_ for _ in ()).throw(
+        # Exercise the unchanged-watcher branch independently of the host's
+        # inotify quota. The next test covers the real metadata fallback.
+        shared._cache_watcher = SimpleNamespace(changed=lambda: False)
+        shared._snapshot = lambda *_args: (_ for _ in ()).throw(
             AssertionError("hot cache walked the applications tree"))
         assert xdgapps.scan() is expected
     finally:
         shared._snapshot = original
+        shared._cache_watcher = watcher
 
 
 def metadata_fallback_still_invalidates_immediately():
