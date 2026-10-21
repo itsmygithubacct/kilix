@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -18,6 +19,7 @@ class DesktopControlTests(unittest.TestCase):
         spec.loader.exec_module(module)
         argv = ['--parse-only', 'keyboard', 'type', '--text', 'literal; $(text)']
         with patch.dict(os.environ, {}, clear=True), \
+             patch.object(module, 'installed_command', return_value=None), \
              patch.object(module.shutil, 'which', side_effect=lambda name: '/catalog/kilix-needle' if name=='kilix-needle' else None), \
              patch.object(module.os, 'execv', side_effect=SystemExit(0)) as execute:
             with self.assertRaises(SystemExit): module.main(argv)
@@ -26,6 +28,30 @@ class DesktopControlTests(unittest.TestCase):
             execute.reset_mock()
             self.assertEqual(module.main(argv), 7)
             execute.assert_not_called()
+
+    def test_verified_catalog_dispatch_binds_content_root(self):
+        spec = importlib.util.spec_from_file_location('desktop_delegate_catalog', ROOT/'config/desktop_control.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.dict(os.environ, {'KILIX_DATA_HOME': directory}, clear=True), \
+             patch.object(sys, 'path', [str(ROOT/'config'), *sys.path]):
+            self.assertIsNone(module.installed_command())
+            self.assertEqual(list(Path(directory).iterdir()), [])
+            install_root = Path(directory)/'desktop-apps'
+            install_root.mkdir()
+            from kilix_sdk import content
+            with patch.object(content.Installer, 'ready', return_value='/installed/kilix-needle') as ready, \
+                 patch.object(content.Installer, 'ensure', side_effect=AssertionError('no installation')), \
+                 patch.object(module.shutil, 'which', return_value=None), \
+                 patch.object(module.os, 'execve', side_effect=SystemExit(0)) as execute:
+                argv = ['--parse-only', 'window', 'list']
+                with self.assertRaises(SystemExit): module.main(argv)
+                self.assertEqual(ready.call_args.args[0].content_id, 'kilix-needle')
+                binary, forwarded, environment = execute.call_args.args
+                self.assertEqual(binary, '/installed/kilix-needle')
+                self.assertEqual(forwarded, [binary, 'desktop-action', *argv])
+                self.assertEqual(environment['KILIX_CONTENT_ROOT'], str(install_root))
 
     def test_read_only_help_and_exact_delegation(self):
         with tempfile.TemporaryDirectory() as directory:

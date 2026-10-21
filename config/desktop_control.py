@@ -24,11 +24,27 @@ Examples:
   kilix desktop-action --yes pointer move --x 300 --y 200
   kilix desktop-action --yes batch actions.json
 
-Requires kilix-desktop or kilix-needle on PATH. KILIX_DESKTOP_CLI selects an
+Uses installed catalog Needle, or kilix-desktop/kilix-needle on PATH.
+Install with `kilix install kilix-needle`. KILIX_DESKTOP_CLI selects an
 executable; KILIX_DESKTOP_MODULE_ROOT selects its source directory. An explicit
 selection is never replaced with another implementation. No automatic install.
 Natural language: kilix-needle desktop --parser grammar|needle|hybrid REQUEST.
 """
+
+
+def installed_command():
+    """Resolve the host's existing verified catalog installation without setup."""
+    from kilix_sdk._content_runtime import apps_root, launch_environment
+    root = apps_root()
+    # Installer creates its root in __init__; a missing installation must not.
+    if not Path(root).is_dir():
+        return None
+    from kilix_sdk import content
+    spec = content.default_catalog().require("kilix-needle")
+    executable = content.Installer(root).ready(spec)
+    if executable:
+        return executable, launch_environment(root=root)
+    return None
 
 
 def main(argv=None):
@@ -50,6 +66,14 @@ def main(argv=None):
         executable = shutil.which("kilix-desktop")
         if executable:
             os.execv(executable, [executable, *args])
+        try:
+            installed = installed_command()
+        except (ImportError, OSError, RuntimeError, ValueError) as error:
+            print(f"kilix desktop-action: catalog lookup failed: {error}", file=sys.stderr)
+            return 7
+        if installed:
+            executable, environment = installed
+            os.execve(executable, [executable, "desktop-action", *args], environment)
         executable = shutil.which("kilix-needle")
         if executable:
             os.execv(executable, [executable, "desktop-action", *args])
