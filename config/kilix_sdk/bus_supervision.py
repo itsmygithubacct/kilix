@@ -646,7 +646,9 @@ class RootManager(SystemdTransport):
         self.connect(deadline)
 
 
-WAIT_PREFIX = "kilix-private-bus-wait@"
+# Scope units cannot be instantiated from templates. Keep the authenticated
+# account/nonce in a plain unit name; '@' makes StartTransientUnit refuse it.
+WAIT_PREFIX = "kilix-private-bus-wait-"
 SCOPE = "org.freedesktop.systemd1.Scope"
 
 
