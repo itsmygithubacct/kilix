@@ -108,7 +108,7 @@ jobs:
 
       - name: Retain private-bus service diagnostics
         if: failure()
-        run: sudo journalctl --since '30 minutes ago' -u 'kilix-private-bus-supervisor@*' --no-pager -n 200
+        run: sudo journalctl --since '30 minutes ago' -u 'kilix-private-bus-*' --no-pager -n 200
 
   private-bus:
     runs-on: ubuntu-24.04
@@ -137,4 +137,4 @@ jobs:
             python3 -m unittest discover -s tests -p test_private_bus.py -v -f
       - name: Retain private-bus service diagnostics
         if: failure()
-        run: sudo journalctl --since '15 minutes ago' -u 'kilix-private-bus-supervisor@*' --no-pager -n 200
+        run: sudo journalctl --since '15 minutes ago' -u 'kilix-private-bus-*' --no-pager -n 200
