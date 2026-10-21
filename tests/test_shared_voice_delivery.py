@@ -20,7 +20,21 @@ class SharedVoiceTests(unittest.TestCase):
         lease = Path(os.environ.get('KILIX_DEVICE_LEASE_TEST_SOURCE', str(SOURCES/'kilix-system-monitor')))
         def head(path):
             return subprocess.check_output(['git','-C',str(path),'rev-parse','HEAD'],text=True).strip()
-        return argparse.Namespace(voice_source=voice,voice_ref=head(voice),lease_source=lease,lease_ref=head(lease))
+        scratch = tempfile.TemporaryDirectory(prefix='shared-voice-sources-')
+        self.addCleanup(scratch.cleanup)
+        values = {}
+        for name, source in (('voice', voice), ('lease', lease)):
+            revision = head(source)
+            destination = Path(scratch.name) / name
+            # Managed generations require a private chain. A caller's fixture
+            # checkout can live beneath a shared research/work directory.
+            subprocess.run(['git','clone','--quiet','--shared',str(source),str(destination)],
+                           check=True, capture_output=True)
+            subprocess.run(['git','-C',str(destination),'checkout','--quiet','--detach',revision],
+                           check=True, capture_output=True)
+            destination.chmod(0o700)
+            values[name + '_source'], values[name + '_ref'] = destination, revision
+        return argparse.Namespace(**values)
 
     def test_partial_closure_refuses_and_default_does_not_invent_a_pin(self):
         self.assertIsNone(shared_voice.selected(argparse.Namespace(),staging))

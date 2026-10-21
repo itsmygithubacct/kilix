@@ -81,8 +81,9 @@ def release_received(fd):
     try:
         lease.close()
     finally:
-        if lease.fd is None:
-            fd.acquisition_owner.transfer(fd)
+        owner = getattr(fd, "acquisition_owner", None)
+        if lease.fd is None and owner is not None:
+            owner.transfer(fd)
 
 
 class PrivateBus:

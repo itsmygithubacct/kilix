@@ -35,8 +35,8 @@ import stream
 from kilix_sdk.private_bus import PrivateBus
 supervisor=stream.StreamSupervisor('killed-sdk-owner')
 bus=PrivateBus(supervisor,sandbox_env())
-app=supervisor.spawn('app',[sys.executable,sys.argv[2],'--app',str(os.getpid()),str(bus.app_fd),'--',
- '/usr/bin/python3','-c','import time;time.sleep(30)'],env=bus.environment(sandbox_env() if env is None else env),pass_fds=(bus.app_fd,))
+app=supervisor.spawn('app',['/usr/bin/python3','-c','import time;time.sleep(30)'],
+ env=bus.environment(sandbox_env()),_kilix_remote_launcher=bus.launch_primary)
 if sys.argv[3]!='unbound':bus.bind(app)
 print(json.dumps({'primary':app.pid,'guardian':bus.guardian_pid,'daemon':bus.daemon_pid,'bus-owner':bus.owner_process.pid}),flush=True)
 while True:time.sleep(.03)
@@ -69,16 +69,10 @@ class PrivateBusOwnership(unittest.TestCase):
         bus = PrivateBus(supervisor, sandbox_env() if env is None else env)
         self.resources[-1][1] = bus
         private = bus.environment(sandbox_env() if env is None else env)
-        command = [sys.executable, str(ROOT / "config/kilix_sdk/private_bus.py"), "--app", str(os.getpid()), str(bus.app_fd), "--",
-                   "/usr/bin/python3", "-c", PRIMARY, mode]
-        app = supervisor.spawn("app", command, env=private, stdout=subprocess.PIPE, text=True, pass_fds=(bus.app_fd,))
-        if bind:
-            bus.bind(app)
-            self.assertTrue(select.select([app.stdout], [], [], 5)[0])
-            ready = json.loads(app.stdout.readline())
-        else:
-            self.assertFalse(select.select([app.stdout], [], [], .15)[0], "unowned primary execed before handoff")
-            ready = {}
+        command = ["/usr/bin/python3", "-c", PRIMARY, mode]
+        app = supervisor.spawn("app", command, env=private, stdout=subprocess.PIPE,
+                               _kilix_remote_launcher=bus.launch_primary)
+        # Pin every identity before opening the gate, including fast exits.
         identities = {}
         for role, pid in (("primary", app.pid), ("guardian", bus.guardian_pid), ("daemon", bus.daemon_pid), ("bus-owner", bus.owner_process.pid)):
             fd = os.pidfd_open(pid)
@@ -86,6 +80,13 @@ class PrivateBusOwnership(unittest.TestCase):
             stat = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
             identities[role] = {"pid": pid, "fd": fd, "start": stat[19]}
         self.assertEqual(int(Path(f"/proc/{bus.daemon_pid}/stat").read_text().rsplit(")", 1)[1].split()[1]), bus.guardian_pid)
+        if bind:
+            bus.bind(app)
+            self.assertTrue(select.select([app.stdout], [], [], 5)[0])
+            ready = json.loads(app.stdout.readline())
+        else:
+            self.assertFalse(select.select([app.stdout], [], [], .15)[0], "unowned primary execed before handoff")
+            ready = {}
         print(json.dumps({"instance_started": {role: {k: v for k, v in row.items() if k != "fd"}
                                               for role, row in identities.items()}}), flush=True)
         return supervisor, bus, app, identities, ready
