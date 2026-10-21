@@ -12,6 +12,8 @@ import stat
 import subprocess
 import sys
 
+SUPERVISOR_ROOT = Path("/usr/libexec/kilix-private-bus-supervisor")
+
 FILES = {"config/kilix_sdk/" + name: "/usr/libexec/kilix-private-bus-supervisor/" + name
          for name in ("bus_supervisor.py", "bus_supervision.py", "bus_ownership.py", "bus_platform.py")}
 FILES.update({"share/private-bus/kilix-private-bus-supervisor@.service": "/etc/systemd/system/kilix-private-bus-supervisor@.service",
@@ -87,12 +89,20 @@ class InstalledFilesystem:
         current = Path(parts[0])
         for part in parts[1:]:
             current /= part
+            created = False
             try: st = current.lstat()
             except FileNotFoundError:
                 current.mkdir(mode=0o755)
+                created = True
                 st = current.lstat()
             if not stat.S_ISDIR(st.st_mode) or st.st_uid != 0 or st.st_mode & 0o022:
                 raise RuntimeError("unsafe installed directory: " + str(current))
+            # mkdir's mode is filtered by the caller's umask. The SDK must
+            # read these public modules as an ordinary user. Repair older
+            # private-mode installs only inside our own delivery directories;
+            # preserve the modes of existing distribution parent directories.
+            if created or current == SUPERVISOR_ROOT or current.parent == SUPERVISOR_ROOT:
+                current.chmod(0o755)
         return parent
 
     def read_safe(self, path):
