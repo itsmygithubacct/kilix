@@ -10,6 +10,8 @@ from unittest.mock import patch
 import importlib.util
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT/'tests'))
+from _env_support import sandbox_env
 
 
 class DesktopControlTests(unittest.TestCase):
@@ -56,7 +58,7 @@ class DesktopControlTests(unittest.TestCase):
     def test_read_only_help_and_exact_delegation(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            env = dict(os.environ, HOME=str(root), GPU_TERMINAL_HOME=str(root/'storage'))
+            env = sandbox_env(HOME=str(root), GPU_TERMINAL_HOME=str(root/'storage'))
             result = subprocess.run([str(ROOT/'kilix'),'desktop-action','--help'],env=env,capture_output=True,text=True)
             self.assertEqual(result.returncode,0,result.stderr)
             self.assertFalse((root/'storage').exists())
