@@ -1,0 +1,17 @@
+{
+  "schema": "kilix.actions/v1",
+  "operation_id": "wrapped-message-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "operation": "agent.deliver",
+  "source": {
+    "pane_id": 1,
+    "broker": "aaaaaaaaaaaaaaaa"
+  },
+  "target": {
+    "pane_id": 2,
+    "broker": "bbbbbbbbbbbbbbbb"
+  },
+  "params": {
+    "text": "xxxxxxx xx-xxxxx-xxxxx-xxxxxxxxxxx.xx xxxxxx xxxx xxxxxxx: xxxxxx xxxx/xxxxxxxxxx xxxxxxx xxxxxx xxxxxxxx. xxxxxxx xxxx xxx xxx00000 xxxxx xxxx xxxxxx xxxxxx xxxxx. xxxx xxx xxxxxxxx xxxxxxxx xxxxxxxx xxxx xxxx xxxxxx; xxxxxxxx xxx xxxxxxx xxxxxxxx xxxx xxx xxxxxx xxxxxx xxxxxxxx. xxxxxxx xxxxx xxxxx xxxxxxxx xxx xxx xxxx xxxxxxxxxxx xxxx."
+  },
+  "timeout": 30
+}

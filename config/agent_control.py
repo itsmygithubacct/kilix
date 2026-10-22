@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -19,6 +20,7 @@ import sys
 import time
 
 SCHEMA = "kilix.agent-control/v1"
+DEFAULT_RPC_TIMEOUT = 10.0
 BROKER = re.compile(r"[0-9a-f]{16,64}\Z")
 KEYS = {"enter": b"\r", "escape": b"\x1b", "up": b"\x1b[A",
         "down": b"\x1b[B", "right": b"\x1b[C", "left": b"\x1b[D",
@@ -58,6 +60,7 @@ AGENT_ARG_PATTERNS = {
     "qwen-omp": (re.compile(r"--thinking=[A-Za-z0-9_-]+\Z"),),
     "kimi": (),
 }
+REASONING_EFFORTS = ("low", "medium", "high", "xhigh")
 _SUBCOMMANDS = {}
 
 
@@ -108,6 +111,12 @@ def positive(value):
     if number <= 0:
         raise argparse.ArgumentTypeError("expected a positive pane ID")
     return number
+
+
+def delivery_message_id(value):
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", value):
+        raise argparse.ArgumentTypeError("expected a 1–64 character delivery ID")
+    return value
 
 
 def plain_text(value, label, limit=1024):
@@ -284,7 +293,13 @@ class Client:
     def run(self, args, payload=None):
         process = None
         try:
-            deadline = min(time.monotonic() + 10, getattr(self, "deadline", float("inf")))
+            # Structured operations install one absolute deadline shared by
+            # their identity checks, mutations and observations. Do not let a
+            # shorter per-RPC default cut that operation off mid-flight. A
+            # direct, unbounded client call still gets a local safety limit.
+            deadline = getattr(self, "deadline", float("inf"))
+            if deadline == float("inf"):
+                deadline = time.monotonic() + DEFAULT_RPC_TIMEOUT
             if deadline <= time.monotonic():
                 raise ControlError("terminal request deadline expired; inspect state before retrying")
             process = subprocess.Popen(self.command + args,
@@ -463,6 +478,15 @@ def launch(client, args, *, explicit_argv=None):
             "folder_trust": trusted}
 
 
+def validate_reasoning_effort(agent, effort):
+    """Typed Codex setting; never turn arbitrary config into launch arguments."""
+    if agent != "codex":
+        raise ControlError("reasoning_effort is supported only for codex")
+    if not isinstance(effort, str) or effort not in REASONING_EFFORTS:
+        raise ControlError("reasoning_effort must be low, medium, high or xhigh")
+    return effort
+
+
 def agent_argv(args, executable, cwd, deadline=float("inf")):
     """The client's argv: its own flags, then resume, then a prompt, each one
     literal item. Nothing here comes from a shell string."""
@@ -483,6 +507,10 @@ def agent_argv(args, executable, cwd, deadline=float("inf")):
         if model.startswith("-"):
             raise ControlError("a model name may not begin with '-'")
         argv.extend(["--model", model])
+    effort = getattr(args, "reasoning_effort", None)
+    if effort is not None:
+        validate_reasoning_effort(agent, effort)
+        argv.extend(["-c", f'model_reasoning_effort="{effort}"'])
     yolo = False
     if args.coding_yolo:
         from kilix_sdk import settings
@@ -544,7 +572,7 @@ def parser():
         command.add_argument("--expect-broker", required=True,
                              help="exact broker identity from the inspected snapshot")
         if name in ("send", "deliver"):
-            text = command.add_mutually_exclusive_group(required=True)
+            text = command.add_mutually_exclusive_group(required=name == "send")
             text.add_argument("--text")
             text.add_argument("--file", type=Path,
                               help=("single-line UTF-8 message; 900 bytes including the ID prefix"
@@ -556,6 +584,12 @@ def parser():
                                      help="total delivery deadline in seconds (1–60)")
                 command.add_argument("--mode", choices=("steer", "defer"), default="steer",
                                      help="Enter for steering, or Tab for deliberate next-turn deferral")
+                command.add_argument("--envelope", action="store_true",
+                                     help="opt in: store the exact text in a private content-addressed file and type only a short one-row pointer, so a long message needs no wrapped-draft proof")
+                command.add_argument("--finish-staged", action="store_true",
+                                     help="finish an exact earlier staged message; provide its original body for proof, never repaste it")
+                command.add_argument("--previous-completed-suggestion-id", type=delivery_message_id,
+                                     help="authorize a named faint Claude suggestion only with matching same-source private submitted receipts")
             else:
                 command.add_argument("--submit", action="store_true",
                                      help="send a separate Enter after text; verify the result")
@@ -568,6 +602,8 @@ def parser():
             command.add_argument("--cwd", required=True)
             command.add_argument("--title", required=True)
             command.add_argument("--model")
+            command.add_argument("--reasoning-effort", choices=REASONING_EFFORTS,
+                                 help="Codex only; pass this exact requested effort, without model substitution")
             command.add_argument("--agent-arg", action="append", default=[],
                                  help="one explicit agent argv item; use --agent-arg=--flag")
             command.add_argument("--prompt", help="one line of initial task text, passed as "
@@ -588,6 +624,15 @@ def parser():
 
 def main(argv=None):
     args = parser().parse_args(argv)
+    if args.action == "deliver":
+        has_body = args.text is not None or args.file is not None
+        if not has_body:
+            parser().error("deliver requires --text or --file, including with --finish-staged")
+        if args.previous_completed_suggestion_id is not None and (
+                args.previous_completed_suggestion_id == args.message_id or
+                args.mode != "steer" or args.finish_staged or
+                not math.isfinite(args.timeout) or not 1 <= args.timeout <= 60):
+            parser().error("completed-suggestion authorization requires a different prior ID and a fresh steer delivery")
     if args.action == "context":
         if args.expect_broker is not None and (not args.target or not BROKER.fullmatch(args.expect_broker)):
             parser().error("context --expect-broker requires --target and an exact broker identity")
@@ -612,8 +657,22 @@ def main(argv=None):
         elif args.action in ("new-tab", "split"):
             result = launch(client, args)
         elif args.action == "deliver":
-            from agent_delivery import deliver
-            result = deliver(client, args)
+            previous_deadline = getattr(client, "deadline", float("inf"))
+            try:
+                if args.previous_completed_suggestion_id is not None:
+                    client.deadline = min(previous_deadline,
+                                          time.monotonic() + args.timeout)
+                    import agent_actions
+                    source = agent_actions.current_cli_source_identity(client)
+                    target = {"pane_id": args.pane, "broker": args.expect_broker}
+                    args._previous_completed_suggestion_source_identity = source
+                    args._previous_completed_suggestion_scope_verified = (
+                        agent_actions.previous_completed_suggestion_scope(
+                            client, args.previous_completed_suggestion_id, source, target))
+                from agent_delivery import deliver
+                result = deliver(client, args)
+            finally:
+                client.deadline = previous_deadline
             print(json.dumps(result, ensure_ascii=True))
             return 0 if result["delivery_verified"] else 1
         else:

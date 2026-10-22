@@ -748,6 +748,36 @@ class ConnectionTests(unittest.TestCase):
         with self.assertRaisesRegex(control.ControlError, "exceeded 1 MiB"):
             client.run(["import sys; sys.stdout.write('x' * (2 * 1024 * 1024))"])
 
+    def test_shared_action_deadline_covers_the_post_paste_observation(self):
+        fixture = Path(control.__file__).resolve().parents[1] / "tests/fixtures/delivery_rpc_fixture.py"
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = Path(directory) / "fixture-state.json"
+            client = control.Client.__new__(control.Client)
+            client.command = [sys.executable, str(fixture)]
+            client.command_env = {**os.environ, "DELIVERY_RPC_FIXTURE_STATE": str(state_path)}
+
+            # Model a silent send-text that staged its bytes, followed by a
+            # response-bearing screen read. A direct call keeps the local
+            # default; an action deadline is authoritative when one exists.
+            with mock.patch.object(control, "DEFAULT_RPC_TIMEOUT", 0.15):
+                client.run(["stage"], b"safe fixture text")
+                with self.assertRaisesRegex(control.ControlError, "terminal request timed out"):
+                    client.run(["observe", "0.25"])
+                state = json.loads(state_path.read_text())
+                self.assertEqual(state["phase"], "pasting")
+
+                client.deadline = time.monotonic() + 2
+                self.assertEqual(client.run(["observe", "0.25"]), "composer verified\n")
+                client.run(["submit"], b"\r")
+
+            state = json.loads(state_path.read_text())
+            self.assertEqual(state["phase"], "submitted")
+            self.assertEqual(state["payload_bytes"], len(b"safe fixture text"))
+            self.assertEqual(len(state["payload_sha256"]), 64)
+            for pid in state["pids"]:
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(pid, 0)
+
     def test_credential_rejects_symlink_hardlink_or_wrong_permissions(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

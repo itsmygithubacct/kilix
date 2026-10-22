@@ -21,7 +21,7 @@ import time
 from types import SimpleNamespace
 
 import agent_control as control
-from agent_delivery import Ledger, MESSAGE_ID, MAX_WIRE, composer, read_payload
+from agent_delivery import DELIVERY_AGENTS, Ledger, MESSAGE_ID, MAX_WIRE, composer, read_payload
 from agent_skills import Conflict, directory
 
 SCHEMA = "kilix.actions/v1"
@@ -31,9 +31,12 @@ ACTION_OPERATIONS = {
                   "optional": ["direction", "bias"], "mutation": True},
     "agent.launch": {"required": ["agent", "cwd", "title", "placement"],
                      "optional": ["direction", "bias", "model", "prompt", "resume",
-                                  "coding_yolo", "trust_folder", "agent_arg"], "mutation": True,
-                     "unsupported": {"trust_folder": True}},
-    "agent.deliver": {"required": ["text"], "optional": ["mode"], "mutation": True},
+                                  "coding_yolo", "trust_folder", "agent_arg", "reasoning_effort"], "mutation": True,
+                     "unsupported": {"trust_folder": True},
+                     "reasoning_effort": {"agents": ["codex"], "values": ["low", "medium", "high", "xhigh"]}},
+    "agent.deliver": {"required": ["text"],
+                      "optional": ["mode", "finish_staged_message_id",
+                                   "previous_completed_suggestion_id", "envelope"], "mutation": True},
     "operation.status": {"required": [], "optional": [], "mutation": False},
 }
 ACTION_REQUEST = {"required": ["schema", "operation_id", "operation", "source", "target", "params"],
@@ -45,7 +48,7 @@ ACTION_REQUEST = {"required": ["schema", "operation_id", "operation", "source", 
 def capabilities():
     return {"schema": SCHEMA, "operations": json.loads(json.dumps(ACTION_OPERATIONS)),
             "request": json.loads(json.dumps(ACTION_REQUEST)),
-            "agents": list(control.AGENTS), "delivery_agents": ["codex"],
+            "agents": list(control.AGENTS), "delivery_agents": list(DELIVERY_AGENTS),
             "folder_trust_supported": False,
             "acknowledgment_supported": False, "completion_supported": False}
 
@@ -117,6 +120,8 @@ def validate(request):
     if operation == "agent.launch":
         if not isinstance(params["agent"], str) or params["agent"] not in control.AGENTS:
             raise control.ControlError("unsupported agent")
+        if "reasoning_effort" in params:
+            control.validate_reasoning_effort(params["agent"], params["reasoning_effort"])
         for name in ("model", "prompt", "resume"):
             if name in params:
                 text(params[name], name, 200 if name == "model" else 1024)
@@ -137,9 +142,25 @@ def validate(request):
     if operation == "agent.deliver":
         if params.get("mode", "steer") not in ("steer", "defer"):
             raise control.ControlError("mode must be steer or defer")
+        if "finish_staged_message_id" in params and request.get("dry_run", False):
+            raise control.ControlError("finish-staged completion cannot be previewed; use an explicit deliver action")
+        message_id = params.get("finish_staged_message_id", request["operation_id"])
+        if not isinstance(message_id, str) or not MESSAGE_ID.fullmatch(message_id):
+            raise control.ControlError("finish_staged_message_id must be a valid previous message ID")
+        if not isinstance(params.get("envelope", False), bool):
+            raise control.ControlError("envelope must be a boolean")
+        previous_id = params.get("previous_completed_suggestion_id")
+        if "previous_completed_suggestion_id" in params:
+            if not isinstance(previous_id, str) or not MESSAGE_ID.fullmatch(previous_id):
+                raise control.ControlError("previous_completed_suggestion_id must be a valid prior message ID")
+            if previous_id == message_id:
+                raise control.ControlError("previous suggestion ID must differ from the new message ID")
+            if (params.get("mode", "steer") != "steer" or
+                    "finish_staged_message_id" in params or request.get("dry_run", False)):
+                raise control.ControlError("completed-suggestion authorization requires a fresh non-preview Claude steer delivery")
         text(params["text"], "message", MAX_WIRE)
         value = read_payload(SimpleNamespace(file=None, text=params["text"]))
-        text(f"[kilix-message:{request['operation_id']}] " + value, "message with ID", MAX_WIRE)
+        text(f"[kilix-message:{message_id}] " + value, "message with ID", MAX_WIRE)
     # Bound inputs before hashing or touching private storage; reject non-JSON values.
     encoded = json.dumps(request, ensure_ascii=True, allow_nan=False)
     if len(encoded.encode()) > MAX_REQUEST:
@@ -203,6 +224,50 @@ def ledger(client, operation_id, *, create=True):
                 os.close(lock)
     except Conflict as exc:
         raise control.ControlError(str(exc)) from exc
+
+
+def previous_completed_suggestion_scope(client, previous_id, source, target):
+    """Read an existing submitted action receipt in the same private scope.
+
+    This intentionally opens no action lock and creates no missing state. The
+    currently executing action has a different operation ID; receipt writes
+    are atomic, so a read sees one complete prior record.
+    """
+    if not isinstance(previous_id, str) or not MESSAGE_ID.fullmatch(previous_id):
+        return False
+    try:
+        with ledger(client, previous_id, create=False) as store:
+            record = store.read()
+        validate_record(record, previous_id)
+    except (FileNotFoundError, control.ControlError, OSError, ValueError,
+            TypeError, KeyError):
+        return False
+    if record is None or record.get("phase") != "final":
+        return False
+    saved = record["receipt"]
+    return (
+        saved.get("operation_id") == previous_id and
+        saved.get("operation") == "agent.deliver" and
+        saved.get("source") == source and saved.get("target") == target and
+        saved.get("status") == "submitted" and
+        saved.get("delivery_verified") is True and
+        saved.get("evidence", {}).get("verification") == "claude-screen-v1"
+    )
+
+
+def current_cli_source_identity(client):
+    """Resolve the inherited CLI caller's exact pane/broker for scope binding."""
+    caller = getattr(client, "caller", None)
+    if type(caller) is not int or caller <= 0:
+        raise control.ControlError("previous suggestion authorization requires a verified caller pane")
+    matches = [pane for pane in client.snapshot() if pane.get("id") == caller]
+    if len(matches) != 1:
+        raise control.ControlError("caller pane is absent or ambiguous")
+    broker = (matches[0].get("env") or {}).get("KITTY_PTY_BROKER_SESSION", "")
+    if not isinstance(broker, str) or not control.BROKER.fullmatch(broker):
+        raise control.ControlError("caller pane has no exact broker identity")
+    client.resolve(caller, broker)
+    return {"pane_id": caller, "broker": broker}
 
 
 class GuardedClient:
@@ -273,20 +338,33 @@ def execute(client, request):
             pane = result["pane"]
             client.resolve(pane["pane_id"], pane["broker"])
         return result
-    args.message_id, args.timeout, args.file = request["operation_id"], request["timeout"], None
+    args.message_id = params.get("finish_staged_message_id", request["operation_id"])
+    args.finish_staged = "finish_staged_message_id" in params
+    args.previous_completed_suggestion_id = params.get("previous_completed_suggestion_id")
+    args.envelope = params.get("envelope", False)
+    args.timeout, args.file = request["timeout"], None
     args.mode = params.get("mode", "steer")
     if request["dry_run"]:
         target = client.resolve(args.pane, args.expect_broker, input_target=True)
-        if control.describe(target)["agent"] != "codex":
-            raise control.ControlError("verified delivery supports foreground Codex only")
+        agent = control.describe(target)["agent"]
+        if agent not in DELIVERY_AGENTS:
+            raise control.ControlError("verified delivery supports foreground Codex or Claude only")
+        if agent == "claude" and args.mode == "defer":
+            raise control.ControlError("Claude delivery supports steer only; Tab changes permission mode")
         screen = composer(client.run(["get-text", "--match", f"env:KITTY_PTY_BROKER_SESSION={args.expect_broker}",
-                                      "--extent", "screen", "--ansi"]))
+                                      "--extent", "screen", "--ansi"]), agent)
         client.verify()
         if not screen["empty"]:
             raise control.ControlError("target composer is occupied")
         if args.mode == "defer" and "esc to interrupt" not in screen["screen"].lower():
             raise control.ControlError("defer requires a visibly working Codex session")
-        return {"status": "dry_run", "verification": "codex-screen-v1"}
+        return {"status": "dry_run", "verification": agent + "-screen-v1"}
+    if args.previous_completed_suggestion_id is not None:
+        args._previous_completed_suggestion_source_identity = dict(request["source"])
+        args._previous_completed_suggestion_scope_verified = (
+            previous_completed_suggestion_scope(
+                client, args.previous_completed_suggestion_id,
+                request["source"], request["target"]))
     from agent_delivery import deliver
     return deliver(client, args)
 
@@ -306,6 +384,11 @@ def finish(request, result):
         if not out["delivery_verified"]:
             out["status"] = "uncertain"
         out["evidence"] = {"verification": result.get("verification"), "verified_at": result.get("verified_at")}
+    if request["operation"] == "agent.launch" and status in ("created", "planned"):
+        params = request["params"]
+        out.setdefault("evidence", {})["requested"] = {
+            "agent": params["agent"], "model": params.get("model"),
+            "reasoning_effort": params.get("reasoning_effort")}
     if result.get("error"):
         out["error"] = result["error"][:240]
     return out
@@ -338,7 +421,16 @@ def validate_record(record, operation_id):
         raise control.ControlError("invalid stored action receipt")
     if saved["status"] == "created":
         evidence = saved["evidence"]
-        fields(evidence, ("pane", "prompt_passed"), label="created pane evidence")
+        fields(evidence, ("pane", "prompt_passed"), ("requested",), label="created pane evidence")
+        if "requested" in evidence:
+            requested = evidence["requested"]
+            fields(requested, ("agent", "model", "reasoning_effort"), label="requested launch settings")
+            if saved["operation"] != "agent.launch" or requested["agent"] not in control.AGENTS:
+                raise control.ControlError("invalid requested launch settings")
+            if requested["model"] is not None:
+                text(requested["model"], "requested model", 200)
+            if requested["reasoning_effort"] is not None:
+                control.validate_reasoning_effort(requested["agent"], requested["reasoning_effort"])
         pane = evidence["pane"]
         fields(pane, ("pane_id", "broker", "tab_id", "os_window_id"), label="created pane identity")
         identity({key: pane[key] for key in ("pane_id", "broker")})
@@ -348,7 +440,7 @@ def validate_record(record, operation_id):
     if saved["status"] in ("submitted", "deferred"):
         evidence = saved.get("evidence")
         fields(evidence, ("verification", "verified_at"), label="delivery evidence")
-        if (evidence["verification"] != "codex-screen-v1" or
+        if (evidence["verification"] not in tuple(agent + "-screen-v1" for agent in DELIVERY_AGENTS) or
                 type(evidence["verified_at"]) not in (int, float) or not math.isfinite(evidence["verified_at"])):
             raise control.ControlError("invalid delivery evidence")
 

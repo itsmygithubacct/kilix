@@ -119,7 +119,7 @@ accepted phrasing each. Choose one and call that job's own tool; do not rephrase
 until something acts. A route to tmux, logs, pty or desktop names that job's tool
 and runs nothing. When the job is known, call its tool directly.
 
-For a supported Codex composer, prefer verified delivery:
+For a supported Codex or Claude composer, prefer verified delivery:
 
 ```sh
 kilix agent-control deliver ID --expect-broker BROKER \
@@ -130,7 +130,8 @@ Use the broker from the same target record. Delivery checks identity, an empty
 composer, full paste, separate submission, and submission evidence. Use one line,
 at most 900 UTF-8 bytes including the ID prefix. Retain ID and payload for recovery;
 inspect uncertainty before retrying, never just issue a new ID. `--mode defer`
-queues a follow-up. Submission does not prove acknowledgment or completion.
+queues a follow-up for Codex; Claude supports the default steer mode only.
+Submission does not prove acknowledgment or completion.
 
 ## Files, logs, and system queries
 
@@ -228,6 +229,9 @@ including its tail; never "repair" it by executing it in the controlling shell.
   receipts with status and the original operation ID. Timeout is in seconds,
   1–60, default 15. Creation does not prove readiness. See
   [structured actions](structured-actions.md) for request schemas and receipts.
+  Codex `agent.launch` accepts typed `reasoning_effort`: `low`, `medium`, `high`,
+  or `xhigh`, alongside the exact `model`. Omit it to keep the client default.
+  `evidence.requested` records the request, not provider acceptance.
 - For Needle automation use `--agent --json`; apps changes use
   `kilix-needle apps --agent --json --yes 'REQUEST'`, such as `hide the clock`.
   `--yes` applies to the requested change. `kilix screen-size set POINTS` sets text

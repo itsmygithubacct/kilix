@@ -18,6 +18,22 @@ def ask(question, input_fn):
         print('Please answer yes or no.')
 
 
+def llm_license_covered(model, entries, saved, manifest_digest):
+    """Reuse an actual prior answer only for the same manifest and licence bytes."""
+    record = saved.get(model)
+    if not isinstance(record, dict) or record.get('manifest_sha256') != manifest_digest:
+        return False
+    groups = record.get('groups')
+    if not isinstance(groups, list):
+        return False
+    return bool(entries) and all(any(
+        isinstance(group, dict) and group.get('licence') == label
+        and group.get('capture_mode') == 'interactive-tty' and group.get('captured_at')
+        and isinstance(group.get('text_sha256'), list)
+        and text_key(payload) in group['text_sha256']
+        for group in groups) for label, payload in entries)
+
+
 def consent_and_install(selected, *, input_fn=input):
     """Return installed and declined IDs; failed installs raise for a safe retry.
 
@@ -56,7 +72,12 @@ def consent_and_install(selected, *, input_fn=input):
                 group['records'][record.digest] = record
                 requirements[model].add(key)
         # Read only the pinned manifests and licence layers, never model weights.
+        from model_wizard import atomic_json, read_json, state_root
+        llm_licenses_path = state_root() / 'model-wizard-llm-licenses.json'
+        saved = read_json(llm_licenses_path)
         for model, entries in system_llm.license_texts(llm_ids).items():
+            if llm_license_covered(model, entries, saved, system_llm.MODELS[model][3]):
+                continue
             for label, payload in entries:
                 key = label
                 group = groups.setdefault(key, dict(label=key, models=[], records={}, texts={}))
@@ -114,17 +135,16 @@ def consent_and_install(selected, *, input_fn=input):
                     manifest_digest=spec.manifest_digest, release_digest=release_digest(),
                     catalogue_digest=catalog_sha256()))
         if allowed & set(llm_ids):
-            from model_wizard import atomic_json, read_json, state_root
-            path = state_root() / 'model-wizard-llm-licenses.json'
-            saved = read_json(path)
             for model in allowed & set(llm_ids):
+                if not requirements[model]:
+                    continue
                 saved[model] = {'manifest_sha256': system_llm.MODELS[model][3],
                     'groups': [{'licence': key, 'text_sha256': [hashlib.sha256(text).hexdigest()
                                for text in groups[key]['texts'].values()],
                                 'captured_at': captures[key].captured_at,
                                 'capture_mode': captures[key].capture_mode}
                                for key in requirements[model]]}
-            atomic_json(path, saved)
+            atomic_json(llm_licenses_path, saved)
         from kilix_sdk._content_runtime import apps_root
         installer = api.Installer(apps_root())
         for model in selected:
@@ -135,7 +155,7 @@ def consent_and_install(selected, *, input_fn=input):
                     installer.ensure_upstream_asset(specs[model], store=store, records=records,
                         notices=texts, report=lambda message: print(message, flush=True))
                 else:
-                    # The licence-group Yes above is also explicit download consent.
+                    # The current or saved licence-group Yes also covers the download.
                     system_llm.acquire(model, consented=True)
             except Exception as error:
                 raise RuntimeError(f'Could not install {model}') from error

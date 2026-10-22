@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'config'))
 import content_models as cm
 import wizard_licenses as batch
 import system_llm
+import model_wizard
 
 
 class BatchTests(unittest.TestCase):
@@ -23,7 +24,7 @@ class BatchTests(unittest.TestCase):
         self.installer = Mock()
         self.questions = []
 
-    def run_batch(self, names, decisions):
+    def run_batch(self, names, decisions, llm_entries=None):
         decisions = iter(decisions)
         def answer(question):
             self.questions.append(question)
@@ -31,8 +32,11 @@ class BatchTests(unittest.TestCase):
         output = io.TextIOWrapper(io.BytesIO(), encoding='utf-8', write_through=True)
         with patch.object(cm, '_api', return_value=self.api), \
                 patch.object(self.lic.ReceiptStore, 'shared', return_value=self.store), \
+                patch.object(self.lic, 'observe_capture', return_value=self.lic.observe_capture(interactive=True)), \
                 patch.object(self.api, 'Installer', return_value=self.installer), \
-                patch.object(system_llm, 'license_texts', return_value={}), \
+                patch.object(system_llm, 'license_texts', return_value=llm_entries or {}), \
+                patch.object(system_llm, 'acquire'), \
+                patch.object(model_wizard, 'state_root', return_value=Path(self.directory.name)), \
                 contextlib.redirect_stdout(output):
             result = batch.consent_and_install(names, input_fn=answer)
             output.flush()
@@ -93,6 +97,40 @@ class BatchTests(unittest.TestCase):
             self.run_batch(['yolox_s'], ['yes'])
         self.assertIsInstance(caught.exception.__cause__, FileNotFoundError)
         self.assertEqual(len(list(self.store.root.glob('*.json'))), 1)
+
+    def test_llm_retry_reuses_and_preserves_exact_prior_acceptance(self):
+        name = 'qwen3:4b-instruct-2507-q4_K_M'
+        entries = {name: [('apache-2.0', b'Original terms')]}
+        self.run_batch([name], ['yes'], entries)
+        saved = Path(self.directory.name) / 'model-wizard-llm-licenses.json'
+        original = saved.read_bytes()
+        self.questions.clear()
+        self.assertEqual(self.run_batch([name], [], entries), ({name}, set()))
+        self.assertEqual(self.questions, [])
+        self.assertEqual(saved.read_bytes(), original)
+
+    def test_changed_llm_terms_require_new_answer(self):
+        name = 'qwen3:4b-instruct-2507-q4_K_M'
+        self.run_batch([name], ['yes'], {name: [('apache-2.0', b'Original terms')]})
+        self.questions.clear()
+        self.assertEqual(self.run_batch([name], ['no'],
+            {name: [('apache-2.0', b'Changed terms')]}), (set(), {name}))
+        self.assertEqual(len(self.questions), 1)
+
+    def test_install_error_names_model_and_reaches_wizard_error_handler(self):
+        self.installer.ensure_upstream_asset.side_effect = self.api.InstallError('converter missing')
+        with self.assertRaisesRegex(RuntimeError, 'Could not install yolox_s') as caught:
+            self.run_batch(['yolox_s'], ['yes'])
+        self.assertIsInstance(caught.exception.__cause__, self.api.InstallError)
+        self.assertEqual(str(caught.exception.__cause__), 'converter missing')
+
+    def test_download_error_reaches_wizard_error_handler(self):
+        original = self.api.DownloadError('size-mismatch')
+        self.installer.ensure_upstream_asset.side_effect = original
+        with self.assertRaisesRegex(RuntimeError, 'Could not install yolox_s') as caught:
+            self.run_batch(['yolox_s'], ['yes'])
+        self.assertIsInstance(caught.exception.__cause__, self.api.DownloadError)
+        self.assertIs(caught.exception.__cause__, original)
 
 
 if __name__ == '__main__': unittest.main()

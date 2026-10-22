@@ -57,7 +57,7 @@ Supported operations:
 | --- | --- |
 | `pane.open` | Launch an explicit argument vector in a new pane or tab. |
 | `agent.launch` | Launch a supported coding client using the existing agent-control policy. |
-| `agent.deliver` | Submit a message through the verified Codex delivery helper. |
+| `agent.deliver` | Submit a message through the verified Codex or Claude delivery helper. |
 | `operation.status` | Read an operation's durable receipt without repeating its mutation. |
 
 Each new mutation needs a distinct `operation_id`. Preserve that ID through
@@ -66,11 +66,53 @@ fields rather than silently ignoring misspelled arguments. Literal arguments are
 not evaluated as a shell command by the executor; explicitly launching a shell
 with `-c` still invokes that shell's normal semantics.
 
+Claude delivery supports `mode: "steer"` (the default). Its framed composer and
+permission-mode footer must be recognized, its input must be empty, and the full
+paste is verified before Enter. `defer` is refused for Claude because Tab changes
+its permission mode. Both clients retain durable at-most-once input attempts;
+uncertain receipts are recovered by observation without resending text or keys.
+
 Structured agent launches do not record folder trust: `trust_folder: true` is
 refused before connecting. Use the existing `kilix agent-control new-tab` or
 `split` workflow with `--trust-folder` when an authorized launch must also record
 folder trust. This
 keeps parallel launches from racing writes to a client's shared trust config.
+
+## Model and reasoning effort
+
+For Codex, `agent.launch` accepts an optional typed `reasoning_effort`: `low`,
+`medium`, `high`, or `xhigh`. For example, after resolving the source and anchor,
+use these launch parameters with a fresh operation ID:
+
+```json
+{
+  "agent": "codex",
+  "cwd": "/home/pleb/research/gpu_terminal/pleb-dgm",
+  "title": "DGM controller",
+  "placement": "new-tab",
+  "model": "gpt-6.1-sol",
+  "reasoning_effort": "xhigh",
+  "prompt": "Read the assigned brief and implement its tests"
+}
+```
+
+The same field works through Needle's structured CLI and MCP action tools when
+both components include this capability. `kilix action capabilities` lists the
+accepted agents and values. `kilix agent-control new-tab` and `split` also accept
+`--reasoning-effort`. The launcher forwards the exact model and a bounded Codex
+configuration argument, including on resume. Omission preserves the client's
+existing configuration. Unsupported clients, invalid values, and misspelled
+fields are refused; arbitrary Codex `agent_arg` configuration remains refused.
+A particular model may reject an effort: Kilix never substitutes another effort
+or model, and pane creation alone does not establish provider acceptance.
+
+Created and planned agent receipts include `evidence.requested` with `agent`,
+`model`, and `reasoning_effort`. A null value means the caller left that setting
+unspecified. These are requested settings, not observations of the served model
+or effort. The receipt contains no prompt or credentials. Existing saved receipts
+without this optional evidence remain readable. A reused operation ID with a
+changed effort is a different request and is refused. Effort selection does not
+change folder trust, approval policy, or `coding_yolo` behavior.
 
 ## Results and recovery
 

@@ -35,6 +35,90 @@ def request(operation="pane.open", operation_id="open-1"):
 
 
 class ActionsTests(unittest.TestCase):
+    def test_capabilities_advertise_codex_and_claude_delivery(self):
+        self.assertEqual(actions.capabilities()['delivery_agents'], ['codex', 'claude'])
+        self.assertIn('finish_staged_message_id',
+                      actions.capabilities()['operations']['agent.deliver']['optional'])
+        self.assertIn('previous_completed_suggestion_id',
+                      actions.capabilities()['operations']['agent.deliver']['optional'])
+        self.assertIn('envelope', actions.capabilities()['operations']['agent.deliver']['optional'])
+
+    def test_envelope_is_an_opt_in_boolean_only(self):
+        value = request('agent.deliver', 'env-op')
+        value['params']['envelope'] = True
+        self.assertIs(actions.validate(copy.deepcopy(value))['params']['envelope'], True)
+        for bad in ('yes', 1, None):
+            broken = copy.deepcopy(value)
+            broken['params']['envelope'] = bad
+            with self.subTest(bad=bad), self.assertRaises(control.ControlError):
+                actions.validate(broken)
+
+    def test_claude_structured_delivery_and_status_are_observation_only_after_submit(self):
+        from test_agent_delivery import ClaudeTerminal
+        self.client = ClaudeTerminal()
+        value = request('agent.deliver', 'claude-action')
+        result = self.dispatch(value)
+        self.assertEqual(result['status'], 'submitted')
+        self.assertTrue(result['delivery_verified'])
+        self.assertEqual(result['evidence']['verification'], 'claude-screen-v1')
+        calls = len(self.client.calls)
+        recovered = self.dispatch(request('operation.status', 'claude-action'))
+        self.assertEqual(recovered['status'], 'submitted')
+        self.assertEqual(len(self.client.calls), calls)
+        self.assertEqual(len(self.client.inputs), 2)
+
+    def test_claude_dry_run_and_defer_refusal_send_no_input(self):
+        from test_agent_delivery import ClaudeTerminal
+        self.client = ClaudeTerminal()
+        value = request('agent.deliver', 'claude-preview')
+        value['dry_run'] = True
+        result = self.dispatch(value)
+        self.assertEqual(result['status'], 'planned')
+        self.assertTrue(result['identity_verified'])
+        value['params']['mode'] = 'defer'
+        self.assertEqual(self.dispatch(value)['status'], 'blocked')
+        self.assertEqual(self.client.inputs, [])
+
+    def test_previous_suggestion_parameter_requires_fresh_steer_and_cli_is_explicit(self):
+        value = request("agent.deliver", "new-message")
+        value["params"] = {"text": "New body.",
+                           "previous_completed_suggestion_id": "old-message"}
+        normalized = actions.validate(value)
+        self.assertEqual(normalized["params"]["previous_completed_suggestion_id"],
+                         "old-message")
+        invalid = []
+        defer = copy.deepcopy(value)
+        defer["params"]["mode"] = "defer"
+        invalid.append(defer)
+        staged = copy.deepcopy(value)
+        staged["params"]["finish_staged_message_id"] = "staged-message"
+        invalid.append(staged)
+        dry = copy.deepcopy(value)
+        dry["dry_run"] = True
+        invalid.append(dry)
+        same_id = copy.deepcopy(value)
+        same_id["params"]["previous_completed_suggestion_id"] = "new-message"
+        invalid.append(same_id)
+        null_id = copy.deepcopy(value)
+        null_id["params"]["previous_completed_suggestion_id"] = None
+        invalid.append(null_id)
+        for candidate in invalid:
+            with self.subTest(params=candidate["params"], dry_run=candidate.get("dry_run")):
+                with self.assertRaises(control.ControlError):
+                    actions.validate(candidate)
+        parsed = control.parser().parse_args([
+            "deliver", "2", "--expect-broker", TARGET_BROKER,
+            "--message-id", "new-message", "--text", "New body.",
+            "--previous-completed-suggestion-id", "old-message"])
+        self.assertEqual(parsed.previous_completed_suggestion_id, "old-message")
+
+    def test_missing_action_scope_lookup_creates_no_state(self):
+        source = {"pane_id": 1, "broker": SOURCE_BROKER}
+        target = {"pane_id": 2, "broker": TARGET_BROKER}
+        self.assertFalse(actions.previous_completed_suggestion_scope(
+            self.client, "absent-prior", source, target))
+        self.assertFalse((Path(self.temp.name) / "kilix").exists())
+
     def test_stdin_errors_explain_input_and_units_without_connecting(self):
         for raw in (b"", b" \n", json.dumps({**request(), "timeout": 30000}).encode()):
             with io.TextIOWrapper(io.BytesIO(raw)) as stdin, \
@@ -58,6 +142,162 @@ class ActionsTests(unittest.TestCase):
 
     def dispatch(self, value):
         return actions.dispatch(value, self.client)
+
+    def seed_completed_suggestion(self, message_id="previous-message"):
+        from test_agent_delivery import ClaudeTerminal, claude_screen
+        self.client = ClaudeTerminal()
+        prior = request("agent.deliver", message_id)
+        prior["params"]["text"] = "Please  review  the exact old suggestion."
+        self.assertEqual(self.dispatch(prior)["status"], "submitted")
+        wire = f"[kilix-message:{message_id}] {prior['params']['text']}"
+        self.client.current = claude_screen(
+            "\x1b[2m" + wire, history=self.client.history,
+            footer=self.client.footer, prompt_gap="\u00a0")
+        return wire
+
+    def suggestion_request(self, previous_id="previous-message", new_id="new-message"):
+        value = request("agent.deliver", new_id)
+        value["params"] = {"text": "Send only this new body.",
+                           "previous_completed_suggestion_id": previous_id}
+        return value
+
+    def change_action_receipt(self, message_id, change):
+        with actions.ledger(self.client, message_id) as store:
+            record = store.read()
+            change(record)
+            store.write(record)
+
+    def change_delivery_receipt(self, message_id, change):
+        from types import SimpleNamespace
+        args = SimpleNamespace(pane=2, expect_broker=TARGET_BROKER,
+                               message_id=message_id)
+        with delivery.ledger(self.client, args) as store:
+            record = store.read()
+            change(record)
+            store.write(record)
+
+    def test_named_completed_faint_suggestion_is_replaced_and_submitted_once(self):
+        self.seed_completed_suggestion()
+        source = actions.current_cli_source_identity(self.client)
+        self.assertTrue(actions.previous_completed_suggestion_scope(
+            self.client, "previous-message", source,
+            {"pane_id": 2, "broker": TARGET_BROKER}))
+        root = Path(self.temp.name) / "kilix" / "agent-delivery"
+        target_hash = actions.hashlib.sha256(
+            (self.client.command[self.client.command.index("--to") + 1] +
+             "\0" + TARGET_BROKER).encode()).hexdigest()
+        prior_hash = actions.hashlib.sha256(b"previous-message").hexdigest()
+        prior_path = root / f"{target_hash}-{prior_hash}.json"
+        prior_bytes = prior_path.read_bytes()
+        value = self.suggestion_request()
+        with mock.patch.object(delivery, "ledger", wraps=delivery.ledger) as target_ledger:
+            result = self.dispatch(value)
+        self.assertEqual(result["status"], "submitted")
+        self.assertEqual(self.client.inputs, [
+            b"[kilix-message:previous-message] Please  review  the exact old suggestion.", b"\r",
+            b"[kilix-message:new-message] Send only this new body.", b"\r",
+        ])
+        self.assertEqual(target_ledger.call_count, 1)
+        self.assertEqual(prior_path.read_bytes(), prior_bytes)
+
+    def test_suggestion_scope_requires_same_owned_source_and_provider(self):
+        cases = (
+            ("source", lambda r: r["receipt"].update(
+                source={"pane_id": 3, "broker": SOURCE_BROKER})),
+            ("provider", lambda r: r["receipt"]["evidence"].update(
+                verification="codex-screen-v1")),
+        )
+        for label, mutate in cases:
+            with self.subTest(case=label):
+                old_id = f"previous-{label}"
+                self.seed_completed_suggestion(old_id)
+                self.change_action_receipt(old_id, mutate)
+                before = list(self.client.inputs)
+                result = self.dispatch(self.suggestion_request(
+                    previous_id=old_id, new_id=f"new-{label}"))
+                self.assertEqual(result["status"], "blocked")
+                self.assertEqual(self.client.inputs, before)
+
+    def test_suggestion_requires_exact_digest_process_and_submitted_phase(self):
+        cases = (
+            ("digest", lambda r: r.update(digest="0" * 64)),
+            ("process", lambda r: r.update(process_identity="0" * 64)),
+            ("phase", lambda r: r.update(phase="deferred")),
+        )
+        for label, mutate in cases:
+            with self.subTest(case=label):
+                old_id = f"previous-{label}"
+                self.seed_completed_suggestion(old_id)
+                self.change_delivery_receipt(old_id, mutate)
+                before = list(self.client.inputs)
+                result = self.dispatch(self.suggestion_request(
+                    previous_id=old_id, new_id=f"new-{label}"))
+                self.assertEqual(result["status"], "blocked")
+                self.assertEqual(self.client.inputs, before)
+
+    def test_suggestion_mismatch_mixed_style_and_wrapping_preserve_composer(self):
+        from test_agent_delivery import claude_screen, wrapped_wire
+        self.seed_completed_suggestion()
+        original_inputs = list(self.client.inputs)
+        old_wire = "[kilix-message:previous-message] Please  review  the exact old suggestion."
+        cases = (
+            ("wrong-id", "\x1b[2m[kilix-message:other-id] body"),
+            ("mixed-style", "\x1b[2m" + old_wire[:8] + "\x1b[0m" + old_wire[8:]),
+            ("wrapped", "\x1b[2m" + wrapped_wire(old_wire)),
+            ("bright-draft", old_wire),
+        )
+        for label, value in cases:
+            with self.subTest(case=label):
+                self.client.current = claude_screen(
+                    value, history=self.client.history, footer=self.client.footer,
+                    prompt_gap="\u00a0")
+                before_screen = self.client.current
+                result = self.dispatch(self.suggestion_request(
+                    new_id=f"new-{label}"))
+                self.assertIn(result["status"], ("blocked", "uncertain"))
+                self.assertEqual(self.client.current, before_screen)
+                self.assertEqual(self.client.inputs, original_inputs)
+
+    def test_unknown_suggestion_receipt_is_read_only_and_not_created(self):
+        from test_agent_delivery import ClaudeTerminal, claude_screen
+        self.client = ClaudeTerminal()
+        old_wire = "[kilix-message:missing-old] prior body"
+        self.client.current = claude_screen(
+            "\x1b[2m" + old_wire, prompt_gap="\u00a0")
+        result = self.dispatch(self.suggestion_request(
+            previous_id="missing-old", new_id="new-missing"))
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(self.client.inputs, [])
+        operation_root = Path(self.temp.name) / "kilix" / "agent-actions"
+        self.assertEqual(len(list(operation_root.glob("*.json"))), 1)
+        delivery_root = Path(self.temp.name) / "kilix" / "agent-delivery"
+        self.assertFalse(delivery_root.exists())
+
+    def test_bright_new_wire_failure_stays_pasting_and_retries_observe_only(self):
+        self.seed_completed_suggestion()
+        faint_before = self.client.current
+        self.client.on_paste = lambda c: setattr(c, "current", faint_before)
+        # Use the lower-level path twice to verify the receipt itself prevents
+        # a second paste after the replacement was attempted but not observed.
+        from types import SimpleNamespace
+        delivery_args = SimpleNamespace(
+            pane=2, expect_broker=TARGET_BROKER, message_id="new-message",
+            text="Send only this new body.", file=None, timeout=1, mode="steer",
+            finish_staged=False, previous_completed_suggestion_id="previous-message",
+            _previous_completed_suggestion_scope_verified=True,
+            _previous_completed_suggestion_source_identity={
+                "pane_id": 1, "broker": SOURCE_BROKER})
+        before = list(self.client.inputs)
+        first = delivery.deliver(self.client, delivery_args)
+        self.assertEqual(first["status"], "uncertain")
+        after_first = list(self.client.inputs)
+        self.assertEqual(after_first, before + [
+            b"[kilix-message:new-message] Send only this new body."])
+        self.assertEqual(self.client.current, faint_before)
+        second = delivery.deliver(self.client, delivery_args)
+        self.assertEqual(second["status"], "uncertain")
+        self.assertEqual(self.client.inputs, after_first)
+        self.assertNotIn(b"\r", self.client.inputs[len(before):])
 
     def test_open_literal_argv_exact_broker_and_truthful_receipt(self):
         value = request()
@@ -240,6 +480,49 @@ class ActionsTests(unittest.TestCase):
         self.assertTrue(repeated["duplicate"])
         self.assertFalse(result["acknowledgment_verified"])
         self.assertFalse(result["completion_verified"])
+
+    def test_structured_finish_staged_uses_previous_id_and_a_new_action_receipt(self):
+        from test_agent_delivery import Terminal
+        self.client = Terminal()
+        message_id = "previous-stage"
+        body = "Please inspect the exact prepared result."
+        stage_args = control.parser().parse_args([
+            "deliver", "2", "--expect-broker", TARGET_BROKER,
+            "--message-id", message_id, "--text", body, "--timeout", "1"
+        ])
+        self.client.on_paste = lambda _client: (_ for _ in ()).throw(KeyboardInterrupt())
+        with self.assertRaises(KeyboardInterrupt):
+            delivery.deliver(self.client, stage_args)
+        self.client.on_paste = None
+
+        value = request("agent.deliver", "finish-action-1")
+        value["params"].update(text=body, finish_staged_message_id=message_id)
+        result = self.dispatch(value)
+        self.assertEqual(result["status"], "submitted")
+        self.assertTrue(result["delivery_verified"])
+        self.assertEqual(self.client.inputs, [
+            f"[kilix-message:{message_id}] {body}".encode(), b"\r"
+        ])
+        calls = len(self.client.calls)
+        repeated = self.dispatch(value)
+        self.assertTrue(repeated["duplicate"])
+        self.assertEqual(len(self.client.calls), calls)
+
+    def test_structured_finish_staged_rejects_bad_id_and_dry_run_before_io(self):
+        invalid = request("agent.deliver", "finish-action-invalid")
+        invalid["params"]["finish_staged_message_id"] = "../bad"
+        with mock.patch.object(control, "Client") as client:
+            self.assertEqual(actions.dispatch(invalid)["status"], "blocked")
+        client.assert_not_called()
+
+        preview = request("agent.deliver", "finish-action-preview")
+        preview["params"]["finish_staged_message_id"] = "previous-stage"
+        preview["dry_run"] = True
+        with mock.patch.object(control, "Client") as client:
+            result = actions.dispatch(preview)
+        self.assertEqual(result["status"], "blocked")
+        self.assertIn("cannot be previewed", result["error"])
+        client.assert_not_called()
 
     def test_invalid_schema_fields_and_types_never_connect(self):
         cases = []
