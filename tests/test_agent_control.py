@@ -12,6 +12,7 @@ import threading
 import time
 import unittest
 from unittest import mock
+from _env_support import sandbox_env
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "config"))
 import agent_control as control
@@ -754,7 +755,7 @@ class ConnectionTests(unittest.TestCase):
             state_path = Path(directory) / "fixture-state.json"
             client = control.Client.__new__(control.Client)
             client.command = [sys.executable, str(fixture)]
-            client.command_env = {**os.environ, "DELIVERY_RPC_FIXTURE_STATE": str(state_path)}
+            client.command_env = sandbox_env(DELIVERY_RPC_FIXTURE_STATE=str(state_path))
 
             # Model a silent send-text that staged its bytes, followed by a
             # response-bearing screen read. A direct call keeps the local
