@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import tempfile
 import time
@@ -86,6 +87,11 @@ class NativeWindowIntegration(unittest.TestCase):
                             break
                         time.sleep(.03)
                     diagnostics = []
+                    if logger is not None and logger.poll() is None:
+                        os.kill(logger.pid, signal.SIGUSR1)
+                        time.sleep(.1)
+                    for name in ('_NET_CLIENT_LIST', '_NET_ACTIVE_WINDOW', '_NET_SUPPORTING_WM_CHECK'):
+                        diagnostics.append(name + ': ' + repr(root.get_full_property(atom(name), X.AnyPropertyType)))
                     for child in children:
                         diagnostics.append(f'{child.args!r}: exit={child.poll()!r}')
                     if stderr:
@@ -95,7 +101,10 @@ class NativeWindowIntegration(unittest.TestCase):
                         diagnostics.append((state / 'native-windows.jsonl').read_text())
                     self.fail('timed out waiting for X11/logger state\n' + '\n'.join(diagnostics))
                 wait_for(lambda: root.get_full_property(atom('_NET_SUPPORTING_WM_CHECK'), X.AnyPropertyType))
-                cmd = ['/usr/bin/python3', str(SCRIPT), '--state-dir', str(state)]
+                cmd = ['/usr/bin/python3', '-c',
+                       'import faulthandler,runpy,signal,sys; faulthandler.register(signal.SIGUSR1,all_threads=True); '
+                       'sys.argv=sys.argv[1:]; runpy.run_path(sys.argv[0],run_name="__main__")',
+                       str(SCRIPT), '--state-dir', str(state)]
                 stderr = tempfile.TemporaryFile()
                 logger = subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL, stderr=stderr)
                 children.append(logger)
