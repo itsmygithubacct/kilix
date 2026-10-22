@@ -45,7 +45,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends build-essential pkg-config python3-dev \
-            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxkbcommon-dev \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxres-dev libxkbcommon-dev \
             libxkbcommon-x11-dev libx11-xcb-dev libdbus-1-dev libgl1-mesa-dev libegl-dev libdrm-dev \
             libfontconfig-dev libpng-dev liblcms2-dev libcairo2-dev libharfbuzz-dev libssl-dev \
             libxxhash-dev libsimde-dev libwayland-dev wayland-protocols zlib1g-dev
