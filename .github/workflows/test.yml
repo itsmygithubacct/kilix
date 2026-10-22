@@ -23,6 +23,15 @@ jobs:
 
       - name: Install test-only OS packages
         run: |
+          # The runner's Azure mirror can take longer than the entire test
+          # budget to deliver this dependency set. Keep Ubuntu's signed
+          # archives and use its primary mirrors for this disposable runner.
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            printf '%s\n' 'https://archive.ubuntu.com/ubuntu' | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
+          fi
+          if [ -f /etc/apt/apt-security-mirrors.txt ]; then
+            printf '%s\n' 'https://security.ubuntu.com/ubuntu' | sudo tee /etc/apt/apt-security-mirrors.txt >/dev/null
+          fi
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             ffmpeg python3-pil python3-xlib shellcheck xvfb xauth openbox dbus-daemon tmux \

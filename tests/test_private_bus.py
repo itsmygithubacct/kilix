@@ -58,7 +58,14 @@ class PrivateBusOwnership(unittest.TestCase):
             raise unittest.SkipTest(message)
 
     def setUp(self):
-        self.assertEqual(ctypes.CDLL(None).prctl(36, 1, 0, 0, 0), 0)
+        libc = ctypes.CDLL(None)
+        previous_subreaper = ctypes.c_int()
+        self.assertEqual(libc.prctl(37, ctypes.byref(previous_subreaper), 0, 0, 0), 0)
+        self.assertEqual(libc.prctl(36, 1, 0, 0, 0), 0)
+        # This process runs other suites too. Leaving it as a subreaper makes
+        # later cancellation tests adopt children they do not own or reap.
+        self.addCleanup(lambda: self.assertEqual(
+            libc.prctl(36, previous_subreaper.value, 0, 0, 0), 0))
         self.resources = []
         self.parents = []
         self.pidfds = []
