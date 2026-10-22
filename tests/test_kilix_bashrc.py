@@ -69,6 +69,24 @@ class RunAliasTests(unittest.TestCase):
             self.assertEqual(
                 self._type(app, XDG_SESSION_DESKTOP="pleb"), "alias", app)
 
+    def test_terminal_players_keep_direct_execution_and_arguments(self):
+        for name in ("mpv", "kilix-mpv", "kilix-video"):
+            with self.subTest(player=name):
+                player = self.bin / name
+                player.write_text('#!/bin/sh\nprintf \'%s\\n\' "$@" > '
+                                  '"$(dirname "$0")/../player-argv"\n')
+                player.chmod(0o755)
+                (self.applications / f"{name}.desktop").write_text(
+                    f"[Desktop Entry]\nType=Application\nExec={name} %U\nTerminal=false\n")
+                result = self._shell(
+                    f'type -t {name}\n{name} --playlist="a b.m3u" -- "clip name.mkv"\n',
+                    XDG_SESSION_DESKTOP="pleb", KILIX_RUN_ALIAS_APPS=name)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.strip(), "file")
+                self.assertEqual((self.bin.parent / "player-argv").read_text().splitlines(),
+                                 ["--playlist=a b.m3u", "--", "clip name.mkv"])
+                self.assertFalse(self.record.exists(), "terminal player was sent to kilix run")
+
     def test_no_alias_outside_pleb_session(self):
         self.assertEqual(self._type("chromium"), "file")
 
