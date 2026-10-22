@@ -80,7 +80,7 @@ if [ "$_kilix_run_aliases" = 1 ]; then
         code codium discord dolphin editres eog epiphany evince feh firefox
         firefox-esr galculator geany gedit gimp gnome-calculator gnome-terminal
         google-chrome google-chrome-stable gnumeric inkscape kate konsole krita
-        libreoffice mousepad mpv nautilus obconf okular opera pcmanfm qpdfview
+        libreoffice mousepad nautilus obconf okular opera pcmanfm qpdfview
         rhythmbox signal-desktop slack smplayer soffice spotify steam
         sublime_text system-config-printer telegram-desktop thunar thunderbird
         uxterm vivaldi-stable vlc xev xfd xfontsel xmessage xpdf xterm zenity
@@ -109,7 +109,9 @@ if [ "$_kilix_run_aliases" = 1 ]; then
             fi
         done
         [ "$_kilix_excluded" = 0 ] || continue
-        case "$_kilix_app" in kilix|kitty|kitten) continue ;; esac
+        # Terminal media players must stay in the calling pane. Their desktop
+        # entries can otherwise reintroduce the GUI wrapper through discovery.
+        case "$_kilix_app" in kilix|kitty|kitten|mpv|kilix-mpv|kilix-video) continue ;; esac
         if [ "$(type -t "$_kilix_app" 2>/dev/null)" = file ]; then
             # shellcheck disable=SC2139  # expand $_kilix_bin now, by design
             alias "$_kilix_app"="$(printf '%q run %q' "$_kilix_bin" "$_kilix_app")"
