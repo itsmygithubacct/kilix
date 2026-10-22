@@ -479,7 +479,11 @@ def _agent_rows() -> list[dict]:
 def rows() -> list[dict]:
     """Everything installable, including optional application data."""
     return (_catalog_rows() + _agent_rows() + _runtime_rows() +
-            techno_soundbanks.rows() + _driver_rows())
+            techno_soundbanks.rows() + _driver_rows() + [{
+                "id": "kilix-session", "label": "Kilix Session", "kind": "tool",
+                "description": "Managed coding sessions, trust, logs and lifecycle (bundled with Kilix)",
+                "installed": bool(_resolve_agent_command("kilix-session")),
+            }])
 
 
 def _agent(identifier: str) -> dict | None:
@@ -497,6 +501,10 @@ def _driver(identifier: str) -> dict | None:
 
 
 def install(identifier: str, *, assume_yes: bool = False) -> int:
+    if identifier == "kilix-session":
+        return subprocess.run([sys.executable, "-B", os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "scripts", "install-kilix-session.py")], check=False).returncode
     soundbank = _soundbank(identifier)
     if soundbank is not None:
         return _install_soundbank(soundbank, assume_yes=assume_yes)
@@ -646,6 +654,8 @@ def _install_catalog(identifier: str) -> int:
 
 
 def update(identifier: str) -> int:
+    if identifier == "kilix-session":
+        return install(identifier, assume_yes=True)
     soundbank = _soundbank(identifier)
     if soundbank is not None:
         return _install_soundbank(soundbank, assume_yes=True)
@@ -688,7 +698,7 @@ def _update_driver(driver: dict) -> int:
 
 def _print_table(entries: list[dict]) -> None:
     width = max((len(r.get("id", "")) for r in entries), default=2)
-    kinds = ("agent", "app", "game", "runtime", "soundbank", "driver")
+    kinds = ("agent", "app", "game", "runtime", "soundbank", "driver", "tool")
     for kind in kinds:
         group = [r for r in entries if r.get("kind") == kind]
         if not group:

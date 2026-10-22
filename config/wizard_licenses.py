@@ -130,10 +130,13 @@ def consent_and_install(selected, *, input_fn=input):
         for model in selected:
             if model not in allowed: continue
             print('\nInstalling ' + model + '…', flush=True)
-            if model in specs:
-                installer.ensure_upstream_asset(specs[model], store=store, records=records,
-                    notices=texts, report=lambda message: print(message, flush=True))
-            else:
-                # The licence-group Yes above is also explicit download consent.
-                system_llm.acquire(model, consented=True)
+            try:
+                if model in specs:
+                    installer.ensure_upstream_asset(specs[model], store=store, records=records,
+                        notices=texts, report=lambda message: print(message, flush=True))
+                else:
+                    # The licence-group Yes above is also explicit download consent.
+                    system_llm.acquire(model, consented=True)
+            except Exception as error:
+                raise RuntimeError(f'Could not install {model}') from error
     return allowed, declined

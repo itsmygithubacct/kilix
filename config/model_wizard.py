@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import traceback
 
 SCHEMA = 'kilix.model-wizard/v1'
 # Presentation policy only. Identities and sizes must exist in the selected catalog.
@@ -84,6 +85,44 @@ def atomic_json(path, value):
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
+
+
+def new_run_directory():
+    """Retain diagnostics after the desktop closes the setup window."""
+    root = state_root() / 'model-wizard-runs'
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    return Path(tempfile.mkdtemp(prefix='run-', dir=root))
+
+
+def error_detail(error):
+    """Include wrapped installer causes, such as a missing converter path."""
+    messages, seen = [], set()
+    while error is not None and id(error) not in seen:
+        seen.add(id(error))
+        message = str(error).strip() or type(error).__name__
+        if message not in messages:
+            messages.append(message)
+        error = error.__cause__
+    return ': '.join(messages)
+
+def record_failure(error, *, phase, directory=None):
+    """Persist failures before a worker starts or when it exits without a result."""
+    result = {'ok': False, 'error': error_detail(error), 'phase': phase}
+    try:
+        directory = Path(directory) if directory is not None else new_run_directory()
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        diagnostic = directory / 'error.log'
+        fd = os.open(diagnostic, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, 'w') as stream:
+            print(f'Phase: {phase}', file=stream)
+            traceback.print_exception(type(error), error, error.__traceback__, file=stream)
+        result.update(error_log=str(diagnostic), run_directory=str(directory))
+        atomic_json(directory / 'result.json', result)
+        atomic_json(state_root() / 'model-wizard-last-result.json', result)
+    except OSError as log_error:
+        result['error'] += f'; could not save diagnostic log: {log_error}'
+        print(result['error'], file=sys.stderr)
+    return result
 
 
 @contextmanager
@@ -471,6 +510,16 @@ def main(argv=None):
     action.add_argument('--result', type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     result = {'ok': False}
+    run_directory = None
+    if args.command == 'finish':
+        # Older desktops put their IPC result in a temporary directory and
+        # delete it immediately. Keep diagnostics outside that directory.
+        persistent_root = state_root() / 'model-wizard-runs'
+        run_directory = (args.result.parent if args.result and args.result.parent.parent == persistent_root
+                         else new_run_directory())
+        run_directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if not args.result:
+            args.result = run_directory / 'result.json'
     try:
         if args.command in ('answer', 'finish'):
             if args.result:
@@ -490,13 +539,27 @@ def main(argv=None):
                 raise ValueError('Use --json to inspect pages, or run kilix wizard in a terminal.')
             return interactive(include_answered=args.all)
         return 0
-    except (OSError, ValueError, KeyboardInterrupt, EOFError) as error:
-        result['error'] = str(error) or 'Setup interrupted; unanswered pages are retained.'
+    except (Exception, KeyboardInterrupt) as error:
+        result['error'] = error_detail(error)
+        if run_directory is not None:
+            diagnostic = run_directory / 'error.log'
+            try:
+                fd = os.open(diagnostic, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
+                with os.fdopen(fd, 'w') as stream:
+                    traceback.print_exc(file=stream)
+                result['error_log'] = str(diagnostic)
+                print(f'Detailed error saved to {diagnostic}', file=sys.stderr)
+            except OSError as log_error:
+                print(f'Could not save diagnostic log: {log_error}', file=sys.stderr)
         print(result['error'], file=sys.stderr)
         return 1
     finally:
         if getattr(args, 'result', None):
             atomic_json(args.result, result)
+        if run_directory is not None:
+            atomic_json(run_directory / 'result.json', result)
+            atomic_json(state_root() / 'model-wizard-last-result.json',
+                        dict(result, run_directory=str(run_directory)))
 
 
 if __name__ == '__main__':

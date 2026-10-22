@@ -11,7 +11,7 @@ which keys/buttons are currently held and can release them all on disconnect, so
 a viewer that drops mid-drag or mid-keypress never leaves a stuck modifier or
 button down on the shared display.
 """
-from collections import OrderedDict
+from collections import OrderedDict, deque
 import time
 
 from Xlib import X, XK
@@ -25,6 +25,20 @@ SCRATCH_KEYCODES = 32
 # Before rebinding a spare keycode, give clients time to read the key events
 # that used its previous keysym: they resolve keycodes with their current map.
 REBIND_DELAY = .03
+# Bound work between returns to the pane's input/capture event loop.
+INPUT_BATCH = 16
+INPUT_SLICE = .004
+# Admission is separate from dispatch. Keep complete accepted pastes, with a
+# finite retained UTF-8 payload budget, and reserve a separate bounded slot for
+# each accepted gesture's release. A full paste queue cannot strand a key.
+INPUT_ITEMS = 256
+INPUT_BYTES = 1024 * 1024
+INPUT_RELEASES = 256
+INPUT_GESTURE_BYTES = 128
+
+
+class _RebindPending(Exception):
+    """A queued input must yield until its old keycode has had its grace period."""
 
 # kitty functional keycodes for modifier keys -> X keysym names
 MOD_KEYSYMS = {57441: "Shift_L", 57442: "Control_L", 57443: "Alt_L",
@@ -67,8 +81,28 @@ class Injector:
         self._mouse_mods = []        # one modifier owner for the pointer gesture
         self._mouse_mask = 0
         self._key_presses = {}       # pane key identity -> keycode pressed for it
-        self._scratch = OrderedDict()  # keysym -> spare keycode bound to it (LRU)
+        # keysym -> code, with (keysym, code) for an alternate binding while
+        # the original is held. Every owned row remains in the same LRU.
+        self._scratch = OrderedDict()
         self._spare = None           # spare keycodes of the private keymap
+        self._input = deque()        # FIFO: pastes and subsequent gestures
+        # Item identities whose presses collided with an owner before its
+        # restoring release passed them. Keep that verdict until FIFO dispatch;
+        # later items after the release belong to a new generation.
+        self._superseded_presses = {}  # item id -> original alias row, or duplicate
+        self._input_bytes = 0        # retained UTF-8 text + fixed gesture charges
+        self._work_items = 0
+        self._work_bytes = 0
+        self._release_reservations = set()  # admitted presses awaiting release
+        self._queued_releases = 0
+        self._release_pending = {}   # identity -> release edges already in FIFO
+        self.last_input_refusal = None
+        self._input_capacity_pending = False
+        self._released_codes = set()  # rows with release events not yet fenced for a rebind
+        self._rebind_safe_codes = set()  # release rows covered by one completed grace barrier
+        self._rebind_grace_codes = set()  # rows included in the outstanding barrier
+        self._defer_rebind = False
+        self._rebind_pending = None
 
     # The private Xvfb starts with its default (US) keymap and never learns the
     # physical layout. A German pane sends a, o, u umlauts and sharp s as their
@@ -93,30 +127,74 @@ class Injector:
             if not syms:
                 return True
             sym = syms.pop() if len(syms) == 1 else 0
-            return 0xa0 <= sym <= 0xff or sym >= UNICODE_KEYSYM
+            cp = sym - UNICODE_KEYSYM
+            return (0xa0 <= sym <= 0xff or
+                    0x100 <= cp <= 0x10ffff and not 0xd800 <= cp <= 0xdfff)
         spare = [first + i for i, row in enumerate(rows) if reusable(row)]
         return spare[::-1][:SCRATCH_KEYCODES]
 
-    def _bind_scratch(self, keysym):
-        if keysym in self._scratch:
-            self._scratch.move_to_end(keysym)
-            return self._scratch[keysym]
+    def _record_released_code(self, code):
+        self._released_codes.add(code)
+        self._rebind_safe_codes.discard(code)
+        self._rebind_grace_codes.discard(code)
+
+    def _bind_scratch(self, keysym, unheld=False):
+        for binding, code in self._scratch.items():
+            symbol = binding[0] if isinstance(binding, tuple) else binding
+            if symbol == keysym and (not unheld or code not in self._keys_down):
+                self._scratch.move_to_end(binding)
+                return code
         if self._spare is None:
             self._spare = self._find_spare()
         used = set(self._scratch.values())
-        free = [code for code in self._spare if code not in used]
+        # A reusable pre-existing Unicode/Latin-1 row can still be a native
+        # key held by this injector. Recheck holds even for a cached free list.
+        free = [code for code in self._spare
+                if code not in used and code not in self._keys_down]
         if free:
             code = free[0]
         else:
             # Rebind the least recently used spare that is not held down.
             for old, code in self._scratch.items():
                 if code not in self._keys_down:
-                    del self._scratch[old]
                     break
             else:
                 return 0
-            self.xd.sync()
-            time.sleep(REBIND_DELAY)
+        needs_grace = (not free or code in self._released_codes) and code not in self._rebind_safe_codes
+        if needs_grace:
+            if self._defer_rebind:
+                pending = self._rebind_pending
+                if pending is None or pending[:2] != (keysym, code):
+                    # Flush and fence the old events before starting the
+                    # existing client keymap-consumption grace period. Keep
+                    # the old binding until the FIFO retries this same input.
+                    # Every row released before this fence shares the same
+                    # 30 ms grace window; waiting once per LRU row serialized
+                    # the same client-consumption interval and multiplied
+                    # multilingual paste latency by the number of spares.
+                    self.xd.sync()
+                    self._rebind_grace_codes = set(self._released_codes)
+                    self._rebind_grace_codes.add(code)
+                    self._rebind_pending = (keysym, code, time.monotonic() + REBIND_DELAY)
+                    raise _RebindPending
+                if time.monotonic() < pending[2]:
+                    raise _RebindPending
+                self._released_codes.difference_update(self._rebind_grace_codes)
+                self._rebind_safe_codes.update(self._rebind_grace_codes)
+                self._rebind_grace_codes.clear()
+                self._rebind_pending = None
+            else:
+                self.xd.sync()
+                time.sleep(REBIND_DELAY)
+                grace_codes = set(self._released_codes)
+                grace_codes.add(code)
+                self._released_codes.difference_update(grace_codes)
+                self._rebind_safe_codes.update(grace_codes)
+        self._released_codes.discard(code)
+        if not free:
+            # A row covered by an earlier shared barrier needs no new wait,
+            # but its former LRU symbol must still leave the cache.
+            del self._scratch[old]
         try:
             self.xd.change_keyboard_mapping(code, [(keysym, keysym)])
             self.xd.sync()
@@ -130,26 +208,47 @@ class Injector:
                 update(code, 1)
             except Exception:
                 pass
-        self._scratch[keysym] = code
+        binding = keysym if keysym not in self._scratch else (keysym, code)
+        self._scratch[binding] = code
         return code
 
-    def _keycode_for(self, keysym):
-        """(keycode, level) that produces *keysym*; level 1 needs Shift."""
-        if keysym in self._scratch:
-            return self._bind_scratch(keysym), 0
+    def _native_keycode_for(self, keysym, unheld=False):
+        """Look up existing rows without binding or changing their ownership."""
         code = self.xd.keysym_to_keycode(keysym)
-        if code:
-            lookup = getattr(self.xd, "keycode_to_keysym", None)
-            if lookup is None:
-                return code, 0
+        lookup = getattr(self.xd, 'keycode_to_keysym', None)
+        if lookup is None:
+            return (code, 0) if not unheld or code not in self._keys_down else (0, 0)
+        if code and (not unheld or code not in self._keys_down):
             try:
                 for level in (0, 1):
                     if lookup(code, level) == keysym:
                         return code, level
             except Exception:
-                return code, 0
-            # Only reachable through a group or level-3 shift: bind it plainly.
-        return self._bind_scratch(keysym), 0
+                return (0, 0) if unheld else (code, 0)
+        if unheld and code:
+            # The preferred row may be held while another native row already
+            # produces this glyph. Consult the cached keymap before rebinding.
+            first = self.xd.display.info.min_keycode
+            last = self.xd.display.info.max_keycode
+            for other in range(first, last + 1):
+                if other not in self._keys_down:
+                    for level in (0, 1):
+                        if lookup(other, level) == keysym:
+                            return other, level
+        return 0, 0
+
+    def _keycode_for(self, keysym, unheld=False):
+        """(code, level); paste pairs require a row with no existing owner."""
+        for binding, code in self._scratch.items():
+            symbol = binding[0] if isinstance(binding, tuple) else binding
+            if symbol == keysym and (not unheld or code not in self._keys_down):
+                return self._bind_scratch(keysym, unheld), 0
+        code, level = self._native_keycode_for(keysym, unheld)
+        if code:
+            return code, level
+        # Missing or only reachable through a group/level-3 shift, or all
+        # matching native/owned rows held: bind a separate safe row plainly.
+        return self._bind_scratch(keysym, unheld), 0
 
     @staticmethod
     def _is_glyph(key):
@@ -266,6 +365,7 @@ class Injector:
                     return False
             modcodes = self._chord_mods.pop(keycode, [])
             xtest.fake_input(self.xd, X.KeyRelease, keycode)
+            self._record_released_code(keycode)
             self._keys_down.discard(keycode)
             self._release_modifiers(modcodes)
         self.xd.flush()
@@ -301,6 +401,7 @@ class Injector:
             self._keys_down.add(keycode)
         else:
             xtest.fake_input(self.xd, X.KeyRelease, keycode)
+            self._record_released_code(keycode)
             self._keys_down.discard(keycode)
         self.xd.flush()
         return True
@@ -347,21 +448,331 @@ class Injector:
                 self._btns_down.discard(button)
         self.xd.flush()
 
-    def paste(self, text):
-        """Type *text*: each character as its own keysym, Shift where needed."""
+    def _paste_key(self, ch):
         shift = self._modifier_codes(MOD_SHIFT)
+        keysym = self.keysym_for(PASTE_KEYS.get(ch, ch))
+        keycode, level = self._keycode_for(keysym, unheld=True) if keysym else (0, 0)
+        if not keycode:
+            return not keysym  # intentionally ignored controls, never a lost valid glyph
+        if level == 1:
+            self._hold_modifiers(shift)
+        xtest.fake_input(self.xd, X.KeyPress, keycode)
+        xtest.fake_input(self.xd, X.KeyRelease, keycode)
+        self._record_released_code(keycode)
+        if level == 1:
+            self._release_modifiers(shift)
+        return True
+
+    def _paste_has_capacity(self, text):
+        """Whole-item preflight, without X input, remapping or sleeping.
+
+        One unheld reusable row can deliver any supported glyph sequentially.
+        With no such row, every distinct glyph must have an unheld existing
+        mapping. Cached lookups and a bounded set avoid per-character X calls.
+        """
+        if self._spare is None:
+            self._spare = self._find_spare()
+        if any(code not in self._keys_down for code in self._spare):
+            return True
+        seen = set()
         for ch in text:
-            keysym = self.keysym_for(PASTE_KEYS.get(ch, ch))
-            keycode, level = self._keycode_for(keysym) if keysym else (0, 0)
-            if not keycode:
+            if ch in seen:
                 continue
-            if level == 1:
-                self._hold_modifiers(shift)
-            xtest.fake_input(self.xd, X.KeyPress, keycode)
-            xtest.fake_input(self.xd, X.KeyRelease, keycode)
-            if level == 1:
-                self._release_modifiers(shift)
+            seen.add(ch)
+            keysym = self.keysym_for(PASTE_KEYS.get(ch, ch))
+            if keysym and not self._native_keycode_for(keysym, unheld=True)[0]:
+                return False
+        return True
+
+    def paste(self, text):
+        """Synchronous typing for callers without an event loop."""
+        if not self._paste_has_capacity(text):
+            return self._refuse_input('key capacity unavailable')
+        for ch in text:
+            if not self._paste_key(ch):
+                self.xd.flush()
+                return self._refuse_input('key capacity unavailable')
         self.xd.flush()
+        return True
+
+    def queue_input(self, kind, *args):
+        """Admit a whole item, returning bool; False sets last_input_refusal.
+
+        Up to INPUT_ITEMS work items / INPUT_BYTES retained payload bytes plus
+        INPUT_RELEASES release slots / INPUT_GESTURE_BYTES per slot. Matching
+        releases consume their reserved slots even when work admission is full.
+        Accepted text/work stays FIFO. Only an actual held owner's queued
+        release may pass a capacity-blocked paste to restore its delivery.
+        Refused items have no injected prefix and are never retained for
+        automatic retry. Focus/close cancels all.
+        """
+        if kind not in ('paste', 'chord', 'mouse'):
+            raise ValueError('unknown input kind')
+        self.last_input_refusal = None
+        identity = None
+        release = False
+        if kind == 'paste':
+            if len(args) != 1 or not isinstance(args[0], str):
+                return self._refuse_input('invalid input')
+            payload = args[0]
+            if not payload:
+                return True
+            # Do not encode a caller's arbitrarily large string just to refuse
+            # it. With this length check the temporary encoding is <= 4 MiB.
+            if len(payload) > INPUT_BYTES:
+                return self._refuse_input('item too large')
+            try:
+                cost = len(payload.encode('utf-8'))
+            except UnicodeError:
+                return self._refuse_input('invalid Unicode')
+            if cost > INPUT_BYTES:
+                return self._refuse_input('item too large')
+        elif kind == 'chord':
+            if len(args) not in (3, 4):
+                return self._refuse_input('invalid input')
+            key, mods, etype = args[:3]
+            shifted = args[3] if len(args) == 4 else None
+            if (not isinstance(key, str) or not (len(key) == 1 or key in NAME_KEYSYMS)
+                    or type(mods) is not int or etype not in (1, 3)
+                    or (shifted is not None and
+                        (not isinstance(shifted, str) or len(shifted) != 1))):
+                return self._refuse_input('invalid input')
+            if any(0xd800 <= ord(c) <= 0xdfff for c in key + (shifted or '')):
+                return self._refuse_input('invalid Unicode')
+            mods &= MOD_SHIFT | MOD_ALT | MOD_CTRL | MOD_SUPER | MOD_LOCKS
+            payload = (key, mods, etype, shifted)
+            identity, release = ('key', key), etype == 3
+            cost = INPUT_GESTURE_BYTES
+        else:
+            # Snapshot only bounded protocol fields; do not retain arbitrary
+            # caller dictionaries, extra strings or giant integer objects.
+            if len(args) != 2:
+                return self._refuse_input('invalid input')
+            ev, box = args
+            try:
+                b, x, y, press = ev['b'], ev['x'], ev['y'], ev['press']
+                if (any(type(n) is not int or abs(n) > 0x7fffffff for n in (b, x, y))
+                        or not 0 <= b <= 511 or type(press) is not bool
+                        or len(box) != 4
+                        or any(type(n) not in (int, float) or not -0x7fffffff <= n <= 0x7fffffff
+                               for n in box) or box[2] <= 0 or box[3] <= 0):
+                    return self._refuse_input('invalid input')
+            except (KeyError, TypeError):
+                return self._refuse_input('invalid input')
+            payload = ({'b': b, 'x': x, 'y': y, 'press': press}, tuple(box))
+            if not b & (32 | 64 | 256):
+                identity = ('button', (b & 3) + (8 if b & 128 else 1))
+                release = not press
+            cost = INPUT_GESTURE_BYTES
+        # Direct/native holds may predate queued input. Give them the same
+        # release reservation before admitting work behind them.
+        live = {('key', key) for key in self._key_presses}
+        live.update(('button', btn) for btn in self._btns_down)
+        self._release_reservations.update(live - self._release_pending.keys())
+        if release:
+            if identity not in self._release_reservations:
+                return self._refuse_input('no accepted press')
+            if self._queued_releases >= INPUT_RELEASES:
+                return self._refuse_input('release capacity full')
+            self._release_reservations.remove(identity)
+            self._queued_releases += 1
+            self._release_pending[identity] = self._release_pending.get(identity, 0) + 1
+        else:
+            if self._work_items >= INPUT_ITEMS or self._work_bytes + cost > INPUT_BYTES:
+                return self._refuse_input('queue full')
+            if kind == 'paste' and not self._paste_has_capacity(payload):
+                return self._refuse_input('key capacity unavailable')
+            if (identity is not None and identity not in self._release_reservations
+                    and len(self._release_reservations) + self._queued_releases >= INPUT_RELEASES):
+                return self._refuse_input('release capacity full')
+            if identity is not None:
+                self._release_reservations.add(identity)
+            self._work_items += 1
+            self._work_bytes += cost
+        self._input.append([kind, payload, 0, cost, identity if release else None])
+        self._input_bytes += cost
+        return True
+
+    def _refuse_input(self, reason):
+        self.last_input_refusal = reason
+        return False
+
+    @property
+    def queued_input_bytes(self):
+        """Retained payload charge, including the full partially typed string."""
+        return self._input_bytes
+
+    @property
+    def input_capacity_pending(self):
+        return self._input_capacity_pending
+
+    def _finish_input(self, item=None):
+        if item is None:
+            item = self._input.popleft()
+        else:
+            self._input.remove(item)
+        self._superseded_presses.pop(id(item), None)
+        cost, release = item[3:]
+        self._input_bytes -= cost
+        if release is None:
+            self._work_items -= 1
+            self._work_bytes -= cost
+        else:
+            self._queued_releases -= 1
+            count = self._release_pending[release] - 1
+            if count:
+                self._release_pending[release] = count
+            else:
+                del self._release_pending[release]
+
+    def _capacity_release(self, keysym):
+        """Only a real held owner's queued release may unblock a paste.
+
+        Text/work stays ordered. This narrow release priority prevents the
+        last-row owner's real release being stranded behind accepted text.
+        """
+        for item in self._input:
+            identity = item[4]
+            if identity is None or identity[0] != 'key':
+                continue
+            code = self._key_presses.get(identity[1])
+            if code is None or code not in self._keys_down:
+                continue
+            if code in self._spare or any(self.xd.keycode_to_keysym(code, level) == keysym for level in (0, 1)):
+                return item
+        return None
+
+    def _preserve_press_owners(self, release):
+        """Latch duplicate/alias verdicts only within the overtaken FIFO span.
+
+        Use the same cached row preference and shifted symbol as chord, without
+        allocating a row, remapping or injecting any intervening work. A press
+        after this release is untouched and can establish its own real owner.
+        At most INPUT_ITEMS item identities are retained, under their existing
+        work charges; completion and cancellation discard them.
+        """
+        key = release[4][1]
+        code = self._key_presses.get(key)
+        if code is None:
+            return
+        scratch = self._scratch.copy()
+        for item in self._input:
+            if item is release:
+                break
+            if id(item) in self._superseded_presses:
+                alias = self._superseded_presses[id(item)]
+                if alias is not None:
+                    symbol, original = alias
+                    for binding, value in scratch.items():
+                        mapped_symbol = binding[0] if isinstance(binding, tuple) else binding
+                        if mapped_symbol == symbol and value == original:
+                            scratch.move_to_end(binding)
+                            break
+                continue
+            if item[0] != 'chord' or item[1][2] != 1:
+                continue
+            prior, mods, _etype, *rest = item[1]
+            if self.is_modifier(prior):
+                continue
+            if prior == key:
+                self._superseded_presses[id(item)] = None
+                continue
+            if prior in self._key_presses:
+                continue
+            mods &= ~MOD_LOCKS
+            shifted = rest[0] if rest else None
+            symbol = shifted if not mods & ~MOD_SHIFT and mods & MOD_SHIFT and shifted else prior
+            keysym = self.keysym_for(symbol)
+            if not keysym:
+                continue
+            owned = next(((binding, value) for binding, value in scratch.items()
+                          if (binding[0] if isinstance(binding, tuple) else binding) == keysym), None)
+            if owned is not None:
+                # Even a rejected alias lookup moves its row to the LRU end.
+                # The next alias may therefore refer to a different owner.
+                scratch.move_to_end(owned[0])
+                mapped = owned[1]
+            else:
+                mapped = self._native_keycode_for(keysym)[0]
+            if mapped == code:
+                self._superseded_presses[id(item)] = (keysym, code)
+
+    def _retired_press(self, item):
+        if id(item) not in self._superseded_presses:
+            return False
+        alias = self._superseded_presses[id(item)]
+        if alias is not None:
+            keysym, code = alias
+            # Preserve the original cache lookup at this item's FIFO turn if
+            # that binding survived the paste. Never recreate or remap it.
+            for binding, value in self._scratch.items():
+                symbol = binding[0] if isinstance(binding, tuple) else binding
+                if symbol == keysym and value == code:
+                    self._scratch.move_to_end(binding)
+                    break
+        return True
+
+    def input_timeout(self, idle=.25):
+        """Select timeout: run queued work promptly without spinning on a guard."""
+        if not self._input:
+            return idle
+        if self._input_capacity_pending:
+            return min(idle, REBIND_DELAY)
+        if self._rebind_pending is not None:
+            return min(idle, max(0, self._rebind_pending[2] - time.monotonic()))
+        return 0
+
+    def dispatch_pending(self):
+        """One bounded slice, with no sleep and no overlapping scratch remaps."""
+        deadline = time.monotonic() + INPUT_SLICE
+        self._defer_rebind = True
+        try:
+            for _ in range(INPUT_BATCH):
+                if not self._input:
+                    break
+                item = self._input[0]
+                try:
+                    if item[0] == 'paste':
+                        ch = item[1][item[2]]
+                        if not self._paste_key(ch):
+                            # Capacity can change after admission. Keep the
+                            # entire string/charge and retry this same glyph;
+                            # never advance past an un-emitted valid character.
+                            self._input_capacity_pending = True
+                            self._rebind_pending = None
+                            self._rebind_grace_codes.clear()
+                            release = self._capacity_release(self.keysym_for(PASTE_KEYS.get(ch, ch)))
+                            if release is None:
+                                break
+                            self._preserve_press_owners(release)
+                            self.chord(*release[1])
+                            self._finish_input(release)
+                            self._input_capacity_pending = False
+                            if time.monotonic() >= deadline:
+                                break
+                            continue
+                        self._input_capacity_pending = False
+                        item[2] += 1
+                        if item[2] == len(item[1]):
+                            self._finish_input()
+                    else:
+                        # A queued press can fail to resolve a keysym or alias
+                        # an already-held code. Its later release must not use
+                        # chord's legacy fallback to release a different owner.
+                        args = item[1]
+                        orphan = (item[0] == 'chord' and args[2] == 3
+                                  and args[0] not in self._key_presses
+                                  and not self.is_modifier(args[0]))
+                        if not orphan and not self._retired_press(item):
+                            getattr(self, item[0])(*args)
+                        self._finish_input()
+                except _RebindPending:
+                    break
+                if time.monotonic() >= deadline:
+                    break
+        finally:
+            self._defer_rebind = False
+            self.xd.flush()
 
     def mouse(self, ev, box):
         """Map a pane-pixel mouse event through `box` (x,y,w,h — the on-screen
@@ -414,6 +825,18 @@ class Injector:
         """Release every key/button we still hold — call on client disconnect,
         on pane focus-out, and on every exit path
         or shutdown so nothing stays stuck down on the shared display."""
+        self._input.clear()
+        self._superseded_presses.clear()
+        self._input_bytes = self._work_items = self._work_bytes = 0
+        self._release_reservations.clear()
+        self._queued_releases = 0
+        self._release_pending.clear()
+        self.last_input_refusal = None
+        self._input_capacity_pending = False
+        self._rebind_pending = None
+        self._rebind_grace_codes.clear()
+        self._released_codes.update(self._keys_down)
+        self._rebind_safe_codes.difference_update(self._keys_down)
         for btn in list(self._btns_down):
             try:
                 xtest.fake_input(self.xd, X.ButtonRelease, btn)

@@ -26,6 +26,7 @@
 #   ./kilix launcher          # catalog TUI: stack programs, apps, launchers
 #   ./kilix skills ...        # explicitly install/list/remove bundled agent skills
 #   ./kilix agent-control ... # bounded coding-session inspection and control
+#   ./kilix session ...       # managed coding runs, trust, logs and lifecycle
 #   ./kilix action ...        # structured actions and compact verified receipts
 #   ./kilix app run ID        # install/run one pinned catalog application
 #   ./kilix app window ID     # render a terminal app in a desktop window
@@ -64,6 +65,7 @@
 #   ./kilix update --stack    # most complete updater present, then kilix
 #   ./kilix desktop           # launch the configured desktop provider
 #   ./kilix windows --host H ... # control a Windows desktop over SSH
+#   ./kilix desktop-action ... # typed X11 input/window actions; preview by default
 #   ./kilix cap               # launch/install the Kilix Cap mansion desktop
 #   ./kilix tui               # launch/install the Kilix TUI desktop
 #   ./kilix land              # launch/install the Kilix Land desktop
@@ -143,12 +145,18 @@ case "${1:-}" in
       exec bash "$KILIX_HOME/scripts/build-terminal-mpv.sh" "$@"
     fi
     exec python3 -B "$KILIX_HOME/config/terminal_video.py" "$@" ;;
+  desktop-action)
+    shift
+    exec python3 -B "$KILIX_HOME/config/desktop_control.py" "$@" ;;
   skills)
     shift
     exec python3 "$KILIX_HOME/config/agent_skills.py" "$@" ;;
   agent-control)
     shift
     exec python3 "$KILIX_HOME/config/agent_control.py" "$@" ;;
+  session)
+    shift
+    exec python3 -B "$KILIX_HOME/kilix-session" "$@" ;;
   action)
     shift
     if [[ "${1:-}" == capabilities ]]; then
@@ -179,29 +187,27 @@ case "${1:-}" in
   # the running session's config. The engine's options stay one flag away.
   -h|--help|help)
     cat <<'EOF'
-usage: kilix [COMMAND] [ARGS...]    (no command: open a Kilix window)
-Common tasks, complete as shown (run inside a Kilix pane):
-  kilix pane right -- bash                          open a shell right
+usage: kilix [COMMAND] [ARGS...]    (default: new window)
+  kilix pane right -- bash                          open shell right
   kilix pane send build 'make test' --submit         type into build + Enter
   kilix pane close build                            close the named pane
-  kilix new-tab --title Codex --cwd ~/src/app codex  start a program in a tab
-Panes and tabs (directions relative to the calling pane):
+  kilix new-tab --title Codex --cwd ~/src/app codex  start a program
+
   kilix pane right|left|up|down [--title T] [--cwd DIR] [--hold] [--porcelain] [-- CMD...]
   kilix pane send TARGET 'TEXT' [--submit]   --submit presses Enter
-  kilix pane close [TARGET]                 default: this pane and its program
+  kilix pane close [TARGET]                 default: this pane
   kilix pane read TARGET [--extent all]
   kilix pane focus TARGET
-  kilix pane list [--json]                  ids, titles, programs; (self) is you
+  kilix pane list [--json]                  ids, titles, programs; (self)
   kilix new-tab [--title T] [--cwd DIR] [CMD...]
   kilix tab list|close|rename|focus|left|right
   kilix tmux --socket PATH [--json] VERB ...  no args: manager
-TARGET: unique title or pane:ID. This is the complete syntax:
-no subcommand --help or pane list needed. Missing/ambiguous titles
-are refused; each verb prints what it did.
-Coding agent input (verify target first):
+  kilix desktop-action --help              X11 windows, pointer, keyboard
+TARGET: unique title or pane:ID. Above is the complete syntax; no subcommand --help
+needed first. Ambiguous targets fail; each verb prints what it did.
   kilix agent-control context|list|dump|send|key   --help
-Structured actions:
-  kilix action --request-json -             JSON on stdin
+  kilix session --help                     coding runs, trust, logs, stop
+  kilix action --request-json -             structured request from stdin
   kilix action capabilities                inspect available features
   kilix windows --host HOST COMMAND         Windows desktop via SSH
 Also: ask 'REQUEST', wizard, settings, status, update, install, games,
@@ -3009,6 +3015,15 @@ print(apps_root())
       _kilix_voice_request dictate "$_dictate_seconds" "$_dictate_interrupt" || exit $?
     fi
     exit 0 ;;
+  voicebox|kilix-voicebox)
+    shift
+    exec /usr/bin/python3 -I -B -c '
+import sys
+sys.path.insert(0,sys.argv[1])
+from kilix_sdk.voicebox import main
+raise SystemExit(main(sys.argv[2:]))
+' "$KILIX_HOME/config" "$@"
+    ;;
   transcribe|kilix-transcribe)
     shift
     exec /usr/bin/python3 -I -B -c '

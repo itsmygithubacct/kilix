@@ -17,11 +17,12 @@ import uuid
 from . import paths, qwen_provider as staging
 from ._content_runtime import apps_root
 
-PROVIDER_REF = '32e39c4d5b2419c0c698d026d8731b51e4ef3eb1'
+PROVIDER_REF = 'cc543b5ad03d2968314a9520ca6fcc2074d0692a'
 MODEL = 'whisper-tiny-ggml'
 MODEL_REVISION = '5359861c739e955e79d9a303bcbc70fb988958b1'
 MODEL_SHA256 = 'be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21'
 BUDGET = 128 * 1024**2
+DIARIZATION_MODEL = 'kilix-diarization-cpu'
 
 
 def managed_root():
@@ -96,10 +97,30 @@ def prepare(args):
             'provider="kilix-transcribe",consumer_schema="kilix.transcribe.runtime") as model:\n'
             f' model.bind({MODEL!r},{MODEL_REVISION!r},{{"model.bin":{MODEL_SHA256!r}}})\n'
             ' with model.open(lambda:None):\n  pass\n'
-            ' print(json.dumps({"receipt_root":str(model.store.root),"runtime_root":str(runtime_directory())}))\n')
+            ' effective={"receipt_root":str(model.store.root),"runtime_root":str(runtime_directory())}\n')
+        if getattr(args,'diarization',False):
+            # The optional route uses a separate asset and first-use receipt.
+            # Bind its declared manifest without copying weights into lib/.
+            preflight += ('from kilix_transcribe.diarization import DiarizationRuntime\n'
+                'import kilix_content\n'
+                f'with InstalledModel({DIARIZATION_MODEL!r},Path({apps_root()!r}),maximum_bytes={512*1024**2},'
+                'provider="kilix-transcribe",consumer_schema="kilix.transcribe.diarization-runtime") as diarization:\n'
+                f' root=Path(kilix_content.Installer({apps_root()!r}).asset_destination(diarization.spec))\n'
+                ' selected=DiarizationRuntime(root,model_source=diarization)\n'
+                ' with diarization.open(lambda:None):\n  pass\n'
+                f' effective["diarization"]={{"asset":{DIARIZATION_MODEL!r},"root":str(root),'
+                '"manifest_sha256":selected.manifest_sha256}\n'
+                )
+        preflight += 'print(json.dumps(effective))\n'
         effective = json.loads(staging.owned_run(provider, [python, '-I', '-S', '-B', '-X',
             'pycache_prefix=/dev/null', '-c', preflight], environment, timeout=150, capture=True))
         environment.update(KILIX_LICENSE_RECEIPTS=effective['receipt_root'], XDG_RUNTIME_DIR=effective['runtime_root'])
+        from . import shared_voice
+        shared_selection = shared_voice.selected(args, staging)
+        lease_source = None
+        if shared_selection is None:
+            lease_source = staging.acquire_source(sources, '.kilix-device-lease-' + staging.LEASE_REF,
+                'https://github.com/itsmygithubacct/kilix-system-monitor.git', staging.LEASE_REF, args.offline)
         generation = generations / (PROVIDER_REF + '-' + uuid.uuid4().hex)
         link = root / ('.current-' + uuid.uuid4().hex)
         published = False
@@ -119,14 +140,23 @@ def prepare(args):
                 '--decoder', args.decoder, '--decoder-sha256', args.decoder_sha256, '--model-sha256', MODEL_SHA256,
                 '--model-id', 'whisper-tiny', '--model-revision', MODEL_REVISION, '--installed-asset', MODEL,
                 '--content-root', apps_root(), '--model-snapshot-bytes', str(BUDGET)], environment, timeout=180)
+            shared = shared_voice.stage(shared_selection, generation, staging, environment, python)
+            if shared is None:
+                staging.stage_package(lease_source, staging.LEASE_REF, staging.LEASE_PACKAGE,
+                                      lib / 'kilix_device_lease', environment)
             launcher = launcher_module()
             python_root = python.parent.parent
             binding = {'provider_ref': PROVIDER_REF, 'content_ref': staging.CONTENT_REF, 'license_ref': staging.LICENSE_REF,
+                'lease_ref': shared['sources']['lease'] if shared is not None else staging.LEASE_REF,
                 'model': MODEL, 'content_root': apps_root(), 'budget': BUDGET,
                 'python': str(python), 'python_root': str(python_root), 'python_root_sha256': launcher.tree_digest(python_root, staging.checkpoint),
                 'files': launcher.file_population(lib, staging.checkpoint), 'runtime_files': launcher.file_population(generation / 'runtime', staging.checkpoint),
                 'environment': {key: environment[key] for key in ('GPU_TERMINAL_HOME', 'KILIX_LICENSE_RECEIPTS',
                     'XDG_RUNTIME_DIR', 'XDG_STATE_HOME') if key in environment}}
+            if shared is not None:
+                binding['shared_voice'] = shared
+            if 'diarization' in effective:
+                binding['diarization']=effective['diarization']
             payload = (json.dumps(binding, sort_keys=True) + '\n').encode()
             if len(payload) > 65536:
                 raise ValueError('transcription binding exceeds its bound')
@@ -138,6 +168,8 @@ def prepare(args):
             (binary / 'kilix-transcribe').write_text(template.replace('@BINDING_SHA256@', hashlib.sha256(payload).hexdigest()))
             (binary / 'kilix-transcribe').chmod(0o700)
             staging.exact_source(provider, PROVIDER_REF)
+            if lease_source is not None:
+                staging.exact_source(lease_source, staging.LEASE_REF)
             staging.verify_content(content, environment)
             staging.private_chain(generation)
             staging.checkpoint()
@@ -159,6 +191,10 @@ def main(argv=None):
     prep = sub.add_parser('prepare', help='prepare reviewed tools for the installed Tiny model')
     prep.add_argument('--uv', type=Path, default=Path(shutil.which('uv') or '/usr/bin/uv'))
     prep.add_argument('--offline', action='store_true')
+    prep.add_argument('--diarization',action='store_true',
+                      help='select the separately installed, receipt-covered speaker-turn model')
+    from . import shared_voice
+    shared_voice.arguments(prep)
     for name in ('engine', 'decoder'):
         prep.add_argument('--' + name, type=Path, required=True)
         prep.add_argument('--' + name + '-sha256', required=True)

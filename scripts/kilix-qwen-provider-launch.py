@@ -31,6 +31,18 @@ def main():
             actual[str(path.relative_to(lib))] = hashlib.sha256(path.read_bytes()).hexdigest()
     if actual != value['files']:
         raise ValueError('provider library changed; prepare a new generation')
+    if 'shared_voice' in value:
+        shared = generation / 'shared'
+        actual_shared = {}
+        for path in [shared, *sorted(shared.rglob('*'))]:
+            info = path.lstat()
+            if (path.is_symlink() or info.st_uid != os.geteuid() or info.st_mode & 0o022
+                    or not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode))):
+                raise ValueError('unsafe shared Voice/lease population')
+            if path.is_file():
+                actual_shared[str(path.relative_to(shared))] = hashlib.sha256(path.read_bytes()).hexdigest()
+        if actual_shared != value['shared_voice']['files']:
+            raise ValueError('shared Voice/lease generation changed; prepare a new generation')
     def bound_bytes(path, digest, what):
         if any(part.is_symlink() for part in (path, *path.parents) if generation in (part, *part.parents)):
             raise ValueError('unsafe '+what)
@@ -81,6 +93,8 @@ def main():
     if command == ['serve']:
         command += ['--runtime-index',str(generation/'runtime-index.json'),
                     '--content-root',value['content_root']]
+        if 'shared_voice' in value:
+            command += ['--lease-device',value['device']]
     elif command != ['status'] and not (len(command)==2 and command[0]=='wait-ready'
                                           and command[1].isdigit() and int(command[1])>0):
         raise ValueError('usage: kilix-qwen-provider serve|status|wait-ready')
@@ -138,6 +152,8 @@ while time.monotonic()<deadline:
     time.sleep(.2)
 raise SystemExit('provider did not become ready within startup deadline')
 '''
+    if 'shared_voice' in value:
+        bootstrap = 'import sys;sys.path.insert(0,' + repr(str(generation/'shared')) + ');' + bootstrap
     python = str(generation/'environment/bin/python')
     os.execve(python,[python,'-I','-S','-B','-X','pycache_prefix=/dev/null',
                       '-c',bootstrap,str(lib),*command],environment)

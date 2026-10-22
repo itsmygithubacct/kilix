@@ -117,6 +117,9 @@ class KilixTuiProviderTests(unittest.TestCase):
     def test_first_use_clones_exact_ref_and_installs(self):
         result = self._install(KILIX_TUI_UTILS_REF=self.ref)
         self.assertEqual(result.returncode, 0, result.stderr)
+        session = self.home / ".local/bin/kilix-session"
+        self.assertTrue(session.is_file())
+        self.assertIn("kilix session", run([session, "--help"], env=self.env).stdout)
         launcher = self.home / ".local" / "bin" / "kilix-tui"
         self.assertEqual(result.stdout.strip(), str(launcher))
         self.assertTrue(os.access(launcher, os.X_OK))

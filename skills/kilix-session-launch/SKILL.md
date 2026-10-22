@@ -13,6 +13,15 @@ and ask only about choices that change the work. Do not add workers because ther
 
 ## One agent, nothing else
 
+For a recorded coding run with a model, effort, initial brief or folder trust,
+prefer `kilix session launch codex --cwd DIR --trust-folder --model MODEL
+--effort LEVEL --prompt-file FILE`. This creates a held tab without taking focus.
+Claude and Grok are also supported. Folder trust is explicit and does not imply
+permission bypass. Native prompts are retained exactly in a private file; the
+client receives a short instruction to read it. Save the run ID and inspect it
+with `kilix session show|logs|wait`. A submitted run is not verified agent
+readiness or task completion. Read `$KILIX_HOME/docs/session.md` for details.
+
 `kilix new-tab --title TITLE --cwd DIR codex`, or another agent command. One command, no
 preflight: in the 2026-09-29 route benchmark it cost a quarter of the procedure below.
 

@@ -22,9 +22,11 @@ import uuid
 from . import paths
 from ._content_runtime import apps_root
 
-PROVIDER_REF = 'c8093798a0a643d3dbacea38979b5d27a46744ce'
-CONTENT_REF = '1db596b7d9e560c59c216eb2d917b089d0f5c8b6'
-LICENSE_REF = 'b3d5f52c762d967186bd4d7b63430b057b07aa28'
+PROVIDER_REF = '95750c48f2b0aa7bc4d545f58607b3b3a2400ed1'
+CONTENT_REF = '9112e2f9533d076d8f832670419b69143b4dbaa4'
+LICENSE_REF = '0566f50ac53de6d55e2c7507fd601735eb4e28f7'
+LEASE_REF = '849e35051eee81e1ad11c9b00236597409c835dd'
+LEASE_PACKAGE = 'components/kilix-device-lease/src/kilix_device_lease'
 ENGINE_REF = '6cafe5582caea83df269c36b1ce62d953a9cc66b'
 MODEL = 'qwen3-tts-0.6b-customvoice'
 BUDGET = 3 * 1024**3
@@ -302,6 +304,12 @@ def prepare(args):
         environment['XDG_RUNTIME_DIR'] = effective['runtime_root']
         engine = acquire_source(sources,'.qwen3-tts-'+ENGINE_REF,
             'https://github.com/QwenLM/Qwen3-TTS.git',ENGINE_REF,args.offline)
+        from . import shared_voice
+        shared_selection = shared_voice.selected(args, sys.modules[__name__])
+        lease_source = None
+        if shared_selection is None:
+            lease_source = acquire_source(sources, '.kilix-device-lease-' + LEASE_REF,
+                'https://github.com/itsmygithubacct/kilix-system-monitor.git', LEASE_REF, args.offline)
         sys.path.insert(0,str(provider/'tools'))
         from build_environment import Destination
         generation = generations/(PROVIDER_REF+'-'+uuid.uuid4().hex)
@@ -321,6 +329,10 @@ def prepare(args):
                 stage_package(content,CONTENT_REF,'src/kilix_content',lib/'kilix_content',environment)
                 stage_package(content,CONTENT_REF,'third_party/kilix-license/src/kilix_license',
                               lib/'kilix_license',environment)
+                shared = shared_voice.stage(shared_selection, generation, sys.modules[__name__],
+                    environment, generation/'environment/bin/python')
+                if shared is None:
+                    stage_package(lease_source,LEASE_REF,LEASE_PACKAGE,lib/'kilix_device_lease',environment)
                 held.check()
                 stage = ('import sys,runpy;sys.path.insert(0,'+repr(str(generation/'lib'))+');'
                     'runpy.run_path('+repr(str(provider/'tools/stage_installed_runtime.py'))+',run_name="__main__")')
@@ -340,6 +352,7 @@ def prepare(args):
                 write_private(write_root/'runtime-index.json',index)
                 checkpoint()
                 binding = {'provider_ref':PROVIDER_REF,'content_ref':CONTENT_REF,'license_ref':LICENSE_REF,
+                    'lease_ref':shared['sources']['lease'] if shared is not None else LEASE_REF,
                     'content_root':apps_root(),'models':{name:MODELS[name] for name in models},
                     'device':device,'index_sha256':hashlib.sha256(index).hexdigest(),
                     'runtimes':{name:hashlib.sha256((write_root/'runtimes'/name/'runtime.json')
@@ -347,6 +360,8 @@ def prepare(args):
                     'venv_config_sha256':hashlib.sha256((write_root/'environment/pyvenv.cfg').read_bytes()).hexdigest(),
                     'environment':{k:environment[k] for k in ('GPU_TERMINAL_HOME','KILIX_LICENSE_RECEIPTS',
                         'XDG_RUNTIME_DIR','XDG_STATE_HOME') if k in environment},'files':package_files(lib)}
+                if shared is not None:
+                    binding['shared_voice'] = shared
                 payload = (json.dumps(binding,sort_keys=True)+'\n').encode()
                 (write_root/'binding.json').write_bytes(payload)
                 (write_root/'binding.json').chmod(0o600)
@@ -358,6 +373,8 @@ def prepare(args):
                 (binary/'kilix-qwen-provider').chmod(0o700)
                 # Recheck selected source populations before committing current.
                 exact_source(provider,PROVIDER_REF)
+                if lease_source is not None:
+                    exact_source(lease_source,LEASE_REF)
                 verify_content(content,environment)
                 owned_run(provider,[python,'-I','-B',content/'tools/vendored_kilix_license.py','--check'],
                           environment,timeout=30)
@@ -386,6 +403,8 @@ def main(argv=None):
                       help='cuda builds a CUDA environment that still runs on the CPU when no GPU '
                            'is usable; auto selects cuda for an NVIDIA GPU 0 with compute capability 7.0+')
     prep.add_argument('--offline',action='store_true',help='require cached sources, Python and dependencies')
+    from . import shared_voice
+    shared_voice.arguments(prep)
     sub.add_parser('serve',help='run the prepared provider in this terminal; Ctrl-C stops it')
     sub.add_parser('status',help='query provider selection and current state')
     service = sub.add_parser('service',help='install and control login startup for the prepared provider')

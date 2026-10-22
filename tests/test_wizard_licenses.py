@@ -87,5 +87,12 @@ class BatchTests(unittest.TestCase):
         self.installer.ensure_upstream_asset.assert_called_once()
         self.assertEqual(self.installer.ensure_upstream_asset.call_args.args[0].asset_id, 'yolox_s')
 
+    def test_download_failure_names_model_and_preserves_the_original_cause(self):
+        self.installer.ensure_upstream_asset.side_effect = FileNotFoundError('/missing/converter')
+        with self.assertRaisesRegex(RuntimeError, 'Could not install yolox_s') as caught:
+            self.run_batch(['yolox_s'], ['yes'])
+        self.assertIsInstance(caught.exception.__cause__, FileNotFoundError)
+        self.assertEqual(len(list(self.store.root.glob('*.json'))), 1)
+
 
 if __name__ == '__main__': unittest.main()

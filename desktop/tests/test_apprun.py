@@ -178,6 +178,8 @@ finally:
 
 class FakeAttrs:
     map_state = apprun.X.IsViewable
+    win_class = apprun.X.InputOutput
+    override_redirect = False
 
 
 class FakeGeom:
@@ -268,6 +270,12 @@ class FakeInjector:
 
     def chord(self, key, mods, etype, shifted=None):
         self.keys.append((key, mods, etype))
+
+    def queue_input(self, kind, *args):
+        if kind != "chord":
+            return False
+        self.chord(*args)
+        return True
 
 
 pane = object.__new__(apprun.AppPane)

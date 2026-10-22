@@ -120,6 +120,58 @@ class FakeInjector:
 
 
 class XAppSessionTests(unittest.TestCase):
+    def test_dnd_startup_callback_cannot_publish_after_session_close(self):
+        supervisor = FakeSupervisor()
+        session = xapp.XAppSession("dnd-reentry", 640, 480, supervisor=supervisor)
+        bridge = mock.Mock()
+
+        def construct(*args, **kwargs):
+            session.close()
+            return bridge
+
+        with mock.patch.object(session, "make_injector", return_value=mock.Mock()), \
+                mock.patch("kilix_sdk.xdnd.NativeDndBridge", side_effect=construct):
+            with self.assertRaisesRegex(RuntimeError, "closed during XDND startup"):
+                session.make_dnd_bridge(lambda *a: None, lambda: (0, 0, 640, 480))
+        bridge.close.assert_called_once_with()
+        self.assertIsNone(session.dnd_bridge)
+        self.assertTrue(session._closed)
+        self.assertEqual(supervisor.cleaned, 1)
+
+    def test_dnd_cleanup_failure_retains_bridge_for_exact_retry(self):
+        supervisor = FakeSupervisor()
+        session = xapp.XAppSession("dnd-retry", 640, 480, supervisor=supervisor)
+        bridge = mock.Mock()
+        bridge.close.side_effect = [RuntimeError("bridge busy"), None]
+        session.dnd_bridge = bridge
+        with self.assertRaises(xapp.SessionCleanupError):
+            session.close()
+        self.assertIs(session.dnd_bridge, bridge)
+        self.assertFalse(session._closed)
+        session.close()
+        self.assertIsNone(session.dnd_bridge)
+        self.assertTrue(session._closed)
+        self.assertEqual(bridge.close.call_count, 2)
+        self.assertEqual(supervisor.cleaned, 1)
+
+    def setUp(self):
+        # These are argv/environment unit checks; real guardian/daemon/app
+        # ownership is exercised separately in test_private_bus.py.
+        class Bus:
+            def __init__(self, supervisor, env):
+                self.app_fd = 101
+            def environment(self, env):
+                return dict(env, DBUS_SESSION_BUS_ADDRESS="unix:path=/owned/private", DBUS_SESSION_BUS_PID="42")
+            def launch_primary(self, argv, env, cwd, pass_fds):
+                return FakeProcess()
+            def bind(self, app):
+                pass
+            def close(self):
+                pass
+        patcher = mock.patch.object(xapp, "PrivateBus", Bus)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_local_pane_publication_is_independent_of_clipboard_and_closes_first(self):
         supervisor=FakeSupervisor()
         session=xapp.XAppSession('capture-publication',640,480,supervisor=supervisor)
@@ -259,16 +311,20 @@ class XAppSessionTests(unittest.TestCase):
                      "KITTY_LISTEN_ON": "unix:@host", "KITTY_PID": "123",
                      "KILIX_IN_OVERLAY": "1", "KILIX_RC_PASSWORD_FILE": "/host",
                      "DBUS_SESSION_BUS_ADDRESS": "unix:path=/host/bus"}
-        with mock.patch.dict(os.environ, inherited), mock.patch.object(
-                xapp.shutil, "which", return_value="/usr/bin/dbus-run-session"):
+        with mock.patch.dict(os.environ, inherited, clear=True), mock.patch.object(
+                xapp.shutil, "which", return_value="/usr/bin/dbus-daemon"):
             session.launch_app(["fixture-app", "two words"], isolate_bus=True)
         argv, kwargs, _ = supervisor.spawns["app"]
-        self.assertEqual(argv, ["/usr/bin/dbus-run-session", "--", xapp.sys.executable,
+        self.assertEqual(argv, [xapp.sys.executable,
                                str(Path(xapp.__file__).with_name("portal_bridge.py")),
                                "--wrap", "--", "fixture-app", "two words"])
+        self.assertTrue(callable(kwargs["_kilix_remote_launcher"]))
         env = kwargs["env"]
         for key in inherited:
-            self.assertNotIn(key, env)
+            if key == "DBUS_SESSION_BUS_ADDRESS":
+                self.assertEqual(env[key], "unix:path=/owned/private")
+            else:
+                self.assertNotIn(key, env)
         self.assertEqual(env["DISPLAY"], ":77")
         self.assertEqual(env["KILIX_RUN_ALIASES"], "0")
         self.assertEqual(env["KILIX_PRIVATE_XAPP"], "1")
@@ -276,13 +332,28 @@ class XAppSessionTests(unittest.TestCase):
         self.assertEqual(env["KILIX_PORTAL_HOST_BUS"], "unix:path=/host/bus")
         self.assertEqual(env["GTK_USE_PORTAL"], "1")
 
+    def test_private_mpv_launch_delivers_native_inhibitor_from_the_installed_sdk(self):
+        supervisor = FakeSupervisor()
+        session = xapp.XAppSession("mpv", 640, 480, supervisor=supervisor)
+        session.start_xvfb()
+        with mock.patch.dict(os.environ, {"PLEB_DESKTOP_BUS_ADDRESS": "unix:path=/physical"}, clear=True), \
+                mock.patch.object(xapp.shutil, "which", return_value="/usr/bin/dbus-daemon"):
+            session.launch_app(["/usr/bin/mpv", "--no-config", "--script=/user.lua", "--", "video.mp4"],
+                               isolate_bus=True)
+        argv = supervisor.spawns["app"][0]
+        self.assertEqual(argv[-7:], ["--", "/usr/bin/mpv", "--no-config", "--script=/user.lua",
+                                    "--script=" + str(Path(xapp.__file__).with_name("mpv_screensaver.run")),
+                                    "--", "video.mp4"])
+        self.assertEqual(supervisor.spawns["app"][1]["env"]["KILIX_PORTAL_HOST_BUS"], "unix:path=/physical")
+        session.close()
+
     def test_private_portal_uses_physical_bus_and_headless_apps_need_no_bridge(self):
         supervisor = FakeSupervisor()
         session = xapp.XAppSession("portals", 640, 480, supervisor=supervisor)
         session.start_xvfb()
         with mock.patch.dict(os.environ, {"DBUS_SESSION_BUS_ADDRESS": "unix:path=/outer/private",
                                          "PLEB_DESKTOP_BUS_ADDRESS": "unix:path=/physical"}, clear=True), \
-                mock.patch.object(xapp.shutil, "which", return_value="/usr/bin/dbus-run-session"):
+                mock.patch.object(xapp.shutil, "which", return_value="/usr/bin/dbus-daemon"):
             session.launch_app(["fixture-app"], isolate_bus=True)
         self.assertEqual(supervisor.spawns["app"][1]["env"]["KILIX_PORTAL_HOST_BUS"],
                          "unix:path=/physical")
@@ -291,10 +362,10 @@ class XAppSessionTests(unittest.TestCase):
         session = xapp.XAppSession("headless", 640, 480, supervisor=supervisor)
         session.start_xvfb()
         with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(
-                xapp.shutil, "which", return_value="/usr/bin/dbus-run-session"):
+                xapp.shutil, "which", return_value="/usr/bin/dbus-daemon"):
             session.launch_app(["fixture-app"], isolate_bus=True)
         self.assertEqual(supervisor.spawns["app"][0],
-                         ["/usr/bin/dbus-run-session", "--", "fixture-app"])
+                         ["fixture-app"])
         session.close()
 
     def test_explicit_private_gtk_chooser_policy_is_preserved(self):
@@ -302,7 +373,7 @@ class XAppSessionTests(unittest.TestCase):
         session = xapp.XAppSession("chooser-policy", 640, 480, supervisor=supervisor)
         session.start_xvfb()
         with mock.patch.dict(os.environ, {"PLEB_DESKTOP_BUS_ADDRESS": "unix:path=/physical"}, clear=True), \
-                mock.patch.object(xapp.shutil, "which", return_value="/usr/bin/dbus-run-session"):
+                mock.patch.object(xapp.shutil, "which", return_value="/usr/bin/dbus-daemon"):
             session.launch_app(["fixture-app"], env={"GTK_USE_PORTAL": "0"}, isolate_bus=True)
         self.assertEqual(supervisor.spawns["app"][1]["env"]["GTK_USE_PORTAL"], "0")
         session.close()

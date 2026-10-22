@@ -26,7 +26,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             ffmpeg python3-pil python3-xlib shellcheck xvfb xauth openbox dbus-daemon tmux \
-            libsamplerate0-dev libssl-dev
+            libsamplerate0-dev libssl-dev python3-dbus polkitd
 
       - name: Allow unprivileged user namespaces for the X11 sandbox tests
         # tests/x11_sandbox.py and the path-guard tests enter a private
@@ -67,6 +67,24 @@ jobs:
           git -C "$source_dir" checkout -q --detach "$ref"
           printf 'KILIX_QWEN_PROVIDER_TEST_SOURCE=%s\n' "$source_dir" >> "$GITHUB_ENV"
 
+      - name: Fetch pinned shared-source and distribution fixtures
+        run: |
+          fixture_root="$RUNNER_TEMP/kilix-fixtures"
+          mkdir -m 700 "$fixture_root"
+          fetch_fixture() {
+            repo="$1" ref="$2" variable="$3"
+            destination="$fixture_root/$repo"
+            git init -q "$destination"
+            git -C "$destination" fetch -q --depth=1 "https://github.com/itsmygithubacct/$repo.git" "$ref"
+            git -C "$destination" checkout -q --detach "$ref"
+            chmod 700 "$destination"
+            printf '%s=%s\n' "$variable" "$destination" >> "$GITHUB_ENV"
+          }
+          fetch_fixture kilix-voice 401b3efcc3801730b4b6d24cad81c9408c32df65 KILIX_VOICE_TEST_SOURCE
+          fetch_fixture kilix-system-monitor 849e35051eee81e1ad11c9b00236597409c835dd KILIX_DEVICE_LEASE_TEST_SOURCE
+          fetch_fixture pleb 9420e7a0a8cfd63584b4f42b383ca9bae0786f33 KILIX_PLEB_TEST_SOURCE
+          fetch_fixture plebian-os 1b190a62c535163f3c424c8dcf4ab6469c08a419 KILIX_OS_TEST_SOURCE
+
       - name: Run host tests
         run: |
           export KILIX_STORAGE_HOME="$RUNNER_TEMP/kilix-storage"
@@ -88,3 +106,37 @@ jobs:
           for test_file in desktop/tests/test_*.py; do
             python3 "$test_file"
           done
+
+      - name: Retain private-bus service diagnostics
+        if: failure()
+        run: sudo journalctl --since '30 minutes ago' -u 'kilix-private-bus-*' --no-pager -n 200
+
+  private-bus:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Install integration prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-dbus python3-pil python3-xlib dbus-daemon polkitd
+          # Hosted images make /usr/share writable to their runner group.
+          # The installed service requires the distribution's root-owned,
+          # non-writable parent chain, including its authorization rules.
+          sudo chown root:root /usr/share /usr/share/polkit-1 /usr/share/polkit-1/rules.d
+          sudo chmod go-w /usr/share /usr/share/polkit-1 /usr/share/polkit-1/rules.d
+          sudo /usr/bin/python3 -B tests/test_private_bus_installer.py -v
+          sudo bash -c 'umask 077; exec /usr/bin/python3 scripts/install-private-bus-supervisor.py --install'
+      - name: Exercise installed private-bus ownership
+        run: |
+          fixture_home="$RUNNER_TEMP/private-bus-home"
+          mkdir -m 700 "$fixture_home"
+          env -i HOME="$fixture_home" PATH=/usr/bin:/bin LANG=C.UTF-8 \
+            TMPDIR="$RUNNER_TEMP" PYTHONDONTWRITEBYTECODE=1 \
+            KILIX_REQUIRE_PRIVATE_BUS_TESTS=1 \
+            python3 -m unittest discover -s tests -p test_private_bus.py -v
+      - name: Retain private-bus service diagnostics
+        if: failure()
+        run: sudo journalctl --since '15 minutes ago' -u 'kilix-private-bus-*' --no-pager -n 200

@@ -294,10 +294,17 @@ class QwenProviderRouteTests(unittest.TestCase):
 
     def staged_preparation(self, ready, requested_device, capable=False):
         selected = self.provider_source()
-        builder = Path(selected)/'tools'
         scratch = tempfile.TemporaryDirectory()
         self.addCleanup(scratch.cleanup)
         root = Path(scratch.name)
+        # A source supplied by CI is a shared input, not a managed private
+        # checkout. Stage an owned copy just as preparation normally does.
+        staged = root / 'provider'
+        subprocess.run(['git', 'clone', '--shared', selected, str(staged)],
+                       check=True, capture_output=True, env=provider.clean_environment())
+        staged.chmod(0o700)
+        selected = str(staged)
+        builder = staged / 'tools'
         managed,previous = self.previous(root)
         calls = []
         def run(source,command,_environment,**kwargs):
@@ -308,7 +315,9 @@ class QwenProviderRouteTests(unittest.TestCase):
             if 'find' in words:
                 return b'/private/python3.12\n'
             if 'rev-parse' in words:
-                return ((provider.CONTENT_REF if 'kilix-content' in words[2] else provider.PROVIDER_REF)
+                revision = (provider.CONTENT_REF if 'kilix-content' in words[2] else
+                            provider.LEASE_REF if 'kilix-device-lease' in words[2] else provider.PROVIDER_REF)
+                return (revision
                         +'\n').encode()
             if 'status' in words:
                 return b''
@@ -338,7 +347,11 @@ class QwenProviderRouteTests(unittest.TestCase):
                 return None
             return None
         def source(_parent,name,*_args):
-            return Path(selected) if name.startswith('.kilix-qwen-tts-') else root/'engine'
+            if name.startswith('.kilix-qwen-tts-'):
+                return Path(selected)
+            target = root / ('kilix-device-lease' if name.startswith('.kilix-device-lease-') else 'engine')
+            target.mkdir(mode=0o700, exist_ok=True)
+            return target
         with patch.object(provider.paths,'data_dir',return_value=str(root/'data')), \
              patch.object(provider.paths,'source_home',return_value=str(root/'sources')), \
              patch.object(provider.paths,'kilix_home',return_value=str(ROOT)), \
@@ -376,6 +389,8 @@ class QwenProviderRouteTests(unittest.TestCase):
                 self.assertEqual(binding['models'],{name:provider.MODELS[name] for name in expected})
                 self.assertEqual(list(binding['models']),expected)
                 self.assertEqual(binding['device'],device)
+                self.assertEqual(binding['lease_ref'],provider.LEASE_REF)
+                self.assertTrue((generation/'lib/kilix_device_lease/module.py').is_file())
                 self.assertEqual(binding['index_sha256'],hashlib.sha256(
                     (generation/'runtime-index.json').read_bytes()).hexdigest())
                 self.assertEqual(set(binding['runtimes']),set(expected))

@@ -44,6 +44,21 @@ class ContentTests(unittest.TestCase):
             b'# comment\r\nhttps://example.com/a\r\nfile://remote/tmp/a\r\nfile:///tmp/%00bad\r\n'}).files[1], ())
 
 
+class SelectionReleaseTests(unittest.TestCase):
+    def test_failed_owner_query_does_not_leave_the_server_grabbed(self):
+        bridge = object.__new__(clip.SelectionBridge)
+        bridge._abort_read = mock.Mock()
+        bridge._timestamp = 123
+        bridge.atoms = {'CLIPBOARD': 42}
+        bridge.d = mock.Mock()
+        bridge.d.get_selection_owner.side_effect = RuntimeError('display failed')
+        with self.assertRaisesRegex(RuntimeError, 'display failed'):
+            bridge._release()
+        bridge.d.assert_has_calls([
+            mock.call.grab_server(), mock.call.get_selection_owner(42),
+            mock.call.ungrab_server(), mock.call.flush()])
+
+
 @unittest.skipUnless(shutil.which('Xvfb') and shutil.which('xauth'), 'Xvfb and xauth required')
 class ClipboardTransportTests(unittest.TestCase):
     def setUp(self):
@@ -229,9 +244,10 @@ class ClipboardTransportTests(unittest.TestCase):
 
     def test_source_clear_cannot_take_a_newer_copy_from_a_pane(self):
         # In one select() pass the host source clears while an app in the
-        # pane copies something new. Releasing at CurrentTime would clear the
-        # app's newer ownership; releasing at the endpoint's own claim time
-        # cannot, because X ignores an older SetSelectionOwner.
+        # pane copies something new. Two ownership changes can share the same
+        # server millisecond; the old claim's timestamp alone cannot protect
+        # the new owner. Use that equal timestamp explicitly so the case does
+        # not depend on scheduler speed.
         content = clip.Content.from_text('secret')
         owner = self.owner(content)
         self.pump(lambda: self.hub.content == content)
@@ -239,7 +255,7 @@ class ClipboardTransportTests(unittest.TestCase):
         d = self.sessions[1].xd
         app = d.screen().root.create_window(-10, -10, 1, 1, 0, X.CopyFromParent,
             window_class=X.InputOnly, visual=X.CopyFromParent)
-        app.set_selection_owner(d.intern_atom('CLIPBOARD'), X.CurrentTime)
+        app.set_selection_owner(d.intern_atom('CLIPBOARD'), self.bridges[1]._timestamp)
         d.sync()
         clip.xrequest.SetSelectionOwner(display=owner.d.display, window=X.NONE,
                                         selection=owner.atoms['CLIPBOARD'], time=X.CurrentTime)
@@ -474,7 +490,8 @@ class ClipboardTransportTests(unittest.TestCase):
 
     def test_ready_format_pastes_while_another_format_is_still_being_collected(self):
         self.hub.set_clipboard_content(clip.Content.from_text('previous value'))
-        self.pump(lambda: all(bridge._owns_selection() for bridge in self.bridges))
+        self.pump(lambda: all(not bridge._claim and bridge._owns_selection()
+                              for bridge in self.bridges))
         source, destination = (session.xd for session in self.sessions)
         owner = source.screen().root.create_window(-10, -10, 1, 1, 0, X.CopyFromParent,
             window_class=X.InputOnly, visual=X.CopyFromParent)
@@ -533,7 +550,11 @@ class ClipboardTransportTests(unittest.TestCase):
     def _pending_copy_paste(self, *, abort, previous=True):
         if previous:
             self.hub.set_clipboard_content(clip.Content.from_text('previous value'))
-            self.pump(lambda: all(bridge._owns_selection() for bridge in self.bridges))
+            # The endpoints already own the initial empty clipboard. Wait for
+            # the new value's asynchronous timestamp/claim as well, or it can
+            # steal ownership back from the fixture before TARGETS arrives.
+            self.pump(lambda: all(not bridge._claim and bridge._owns_selection()
+                                  for bridge in self.bridges))
         else:
             deadline=time.monotonic()+.05
             self.pump(lambda:time.monotonic()>=deadline)
@@ -612,7 +633,8 @@ class ClipboardTransportTests(unittest.TestCase):
 
     def test_pending_paste_expires_without_returning_previous_content(self):
         self.hub.set_clipboard_content(clip.Content.from_text('previous value'))
-        self.pump(lambda: all(bridge._owns_selection() for bridge in self.bridges))
+        self.pump(lambda: all(not bridge._claim and bridge._owns_selection()
+                              for bridge in self.bridges))
         source,destination=(session.xd for session in self.sessions)
         owner=source.screen().root.create_window(-10,-10,1,1,0,X.CopyFromParent,
             window_class=X.InputOnly,visual=X.CopyFromParent)

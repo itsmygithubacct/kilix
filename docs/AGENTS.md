@@ -213,6 +213,15 @@ including its tail; never "repair" it by executing it in the controlling shell.
 
 ## Optional interfaces
 
+- For a managed coding run, use `kilix session launch PROVIDER --cwd DIR
+  --trust-folder --model MODEL --effort LEVEL --prompt-file FILE`. Native UI in
+  a fresh tab is the default; `--headless --background` records a detached run.
+  All new tabs/grid panes preserve focus. `--trust-folder` uses client trust
+  without enabling permission bypass. Save the returned run ID and inspect it
+  with `kilix session show|logs|wait`; `stop` cancels only that run and retains
+  its pane. Requested model, process startup and task completion are distinct.
+  See [managed coding sessions](session.md) for grids, batches and the library.
+
 - For structured actions, inspect `kilix action capabilities` once, then use
   `kilix action --request-json - < request.json`. Operations include `pane.open`,
   `agent.launch`, `agent.deliver`, and `operation.status`. Recover lost/uncertain
