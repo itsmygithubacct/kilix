@@ -230,7 +230,8 @@ class TerminalMediaTests(unittest.TestCase):
                 proc = subprocess.Popen(
                     ['/usr/bin/python3', '-B', str(ROOT / 'config/terminal_video.py'), 'clip.mp4'],
                     stdin=slave, stdout=slave, stderr=slave,
-                    env={'PATH': tmp + ':/usr/bin:/bin', 'HOME': tmp})
+                    env={'PATH': tmp + ':/usr/bin:/bin', 'HOME': tmp,
+                         'KILIX_VIDEO_PLAYER': str(fake)})
                 self.assertEqual(proc.wait(timeout=5), 134)
                 self.assertEqual(termios.tcgetattr(slave), original)
                 output = b''
@@ -263,7 +264,8 @@ class TerminalMediaTests(unittest.TestCase):
                     proc = subprocess.Popen(
                         ['/usr/bin/python3', '-B', str(ROOT / 'config/terminal_video.py'), 'clip.mp4'],
                         stdin=slave, stdout=slave, stderr=slave,
-                        env={'PATH': tmp + ':/usr/bin:/bin', 'HOME': tmp})
+                        env={'PATH': tmp + ':/usr/bin:/bin', 'HOME': tmp,
+                             'KILIX_VIDEO_PLAYER': str(fake)})
                     self.assertEqual(proc.wait(timeout=5), 0)
                     output = b''
                     while select.select([master], [], [], 0.1)[0]:
