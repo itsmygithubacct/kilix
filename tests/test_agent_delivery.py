@@ -1042,7 +1042,10 @@ class DeliveryTests(unittest.TestCase):
             with self.subTest(phase=phase):
                 self.client = Terminal()
                 self.leave_exact_draft(message_id=phase, text="Review this exact body.")
-                path = next((Path(self.temp.name) / "kilix" / "agent-delivery").glob("*.json"))
+                matches = [path for path in (Path(self.temp.name) / "kilix" / "agent-delivery").glob("*.json")
+                           if json.loads(path.read_text()).get("message_id") == phase]
+                self.assertEqual(len(matches), 1)
+                path = matches[0]
                 record = json.loads(path.read_text())
                 record["phase"] = phase
                 path.write_text(json.dumps(record))
