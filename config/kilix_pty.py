@@ -700,8 +700,31 @@ def cmd_request(broker: Broker, argv: list[str]) -> int:
     return kilix_pty_request.cmd_request(broker, argv)
 
 
+def cmd_marker(broker: Broker, argv: list[str]) -> int:
+    import kilix_pty_semantic
+    if len(argv) != 2 or argv[1] != '--json':
+        return fail('usage: kilix pty marker PRINTABLE_MARKER --json', EXIT_USAGE)
+    try:
+        emit(kilix_pty_semantic.marker_occurrences(broker, argv[0]))
+    except ValueError as error:
+        return fail(str(error), EXIT_USAGE)
+    return 0
+
+
+def cmd_foreground(broker: Broker, argv: list[str]) -> int:
+    import kilix_pty_semantic
+    if len(argv) != 2 or argv[1] != '--json':
+        return fail('usage: kilix pty foreground ID --json', EXIT_USAGE)
+    try:
+        emit(kilix_pty_semantic.foreground_sample(broker, argv[0]))
+    except ValueError as error:
+        return fail(str(error), EXIT_USAGE)
+    return 0
+
+
 COMMANDS = {"list": cmd_list, "status": cmd_status, "reaped": cmd_reaped,
             "kill": cmd_kill, "observe": cmd_observe, "journals": cmd_journals,
+            "marker": cmd_marker, "foreground": cmd_foreground,
             "capabilities": cmd_capabilities, "request": cmd_request,
             "resolve": cmd_selector_resolve, "end": cmd_selector_end,
             "passthrough": cmd_passthrough}

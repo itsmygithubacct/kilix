@@ -69,7 +69,8 @@ class Controller:
         import json
         import kilix_pty_request as legacy
         request = legacy.validate(json.dumps(actor_request, ensure_ascii=True).encode())
-        if request["verb"] not in {"list", "status", "observe", "reaped", "journals", "pane"}:
+        if request["verb"] not in {"list", "status", "observe", "reaped", "journals", "pane",
+                                   "marker", "foreground"}:
             raise ValueError("unsupported constrained read")
         with self._lock:
             previous_timeout = self._broker.timeout

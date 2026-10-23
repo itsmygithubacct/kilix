@@ -178,7 +178,7 @@ class StructuredKillTests(C1Case):
         timeout = document["top_level"]["timeout_seconds"]
         self.assertEqual((timeout["default"], timeout["default_list"]), (2, 1))
         self.assertIn("--lines", document["names"])
-        self.assertLessEqual(len(self.pty("capabilities").stdout.encode()), 3900)
+        self.assertLessEqual(len(self.pty("capabilities").stdout.encode()), 4600)
 
 
 class PlainRouteCallerTests(C1Case):

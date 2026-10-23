@@ -101,6 +101,16 @@ def parse(argv):
 
 
 def execute(controller, argv):
+    if isinstance(argv, list) and argv and argv[0] in ('marker', 'foreground'):
+        if len(argv) != 3 or argv[2] != '--json' or type(argv[1]) is not str:
+            raise ValueError('semantic read requires one value and --json')
+        import kilix_pty_semantic as semantic
+        result = (semantic.marker_occurrences(controller._broker, argv[1]) if argv[0] == 'marker'
+                  else semantic.foreground_sample(controller._broker, argv[1]))
+        raw = json.dumps(result, separators=(',', ':'), ensure_ascii=True) + '\n'
+        if len(raw.encode()) > 24576:
+            raise ValueError('semantic result exceeds controller bound')
+        return {'code': 0, 'stdout': raw, 'stderr': ''}
     verb, document, flags, as_json, action = parse(argv)
     broker, args = controller._broker, document['args']
     previous_timeout = broker.timeout

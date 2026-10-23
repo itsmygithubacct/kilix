@@ -29,6 +29,9 @@ class RemoteController:
         response = call({"route": "read", "request": request})
         return response["code"], response["receipt"]
 
+    def read_cli(self, argv):
+        return call({"route": "host_read", "argv": argv})
+
 
 def main(argv):
     response = call({"route": "broker", "argv": argv})

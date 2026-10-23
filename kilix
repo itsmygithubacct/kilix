@@ -459,6 +459,8 @@ usage: $_self pty [--timeout SECONDS] [COMMAND]
   observe ID [--from EPOCH:OFFSET]   watch read-only; Ctrl-] leaves
   observe ID --once [--from EPOCH:OFFSET] [--lines N | --bytes N] [--text] [--json]
                                bounded snapshot, no terminal needed (default 200 lines / 64 KiB)
+  marker PRINTABLE_MARKER --json  raw-byte marker order by broker observation; read-only
+  foreground ID --json        bounded current child and PTY foreground-process sample
   attach ID [--resume EPOCH:OFFSET]  take over a detached session (a terminal is required)
   kill ID --yes [--expect-started MILLIS] [--json] [--no-caller-check]
                                end a session, then verify it is gone (asks on a terminal); off a
@@ -660,6 +662,10 @@ _kilix_pty_cli() {
       python3 "$KILIX_HOME/config/kilix_pty_supervisor.py" \
         --broker "$broker" --runtime "$runtime" --state "$KILIX_STATE_DIRECTORY" "$@" ;;
     resolve|end)
+      broker="$(_kilix_pty_broker_path)" || return 1
+      runtime="$(_kilix_resolve_pty_broker_runtime)" || return 1
+      _kilix_pty_py "$verb" "$@" ;;
+    marker|foreground)
       broker="$(_kilix_pty_broker_path)" || return 1
       runtime="$(_kilix_resolve_pty_broker_runtime)" || return 1
       _kilix_pty_py "$verb" "$@" ;;

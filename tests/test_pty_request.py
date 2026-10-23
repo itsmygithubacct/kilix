@@ -62,9 +62,10 @@ class CapabilitiesTests(RequestCase):
         document = json.loads(result.stdout)
         self.assertEqual(document["schema"], "kilix.pty/v1")
         self.assertEqual(document["request_schema"], SCHEMA)
-        self.assertLessEqual(len(result.stdout.encode()), 3900)
+        self.assertLessEqual(len(result.stdout.encode()), 4600)
         verbs = {entry["verb"]: entry for entry in document["verbs"]}
-        self.assertEqual(set(verbs), {"list", "status", "pane", "reaped", "journals", "observe", "kill"})
+        self.assertEqual(set(verbs), {"list", "status", "pane", "reaped", "journals",
+                                      "observe", "marker", "foreground", "kill"})
         self.assertEqual(document["not_available"], ["attach", "reap"])
         self.assertEqual(verbs["kill"]["consent"], "--yes on the command line")
         self.assertEqual(verbs["kill"]["operation_id"], "required")

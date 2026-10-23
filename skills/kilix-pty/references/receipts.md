@@ -37,6 +37,8 @@ Usage errors exit 2. `status` of a missing session is `not_found` with exit 4.
 
 - `kilix pty list --json`: `sessions` (each with `id`, `attached`, `started_millis`, `cwd`, `cwd_now`) and `unreachable`.
 - `kilix pty observe ID --once --lines 50 --json`: `text` or `bytes_b64`, `truncated`, `cursor`, `untrusted`.
+- `kilix pty marker TOKEN --json`: complete live-session census and raw marker occurrences ordered by broker observation time only. `unique`, `no_match`, or explicit `unknown`; this does not establish application print or rendered-text order.
+- `kilix pty foreground ID --json`: separate launch command, sampled child argv, and plural foreground processes. An incomplete sample stays `unknown`.
 - Bound a read with `--lines N` or `--bytes N`, not both. `--timeout SECONDS` (0.1-60) goes before the verb.
 
 ## Structured clients

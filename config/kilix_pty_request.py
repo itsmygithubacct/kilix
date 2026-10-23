@@ -59,6 +59,8 @@ EXAMPLES = {
                  "args": {"id": "3fa9c2d41b7e6a05", "max_lines": 50, "text": True}},
     "observe": {"schema": REQUEST_SCHEMA, "verb": "observe",
                 "args": {"id": "3fa9c2d41b7e6a05", "max_lines": 50, "text": True}},
+    "marker": {"schema": REQUEST_SCHEMA, "verb": "marker", "args": {"marker": "deploy-ok-419ee9"}},
+    "foreground": {"schema": REQUEST_SCHEMA, "verb": "foreground", "args": {"id": "3fa9c2d41b7e6a05"}},
     "kill": {"schema": REQUEST_SCHEMA, "verb": "kill", "operation_id": "end-1",
              "args": {"id": "3fa9c2d41b7e6a05", "expect_started_millis": 1791337517862}},
 }
@@ -81,6 +83,9 @@ VERBS = {
     "journals": ([dict(ID, note="omit to list the archive")] + BOUNDS, False),
     "observe": ([dict(ID, required=True), {"name": "from", "type": "string", "note": "cursor EPOCH:OFFSET"}] + BOUNDS,
                 False),
+    "marker": ([{"name": "marker", "type": "string", "required": True,
+                  "note": "1-128 printable non-space ASCII bytes; full live census"}], False),
+    "foreground": ([dict(ID, required=True)], False),
     "kill": ([dict(ID, required=True), dict(EXPECT)], True),
 }
 ALLOWED_ARGS = {verb: {arg["name"] for arg in args} for verb, (args, _) in VERBS.items()}
@@ -220,7 +225,13 @@ def validate(raw: bytes) -> dict:
         raise Refusal("bad_type", '"text" must be true or false', '"text": true')
     if "from" in args and not (isinstance(args["from"], str) and re.fullmatch(r"\d+:\d+", args["from"])):
         raise Refusal("bad_type", '"from" must look like EPOCH:OFFSET, from a cursor you were given', '"from": "0:28"')
-    required = {"pane": ["pane_id"], "observe": ["id"], "kill": ["id", "expect_started_millis"]}.get(verb, [])
+    if "marker" in args and (not isinstance(args["marker"], str) or
+                             not args["marker"].isascii() or not 1 <= len(args["marker"]) <= 128 or
+                             any(ord(char) < 33 or ord(char) > 126 for char in args["marker"])):
+        raise Refusal("bad_marker", "marker must be 1-128 printable non-space ASCII bytes",
+                      example_for("marker"))
+    required = {"pane": ["pane_id"], "observe": ["id"], "foreground": ["id"],
+                "marker": ["marker"], "kill": ["id", "expect_started_millis"]}.get(verb, [])
     for key in required:
         if key not in args:
             raise Refusal("missing_field", f"{verb} needs args.{key}"
@@ -470,6 +481,10 @@ def failure(broker, status, message, reason="failed", **extra):
 
 def run_verb(broker, request, state):
     verb, args = request["verb"], request.get("args", {})
+    if verb in ("marker", "foreground"):
+        import kilix_pty_semantic as semantic
+        return 0, (semantic.marker_occurrences(broker, args["marker"]) if verb == "marker"
+                   else semantic.foreground_sample(broker, args["id"]))
     if verb == "list":
         status, document, err = call(pty.cmd_list, broker, [])
     elif verb == "reaped":

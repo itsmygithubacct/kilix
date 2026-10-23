@@ -109,7 +109,7 @@ def raw_request(controller, broker, request, issued, argv):
     if not isinstance(argv, list) or not argv or len(argv) > 8 or any(type(x) is not str for x in argv):
         raise ValueError("invalid broker argv")
     verb, *args = argv
-    if verb in ("journals", "pane"):
+    if verb in ("journals", "pane", "marker", "foreground"):
         return controller.read_cli(argv)
     if verb == "kill":
         if not issued["issued"]:
