@@ -1,5 +1,6 @@
 """Supervisor-only owned-pane data lookup. Never mounts desktop authority."""
 import json
+from decimal import Decimal, ROUND_FLOOR
 import os
 from pathlib import Path
 import selectors
@@ -15,8 +16,10 @@ class LookupFailure(ValueError):
     pass
 
 
-def bounded_ls(command, environment, deadline):
-    """One fixed ls child, byte limits and one absolute deadline, owned cleanup."""
+def bounded_query(command, environment, deadline):
+    """Fixed ls/status child, one absolute work deadline and bounded owned cleanup."""
+    if time.monotonic() >= deadline:
+        raise LookupFailure('pane_lookup_timeout')
     process = subprocess.Popen(command, env=environment, stdin=subprocess.DEVNULL,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     streams = {process.stdout: bytearray(), process.stderr: bytearray()}
@@ -40,18 +43,25 @@ def bounded_ls(command, environment, deadline):
                     if len(output) > limit:
                         raise LookupFailure('pane_lookup_overflow')
         try:
-            code = process.wait(timeout=max(.001, deadline-time.monotonic()))
+            code = process.wait(timeout=max(0, deadline-time.monotonic()))
         except subprocess.TimeoutExpired:
             raise LookupFailure('pane_lookup_timeout') from None
         if code:
             raise LookupFailure('pane_lookup_unavailable')
+        if time.monotonic() >= deadline:
+            raise LookupFailure('pane_lookup_timeout')
         return bytes(streams[process.stdout])
     finally:
         if process.poll() is None:
             process.kill()
-        process.wait(timeout=1)
-        for stream in streams:
-            stream.close()
+        try:
+            # A fixed cleanup endpoint, never another fresh work/cleanup budget.
+            process.wait(timeout=max(0, deadline+1-time.monotonic()))
+        except subprocess.TimeoutExpired:
+            raise LookupFailure('pane_lookup_cleanup_timeout') from None
+        finally:
+            for stream in streams:
+                stream.close()
 
 
 class PaneLookup:
@@ -90,7 +100,7 @@ class PaneLookup:
                 result[key] = value
             return result
         try:
-            state = json.loads(bounded_ls(self.command, self.environment, deadline),
+            state = json.loads(bounded_query(self.command, self.environment, deadline),
                                object_pairs_hook=pairs,
                                parse_constant=lambda _: (_ for _ in ()).throw(LookupFailure('pane_lookup_malformed')))
             if not isinstance(state, list):
@@ -121,19 +131,26 @@ class PaneLookup:
     def lookup(self, pane_id, broker):
         if pane_id not in self.owned:
             return 3, broker.envelope(result='refused', reason='pane_not_admitted', pane_id=pane_id)
-        previous_timeout = broker.timeout
-        deadline = time.monotonic() + min(5, float(previous_timeout or 5))
+        deadline = time.monotonic() + min(5, float(broker.timeout or 5))
         try:
             ident = self.snapshot(pane_id, deadline)
             remaining = deadline - time.monotonic()
-            if remaining <= 0:
+            # Refuse instead of raising the native100ms minimum above our budget.
+            native_timeout = Decimal.from_float(remaining).quantize(Decimal('.000001'), rounding=ROUND_FLOOR)
+            if native_timeout < Decimal('.1'):
                 raise LookupFailure('pane_lookup_timeout')
             # Native parse_timeout bounds decimal precision; Python's arbitrary
             # float repr can exceed it and turn an available session into error.
-            broker.timeout = format(max(.1, min(remaining, 5)), '.6f')
-            code, raw, _ = broker.call('status', ident, '--json')
-            if code != 0:
-                raise LookupFailure('pane_session_unavailable')
+            command = [broker.path, '--runtime-dir', broker.runtime, '--timeout', format(native_timeout, '.6f'),
+                       'status', ident, '--json']
+            # The normal broker guard is a separate relative budget. This lookup
+            # instead uses its SAME absolute deadline for both snapshots/status.
+            try:
+                raw = bounded_query(command, getattr(broker, 'environment', None), deadline)
+            except LookupFailure as error:
+                if str(error) == 'pane_lookup_unavailable':
+                    raise LookupFailure('pane_session_unavailable') from None
+                raise
             try:
                 session = json.loads(raw)
             except (ValueError, UnicodeError):
@@ -152,5 +169,3 @@ class PaneLookup:
             return 4, broker.envelope(result='unknown', reason=str(error), pane_id=pane_id)
         except OSError:
             return 4, broker.envelope(result='unknown', reason='pane_lookup_unavailable', pane_id=pane_id)
-        finally:
-            broker.timeout = previous_timeout

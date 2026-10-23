@@ -285,3 +285,13 @@ replace it with a credential for a different frontend. The lookup still checks
 ownership/mode/link count and never mounts that file into the actor. Its native
 broker timeout uses bounded decimal precision accepted by the pinned broker;
 a high-precision float string is not passed as a native timeout argument.
+
+Pane lookup does not reuse the broker's independent relative guard. Both `ls`
+queries and the fixed native `status` query share the original absolute request
+endpoint. Remaining time is rounded DOWN to six decimal places for the native
+argument; less than its100ms minimum refuses BEFORE spawning the status client.
+The bounded pipe reader checks that same endpoint, including its final wait and
+late completion check. Cleanup ends at request deadline+1 second, never a fresh
+interval; the outer model work/cleanup timer remains authoritative. Expired work
+never starts another child. Deterministic clock and owned-stub tests cover default
+0.3s, sub-minimum remaining time, rounding, client wait and cleanup endpoints.
