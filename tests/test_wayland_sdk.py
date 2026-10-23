@@ -1,5 +1,9 @@
 """Nested session policy tests; real ownership is exercised by the app suite."""
 import os
+import socket
+import subprocess
+import time
+from urllib.parse import quote_from_bytes
 from pathlib import Path
 import sys
 import tempfile
@@ -109,6 +113,77 @@ class WaylandTests(unittest.TestCase):
                 self.assertEqual(spawn.call_args.kwargs["_kilix_remote_launcher"], owner_type.return_value.launch_primary)
                 owner_type.return_value.bind.assert_called_once_with(spawn.return_value)
                 owner_type.return_value.environment.assert_not_called()
+
+
+    def test_real_runtime_bus_survives_nested_environment(self):
+        # Punctuation and UTF-8 bytes must be escaped in an explicit address.
+        runtime = Path(self.temp.name) / "runtime %;,=~é"
+        runtime.mkdir(mode=0o700)
+        endpoint = runtime / "bus"
+        address = "unix:path=" + quote_from_bytes(os.fsencode(endpoint), safe="/").replace("~", "%7e")
+        daemon = subprocess.Popen(
+            ["dbus-daemon", "--session", "--nofork", "--nopidfile", "--address=" + address],
+            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+            env={"PATH": "/usr/bin:/bin", "HOME": self.temp.name},
+        )
+        try:
+            deadline = time.monotonic() + 5
+            while not endpoint.exists() and daemon.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertIsNone(daemon.poll(), "temporary bus exited before readiness")
+            self.assertTrue(endpoint.is_socket(), "temporary bus did not become ready")
+            query = (
+                "import dbus; b=dbus.SessionBus(); "
+                "print(b.call_blocking('org.freedesktop.DBus', '/org/freedesktop/DBus', "
+                "'org.freedesktop.DBus', 'GetId', '', ()))"
+            )
+            baseline = None
+            for supplied in (None, "", address):
+                env = {"PATH": "/usr/bin:/bin", "HOME": self.temp.name,
+                       "XDG_RUNTIME_DIR": str(runtime), "KILIX_SESSION_HOME": self.temp.name}
+                if supplied is not None:
+                    env["DBUS_SESSION_BUS_ADDRESS"] = supplied
+                with self.subTest(address=supplied), mock.patch.dict(os.environ, env, clear=True):
+                    original = subprocess.run([sys.executable, "-c", query], env=env,
+                                              text=True, capture_output=True, timeout=5, check=True).stdout.strip()
+                    baseline = baseline or original
+                    self.assertEqual(original, baseline)
+                    with wayland.NestedWaylandSession("bus-fixture", exclusive="waydroid-test") as session:
+                        nested_env = session.environment()
+                        self.assertNotEqual(nested_env["XDG_RUNTIME_DIR"], str(runtime))
+                        if supplied:
+                            self.assertEqual(nested_env["DBUS_SESSION_BUS_ADDRESS"], supplied)
+                        nested = subprocess.run([sys.executable, "-c", query], env=nested_env,
+                                                text=True, capture_output=True, timeout=5, check=True).stdout.strip()
+                        self.assertEqual(nested, baseline)
+                        self.assertTrue(nested_env["DBUS_SESSION_BUS_ADDRESS"])
+        finally:
+            daemon.terminate()
+            try:
+                daemon.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                daemon.kill()
+                daemon.wait(timeout=5)
+            daemon.stderr.close()
+
+    def test_session_bus_resolution_rejects_missing_non_socket_and_other_runtime(self):
+        runtime = Path(self.temp.name) / "runtime"
+        runtime.mkdir()
+        for supplied in (None, ""):
+            env = {"XDG_RUNTIME_DIR": str(runtime)}
+            if supplied is not None:
+                env["DBUS_SESSION_BUS_ADDRESS"] = supplied
+            self.assertEqual(wayland.session_bus_address(env), "")
+            (runtime / "bus").touch()
+            self.assertEqual(wayland.session_bus_address(env), "")
+            (runtime / "bus").unlink()
+        with socket.socket(socket.AF_UNIX) as endpoint:
+            endpoint.bind(str(runtime / "bus"))
+            self.assertEqual(wayland.session_bus_address({}), "")
+            self.assertEqual(wayland.session_bus_address({"XDG_RUNTIME_DIR": "relative"}), "")
+            self.assertEqual(wayland.session_bus_address({"XDG_RUNTIME_DIR": str(runtime / "other")}), "")
+        explicit = "unix:abstract=explicit%2cbus;unix:path=/fallback"
+        self.assertEqual(wayland.session_bus_address({"DBUS_SESSION_BUS_ADDRESS": explicit}), explicit)
 
     def test_launch_without_compositor_refuses(self):
         with wayland.NestedWaylandSession("fixture", exclusive="waydroid-test") as session:

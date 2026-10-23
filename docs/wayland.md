@@ -32,3 +32,12 @@ permissions, asks for explicit confirmation, and invokes sudo. Graphical
 callers get the same prompt in xterm on their current X display. Refusal,
 EOF, and helper failure do not report setup success. No policy grants generic
 root commands; OS package/image selection remains in the release-owned helper.
+
+`session_bus_address()` returns an explicit session-bus address unchanged or
+resolves the original `$XDG_RUNTIME_DIR/bus` socket before the nested runtime
+directory is substituted. An unset or empty address uses this fallback. Socket
+path bytes are escaped for D-Bus address syntax. The application doctor uses
+the same resolver, so it does not report a different runtime directory or a
+regular file as a usable fallback. Resolution is read-only; it does not connect
+or autolaunch a daemon. X11 autolaunch configurations must supply an explicit
+`DBUS_SESSION_BUS_ADDRESS` for this application.

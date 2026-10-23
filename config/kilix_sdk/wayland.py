@@ -18,6 +18,33 @@ import stream
 from .private_bus import PrivateBus
 
 
+def session_bus_address(environment=None):
+    """Preserve an explicit address or libdbus's original runtime-bus fallback.
+
+    Do not autolaunch a bus or guess another runtime directory. Call before
+    replacing XDG_RUNTIME_DIR; percent-escape filesystem bytes, not Unicode
+    code points, using the D-Bus address alphabet.
+    """
+    env = os.environ if environment is None else environment
+    explicit = env.get("DBUS_SESSION_BUS_ADDRESS")
+    if explicit:
+        return explicit
+    runtime = env.get("XDG_RUNTIME_DIR")
+    if not runtime or not os.path.isabs(runtime):
+        return ""
+    bus = Path(runtime) / "bus"
+    try:
+        info = bus.stat()
+    except OSError:
+        return ""
+    if not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.getuid():
+        return ""
+    safe = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-/\\.*"
+    escaped = "".join(chr(byte) if byte in safe else f"%{byte:02x}"
+                      for byte in os.fsencode(bus))
+    return "unix:path=" + escaped
+
+
 @dataclass(frozen=True)
 class SessionExit:
     source: str
@@ -62,7 +89,10 @@ class NestedWaylandSession:
 
     def environment(self):
         env = dict(os.environ)
-        previous = env.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+        address = session_bus_address(env)
+        if address:
+            env["DBUS_SESSION_BUS_ADDRESS"] = address
+        previous = env.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
         # Keep host audio reachable after changing the Wayland socket directory.
         if "PULSE_SERVER" not in env and (Path(previous) / "pulse/native").exists():
             env["PULSE_SERVER"] = "unix:" + str(Path(previous) / "pulse/native")
