@@ -1,0 +1,271 @@
+"""Owned PTY user ingress plus real Linux sandbox/broker integration; no model."""
+import fcntl
+import json
+import os
+from pathlib import Path
+import pty as terminal_pty
+import select
+import subprocess
+import sys
+import termios
+import time
+import unittest
+
+import test_pty_selector as fixtures
+import kilix_pty_supervisor as supervisor
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+class SupervisorTests(unittest.TestCase):
+    setUpClass = classmethod(fixtures.SelectorEnds.setUpClass.__func__)
+    setUp = fixtures.SelectorEnds.setUp
+    tearDown = fixtures.SelectorEnds.tearDown
+
+    def launch(self, actor, selector, *, lifetime=5, confirm=True, after_preview=None, revoke=False, revoke_after_request=False, via_launcher=False, read_only=False):
+        script = self.fx.root / "actor.py"
+        script.write_text(actor)
+        master, slave = terminal_pty.openpty()
+        def user_terminal():
+            os.setsid()
+            fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+        command = [sys.executable, str(ROOT / "config/kilix_pty_supervisor.py"),
+                   "--broker", str(fixtures.BROKER), "--runtime", str(self.fx.runtime),
+                   "--state", str(self.state), "--actor", str(script), "--lifetime", str(lifetime)]
+        needle = os.environ.get("SELECTOR_NEEDLE_SOURCE")
+        if needle:
+            command += ["--needle-source", needle]
+        if read_only:
+            command.append("--read-only")
+        env = self.fx.env
+        if via_launcher:
+            command = ["bash", str(ROOT / "kilix"), "pty", "supervise", "--actor", str(script),
+                       "--lifetime", str(lifetime)]
+            if needle:
+                command += ["--needle-source", needle]
+            if read_only:
+                command.append("--read-only")
+            env = {"PATH": os.environ["PATH"], "HOME": str(self.fx.root / "home"), "TMPDIR": "/tmp",
+                   "KILIX_STORAGE_HOME": str(self.fx.root / "storage"),
+                   "KITTY_PTY_BROKER_EXECUTABLE": str(fixtures.BROKER),
+                   "KITTY_PTY_BROKER_RUNTIME": str(self.fx.runtime),
+                   "KITTY_PTY_BROKER_SESSION": "caller_unrelated",
+                   "XDG_RUNTIME_DIR": str(self.fx.root / "xdg")}
+        process = subprocess.Popen(command, stdin=slave, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   preexec_fn=user_terminal, env=env)
+        os.close(slave)
+        seen = bytearray()
+        def until(marker):
+            deadline = time.monotonic() + 10
+            while marker not in seen:
+                if time.monotonic() >= deadline:
+                    self.fail("missing trusted prompt " + repr(marker) + ": " + repr(seen))
+                if select.select([master], [], [], .1)[0]:
+                    try:
+                        seen.extend(os.read(master, 8192))
+                    except OSError:
+                        out, err = process.communicate(timeout=3)
+                        self.fail(f"supervisor closed UI: {out!r} {err!r}")
+        try:
+            if not read_only:
+                until(b"Selector JSON")
+                os.write(master, json.dumps(selector).encode() + b"\n")
+            if not read_only and confirm is not None:
+                until(b"Type END")
+                if after_preview:
+                    after_preview()
+                os.write(master, b"END\n" if confirm else b"CANCEL\n")
+            if revoke:
+                until(b"ACTOR_RUNNING")
+                if revoke_after_request:
+                    until(b"REQUEST_COMPLETE")
+                os.write(master, b"REVOKE\n")
+            out, err = process.communicate(timeout=12)
+            self.assertTrue(out, err.decode(errors="replace"))
+            result = json.loads(out)
+            self.assertNotIn("error", result, result)
+            if "cleanup_observations" in result:
+                self.assertTrue(result["cleanup_observations"], result)
+                self.assertTrue(all(row["absent_or_exited"] for row in result["cleanup_observations"]), result)
+            return result, process.returncode
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate(timeout=3)
+            os.close(master)
+
+    def test_isolated_selector_positive_replay_and_access_refusals(self):
+        self.fx.start("selected")
+        self.fx.start("bystander")
+        canary = self.fx.root / "outside-canary"
+        canary.write_text("owned fixture only")
+        actor = '''import json, os, socket, sys
+sys.path.insert(0, '/tools')
+from kilix_pty_agent_client import call
+selection = json.load(open('/run/selection.json'))
+assert not os.path.exists(CANARY)
+assert not os.path.exists('/proc/1/root' + CANARY)
+assert not os.path.exists(RUNTIME)
+assert not os.path.exists(SOURCE)
+assert not os.path.exists('/home')
+assert not any(name.startswith('KILIX_') for name in os.environ)
+try:
+    os.open('/dev/tty', os.O_RDWR)
+except OSError:
+    pass
+else:
+    raise AssertionError('actor inherited user terminal')
+status = open('/proc/self/status').read()
+assert 'NoNewPrivs:\\t1' in status
+assert 'CapEff:\\t0000000000000000' in status
+assert os.readlink('/proc/self/ns/pid') != PARENT_PIDNS
+assert os.readlink('/proc/self/ns/net') != PARENT_NETNS
+assert os.readlink('/proc/self/ns/user') != PARENT_USERNS
+assert os.readlink('/proc/self/ns/mnt') != PARENT_MNTNS
+bad = call({'route':'select','request':selection['request']})
+assert bad['code'] == 3
+first = call({'route':'selector','request':selection['request']})
+assert first['code'] == 0, first
+assert first['receipt']['result'] == 'verified_absent'
+second = call({'route':'selector','request':selection['request']})
+assert second['receipt']['duplicate'] is True
+print(json.dumps({'isolation_checked':True,'positive':True,'replay':True}))
+'''
+        values = {"CANARY": str(canary), "RUNTIME": str(self.fx.runtime),
+                  "SOURCE": str(ROOT / "config/kilix_pty_controller.py"),
+                  "PARENT_PIDNS": os.readlink('/proc/self/ns/pid'),
+                  "PARENT_NETNS": os.readlink('/proc/self/ns/net'),
+                  "PARENT_USERNS": os.readlink('/proc/self/ns/user'),
+                  "PARENT_MNTNS": os.readlink('/proc/self/ns/mnt')}
+        actor = '\n'.join(f'{key} = {value!r}' for key, value in values.items()) + '\n' + actor
+        result, code = self.launch(actor, {"id": "selected"})
+        self.assertEqual(code, 0, result)
+        self.assertEqual(len(result["calls"]), 3)
+        self.assertIn('"positive": true', result["actor_output"])
+        self.assertTrue(self.fx.alive("bystander"))
+
+    def test_raw_facade_preserves_original_prefix_qualifier_and_positive(self):
+        self.fx.start("pair.attached")
+        self.fx.start("pair.detached")
+        self.fx.attach("pair.attached")
+        actor = '''import json, subprocess
+s = json.load(open('/run/selection.json'))
+def raw(*args):
+    return subprocess.run(['kitty-pty-broker', *args], capture_output=True, text=True)
+assert raw('list','--json').returncode == 0
+assert raw('status',s['issued']['resolved']['id'],'--json').returncode == 0
+first = raw('kill',s['issued']['resolved']['id'])
+assert first.returncode == 0, first.stdout + first.stderr
+receipt = json.loads(first.stdout)
+assert receipt['selector'] == {'id_prefix':'pair.','attached':False}
+second = raw('kill',s['issued']['resolved']['id'])
+assert json.loads(second.stdout)['duplicate'] is True
+print('raw facade positive and replay')
+'''
+        result, code = self.launch(actor, {"id_prefix": "pair.", "attached": False})
+        self.assertEqual(code, 0, result)
+        self.assertTrue(self.fx.alive("pair.attached"))
+        self.assertFalse(self.fx.alive("pair.detached"))
+
+    def test_needle_adapter_positive(self):
+        if not os.environ.get("SELECTOR_NEEDLE_SOURCE"):
+            self.skipTest("SELECTOR_NEEDLE_SOURCE must identify exact owned Needle source")
+        self.fx.start("selected")
+        actor = '''import json, subprocess
+s = json.load(open('/run/selection.json'))['request']
+action = {'operation':'end','selector':s['selector'],'operation_id':s['operation_id']}
+p = subprocess.run(['kilix-needle','pty','--request-json',json.dumps(action)],capture_output=True,text=True)
+assert p.returncode == 0, p.stdout + p.stderr
+assert json.loads(p.stdout)['result']['result'] == 'verified_absent'
+print('Needle isolated positive')
+'''
+        result, code = self.launch(actor, {"id": "selected"}, via_launcher=True)
+        self.assertEqual(code, 0, result)
+        self.assertFalse(self.fx.alive("selected"))
+
+    def test_ambiguous_declined_and_changed_preview_do_not_launch_actor(self):
+        self.fx.start("pair.one")
+        self.fx.start("pair.two")
+        result, code = self.launch("raise AssertionError('must not run')", {"id_prefix": "pair."}, confirm=None)
+        self.assertFalse(result["issued"])
+        self.assertNotIn("actor_exit", result)
+        self.assertEqual(code, 3)
+        result, _ = self.launch("raise AssertionError('must not run')", {"id": "pair.one"}, confirm=False)
+        self.assertEqual(result["selection"]["reason"], "declined")
+        result, _ = self.launch("raise AssertionError('must not run')", {"id": "pair.one"},
+                                after_preview=lambda: self.fx.attach("pair.one"))
+        self.assertEqual(result["selection"]["reason"], "selection_changed")
+        self.assertTrue(self.fx.alive("pair.one"))
+        self.assertTrue(self.fx.alive("pair.two"))
+
+    def test_mismatched_expired_and_stale_raw_authority_refuse(self):
+        self.fx.start("selected")
+        for mode in ("mismatch", "expire", "stale_raw"):
+            with self.subTest(mode=mode):
+                actor = '''import json, sys, time
+sys.path.insert(0, '/tools')
+from kilix_pty_agent_client import call
+s = json.load(open('/run/selection.json'))
+if MODE == 'mismatch':
+    s['request']['selector'] = {'id':'unselected'}
+    reply = call({'route':'selector','request':s['request']})
+elif MODE == 'expire':
+    time.sleep(.3)
+    reply = call({'route':'selector','request':s['request']})
+else:
+    reply = call({'route':'broker','argv':['kill','selected','--expect-started','1']})
+assert reply['code'] == 3, reply
+print(json.dumps(reply))
+'''
+                result, code = self.launch(f'MODE = {mode!r}\n' + actor, {"id": "selected"},
+                                           lifetime=.1 if mode == "expire" else 5)
+                self.assertEqual(code, 3, result)
+                self.assertEqual(result["calls"][0]["code"], 3)
+                self.assertTrue(self.fx.alive("selected"))
+
+    def test_user_revocation_kills_owned_actor_without_dispatch(self):
+        self.fx.start("selected")
+        actor = '''import subprocess, time, sys
+sys.path.insert(0, '/tools')
+from kilix_pty_agent_client import call
+subprocess.Popen(['/bin/sleep','60'])
+assert call({'route':'broker','argv':['list','--json']})['code'] == 0
+time.sleep(60)
+'''
+        result, code = self.launch(actor, {"id": "selected"}, revoke=True, revoke_after_request=True)
+        self.assertEqual((code, result["stop"], len(result["calls"])), (3, "user_revoked", 1))
+        self.assertGreaterEqual(len(result["cleanup_observations"]), 3)
+        self.assertTrue(self.fx.alive("selected"))
+
+    def test_actor_output_cannot_claim_completion_without_dispatch(self):
+        self.fx.start("selected")
+        result, code = self.launch("print('verified_absent')", {"id": "selected"})
+        self.assertEqual((code, result["actor_exit"], result["operation_outcome"]), (3, 0, "not_requested"))
+        self.assertEqual(result["calls"], [])
+        self.assertTrue(self.fx.alive("selected"))
+
+    def test_read_only_actor_can_inspect_but_cannot_end(self):
+        self.fx.start("selected")
+        actor = """import json, subprocess
+p = subprocess.run(['kitty-pty-broker','status','selected','--json'],capture_output=True,text=True)
+assert p.returncode == 0, p.stdout + p.stderr
+p = subprocess.run(['kitty-pty-broker','kill','selected'],capture_output=True,text=True)
+assert p.returncode == 3
+assert json.loads(p.stdout)['reason'] == 'authority_required'
+"""
+        result, code = self.launch(actor, None, read_only=True, via_launcher=True)
+        self.assertEqual(code, 0, result)
+        self.assertFalse(result["issued"])
+        self.assertTrue(self.fx.alive("selected"))
+
+    def test_nonterminal_launch_refuses_without_actor(self):
+        result = subprocess.run([sys.executable, str(ROOT / 'config/kilix_pty_supervisor.py'),
+                                 '--broker', str(fixtures.BROKER), '--runtime', str(self.fx.runtime),
+                                 '--state', str(self.state), '--actor', '/nonexistent'],
+                                stdin=subprocess.DEVNULL, capture_output=True, text=True, start_new_session=True)
+        self.assertEqual(result.returncode, 3)
+        self.assertFalse(json.loads(result.stdout)['issued'])
+
+
+if __name__ == '__main__':
+    unittest.main()

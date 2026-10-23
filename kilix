@@ -459,7 +459,9 @@ usage: $_self pty [--timeout SECONDS] [COMMAND]
                                end a session, then verify it is gone (asks on a terminal); off a
                                terminal it refuses unless the caller's own session is known
                                (KITTY_PTY_BROKER_SESSION); only a person passes --no-caller-check
-                               Legacy exact-ID operation; selector ends below are the supported agent route.
+                               Legacy trusted administrative operation; constrained agents use supervise.
+  supervise --actor FILE [--needle-source DIR] [--lifetime SECONDS]
+                               trusted terminal selection, then isolated actor; see docs/pty-supervisor.md
   resolve --selector-json JSON|-|FILE [--json]  read-only selector preview; never a ticket
   end --selector-json JSON|-|FILE --operation-id KEY --yes [--json]
                                End a session only when the user's own message asks you to end that
@@ -643,6 +645,14 @@ _kilix_pty_cli() {
       broker="$(_kilix_pty_broker_path)" || return 1
       runtime="$(_kilix_resolve_pty_broker_runtime)" || return 1
       KILIX_KITTEN="$(_kilix_pty_kitten || true)" _kilix_pty_py request "$@" ;;
+    supervise)
+      # Trusted direct-user launch only. The supervisor opens /dev/tty itself;
+      # actor requests never enter this launch/issuance path.
+      [ -z "$tvalue" ] || { echo "kilix pty: supervise uses its fixed broker budget" >&2; return 2; }
+      broker="$(_kilix_pty_broker_path)" || return 1
+      runtime="$(_kilix_resolve_pty_broker_runtime)" || return 1
+      python3 "$KILIX_HOME/config/kilix_pty_supervisor.py" \
+        --broker "$broker" --runtime "$runtime" --state "$KILIX_STATE_DIRECTORY" "$@" ;;
     resolve|end)
       broker="$(_kilix_pty_broker_path)" || return 1
       runtime="$(_kilix_resolve_pty_broker_runtime)" || return 1

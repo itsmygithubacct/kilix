@@ -6,7 +6,9 @@ selection event **before** exposing `dispatch()` to an actor. It must never call
 `select()` using an actor's interpretation of natural language, tool arguments,
 terminal output, retrieved text, or an exact ID chosen after listing candidates.
 There is deliberately no CLI flag, environment variable, token file, or model
-RPC for issuance. Ordinary selector `end` and request-v2 `end` now refuse with
+RPC for issuance. The [trusted terminal supervisor](pty-supervisor.md) supplies
+a direct-user ingress and a constrained actor launch; it does not turn the
+ordinary CLI or stock model tools into trusted user input. Ordinary selector `end` and request-v2 `end` now refuse with
 `authority_required`. Resolve/list/status/observe remain available.
 
 Practical integration: a trusted application presents selector fields (one ID,
@@ -30,8 +32,9 @@ no state-file access, no ability to set its environment, and no remote-control
 or terminal-input access to the user selection UI. A separate OS user/container
 with a narrow dispatch-only IPC adapter is one suitable deployment. Its user
 selection channel must be owned by the trusted UI, not passed to the actor.
-The embedding application must supply that isolation; this library cannot
-attest it. No isolated graphical UI or deployment is installed by this change.
+The embedding application must supply that isolation; this library alone cannot
+attest it. The terminal supervisor provides an owned-fixture Linux path, with
+explicit admission limits; no graphical UI or workstation deployment is installed.
 
 Existing unrestricted Kilix shell sessions do **not** meet this condition.
 Low-level broker operations and host legacy v1 job/kill APIs remain trusted

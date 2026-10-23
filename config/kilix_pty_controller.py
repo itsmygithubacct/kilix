@@ -27,7 +27,7 @@ class Controller:
         with self._lock:
             self._grant = None
 
-    def select(self, direct_user_request, *, lifetime_seconds=30):
+    def select(self, direct_user_request, *, lifetime_seconds=30, expected_binding=None):
         """Called ONLY by trusted direct-user selection code, before actor ingress.
 
         A new selection revokes the previous selection, including on refusal.
@@ -51,6 +51,8 @@ class Controller:
             if (doc is None or code or not doc["complete"] or not doc["actionable"]
                     or doc["resolved"]["id"] == context["caller"]["id"]):
                 return {"issued": False, "reason": "selection_not_actionable"}
+            if expected_binding is not None and doc["resolved"] != expected_binding:
+                return {"issued": False, "reason": "selection_changed"}
             if self._clock() >= deadline:
                 return {"issued": False, "reason": "authority_expired"}
             self._grant = {"request": request, "context": copy.deepcopy(context),
