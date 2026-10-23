@@ -2012,6 +2012,7 @@ catalogue; scripts and terminal-only programs are not changed. Set
 
 RC2 uses bare Openbox on each app's private display when it is installed.
 Normal app windows fill the pane; dialogs retain their own size and focus.
+Window decorations use Openbox's packaged dark Nightmare-02 theme.
 The private profile has no launcher or root menu, and never starts another
 Kilix. `KILIX_RUN_WM=openbox` requires this behavior; `KILIX_RUN_WM=none`
 selects the older WM-less fallback. The default `auto` uses Openbox when
