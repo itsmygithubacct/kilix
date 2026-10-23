@@ -91,6 +91,13 @@ initialize_missing_submodules() {
   [ -f "$directory/.gitmodules" ] || return 0
   [ ! -L "$directory/.gitmodules" ] \
     || die "refusing unsafe submodule manifest: $directory/.gitmodules"
+  # Trusted packaged sources retain .gitmodules as provenance, but have no
+  # Git metadata. Their dependencies must already be shipped; make below
+  # still refuses an incomplete package. Never treat broken Git metadata as
+  # a packaged tree.
+  if [ ! -e "$directory/.git" ] && [ ! -L "$directory/.git" ]; then
+    return 0
+  fi
   status="$(git -C "$directory" submodule status --recursive 2>/dev/null)" \
     || die "could not inspect Kilix Land submodules"
   if printf '%s\n' "$status" | grep -q '^-'; then

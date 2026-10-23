@@ -122,6 +122,26 @@ class KilixLandProviderTests(unittest.TestCase):
             "kilix-land-desktop fixture:hello",
         )
 
+    def test_trusted_package_with_submodule_manifest_builds_offline(self):
+        self.checkout.mkdir(parents=True)
+        for name in ("Makefile", "runner"):
+            (self.checkout / name).write_bytes((self.remote / name).read_bytes())
+        (self.checkout / ".gitmodules").write_text(
+            '[submodule "dependency"]\n\tpath = dependency\n'
+            '\turl = https://example.invalid/dependency.git\n')
+        result = self._install(KILIX_LAND_DESKTOP_TRUST_EXISTING_CHECKOUT=1,
+                               KILIX_LAND_DESKTOP_AUTO_INSTALL=0)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(run([self.checkout / "kilix-land-desktop", "hello"])
+                         .stdout.strip(), "kilix-land-desktop fixture:hello")
+        self.assertFalse((self.checkout / ".git").exists())
+        # Missing packaged dependencies must still fail the real build.
+        (self.checkout / "Makefile").write_text('include dependency/missing.mk\n')
+        missing = self._install(KILIX_LAND_DESKTOP_TRUST_EXISTING_CHECKOUT=1,
+                                KILIX_LAND_DESKTOP_AUTO_INSTALL=0)
+        self.assertNotEqual(missing.returncode, 0)
+        self.assertIn("build failed", missing.stderr)
+
     def test_existing_development_checkout_is_not_reset(self):
         first = self._install(KILIX_LAND_DESKTOP_REF=self.ref)
         self.assertEqual(first.returncode, 0, first.stderr)
