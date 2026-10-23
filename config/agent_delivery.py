@@ -23,6 +23,7 @@ MESSAGE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
 SGR = re.compile(r"\x1b\[([0-9;:]*)m")
 OSC = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
 MODEL = re.compile(r"^  (?:GPT-|gpt-|codex|o[1-9])[\w.-]*\b.*[·•]")
+CODEX_QUEUE_FOOTER = re.compile(r"  tab to queue message +(?:100|[0-9]{1,2})% context left *")
 MAX_WIRE = 900
 DELIVERY_AGENTS = ("codex", "claude")
 _SHELL_COUNT = r"(?:1 shell|(?:[2-9]|[1-9][0-9]+) shells)"
@@ -229,7 +230,15 @@ def composer(screen, agent="codex"):
     if not candidates:
         raise ScreenError("Codex composer is not visible; inspect the target")
     start = candidates[-1]
-    footers = [i for i in range(start + 1, len(text)) if MODEL.match(text[i])]
+    working = any(re.match(r"^• Working \([^\n]*esc to interrupt\)", line)
+                  for line in text[:start])
+    # Codex replaces its model footer while a busy composer holds text. The
+    # observed queue hint has a bold, non-faint Tab key; plain pasted text is
+    # not a footer. Keep unknown hints and ambiguous multiple footers blocked.
+    footers = [i for i in range(start + 1, len(text))
+               if MODEL.match(text[i]) or (
+                   working and CODEX_QUEUE_FOOTER.fullmatch(text[i]) and
+                   all(not faint and bold for _, faint, bold in rows[i][2:5]))]
     if len(footers) != 1:
         raise ScreenError("unrecognized Codex footer; inspect the target")
     end = footers[0]

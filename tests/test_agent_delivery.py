@@ -126,6 +126,23 @@ class ClaudeTerminal(Terminal):
 
 
 class ComposerTests(unittest.TestCase):
+    def test_codex_busy_queue_hint_footer_preserves_exact_draft(self):
+        raw = ("• Working (12s • esc to interrupt)\n\n"
+               "\x1b[1m›\x1b[22m owned draft probe\n\n"
+               "  \x1b[1mtab\x1b[22m to queue message     99% context left\n")
+        parsed = delivery.composer(raw)
+        self.assertFalse(parsed["empty"])
+        self.assertEqual(parsed["wire_text"], "owned draft probe")
+        for bad in (
+            raw.replace("\x1b[1mtab\x1b[22m", "tab"),
+            raw.replace("99%", "101%"),
+            raw.replace("context left", "context left extra"),
+            raw.replace("• Working (12s • esc to interrupt)", "Idle"),
+            raw + "  GPT-example medium · project\n",
+        ):
+            with self.subTest(screen=bad), self.assertRaises(delivery.ScreenError):
+                delivery.composer(bad)
+
     def test_claude_monitor_footer_preserves_empty_and_draft_detection(self):
         for footer in (
             "  ⏵⏵ bypass permissions on · 1 monitor · esc to interrupt · ← for agents · ↓ to manage",
@@ -1178,6 +1195,22 @@ class DeliveryTests(unittest.TestCase):
     def test_defer_on_idle_target_is_blocked(self):
         self.assertEqual(self.deliver(mode='defer')['status'], 'blocked')
         self.assertEqual(self.client.inputs, [])
+
+    def test_busy_paste_switches_to_styled_queue_hint_before_one_tab(self):
+        self.client.current = screen(busy=True)
+        self.client.busy = True
+        def queue_hint(client):
+            client.current = ("• Working (12s • esc to interrupt)\n\n"
+                "\x1b[1m›\x1b[22m " + client.wire + "\n\n"
+                "  \x1b[1mtab\x1b[22m to queue message     99% context left\n")
+        self.client.on_paste = queue_hint
+        result = self.deliver(mode="defer")
+        self.assertEqual(result["status"], "deferred")
+        self.assertEqual(self.client.inputs,
+                         [b"[kilix-message:task-1] Please read the prepared result.", b"\t"])
+        again = self.deliver(mode="defer")
+        self.assertTrue(again["duplicate"])
+        self.assertEqual(len(self.client.inputs), 2)
 
     def test_message_already_visible_without_receipt_refuses(self):
         self.client.current = screen(history='[kilix-message:task-1] earlier message')
