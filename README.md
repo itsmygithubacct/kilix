@@ -30,8 +30,10 @@ it wrote in `state/` so `--uninstall-desktop` can take exactly that back out.
 
 ## Release 0.2.2 — in development
 
-Prepared for the coordinated Plebian-OS 0.2.2 candidate. The supported upgrade
-source is 0.2.1; image, upgrade and final human acceptance remain pending.
+The reviewed source integration is selected for the coordinated Plebian-OS
+0.2.2 candidate. Image, upgrade, rollback and final installed acceptance remain
+pending; supported upgrade paths are defined by the
+[OS upgrade policy](https://github.com/itsmygithubacct/plebian-os/blob/main/UPGRADING.md).
 
 The Windows preview adds desktop automation through `kilix desktop`:
 application/control selectors, condition waits, local screenshots, UI Automation
@@ -50,6 +52,17 @@ verification and recovery, see [Kilix Workflows](docs/workflows/README.md).
 trust, native UI or headless logging, and lifecycle inspection. New panes preserve
 focus. See [managed coding sessions](docs/session.md) for commands, the importable
 `kilix_session` library and the installed `kilix-session` entry.
+
+`kilix pty` manages persistent terminal sessions and their journals; the PTY
+manager in Kilix 95 uses the same host interface. `kilix ralph` provides durable
+mailboxes and bounded follow-ups. The host also selects the reviewed multiplexer,
+agent-state tools, IceWM integration and Content catalog. Runtime qualification
+of each external agent/client remains separate from the local source tests.
+
+PTY selection checks apply to the selector supplied by the caller; they do not
+authenticate the user's original intent. Consumer qualification remains open.
+The host's ARM64 engine support does not imply that the complete Plebian-OS
+0.2.2 binary closure supports ARM64; its selected runtimes currently target AMD64.
 
 - The three-line Start button and status widgets open floating drop-downs above
   the panes. Panes keep their size and continue updating behind the popup.
@@ -1194,9 +1207,10 @@ explicitly confirmed termination action.
 
 ## Requirements
 
-- **Linux only**, x86_64 or arm64 for the prebuilt engine. The clickable-chrome
+- **Linux desktop:** x86_64 or arm64 for the prebuilt engine. The clickable-chrome
   fork build supports x86_64 and arm64; arm64 builds use the system's
-  development packages (`KILIX_BUILD_MODE=system`). (No macOS/Windows.)
+  development packages (`KILIX_BUILD_MODE=system`). Native Windows preview
+  builds have [separate requirements](windows/README.md); macOS is unsupported.
 - A running graphical session — **X11 or Wayland** (`$DISPLAY` or `$WAYLAND_DISPLAY`).
 - NetworkManager's **`nmtui`** for the clickable network/Wi-Fi item. Pleb and
   Plebian-OS install it; standalone Kilix shows an explanatory error if it is

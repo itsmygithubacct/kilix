@@ -19,7 +19,7 @@ KILIX_ICEWM_ALLOW_MUTABLE_REF="${KILIX_ICEWM_ALLOW_MUTABLE_REF:-0}"
 
 # Every run resolves this commit, for a first-use clone and an existing checkout
 # alike. The provider lazily reconciles and builds its own pinned IceWM source.
-KILIX_ICEWM_DEFAULT_REF=70ae6952fd3f28133b1ac027dcd558ba166b580b
+KILIX_ICEWM_DEFAULT_REF=f6f52b044538c47fcac85d734a6862bb702f43d0
 
 die() { printf 'kilix icewm: %s\n' "$*" >&2; exit 1; }
 log() { printf 'kilix icewm: %s\n' "$*" >&2; }
