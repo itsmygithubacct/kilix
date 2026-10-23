@@ -60,7 +60,8 @@ class Controller:
                            "consumed": False, "result": None}
             return {"issued": True, "operation_id": request["operation_id"],
                     "selector": copy.deepcopy(request["selector"]),
-                    "resolved": copy.deepcopy(doc["resolved"]), "lifetime_seconds": lifetime_seconds}
+                    "resolved": copy.deepcopy(doc["resolved"]), "lifetime_seconds": lifetime_seconds,
+                    "issued_monotonic": deadline - lifetime_seconds, "expires_monotonic": deadline}
 
     def read(self, actor_request):
         """Validated bounded data reads; no desktop lookup or mutation route."""

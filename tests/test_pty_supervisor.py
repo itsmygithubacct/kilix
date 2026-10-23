@@ -12,6 +12,7 @@ import sys
 import termios
 import time
 import unittest
+from unittest import mock
 
 import test_pty_selector as fixtures
 import kilix_pty_supervisor as supervisor
@@ -24,7 +25,7 @@ class SupervisorTests(unittest.TestCase):
     setUp = fixtures.SelectorEnds.setUp
     tearDown = fixtures.SelectorEnds.tearDown
 
-    def launch(self, actor, selector, *, lifetime=5, confirm=True, after_preview=None, revoke=False, revoke_after_request=False, via_launcher=False, read_only=False, model_channel=None):
+    def launch(self, actor, selector, *, lifetime=5, confirm=True, after_preview=None, revoke=False, revoke_after_request=False, via_launcher=False, read_only=False, model_channel=None, model_deadline=None):
         script = self.fx.root / "actor.py"
         script.write_text(actor)
         master, slave = terminal_pty.openpty()
@@ -54,7 +55,8 @@ class SupervisorTests(unittest.TestCase):
                    "KITTY_PTY_BROKER_SESSION": "caller_unrelated",
                    "XDG_RUNTIME_DIR": str(self.fx.root / "xdg")}
         if model_channel is not None:
-            command += ["--profile", "model180", "--model-channel", str(model_channel)]
+            command += ["--profile", "model180", "--model-channel", str(model_channel),
+                        "--model-deadline", str(model_deadline if model_deadline is not None else time.monotonic()+180)]
         process = subprocess.Popen(command, stdin=slave, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                    preexec_fn=user_terminal, env=env)
         os.close(slave)
@@ -265,6 +267,40 @@ print(json.dumps(results))
                     self.assertEqual(code, 3 if expired else 0, result)
                     self.assertEqual(self.fx.alive(target), expired)
                     self.assertTrue(self.fx.alive('bystander'))
+
+    def test_model_work_deadline_interrupts_pending_tool_and_cleans_actor(self):
+        self.fx.start('selected')
+        directory = self.fx.root / 'deadline-provider'
+        directory.mkdir(mode=0o700)
+        endpoint = directory / 'model.sock'
+        actor = directory / 'actor.py'
+        actor.write_text("import sys; sys.path.insert(0,'/tools'); from kilix_pty_agent_client import call; "
+                         "call({'route':'broker','argv':['list','--json']})")
+        controller = supervisor.authority.Controller(self.broker, str(self.state))
+        request = fixtures.SelectorEnds.request(self, {'id':'selected'})
+        issued = controller.select(request)
+        self.assertTrue(issued['issued'])
+        master, slave = terminal_pty.openpty()
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+                listener.bind(str(endpoint))
+                endpoint.chmod(0o600)
+                deadline = time.monotonic() + .5
+                with mock.patch.object(supervisor, 'dispatch', side_effect=lambda *a: time.sleep(10)) as pending:
+                    report = supervisor.run_actor(controller,self.broker,request,issued,actor,slave,30,
+                                                  profile='model180',model_channel=endpoint,model_deadline=deadline)
+                self.assertTrue(pending.called)
+                self.assertEqual(report['stop'], 'model_work_deadline')
+                self.assertEqual(report['operation_outcome'], 'uncertain')
+                self.assertTrue(report['interrupted_call'])
+                self.assertEqual(report['work_deadline_monotonic'], deadline)
+                self.assertLessEqual(report['cleanup_finished_monotonic'], deadline+5)
+                self.assertTrue(all(o['absent_or_exited'] for o in report['cleanup_observations']))
+                self.assertTrue(self.fx.alive('selected'))
+                self.assertEqual(controller.dispatch(request)[1]['reason'], 'authority_required')
+        finally:
+            os.close(master)
+            os.close(slave)
 
     def test_model_endpoint_rejects_untrusted_layout(self):
         directory = self.fx.root / 'provider'

@@ -162,13 +162,18 @@ cleanup. It does not run a model or certify final release acceptance.
 
 ## Model180 private integration profile
 
-`--profile model180 --model-channel PATH` mounts one trusted per-case inference
+`--profile model180 --model-channel PATH --model-deadline MONOTONIC_TIME` mounts one trusted per-case inference
 socket at `/run/model.sock`. The socket must be owned by the launcher UID, mode
 0600, inside an owned0700 directory; symlinks, non-sockets and permissive modes
 refuse. The fixture profile cannot expose this endpoint. The model profile gives
 the actor185 wall seconds,512 MiB address space and30 CPU seconds per process.
-The extra five wall seconds are execution/cleanup allowance, not additional model
-or grant time. Per-process limits do not establish aggregate resource containment.
+The supervisor and provider use the SAME trusted absolute monotonic deadline,
+supplied by the driver outside actor data and at most180 seconds away. At that
+cutoff the supervisor stops tool work, interrupts pending calls and kills its
+owned actor. The extra five seconds are cleanup ONLY, never execution or grant
+time. An interrupted call is reported uncertain. The model profile requires the
+main thread and no preexisting interval alarm; it restores the prior signal
+handler. Issue, launch, work deadline and cleanup timestamps are recorded. Per-process limits do not establish aggregate resource containment.
 Output, dispatch-call and descriptor bounds remain unchanged. Client dependency
 files are snapshotted before launch; their hashes are included in the report.
 System binaries/libraries/kernel remain trusted platform dependencies.

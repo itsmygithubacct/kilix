@@ -7,6 +7,7 @@ argument exists. The actor never inherits that terminal or the issuance channel.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import functools
 import hashlib
 import json
@@ -18,6 +19,8 @@ import secrets
 import select
 import selectors
 import socket
+import signal
+import threading
 import stat
 import subprocess
 import tempfile
@@ -141,6 +144,48 @@ def snapshot_client(source, root):
     return destination
 
 
+class WorkDeadline(BaseException):
+    """Not an ordinary tool error: unwind broker cleanup without continuing work."""
+
+
+class CleanupDeadline(BaseException):
+    pass
+
+
+class WorkTimer:
+    """Main-thread Linux work cutoff; the second alarm bounds cleanup only."""
+    def __init__(self, deadline, process):
+        self.deadline, self.process = deadline, process
+        self.cleaning = False
+        self.cleanup_deadline = deadline + 5
+
+    def __enter__(self):
+        self.previous = signal.getsignal(signal.SIGALRM)
+        signal.signal(signal.SIGALRM, self.expired)
+        return self
+
+    def start(self):
+        signal.setitimer(signal.ITIMER_REAL, max(.0001, self.deadline - time.monotonic()))
+
+    def expired(self, *unused):
+        if self.cleaning:
+            raise CleanupDeadline()
+        self.cleaning = True
+        # Kill only the owned Popen child; its PID namespace owns actor descendants.
+        self.process.kill()
+        signal.setitimer(signal.ITIMER_REAL, max(.0001, self.cleanup_deadline - time.monotonic()))
+        raise WorkDeadline()
+
+    def finish(self):
+        self.cleaning = True
+        self.cleanup_deadline = min(self.cleanup_deadline, time.monotonic() + 5)
+        signal.setitimer(signal.ITIMER_REAL, max(.0001, self.cleanup_deadline - time.monotonic()))
+
+    def __exit__(self, *unused):
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, self.previous)
+
+
 def model_endpoint(path):
     """Only an explicit trusted per-case inference endpoint; never actor supplied."""
     path = Path(path).absolute()
@@ -225,10 +270,18 @@ def observe_tree(pid, observations):
 
 
 def run_actor(controller, broker, request, issued, actor, ui_fd, lifetime, needle_source=None,
-              *, profile="fixture", model_channel=None):
+              *, profile="fixture", model_channel=None, model_deadline=None):
     """Actor stdout is data, never forwarded as terminal UI or interpreted as RPC."""
     if profile not in ("fixture", "model180") or ((profile == "model180") != (model_channel is not None)):
         raise ValueError("model180 requires a dedicated model channel; fixture has none")
+    if profile == "model180":
+        if (type(model_deadline) not in (float, int) or not math.isfinite(model_deadline)
+                or not 0 < model_deadline - time.monotonic() <= 180):
+            raise ValueError("model180 requires the shared trusted deadline within180 seconds")
+        if threading.current_thread() is not threading.main_thread() or any(signal.getitimer(signal.ITIMER_REAL)):
+            raise ValueError("model180 needs the main thread with no existing alarm")
+    elif model_deadline is not None:
+        raise ValueError("fixture profile has no model deadline")
     if model_channel is not None:
         model_channel = model_endpoint(model_channel)
     calls, output, observations = [], bytearray(), set()
@@ -251,100 +304,127 @@ def run_actor(controller, broker, request, issued, actor, ui_fd, lifetime, needl
             os.chmod(root / "dispatch.sock", 0o600)
             listener.listen(4)
             argv = sandbox_argv(root, root / "actor.py", broker.caller["id"] or "", needle_source, model_channel)
+            launch_started = time.monotonic()
+            if model_deadline is not None and launch_started >= model_deadline:
+                raise ValueError("model deadline expired before actor launch")
             process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                        stderr=subprocess.STDOUT, close_fds=True, preexec_fn=functools.partial(limits, profile))
             observe_tree(process.pid, observations)
             wall_seconds = 185 if profile == "model180" else min(lifetime + 5, 65)
-            deadline = time.monotonic() + wall_seconds
+            actor_started = time.monotonic()
+            deadline = model_deadline if model_deadline is not None else actor_started + wall_seconds
             stop = "actor_exited"
-            try:
-                tell(ui_fd, 'ACTOR_RUNNING; type REVOKE and Enter to revoke authority.')
-                with selectors.DefaultSelector() as events:
-                    events.register(ui_fd, selectors.EVENT_READ, "user")
-                    events.register(listener, selectors.EVENT_READ, "request")
-                    events.register(process.stdout, selectors.EVENT_READ, "output")
-                    while process.poll() is None:
-                        if time.monotonic() >= deadline:
-                            stop = "actor_deadline"
-                            break
-                        ready = events.select(min(.1, deadline - time.monotonic()))
-                        # Revocation has priority over pending requests in this sample.
-                        if any(key.data == "user" for key, _ in ready):
-                            os.read(ui_fd, 8192)
-                            controller.revoke()
-                            stop = "user_revoked"
-                            break
-                        for key, _ in ready:
-                            if key.data == "output":
-                                data = os.read(process.stdout.fileno(), 4096)
-                                output += data
-                                if not data:
-                                    events.unregister(process.stdout)
-                                if len(output) > MAX_OUTPUT:
-                                    stop = "actor_output_limit"
-                                    break
-                            elif key.data == "request":
-                                with listener.accept()[0] as connection:
-                                    connection.settimeout(.5)
-                                    try:
-                                        with connection.makefile("rb") as stream:
-                                            raw = stream.readline(MAX_LINE + 1)
-                                        if len(raw) > MAX_LINE or not raw.endswith(b"\n"):
-                                            raise ValueError("actor request exceeds bound or is incomplete")
-                                        message = selector.parse_json(raw)
-                                        reply = dispatch(controller, broker, request, issued, message)
-                                    except (ValueError, OSError, legacy.Refusal, RecursionError):
-                                        reply = {"code": 3, "receipt": {"result": "refused", "reason": "invalid_actor_request"}}
-                                    encoded = json.dumps(reply, ensure_ascii=True, separators=(",", ":")).encode() + b"\n"
-                                    if len(encoded) > MAX_OUTPUT:
-                                        encoded = b'{"code":3,"receipt":{"result":"refused","reason":"response_limit"}}\n'
-                                    calls.append(reply)
-                                    observe_tree(process.pid, observations)
-                                    try:
-                                        connection.sendall(encoded)
-                                    except OSError:
-                                        pass  # A lost receipt never rearms authority.
-                                tell(ui_fd, "REQUEST_COMPLETE")
-                                if len(calls) >= MAX_CALLS:
-                                    stop = "actor_request_limit"
-                                    break
-                        if stop != "actor_exited":
-                            break
-            finally:
-                controller.revoke()
-                if process.poll() is None:
-                    process.kill()  # Owned unreaped bwrap child; PID namespace dies with it.
+            call_inflight = False
+            interrupted_call = False
+            with (WorkTimer(deadline, process) if model_deadline is not None else contextlib.nullcontext(None)) as timer:
                 try:
-                    tail, _ = process.communicate(timeout=3)
-                    output += tail
-                except subprocess.TimeoutExpired:
-                    process.stdout.close()
-                    raise RuntimeError("sandbox cleanup did not complete within its bound")
-            cleanup = [{"pid": pid, "start_ticks": ticks, "absent_or_exited": False}
-                       for pid, ticks in sorted(observations)]
-            cleanup_deadline = time.monotonic() + 3
-            while True:
-                for row in cleanup:
-                    if not row["absent_or_exited"]:
-                        row["absent_or_exited"] = selector.process_absent(row["pid"], row["start_ticks"])
-                if all(row["absent_or_exited"] for row in cleanup) or time.monotonic() >= cleanup_deadline:
-                    break
-                time.sleep(.01)
-            end_receipts = [call["receipt"] for call in calls if isinstance(call.get("receipt"), dict)
-                            and call["receipt"].get("schema") == selector.SCHEMA
-                            and call["receipt"].get("operation") == "end"]
-            outcome = ("verified_absent" if any(row["result"] == "verified_absent" for row in end_receipts)
-                       else end_receipts[-1]["result"] if end_receipts else "not_requested")
-            return {"stop": stop, "actor_exit": process.returncode, "calls": calls,
-                    "profile": profile, "actor_wall_seconds": wall_seconds,
-                    "model_channel_exposed": model_channel is not None,
-                    "operation_outcome": outcome,
-                    "cleanup_observations": cleanup,
-                    "actor_output": bytes(output[:MAX_OUTPUT]).decode("utf-8", errors="replace"),
-                    "actor_sha256": hashlib.sha256(code).hexdigest(),
-                    "client_sha256": {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
-                                      for p in sorted((root / "clients").iterdir())},
-                    "bwrap_sha256": hashlib.sha256(Path(BWRAP).read_bytes()).hexdigest()}
+                    if timer is not None:
+                        timer.start()
+                    tell(ui_fd, 'ACTOR_RUNNING; type REVOKE and Enter to revoke authority.')
+                    with selectors.DefaultSelector() as events:
+                        events.register(ui_fd, selectors.EVENT_READ, "user")
+                        events.register(listener, selectors.EVENT_READ, "request")
+                        events.register(process.stdout, selectors.EVENT_READ, "output")
+                        while process.poll() is None:
+                            if time.monotonic() >= deadline:
+                                stop = "model_work_deadline" if model_deadline is not None else "actor_deadline"
+                                break
+                            ready = events.select(min(.1, deadline - time.monotonic()))
+                            # Revocation has priority over pending requests in this sample.
+                            if any(key.data == "user" for key, _ in ready):
+                                os.read(ui_fd, 8192)
+                                controller.revoke()
+                                stop = "user_revoked"
+                                break
+                            for key, _ in ready:
+                                if key.data == "output":
+                                    data = os.read(process.stdout.fileno(), 4096)
+                                    output += data
+                                    if not data:
+                                        events.unregister(process.stdout)
+                                    if len(output) > MAX_OUTPUT:
+                                        stop = "actor_output_limit"
+                                        break
+                                elif key.data == "request":
+                                    with listener.accept()[0] as connection:
+                                        connection.settimeout(.5)
+                                        try:
+                                            with connection.makefile("rb") as stream:
+                                                raw = stream.readline(MAX_LINE + 1)
+                                            if len(raw) > MAX_LINE or not raw.endswith(b"\n"):
+                                                raise ValueError("actor request exceeds bound or is incomplete")
+                                            message = selector.parse_json(raw)
+                                            call_inflight = True
+                                            reply = dispatch(controller, broker, request, issued, message)
+                                        except (ValueError, OSError, legacy.Refusal, RecursionError):
+                                            reply = {"code": 3, "receipt": {"result": "refused", "reason": "invalid_actor_request"}}
+                                        encoded = json.dumps(reply, ensure_ascii=True, separators=(",", ":")).encode() + b"\n"
+                                        if len(encoded) > MAX_OUTPUT:
+                                            encoded = b'{"code":3,"receipt":{"result":"refused","reason":"response_limit"}}\n'
+                                        calls.append(reply)
+                                        call_inflight = False
+                                        observe_tree(process.pid, observations)
+                                        try:
+                                            connection.sendall(encoded)
+                                        except OSError:
+                                            pass  # A lost receipt never rearms authority.
+                                    tell(ui_fd, "REQUEST_COMPLETE")
+                                    if len(calls) >= MAX_CALLS:
+                                        stop = "actor_request_limit"
+                                        break
+                            if stop != "actor_exited":
+                                break
+                except WorkDeadline:
+                    stop = "model_work_deadline"
+                    interrupted_call = call_inflight
+                    if interrupted_call:
+                        calls.append({"code": 1, "receipt": {"result": "uncertain", "reason": "work_deadline",
+                                                            "completion": "unknown"}})
+                finally:
+                    if timer is not None:
+                        timer.finish()
+                    controller.revoke()
+                    if process.poll() is None:
+                        process.kill()  # Owned unreaped bwrap child; PID namespace dies with it.
+                    try:
+                        tail, _ = process.communicate(timeout=min(3, max(.0001, timer.cleanup_deadline-time.monotonic())) if timer else 3)
+                        output += tail
+                    except subprocess.TimeoutExpired:
+                        process.stdout.close()
+                        if timer is not None:
+                            raise CleanupDeadline()
+                        raise RuntimeError("sandbox cleanup did not complete within its bound")
+                cleanup = [{"pid": pid, "start_ticks": ticks, "absent_or_exited": False}
+                           for pid, ticks in sorted(observations)]
+                cleanup_deadline = min(time.monotonic() + 3, timer.cleanup_deadline) if timer else time.monotonic() + 3
+                while True:
+                    for row in cleanup:
+                        if not row["absent_or_exited"]:
+                            row["absent_or_exited"] = selector.process_absent(row["pid"], row["start_ticks"])
+                    if all(row["absent_or_exited"] for row in cleanup) or time.monotonic() >= cleanup_deadline:
+                        break
+                    time.sleep(.01)
+                end_receipts = [call["receipt"] for call in calls if isinstance(call.get("receipt"), dict)
+                                and call["receipt"].get("schema") == selector.SCHEMA
+                                and call["receipt"].get("operation") == "end"]
+                outcome = ("verified_absent" if any(row["result"] == "verified_absent" for row in end_receipts)
+                           else end_receipts[-1]["result"] if end_receipts else "not_requested")
+                return {"stop": stop, "actor_exit": process.returncode, "calls": calls,
+                        "profile": profile, "actor_wall_seconds": wall_seconds,
+                        "model_channel_exposed": model_channel is not None,
+                        "operation_outcome": "uncertain" if interrupted_call else outcome,
+                        "interrupted_call": interrupted_call,
+                        "launch_started_monotonic": launch_started,
+                        "actor_started_monotonic": actor_started,
+                        "work_deadline_monotonic": deadline,
+                        "cleanup_finished_monotonic": time.monotonic(),
+                        "cleanup_deadline_monotonic": timer.cleanup_deadline if timer else cleanup_deadline,
+                        "cleanup_observations": cleanup,
+                        "actor_output": bytes(output[:MAX_OUTPUT]).decode("utf-8", errors="replace"),
+                        "actor_sha256": hashlib.sha256(code).hexdigest(),
+                        "client_sha256": {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+                                          for p in sorted((root / "clients").iterdir())},
+                        "bwrap_sha256": hashlib.sha256(Path(BWRAP).read_bytes()).hexdigest()}
 
 
 def main(argv=None):
@@ -357,6 +437,7 @@ def main(argv=None):
     parser.add_argument("--lifetime", type=float, default=30)
     parser.add_argument("--profile", choices=("fixture", "model180"), default="fixture")
     parser.add_argument("--model-channel", type=Path)
+    parser.add_argument("--model-deadline", type=float, help="trusted shared monotonic work deadline; never actor input")
     parser.add_argument("--read-only", action="store_true", help="launch without any end authority")
     args = parser.parse_args(argv)
     if not math.isfinite(args.lifetime) or not 0 < args.lifetime <= 60:
@@ -377,9 +458,11 @@ def main(argv=None):
             if issued["issued"] or args.read_only:
                 result.update(run_actor(controller, broker, request, issued, args.actor, fd,
                                         args.lifetime, args.needle_source.resolve() if args.needle_source else None,
-                                        profile=args.profile, model_channel=args.model_channel))
+                                        profile=args.profile, model_channel=args.model_channel, model_deadline=args.model_deadline))
         finally:
             os.close(fd)
+    except CleanupDeadline:
+        result.update(result="uncertain", error="owned cleanup deadline exceeded", reason="cleanup_deadline")
     except (OSError, ValueError, legacy.Refusal) as error:
         result.update(error=str(error), result="refused")
     finally:
