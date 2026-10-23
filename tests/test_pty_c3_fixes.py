@@ -95,6 +95,7 @@ class ForkedCase(StoreCase):
                 self.wait_file(ready)                  # the waiter has opened the lock, not yet locked it
                 release.touch()
             else:
+                self.wait_file(self.tmp / "waiter-ready")
                 release.touch()                        # the waiter can only hold the lock once the owner drops it
                 self.wait_file(ready)
             _, status = os.waitpid(owner, 0)
@@ -144,6 +145,21 @@ def pause_before_reread(ready, resume):
     original = module.Store.locked
     entries = 0
     holds = ready.parent / "waiter-holds"
+    original_owner_lock = module.Store.owner_lock
+    opens = 0
+
+    def owner_lock(self, operation_id):
+        nonlocal opens
+        descriptor = original_owner_lock(self, operation_id)
+        opens += 1
+        if opens == 2:
+            # The waiter has observed the in-progress receipt and reached its
+            # waiting lock. Only now may the parent release the dispatcher;
+            # otherwise a fast owner can finish before the waiter's first read.
+            (ready.parent / "waiter-ready").touch()
+        return descriptor
+
+    module.Store.owner_lock = owner_lock
 
     def pausing(self):
         nonlocal entries
