@@ -157,7 +157,7 @@ class RetainedTimeout(unittest.TestCase):
         for phase, sent in (("reserved", False), ("resolved", False), ("dispatch", True),
                             ("done", False), ("done", True), ("done", None)):
             self.request["operation_id"] = "fault-" + phase + "-" + str(sent)
-            def inert_failure(broker, request, context, store, record, yes):
+            def inert_failure(broker, request, context, store, record, yes, *, before_dispatch=None):
                 self.put(self.record(phase, sent=sent))
                 raise RuntimeError("synthetic owned failure")
             with self.subTest(phase=phase, sent=sent), mock.patch.object(api, "perform", side_effect=inert_failure):

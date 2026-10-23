@@ -100,6 +100,7 @@ def capabilities_document(broker) -> dict:
         selector_request={"schema": "kilix.pty.request/v2", "verbs": ["resolve", "end"],
                           "selector": "exactly one of id, id_prefix, startup_words; optional attached boolean",
                           "receipt_schema": "kilix.pty.selector/v1", "end_operation_id": "required",
+                          "end_authority": "trusted controller selection; ordinary CLI/JSON end refuses",
                           "example": {"schema": "kilix.pty.request/v2", "verb": "end", "operation_id": "end-1",
                                       "selector": {"startup_words": ["sleep", "60"], "attached": False}},
                           "rules": "Preserve original references and qualifiers. Broker counts. Preview is not a ticket."
@@ -745,7 +746,7 @@ def cmd_request(broker, argv):
         if isinstance(candidate, dict) and candidate.get("schema") == selector_api.REQUEST_SCHEMA:
             try:
                 request = selector_api.validate(selector_api.parse_json(raw))
-                status, document = selector_api.execute(broker, request, yes, state)
+                status, document = selector_api.untrusted_execute(broker, request, yes, state)
             except Refusal as error:
                 verb = candidate.get("verb") if candidate.get("verb") in ("resolve", "end") else None
                 status, document = error.code, selector_api.refusal_document(

@@ -3111,3 +3111,9 @@ Cancellation applies only before a message is claimed; uncertain or provider-own
 messages require reconciliation and must not be blindly resent. Worker shutdown
 preserves queue state. See the module documentation for restart, cleanup and
 receipt retention limits. `KILIX_RALPH_HOME` selects a local module checkout.
+
+Selected-session original-user authority requires a trusted embedding controller;
+ordinary selector `end` CLI/JSON calls now refuse with `authority_required`.
+Read-only operations and owned-job primitives remain available. See
+[the controller boundary](docs/pty-controller.md) for issuance, scope, expiry,
+replay, revocation and the required isolation from model shell/broker access.
