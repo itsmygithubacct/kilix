@@ -41,6 +41,21 @@ for a in "$@"; do
 done
 log(){ printf 'kilix: %s\n' "$*" >&2; }
 
+case "$(uname -m)" in
+  x86_64|amd64)  KARCH=x86_64 ;;
+  aarch64|arm64) KARCH=arm64 ;;
+  *) log "unsupported arch: $(uname -m)"; exit 1 ;;
+esac
+# These release checksums identify x86_64 bytes even when the download URL is
+# selected for ARM64. Refuse before cache/state changes or a network request.
+if [ "$KARCH" = arm64 ]; then
+  case "$PINNED_SHA256" in
+    bc230142b2bd27f2a4bf1b1b67575f3d397a4ea2cc83f4ac2b912c306a939693|967a1958e7fc67b495d279c0963bcd1a0482097151817ce6506fabc822689af7)
+      log "selected kitty checksum is for x86_64; select the exact ARM64 bundle checksum"
+      exit 1 ;;
+  esac
+fi
+
 mkdir -p "$STATE_DIR"
 chmod 0700 "$KILIX_STORAGE_HOME" "$STATE_DIR" 2>/dev/null || true
 
@@ -54,12 +69,6 @@ if [ "$IF_STALE" = 1 ] && [ "$FORCE" = 0 ] && [ -z "$PINNED_VERSION" ] \
      && [ -x "$BIN" ] && [ -f "$STAMP" ]; then
   if find "$STAMP" -mtime -1 2>/dev/null | grep -q .; then exit 0; fi
 fi
-
-case "$(uname -m)" in
-  x86_64|amd64)  KARCH=x86_64 ;;
-  aarch64|arm64) KARCH=arm64 ;;
-  *) log "unsupported arch: $(uname -m)"; exit 1 ;;
-esac
 
 have=""
 if [ -x "$BIN" ]; then
