@@ -301,13 +301,15 @@ class AppPanePresenterTests(unittest.TestCase):
         finally:
             pane.presenter.close()
 
-    def test_shared_memory_ring_reuses_only_consumed_names(self):
+    def test_shared_memory_ring_uses_fresh_names_for_consumed_slots(self):
         pane = make_apppane(width=4, height=4, stream=False)
         try:
             for value in range(10):
                 pane.blit(solid(pane, value), force_full=True)
             self.assertEqual(len(pane.term.payloads), 10)
-            self.assertLessEqual(len(set(pane.term.shm_names)), 3)
+            # Capacity can be reused after consumption, but a delayed terminal
+            # command must never resolve an old name to a newer payload.
+            self.assertEqual(len(set(pane.term.shm_names)), 10)
             self.assertEqual(pane.term.payloads[-1], solid(pane, 9))
         finally:
             pane.presenter.close()
