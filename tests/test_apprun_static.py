@@ -32,9 +32,12 @@ class ForwardingDisciplineTests(unittest.TestCase):
         self.assertIn('print(f"kilix run: {e}", file=sys.stderr)', window)
 
     def test_every_exit_path_releases_everything(self):
-        finally_block = re.search(r"        finally:\n(.*?)\n            if self\.term:\n                self\.term\.restore\(\)", APPRUN, re.S)
-        self.assertIsNotNone(finally_block)
-        self.assertIn("release_all()", finally_block.group(1))
+        self.assertIn("finally:\n            self._cleanup()", APPRUN)
+        cleanup = re.search(r"def _cleanup\(self\):.*?\n(?=    def )", APPRUN, re.S)
+        self.assertIsNotNone(cleanup)
+        self.assertIn("release_all()", cleanup.group(0))
+        self.assertIn("cleanup.callback(self.term.restore)", cleanup.group(0))
+        self.assertIn("cleanup.callback(self.xapp.close)", cleanup.group(0))
 
 
 if __name__ == "__main__":
