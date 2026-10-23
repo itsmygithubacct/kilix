@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-BROKER = ROOT.parent / "broker"
+BROKER = ROOT / "third_party" / "kitty-pty-broker"
 SELECTED = "test_guard"
 
 
