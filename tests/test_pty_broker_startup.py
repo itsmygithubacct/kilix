@@ -2,6 +2,7 @@
 import io
 import os
 from pathlib import Path
+import selectors
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -33,8 +34,17 @@ class StartupSessionTests(unittest.TestCase):
         env = sandbox_env()
         if token is not None:
             env['KITTY_PTY_BROKER_STARTUP_SESSION'] = token
-        child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], env=env)
+        child = subprocess.Popen(
+            [sys.executable, '-c', 'import time; print("ready", flush=True); time.sleep(60)'],
+            env=env, stdout=subprocess.PIPE)
         self.children.append(child)
+        # The fixture promises a running marked child, not one still entering
+        # its interpreter. Synchronize before inspecting the real /proc data.
+        with selectors.DefaultSelector() as ready:
+            ready.register(child.stdout, selectors.EVENT_READ)
+            self.assertTrue(ready.select(timeout=5), 'fixture child did not become ready')
+            self.assertEqual(child.stdout.readline(), b'ready\n')
+        child.stdout.close()
         return {'id': 'pane-' + str(child.pid), 'child_pid': child.pid, 'attached': False}
 
     def test_matches_live_initial_child_and_ignores_unmarked_panes(self):
