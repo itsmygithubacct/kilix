@@ -136,3 +136,5 @@ unknown until separately observed. Use `--dry-run` to validate and resolve
 a request without mutation. Close only the exact session within the user's
 requested scope. Implementation selection uses `KILIX_TMUX_CLI` or
 `KILIX_TMUX_MODULE_ROOT`; these do not choose a socket or install anything.
+
+For persistent PTY session management, use `kilix-pty`.

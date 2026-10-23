@@ -1,0 +1,41 @@
+{
+  "schema": "kitty-pty-selector/v1",
+  "operation": "end",
+  "selector": {
+    "id": "Target-7",
+    "attached": false
+  },
+  "caller": {
+    "source": "environment",
+    "authenticated": false,
+    "status": "valid",
+    "id": "-Caller"
+  },
+  "result": "refused",
+  "reason": "unresolved",
+  "complete": true,
+  "census_count": 1,
+  "matches": 1,
+  "possible": 0,
+  "candidates": [
+    {
+      "id": "Target-7",
+      "reachable": true,
+      "possible": false
+    }
+  ],
+  "candidates_truncated": false,
+  "resolved": {
+    "id": "Target-7",
+    "started_millis": 900,
+    "attached": false,
+    "broker_pid": 10,
+    "child_pid": 11,
+    "boot_id": "synthetic-boot",
+    "start_ticks": 80,
+    "child_start_ticks": 81
+  },
+  "actionable": true,
+  "request_sent": false,
+  "receiver_refused": false
+}

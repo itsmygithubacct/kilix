@@ -61,6 +61,31 @@ class SkillsTests(unittest.TestCase):
                     item.read_bytes() if item.is_file() else None)
         return result
 
+    def test_existing_bundle_adds_pty_without_replacing_existing_links(self):
+        old_names = skills.PRE_PTY_NAMES
+        pty_source = self.source / "skills/kilix-pty"
+        saved = self.source / "saved-pty"
+        pty_source.rename(saved)
+        with mock.patch.object(skills, "NAMES", old_names):
+            self.call()
+        before = {name: (self.root / name).lstat().st_ino for name in old_names}
+        saved.rename(pty_source)
+        self.call()
+        self.assertTrue((self.root / "kilix-pty").is_symlink())
+        self.assertEqual(before, {name: (self.root / name).lstat().st_ino for name in old_names})
+        self.call("remove")
+        self.assertFalse((self.root / "kilix-pty").exists())
+
+    def test_removing_one_legacy_owner_does_not_add_an_uninstalled_skill(self):
+        folder = self.source / "skills/kilix-pty"
+        folder.rename(self.source / "saved-pty")
+        with mock.patch.object(skills, "NAMES", skills.PRE_PTY_NAMES):
+            self.call(agent="codex")
+            self.call(agent="kimi")
+        self.call("remove", agent="codex")
+        self.assertFalse((self.root / "kilix-pty").is_symlink())
+        self.assertEqual(self.call("status", agent="kimi")["state"], "installed")
+
     def test_read_only_status_and_remove_do_not_create_roots(self):
         original = self.snapshot()
         for agent in skills.AGENTS:

@@ -1,6 +1,6 @@
-"""Explicit installation of the three bundled skills; never edit agent config.
+"""Explicit installation of the bundled skills; never edit agent config.
 
-Three discovery links share one atomic version pointer outside the scan root.
+The discovery links share one atomic version pointer outside the scan root.
 Receipts bind every byte and registration inode. Old snapshots are retained:
 removing a registration must never recursively delete a user's later edits.
 """
@@ -21,7 +21,8 @@ import time
 import uuid
 
 SOURCE = Path(__file__).resolve().parent.parent
-NAMES = ("kilix", "kilix-model-switch", "kilix-session-launch", "kilix-desktop")
+NAMES = ("kilix", "kilix-model-switch", "kilix-session-launch", "kilix-desktop", "kilix-pty")
+PRE_PTY_NAMES = NAMES[:-1]
 AGENTS = ("codex", "claude", "kimi")
 STORE = ".kilix-skill-bundles"
 LIMIT = 1024 * 1024
@@ -195,7 +196,7 @@ def bundle(source=SOURCE):
     files = {name: (data, 0o700 if mode & 0o111 else 0o600)
              for name, (data, mode) in files.items()}
     if sorted(name for name in dirs if "/" not in name) != sorted(NAMES):
-        raise Conflict("the bundled set must contain exactly the three Kilix skills")
+        raise Conflict("the bundled set must contain exactly the registered Kilix skills")
     if any(name.split("/")[0] not in NAMES for name in files):
         raise Conflict("unexpected file outside a bundled skill")
     descriptions = {}
@@ -284,7 +285,8 @@ def current(store, root, root_path):
             or any(not isinstance(a, str) or a not in AGENTS for a in record["owners"])
             or record["owners"] != sorted(set(record["owners"]))
             or not isinstance(record["links"], dict)
-            or set(record["links"]) != (set(NAMES) if record["owners"] else set())
+            or (set(record["links"]) not in (set(NAMES), set(PRE_PTY_NAMES))
+                if record["owners"] else bool(record["links"]))
             or not isinstance(record["bundle"], dict)):
             raise Conflict("invalid Kilix ownership receipt")
         files, dirs = population(gen, receipt=True)
@@ -296,7 +298,7 @@ def current(store, root, root_path):
             raise Conflict("installed package was edited; preserved unchanged")
         for name in NAMES:
             link = info_at(root, name)
-            if not record["owners"]:
+            if not record["owners"] or name not in record["links"]:
                 if link is not None:
                     raise Conflict(f"unowned discovery entry: {name}")
             elif (link is None or not stat.S_ISLNK(link.st_mode)
@@ -390,11 +392,13 @@ def publish(store, root, root_path, old, owners, packaged):
         _still_here(root_path, root)
         _still_here(root_path.parent / STORE, store)
         links = {} if old is None else dict(old[0]["links"])
-        if owners and not links:
+        if owners:
             for name in NAMES:
+                if name in links or name not in dirs:
+                    continue
                 os.symlink(link_target(name), name, dir_fd=root)
                 created[name] = identity(os.stat(name, dir_fd=root, follow_symlinks=False))
-            links = created.copy()
+            links.update(created)
         receipt = {"schema": 1, "root": str(root_path), "owners": sorted(owners),
                    "links": links if owners else {}, "bundle": record}
         write_new(gen, "receipt.json", encoded(receipt))
@@ -424,7 +428,7 @@ def publish(store, root, root_path, old, owners, packaged):
         elif (pointer is None or not stat.S_ISLNK(pointer.st_mode)
               or identity(pointer) != old[3]):
             raise Conflict("current-version entry changed during preparation")
-        # Atomic set update: all three discovery names select this one pointer.
+        # Atomic set update: all registered discovery names select this one pointer.
         if old is None:
             move_new(store, pending, store, "current")
         else:
