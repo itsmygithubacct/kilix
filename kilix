@@ -135,6 +135,9 @@ fi
 # These commands also work before engine/storage setup. Model inspection needs
 # the pinned Content package, but never initializes shared settings or receipts.
 case "${1:-}" in
+  ralph)
+    shift
+    exec python3 -B "$KILIX_HOME/config/ralph.py" "$@" ;;
   windows)
     shift
     exec python3 -B "$KILIX_HOME/config/windows_control.py" "$@" ;;
@@ -207,6 +210,7 @@ TARGET: unique title or pane:ID. Above is the complete syntax; no subcommand --h
 needed first. Ambiguous targets fail; each verb prints what it did.
   kilix agent-control context|list|dump|send|key   --help
   kilix session --help                     coding runs, trust, logs, stop
+  kilix ralph --help                       durable mailboxes and follow-ups
   kilix action --request-json -             structured request from stdin
   kilix action capabilities                inspect available features
   kilix windows --host HOST COMMAND         Windows desktop via SSH

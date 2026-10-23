@@ -2703,3 +2703,21 @@ by merely opening or listing the wizard.
 Use `kilix image -- photo.png` to display images and `kilix video FILE_OR_URL`
 to play local video or direct streams in the current terminal. See
 [terminal media](docs/terminal-media.md) for controls and renderer options.
+
+### Durable agent mailboxes
+
+`kilix ralph` exposes the pinned [Ralph module](third_party/kilix-ralph/README.md)
+without starting the terminal engine. Run `kilix ralph --help` for its queue,
+receiver and worker commands. Pull receivers explicitly claim messages at their
+idle boundary. Provider adapters require their own guarded delivery and durable
+receipts; they do not use terminal keystrokes or the pane activity detector.
+The managed streaming provider owns a separate session and does not take over
+an existing interactive session. Native provider compatibility requires separate
+qualification against the selected client version.
+
+Recurring schedules start paused. Use `--max-wakes` to bound a schedule and
+`serve --once` for a single worker pass. No worker starts at installation or boot.
+Cancellation applies only before a message is claimed; uncertain or provider-owned
+messages require reconciliation and must not be blindly resent. Worker shutdown
+preserves queue state. See the module documentation for restart, cleanup and
+receipt retention limits. `KILIX_RALPH_HOME` selects a local module checkout.
