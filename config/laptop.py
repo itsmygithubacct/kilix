@@ -24,20 +24,14 @@ kilix-launcher implement the same rules over the same files):
   directory  <profiles>/run — <profiles> is $KILIX_LAPTOP_PROFILES
              (absolute) or ~/.local/gpu_terminal/laptop; every level is
              created 0700 on first write.
-  file       run/<profile-id>.pid — a single line holding the ASCII
-             decimal PID of the session's kilix/kitty process and a
-             trailing newline, written 0600 via a same-directory temp
-             file + rename by whichever surface spawned the session, at
-             spawn time.
-  liveness   a profile is RUNNING iff its pid file parses to a pid > 1
-             AND kill(pid, 0) succeeds or fails with EPERM, AND — when
-             /proc/<pid>/stat is readable — the process state is not Z:
-             a zombie's window is already gone, only an unreaped parent
-             keeps the pid visible. The file alone is never trusted:
-             ESRCH, a zombie, or an unparsable file marks it STALE, and
-             any reader that notices a stale file deletes it.
-  close      SIGTERM to the recorded pid; the pid file is removed once
-             the process is gone (immediately when it already is).
+  file       run/<profile-id>.pid contains canonical decimal PID plus newline.
+             Its .identity sidecar contains "v1 PID START_TICKS BOOT_UUID\n".
+             Writers publish identity first, then PID, using private temp files.
+  liveness   birth ticks and boot UUID must match the current live process.
+             Legacy/mismatched records fail closed. Reads retain shared files,
+             including stale ones, rather than racing another provider's write.
+  close      acquire a pidfd before revalidating identity; signal only that
+             stable handle. No numeric-PID or older host fallback is permitted.
   scope      only pane profiles are tracked. A desktop profile opens a
              provider tab through `kilix <provider>` whose wrapper exits
              once the tab exists, so there is no long-lived pid to
@@ -329,9 +323,65 @@ def pid_path(profile_id: str) -> str:
     return os.path.join(run_directory(), profile_id + ".pid")
 
 
+def _process_identity(pid: int):
+    """Birth identity shared with Cap/Land; unreadable identity fails closed."""
+    if not 1 < pid <= 2147483647:
+        raise ProfileError("Invalid session PID")
+    try:
+        with open("/proc/%d/stat" % pid, "r", encoding="ascii") as handle:
+            text = handle.read(4096)
+        fields = text[text.rindex(")") + 2:].split()
+        if fields[0] in ("Z", "X"):
+            return None
+        start = int(fields[19])
+        with open("/proc/sys/kernel/random/boot_id", "r", encoding="ascii") as handle:
+            boot = handle.read(64).rstrip("\n")
+        if start <= 0 or len(boot) != 36 or any(c not in "0123456789abcdef-" for c in boot):
+            raise ValueError("invalid birth identity")
+        return "v1 %d %d %s\n" % (pid, start, boot)
+    except (OSError, ValueError, IndexError) as error:
+        raise ProfileError("The session identity cannot be verified") from error
+
+
 def record_session(profile_id: str, pid: int) -> None:
+    identity = _process_identity(pid)
+    if identity is None:
+        raise ProfileError("The session exited before registration")
     _ensure_directory(run_directory())
+    # Publish metadata first. A partial pair is never trusted by a reader.
+    _write_private(pid_path(profile_id) + ".identity", identity)
     _write_private(pid_path(profile_id), "%d\n" % pid)
+
+
+def _registered_pid(profile_id: str):
+    try:
+        with open(pid_path(profile_id), "r", encoding="ascii") as handle:
+            text = handle.read(64)
+    except FileNotFoundError:
+        return None
+    except (OSError, UnicodeError) as error:
+        raise ProfileError("The session registry cannot be verified") from error
+    try:
+        pid = int(text)
+    except ValueError:
+        pid = 0
+    if not 1 < pid <= 2147483647 or text != "%d\n" % pid:
+        raise ProfileError("The session registry cannot be verified")
+    return pid
+
+
+def _registered_identity_matches(profile_id: str, pid: int) -> bool:
+    actual = _process_identity(pid)
+    if actual is None:
+        return False
+    try:
+        with open(pid_path(profile_id) + ".identity", "r", encoding="ascii") as handle:
+            expected = handle.read(128)
+    except (OSError, UnicodeError) as error:
+        raise ProfileError("The session identity cannot be verified") from error
+    if actual != expected:
+        raise ProfileError("The session identity has changed; close it in its owning window")
+    return True
 
 
 def _alive(pid: int) -> bool:
@@ -357,25 +407,11 @@ def _alive(pid: int) -> bool:
 
 
 def session_pid(profile_id: str):
-    """The RUNNING pid, or None. A stale or unparsable file is deleted on
-    sight — the file alone is never trusted."""
-    path = pid_path(profile_id)
-    try:
-        with open(path, "r", encoding="ascii", errors="strict") as handle:
-            first = handle.readline(64).strip()
-    except (OSError, UnicodeDecodeError):
+    """Verified live PID, or None. Shared records are never deleted on read."""
+    pid = _registered_pid(profile_id)
+    if pid is None or not _alive(pid):
         return None
-    try:
-        pid = int(first)
-    except ValueError:
-        pid = 0
-    if pid > 1 and _alive(pid):
-        return pid
-    try:
-        os.unlink(path)
-    except OSError:
-        pass
-    return None
+    return pid if _registered_identity_matches(profile_id, pid) else None
 
 
 def clear_session(profile_id: str) -> None:
@@ -446,6 +482,24 @@ def _child_status(pid: int):
     return os.waitstatus_to_exitcode(status)
 
 
+def _cancel_owned_child(pid: int) -> None:
+    """Bounded cleanup; this caller alone owns wait rights for the new child."""
+    try:
+        waited, _ = os.waitpid(pid, os.WNOHANG)
+        if waited == pid:
+            return
+        os.kill(pid, signal.SIGTERM)
+        for _ in range(25):
+            waited, _ = os.waitpid(pid, os.WNOHANG)
+            if waited == pid:
+                return
+            time.sleep(0.01)
+        os.kill(pid, signal.SIGKILL)
+        os.waitpid(pid, os.WNOHANG)
+    except (ChildProcessError, ProcessLookupError):
+        pass
+
+
 def _session_file_directory() -> str:
     configured = os.environ.get("KILIX_SESSION_HOME", "")
     if configured.startswith("/"):
@@ -501,11 +555,14 @@ def cmd_open(profile_id: str) -> int:
                                 "laptop-%s.session" % profile_id)
     _write_private(session_path, session_text(profile))
     child_pid = _spawn_detached([kilix, "--session", session_path])
-    record_session(profile_id, child_pid)
+    try:
+        record_session(profile_id, child_pid)
+    except (ProfileError, OSError) as error:
+        _cancel_owned_child(child_pid)
+        raise ProfileError("The session could not be registered; launch cancelled") from error
     deadline = time.monotonic() + 0.3
     while time.monotonic() < deadline:
         if _child_status(child_pid) is not None:
-            clear_session(profile_id)
             raise ProfileError("the session exited immediately")
         time.sleep(0.05)
     print("laptop %s: opened (pid %d)" % (profile_id, child_pid))
@@ -523,23 +580,35 @@ def cmd_close(profile_id: str) -> int:
             raise ProfileError("no such profile")
         print("laptop %s: not running" % profile_id)
         return 0
+    if not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal"):
+        raise ProfileError("Safe session closing requires pidfd support")
     try:
-        os.kill(pid, signal.SIGTERM)
+        fd = os.pidfd_open(pid)
     except ProcessLookupError:
-        pass
-    except PermissionError as error:
-        raise ProfileError("cannot signal pid %d" % pid) from error
-    deadline = time.monotonic() + 5.0
-    while time.monotonic() < deadline:
-        if not _alive(pid):
+        return 0
+    except OSError as error:
+        raise ProfileError("Cannot acquire a stable session handle") from error
+    try:
+        if not _registered_identity_matches(profile_id, pid):
+            return 0
+        try:
+            signal.pidfd_send_signal(fd, signal.SIGTERM)
+        except ProcessLookupError:
+            return 0
+        except OSError as error:
+            raise ProfileError("Cannot signal the verified session") from error
+        import select
+        poller = select.poll()
+        poller.register(fd, select.POLLIN)
+        if poller.poll(5000):
             try:
-                os.waitpid(pid, os.WNOHANG)  # reap if it was our child
+                os.waitpid(pid, os.WNOHANG)
             except (ChildProcessError, OSError):
                 pass
-            clear_session(profile_id)
             print("laptop %s: closed" % profile_id)
             return 0
-        time.sleep(0.1)
+    finally:
+        os.close(fd)
     print("laptop %s: still shutting down (pid %d)" % (profile_id, pid),
           file=sys.stderr)
     return 1
