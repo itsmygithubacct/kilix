@@ -249,8 +249,8 @@ def test_frame_shm_ring_is_bounded_and_newest_wins():
         assert len(set(names)) == 3
         assert d.presenter.stats.frames_dropped == 6
         # Kitty's unlink is the consumption acknowledgement. Free one slot;
-        # flush must emit the newest queued request under that safely reused
-        # name, never grow the ring. Honour the presenter's pacing contract
+        # flush must emit the newest queued request under a fresh name without
+        # growing the ring. Honour the presenter's pacing contract
         # explicitly so this boundary test does not depend on wall-clock
         # time spent preparing the assertions above.
         os.unlink("/dev/shm/" + names[0].lstrip("/"))
@@ -258,7 +258,11 @@ def test_frame_shm_ring_is_bounded_and_newest_wins():
         assert deadline is not None
         assert d.presenter.flush(now=deadline).emitted
         match = re.search(r"t=s[^;]*;([A-Za-z0-9+/=]+)\x1b\\", t.writes[-1])
-        assert base64.b64decode(match.group(1)).decode() == names[0]
+        next_name = base64.b64decode(match.group(1)).decode()
+        assert next_name not in names
+        assert not os.path.exists("/dev/shm/" + names[0].lstrip("/"))
+        assert all(os.path.isfile("/dev/shm/" + name.lstrip("/"))
+                   for name in [*names[1:], next_name])
         assert all("N=1" in write for write in t.writes)
     finally:
         d.cleanup_shm(discard=True)
