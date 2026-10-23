@@ -6,9 +6,9 @@ the same ones kilix-cap's --laptop-test and kilix-land-desktop's
 --laptop-test run, so a profile one surface refuses, every surface refuses,
 and the generated session lines are asserted verbatim against the desktops'
 own expectations. Second, the run registry (run/<profile-id>.pid beside the
-profiles) must never trust a file without a real process check, must clean
-stale files on sight, and must close a session by signalling the recorded
-pid — that registry is what makes a desktop's laptop draw itself open.
+profiles) must never trust a file without a real process check, must
+retain shared records on read, and must close a session through an
+identity-verified stable process handle — that registry is what makes a desktop's laptop draw itself open.
 """
 import importlib.util
 import os
@@ -18,6 +18,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -170,18 +171,18 @@ class LaptopVerbTests(unittest.TestCase):
     # ── the run registry ────────────────────────────────────────────────
 
     def test_registry_requires_a_live_process(self):
-        # A recorded live pid reads back; the file alone is never
-        # believed — a dead or garbled entry is stale and is deleted.
-        self.laptop.record_session("alive", os.getpid())
-        self.assertEqual(self.laptop.session_pid("alive"), os.getpid())
-        dead = subprocess.Popen(["true"])
-        dead.wait()
-        self.laptop.record_session("dead", dead.pid)
-        self.assertIsNone(self.laptop.session_pid("dead"))
-        self.assertFalse(Path(self.laptop.pid_path("dead")).exists())
+        identity = "v1 4242 77 12345678-1234-1234-1234-123456789abc\n"
+        with patch.object(self.laptop, '_process_identity', return_value=identity), \
+             patch.object(self.laptop, '_alive', return_value=True):
+            self.laptop.record_session("alive", 4242)
+            self.assertEqual(self.laptop.session_pid("alive"), 4242)
+        with patch.object(self.laptop, '_alive', return_value=False):
+            self.assertIsNone(self.laptop.session_pid("alive"))
+        self.assertTrue(Path(self.laptop.pid_path("alive")).exists())
         Path(self.laptop.pid_path("junk")).write_text("not-a-pid\n")
-        self.assertIsNone(self.laptop.session_pid("junk"))
-        self.assertFalse(Path(self.laptop.pid_path("junk")).exists())
+        with self.assertRaises(self.laptop.ProfileError):
+            self.laptop.session_pid("junk")
+        self.assertTrue(Path(self.laptop.pid_path("junk")).exists())
 
     def test_open_records_and_close_terminates(self):
         self._write("bench.profile", "name=Bench\npane.1.cwd=~\n")
