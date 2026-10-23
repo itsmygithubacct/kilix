@@ -90,7 +90,7 @@ jobs:
             printf '%s=%s\n' "$variable" "$destination" >> "$GITHUB_ENV"
           }
           fetch_fixture kilix-voice 401b3efcc3801730b4b6d24cad81c9408c32df65 KILIX_VOICE_TEST_SOURCE
-          fetch_fixture kilix-system-monitor 849e35051eee81e1ad11c9b00236597409c835dd KILIX_DEVICE_LEASE_TEST_SOURCE
+          fetch_fixture kilix-system-monitor 9316bc2631958f5dcdb3588012d9baca7be1566d KILIX_DEVICE_LEASE_TEST_SOURCE
           fetch_fixture pleb 9420e7a0a8cfd63584b4f42b383ca9bae0786f33 KILIX_PLEB_TEST_SOURCE
           fetch_fixture plebian-os 1b190a62c535163f3c424c8dcf4ab6469c08a419 KILIX_OS_TEST_SOURCE
 

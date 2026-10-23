@@ -1,9 +1,9 @@
 {
-  "needle": "3aa90eaa09be718e5ffd785034b5af43a51382de",
+  "needle": "5bce5f98d556ad9b1310f5921712214cefc2c61a",
   "needle/third_party/kilix-content": "2b288ef13b9debe4135fc101113ffde85dc012e0",
   "needle/third_party/kilix-ml": "5e784b7bf24ae7609138416dfcc4715ef9973c77",
   "needle/third_party/kilix-transcript-clean": "638b7919d196bb8c5efce51355d42fca73bf24eb",
-  "needle/third_party/kilix-tui-utils": "8b461045715f176218c57b17ff16ccfd756aace1",
+  "needle/third_party/kilix-tui-utils": "ea7818467496965accf0ee58ae5ca4c0571d5b69",
   "games": "2e11cafc36018b0bddd9c3f179fe3068c082f735",
   "games/third_party/kilix-game-sdk": "e74c94baf75eb498a01cc3577a26db425c73d8e6",
   "games/third_party/kilix-game-sdk/kilix-game-kit/third_party/kitty-terminal-session": "da9502913c0e07948a0e439c04b6765f2d8857bd",
