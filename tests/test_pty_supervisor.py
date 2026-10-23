@@ -183,6 +183,68 @@ print('Needle isolated positive')
         self.assertEqual(code, 0, result)
         self.assertFalse(self.fx.alive("selected"))
 
+    def test_actual_host_selector_and_request_cli(self):
+        self.fx.start("bystander")
+        for mode in ("selector", "request"):
+            with self.subTest(mode=mode):
+                self.fx.start(mode)
+                actor = r'''import json, subprocess
+s = json.load(open('/run/selection.json'))['request']
+if MODE == 'selector':
+    argv = ['kilix','pty','end','--selector-json',json.dumps(s['selector']),
+            '--operation-id',s['operation_id'],'--yes','--json']
+    p = subprocess.run(argv,capture_output=True,text=True)
+else:
+    p = subprocess.run(['kilix','pty','request','--request-json','-'],input=json.dumps(s),capture_output=True,text=True)
+assert p.returncode == 0, p.stdout+p.stderr
+assert json.loads(p.stdout)['result'] == 'verified_absent'
+print('actual host CLI positive')
+'''
+                result, code = self.launch(f"MODE={mode!r}\n"+actor, {"id":mode})
+                self.assertEqual(code, 0, result)
+                self.assertFalse(self.fx.alive(mode))
+                self.assertTrue(self.fx.alive("bystander"))
+
+    def test_actual_needle_grammar_and_stdio_mcp(self):
+        if not os.environ.get("SELECTOR_NEEDLE_SOURCE"):
+            self.skipTest("SELECTOR_NEEDLE_SOURCE required")
+        self.fx.start("bystander")
+        for mode in ("grammar", "mcp"):
+            with self.subTest(mode=mode):
+                self.fx.start(mode)
+                actor = r'''import json, subprocess
+s = json.load(open('/run/selection.json'))['request']
+if MODE == 'grammar':
+    read = subprocess.run(['kilix-needle','pty','list sessions'],capture_output=True,text=True)
+    assert read.returncode == 0, read.stdout + read.stderr
+    text = 'end selector ' + json.dumps(s['selector']) + ' operation ' + s['operation_id']
+    p = subprocess.run(['kilix-needle','pty',text],capture_output=True,text=True)
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert json.loads(p.stdout)['result']['result'] == 'verified_absent'
+else:
+    action = {'operation':'end','selector':s['selector'],'operation_id':s['operation_id']}
+    messages = [
+      {'jsonrpc':'2.0','id':1,'method':'initialize','params':{'protocolVersion':'2025-06-18'}},
+      {'jsonrpc':'2.0','method':'notifications/initialized'},
+      {'jsonrpc':'2.0','id':2,'method':'tools/list'},
+      {'jsonrpc':'2.0','id':3,'method':'tools/call','params':{'name':'kilix_pty_read','arguments':{'request':'list sessions'}}},
+      {'jsonrpc':'2.0','id':4,'method':'tools/call','params':{'name':'kilix_pty_act','arguments':{'request':action}}},
+      {'jsonrpc':'2.0','id':5,'method':'tools/call','params':{'name':'kilix_action_act','arguments':{}}}]
+    p = subprocess.run(['kilix-needle','mcp','--tools','pty'],input=''.join(json.dumps(m)+'\n' for m in messages),capture_output=True,text=True)
+    assert p.returncode == 0, p.stdout + p.stderr
+    rows = [json.loads(line) for line in p.stdout.splitlines()]
+    assert [r['id'] for r in rows] == [1,2,3,4,5], rows
+    assert len(rows[1]['result']['tools']) == 3, rows
+    assert rows[2]['result']['structuredContent']['status'] == 0, rows
+    assert rows[3]['result']['structuredContent']['result']['result'] == 'verified_absent', rows
+    assert rows[4]['error']['code'] == -32602, rows
+print('actual grammar/MCP positive')
+'''
+                result, code = self.launch(f"MODE={mode!r}\n" + actor, {"id": mode})
+                self.assertEqual(code, 0, result)
+                self.assertFalse(self.fx.alive(mode))
+                self.assertTrue(self.fx.alive("bystander"))
+
     def test_ambiguous_declined_and_changed_preview_do_not_launch_actor(self):
         self.fx.start("pair.one")
         self.fx.start("pair.two")

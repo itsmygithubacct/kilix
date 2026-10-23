@@ -25,6 +25,10 @@ class RemoteController:
         response = call({"route": "selector", "request": request})
         return response["code"], response["receipt"]
 
+    def read(self, request):
+        response = call({"route": "read", "request": request})
+        return response["code"], response["receipt"]
+
 
 def main(argv):
     response = call({"route": "broker", "argv": argv})

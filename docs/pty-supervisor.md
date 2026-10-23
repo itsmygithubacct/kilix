@@ -67,6 +67,9 @@ it. `/run/dispatch.sock` accepts bounded newline JSON, one request per connectio
 
 - `{"route":"selector","request":REQUEST_V2}` returns `{"code":N,"receipt":...}`.
 - `{"route":"broker","argv":[...]}` implements the constrained facade below.
+- `{"route":"read","request":REQUEST_V1}` returns numeric `code` and the existing
+  typed host receipt. Only list, status by session ID, observe, reaped and bounded
+  journal reads are available; pane/desktop lookup and legacy kill are refused.
 
 There is no arbitrary subprocess, selection, revocation, environment, runtime or
 state override route. Unknown fields/methods refuse. The existing Controller
@@ -112,15 +115,26 @@ fixtures neither waive unchanged G3 nor claim full R1/G3 coverage.
 
 ## Needle and a small actor
 
-With `--needle-source DIR`, only the selected Needle PTY parser/receipt modules
-and `pty_controller_client.py` are mounted. The actor can run:
+The actor has a constrained `/tools/kilix` client. Its selected end/resolve and
+request forms call the existing host selector/request parsers with a remote
+dispatch controller. The client does not discover a native broker or expose the
+launcher. Other administrative host commands refuse.
+
+With `--needle-source DIR`, selected Needle PTY/parser, MCP and import-dependency
+modules are mounted. The actor can run:
 
 ```
 kilix-needle pty --request-json '{"operation":"end","selector":{"id":"job"},"operation_id":"KEY"}'
 ```
 
 It must use the exact issued selector/key from the selection document. This
-adapter calls the actual `pty_cli.run` with a remote dispatch-only controller.
+adapter calls the actual `pty_cli.main` with a remote dispatch-only controller.
+Text requests use the existing grammar, for example `end selector JSON operation
+KEY`. The adapter emits JSON records. `kilix-needle mcp --tools pty` runs the actual
+`mcp_server.serve` newline-delimited JSON-RPC transport with only PTY tools.
+Initialization, notifications, tool listing, read and end calls use that server;
+this is not a substitute parser. Injection is a Python dependency, never an MCP
+argument. The ordinary server has no injected controller by default.
 Importing or altering client code inside the sandbox cannot reach issuance or
 raw runtime sockets. Stock unrestricted Needle CLI/MCP keeps refusing selected
 ends without controller authority; this adapter is a distinct constrained route.

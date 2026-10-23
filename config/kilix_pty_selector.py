@@ -471,7 +471,7 @@ def refusal_document(broker, verb, error, selector=None, operation_id=None):
     return document
 
 
-def command(broker, verb, argv):
+def command(broker, verb, argv, *, controller=None):
     request = {"schema": REQUEST_SCHEMA, "verb": verb}
     yes, source = False, None
     rest = list(argv)
@@ -499,9 +499,10 @@ def command(broker, verb, argv):
         request["selector"] = parse_json(raw)
         validate(request)
         state = os.environ.get("KILIX_STATE_DIRECTORY", "")
-        if verb == "end" and not state:
+        if verb == "end" and not state and controller is None:
             refuse("store_unavailable", "KILIX_STATE_DIRECTORY must identify the private state directory")
-        code, result = untrusted_execute(broker, request, yes, state)
+        code, result = (controller.dispatch(request) if controller is not None
+                        else untrusted_execute(broker, request, yes, state))
     except legacy.Refusal as error:
         code = error.code
         result = refusal_document(broker, verb, error, request.get("selector"), request.get("operation_id"))

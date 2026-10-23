@@ -722,7 +722,7 @@ def cmd_capabilities(broker, argv):
     return 0
 
 
-def cmd_request(broker, argv):
+def cmd_request(broker, argv, *, controller=None):
     yes, source, rest = False, None, list(argv)
     while rest:
         flag = rest.pop(0)
@@ -735,7 +735,7 @@ def cmd_request(broker, argv):
             break
     state = os.environ.get("KILIX_STATE_DIRECTORY", "")
     try:
-        if source is None or not state:
+        if source is None or (not state and controller is None):
             raise Refusal("usage", "usage: kilix pty request [--yes] --request-json -|FILE", heredoc())
         raw = read_request(source)
         import kilix_pty_selector as selector_api
@@ -746,7 +746,8 @@ def cmd_request(broker, argv):
         if isinstance(candidate, dict) and candidate.get("schema") == selector_api.REQUEST_SCHEMA:
             try:
                 request = selector_api.validate(selector_api.parse_json(raw))
-                status, document = selector_api.untrusted_execute(broker, request, yes, state)
+                status, document = (controller.dispatch(request) if controller is not None
+                                    else selector_api.untrusted_execute(broker, request, yes, state))
             except Refusal as error:
                 verb = candidate.get("verb") if candidate.get("verb") in ("resolve", "end") else None
                 status, document = error.code, selector_api.refusal_document(
@@ -756,7 +757,10 @@ def cmd_request(broker, argv):
         request = validate(raw)
         if "timeout_seconds" in request:
             broker.timeout = format(request["timeout_seconds"], "g")
-        status, document = execute(broker, request, yes, state)
+        if controller is not None and request["verb"] == "kill":
+            raise Refusal("authority_required", "use the original selector through request v2", heredoc(), 3)
+        status, document = (controller.read(request) if controller is not None
+                            else execute(broker, request, yes, state))
     except RecursionError:
         status, document = 2, broker.envelope(result="refused", reason="not_json",
                                               request_sent=False, message="request nesting is too deep")

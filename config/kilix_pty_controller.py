@@ -62,6 +62,23 @@ class Controller:
                     "selector": copy.deepcopy(request["selector"]),
                     "resolved": copy.deepcopy(doc["resolved"]), "lifetime_seconds": lifetime_seconds}
 
+    def read(self, actor_request):
+        """Validated bounded data reads; no desktop lookup or mutation route."""
+        import json
+        import kilix_pty_request as legacy
+        request = legacy.validate(json.dumps(actor_request, ensure_ascii=True).encode())
+        if (request["verb"] not in {"list", "status", "observe", "reaped", "journals"}
+                or "pane_id" in request.get("args", {})):
+            raise ValueError("unsupported constrained read")
+        with self._lock:
+            previous_timeout = self._broker.timeout
+            try:
+                if "timeout_seconds" in request:
+                    self._broker.timeout = format(request["timeout_seconds"], "g")
+                return legacy.execute(self._broker, request, False, self._state)
+            finally:
+                self._broker.timeout = previous_timeout
+
     def dispatch(self, actor_request):
         """Only actor-facing entrypoint. Exact request match; no issuance or fallback."""
         with self._lock:

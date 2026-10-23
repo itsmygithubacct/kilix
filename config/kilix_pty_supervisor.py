@@ -115,16 +115,37 @@ def dispatch(controller, broker, request, issued, message):
     if set(message) == {"route", "request"} and message["route"] == "selector":
         code, receipt = controller.dispatch(message["request"])
         return {"code": code, "receipt": receipt}
+    if set(message) == {"route", "request"} and message["route"] == "read":
+        code, receipt = controller.read(message["request"])
+        return {"code": code, "receipt": receipt}
     if set(message) == {"route", "argv"} and message["route"] == "broker":
         return raw_request(controller, broker, request, issued, message["argv"])
     raise ValueError("no issuance, revocation or arbitrary command route is exposed")
+
+
+def snapshot_client(source, root):
+    """Freeze each trusted client dependency for this launch; no mutable bind source."""
+    destination = root / "clients" / source.name
+    destination.parent.mkdir(exist_ok=True)
+    fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_size > 4 * 1024 * 1024:
+            raise ValueError("client dependency must be a bounded regular file")
+        data = stream.read(4 * 1024 * 1024 + 1)
+    if len(data) > 4 * 1024 * 1024:
+        raise ValueError("client dependency exceeds bound")
+    destination.write_bytes(data)
+    destination.chmod(0o555)
+    return destination
 
 
 def sandbox_argv(root, actor, caller, needle_source=None):
     info = os.stat(BWRAP)
     if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
         raise ValueError("bubblewrap must be a root-owned, non-writable system executable")
-    client = Path(__file__).with_name("kilix_pty_agent_client.py")
+    source = Path(__file__).parent
+    client = snapshot_client(source / "kilix_pty_agent_client.py", root)
     argv = [BWRAP, "--unshare-all", "--unshare-user", "--disable-userns", "--assert-userns-disabled",
             "--new-session", "--die-with-parent", "--cap-drop", "ALL",
             "--clearenv", "--setenv", "PATH", "/tools:/usr/bin:/bin",
@@ -138,13 +159,18 @@ def sandbox_argv(root, actor, caller, needle_source=None):
             "--ro-bind", str(client), "/tools/kilix_pty_agent_client.py",
             "--ro-bind", str(client), "/tools/kitty-pty-broker",
             "--ro-bind", str(actor), "/actor.py", "--chdir", "/tmp"]
+    for name in ("kilix_pty.py", "kilix_pty_request.py", "kilix_pty_selector.py",
+                 "kilix_pty_selector_validation.py", "kilix_pty_host_client.py"):
+        argv += ["--ro-bind", str(snapshot_client(source / name, root)), "/tools/" + name]
+    argv += ["--ro-bind", str(client.with_name("kilix_pty_host_client.py")), "/tools/kilix"]
     if needle_source is not None:
         # Only the reviewed PTY client surface; no controller implementation,
         # launcher, user home, storage, model weights or credentials are mounted.
         for name in ("pty_cli.py", "pty_job.py", "pty_backend.py", "pty_selector_receipt.py", "json_request.py",
-                     "pty_controller_client.py"):
-            argv += ["--ro-bind", str(needle_source / name), "/tools/" + name]
-        argv += ["--ro-bind", str(needle_source / "pty_controller_client.py"), "/tools/kilix-needle"]
+                     "pty_controller_client.py", "mcp_server.py", "engine.py", "libengine.py",
+                     "asset.py", "action_cli.py", "action_backend.py"):
+            argv += ["--ro-bind", str(snapshot_client(needle_source / name, root)), "/tools/" + name]
+        argv += ["--ro-bind", str(root / "clients/pty_controller_client.py"), "/tools/kilix-needle"]
     return argv + ["/usr/bin/python3", "-I", "/actor.py"]
 
 
@@ -288,6 +314,8 @@ def run_actor(controller, broker, request, issued, actor, ui_fd, lifetime, needl
                     "cleanup_observations": cleanup,
                     "actor_output": bytes(output[:MAX_OUTPUT]).decode("utf-8", errors="replace"),
                     "actor_sha256": hashlib.sha256(code).hexdigest(),
+                    "client_sha256": {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+                                      for p in sorted((root / "clients").iterdir())},
                     "bwrap_sha256": hashlib.sha256(Path(BWRAP).read_bytes()).hexdigest()}
 
 
