@@ -43,13 +43,15 @@ common time namespace and boot. Equal latest timestamps across sessions are
 unknown, even when offsets differ. Within one session the last byte offset
 orders same-timestamp occurrences.
 Marker `reason` is null or one of `deadline`, `broker_unavailable`,
-`broker_malformed`, `census_unavailable`, `census_malformed`,
+`broker_cleanup_timeout`, `broker_output_cap`, `broker_malformed`,
+`census_unavailable`, `census_malformed`,
 `candidate_overflow`, `census_incomplete`, `census_ambiguous`,
 `census_changed`, `status_malformed`, `clock_unknown`,
 `clock_incomparable`, `incarnation_changed`, `history_incomplete`,
 `session_path_unavailable`, `index_unavailable`, `index_untrusted`,
 `index_partial`, `index_malformed`, `index_gap`, `index_cap`, `scan_cap`,
-`unstable_snapshot`, `tie`, or `result_cap`.
+`unstable_snapshot`, `proc_gone`, `proc_unavailable`, `proc_malformed`,
+`tie`, or `result_cap`.
 
 The broker creates private `journal.time` beside `journal.bin`. Each ASCII line
 is exactly five unsigned decimal fields separated by one space and a newline:
@@ -68,7 +70,10 @@ requires a second identical census and unchanged sessions-directory identity
 and modification times. A post-cutoff append can therefore yield unknown
 rather than a stale ranking. The read deadline is one absolute endpoint, at
 most ten seconds (or the caller's smaller guard); all broker calls and scans
-share it. Each journal scan is at most 1 MiB; each index at most 4096 records
+share it. Native calls refuse before launch if less than the broker's 100 ms
+minimum remains. Captured output is bounded, and owned CLI cleanup has one
+fixed deadline at most one second after the work endpoint. Each journal scan
+is at most 1 MiB; each index at most 4096 records
 and 640 KiB; the result at most 24 KiB. Caps never narrow the candidate set
 or silently truncate a positive response.
 
@@ -93,8 +98,9 @@ The sampled child is null or an object with integer `pid`, integer
 member has the same four fields. `foreground_processes` is empty on an early
 unknown and may contain partial facts on a later unknown; neither supports
 a singular answer. The `reason` for unknown is one of `deadline`,
-`broker_unavailable`, `broker_malformed`, `status_malformed`,
-`process_unavailable`, `tty_unavailable`, `proc_unavailable`,
+`broker_unavailable`, `broker_cleanup_timeout`, `broker_output_cap`,
+`broker_malformed`, `status_malformed`, `process_unavailable`,
+`tty_unavailable`, `proc_gone`, `proc_unavailable`,
 `proc_malformed`, `proc_scan_cap`, `process_result_cap`, `argv_unavailable`,
 `argv_empty`, `argv_unterminated`, `argv_invalid_utf8`, `argv_cap`,
 `child_changed`, `foreground_changed`, `foreground_missing`, or

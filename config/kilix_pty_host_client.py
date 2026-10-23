@@ -18,7 +18,10 @@ def main(argv):
               "Reads: pty list [--all] [--json]; pty status ID [--json]; pty status --pane P [--json]; "
               "pty pane P; pty observe ID --once [--text] [--lines N|--bytes N] [--json]; "
               "pty journals [--json]; pty journals show ID [--text] [--lines N|--bytes N] [--json]; "
-              "pty reaped [--json]; pty capabilities --json. Pane reads require trusted owned-pane admission. "
+              "pty reaped [--json]; pty capabilities --json; "
+              "pty marker TOKEN --json (broker-observed raw bytes); "
+              "pty foreground ID --json (sampled processes). "
+              "Pane reads require trusted owned-pane admission. "
               "No CLI flag issues authority. See /tools/PTY-GUIDANCE.txt and /tools/kilix-pty/SKILL.md.")
         return 0
     # Only supplies standard validation-failure envelopes; never used for transport.
@@ -28,7 +31,8 @@ def main(argv):
         return selector.command(broker, argv[0], argv[1:], controller=controller)
     if argv[0] == "request":
         return request.cmd_request(broker, argv[1:], controller=controller)
-    if argv[0] in ("list", "status", "pane", "observe", "journals", "reaped", "capabilities", "--timeout"):
+    if argv[0] in ("list", "status", "pane", "observe", "journals", "reaped", "capabilities",
+                   "marker", "foreground", "--timeout"):
         response = call({"route": "host_read", "argv": argv})
         if "stdout" in response:
             sys.stdout.write(response["stdout"])

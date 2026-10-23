@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import bisect
 import contextlib
+from decimal import Decimal, ROUND_FLOOR
+import errno
 import fcntl
 import json
 import os
@@ -16,6 +18,7 @@ import stat
 import time
 
 import kilix_pty as pty
+from kilix_pty_pane_lookup import bounded_query, LookupFailure
 
 SCHEMA = 'kilix.pty.semantic/v1'
 MARKER_MAX = 128
@@ -44,16 +47,34 @@ def _time_left(deadline):
 
 
 def _broker_json(broker, deadline, *argv):
-    scoped = broker.bounded(_time_left(deadline))
-    code, raw, _ = scoped.call(*argv)
-    if time.monotonic() >= deadline:
+    # Native broker timeout has a 100 ms minimum. Refuse before launch when
+    # the one absolute work budget cannot fit it, and use the same endpoint for
+    # output capture and owned-child cleanup.
+    remaining = _time_left(deadline)
+    native_timeout = Decimal.from_float(min(remaining, broker.timeout_seconds)).quantize(
+        Decimal('.000001'), rounding=ROUND_FLOOR)
+    if native_timeout < Decimal('.1'):
         raise Unknown('deadline')
-    if code != 0 or len(raw) > 131072:
-        raise Unknown('broker_unavailable')
+    command = [broker.path, '--runtime-dir', broker.runtime, '--timeout',
+               format(native_timeout, '.6f'), *argv]
     try:
-        return json.loads(raw)
-    except (UnicodeError, ValueError):
+        raw = bounded_query(command, getattr(broker, 'environment', None), deadline)
+    except LookupFailure as error:
+        reason = {'pane_lookup_timeout': 'deadline',
+                  'pane_lookup_cleanup_timeout': 'broker_cleanup_timeout',
+                  'pane_lookup_overflow': 'broker_output_cap'}.get(str(error), 'broker_unavailable')
+        raise Unknown(reason) from None
+    except OSError:
+        raise Unknown('broker_unavailable') from None
+    _time_left(deadline)
+    if len(raw) > 131072:
+        raise Unknown('broker_output_cap')
+    try:
+        parsed = json.loads(raw)
+    except (UnicodeError, ValueError, RecursionError):
         raise Unknown('broker_malformed') from None
+    _time_left(deadline)
+    return parsed
 
 
 def _census(broker, deadline):
@@ -161,9 +182,13 @@ def _read_index_and_journal(broker, row, deadline):
     chunks = []
     previous = 0
     previous_time = 0
-    for line in lines:
+    for index, line in enumerate(lines):
+        if index % 64 == 0:
+            _time_left(deadline)
         parts = line.split(b' ')
-        if len(parts) != 5 or any(not re.fullmatch(rb'[0-9]+', part) for part in parts):
+        if (len(line) > 160 or len(parts) != 5 or
+                any(not 1 <= len(part) <= 20 or not re.fullmatch(rb'[0-9]+', part)
+                    for part in parts)):
             raise Unknown('index_malformed')
         started, epoch, begin, end, observed = map(int, parts)
         if (started != row['started_millis'] or epoch != row['journal_epoch'] or
@@ -174,14 +199,18 @@ def _read_index_and_journal(broker, row, deadline):
         previous, previous_time = end, observed
     if previous != journal_size:
         raise Unknown('index_gap')
+    _time_left(deadline)
     return journal, chunks
 
 
-def _last_occurrence(journal, chunks, marker, cutoff_ns):
+def _last_occurrence(journal, chunks, marker, cutoff_ns, deadline=None):
     ends = [end for end, _ in chunks]
     last = None
     offset = journal.find(marker)
+    checked = 0
     while offset >= 0:
+        if deadline is not None and checked % 1024 == 0:
+            _time_left(deadline)
         end_offset = offset + len(marker)
         index = bisect.bisect_left(ends, end_offset)
         if index >= len(chunks):
@@ -190,6 +219,9 @@ def _last_occurrence(journal, chunks, marker, cutoff_ns):
         if observed_ns <= cutoff_ns:
             last = (observed_ns, end_offset)
         offset = journal.find(marker, offset + 1)
+        checked += 1
+    if deadline is not None:
+        _time_left(deadline)
     return last
 
 
@@ -224,7 +256,7 @@ def marker_occurrences(broker, marker):
             elif domain != boot_domain:
                 raise Unknown('clock_incomparable')
             journal, chunks = _read_index_and_journal(broker, row, deadline)
-            last = _last_occurrence(journal, chunks, marker.encode('ascii'), cutoff_ns)
+            last = _last_occurrence(journal, chunks, marker.encode('ascii'), cutoff_ns, deadline)
             again = _status(broker, deadline, ident)
             if any(again[k] != row[k] for k in ('broker_pid', 'started_millis', 'journal_epoch',
                                                 'journal_bytes', 'replay_complete')):
@@ -278,7 +310,9 @@ def marker_occurrences(broker, marker):
 def _proc_stat(pid):
     try:
         raw = Path(f'/proc/{pid}/stat').read_bytes()
-    except OSError:
+    except OSError as error:
+        if error.errno in (errno.ENOENT, errno.ESRCH):
+            raise Unknown('proc_gone') from None
         raise Unknown('proc_unavailable') from None
     if len(raw) > 4096 or b') ' not in raw:
         raise Unknown('proc_malformed')
@@ -329,7 +363,7 @@ def _foreground_candidates(child, foreground, deadline):
         try:
             sampled = _proc_stat(pid)
         except Unknown as error:
-            if error.reason == 'proc_unavailable':
+            if error.reason == 'proc_gone':
                 # The sample is taken after this process disappeared. A
                 # second complete membership scan below checks stability.
                 continue
