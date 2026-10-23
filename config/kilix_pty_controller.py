@@ -15,12 +15,13 @@ import kilix_pty_selector as selector
 
 
 class Controller:
-    def __init__(self, broker, state, *, clock=time.monotonic):
+    def __init__(self, broker, state, *, clock=time.monotonic, pane_lookup=None):
         self._broker = broker
         self._state = state
         self._clock = clock
         self._lock = threading.RLock()
         self._grant = None
+        self._pane_lookup = pane_lookup
 
     def revoke(self):
         """Linearizes before dispatch or after its outcome; cannot undo a send."""
@@ -64,21 +65,34 @@ class Controller:
                     "issued_monotonic": deadline - lifetime_seconds, "expires_monotonic": deadline}
 
     def read(self, actor_request):
-        """Validated bounded data reads; no desktop lookup or mutation route."""
+        """Validated bounded data reads; optional owned-pane data lookup only."""
         import json
         import kilix_pty_request as legacy
         request = legacy.validate(json.dumps(actor_request, ensure_ascii=True).encode())
-        if (request["verb"] not in {"list", "status", "observe", "reaped", "journals"}
-                or "pane_id" in request.get("args", {})):
+        if request["verb"] not in {"list", "status", "observe", "reaped", "journals", "pane"}:
             raise ValueError("unsupported constrained read")
         with self._lock:
             previous_timeout = self._broker.timeout
             try:
                 if "timeout_seconds" in request:
                     self._broker.timeout = format(request["timeout_seconds"], "g")
+                if "pane_id" in request.get("args", {}):
+                    pane = request["args"]["pane_id"]
+                    if self._pane_lookup is None:
+                        return 3, self._broker.envelope(result="refused", reason="pane_lookup_unavailable", pane_id=pane)
+                    code, mapped = self._pane_lookup.lookup(pane, self._broker)
+                    if code or request["verb"] == "pane":
+                        return code, mapped
+                    request = copy.deepcopy(request)
+                    request["args"] = {"id": mapped["id"]}
                 return legacy.execute(self._broker, request, False, self._state)
             finally:
                 self._broker.timeout = previous_timeout
+
+    def read_cli(self, argv):
+        import kilix_pty_reads
+        with self._lock:
+            return kilix_pty_reads.execute(self, argv)
 
     def dispatch(self, actor_request):
         """Only actor-facing entrypoint. Exact request match; no issuance or fallback."""

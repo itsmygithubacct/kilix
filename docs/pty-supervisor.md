@@ -68,8 +68,12 @@ it. `/run/dispatch.sock` accepts bounded newline JSON, one request per connectio
 - `{"route":"selector","request":REQUEST_V2}` returns `{"code":N,"receipt":...}`.
 - `{"route":"broker","argv":[...]}` implements the constrained facade below.
 - `{"route":"read","request":REQUEST_V1}` returns numeric `code` and the existing
-  typed host receipt. Only list, status by session ID, observe, reaped and bounded
-  journal reads are available; pane/desktop lookup and legacy kill are refused.
+  typed host receipt. List, status, observe, reaped and bounded journal reads are
+  available. Pane reads require the explicit trusted admission described below.
+- `{"route":"host_read","argv":[...]}` accepts only validated plain read forms
+  and returns `code`, `stdout`, `stderr`. Existing product read renderers produce
+  the text/table/JSON output. Each output stream is capped at 24 KiB; overflow
+  refuses instead of silently truncating. Legacy kill and desktop control refuse.
 
 There is no arbitrary subprocess, selection, revocation, environment, runtime or
 state override route. Unknown fields/methods refuse. The existing Controller
@@ -97,12 +101,16 @@ Inside this sandbox, PATH names `/tools/kitty-pty-broker`, a controller-backed
 facade. It accepts the historical core forms `list [--json] [--all]`,
 `status ID [--json]`, `reaped [--json]`, `observe ID` (bounded, no stdin), and
 `kill ID [--expect-started MILLIS]`. Reads use the trusted bounded transport.
+The successor also exposes `journals [--json]`,
+`journals show ID [--text] [--lines N|--bytes N] [--json]`, and `pane P` through
+the typed host read boundary. These are declared R1-controlled additions, not
+new native-broker verbs. Archive paths and host runtime access stay unavailable.
 A kill must name the already user-approved ID; a supplied start must also match.
 It consumes the stored **original selector, all qualifiers, operation ID and
 incarnation**, rather than narrowing that original request to the model's ID.
 The current census and receiver checks still run. Exact retries return the cached
 receipt. Runtime/transport overrides, attach, run, arbitrary flags and unrelated
-IDs refuse. In read-only mode every kill refuses. Kill output is a controller
+IDs refuse for kill. In read-only mode every kill refuses. Kill output is a controller
 receipt, not the native broker's output; errors use controller exit semantics.
 
 This facade preserves a legitimate positive selected-end path without exposing
@@ -224,3 +232,49 @@ instructions; measured still owns the exact route-specific rendered skill and
 prompt bindings. Visibility of selection.json and the new guidance changes task
 assistance and must be recorded. Per-route fixture success is not campaign or
 installed-artifact admission.
+
+## Read capability and owned-pane admission
+
+The constrained host client supports plain `list`, `status`, `observe --once`,
+`journals`, `reaped`, `pane`, and `capabilities` forms in addition to the existing
+selected and structured routes. `kilix pty help` lists their actual syntax.
+R8 mounts the repository's `skills/kilix-pty/SKILL.md` and
+`references/receipts.md` at `/tools/kilix-pty/`; each frozen file is hashed in
+`client_sha256`. The separate successor guidance remains mounted and hashed.
+These help/skill changes require new route review; they do not preserve historical
+capability equivalence by assertion.
+
+Text rendering occurs in the trusted host, not the actor. Before selection or
+actor launch, the supervisor checks the six required Python files in the pinned
+`third_party/kilix-transcript-clean` checkout and records their hashes in
+`runtime_asset_sha256`. A missing checkout refuses before launching the actor
+with a specific dependency error. No automatic fetch/install occurs. These host
+sources remain trusted deployment dependencies; their hashes are not a claim
+that all host Python/system libraries are snapshotted. Archive fixtures must use
+actual owned process output and the real reaper/compressor, not synthetic truth
+files. Neither the renderer's host access nor the archive directory is exposed
+to the actor.
+
+A trusted driver may pass `--owned-pane ID` once per owned fixture pane, up to64.
+IDs must come from actual owned creation receipts, never actor arguments or a
+precomputed pane-to-session truth mapping. This is explicit read admission,
+not issuance of an end grant. With no admitted panes, pane queries refuse.
+The actor supplies only an integer pane ID through validated v1 `pane` or
+`status` with `pane_id`, the corresponding plain forms, or R1-controlled `pane`.
+
+The supervisor runs only its fixed authenticated pane client's `ls`, captures
+at most1MiB stdout/16KiB stderr, and parses actual metadata. An admitted pane
+must occur exactly once and name a valid persistent session. Native broker status
+supplies the incarnation, and a second snapshot must retain the same mapping.
+Missing, nonpersistent, malformed, ambiguous, changed or unreachable data returns
+an explicit unknown/refusal. Only mapping/incarnation/timestamp data leaves this
+boundary, never the full workspace snapshot or credentials. The owned ls child
+is killed/reaped on timeout, overflow or interruption. Each lookup uses one
+at-most5s/request-timeout deadline, also subject to the shared model work cutoff;
+no progress renews the turn or grant. Cleanup uses the existing overall bound.
+
+Mapping is sampled, not atomic. Pane/session reuse and attachment ABA remain
+limitations; mapping never substitutes a resolved ID into original end authority.
+The caller must independently retain ownership evidence for admitted pane IDs.
+Synthetic parser tests do not qualify T4: actual owned-pane creation, native
+metadata, and confined client roundtrips on the exact final tuple remain required.

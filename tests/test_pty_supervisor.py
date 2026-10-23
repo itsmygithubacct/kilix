@@ -7,6 +7,7 @@ import pty as terminal_pty
 import select
 import subprocess
 import socket
+import signal
 import threading
 import sys
 import termios
@@ -406,6 +407,79 @@ print('actual grammar/MCP positive')
                 self.assertEqual(code, 0, result)
                 self.assertFalse(self.fx.alive(mode))
                 self.assertTrue(self.fx.alive("bystander"))
+
+    def test_actual_live_and_archived_reads_help_and_skill(self):
+        if not os.environ.get('SELECTOR_NEEDLE_SOURCE'):
+            self.skipTest('SELECTOR_NEEDLE_SOURCE required')
+        self.fx.start('bystander')
+        self.fx.start('read-live', [sys.executable, '-c',
+                                   "import time; print('owned-first-line\\nowned-final-line', flush=True); time.sleep(60)"])
+        actor = r'''import json, subprocess
+def run(argv, input=None):
+    p = subprocess.run(argv,input=input,capture_output=True,text=True)
+    assert p.returncode == 0, (argv,p.stdout,p.stderr)
+    return p.stdout
+assert 'read-live' in run(['kilix','pty','list'])
+assert 'read-live' in run(['kilix','pty','status','read-live'])
+help = run(['kilix','pty','help'])
+assert 'observe ID --once' in help and 'journals show ID' in help
+skill = open('/tools/kilix-pty/SKILL.md').read()
+assert 'observe ID --once --text --lines 50 --json' in skill
+assert open('/tools/kilix-pty/references/receipts.md').read()
+plain = json.loads(run(['kilix','pty','observe','read-live','--once','--text','--lines','50','--json']))
+assert plain['text'].splitlines()[-1] == 'owned-final-line', plain
+request = {'schema':'kilix.pty.request/v1','verb':'observe','args':{'id':'read-live','text':True,'max_lines':50}}
+typed = run(['kilix','pty','request','--request-json','-'],json.dumps(request))
+assert 'owned-final-line' in typed, typed
+grammar = run(['kilix-needle','pty','read last 50 lines from session "read-live"'])
+assert 'owned-final-line' in grammar, grammar
+msg = {'jsonrpc':'2.0','id':1,'method':'tools/call','params':{'name':'kilix_pty_read','arguments':{'request':{'operation':'observe','id':'read-live','max_lines':50}}}}
+reply = json.loads(run(['kilix-needle','mcp','--tools','pty'],json.dumps(msg)+'\n'))
+assert reply['result']['structuredContent']['status'] == 0, reply
+assert 'owned-final-line' in json.dumps(reply), reply
+print(json.dumps({'live_last_line':plain['text'].splitlines()[-1], 'help_used':True,'skill_used':True}))
+'''
+        result, code = self.launch(actor, None, read_only=True)
+        self.assertEqual(code, 0, result)
+        self.assertEqual(len(result['runtime_asset_sha256']), 6)
+        self.assertTrue(self.fx.alive('bystander'))
+        # Actual output is archived by the real reaper, never fabricated files.
+        handles = [os.pidfd_open(self.fx.started['read-live'][key]) for key in ('broker_pid','child_pid')]
+        try:
+            for handle in handles:
+                try:
+                    signal.pidfd_send_signal(handle, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+        finally:
+            for handle in handles:
+                os.close(handle)
+        time.sleep(.05)
+        env = {'PATH':os.environ['PATH'], 'TMPDIR':'/tmp', 'HOME':str(self.fx.root/'home'),
+               'KILIX_STORAGE_HOME':str(self.fx.root), 'KILIX_STATE_DIRECTORY':str(self.state),
+               'KITTY_PTY_BROKER_SESSION':'caller_unrelated',
+               'KITTY_PTY_BROKER_EXECUTABLE':str(fixtures.BROKER),
+               'KITTY_PTY_BROKER_RUNTIME':str(self.fx.runtime), 'KILIX_PTY_ZSTD_TIMEOUT':'5'}
+        reaped = subprocess.run(['bash',str(ROOT/'kilix'),'pty','reap','--runtime',str(self.fx.runtime)],
+                                env=env,capture_output=True,text=True,timeout=12)
+        self.assertEqual(reaped.returncode,0,reaped.stdout+reaped.stderr)
+        self.assertTrue(list((self.state/'pty-journals').glob('read-live.*.journal.zst')))
+        archived = r'''import json, subprocess
+commands = [
+ ['kitty-pty-broker','journals','show','read-live','--text','--lines','50','--json'],
+ ['kilix','pty','journals','show','read-live','--text','--lines','50','--json'],
+ ['kilix-needle','pty','read journal "read-live"']]
+for argv in commands:
+    p = subprocess.run(argv,capture_output=True,text=True)
+    assert p.returncode == 0 and 'owned-final-line' in p.stdout, (argv,p.stdout,p.stderr)
+    print(json.dumps({'argv':argv,'reply':json.loads(p.stdout)}))
+for argv in (['kilix','pty','journals','--json'],['kitty-pty-broker','journals','--json']):
+    p = subprocess.run(argv,capture_output=True,text=True)
+    assert p.returncode == 0 and 'read-live' in p.stdout, (argv,p.stdout,p.stderr)
+'''
+        result, code = self.launch(archived, None, read_only=True)
+        self.assertEqual(code,0,result)
+        self.assertTrue(self.fx.alive('bystander'))
 
     def test_ambiguous_declined_and_changed_preview_do_not_launch_actor(self):
         self.fx.start("pair.one")

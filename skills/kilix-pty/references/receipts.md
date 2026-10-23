@@ -16,8 +16,10 @@ qualifier, to `kilix pty end --selector-json JSON --operation-id KEY --yes --jso
 Never convert a reference to a chosen exact ID. Only the broker counts candidates;
 ambiguity or unknown facts end none. Resolve is a read-only preview; end re-evaluates.
 Caller context is from the environment and unauthenticated. Own, missing and
-malformed caller identities refuse. Retry a retained key unchanged to read its
-outcome; do not automatically create another key. Unsupported dynamic descriptions refuse.
+malformed caller identities refuse. Reconcile uncertainty with reads, not an
+automatic action retry. An identical retained-key replay only retrieves its
+recorded outcome; it cannot renew authority or authorize another send.
+Unsupported dynamic descriptions refuse.
 
 
 `kilix pty kill ID --yes --expect-started MILLIS --json` returns `result`, `id`, `request_sent`, `reason`, `message`:
@@ -25,7 +27,7 @@ outcome; do not automatically create another key. Unsupported dynamic descriptio
 | result | exit | meaning |
 | --- | --- | --- |
 | `verified_absent` | 0 | terminated, then that session's `status` shows it gone, or shows a different `started_millis` (a replacement); never inferred from a listing |
-| `uncertain` | 1 | re-list before retrying; `request_sent` says whether anything was sent |
+| `uncertain` | 1 | reconcile with reads; no automatic retry; `request_sent` says whether anything was sent |
 | `refused` | 3 | `caller_unidentified` (no `KITTY_PTY_BROKER_SESSION`: stop and report), `own_session`, `started_mismatch` (another session now has the ID), `cannot_bind` (an old broker cannot check the identity; nothing was done) or `declined` |
 | `not_found` | 4 | no such session; nothing was sent |
 

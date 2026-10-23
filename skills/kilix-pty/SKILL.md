@@ -33,7 +33,9 @@ whitespace. No shell parsing or inference about the current process.
 
 New ends require operation_id. Retained keys bind selector, captured environment
 caller/runtime and resolved incarnation; refusals are retained too.
-Retry the same key to read its outcome; do not invent another key to retry uncertainty.
+Reconcile uncertainty with read-only inspection; never automatically retry an action.
+An identical retained-key replay retrieves its recorded outcome; it cannot renew
+authority or authorize another send. Do not invent another key to retry uncertainty.
 The echo says source=environment, authenticated=false. It does not authenticate
 original user intent: fabricated exact selectors remain a provenance limitation.
 
@@ -46,3 +48,9 @@ use only its exact accepted forms.
 
 Read [references/receipts.md](references/receipts.md) for receipts and the selector contract.
 The request route is for structured clients; agents do not need it.
+
+In the constrained successor, this skill and its receipt reference are frozen at
+`/tools/kilix-pty/`. Also read `/tools/PTY-GUIDANCE.txt` for its declared capability
+changes. Only trusted original selection can authorize an end; flags do not.
+Pane reads require the supervisor's explicit owned-pane read admission and return
+sampled data, never new end authority. Missing or changed mappings remain unknown.

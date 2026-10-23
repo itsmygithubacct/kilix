@@ -37,6 +37,27 @@ MAX_OUTPUT = 65536
 MAX_CALLS = 64
 
 
+def runtime_assets():
+    """Preflight and identify the trusted host-side renderer, not an actor mount."""
+    source = Path(__file__).resolve().parent.parent / 'third_party/kilix-transcript-clean/src/kilix_transcript_clean'
+    hashes = {}
+    for name in ('__init__.py', '__main__.py', 'providers.py', 'screen.py', 'sources.py', 'stitch.py'):
+        path = source / name
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            with os.fdopen(fd, 'rb') as stream:
+                info = os.fstat(stream.fileno())
+                if not stat.S_ISREG(info.st_mode) or info.st_size > 4 * 1024 * 1024:
+                    raise ValueError('unbounded renderer dependency')
+                data = stream.read(4 * 1024 * 1024 + 1)
+            if len(data) > 4 * 1024 * 1024:
+                raise ValueError('unbounded renderer dependency')
+        except OSError:
+            raise ValueError('missing trusted transcript-clean dependency; materialize the pinned submodule') from None
+        hashes[name] = hashlib.sha256(data).hexdigest()
+    return hashes
+
+
 def read_line(fd, timeout=300, limit=8192):
     """No buffered read-ahead across the user-selection/revocation boundary."""
     deadline = time.monotonic() + timeout
@@ -88,6 +109,8 @@ def raw_request(controller, broker, request, issued, argv):
     if not isinstance(argv, list) or not argv or len(argv) > 8 or any(type(x) is not str for x in argv):
         raise ValueError("invalid broker argv")
     verb, *args = argv
+    if verb in ("journals", "pane"):
+        return controller.read_cli(argv)
     if verb == "kill":
         if not issued["issued"]:
             return {"code": 3, "receipt": {"result": "refused", "reason": "authority_required"}}
@@ -124,6 +147,8 @@ def dispatch(controller, broker, request, issued, message):
         return {"code": code, "receipt": receipt}
     if set(message) == {"route", "argv"} and message["route"] == "broker":
         return raw_request(controller, broker, request, issued, message["argv"])
+    if set(message) == {"route", "argv"} and message["route"] == "host_read":
+        return controller.read_cli(message["argv"])
     raise ValueError("no issuance, revocation or arbitrary command route is exposed")
 
 
@@ -225,6 +250,11 @@ def sandbox_argv(root, actor, caller, needle_source=None, model_channel=None):
     argv += ["--ro-bind", str(client.with_name("kilix_pty_host_client.py")), "/tools/kilix"]
     argv += ["--ro-bind", str(snapshot_client(source / "pty_actor_guidance.txt", root)),
              "/tools/PTY-GUIDANCE.txt"]
+    skill = source.parent / "skills/kilix-pty"
+    argv += ["--dir", "/tools/kilix-pty", "--dir", "/tools/kilix-pty/references",
+             "--ro-bind", str(snapshot_client(skill / "SKILL.md", root)), "/tools/kilix-pty/SKILL.md",
+             "--ro-bind", str(snapshot_client(skill / "references/receipts.md", root)),
+             "/tools/kilix-pty/references/receipts.md"]
     if needle_source is not None:
         # Only the reviewed PTY client surface; no controller implementation,
         # launcher, user home, storage, model weights or credentials are mounted.
@@ -439,6 +469,8 @@ def main(argv=None):
     parser.add_argument("--model-channel", type=Path)
     parser.add_argument("--model-deadline", type=float, help="trusted shared monotonic work deadline; never actor input")
     parser.add_argument("--read-only", action="store_true", help="launch without any end authority")
+    parser.add_argument("--owned-pane", type=int, action="append", default=[],
+                        help="trusted owned-pane read admission; repeat for each fixture pane, never actor input")
     args = parser.parse_args(argv)
     if not math.isfinite(args.lifetime) or not 0 < args.lifetime <= 60:
         parser.error("lifetime must be positive and at most 60 seconds")
@@ -446,6 +478,11 @@ def main(argv=None):
     controller = authority.Controller(broker, str(args.state.resolve()))
     result = {"schema": "kilix.pty.supervisor/v1", "issued": False, "read_only": args.read_only}
     try:
+        result['runtime_asset_sha256'] = runtime_assets()
+        if args.owned_pane:
+            from kilix_pty_pane_lookup import PaneLookup
+            controller._pane_lookup = PaneLookup(args.owned_pane)
+        result['owned_pane_read_admission'] = sorted(set(args.owned_pane))
         # No stdin fallback or caller-supplied descriptor: the trusted launcher's
         # controlling terminal is a separate channel never inherited by the actor.
         fd = os.open("/dev/tty", os.O_RDWR | os.O_CLOEXEC | os.O_NOCTTY)
