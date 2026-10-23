@@ -158,3 +158,64 @@ before it starts. The test suite includes successful selector, R1-facade and
 Needle ends, read-only behavior, ambiguity/decline/changed-preview refusal,
 stale/mismatched/expired authority, separate user revocation and owned sandbox
 cleanup. It does not run a model or certify final release acceptance.
+
+
+## Model180 private integration profile
+
+`--profile model180 --model-channel PATH` mounts one trusted per-case inference
+socket at `/run/model.sock`. The socket must be owned by the launcher UID, mode
+0600, inside an owned0700 directory; symlinks, non-sockets and permissive modes
+refuse. The fixture profile cannot expose this endpoint. The model profile gives
+the actor185 wall seconds,512 MiB address space and30 CPU seconds per process.
+The extra five wall seconds are execution/cleanup allowance, not additional model
+or grant time. Per-process limits do not establish aggregate resource containment.
+Output, dispatch-call and descriptor bounds remain unchanged. Client dependency
+files are snapshotted before launch; their hashes are included in the report.
+System binaries/libraries/kernel remain trusted platform dependencies.
+
+The trusted gateway owns one180-second monotonic model deadline covering all
+provider work and connections. It binds the case, original user text, route
+guidance and registered model configuration outside actor control. It accepts only
+inference requests, never executes model-selected host commands, and keeps account
+credentials outside actor mounts/environment/FDs. Every returned command or tool
+call executes inside the actor namespace. A private socket is not by itself proof
+that a provider obeys these requirements: its exact implementation and process
+boundary require independent review. The supervisor validates/mounts the endpoint;
+it does not implement or authenticate a live account provider.
+
+The coordinated model protocol is one UTF-8 LF-delimited JSON request/reply per
+connection,262144 bytes including LF in each direction, exact envelope keys and
+sequence0..63 in order with at most64 requests and one concurrent request per case.
+Request: `schema=kilix.measured.model-request/v1`, `sequence`, `tool_results` array
+(sequence0 empty). Reply: `schema=kilix.measured.model-response/v1`, same sequence,
+`kind=action|final|refused`, opaque `payload`. The gateway must reject duplicate
+keys, nonfinite values, malformed/partial/oversized frames and sequence replay;
+it must enforce its single deadline rather than resetting time on each request.
+Lost replies, disconnect and EOF do not retry or reissue. Model-start, usage and
+completion telemetry comes from the trusted gateway, never actor output. These
+are requirements on the separately reviewed gateway, not guarantees of mounting.
+
+Issue once from the direct user's original selection BEFORE actor startup.
+Launch/model latency consumes the default30-second, maximum60-second grant.
+The registered180-second model turn does not renew or extend it. Expired actions
+remain explicit refused outcomes for independent grading. The bounded fake-provider
+fixtures demonstrate this distinction without making a real model call. Existing
+account/model selection is unchanged; live adapter, usage/resource admission,
+final protocol and campaign freeze remain separate obligations.
+
+## Successor discovery and guidance
+
+R6-controlled runs two actual stdio servers: `kilix-needle mcp --tools all` for
+full-menu discovery and a separate `--tools pty` server for PTY actions. The full
+server retains its actual tools/list schemas and descriptions; PTY tools are not
+in that menu. EVERY tools/call on the full discovery server returns an explicit
+capability_unavailable error before invoking a backend. The frozen actor notice
+at `/tools/PTY-GUIDANCE.txt` explains that restriction. This is an intentionally
+changed capability surface, not historical R6 equivalence or inherited G3 credit.
+
+`kilix pty help` and `kilix-needle pty --help` discover the actual constrained
+clients. The same immutable mounted guidance supplies the proposed R8 successor
+instructions; measured still owns the exact route-specific rendered skill and
+prompt bindings. Visibility of selection.json and the new guidance changes task
+assistance and must be recorded. Per-route fixture success is not campaign or
+installed-artifact admission.

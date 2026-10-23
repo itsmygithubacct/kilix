@@ -15,7 +15,7 @@ def main(argv):
     if argv in ([], ["help"], ["--help"]):
         print("Constrained successor: pty resolve|end --selector-json JSON [--operation-id KEY] --json; "
               "pty request --request-json -|FILE. User-issued original selection required. "
-              "No raw administrative operations. No CLI flag issues authority.")
+              "No raw administrative operations. No CLI flag issues authority. See /tools/PTY-GUIDANCE.txt.")
         return 0
     # Only supplies standard validation-failure envelopes; never used for transport.
     broker = pty.Broker("/unavailable", "/unavailable", "0.3", 5)

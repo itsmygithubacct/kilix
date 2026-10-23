@@ -7,6 +7,7 @@ argument exists. The actor never inherits that terminal or the issuance channel.
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
 import json
 import math
@@ -140,7 +141,21 @@ def snapshot_client(source, root):
     return destination
 
 
-def sandbox_argv(root, actor, caller, needle_source=None):
+def model_endpoint(path):
+    """Only an explicit trusted per-case inference endpoint; never actor supplied."""
+    path = Path(path).absolute()
+    if path.resolve(strict=True) != path:
+        raise ValueError("model socket path must not contain symlinks")
+    info, parent = path.lstat(), path.parent.lstat()
+    if (not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.getuid()
+            or stat.S_IMODE(info.st_mode) != 0o600
+            or not stat.S_ISDIR(parent.st_mode) or parent.st_uid != os.getuid()
+            or stat.S_IMODE(parent.st_mode) != 0o700):
+        raise ValueError("model endpoint requires owned0700 directory and0600 socket")
+    return path
+
+
+def sandbox_argv(root, actor, caller, needle_source=None, model_channel=None):
     info = os.stat(BWRAP)
     if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
         raise ValueError("bubblewrap must be a root-owned, non-writable system executable")
@@ -163,6 +178,8 @@ def sandbox_argv(root, actor, caller, needle_source=None):
                  "kilix_pty_selector_validation.py", "kilix_pty_host_client.py"):
         argv += ["--ro-bind", str(snapshot_client(source / name, root)), "/tools/" + name]
     argv += ["--ro-bind", str(client.with_name("kilix_pty_host_client.py")), "/tools/kilix"]
+    argv += ["--ro-bind", str(snapshot_client(source / "pty_actor_guidance.txt", root)),
+             "/tools/PTY-GUIDANCE.txt"]
     if needle_source is not None:
         # Only the reviewed PTY client surface; no controller implementation,
         # launcher, user home, storage, model weights or credentials are mounted.
@@ -171,14 +188,17 @@ def sandbox_argv(root, actor, caller, needle_source=None):
                      "asset.py", "action_cli.py", "action_backend.py"):
             argv += ["--ro-bind", str(snapshot_client(needle_source / name, root)), "/tools/" + name]
         argv += ["--ro-bind", str(root / "clients/pty_controller_client.py"), "/tools/kilix-needle"]
+    if model_channel is not None:
+        argv += ["--ro-bind", str(model_endpoint(model_channel)), "/run/model.sock"]
     return argv + ["/usr/bin/python3", "-I", "/actor.py"]
 
 
-def limits():
+def limits(profile="fixture"):
     # Local bounded actor fixtures, not a model-weight runtime or a DoS proof.
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-    resource.setrlimit(resource.RLIMIT_AS, (256 * 1024 * 1024,) * 2)
-    resource.setrlimit(resource.RLIMIT_CPU, (5, 5))
+    memory, cpu = (512 * 1024 * 1024, 30) if profile == "model180" else (256 * 1024 * 1024, 5)
+    resource.setrlimit(resource.RLIMIT_AS, (memory,) * 2)
+    resource.setrlimit(resource.RLIMIT_CPU, (cpu,) * 2)
     resource.setrlimit(resource.RLIMIT_FSIZE, (1024 * 1024,) * 2)
     resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))
 
@@ -204,8 +224,13 @@ def observe_tree(pid, observations):
             pass  # Exiting observations cannot authorize a signal or a success claim.
 
 
-def run_actor(controller, broker, request, issued, actor, ui_fd, lifetime, needle_source=None):
+def run_actor(controller, broker, request, issued, actor, ui_fd, lifetime, needle_source=None,
+              *, profile="fixture", model_channel=None):
     """Actor stdout is data, never forwarded as terminal UI or interpreted as RPC."""
+    if profile not in ("fixture", "model180") or ((profile == "model180") != (model_channel is not None)):
+        raise ValueError("model180 requires a dedicated model channel; fixture has none")
+    if model_channel is not None:
+        model_channel = model_endpoint(model_channel)
     calls, output, observations = [], bytearray(), set()
     with tempfile.TemporaryDirectory(prefix="kpc-", dir="/tmp") as directory:
         root = Path(directory)
@@ -225,11 +250,12 @@ def run_actor(controller, broker, request, issued, actor, ui_fd, lifetime, needl
             listener.bind(str(root / "dispatch.sock"))
             os.chmod(root / "dispatch.sock", 0o600)
             listener.listen(4)
-            argv = sandbox_argv(root, root / "actor.py", broker.caller["id"] or "", needle_source)
+            argv = sandbox_argv(root, root / "actor.py", broker.caller["id"] or "", needle_source, model_channel)
             process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                       stderr=subprocess.STDOUT, close_fds=True, preexec_fn=limits)
+                                       stderr=subprocess.STDOUT, close_fds=True, preexec_fn=functools.partial(limits, profile))
             observe_tree(process.pid, observations)
-            deadline = time.monotonic() + min(lifetime + 5, 65)
+            wall_seconds = 185 if profile == "model180" else min(lifetime + 5, 65)
+            deadline = time.monotonic() + wall_seconds
             stop = "actor_exited"
             try:
                 tell(ui_fd, 'ACTOR_RUNNING; type REVOKE and Enter to revoke authority.')
@@ -310,6 +336,8 @@ def run_actor(controller, broker, request, issued, actor, ui_fd, lifetime, needl
             outcome = ("verified_absent" if any(row["result"] == "verified_absent" for row in end_receipts)
                        else end_receipts[-1]["result"] if end_receipts else "not_requested")
             return {"stop": stop, "actor_exit": process.returncode, "calls": calls,
+                    "profile": profile, "actor_wall_seconds": wall_seconds,
+                    "model_channel_exposed": model_channel is not None,
                     "operation_outcome": outcome,
                     "cleanup_observations": cleanup,
                     "actor_output": bytes(output[:MAX_OUTPUT]).decode("utf-8", errors="replace"),
@@ -327,6 +355,8 @@ def main(argv=None):
     parser.add_argument("--actor", required=True, type=Path)
     parser.add_argument("--needle-source", type=Path)
     parser.add_argument("--lifetime", type=float, default=30)
+    parser.add_argument("--profile", choices=("fixture", "model180"), default="fixture")
+    parser.add_argument("--model-channel", type=Path)
     parser.add_argument("--read-only", action="store_true", help="launch without any end authority")
     args = parser.parse_args(argv)
     if not math.isfinite(args.lifetime) or not 0 < args.lifetime <= 60:
@@ -346,7 +376,8 @@ def main(argv=None):
             result.update(issued=issued["issued"], selection=issued)
             if issued["issued"] or args.read_only:
                 result.update(run_actor(controller, broker, request, issued, args.actor, fd,
-                                        args.lifetime, args.needle_source.resolve() if args.needle_source else None))
+                                        args.lifetime, args.needle_source.resolve() if args.needle_source else None,
+                                        profile=args.profile, model_channel=args.model_channel))
         finally:
             os.close(fd)
     except (OSError, ValueError, legacy.Refusal) as error:

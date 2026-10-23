@@ -6,6 +6,8 @@ from pathlib import Path
 import pty as terminal_pty
 import select
 import subprocess
+import socket
+import threading
 import sys
 import termios
 import time
@@ -22,7 +24,7 @@ class SupervisorTests(unittest.TestCase):
     setUp = fixtures.SelectorEnds.setUp
     tearDown = fixtures.SelectorEnds.tearDown
 
-    def launch(self, actor, selector, *, lifetime=5, confirm=True, after_preview=None, revoke=False, revoke_after_request=False, via_launcher=False, read_only=False):
+    def launch(self, actor, selector, *, lifetime=5, confirm=True, after_preview=None, revoke=False, revoke_after_request=False, via_launcher=False, read_only=False, model_channel=None):
         script = self.fx.root / "actor.py"
         script.write_text(actor)
         master, slave = terminal_pty.openpty()
@@ -51,6 +53,8 @@ class SupervisorTests(unittest.TestCase):
                    "KITTY_PTY_BROKER_RUNTIME": str(self.fx.runtime),
                    "KITTY_PTY_BROKER_SESSION": "caller_unrelated",
                    "XDG_RUNTIME_DIR": str(self.fx.root / "xdg")}
+        if model_channel is not None:
+            command += ["--profile", "model180", "--model-channel", str(model_channel)]
         process = subprocess.Popen(command, stdin=slave, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                    preexec_fn=user_terminal, env=env)
         os.close(slave)
@@ -183,6 +187,105 @@ print('Needle isolated positive')
         self.assertEqual(code, 0, result)
         self.assertFalse(self.fx.alive("selected"))
 
+    def test_model_profile_fake_provider_action_stays_isolated_and_expires(self):
+        self.fx.start("bystander")
+        for expired in (False, True):
+            with self.subTest(expired=expired):
+                target = "delayed" if expired else "prompt"
+                self.fx.start(target)
+                directory = self.fx.root / target
+                directory.mkdir(mode=0o700)
+                channel = directory / "model.sock"
+                credential = directory / "credential"
+                credential.write_text("owned fake provider canary; never sent")
+                errors, requests = [], []
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+                    listener.bind(str(channel))
+                    channel.chmod(0o600)
+                    listener.listen(1)
+                    listener.settimeout(8)
+                    def provider():
+                        try:
+                            for sequence in range(2):
+                                with listener.accept()[0] as connection:
+                                    connection.settimeout(4)
+                                    with connection.makefile('rb') as stream:
+                                        message = json.loads(stream.readline(262145))
+                                    requests.append(message)
+                                    assert message['sequence'] == sequence
+                                    assert message['schema'] == 'kilix.measured.model-request/v1'
+                                    if expired and sequence == 0:
+                                        time.sleep(.35)
+                                    payload = {'argv':['/usr/bin/python3','-c',
+                                        "import json,sys; sys.path.insert(0,'/tools'); "
+                                        "from kilix_pty_agent_client import RemoteController; "
+                                        "s=json.load(open('/run/selection.json'))['request']; "
+                                        "print(json.dumps(RemoteController().dispatch(s)))"]} if sequence == 0 else 'done'
+                                    reply = {'schema':'kilix.measured.model-response/v1','sequence':sequence,
+                                             'kind':'action' if sequence == 0 else 'final','payload':payload}
+                                    connection.sendall(json.dumps(reply).encode()+b'\n')
+                        except Exception as error:
+                            errors.append(repr(error))
+                    thread = threading.Thread(target=provider, daemon=True)
+                    thread.start()
+                    actor = r'''import json,os,resource,socket,subprocess
+assert not os.path.exists(CREDENTIAL)
+assert not os.path.exists('/proc/1/root'+CREDENTIAL)
+assert resource.getrlimit(resource.RLIMIT_AS) == (536870912,536870912)
+assert resource.getrlimit(resource.RLIMIT_CPU) == (30,30)
+results = []
+for sequence in range(2):
+    with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as connection:
+        connection.settimeout(5)
+        connection.connect('/run/model.sock')
+        connection.sendall(json.dumps({'schema':'kilix.measured.model-request/v1','sequence':sequence,'tool_results':results}).encode()+b'\n')
+        with connection.makefile('rb') as stream:
+            response = json.loads(stream.readline(262145))
+    if response['kind'] == 'action':
+        p = subprocess.run(response['payload']['argv'],capture_output=True,text=True)
+        assert p.returncode == 0, p.stderr
+        code, receipt = json.loads(p.stdout)
+        assert receipt['reason'] == 'authority_expired' if EXPIRED else receipt['result'] == 'verified_absent', receipt
+        results = [{'code':code,'receipt':receipt}]
+    else:
+        assert response['kind'] == 'final'
+print(json.dumps(results))
+'''
+                    try:
+                        result, code = self.launch(f"EXPIRED={expired!r}\nCREDENTIAL={str(credential)!r}\n"+actor,
+                                                   {'id':target}, lifetime=.15 if expired else 5,
+                                                   model_channel=channel, via_launcher=True)
+                    finally:
+                        thread.join(timeout=9)
+                    self.assertFalse(thread.is_alive())
+                    self.assertFalse(errors, errors)
+                    self.assertEqual(len(requests), 2)
+                    self.assertEqual(result['actor_wall_seconds'], 185)
+                    self.assertEqual(result['profile'], 'model180')
+                    self.assertEqual(code, 3 if expired else 0, result)
+                    self.assertEqual(self.fx.alive(target), expired)
+                    self.assertTrue(self.fx.alive('bystander'))
+
+    def test_model_endpoint_rejects_untrusted_layout(self):
+        directory = self.fx.root / 'provider'
+        directory.mkdir(mode=0o700)
+        endpoint = directory / 'model.sock'
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+            listener.bind(str(endpoint))
+            endpoint.chmod(0o600)
+            self.assertEqual(supervisor.model_endpoint(endpoint), endpoint)
+            endpoint.chmod(0o666)
+            with self.assertRaises(ValueError):
+                supervisor.model_endpoint(endpoint)
+            endpoint.chmod(0o600)
+            alias = directory / 'alias'
+            alias.symlink_to(endpoint)
+            with self.assertRaises(ValueError):
+                supervisor.model_endpoint(alias)
+            directory.chmod(0o755)
+            with self.assertRaises(ValueError):
+                supervisor.model_endpoint(endpoint)
+
     def test_actual_host_selector_and_request_cli(self):
         self.fx.start("bystander")
         for mode in ("selector", "request"):
@@ -209,12 +312,19 @@ print('actual host CLI positive')
         if not os.environ.get("SELECTOR_NEEDLE_SOURCE"):
             self.skipTest("SELECTOR_NEEDLE_SOURCE required")
         self.fx.start("bystander")
-        for mode in ("grammar", "mcp"):
+        for mode in ("grammar", "mcp", "mcp_pair", "help", "guidance"):
             with self.subTest(mode=mode):
                 self.fx.start(mode)
                 actor = r'''import json, subprocess
 s = json.load(open('/run/selection.json'))['request']
-if MODE == 'grammar':
+if MODE in ('help', 'guidance'):
+    if MODE == 'help':
+        help = subprocess.run(['kilix-needle','pty','--help'],capture_output=True,text=True)
+        assert help.returncode == 0 and 'selector' in help.stdout, help
+    else:
+        guidance = open('/tools/PTY-GUIDANCE.txt').read()
+        assert 'Never convert a reference to a chosen exact ID.' in guidance
+if MODE in ('grammar', 'help', 'guidance'):
     read = subprocess.run(['kilix-needle','pty','list sessions'],capture_output=True,text=True)
     assert read.returncode == 0, read.stdout + read.stderr
     text = 'end selector ' + json.dumps(s['selector']) + ' operation ' + s['operation_id']
@@ -222,6 +332,20 @@ if MODE == 'grammar':
     assert p.returncode == 0, p.stdout + p.stderr
     assert json.loads(p.stdout)['result']['result'] == 'verified_absent'
 else:
+    if MODE == 'mcp_pair':
+        init = {'jsonrpc':'2.0','id':1,'method':'initialize'}
+        listing = {'jsonrpc':'2.0','id':2,'method':'tools/list'}
+        p = subprocess.run(['kilix-needle','mcp','--tools','all'],input=json.dumps(init)+'\n'+json.dumps(listing)+'\n',capture_output=True,text=True)
+        assert p.returncode == 0, p.stderr
+        menu = [json.loads(line) for line in p.stdout.splitlines()]
+        tools = menu[1]['result']['tools']
+        assert len(tools) > 3 and not any(t['name'].startswith('kilix_pty_') for t in tools), menu
+        attempts = [{'jsonrpc':'2.0','id':i+1,'method':'tools/call','params':{'name':t['name'],'arguments':{}}} for i,t in enumerate(tools)]
+        denied = subprocess.run(['kilix-needle','mcp','--tools','all'],input=''.join(json.dumps(m)+'\n' for m in attempts),capture_output=True,text=True)
+        assert denied.returncode == 0, denied.stderr
+        rows = [json.loads(line) for line in denied.stdout.splitlines()]
+        assert len(rows) == len(tools) and all(r['result']['structuredContent']['refused'] == 'capability_unavailable' for r in rows), rows
+        print(json.dumps({'discovery_exchanges': menu, 'refusal_exchanges': rows}))
     action = {'operation':'end','selector':s['selector'],'operation_id':s['operation_id']}
     messages = [
       {'jsonrpc':'2.0','id':1,'method':'initialize','params':{'protocolVersion':'2025-06-18'}},
@@ -238,6 +362,8 @@ else:
     assert rows[2]['result']['structuredContent']['status'] == 0, rows
     assert rows[3]['result']['structuredContent']['result']['result'] == 'verified_absent', rows
     assert rows[4]['error']['code'] == -32602, rows
+    if MODE == 'mcp_pair':
+        print(json.dumps({'pty_exchanges': rows}))
 print('actual grammar/MCP positive')
 '''
                 result, code = self.launch(f"MODE={mode!r}\n" + actor, {"id": mode})
