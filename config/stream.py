@@ -793,7 +793,12 @@ class StreamSupervisor:
             # entirely where the desktop paints its own pointer instead.
             argv.append("-nocursor")
         logf = _private_open(os.path.join(self.runtime_dir, f"xvfb-{n}.log"), "wb")
-        p = self.spawn(f"xvfb-{n}", argv, stdout=logf, stderr=logf)
+        # A pane hangup targets its process group. Xvfb handles SIGHUP by
+        # resetting clients rather than exiting, which can terminate native
+        # Xlib clients before their Python cleanup runs and strand the server.
+        # Keep the display outside that group; the supervisor owns its stop.
+        p = self.spawn(f"xvfb-{n}", argv, stdout=logf, stderr=logf,
+                       start_new_session=True)
         if not self._wait_x(n):
             raise RuntimeError("kilix: Xvfb did not come up")
         return p

@@ -43,6 +43,7 @@ drift; with --size or broadcast tiers (--serve/--hls/--mse/--webrtc) the
 X screen size stays fixed at startup — those pane resizes rescale the
 picture instead of resizing the app.
 """
+from contextlib import ExitStack
 import json
 import os
 import select
@@ -1111,6 +1112,33 @@ class AppPane:
         if self.ffbuf:
             del self.ffbuf[:]
 
+    def _cleanup(self):
+        # A closed pane can make terminal restoration raise EIO. Register
+        # every owned cleanup first so that output failures cannot strand
+        # the private display or its application processes. ExitStack keeps
+        # errors visible while still attempting every remaining cleanup.
+        with ExitStack() as cleanup:
+            if self.xapp is not None:
+                cleanup.callback(self.xapp.close)
+            cleanup.callback(self._stop_capture)
+            if self.presenter is not None:
+                cleanup.callback(self.presenter.close)
+            if self.term:
+                cleanup.callback(self.term.restore)
+            if self.dnd is not None:
+                try:
+                    self.dnd.close()
+                except (OSError, xerror.ConnectionClosedError):
+                    pass
+                finally:
+                    self.dnd = None
+            inj = getattr(self, "inj", None)
+            if inj is not None:
+                try:
+                    inj.release_all()    # never exit with a key held down
+                except Exception:
+                    pass
+
     def run(self):
         if self.term:
             signal.signal(signal.SIGWINCH,
@@ -1225,26 +1253,7 @@ class AppPane:
         except Exception as e:
             err = f"{type(e).__name__}: {e}"
         finally:
-            if self.dnd is not None:
-                try:
-                    self.dnd.close()
-                except (OSError, xerror.ConnectionClosedError):
-                    pass
-                finally:
-                    self.dnd = None
-            inj = getattr(self, "inj", None)
-            if inj is not None:
-                try:
-                    inj.release_all()    # never exit with a key held down
-                except Exception:
-                    pass
-            if self.term:
-                self.term.restore()
-            if self.presenter is not None:
-                self.presenter.close()
-            self._stop_capture()
-            if self.xapp is not None:
-                self.xapp.close()
+            self._cleanup()
         if err:
             print(f"kilix run: {err}", file=sys.stderr)
             sys.exit(1)
