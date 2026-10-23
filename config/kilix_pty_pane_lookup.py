@@ -128,7 +128,9 @@ class PaneLookup:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise LookupFailure('pane_lookup_timeout')
-            broker.timeout = str(max(.1, min(remaining, 5)))
+            # Native parse_timeout bounds decimal precision; Python's arbitrary
+            # float repr can exceed it and turn an available session into error.
+            broker.timeout = format(max(.1, min(remaining, 5)), '.6f')
             code, raw, _ = broker.call('status', ident, '--json')
             if code != 0:
                 raise LookupFailure('pane_session_unavailable')

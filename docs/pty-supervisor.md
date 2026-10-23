@@ -278,3 +278,10 @@ limitations; mapping never substitutes a resolved ID into original end authority
 The caller must independently retain ownership evidence for admitted pane IDs.
 Synthetic parser tests do not qualify T4: actual owned-pane creation, native
 metadata, and confined client roundtrips on the exact final tuple remain required.
+
+The public launcher preserves the initially inherited trusted pane credential
+path specifically for `pty supervise`; routine local frontend setup must not
+replace it with a credential for a different frontend. The lookup still checks
+ownership/mode/link count and never mounts that file into the actor. Its native
+broker timeout uses bounded decimal precision accepted by the pinned broker;
+a high-precision float string is not passed as a native timeout argument.

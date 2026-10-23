@@ -77,6 +77,11 @@
 set -euo pipefail
 umask 077
 
+# The supervisor's explicit owned-pane reads use the trusted launcher's frontend.
+# Later local config initialization may prepare a DIFFERENT frontend credential.
+# Preserve only the inherited path, never its contents, for this trusted entrypoint.
+_KILIX_SUPERVISOR_RC_PASSWORD_FILE="${KILIX_RC_PASSWORD_FILE:-}"
+
 # Resolve symlinks so `ln -s .../kilix ~/.local/bin/kilix` still finds the project.
 _self="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 KILIX_HOME="$(cd "$(dirname "$_self")" && pwd)"
@@ -651,6 +656,7 @@ _kilix_pty_cli() {
       [ -z "$tvalue" ] || { echo "kilix pty: supervise uses its fixed broker budget" >&2; return 2; }
       broker="$(_kilix_pty_broker_path)" || return 1
       runtime="$(_kilix_resolve_pty_broker_runtime)" || return 1
+      KILIX_RC_PASSWORD_FILE="${_KILIX_SUPERVISOR_RC_PASSWORD_FILE:-$KILIX_RC_PASSWORD_FILE}" \
       python3 "$KILIX_HOME/config/kilix_pty_supervisor.py" \
         --broker "$broker" --runtime "$runtime" --state "$KILIX_STATE_DIRECTORY" "$@" ;;
     resolve|end)

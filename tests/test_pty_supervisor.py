@@ -26,7 +26,7 @@ class SupervisorTests(unittest.TestCase):
     setUp = fixtures.SelectorEnds.setUp
     tearDown = fixtures.SelectorEnds.tearDown
 
-    def launch(self, actor, selector, *, lifetime=5, confirm=True, after_preview=None, revoke=False, revoke_after_request=False, via_launcher=False, read_only=False, model_channel=None, model_deadline=None):
+    def launch(self, actor, selector, *, lifetime=5, confirm=True, after_preview=None, revoke=False, revoke_after_request=False, via_launcher=False, read_only=False, model_channel=None, model_deadline=None, owned_panes=(), launch_env=None):
         script = self.fx.root / "actor.py"
         script.write_text(actor)
         master, slave = terminal_pty.openpty()
@@ -41,7 +41,7 @@ class SupervisorTests(unittest.TestCase):
             command += ["--needle-source", needle]
         if read_only:
             command.append("--read-only")
-        env = self.fx.env
+        env = dict(self.fx.env)
         if via_launcher:
             command = ["bash", str(ROOT / "kilix"), "pty", "supervise", "--actor", str(script),
                        "--lifetime", str(lifetime)]
@@ -55,6 +55,9 @@ class SupervisorTests(unittest.TestCase):
                    "KITTY_PTY_BROKER_RUNTIME": str(self.fx.runtime),
                    "KITTY_PTY_BROKER_SESSION": "caller_unrelated",
                    "XDG_RUNTIME_DIR": str(self.fx.root / "xdg")}
+        env.update(launch_env or {})
+        for pane_id in owned_panes:
+            command += ['--owned-pane', str(pane_id)]
         if model_channel is not None:
             command += ["--profile", "model180", "--model-channel", str(model_channel),
                         "--model-deadline", str(model_deadline if model_deadline is not None else time.monotonic()+180)]
@@ -443,6 +446,7 @@ print(json.dumps({'live_last_line':plain['text'].splitlines()[-1], 'help_used':T
         self.assertEqual(code, 0, result)
         self.assertEqual(len(result['runtime_asset_sha256']), 6)
         self.assertTrue(self.fx.alive('bystander'))
+
         # Actual output is archived by the real reaper, never fabricated files.
         handles = [os.pidfd_open(self.fx.started['read-live'][key]) for key in ('broker_pid','child_pid')]
         try:
@@ -480,6 +484,43 @@ for argv in (['kilix','pty','journals','--json'],['kitty-pty-broker','journals',
         result, code = self.launch(archived, None, read_only=True)
         self.assertEqual(code,0,result)
         self.assertTrue(self.fx.alive('bystander'))
+
+    def test_launcher_preserves_trusted_pane_credential_path_without_actor_access(self):
+        # Refusal-only transport fixture, NOT an actual T4 positive mapping.
+        password = self.fx.root / 'fixture-pane-password'
+        password.write_text('owned inert credential canary')
+        password.chmod(0o600)
+        client = self.fx.root / 'fixture-kitten'
+        client.write_text('#!/usr/bin/python3\nimport sys\nassert sys.argv[1:] == '+
+                          repr(['@','--password-file',str(password),'ls'])+'\nprint("[]")\n')
+        client.chmod(0o700)
+        actor = '''import json,os,sys
+sys.path.insert(0,'/tools')
+from kilix_pty_agent_client import call
+assert not os.path.exists(PASSWORD)
+reply = call({'route':'read','request':{'schema':'kilix.pty.request/v1','verb':'pane','args':{'pane_id':7}}})
+assert reply['code'] == 4 and reply['receipt']['reason'] == 'pane_not_found', reply
+print(json.dumps(reply))
+'''
+        result, code = self.launch('PASSWORD='+repr(str(password))+'\n'+actor,None,read_only=True,
+                                  via_launcher=True,owned_panes=(7,),
+                                  launch_env={'KILIX_KITTEN':str(client),'KILIX_RC_PASSWORD_FILE':str(password)})
+        self.assertEqual(code,0,result)
+
+    def test_pane_timeout_serialization_reaches_native_status(self):
+        # Transport regression only: mocked mapping is NOT actual T4 coverage.
+        import kilix_pty_pane_lookup
+        self.fx.start('read-status')
+        lookup = kilix_pty_pane_lookup.PaneLookup.__new__(kilix_pty_pane_lookup.PaneLookup)
+        lookup.owned = frozenset({7})
+        for timeout in ('.3','5'):
+            self.broker.timeout = timeout
+            with self.subTest(timeout=timeout), mock.patch.object(lookup,'snapshot',return_value='read-status'):
+                code, document = lookup.lookup(7,self.broker)
+                self.assertEqual(code,0,document)
+                self.assertEqual(document['started_millis'],self.fx.started['read-status']['started_millis'])
+                self.assertEqual(self.broker.timeout,timeout)
+        self.assertTrue(self.fx.alive('read-status'))
 
     def test_ambiguous_declined_and_changed_preview_do_not_launch_actor(self):
         self.fx.start("pair.one")
