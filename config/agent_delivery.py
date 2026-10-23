@@ -275,23 +275,29 @@ class Ledger:
             if self.target is None or not MESSAGE_ID.fullmatch(message_id):
                 raise ControlError("invalid same-target delivery receipt lookup")
             name = self.target + "-" + hashlib.sha256(message_id.encode()).hexdigest() + ".json"
-        try:
-            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
-                         dir_fd=self.fd)
-        except FileNotFoundError:
-            return None
-        with os.fdopen(fd, "rb") as stream:
-            info = os.fstat(stream.fileno())
-            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
-                    or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) != 0o600):
-                raise ControlError("delivery receipt must be a private owned regular file")
-            raw = stream.read(self.limit + 1)
-            if len(raw) > self.limit:
-                raise ControlError("delivery receipt exceeds its size limit")
-            record = json.loads(raw, object_pairs_hook=unique_object)
-            if not isinstance(record, dict):
-                raise ControlError("invalid delivery receipt")
-            return record
+        for _ in range(5):
+            try:
+                fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                             dir_fd=self.fd)
+            except FileNotFoundError:
+                return None
+            with os.fdopen(fd, "rb") as stream:
+                info = os.fstat(stream.fileno())
+                if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                        or info.st_nlink > 1 or stat.S_IMODE(info.st_mode) != 0o600):
+                    raise ControlError("delivery receipt must be a private owned regular file")
+                if info.st_nlink == 0:
+                    # A writer may replace the file between open and fstat.
+                    # Reopen and validate the current file, not the retired inode.
+                    continue
+                raw = stream.read(self.limit + 1)
+                if len(raw) > self.limit:
+                    raise ControlError("delivery receipt exceeds its size limit")
+                record = json.loads(raw, object_pairs_hook=unique_object)
+                if not isinstance(record, dict):
+                    raise ControlError("invalid delivery receipt")
+                return record
+        raise ControlError("delivery receipt changed repeatedly while reading; retry")
 
     def write(self, record):
         temporary = ".receipt-" + uuid.uuid4().hex

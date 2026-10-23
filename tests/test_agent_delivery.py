@@ -383,6 +383,52 @@ class ComposerTests(unittest.TestCase):
 
 
 
+class LedgerTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.fd = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY)
+        self.addCleanup(os.close, self.fd)
+        self.store = delivery.Ledger(self.fd, "run.json")
+        self.store.write({"status": "running"})
+
+    def replace_during_open(self, *, repeatedly=False):
+        original_open = os.open
+        replaced = False
+
+        def open_file(name, flags, *args, **kwargs):
+            nonlocal replaced
+            fd = original_open(name, flags, *args, **kwargs)
+            if name == "run.json" and (repeatedly or not replaced):
+                replaced = True
+                self.store.write({"status": "completed"})
+            return fd
+
+        return mock.patch.object(delivery.os, "open", side_effect=open_file)
+
+    def test_read_during_atomic_update_returns_a_valid_snapshot(self):
+        with self.replace_during_open():
+            self.assertEqual(self.store.read(), {"status": "completed"})
+
+    def test_continuous_replacement_fails_without_an_unbounded_retry(self):
+        with self.replace_during_open(repeatedly=True) as opened:
+            with self.assertRaisesRegex(control.ControlError, "changed repeatedly"):
+                self.store.read()
+            self.assertLess(opened.call_count, 100)
+
+    def test_read_still_rejects_shared_or_public_receipts(self):
+        path = self.root / "run.json"
+        alias = self.root / "alias.json"
+        os.link(path, alias)
+        with self.assertRaisesRegex(control.ControlError, "private owned"):
+            self.store.read()
+        alias.unlink()
+        path.chmod(0o644)
+        with self.assertRaisesRegex(control.ControlError, "private owned"):
+            self.store.read()
+
+
 class DeliveryTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
