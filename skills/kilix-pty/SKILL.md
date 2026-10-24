@@ -33,7 +33,9 @@ whitespace. No shell parsing or inference about the current process.
 
 New ends require operation_id. Retained keys bind selector, captured environment
 caller/runtime and resolved incarnation; refusals are retained too.
-Retry the same key to read its outcome; do not invent another key to retry uncertainty.
+Never automatically retry an action. Reconcile uncertainty with reads.
+For a retained receipt only: Retry the same key to read its outcome; this cannot
+renew authority or authorize another send. Do not invent another key.
 The echo says source=environment, authenticated=false. It does not authenticate
 original user intent: fabricated exact selectors remain a provenance limitation.
 
@@ -46,3 +48,6 @@ use only its exact accepted forms.
 
 Read [references/receipts.md](references/receipts.md) for receipts and the selector contract.
 The request route is for structured clients; agents do not need it.
+
+Constrained actor: read `/tools/PTY-GUIDANCE.txt`. Pane data requires trusted
+owned-pane admission; it never issues end authority.

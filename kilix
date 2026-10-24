@@ -77,6 +77,11 @@
 set -euo pipefail
 umask 077
 
+# The supervisor's explicit owned-pane reads use the trusted launcher's frontend.
+# Later local config initialization may prepare a DIFFERENT frontend credential.
+# Preserve only the inherited path, never its contents, for this trusted entrypoint.
+_KILIX_SUPERVISOR_RC_PASSWORD_FILE="${KILIX_RC_PASSWORD_FILE:-}"
+
 # Resolve symlinks so `ln -s .../kilix ~/.local/bin/kilix` still finds the project.
 _self="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 KILIX_HOME="$(cd "$(dirname "$_self")" && pwd)"
@@ -454,12 +459,16 @@ usage: $_self pty [--timeout SECONDS] [COMMAND]
   observe ID [--from EPOCH:OFFSET]   watch read-only; Ctrl-] leaves
   observe ID --once [--from EPOCH:OFFSET] [--lines N | --bytes N] [--text] [--json]
                                bounded snapshot, no terminal needed (default 200 lines / 64 KiB)
+  marker PRINTABLE_MARKER --json  raw-byte marker order by broker observation; read-only
+  foreground ID --json        bounded current child and PTY foreground-process sample
   attach ID [--resume EPOCH:OFFSET]  take over a detached session (a terminal is required)
   kill ID --yes [--expect-started MILLIS] [--json] [--no-caller-check]
                                end a session, then verify it is gone (asks on a terminal); off a
                                terminal it refuses unless the caller's own session is known
                                (KITTY_PTY_BROKER_SESSION); only a person passes --no-caller-check
-                               Legacy exact-ID operation; selector ends below are the supported agent route.
+                               Legacy trusted administrative operation; constrained agents use supervise.
+  supervise --actor FILE [--needle-source DIR] [--lifetime SECONDS]
+                               trusted terminal selection, then isolated actor; see docs/pty-supervisor.md
   resolve --selector-json JSON|-|FILE [--json]  read-only selector preview; never a ticket
   end --selector-json JSON|-|FILE --operation-id KEY --yes [--json]
                                End a session only when the user's own message asks you to end that
@@ -643,7 +652,20 @@ _kilix_pty_cli() {
       broker="$(_kilix_pty_broker_path)" || return 1
       runtime="$(_kilix_resolve_pty_broker_runtime)" || return 1
       KILIX_KITTEN="$(_kilix_pty_kitten || true)" _kilix_pty_py request "$@" ;;
+    supervise)
+      # Trusted direct-user launch only. The supervisor opens /dev/tty itself;
+      # actor requests never enter this launch/issuance path.
+      [ -z "$tvalue" ] || { echo "kilix pty: supervise uses its fixed broker budget" >&2; return 2; }
+      broker="$(_kilix_pty_broker_path)" || return 1
+      runtime="$(_kilix_resolve_pty_broker_runtime)" || return 1
+      KILIX_RC_PASSWORD_FILE="${_KILIX_SUPERVISOR_RC_PASSWORD_FILE:-$KILIX_RC_PASSWORD_FILE}" \
+      python3 "$KILIX_HOME/config/kilix_pty_supervisor.py" \
+        --broker "$broker" --runtime "$runtime" --state "$KILIX_STATE_DIRECTORY" "$@" ;;
     resolve|end)
+      broker="$(_kilix_pty_broker_path)" || return 1
+      runtime="$(_kilix_resolve_pty_broker_runtime)" || return 1
+      _kilix_pty_py "$verb" "$@" ;;
+    marker|foreground)
       broker="$(_kilix_pty_broker_path)" || return 1
       runtime="$(_kilix_resolve_pty_broker_runtime)" || return 1
       _kilix_pty_py "$verb" "$@" ;;

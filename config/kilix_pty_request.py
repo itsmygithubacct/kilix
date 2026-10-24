@@ -59,6 +59,8 @@ EXAMPLES = {
                  "args": {"id": "3fa9c2d41b7e6a05", "max_lines": 50, "text": True}},
     "observe": {"schema": REQUEST_SCHEMA, "verb": "observe",
                 "args": {"id": "3fa9c2d41b7e6a05", "max_lines": 50, "text": True}},
+    "marker": {"schema": REQUEST_SCHEMA, "verb": "marker", "args": {"marker": "deploy-ok-419ee9"}},
+    "foreground": {"schema": REQUEST_SCHEMA, "verb": "foreground", "args": {"id": "3fa9c2d41b7e6a05"}},
     "kill": {"schema": REQUEST_SCHEMA, "verb": "kill", "operation_id": "end-1",
              "args": {"id": "3fa9c2d41b7e6a05", "expect_started_millis": 1791337517862}},
 }
@@ -81,6 +83,9 @@ VERBS = {
     "journals": ([dict(ID, note="omit to list the archive")] + BOUNDS, False),
     "observe": ([dict(ID, required=True), {"name": "from", "type": "string", "note": "cursor EPOCH:OFFSET"}] + BOUNDS,
                 False),
+    "marker": ([{"name": "marker", "type": "string", "required": True,
+                  "note": "1-128 printable non-space ASCII bytes; full live census"}], False),
+    "foreground": ([dict(ID, required=True)], False),
     "kill": ([dict(ID, required=True), dict(EXPECT)], True),
 }
 ALLOWED_ARGS = {verb: {arg["name"] for arg in args} for verb, (args, _) in VERBS.items()}
@@ -100,6 +105,7 @@ def capabilities_document(broker) -> dict:
         selector_request={"schema": "kilix.pty.request/v2", "verbs": ["resolve", "end"],
                           "selector": "exactly one of id, id_prefix, startup_words; optional attached boolean",
                           "receipt_schema": "kilix.pty.selector/v1", "end_operation_id": "required",
+                          "end_authority": "trusted controller selection; ordinary CLI/JSON end refuses",
                           "example": {"schema": "kilix.pty.request/v2", "verb": "end", "operation_id": "end-1",
                                       "selector": {"startup_words": ["sleep", "60"], "attached": False}},
                           "rules": "Preserve original references and qualifiers. Broker counts. Preview is not a ticket."
@@ -219,7 +225,13 @@ def validate(raw: bytes) -> dict:
         raise Refusal("bad_type", '"text" must be true or false', '"text": true')
     if "from" in args and not (isinstance(args["from"], str) and re.fullmatch(r"\d+:\d+", args["from"])):
         raise Refusal("bad_type", '"from" must look like EPOCH:OFFSET, from a cursor you were given', '"from": "0:28"')
-    required = {"pane": ["pane_id"], "observe": ["id"], "kill": ["id", "expect_started_millis"]}.get(verb, [])
+    if "marker" in args and (not isinstance(args["marker"], str) or
+                             not args["marker"].isascii() or not 1 <= len(args["marker"]) <= 128 or
+                             any(ord(char) < 33 or ord(char) > 126 for char in args["marker"])):
+        raise Refusal("bad_marker", "marker must be 1-128 printable non-space ASCII bytes",
+                      example_for("marker"))
+    required = {"pane": ["pane_id"], "observe": ["id"], "foreground": ["id"],
+                "marker": ["marker"], "kill": ["id", "expect_started_millis"]}.get(verb, [])
     for key in required:
         if key not in args:
             raise Refusal("missing_field", f"{verb} needs args.{key}"
@@ -469,6 +481,10 @@ def failure(broker, status, message, reason="failed", **extra):
 
 def run_verb(broker, request, state):
     verb, args = request["verb"], request.get("args", {})
+    if verb in ("marker", "foreground"):
+        import kilix_pty_semantic as semantic
+        return 0, (semantic.marker_occurrences(broker, args["marker"]) if verb == "marker"
+                   else semantic.foreground_sample(broker, args["id"]))
     if verb == "list":
         status, document, err = call(pty.cmd_list, broker, [])
     elif verb == "reaped":
@@ -721,7 +737,7 @@ def cmd_capabilities(broker, argv):
     return 0
 
 
-def cmd_request(broker, argv):
+def cmd_request(broker, argv, *, controller=None):
     yes, source, rest = False, None, list(argv)
     while rest:
         flag = rest.pop(0)
@@ -734,7 +750,7 @@ def cmd_request(broker, argv):
             break
     state = os.environ.get("KILIX_STATE_DIRECTORY", "")
     try:
-        if source is None or not state:
+        if source is None or (not state and controller is None):
             raise Refusal("usage", "usage: kilix pty request [--yes] --request-json -|FILE", heredoc())
         raw = read_request(source)
         import kilix_pty_selector as selector_api
@@ -745,7 +761,8 @@ def cmd_request(broker, argv):
         if isinstance(candidate, dict) and candidate.get("schema") == selector_api.REQUEST_SCHEMA:
             try:
                 request = selector_api.validate(selector_api.parse_json(raw))
-                status, document = selector_api.execute(broker, request, yes, state)
+                status, document = (controller.dispatch(request) if controller is not None
+                                    else selector_api.untrusted_execute(broker, request, yes, state))
             except Refusal as error:
                 verb = candidate.get("verb") if candidate.get("verb") in ("resolve", "end") else None
                 status, document = error.code, selector_api.refusal_document(
@@ -755,7 +772,10 @@ def cmd_request(broker, argv):
         request = validate(raw)
         if "timeout_seconds" in request:
             broker.timeout = format(request["timeout_seconds"], "g")
-        status, document = execute(broker, request, yes, state)
+        if controller is not None and request["verb"] == "kill":
+            raise Refusal("authority_required", "use the original selector through request v2", heredoc(), 3)
+        status, document = (controller.read(request) if controller is not None
+                            else execute(broker, request, yes, state))
     except RecursionError:
         status, document = 2, broker.envelope(result="refused", reason="not_json",
                                               request_sent=False, message="request nesting is too deep")

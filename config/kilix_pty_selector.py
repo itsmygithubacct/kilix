@@ -329,7 +329,7 @@ def verify_absence(binding):
             and process_absent(binding.get("child_pid"), binding.get("child_start_ticks")))
 
 
-def perform(broker, request, context, store, record, yes):
+def perform(broker, request, context, store, record, yes, *, before_dispatch=None):
     if not yes:
         return receipt(broker, request, context, "refused", reason="consent_required")
     if context["caller"]["status"] != "valid":
@@ -348,6 +348,10 @@ def perform(broker, request, context, store, record, yes):
         return receipt(broker, request, context, "refused", reason="runtime_changed", resolved=binding, census=census)
     # This fsync'd phase precedes the only possible mutation. On any crash it is
     # retained as uncertain, never a request to resolve or dispatch another target.
+    if before_dispatch is not None:
+        reason = before_dispatch(request, context, binding)
+        if reason:
+            return receipt(broker, request, context, "refused", reason=reason, resolved=binding, census=census)
     record = save_phase(store, record, "dispatch")
     doc, code, _ = broker_document(broker, request, "end", binding)
     if doc is None:
@@ -372,7 +376,8 @@ def perform(broker, request, context, store, record, yes):
                    resolved=binding, census=census_of(doc))
 
 
-def execute(broker, request, yes, state):
+def execute(broker, request, yes, state, *, before_dispatch=None):
+    """Trusted supplied-selector primitive; not an original-user authority ingress."""
     request = validate(request)
     if "timeout_seconds" in request:
         broker.timeout = format(request["timeout_seconds"], "g")
@@ -402,7 +407,7 @@ def execute(broker, request, yes, state):
         owner, record, replay = reserve(broker, request, context, store, key)
         if replay is not None:
             return RESULT_CODES.get(replay["result"], 1), replay
-        result = perform(broker, request, context, store, record, yes)
+        result = perform(broker, request, context, store, record, yes, before_dispatch=before_dispatch)
         with store.locked():
             current = store.read(request["operation_id"])
             if current is None or current["fingerprint"] != key:
@@ -466,7 +471,7 @@ def refusal_document(broker, verb, error, selector=None, operation_id=None):
     return document
 
 
-def command(broker, verb, argv):
+def command(broker, verb, argv, *, controller=None):
     request = {"schema": REQUEST_SCHEMA, "verb": verb}
     yes, source = False, None
     rest = list(argv)
@@ -494,11 +499,21 @@ def command(broker, verb, argv):
         request["selector"] = parse_json(raw)
         validate(request)
         state = os.environ.get("KILIX_STATE_DIRECTORY", "")
-        if verb == "end" and not state:
+        if verb == "end" and not state and controller is None:
             refuse("store_unavailable", "KILIX_STATE_DIRECTORY must identify the private state directory")
-        code, result = execute(broker, request, yes, state)
+        code, result = (controller.dispatch(request) if controller is not None
+                        else untrusted_execute(broker, request, yes, state))
     except legacy.Refusal as error:
         code = error.code
         result = refusal_document(broker, verb, error, request.get("selector"), request.get("operation_id"))
     print(json.dumps(result, ensure_ascii=True, separators=(",", ":")))
     return code
+
+
+def untrusted_execute(broker, request, yes, state):
+    """CLI/JSON ingress has no trusted user selection channel."""
+    validate(request)
+    if request["verb"] == "end":
+        context = capture(broker)
+        return 3, receipt(broker, request, context, "refused", reason="authority_required")
+    return execute(broker, request, yes, state)
