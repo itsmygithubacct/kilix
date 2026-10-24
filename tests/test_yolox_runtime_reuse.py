@@ -171,3 +171,54 @@ original.with_name(original.stem+'_'+size+'.onnx').write_bytes(b'private-cut:'+o
         self.assertEqual(self.run_installer("--check").returncode, 0)
         self.assertEqual(self.run_installer("--print-path").returncode, 0)
         self.assertEqual(before, {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in self.root.rglob("*") if p.is_file()})
+
+    def run_detector(self, *args, **extra):
+        return subprocess.run([str(ROOT / "scripts/install-yolox.sh"), '--run', *args],
+                              env=dict(self.env, **extra), input='',
+                              capture_output=True, text=True, timeout=20)
+
+    def test_run_verifies_selected_runtime_and_preserves_arguments(self):
+        self.install()
+        before = {p: (p.read_bytes(), p.stat().st_mtime_ns)
+                  for p in self.root.rglob('*') if p.is_file()}
+        result = self.run_detector('--geometry', '320x320', '--conf', '0.1')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['argv'][1:],
+                         ['--model', 'yolox_s', '--geometry', '320x320', '--conf', '0.1'])
+        self.assertEqual(before, {p: (p.read_bytes(), p.stat().st_mtime_ns)
+                                 for p in self.root.rglob('*') if p.is_file()})
+
+    def test_run_refuses_missing_or_revoked_model_without_installing(self):
+        missing = self.run_detector('--geometry', '320x320')
+        self.assertEqual(missing.returncode, 1)
+        self.assertFalse(self.config.exists())
+        self.install()
+        (self.assets / 'verified').unlink()
+        before = (self.runtime / 'runtime.json').read_bytes()
+        refused = self.run_detector('--geometry', '320x320')
+        self.assertEqual(refused.returncode, 1)
+        self.assertEqual(refused.stdout, '')
+        self.assertIn('not ready', refused.stderr)
+        self.assertEqual((self.runtime / 'runtime.json').read_bytes(), before)
+
+    def test_run_refuses_changed_runtime_or_unchecked_model_override(self):
+        wrapper = self.install()
+        for arguments in (('--model', '/unselected.onnx'), ('--geometry',), ('--yes',)):
+            with self.subTest(arguments=arguments):
+                result = self.run_detector(*arguments)
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(result.stdout, '')
+        wrapper.write_text('#!/bin/sh\necho unchecked\n')
+        result = self.run_detector('--geometry', '320x320')
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, '')
+
+    def test_public_launcher_run_never_prepares_a_missing_runtime(self):
+        before = {p: p.read_bytes() for p in self.runtime.rglob('*') if p.is_file()}
+        result = subprocess.run([str(ROOT/'kilix'), 'yolox', 'run', '--geometry', '320x320'],
+                                env=self.env, input='', capture_output=True,
+                                text=True, timeout=20)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, '')
+        self.assertIn('not ready', result.stderr)
+        self.assertEqual(before, {p: p.read_bytes() for p in self.runtime.rglob('*') if p.is_file()})

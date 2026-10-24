@@ -4095,16 +4095,19 @@ sys.exit(0 if ready else 1)
     _yolox_action=--print-path
     while :; do
       case "${1:-}" in
+        run) _yolox_action=--run; shift; break ;;
         install) _yolox_action=--install; shift ;;
         check|status) _yolox_action=--check; shift ;;
         update|upgrade) _yolox_action=--upgrade; shift ;;
         remove|uninstall) _yolox_action=--remove; shift ;;
         -h|--help|help)
           echo "usage: $_self yolox [install|check|update|remove] [--yes]"
+          echo "       $_self yolox run [DETECTOR OPTIONS]"
           echo "the Apache-2.0 object-detection runtime"
           echo
           echo "  $_self yolox             install if needed, print the command"
           echo "  $_self yolox check       what is present, without changing it"
+          echo "  $_self yolox run         verify and run the installed detector; never install"
           echo "  $_self yolox install     build the virtualenv, fetch and cut weights"
           echo "  $_self yolox update      bring its packages forward"
           echo "  $_self yolox remove      delete the runtime directory"

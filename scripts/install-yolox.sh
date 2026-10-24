@@ -67,10 +67,12 @@ python_install() {
 usage() {
   cat <<'EOF'
 usage: install-yolox.sh [--print-path|--print-ref|--check|--install|--upgrade|--remove] [--yes]
+       install-yolox.sh --run [DETECTOR OPTIONS]
 
   --print-path  install if needed, then print the detector command path
   --print-ref   print the immutable pinned kilix-yolox commit, changing nothing
   --check       report what is present without changing anything
+  --run         verify the installed model/runtime and execute it; never install
   --install     install, asking first unless --yes (the licence is never
                 skipped: it needs a terminal and the typed agreement)
   --upgrade     bring the installed packages forward
@@ -95,6 +97,7 @@ action="--print-path"
 assume_yes=0
 while [ $# -gt 0 ]; do
   case "$1" in
+    --run) action=--run; shift; break ;;
     --print-path|--print-ref|--check|--install|--upgrade|--remove) action="$1" ;;
     --yes|-y) assume_yes=1 ;;
     -h|--help) usage; exit 0 ;;
@@ -467,6 +470,20 @@ case "$action" in
   --check)
     report
     runtime_ready && exit 0 || exit 1 ;;
+  --run)
+    [ "${1:-}" != -- ] || shift
+    detector_args=("$@")
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --geometry|--conf|--nms|--input-size|--threads)
+          [ "$#" -ge 2 ] || die "missing detector option value: $1"
+          shift 2 ;;
+        --per-class|--verbose) shift ;;
+        *) die "unsupported detector option: $1 (the model is selected by the installed runtime)" ;;
+      esac
+    done
+    runtime_ready || die "installed YOLOX model, agreement or runtime is not ready; run kilix install yolox"
+    exec "$wrapper" "${detector_args[@]}" ;;
   --upgrade)
     upgrade_runtime
     exit 0 ;;
