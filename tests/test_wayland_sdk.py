@@ -114,6 +114,41 @@ class WaylandTests(unittest.TestCase):
                 owner_type.return_value.bind.assert_called_once_with(spawn.return_value)
                 owner_type.return_value.environment.assert_not_called()
 
+    def test_waydroid_pulse_mount_keeps_original_runtime_socket(self):
+        audio = Path(self.temp.name) / "pulse"
+        audio.mkdir()
+        with socket.socket(socket.AF_UNIX) as endpoint:
+            endpoint.bind(str(audio / "native"))
+            with mock.patch.dict(os.environ, {
+                "KILIX_SESSION_HOME": self.temp.name,
+                "XDG_RUNTIME_DIR": self.temp.name,
+            }, clear=True):
+                with wayland.NestedWaylandSession("pulse-fixture", exclusive="waydroid-test") as session:
+                    env = session.environment()
+                    # This is Waydroid's session-default resolution, followed
+                    # by the LXC bind source. Before the repair it selected a
+                    # nonexistent socket under the nested compositor runtime.
+                    pulse_runtime = env.get("PULSE_RUNTIME_PATH", env["XDG_RUNTIME_DIR"] + "/pulse")
+                    source = Path(pulse_runtime) / "native"
+                    self.assertEqual(source, audio / "native")
+                    self.assertTrue(source.is_socket())
+                    self.assertNotEqual(env["XDG_RUNTIME_DIR"], self.temp.name)
+                    for explicit in ("", "/explicit/audio"):
+                        with mock.patch.dict(os.environ, {"PULSE_RUNTIME_PATH": explicit}):
+                            self.assertEqual(session.environment()["PULSE_RUNTIME_PATH"], explicit)
+
+    def test_missing_or_regular_audio_path_is_not_exported_as_runtime(self):
+        audio = Path(self.temp.name) / "pulse"
+        audio.mkdir()
+        with mock.patch.dict(os.environ, {
+            "KILIX_SESSION_HOME": self.temp.name,
+            "XDG_RUNTIME_DIR": self.temp.name,
+        }, clear=True):
+            with wayland.NestedWaylandSession("pulse-fixture", exclusive="waydroid-test") as session:
+                self.assertNotIn("PULSE_RUNTIME_PATH", session.environment())
+                (audio / "native").touch()
+                self.assertNotIn("PULSE_RUNTIME_PATH", session.environment())
+
 
     def test_real_runtime_bus_survives_nested_environment(self):
         # Punctuation and UTF-8 bytes must be escaped in an explicit address.

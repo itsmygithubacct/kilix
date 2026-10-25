@@ -96,6 +96,17 @@ class NestedWaylandSession:
         # Keep host audio reachable after changing the Wayland socket directory.
         if "PULSE_SERVER" not in env and (Path(previous) / "pulse/native").exists():
             env["PULSE_SERVER"] = "unix:" + str(Path(previous) / "pulse/native")
+        # Waydroid binds this socket into Android using PULSE_RUNTIME_PATH;
+        # PULSE_SERVER alone does not override its XDG_RUNTIME_DIR fallback.
+        audio_socket = Path(previous) / "pulse/native"
+        if "PULSE_RUNTIME_PATH" not in env and audio_socket.is_absolute():
+            try:
+                info = audio_socket.stat()
+            except OSError:
+                pass
+            else:
+                if stat.S_ISSOCK(info.st_mode) and info.st_uid == os.getuid():
+                    env["PULSE_RUNTIME_PATH"] = str(audio_socket.parent)
         env["XDG_RUNTIME_DIR"] = self.supervisor.runtime_dir
         env["WAYLAND_DISPLAY"] = self.socket_name
         env.pop("WAYLAND_SOCKET", None)
