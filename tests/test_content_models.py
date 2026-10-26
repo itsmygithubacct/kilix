@@ -75,7 +75,18 @@ _V3, _ORIGIN = asset_v3_available()
 # pocket-tts-english-python-alba, needle2, needle2-runtime and needle2-train
 # (OD-BV) to rc1's 27; rc3 adds faster-whisper-small-en (owner, 2026-09-29).
 # The selected release also includes the diarization model and CPU runtime.
-PACKAGED_ASSETS = 34
+# The LFM2 Ask default adds lfm2-kilix-commands (content 74013cc), and the
+# optional Needle 3 alternate adds needle3-kilix-commands (content 61abc3d).
+PACKAGED_ASSETS = 36
+
+# Producer notices the pinned upstream archive carries and the installer
+# verifies and reuses from it, so the licence text store does not hold them.
+# Exact (asset, member path) -> (bytes, sha256); any other notice must be in
+# the store, and a changed size or digest falls back to the store and fails.
+ARCHIVE_NOTICES = {
+    ("lfm2-kilix-commands", "notices/LICENSE-kilix-needle.txt"):
+        (1072, "938e0db7e6acd7e99d205863bcbdeda47f5fbd053802519f411dbefe0799071e"),
+}
 
 
 class _Handler(http.server.BaseHTTPRequestHandler):
@@ -416,7 +427,7 @@ class ModelSetupTests(unittest.TestCase):
     def test_every_packaged_model_licence_text_is_available_without_acquisition(self):
         catalog = ui._verified_catalog(self.api)
         self.assertEqual(len(catalog.assets), PACKAGED_ASSETS)
-        digests = set()
+        digests, archived = set(), {}
         for spec in catalog.assets:
             self.assertTrue(spec.licenses)
             primary = spec.licenses[0]
@@ -426,12 +437,57 @@ class ModelSetupTests(unittest.TestCase):
             for row in spec.licenses:
                 self.assertEqual(_sha(self.texts.get(row.text_sha256)), row.text_sha256)
                 digests.add(row.text_sha256)
-            for item in spec.files:
-                if item.path.startswith("notices/"):
-                    self.assertEqual(len(self.texts.get(item.sha256)), item.bytes)
+            archived.update(self.notices_outside_the_store(spec))
+        self.assertEqual(archived, ARCHIVE_NOTICES)
         self.assertGreaterEqual(len(digests), 5)
         # Nothing here needed an origin, so none was ever started.
         self.assertIsNone(self.upstream)
+
+    def notices_outside_the_store(self, spec):
+        """Check each notice of ``spec``; return those its archive supplies.
+
+        A notice is either a determined text in the store or one exact
+        ARCHIVE_NOTICES entry, which must come from an upstream archive whose
+        pin lists the same member. Anything else raises from the store lookup.
+        """
+        archived = {}
+        for item in spec.files:
+            if not item.path.startswith("notices/"):
+                continue
+            key, value = (spec.asset_id, item.path), (item.bytes, item.sha256)
+            if ARCHIVE_NOTICES.get(key) == value:
+                self.assertEqual(spec.source_mode, "upstream-archive", key)
+                component = Path(_ORIGIN).resolve().parents[2]
+                pin = json.loads((component / "tools" / "upstream-pins"
+                                  / f"{spec.asset_id}.json").read_text())
+                self.assertEqual((pin["mode"], pin["archive_sha256"]),
+                                 ("upstream-archive", spec.archive_sha256), key)
+                self.assertIn({"path": item.path, "bytes": item.bytes, "sha256": item.sha256},
+                              pin["members"], key)
+                archived[key] = value
+                continue
+            self.assertEqual(len(self.texts.get(item.sha256)), item.bytes)
+        return archived
+
+    def test_an_archive_notice_exception_covers_only_its_exact_member(self):
+        spec = ui._verified_catalog(self.api).require_asset("lfm2-kilix-commands")
+        (path, (size, digest)), = [(p, v) for (a, p), v in ARCHIVE_NOTICES.items()
+                                   if a == spec.asset_id]
+        item = next(item for item in spec.files if item.path == path)
+        changes = {
+            "another asset": {"asset_id": "needle3-kilix-commands"},
+            "another member": {"files": (SimpleNamespace(path="notices/LICENSE-other.txt",
+                                                         bytes=size, sha256=digest),)},
+            "another digest": {"files": (SimpleNamespace(path=path, bytes=size,
+                                                         sha256=_sha(b"changed notice\n")),)},
+        }
+        for name, change in changes.items():
+            fields = {"asset_id": spec.asset_id, "files": (item,),
+                      "source_mode": spec.source_mode, "archive_sha256": spec.archive_sha256}
+            fields.update(change)
+            with self.subTest(name), self.assertRaises(FileNotFoundError):
+                self.notices_outside_the_store(SimpleNamespace(**fields))
+        self.assertEqual(self.notices_outside_the_store(spec), {(spec.asset_id, path): (size, digest)})
 
     def test_a_second_licence_row_repeats_the_first_rows_record(self):
         """The named gap, pinned so it cannot change unnoticed.
