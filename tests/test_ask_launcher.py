@@ -36,7 +36,8 @@ NEEDLE = '''\
 import json, os, sys
 with open(os.environ["ASK_TEST_LOG"], "a") as stream:
     stream.write(json.dumps({"needle": sys.argv[1:], "root": os.environ.get("KILIX_CONTENT_ROOT"),
-                             "app": os.environ.get("KILIX_APP_ID")}) + "\\n")
+                             "app": os.environ.get("KILIX_APP_ID"),
+                             "backend_env": os.environ.get("KILIX_ASK_COMMANDS_BACKEND")}) + "\\n")
 print("route: panes (stage 0)")
 raise SystemExit(int(os.environ.get("ASK_TEST_STATUS", "0")))
 '''
@@ -128,6 +129,33 @@ class AskLauncherTests(unittest.TestCase):
 
     def test_the_apps_status_is_the_exit_status(self):
         self.assertEqual(self.run_ask("hide the clock", ASK_TEST_STATUS="1").returncode, 1)
+
+    def test_model_selection_is_forwarded_without_changing_the_request(self):
+        request = 'open notepad; keep "$VALUE" and `words` literal'
+        for model in ('needle3', 'lfm2', 'grammar'):
+            for option in (('--model', model), ('--model=' + model,), ('--commands-backend', model)):
+                with self.subTest(option=option):
+                    result = self.run_ask(*option, '--', request, KILIX_ASK_COMMANDS_BACKEND='lfm2')
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(self.calls()[-1]['needle'],
+                                     ['ask', '--interactive', '--commands-backend', model, '--', request])
+
+    def test_environment_preference_and_explicit_local_candidate_survive_the_launcher(self):
+        candidate = '/a path/$literal;not-a-command/candidate.json'
+        result = self.run_ask('--commands-candidate', candidate, 'open calculator',
+                              KILIX_ASK_COMMANDS_BACKEND='needle3')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.calls()[-1]['backend_env'], 'needle3')
+        self.assertEqual(self.calls()[-1]['needle'],
+                         ['ask', '--interactive', '--commands-candidate=' + candidate, '--', 'open calculator'])
+
+    def test_invalid_model_options_never_contact_the_installed_app(self):
+        for arguments in (('--model',), ('--model', 'unknown', 'open calculator'),
+                          ('--model=', 'open calculator'), ('--commands-candidate',),
+                          ('--commands-candidate=', 'open calculator')):
+            with self.subTest(arguments=arguments):
+                self.assertEqual(self.run_ask(*arguments).returncode, 2)
+        self.assertEqual(self.calls(), [])
 
     def test_text_after_the_separator_is_the_request_even_when_it_looks_like_an_option(self):
         result = self.run_ask("--hold", "--", "--yes close tab 2")

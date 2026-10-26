@@ -48,6 +48,15 @@ their named versions; they are not a current component inventory.
 For the human and agent workflows that connect terminal work, automation,
 verification and recovery, see [Kilix Workflows](docs/workflows/README.md).
 
+`kilix ask` uses LFM2 for command interpretation, with an exact grammar fast path.
+To use the optional Needle 3 V9 model, install it with
+`kilix-needle install --commands needle3`, then run
+`kilix ask --model needle3 "open calculator"`. Both models use the same request
+validation and confirmation. `--model grammar` skips model loading.
+Set `export KILIX_ASK_COMMANDS_BACKEND=needle3` in your shell startup file to keep
+the preference; an explicit `--model lfm2` overrides it for one request.
+The installer presents the model and runtime licences before downloading.
+
 `kilix session` launches managed Codex, Claude or Grok runs with explicit folder
 trust, native UI or headless logging, and lifecycle inspection. New panes preserve
 focus. See [managed coding sessions](docs/session.md) for commands, the importable

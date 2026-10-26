@@ -3369,7 +3369,8 @@ case "${1:-}" in
     shift
     _ask_voice=0
     _ask_hold=0
-    _ask_usage="usage: $_self ask [--voice] [--hold] [--] [REQUEST...]"
+    _ask_options=()
+    _ask_usage="usage: $_self ask [--model lfm2|needle3|grammar] [--commands-candidate FILE] [--voice] [--hold] [--] [REQUEST...]"
     # Every exit, a usage error included, waits for Enter under --hold, so the
     # tab it runs in stays readable. Statuses are 0, 1 and 2 only.
     for _ask_arg in "$@"; do
@@ -3388,6 +3389,23 @@ case "${1:-}" in
     while :; do
       case "${1:-}" in
         --voice) _ask_voice=1; shift ;;
+        --model|--commands-backend)
+          case "${2:-}" in
+            lfm2|needle3|grammar) _ask_options+=(--commands-backend "$2"); shift 2 ;;
+            *) echo "kilix ask: --model must be lfm2, needle3 or grammar" >&2; _ask_close 2 ;;
+          esac ;;
+        --model=*|--commands-backend=*)
+          _ask_model="${1#*=}"
+          case "$_ask_model" in
+            lfm2|needle3|grammar) _ask_options+=(--commands-backend "$_ask_model"); shift ;;
+            *) echo "kilix ask: --model must be lfm2, needle3 or grammar" >&2; _ask_close 2 ;;
+          esac ;;
+        --commands-candidate)
+          [ $# -ge 2 ] && [ -n "$2" ] || { echo "$_ask_usage" >&2; _ask_close 2; }
+          _ask_options+=("--commands-candidate=$2"); shift 2 ;;
+        --commands-candidate=*)
+          [ -n "${1#*=}" ] || { echo "$_ask_usage" >&2; _ask_close 2; }
+          _ask_options+=("$1"); shift ;;
         --hold) _ask_hold=1; shift ;;
         -h|--help|help)
           echo "$_ask_usage"
@@ -3395,6 +3413,9 @@ case "${1:-}" in
           echo "agents, files or system), shows the plan, and acts only on a typed yes"
           echo "  --voice  dictate the request; the transcript can be edited first"
           echo "  --hold   wait for Enter before returning, so a tab stays readable"
+          echo "  --model  lfm2 (default), needle3, or grammar; overrides KILIX_ASK_COMMANDS_BACKEND"
+          echo "  --commands-candidate FILE  use a local Needle 3 candidate with --model needle3"
+          echo "Install the alternate: kilix-needle install --commands needle3"
           echo
           echo "With no request, it asks for one. Exit status: 0 acted, 1 not acted"
           echo "(declined, refused or unsure), 2 usage."
@@ -3442,7 +3463,7 @@ print(apps_root())
     export KILIX_CONTENT_ROOT
     _ask_status=0
     KILIX_APP_ID=kilix-needle KILIX_APP_SURFACE=current \
-      "$_ask_needle" ask --interactive -- "$_ask_text" || _ask_status=$?
+      "$_ask_needle" ask --interactive "${_ask_options[@]}" -- "$_ask_text" || _ask_status=$?
     case "$_ask_status" in 0|1|2) ;; *) _ask_status=1 ;; esac
     _ask_close "$_ask_status" ;;
   pdf-view|pdf-viewer)
