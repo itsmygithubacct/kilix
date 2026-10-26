@@ -59,7 +59,7 @@ EXAMPLES = {
                  "args": {"id": "3fa9c2d41b7e6a05", "max_lines": 50, "text": True}},
     "observe": {"schema": REQUEST_SCHEMA, "verb": "observe",
                 "args": {"id": "3fa9c2d41b7e6a05", "max_lines": 50, "text": True}},
-    "marker": {"schema": REQUEST_SCHEMA, "verb": "marker", "args": {"marker": "deploy-ok-419ee9"}},
+    "marker": {"schema": REQUEST_SCHEMA, "verb": "marker", "args": {"marker": "build-finished-ok"}},
     "foreground": {"schema": REQUEST_SCHEMA, "verb": "foreground", "args": {"id": "3fa9c2d41b7e6a05"}},
     "kill": {"schema": REQUEST_SCHEMA, "verb": "kill", "operation_id": "end-1",
              "args": {"id": "3fa9c2d41b7e6a05", "expect_started_millis": 1791337517862}},
