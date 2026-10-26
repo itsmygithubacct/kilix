@@ -456,6 +456,7 @@ usage: $_self pty [--timeout SECONDS] [COMMAND]
   list [--json] [--all]        sessions in this runtime; --all adds unreachable ones
                                (not being listed does not prove a session is gone)
   status ID|--pane PANE_ID [--json]
+                               command records the launch; use foreground for current processes
   observe ID [--from EPOCH:OFFSET]   watch read-only; Ctrl-] leaves
   observe ID --once [--from EPOCH:OFFSET] [--lines N | --bytes N] [--text] [--json]
                                bounded snapshot, no terminal needed (default 200 lines / 64 KiB)

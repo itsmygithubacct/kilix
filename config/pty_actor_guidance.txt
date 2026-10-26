@@ -28,7 +28,10 @@ MCP kilix_pty_act accepts that action or the existing grammar as request.
 R1-controlled kitty-pty-broker is a facade, not the native administrative binary.
 An issued kill consumes the original selector/qualifiers, not new ID authority.
 Read-only inspection is available through plain host list/status/observe/journals,
-typed requests and Needle. R1-controlled additionally exposes journals list/show
+typed requests and Needle. status.command is the launch command;
+`kilix pty foreground ID --json` samples the processes running now. Report plural
+foreground processes as plural, and an incomplete sample as unknown.
+R1-controlled additionally exposes journals list/show
 and pane P as constrained data reads. Pane lookup requires the trusted supervisor's
 owned-pane admission; missing, changed or unavailable mapping remains unknown.
 No desktop control or raw host-state access is exposed. Mapping is sampled data,
