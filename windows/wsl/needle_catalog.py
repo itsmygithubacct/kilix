@@ -6,14 +6,15 @@ Unexpected source versions fail closed instead of receiving a fuzzy patch.
 """
 import hashlib
 
-BEFORE = '44b17a291c3cea3946f3e0065fa78d365a7836efa521219785b94295ef7e68ee'
+BEFORE = 'c3d768abc1dcd2434e6c07311c124c277c58e4614e33731fecc71de0273fa250'
 CHANGES = (
-    ('"terminal-lander", "kitty-brokeout", "kilix-land")',
-     '"terminal-lander", "kitty-brokeout", "kilix-land", "pleb-plant-grower", "tictactoe-tui")'),
+    ('"terminal-lander", "kitty-brokeout", "kilix-land", "tictactoe-tui", "pleb-tower")',
+     '"terminal-lander", "kitty-brokeout", "kilix-land", "tictactoe-tui", "pleb-tower", "pleb-plant-grower")'),
     ('    "kilix-land": ["kilix land"],',
      '    "kilix-land": ["kilix land"],\n'
-     '    "pleb-plant-grower": ["plant grower", "pleb plant grower", "plant-grower"],\n'
-     '    "tictactoe-tui": ["tic-tac-toe", "tic tac toe", "tictactoe", "noughts and crosses"],'),
+     '    "pleb-plant-grower": ["plant grower", "pleb plant grower", "plant-grower"],'),
+    ('    "tictactoe-tui": ["tic tac toe", "tic-tac-toe", "noughts and crosses"],',
+     '    "tictactoe-tui": ["tic tac toe", "tic-tac-toe", "noughts and crosses", "tictactoe"],'),
 )
 
 

@@ -22,9 +22,22 @@ jobs:
         with:
           persist-credentials: false
       - run: git submodule update --init --recursive src third_party/kitty-pty-broker third_party/kilix-content third_party/kilix-transcript-clean
+      - name: Materialize the checksum-pinned Needle test source
+        run: |
+          python3 - <<'PY'
+          import os, sys
+          from pathlib import Path
+          sys.path.insert(0, 'windows/wsl')
+          from catalog_sources import materialize
+          root = Path(os.environ['RUNNER_TEMP']) / 'needle-test-source'
+          root.mkdir()
+          materialize(['needle'], root, Path(os.environ['RUNNER_TEMP']) / 'needle-source-cache')
+          PY
       - run: python3 -m unittest discover -s windows/tests -p 'test_*.py'
         env:
           KILIX_REQUIRE_RECOVERY_TESTS: '1'
+          KILIX_REQUIRE_WSL_NEEDLE_TESTS: '1'
+          KILIX_WSL_NEEDLE_TEST_SOURCE: ${{ runner.temp }}/needle-test-source/needle
       - run: pwsh -NoProfile -File windows/tests/test-install.ps1
       - run: pwsh -NoProfile -File windows/tests/test-update.ps1
 
