@@ -48,6 +48,9 @@ class Admission(fixture.NativeInputFixture):
         while self.inj._input:
             self.assertLess(time.monotonic(), until, 'input did not recover')
             self.inj.dispatch_pending()
+            # dispatch_pending only flushes the injector's connection; sync it
+            # so the server has processed that input before the app round trip.
+            self.xd.sync()
             self.app.sync()
             self.events(seen)
             self.assert_bound()
@@ -109,6 +112,7 @@ class Admission(fixture.NativeInputFixture):
         self.assertTrue(pane.on_paste(text))
         self.assertFalse(pane.on_paste('tail'))
         self.inj.dispatch_pending()
+        self.xd.sync()
         self.app.sync()
         seen = []
         self.events(seen)
@@ -198,6 +202,7 @@ class Admission(fixture.NativeInputFixture):
         self.assert_bound()
         with patch.object(xinject, 'INPUT_BATCH', 1):
             self.inj.dispatch_pending()  # work slot free; all release slots occupied
+            self.xd.sync()
             self.app.sync()
             seen = []
             self.events(seen)
@@ -286,6 +291,7 @@ class Admission(fixture.NativeInputFixture):
         native.HeldNative.read_edges(self)
         self.assertTrue(pane.on_paste('漢界'))
         self.inj.dispatch_pending()
+        self.xd.sync()
         self.app.sync()
         seen = []
         self.events(seen)
