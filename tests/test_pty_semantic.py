@@ -16,6 +16,12 @@ import kilix_pty_semantic as semantic
 import kilix_pty_host_client as host_client
 
 
+def private_write(path, data):
+    """Write a session file as the broker leaves it: 0600, whatever the umask."""
+    path.write_bytes(data)
+    path.chmod(0o600)
+
+
 class FakeBroker:
     guard = 10
 
@@ -80,7 +86,7 @@ class MarkerEvidenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='semantic-', dir='/tmp') as root:
             session = Path(root) / 'sessions/a'
             session.mkdir(parents=True)
-            (session / 'journal.bin').write_bytes(b'abc')
+            private_write(session / 'journal.bin', b'abc')
             index = session / 'journal.time'
             broker = FakeBroker(root)
             row = {'id': 'a', 'journal_bytes': 3, 'journal_epoch': 0,
@@ -92,10 +98,27 @@ class MarkerEvidenceTests(unittest.TestCase):
                 if payload is None:
                     index.unlink(missing_ok=True)
                 else:
-                    index.write_bytes(payload)
+                    private_write(index, payload)
                 with self.subTest(reason=reason), self.assertRaises(semantic.Unknown) as raised:
                     semantic._read_index_and_journal(broker, row, semantic.time.monotonic() + 2)
                 self.assertEqual(raised.exception.reason, reason)
+
+    def test_index_or_journal_others_can_read_is_untrusted(self):
+        with tempfile.TemporaryDirectory(prefix='semantic-', dir='/tmp') as root:
+            session = Path(root) / 'sessions/a'
+            session.mkdir(parents=True)
+            private_write(session / 'journal.bin', b'abc')
+            private_write(session / 'journal.time', b'7 0 0 3 10\n')
+            row = {'id': 'a', 'journal_bytes': 3, 'journal_epoch': 0,
+                   'started_millis': 7, 'replay_complete': True}
+            for name in ('journal.time', 'journal.bin'):
+                for mode in (0o640, 0o604):
+                    (session / name).chmod(mode)
+                    with self.subTest(name=name, mode=oct(mode)):
+                        with self.assertRaises(semantic.Unknown) as raised:
+                            semantic._read_index_and_journal(FakeBroker(root), row, semantic.time.monotonic() + 2)
+                        self.assertEqual(raised.exception.reason, 'index_untrusted')
+                (session / name).chmod(0o600)
 
     def test_candidate_overflow_refuses_before_subset_ranking(self):
         broker = FakeBroker('/tmp')
@@ -142,8 +165,8 @@ class MarkerEvidenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='semantic-', dir='/tmp') as root:
             session = Path(root) / 'sessions/a'
             session.mkdir(parents=True)
-            (session / 'journal.bin').write_bytes(b'x' * 129)
-            (session / 'journal.time').write_bytes(b''.join(
+            private_write(session / 'journal.bin', b'x' * 129)
+            private_write(session / 'journal.time', b''.join(
                 f'7 0 {index} {index + 1} 10\n'.encode() for index in range(129)))
             broker = FakeBroker(root)
             row = {'id': 'a', 'journal_bytes': 129, 'journal_epoch': 0,

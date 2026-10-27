@@ -41,6 +41,7 @@ class StoreCase(C1Case):
         path = self.directory() / (self.name(operation_id) + ".json")
         path.write_text(json.dumps({"fingerprint": "x", "phase": phase, "operation_id": operation_id,
                                     "receipt": receipt}))
+        os.chmod(path, 0o600)  # Store.write creates records 0600, whatever the umask.
         old = time.time() - age
         os.utime(path, (old, old))
         if lock:
@@ -138,12 +139,25 @@ class CapacityTests(StoreCase):
         self.assertLessEqual(len(list(self.directory().glob("op-*.json"))), module.STORE_LIMIT)
 
     def test_a_damaged_record_is_a_bounded_refusal_not_a_traceback(self):
-        (self.directory() / (self.name("damaged") + ".json")).write_text("not json {")
+        damaged = self.directory() / (self.name("damaged") + ".json")
+        damaged.write_text("not json {")
+        os.chmod(damaged, 0o600)
         result = self.run_kill_request("damaged")
         self.assertNotIn("Traceback", result.stderr)
         document = json.loads(result.stdout)
         self.assertEqual((result.returncode, document["reason"]), (3, "store_unavailable"))
         self.assertEqual(self.calls(), [])
+
+    def test_a_record_others_can_read_is_refused_before_dispatch(self):
+        for mode in (0o640, 0o604, 0o660):
+            with self.subTest(mode=oct(mode)):
+                record = self.put(f"exposed-{mode:o}", result="uncertain")
+                os.chmod(record, mode)
+                result = self.run_kill_request(f"exposed-{mode:o}")
+                document = json.loads(result.stdout)
+                self.assertEqual((result.returncode, document["reason"]), (3, "store_unavailable"))
+                self.assertIn("not a bounded private regular file", document["message"])
+                self.assertEqual(self.calls(), [])
 
 
 class LiveOwnerUnderPressureTests(StoreCase):

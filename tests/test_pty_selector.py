@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import time
 import unittest
 from unittest import mock
@@ -381,7 +382,7 @@ while not os.path.exists({str(go)!r}): time.sleep(0.005)
 
     def test_cli_and_structured_routes_keep_original_discriminator(self):
         self.fx.start("route.a"); self.fx.start("route.b")
-        env = {"PATH": os.environ["PATH"], "HOME": str(self.fx.root / "home"), "TMPDIR": os.environ["TMPDIR"],
+        env = {"PATH": os.environ["PATH"], "HOME": str(self.fx.root / "home"), "TMPDIR": tempfile.gettempdir(),
                "KITTY_PTY_BROKER_SESSION": "caller_unrelated", "KITTY_PTY_BROKER_EXECUTABLE": str(BROKER),
                "KITTY_PTY_BROKER_RUNTIME": str(self.fx.runtime), "KILIX_STATE_DIRECTORY": str(self.state),
                "KILIX_STORAGE_HOME": str(self.fx.root), "XDG_RUNTIME_DIR": str(self.fx.root / "xdg")}
