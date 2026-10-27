@@ -35,6 +35,13 @@ The reviewed source integration is selected for the coordinated Plebian-OS
 pending; supported upgrade paths are defined by the
 [OS upgrade policy](https://github.com/itsmygithubacct/plebian-os/blob/main/UPGRADING.md).
 
+Amp and `kilix-music` share one per-user playback service, queue, transport
+controls and EQ. General music uses the selected `kilix-mpv` runtime; native
+EnCodec files and live streams retain their decoder and admission path.
+Closing either controller leaves the shared session running. The pinned Amp
+build includes the spectrum library and checks the installed mpv filter chain
+before it is reported installed.
+
 The Windows preview adds desktop automation through `kilix desktop`:
 application/control selectors, condition waits, local screenshots, UI Automation
 inspection/actions, keyboard and mouse input, application launch, and window
