@@ -377,6 +377,26 @@ class WizardTests(unittest.TestCase):
         self.assertEqual(install.call_args.args[0], ['needle3-kilix-commands'])
         check.assert_called_once_with(model='needle3', select=True)
 
+    def test_first_accepted_ask_model_becomes_the_saved_selection(self):
+        # Both Ask models can be acquired together; Needle saves only the one
+        # the wizard selects, the first choice whose licence was accepted.
+        cases = (({'lfm2-kilix-commands', 'needle3-kilix-commands'}, 'lfm2',
+                  ['lfm2-kilix-commands', 'needle3-kilix-commands']),
+                 ({'needle3-kilix-commands'}, 'needle3', ['needle3-kilix-commands']))
+        with patch.object(wizard, 'catalog', return_value=[asset('lfm2-kilix-commands'), asset('needle3-kilix-commands')]):
+            for allowed, backend, models in cases:
+                with self.subTest(backend), \
+                        patch('wizard_licenses.consent_and_install',
+                              return_value=(allowed, {'lfm2-kilix-commands'} - allowed)) as install, \
+                        patch.object(wizard, 'check_workflows') as check, \
+                        patch.object(wizard, 'legacy_state'):
+                    wizard.apply('workflows', ['lfm2-kilix-commands', 'needle3-kilix-commands'], 'yes')
+                    wizard.finish()
+                    self.assertEqual(install.call_args.args[0], ['lfm2-kilix-commands', 'needle3-kilix-commands'])
+                    check.assert_called_once_with(model=backend, select=True)
+                    self.assertEqual(wizard.answers()['workflows']['models'], models)
+                    self.assertEqual(wizard.answers()['workflows']['scope'], 'ask')
+
     def test_old_saved_needle2_answer_does_not_hide_new_ask_page(self):
         assets = [asset('needle2'), asset('lfm2-kilix-commands')]
         for answer, models in (('yes', ['needle2']), ('no', [])):

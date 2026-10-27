@@ -182,6 +182,18 @@ class AskLauncherTests(unittest.TestCase):
                                  capture_output=True, text=True, timeout=30)
         self.assertIn("Also: ask 'REQUEST'", general.stdout)
 
+    def test_help_names_the_saved_selection_as_the_default(self):
+        # Needle resolves --model, then the environment, then the saved
+        # selection; lfm2 is only the default when nothing is saved.
+        result = self.run_ask("--help")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("(default: lfm2)", result.stdout)
+        self.assertNotIn("lfm2 (default)", result.stdout)
+        self.assertIn("overrides KILIX_ASK_COMMANDS_BACKEND", result.stdout)
+        self.assertIn("saved Ask selection (lfm2 when none is saved)", result.stdout)
+        self.assertIn("kilix-needle workflows select --model lfm2|needle3|grammar", result.stdout)
+        self.assertEqual(self.calls(), [])
+
     def test_hold_waits_for_enter_on_every_status(self):
         for code in ("0", "1"):
             with self.subTest(code):
