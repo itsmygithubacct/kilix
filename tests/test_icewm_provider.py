@@ -96,7 +96,7 @@ class KilixIceWMInstallerTests(unittest.TestCase):
     def test_installer_selects_the_tested_provider_revision(self):
         self.assertIn(
             "KILIX_ICEWM_DEFAULT_REF="
-            "00e570ceff4d5c1374e8f9a92f01cedb620dfe40",
+            "f6f52b044538c47fcac85d734a6862bb702f43d0",
             self.text,
         )
 

@@ -972,16 +972,22 @@ class TranscriptBudgetTests(unittest.TestCase):
         launcher = (ROOT / "kilix").read_text()
         self.assertIn("_kilix_transcript_reap_periodically()", launcher)
         self.assertIn('[ "$current_tick" = "$frontend_start_tick" ]', launcher)
-        self.assertIn('flock -n 9', launcher)
+        self.assertIn('_kilix_hold_lock "$KILIX_STATE_DIRECTORY/transcript-reaper.lock"',
+                      launcher)
 
 
 class TranscriptArchiveIntegrationTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which("zstd"), "zstd is required")
     def test_dead_log_moves_through_both_tiers_and_reads_back(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(prefix="kx") as tmp:
             gpu_home = Path(tmp) / "gpu"
             transcript_dir = gpu_home / "kilix" / "state" / "transcripts"
             transcript_dir.mkdir(parents=True, mode=0o700)
+            # The reaper archives only what a broker proves dead; an empty
+            # runtime of its own proves no live session, and the one this
+            # process inherited may hold the session running the tests.
+            runtime = Path(tmp) / "rt"
+            runtime.mkdir(mode=0o700)
             source = transcript_dir / "dead-session.log"
             payload = b"first line\nsecond line\n" * 128
             source.write_bytes(payload)
@@ -990,6 +996,7 @@ class TranscriptArchiveIntegrationTests(unittest.TestCase):
             env = sandbox_env()
             env["GPU_TERMINAL_HOME"] = str(gpu_home)
             env["GPU_TERMINAL_SOURCE_HOME"] = str(ROOT.parent)
+            env["KITTY_PTY_BROKER_RUNTIME"] = str(runtime)
             command = [str(ROOT / "kilix"), "transcript"]
 
             subprocess.run(

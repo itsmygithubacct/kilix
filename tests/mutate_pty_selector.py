@@ -6,11 +6,11 @@ No source mutation survives, no model calls, no installed broker/Needle, no patt
 """
 import argparse
 import json
-import os
 from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+from _env_support import sandbox_env
 from pty_mutation_result import qualified_detection
 
 PARSER = argparse.ArgumentParser()
@@ -178,11 +178,11 @@ with tempfile.TemporaryDirectory(prefix="selector-mutations-") as temporary:
         if component == "broker":
             command = ["python3", "tests/test_selector.py", str(source / "build/kitty-pty-broker"),
                        str(old / "build/kitty-pty-broker"), "-v"]
-            cwd, env = source, dict(os.environ)
+            cwd, env = source, sandbox_env()
         else:
             command = ["python3", "-B", "-m", "unittest", "discover", "-s", "tests", "-p", "test_pty_selector.py", "-v"]
-            cwd, env = source, {**os.environ, "SELECTOR_BROKER_SOURCE": str(ARGS.broker_source),
-                                "SELECTOR_KILIX_SOURCE": str(KILIX)}
+            cwd, env = source, sandbox_env(SELECTOR_BROKER_SOURCE=str(ARGS.broker_source),
+                                             SELECTOR_KILIX_SOURCE=str(KILIX))
         code = run(command, log, cwd, env)
         results.append({"component": component, "name": "baseline", "exit": code, "passing": code == 0})
         if code:
@@ -215,7 +215,7 @@ with tempfile.TemporaryDirectory(prefix="selector-mutations-") as temporary:
                    str(module), test, str(structured)]
         if component == "broker":
             command += ["--old-broker", str(old / "build/kitty-pty-broker")]
-        env = {**os.environ, "SELECTOR_BROKER_SOURCE": str(ARGS.broker_source), "SELECTOR_KILIX_SOURCE": str(KILIX)}
+        env = sandbox_env(SELECTOR_BROKER_SOURCE=str(ARGS.broker_source), SELECTOR_KILIX_SOURCE=str(KILIX))
         log = OUTPUT / (name + ".log")
         code = run(command, log, target, env)
         try:

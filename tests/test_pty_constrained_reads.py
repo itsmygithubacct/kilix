@@ -1,12 +1,13 @@
 """Boundary tests; synthetic pane samples here are NOT real T4 coverage."""
 import json
-import os
 from pathlib import Path
 import sys
 import subprocess
 import time
 import unittest
 from unittest import mock
+
+from _env_support import sandbox_env
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'config'))
 import kilix_pty
@@ -75,7 +76,7 @@ class ReadBoundaryTests(unittest.TestCase):
                               ("import os; os.write(1,b'x'*1100000)",'pane_lookup_overflow')]:
             before = time.monotonic()
             with self.subTest(reason=reason), self.assertRaisesRegex(pane.LookupFailure,reason):
-                pane.bounded_query([sys.executable,'-c',script],dict(os.environ),before+.3)
+                pane.bounded_query([sys.executable,'-c',script],sandbox_env(),before+.3)
             self.assertLess(time.monotonic()-before,1.3)
 
     def test_remaining_below_native_minimum_never_launches_status(self):

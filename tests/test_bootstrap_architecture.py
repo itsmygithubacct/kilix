@@ -1,11 +1,12 @@
 """Foreign prebuilt selections fail before state changes or downloads."""
 import hashlib
-import os
 from pathlib import Path
 import subprocess
 import tarfile
 import tempfile
 import unittest
+
+from _env_support import sandbox_env
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -39,8 +40,7 @@ class BootstrapArchitectureTests(unittest.TestCase):
             curl.chmod(0o755)
             storage = root / 'state'
             url_log = root / 'url.log'
-            env = {k: v for k, v in os.environ.items()
-                   if not k.startswith(('KILIX_', 'GPU_TERMINAL_'))}
+            env = sandbox_env()
             env.update(HOME=str(root), PATH=str(binary) + ':/usr/bin:/bin',
                        KILIX_STORAGE_HOME=str(storage),
                        KILIX_PREBUILT_VERSION='0.48.2',
@@ -71,8 +71,7 @@ class BootstrapArchitectureTests(unittest.TestCase):
                 uname.write_text('#!/bin/sh\necho aarch64\n')
                 uname.chmod(0o755)
                 storage = root / 'state'
-                env = {k: v for k, v in os.environ.items()
-                       if not k.startswith(('KILIX_', 'GPU_TERMINAL_'))}
+                env = sandbox_env()
                 env.update(HOME=str(root), PATH=str(binary) + ':/usr/bin:/bin',
                            KILIX_STORAGE_HOME=str(storage), KILIX_PREBUILT_VERSION='0.48.2',
                            KILIX_PREBUILT_SHA256=digest)

@@ -12,6 +12,8 @@ import time
 import unittest
 from unittest import mock
 
+from _env_support import sandbox_env
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "config"))
 import kilix_pty as pty
@@ -285,7 +287,7 @@ def crash(store, key, record):
 api.Store.write = crash
 """
                 child = subprocess.run([sys.executable, "-c", self.child_program(request, body)],
-                                       capture_output=True, text=True, env=dict(os.environ), timeout=10)
+                                       capture_output=True, text=True, env=sandbox_env(**self.fx.env), timeout=10)
                 self.assertEqual(child.returncode, 97, child.stderr)
                 before = len(self.broker.calls)
                 code, result = self.execute({"id": ident}, request["operation_id"])
@@ -336,7 +338,7 @@ while not os.path.exists({str(go)!r}): time.sleep(0.005)
 """
         program = self.child_program(self.request({"id": "concurrent"}), body)
         children = [subprocess.Popen([sys.executable, "-c", program], stdout=subprocess.PIPE,
-                                     stderr=subprocess.PIPE, text=True, env=dict(os.environ)) for _ in range(3)]
+                                     stderr=subprocess.PIPE, text=True, env=sandbox_env(**self.fx.env)) for _ in range(3)]
         go.touch()
         results = []
         for child in children:
