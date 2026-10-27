@@ -57,6 +57,7 @@ class SharedRebindBarrier(fixture.NativeInputFixture):
         self.inj.dispatch_pending()
         self.assertFalse(self.inj._input)
         self.assertIsNone(self.inj._rebind_pending)
+        self.xd.sync()
         self.app.sync()
         self.events(seen)
         self.assertEqual(seen, expected)

@@ -50,7 +50,7 @@ class NativeInput(fixture.NativeInputFixture):
         self.inj.queue_input('chord','漢',0,3)
         while self.inj._input:
             self.inj.dispatch_pending()
-            self.app.sync();self.events(seen)
+            self.xd.sync();self.app.sync();self.events(seen)
             self.assertEqual(self.xd.get_keyboard_mapping(held_code,1)[0][0],0x01006f22)
             time.sleep(self.inj.input_timeout(0.01))
         self.assertEqual(seen,[self.inj.keysym_for(c) for c in '漢'+text[:-1]]+[XK.XK_Tab])
@@ -73,7 +73,7 @@ class NativeInput(fixture.NativeInputFixture):
         pane.on_paste('Ab!/ü\n\t')
         while self.inj._input:
             self.inj.dispatch_pending()
-            self.app.sync();self.events(seen)
+            self.xd.sync();self.app.sync();self.events(seen)
             time.sleep(self.inj.input_timeout(.01))
         self.assertEqual(seen,[0x01006f22]+[ord(c) for c in 'Ab!/ü']+[XK.XK_Return,XK.XK_Tab])
         self.assertEqual(self.held(),[])
