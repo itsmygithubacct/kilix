@@ -849,10 +849,19 @@ class AgentHelpTests(unittest.TestCase):
         self.assertIn("kilix --build", result.stderr)
 
     def test_help_names_the_agent_commands_within_a_screen(self):
+        # The last line names this checkout's own guide, so its length follows
+        # wherever the tests run from. Check that the launcher printed exactly
+        # this checkout, then measure the budget with the default checkout of
+        # an install (GPU_TERMINAL_SOURCE_HOME/kilix in a typical home).
+        guide = f"Agent guide: {ROOT}/docs/AGENTS.md\n"
+        installed = "Agent guide: /home/pleb/.local/gpu_terminal/sources/kilix/docs/AGENTS.md\n"
         for flag in ("--help", "-h", "help"):
             with self.subTest(flag=flag):
                 text = self.run_help(flag)
-                self.assertLessEqual(len(text.encode()), 1800)
+                self.assertTrue(text.endswith(guide), text[-200:])
+                self.assertEqual(text.count(str(ROOT)), 1)
+                measured = text[:-len(guide)] + installed
+                self.assertLessEqual(len(measured.encode()), 1800)
                 self.assertLessEqual(len(text.splitlines()), 30)
                 for usage in ("kilix pane right -- bash", "kilix pane list",
                               "kilix pane send TARGET 'TEXT' [--submit]",
