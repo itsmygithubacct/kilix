@@ -15,6 +15,7 @@ import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+FIXTURE_PARENT = ROOT / '.test-tmp'
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _env_support import sandbox_env  # noqa: E402
 
@@ -26,7 +27,13 @@ class InstalledBuildTests(unittest.TestCase):
             self.skipTest('explicit source-bound native package is required')
         self.prefix = Path(prefix).resolve(strict=True)
         self.assertTrue((self.prefix/'share/doc/kilix-encodec/native-package.json').is_file())
-        self.tmp = tempfile.TemporaryDirectory(prefix='kmx-input-')
+        # The build identity binds every parent directory of its inputs, and a
+        # shared temporary directory changes whenever any process adds or
+        # removes an entry there, which forces a correct rebuild and hides
+        # freshness. The checkout's own parents are quiet; keep the fixture
+        # below them, as tests/test_multiplexer_build.py does.
+        FIXTURE_PARENT.mkdir(mode=0o700, exist_ok=True)
+        self.tmp = tempfile.TemporaryDirectory(prefix='kmx-input-', dir=FIXTURE_PARENT)
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         self.source = self.root/'source';self.source.mkdir();(self.source/'include').mkdir()
@@ -72,6 +79,30 @@ class InstalledBuildTests(unittest.TestCase):
         else:self.assertNotEqual(result.returncode,0,result.stdout)
         return result
 
+    def parents(self):
+        return [(str(path),path.lstat().st_ctime_ns) for path in (self.root,*self.root.parents)]
+
+    def build_expecting(self,rebuild):
+        """Run the build and assert whether it rebuilt, as tests/test_multiplexer_build.py does.
+
+        When another process adds or removes an entry in any fixture parent the
+        next build rightly rebuilds. That is an input change, not a freshness
+        failure: a step that must not rebuild is repeated until it runs with
+        every parent unchanged, and a step that must rebuild accepts any extra
+        rebuild caused by such a change.
+        """
+        for _ in range(10):
+            before=self.count();settled=self._settled
+            result=self.run_build();built=self.count()-before
+            self._settled=self.parents()
+            if rebuild:
+                self.assertGreaterEqual(built,2)
+                if built!=2:self.assertNotEqual(self._settled,settled)
+                return result
+            if built==0:return result
+            self.assertNotEqual(self._settled,settled,'rebuilt with no input change')
+        self.fail('fixture parent directories kept changing between builds')
+
     def record(self):return json.loads((self.base/'build-identity').read_text())
     def count(self):return len(self.trace.read_text().splitlines())
     def value(self):return subprocess.run([str(self.base/'kmx-serve')],env=self.env).returncode
@@ -101,11 +132,12 @@ class InstalledBuildTests(unittest.TestCase):
         self.fail('fixture boundary was not reached')
 
     def test_supported_flags_and_actual_header_bytes_invalidate(self):
-        self.run_build();self.assertEqual(self.value(),3)
-        first=self.count();self.run_build();self.assertEqual(self.count(),first)
-        self.env['CFLAGS']+=' -O1';self.run_build();self.assertEqual(self.count(),first+2)
+        self._settled=self.parents()
+        self.build_expecting(True);self.assertEqual(self.value(),3)
+        self.build_expecting(False)
+        self.env['CFLAGS']+=' -O1';self.build_expecting(True)
         self.header.write_text('#define MARKER 7\n')
-        self.run_build();self.assertEqual(self.value(),7);self.assertEqual(self.count(),first+4)
+        self.build_expecting(True);self.assertEqual(self.value(),7)
         self.assertIn(str(self.header),self.record()['dependencies'])
 
     def test_ambient_search_and_override_variables_do_not_select_inputs(self):
