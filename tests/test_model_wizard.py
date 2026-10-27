@@ -277,7 +277,7 @@ class WizardTests(unittest.TestCase):
                                    'workflows', 'select', '--json', '--model', 'lfm2'],
                                   {'stdin': subprocess.DEVNULL, 'stdout': subprocess.PIPE,
                                    'env': dict(environment, KILIX_APP_AUTO_INSTALL='0')})])
-        legacy.assert_called_once_with('workflows', {'answer': 'yes'})
+        legacy.assert_called_once_with('workflows', {'answer': 'yes', 'scope': 'ask'})
         self.assertEqual(wizard.answers()['workflows']['models'], ['lfm2-kilix-commands'])
         self.assertEqual(wizard.pending(), {})
 
@@ -405,6 +405,42 @@ class WizardTests(unittest.TestCase):
                 'answers': {'workflows': {'answer': answer, 'models': models, 'phase': 'complete'}}})
             self.assertEqual([page['id'] for page in wizard.pages(assets=assets, measure=False)], ['workflows'])
             self.assertEqual(wizard.answers()['legacy-workflows']['models'], models)
+
+    def test_desktop_offer_answers_file_under_ask_and_unmarked_ones_under_needle2(self):
+        # The desktop and this wizard mark Ask answers; one from before 0.2.2
+        # has no marker and was about Needle2.
+        assets = [asset('needle2'), asset('lfm2-kilix-commands')]
+        (Path(self.directory.name) / wizard.LEGACY['workflows']).touch()
+        for answer in ('yes', 'no'):
+            for state, page, offered in (({'answer': answer, 'scope': 'ask'}, 'workflows', 'legacy-workflows'),
+                                         ({'answer': answer}, 'legacy-workflows', 'workflows')):
+                with self.subTest(answer=answer, state=state), \
+                        patch.object(wizard, 'legacy_state', return_value=state):
+                    (Path(self.directory.name) / 'model-wizard.json').unlink(missing_ok=True)
+                    answers = wizard.answers()
+                    self.assertEqual(set(answers), {page})
+                    self.assertEqual(answers[page]['answer'], answer)
+                    self.assertEqual(answers[page].get('scope'), 'ask' if page == 'workflows' else None)
+                    self.assertEqual([row['id'] for row in wizard.pages(assets=assets, measure=False)], [offered])
+                    # Saving another answer keeps the imported one where it was filed.
+                    wizard.record('vision', 'no', [])
+                    self.assertEqual(wizard.answers()[page]['answer'], answer)
+                    self.assertNotIn(offered, wizard.answers())
+
+    def test_ask_answers_write_the_scope_marker_to_the_shared_offer_state(self):
+        with patch.object(wizard, 'catalog', return_value=[asset('lfm2-kilix-commands')]), \
+                patch.object(wizard, 'legacy_state') as legacy:
+            wizard.apply('workflows', [], 'no')
+            legacy.assert_called_once_with('workflows', {'answer': 'no', 'scope': 'ask'})
+            legacy.reset_mock()
+            wizard.apply('workflows', ['lfm2-kilix-commands'], 'yes')
+            with patch('wizard_licenses.consent_and_install', return_value=(set(), {'lfm2-kilix-commands'})), \
+                    patch.object(wizard, 'check_workflows') as check:
+                wizard.finish()
+            check.assert_not_called()
+            legacy.assert_called_once_with('workflows', {'answer': 'no', 'scope': 'ask'})
+        self.assertEqual(wizard.declined_state('speech'), {'answer': 'no', 'enabled': False, 'offered': True})
+        self.assertEqual(wizard.declined_state('dictation'), {'answer': 'no'})
 
     def test_grammar_cannot_be_mixed_with_model_downloads(self):
         with patch.object(wizard, 'catalog', return_value=[asset('lfm2-kilix-commands')]):

@@ -182,9 +182,24 @@ def answers():
         if segment == 'speech' and old.get('enabled') is True:
             answer = 'yes'
         if answer in ('yes', 'no'):
-            target = 'legacy-workflows' if segment == 'workflows' else segment
-            result.setdefault(target, {'answer': answer, 'models': [], 'legacy': True})
+            entry = {'answer': answer, 'models': [], 'legacy': True}
+            target = segment
+            if segment == 'workflows':
+                # Ask answers from the desktop or this wizard carry a scope
+                # marker; unmarked ones predate 0.2.2 and were about Needle2.
+                if old.get('scope') == 'ask':
+                    entry['scope'] = 'ask'
+                else:
+                    target = 'legacy-workflows'
+            result.setdefault(target, entry)
     return result
+
+
+def declined_state(segment):
+    changes = {'answer': 'no'}
+    if segment == 'speech': changes.update(enabled=False, offered=True)
+    if segment == 'workflows': changes['scope'] = 'ask'
+    return changes
 
 
 def record(segment, answer, models, phase="complete"):
@@ -430,9 +445,7 @@ def apply(segment, selected, answer, *, input_fn=input):
         if answer not in ('yes', 'no'):
             raise ValueError('Answer must be yes or no.')
         if answer == 'no' and segment in LEGACY:
-            changes = {'answer': 'no'}
-            if segment == 'speech': changes.update(enabled=False, offered=True)
-            legacy_state(segment, changes)
+            legacy_state(segment, declined_state(segment))
         record(segment, answer, selected if answer == 'yes' else [],
                'planned' if answer == 'yes' else 'complete')
 
@@ -458,9 +471,7 @@ def finish(*, input_fn=input):
             models = [model for model in plan['models'] if model in allowed]
             if not models:
                 if segment in LEGACY:
-                    changes = {'answer': 'no'}
-                    if segment == 'speech': changes.update(enabled=False, offered=True)
-                    legacy_state(segment, changes)
+                    legacy_state(segment, declined_state(segment))
                 record(segment, 'no', [])
                 continue
             if segment == 'speech' and 'piper-en-us-kristin-medium' in models:
@@ -483,7 +494,7 @@ def finish(*, input_fn=input):
                 # verifies this exact backend, without any additional download.
                 backend = ASK_MODELS[models[0]]
                 check_workflows(model=backend, select=True)
-                legacy_state(segment, {'answer': 'yes'})
+                legacy_state(segment, {'answer': 'yes', 'scope': 'ask'})
             elif segment == 'legacy-workflows':
                 check_workflows(legacy=True)
             record(segment, 'yes', models)
