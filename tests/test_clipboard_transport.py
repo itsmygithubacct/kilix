@@ -762,7 +762,8 @@ class ClipboardTransportTests(unittest.TestCase):
     def test_oversized_incr_is_rejected_without_replacing_current_content(self):
         baseline=clip.Content.from_text('existing clipboard')
         self.hub.set_clipboard_content(baseline)
-        self.pump(lambda: self.bridges[0]._owns_selection())
+        # The baseline claim must land before the test owner takes CLIPBOARD.
+        self.pump(lambda: self.mirrors(0, baseline))
         d=self.sessions[0].xd
         owner=d.screen().root.create_window(-10,-10,1,1,0,X.CopyFromParent,
             window_class=X.InputOnly,visual=X.CopyFromParent)
