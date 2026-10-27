@@ -86,10 +86,12 @@ import ctypes
 import ctypes.util
 import json
 import os
+import select
 import stat
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import uuid
 
@@ -122,6 +124,25 @@ class SandboxUnavailable(Exception):
 
 class ChildProtocolError(Exception):
     """The sandboxed child did not report a usable result for a test."""
+
+
+def read_display_number(fd: int, timeout: float) -> int:
+    """Read the complete bounded displayfd line without closing a live writer's pipe."""
+    deadline = time.monotonic() + timeout
+    number = b""
+    while b"\n" not in number:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or not select.select([fd], [], [], remaining)[0]:
+            raise RuntimeError("Xvfb did not report a complete display number")
+        chunk = os.read(fd, 33 - len(number))
+        if not chunk:
+            raise RuntimeError("Xvfb closed displayfd before its complete display number")
+        number += chunk
+        if len(number) > 32:
+            raise RuntimeError("Xvfb display number exceeded the line bound")
+    if not number.endswith(b"\n") or not number[:-1].isdigit():
+        raise RuntimeError("Xvfb reported an invalid display number")
+    return int(number[:-1])
 
 
 def in_sandbox() -> bool:

@@ -760,8 +760,10 @@ class ConnectionTests(unittest.TestCase):
             # Model a silent send-text that staged its bytes, followed by a
             # response-bearing screen read. A direct call keeps the local
             # default; an action deadline is authoritative when one exists.
+            # Staging is setup, not the short-timeout observation under test.
+            # Give its interpreter startup the normal RPC budget.
+            client.run(["stage"], b"safe fixture text")
             with mock.patch.object(control, "DEFAULT_RPC_TIMEOUT", 0.15):
-                client.run(["stage"], b"safe fixture text")
                 with self.assertRaisesRegex(control.ControlError, "terminal request timed out"):
                     client.run(["observe", "0.25"])
                 state = json.loads(state_path.read_text())

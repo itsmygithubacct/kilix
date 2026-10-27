@@ -93,13 +93,10 @@ class XDamageCaptureE2E(unittest.TestCase):
         finally:
             os.close(wfd)
         try:
-            ready, _, _ = select.select([rfd], [], [], 15)
-            if not ready:
-                raise RuntimeError("Xvfb did not report a display number")
-            number = os.read(rfd, 32).strip()
+            number = x11_sandbox.read_display_number(rfd, 15)
         finally:
             os.close(rfd)
-        if cls.xvfb.poll() is not None or not number:
+        if cls.xvfb.poll() is not None:
             raise RuntimeError("Xvfb exited during startup")
         cls.display_name = f":{int(number)}"
 

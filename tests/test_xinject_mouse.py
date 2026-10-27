@@ -1,7 +1,6 @@
 """Modified mouse gestures reach an isolated X server and leave no held keys."""
 import os
 from pathlib import Path
-import select
 import shutil
 import socket
 import subprocess
@@ -56,9 +55,7 @@ class MouseModifierTests(unittest.TestCase):
 
         cls.addClassCleanup(stop_server)
         try:
-            if not select.select([read_fd], [], [], 10)[0]:
-                raise RuntimeError("private Xvfb did not become ready")
-            number = int(os.read(read_fd, 32).strip())
+            number = x11_sandbox.read_display_number(read_fd, 10)
         finally:
             os.close(read_fd)
         socket_path = x11_sandbox.confirm_our_socket(number, before)
