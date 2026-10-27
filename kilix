@@ -3414,7 +3414,7 @@ case "${1:-}" in
           echo "agents, files or system), shows the plan, and acts only on a typed yes"
           echo "  --voice  dictate the request; the transcript can be edited first"
           echo "  --hold   wait for Enter before returning, so a tab stays readable"
-          echo "  --model  lfm2 (default), needle3, or grammar; overrides KILIX_ASK_COMMANDS_BACKEND"
+          echo "  --model  lfm2, needle3, or grammar; overrides environment and saved preference (default: lfm2)"
           echo "  --commands-candidate FILE  use a local Needle 3 candidate with --model needle3"
           echo "Install the alternate: kilix-needle install --commands needle3"
           echo

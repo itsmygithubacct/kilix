@@ -17,6 +17,25 @@ Kilix remains the terminal and pane manager. Workflows connect its visible contr
 
 For ordinary inspection, `kilix ls --panes` lists pane IDs and `kilix watch --once PANE_ID` reads one pane snapshot. Use the current pane ID from the listing; numeric row positions and display titles are not stable identities. Kilix's basic `focus` verbs qualify targets as `pane:ID` or `tab:ID` when needed.
 
+## Choose the Ask model
+
+Model Setup's Local Workflows page offers LFM2 by default, Needle3 as an
+alternate, and grammar without a model download. Older Needle2 jobs have their
+own Legacy Needle workflows page. Accepting one model does not verify another.
+
+`kilix-needle workflows status --json` checks the selected Ask backend without
+loading a model, downloading files or changing state. Its result names the
+backend and verifies its release pins, installed files, licence and platform.
+Use `--legacy` for the separate Needle2 job checks.
+
+`kilix-needle workflows setup --model needle3` installs through the normal
+licence flow and saves the preference after verification. Use `--model grammar`
+for download-free setup, or `workflows select --model lfm2` to select an already
+installed model. Ask and the desktop Workflows check read the same preference.
+An explicit `kilix ask --model MODEL` takes priority over
+`KILIX_ASK_COMMANDS_BACKEND`, which takes priority over the saved selection.
+File readiness does not establish inference speed or successful task completion.
+
 ## Human and agent workflows
 
 People can use the visible pane chrome and switcher to choose where work goes, then read the pane itself to see what happened. Direct verbs are useful when the operation is already clear. The `--` separator keeps a program and its arguments distinct from Kilix's own options.

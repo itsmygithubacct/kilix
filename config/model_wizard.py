@@ -24,7 +24,8 @@ SCHEMA = 'kilix.model-wizard/v1'
 PAGES = (
     ('speech', 'Speech / system voice', 'piper-en-us-kristin-medium'),
     ('dictation', 'Dictation / speech recognition', 'faster-whisper-small-en'),
-    ('workflows', 'Local Workflows', 'needle2'),
+    ('workflows', 'Local Workflows / Kilix Ask', 'lfm2-kilix-commands'),
+    ('legacy-workflows', 'Legacy Needle workflows', 'needle2'),
     ('vision', 'Vision / object detection', 'yolox_s'),
     ('audio', 'Audio / EnCodec', 'encodec-24khz-stateful'),
     ('image', 'Image generation / Bonsai', 'bonsai-image-4b-ternary-gemlite'),
@@ -46,6 +47,8 @@ RUNTIME_PAGES = {'vision', 'audio', 'image'}
 LEGACY = {'speech': 'system-voice.state', 'dictation': 'dictation-offer.state',
           'workflows': 'workflows-offer.state'}
 WORKFLOWS_SCHEMA = 'kilix.workflows/v1'
+ASK_MODELS = {'lfm2-kilix-commands': 'lfm2', 'needle3-kilix-commands': 'needle3',
+              'grammar': 'grammar'}
 
 
 def launcher():
@@ -167,6 +170,10 @@ def answers():
                 or not isinstance(value.get('models'), list)
                 or any(not isinstance(model, str) for model in value['models'])):
             raise ValueError('Invalid saved wizard answer.')
+    previous = result.get('workflows', {})
+    if previous and previous.get('scope') != 'ask' and not any(
+            model in ASK_MODELS for model in previous.get('models', [])):
+        result['legacy-workflows'] = result.pop('workflows')
     for segment in LEGACY:
         if segment in result or not (state_root() / LEGACY[segment]).exists():
             continue
@@ -175,13 +182,16 @@ def answers():
         if segment == 'speech' and old.get('enabled') is True:
             answer = 'yes'
         if answer in ('yes', 'no'):
-            result[segment] = {'answer': answer, 'models': [], 'legacy': True}
+            target = 'legacy-workflows' if segment == 'workflows' else segment
+            result.setdefault(target, {'answer': answer, 'models': [], 'legacy': True})
     return result
 
 
 def record(segment, answer, models, phase="complete"):
     saved = answers()
     saved[segment] = {'answer': answer, 'models': models, 'phase': phase}
+    if segment == 'workflows':
+        saved[segment]['scope'] = 'ask'
     atomic_json(state_root() / 'model-wizard.json', {'schema': SCHEMA, 'answers': saved})
 
 
@@ -190,7 +200,8 @@ def group(asset):
     if name.startswith('bonsai-image-'): return 'image'
     if name.startswith('encodec-'): return 'audio'
     if name.startswith('yolox_'): return 'vision'
-    if name.startswith('needle2'): return 'workflows'
+    if name in ASK_MODELS: return 'workflows'
+    if name.startswith('needle2'): return 'legacy-workflows'
     if name == 'yamnet': return 'sound'
     if name.startswith('nomic-embed'): return 'embedding'
     if provider == 'kilix-pdf-conversion': return 'documents'
@@ -311,6 +322,10 @@ def pages(include_answered=False, *, assets=None, measure=True, ensure_sizer=Fal
     grouped = {}
     for asset in assets:
         grouped.setdefault(group(asset), []).append(dict(asset))
+    if 'workflows' in grouped:
+        grouped['workflows'].append(dict(id='grammar', label='Grammar only (no model download)',
+                                        provider='kilix-needle', download_bytes=0,
+                                        installed_bytes=0, temporary_bytes=0))
     definitions = list(PAGES)
     known = {row[0] for row in definitions}
     definitions += [(key, key.replace('kilix-', '').replace('-', ' ').title(), '')
@@ -357,19 +372,26 @@ def run_command(*args):
         raise ValueError(f'Setup exited with status {code}. This page is still unanswered; retry or decline.')
 
 
-def workflows_command():
+def workflows_command(*, model=None, legacy=False, select=False):
     """Needle's readiness probe through the selected catalog, as Kilix 95 runs it.
 
     The launcher has no `workflows` verb; an unrouted first argument becomes the
     program of a new terminal window. Needle owns `workflows status`.
     """
-    return [launcher(), 'app', 'run', 'kilix-needle', '--', 'workflows', 'status', '--json']
+    command = [launcher(), 'app', 'run', 'kilix-needle', '--', 'workflows',
+               'select' if select else 'status', '--json']
+    if model is not None:
+        command += ['--model', model]
+    if legacy:
+        command += ['--legacy']
+    return command
 
 
-def check_workflows():
+def check_workflows(*, model=None, legacy=False, select=False):
     """The page is answered only when Needle verifies the acquired assets."""
     environment = dict(os.environ, KILIX_APP_AUTO_INSTALL='0')
-    result = subprocess.run(workflows_command(), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+    result = subprocess.run(workflows_command(model=model, legacy=legacy, select=select),
+                            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                             env=environment)
     try:
         status = json.loads(result.stdout.decode('utf-8').strip().splitlines()[-1])
@@ -377,7 +399,9 @@ def check_workflows():
         status = None
     if not isinstance(status, dict) or status.get('schema') != WORKFLOWS_SCHEMA \
             or type(status.get('ready')) is not bool or result.returncode not in (0, 1) \
-            or (result.returncode == 0) != status['ready']:
+            or (result.returncode == 0) != status['ready'] \
+            or (model is not None and status.get('backend') != model) \
+            or (legacy and status.get('scope') != 'legacy'):
         raise ValueError(f'Needle did not report workflow readiness (status {result.returncode}). '
                          'This page is still unanswered; retry or decline.')
     if not status['ready']:
@@ -401,6 +425,8 @@ def apply(segment, selected, answer, *, input_fn=input):
         selected = list(dict.fromkeys(selected))
         if set(selected) - {row['id'] for row in page['models']} or (answer == 'yes' and not selected):
             raise ValueError('Choose at least one model from this page.')
+        if segment == 'workflows' and 'grammar' in selected and len(selected) != 1:
+            raise ValueError('Choose grammar alone, or choose the models to install.')
         if answer not in ('yes', 'no'):
             raise ValueError('Answer must be yes or no.')
         if answer == 'no' and segment in LEGACY:
@@ -417,7 +443,8 @@ def finish(*, input_fn=input):
         if not plans:
             print('No model installations are pending.')
             return
-        selected = list(dict.fromkeys(model for plan in plans.values() for model in plan['models']))
+        selected = list(dict.fromkeys(model for plan in plans.values() for model in plan['models']
+                                      if model != 'grammar'))
         # Revalidate against the currently selected catalog, never a stale UI request.
         offered = {page['id']: {model['id'] for model in page['models']}
                    for page in pages(True, measure=False)}
@@ -425,7 +452,8 @@ def finish(*, input_fn=input):
             if set(plan['models']) - offered.get(segment, set()):
                 raise ValueError('The offered models changed. Revisit this page with --all.')
         from wizard_licenses import consent_and_install, ask
-        allowed, declined = consent_and_install(selected, input_fn=input_fn)
+        allowed, declined = consent_and_install(selected, input_fn=input_fn) if selected else (set(), set())
+        allowed = set(allowed) | {'grammar'}
         for segment, plan in plans.items():
             models = [model for model in plan['models'] if model in allowed]
             if not models:
@@ -450,11 +478,14 @@ def finish(*, input_fn=input):
                     run_command('stt', '--default', STT_IDS[active])
                     run_command('stt', '--grant-consent')
                     legacy_state(segment, {'answer': 'yes', 'model': STT_IDS[active]})
-            elif segment == 'workflows' and 'needle2' in models:
-                # Assets were acquired with their batch receipts. Readiness must
-                # not silently pull an unchecked additional model here.
-                check_workflows()
+            elif segment == 'workflows':
+                # Acquisition already used the shared licence batch. Selecting
+                # verifies this exact backend, without any additional download.
+                backend = ASK_MODELS[models[0]]
+                check_workflows(model=backend, select=True)
                 legacy_state(segment, {'answer': 'yes'})
+            elif segment == 'legacy-workflows':
+                check_workflows(legacy=True)
             record(segment, 'yes', models)
         print('Model setup complete. Declined licences were not installed.')
 
