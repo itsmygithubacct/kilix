@@ -120,7 +120,8 @@ class WizardTests(unittest.TestCase):
             answers = wizard.answers()
         self.assertNotIn('speech', answers)
         self.assertEqual(answers['dictation']['answer'], 'no')
-        self.assertEqual(answers['workflows']['answer'], 'yes')
+        self.assertEqual(answers['legacy-workflows']['answer'], 'yes')
+        self.assertNotIn('workflows', answers)
 
     def test_system_llm_never_defaults_without_sizer_fit(self):
         with patch.object(wizard, 'catalog', return_value=system_llm.catalog()), \
@@ -260,38 +261,41 @@ class WizardTests(unittest.TestCase):
         calls = []
         def run(command, **kwargs):
             calls.append((command, kwargs))
-            status = {'schema': 'kilix.workflows/v1', 'ready': True, 'status': 'ready', 'errors': []}
+            status = {'schema': 'kilix.workflows/v1', 'ready': True, 'status': 'ready',
+                      'backend': 'lfm2', 'scope': 'ask', 'errors': []}
             return subprocess.CompletedProcess(command, 0, b'notice\n' + json.dumps(status).encode())
         with patch.dict(os.environ, environment, clear=True), \
-                patch.object(wizard, 'catalog', return_value=[asset('needle2')]):
-            wizard.apply('workflows', ['needle2'], 'yes')
-            with patch('wizard_licenses.consent_and_install', return_value=({'needle2'}, set())), \
+                patch.object(wizard, 'catalog', return_value=[asset('lfm2-kilix-commands')]):
+            wizard.apply('workflows', ['lfm2-kilix-commands'], 'yes')
+            with patch('wizard_licenses.consent_and_install', return_value=({'lfm2-kilix-commands'}, set())), \
                     patch.object(wizard.subprocess, 'run', side_effect=run), \
                     patch.object(wizard.subprocess, 'call') as call, \
                     patch.object(wizard, 'legacy_state') as legacy:
                 wizard.finish()
         call.assert_not_called()
         self.assertEqual(calls, [([wizard.launcher(), 'app', 'run', 'kilix-needle', '--',
-                                   'workflows', 'status', '--json'],
+                                   'workflows', 'select', '--json', '--model', 'lfm2'],
                                   {'stdin': subprocess.DEVNULL, 'stdout': subprocess.PIPE,
                                    'env': dict(environment, KILIX_APP_AUTO_INSTALL='0')})])
         legacy.assert_called_once_with('workflows', {'answer': 'yes'})
-        self.assertEqual(wizard.answers()['workflows']['models'], ['needle2'])
+        self.assertEqual(wizard.answers()['workflows']['models'], ['lfm2-kilix-commands'])
         self.assertEqual(wizard.pending(), {})
 
     def test_unready_or_unreadable_workflows_status_keeps_the_page_pending(self):
-        ready = {'schema': 'kilix.workflows/v1', 'ready': True, 'status': 'ready', 'errors': []}
+        ready = {'schema': 'kilix.workflows/v1', 'ready': True, 'status': 'ready',
+                 'backend': 'lfm2', 'scope': 'ask', 'errors': []}
         unready = dict(ready, ready=False, status='not-ready', detail='Workflow model setup needs attention.',
-                       errors=['needle2-runtime: agreement-required'])
+                       errors=['lfm2-kilix-commands: agreement-required'])
         cases = {'unready': (1, unready, 'agreement-required'), 'unrouted': (1, None, 'did not report'),
                  'mismatch': (0, unready, 'did not report'), 'schema': (0, dict(ready, schema='other'), 'did not report'),
-                 'crash': (2, ready, 'did not report')}
-        with patch.object(wizard, 'catalog', return_value=[asset('needle2')]):
+                 'crash': (2, ready, 'did not report'),
+                 'wrong-model': (0, dict(ready, backend='needle3'), 'did not report')}
+        with patch.object(wizard, 'catalog', return_value=[asset('lfm2-kilix-commands')]):
             for name, (code, status, message) in cases.items():
                 with self.subTest(name):
-                    wizard.apply('workflows', ['needle2'], 'yes')
+                    wizard.apply('workflows', ['lfm2-kilix-commands'], 'yes')
                     output = b'' if status is None else json.dumps(status).encode()
-                    with patch('wizard_licenses.consent_and_install', return_value=({'needle2'}, set())), \
+                    with patch('wizard_licenses.consent_and_install', return_value=({'lfm2-kilix-commands'}, set())), \
                             patch.object(wizard.subprocess, 'run',
                                          return_value=subprocess.CompletedProcess([], code, output)), \
                             patch.object(wizard, 'legacy_state') as legacy:
@@ -320,9 +324,9 @@ class WizardTests(unittest.TestCase):
             'PYTHONDONTWRITEBYTECODE': '1',
         }
         with patch.dict(os.environ, environment, clear=True), \
-                patch.object(wizard, 'catalog', return_value=[asset('needle2')]), \
-                patch('wizard_licenses.consent_and_install', return_value=({'needle2'}, set())):
-            wizard.apply('workflows', ['needle2'], 'yes')
+                patch.object(wizard, 'catalog', return_value=[asset('lfm2-kilix-commands')]), \
+                patch('wizard_licenses.consent_and_install', return_value=({'lfm2-kilix-commands'}, set())):
+            wizard.apply('workflows', ['lfm2-kilix-commands'], 'yes')
             with self.assertRaisesRegex(ValueError, 'did not report workflow readiness'):
                 wizard.finish()
             self.assertIn('workflows', wizard.pending())
@@ -340,6 +344,63 @@ class WizardTests(unittest.TestCase):
         verbs.add(wizard.workflows_command()[1])
         self.assertTrue(verbs >= {'tts', 'stt', 'app'})
         self.assertEqual(verbs - labels, set())
+
+    def test_ask_and_legacy_models_have_distinct_pages_and_defaults(self):
+        assets = [asset(name, 'kilix-needle') for name in (
+            'needle2', 'needle2-runtime', 'lfm2-kilix-commands', 'needle3-kilix-commands')]
+        pages = {page['id']: page for page in wizard.pages(assets=assets, measure=False)}
+        self.assertEqual(set(pages), {'workflows', 'legacy-workflows'})
+        self.assertEqual(pages['workflows']['default'], 'lfm2-kilix-commands')
+        self.assertEqual([row['id'] for row in pages['workflows']['models']],
+                         ['lfm2-kilix-commands', 'needle3-kilix-commands', 'grammar'])
+        self.assertEqual(pages['legacy-workflows']['default'], 'needle2')
+        self.assertEqual(pages['workflows']['models'][-1]['download_bytes'], 0)
+
+    def test_grammar_choice_skips_all_licence_and_acquisition_calls(self):
+        with patch.object(wizard, 'catalog', return_value=[asset('lfm2-kilix-commands')]), \
+                patch('wizard_licenses.consent_and_install') as install, \
+                patch.object(wizard, 'check_workflows') as check, \
+                patch.object(wizard, 'legacy_state'):
+            wizard.apply('workflows', ['grammar'], 'yes')
+            wizard.finish()
+        install.assert_not_called()
+        check.assert_called_once_with(model='grammar', select=True)
+        self.assertEqual(wizard.answers()['workflows']['models'], ['grammar'])
+
+    def test_optional_needle3_is_selected_after_its_own_acceptance(self):
+        with patch.object(wizard, 'catalog', return_value=[asset('lfm2-kilix-commands'), asset('needle3-kilix-commands')]), \
+                patch('wizard_licenses.consent_and_install', return_value=({'needle3-kilix-commands'}, set())) as install, \
+                patch.object(wizard, 'check_workflows') as check, \
+                patch.object(wizard, 'legacy_state'):
+            wizard.apply('workflows', ['needle3-kilix-commands'], 'yes')
+            wizard.finish()
+        self.assertEqual(install.call_args.args[0], ['needle3-kilix-commands'])
+        check.assert_called_once_with(model='needle3', select=True)
+
+    def test_old_saved_needle2_answer_does_not_hide_new_ask_page(self):
+        assets = [asset('needle2'), asset('lfm2-kilix-commands')]
+        for answer, models in (('yes', ['needle2']), ('no', [])):
+            wizard.atomic_json(wizard.state_root() / 'model-wizard.json', {
+                'schema': wizard.SCHEMA,
+                'answers': {'workflows': {'answer': answer, 'models': models, 'phase': 'complete'}}})
+            self.assertEqual([page['id'] for page in wizard.pages(assets=assets, measure=False)], ['workflows'])
+            self.assertEqual(wizard.answers()['legacy-workflows']['models'], models)
+
+    def test_grammar_cannot_be_mixed_with_model_downloads(self):
+        with patch.object(wizard, 'catalog', return_value=[asset('lfm2-kilix-commands')]):
+            with self.assertRaisesRegex(ValueError, 'grammar alone'):
+                wizard.apply('workflows', ['grammar', 'lfm2-kilix-commands'], 'yes')
+        self.assertEqual(wizard.pending(), {})
+
+    def test_legacy_page_still_checks_needle2_without_changing_ask(self):
+        with patch.object(wizard, 'catalog', return_value=[asset('needle2')]), \
+                patch('wizard_licenses.consent_and_install', return_value=({'needle2'}, set())), \
+                patch.object(wizard, 'check_workflows') as check, \
+                patch.object(wizard, 'legacy_state') as legacy:
+            wizard.apply('legacy-workflows', ['needle2'], 'yes')
+            wizard.finish()
+        check.assert_called_once_with(legacy=True)
+        legacy.assert_not_called()
 
 
 if __name__ == '__main__': unittest.main()

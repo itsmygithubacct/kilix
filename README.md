@@ -53,8 +53,9 @@ To use the optional Needle 3 V9 model, install it with
 `kilix-needle install --commands needle3`, then run
 `kilix ask --model needle3 "open calculator"`. Both models use the same request
 validation and confirmation. `--model grammar` skips model loading.
-Set `export KILIX_ASK_COMMANDS_BACKEND=needle3` in your shell startup file to keep
-the preference; an explicit `--model lfm2` overrides it for one request.
+Model Setup and `kilix-needle workflows setup --model needle3` save the Ask
+preference after verification. An explicit `--model lfm2` overrides it for one
+request; `KILIX_ASK_COMMANDS_BACKEND` overrides the saved preference in a shell.
 The installer presents the model and runtime licences before downloading.
 
 `kilix session` launches managed Codex, Claude or Grok runs with explicit folder
