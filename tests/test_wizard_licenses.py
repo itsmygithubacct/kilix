@@ -3,6 +3,7 @@ import contextlib
 import io
 from pathlib import Path
 import sys
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch, Mock
@@ -12,6 +13,7 @@ import content_models as cm
 import wizard_licenses as batch
 import system_llm
 import model_wizard
+import wizard_converters
 
 
 class BatchTests(unittest.TestCase):
@@ -24,7 +26,7 @@ class BatchTests(unittest.TestCase):
         self.installer = Mock()
         self.questions = []
 
-    def run_batch(self, names, decisions, llm_entries=None):
+    def run_batch(self, names, decisions, llm_entries=None, *, finish=False):
         decisions = iter(decisions)
         def answer(question):
             self.questions.append(question)
@@ -38,7 +40,8 @@ class BatchTests(unittest.TestCase):
                 patch.object(system_llm, 'acquire'), \
                 patch.object(model_wizard, 'state_root', return_value=Path(self.directory.name)), \
                 contextlib.redirect_stdout(output):
-            result = batch.consent_and_install(names, input_fn=answer)
+            result = (model_wizard.finish(input_fn=answer) if finish else
+                      batch.consent_and_install(names, input_fn=answer))
             output.flush()
             self.output = output.buffer.getvalue()
         return result
@@ -131,6 +134,64 @@ class BatchTests(unittest.TestCase):
             self.run_batch(['yolox_s'], ['yes'])
         self.assertIsInstance(caught.exception.__cause__, self.api.DownloadError)
         self.assertIs(caught.exception.__cause__, original)
+
+
+    def test_diarization_prerequisite_failure_preserves_other_choices_and_retries(self):
+        catalog = cm._verified_catalog(self.api)
+        spec = catalog.require_asset('kilix-diarization-cpu')
+        real = self.api.Installer(str(Path(self.directory.name) / 'apps'))
+        self.installer.resolve_converter.side_effect = real.resolve_converter
+        names = ['yolox_nano', spec.asset_id]
+        helper = wizard_converters.OS_INSTALLERS[spec.convert_tool_asset_id]
+        rows = [dict(id=item.asset_id, label=item.label, provider=item.provider,
+                     download_bytes=item.download_bytes, installed_bytes=item.installed_bytes,
+                     temporary_bytes=item.temporary_bytes) for item in
+                (catalog.require_asset(name) for name in names)]
+        with patch.object(model_wizard, 'state_root', return_value=Path(self.directory.name)), \
+                patch.object(model_wizard, 'catalog', return_value=rows), \
+                patch('kilix_content.install.shutil.which', return_value=None) as which, \
+                patch.object(wizard_converters, 'checked_helper', return_value=helper), \
+                patch.object(wizard_converters.subprocess, 'run') as run:
+            model_wizard.apply('vision', ['yolox_nano'], 'yes')
+            model_wizard.apply('kilix-transcribe', [spec.asset_id], 'yes')
+            before = model_wizard.pending()
+            # Both models have real Apache terms. No model, including the
+            # earlier YOLOX choice, may download if software setup is refused.
+            with self.assertRaisesRegex(ValueError, 'remain pending'):
+                self.run_batch(names, ['yes', 'no'], finish=True)
+            self.installer.ensure_upstream_asset.assert_not_called()
+            self.assertEqual(model_wizard.pending(), before)
+            run.assert_called_once_with([helper, '--dry-run'], check=True)
+            receipts = {path.name: path.read_bytes() for path in self.store.root.glob('*.json')}
+            self.assertEqual(len(receipts), 2)
+            self.questions.clear()
+            run.reset_mock()
+            run.side_effect = [None, subprocess.CalledProcessError(1, ['/usr/bin/sudo', helper])]
+            with self.assertRaisesRegex(ValueError, 'remain pending'):
+                self.run_batch(names, ['yes'], finish=True)
+            self.assertEqual(model_wizard.pending(), before)
+            self.installer.ensure_upstream_asset.assert_not_called()
+            self.questions.clear()
+            run.reset_mock()
+            def installed(argv, **_):
+                if argv == ['/usr/bin/sudo', helper]: which.return_value = spec.convert_argv[0]
+            run.side_effect = installed
+            self.run_batch(names, ['yes'], finish=True)
+            self.assertEqual(len(self.questions), 1)  # software Yes, no repeated model licence
+            self.assertEqual(model_wizard.pending(), {})
+            self.assertEqual(model_wizard.answers()['vision']['models'], ['yolox_nano'])
+            self.assertEqual(model_wizard.answers()['kilix-transcribe']['models'], [spec.asset_id])
+            self.assertEqual([call.args[0].asset_id for call in self.installer.ensure_upstream_asset.call_args_list], names)
+            self.assertEqual(receipts, {path.name: path.read_bytes() for path in self.store.root.glob('*.json')})
+
+    def test_declining_diarization_licence_never_prepares_software(self):
+        with patch.object(wizard_converters.subprocess, 'run') as run:
+            self.assertEqual(self.run_batch(['kilix-diarization-cpu'], ['no']),
+                             (set(), {'kilix-diarization-cpu'}))
+        run.assert_not_called()
+        self.installer.resolve_converter.assert_not_called()
+        self.installer.ensure_upstream_asset.assert_not_called()
+        self.assertEqual(list(self.store.root.glob('*.json')), [])
 
 
 if __name__ == '__main__': unittest.main()

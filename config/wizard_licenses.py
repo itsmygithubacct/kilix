@@ -147,6 +147,9 @@ def consent_and_install(selected, *, input_fn=input):
             atomic_json(llm_licenses_path, saved)
         from kilix_sdk._content_runtime import apps_root
         installer = api.Installer(apps_root())
+        from wizard_converters import prepare_converters
+        prepare_converters(api, installer, [specs[model] for model in selected
+                                           if model in allowed and model in specs], input_fn=input_fn)
         for model in selected:
             if model not in allowed: continue
             print('\nInstalling ' + model + '…', flush=True)
