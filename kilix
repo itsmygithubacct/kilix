@@ -219,15 +219,15 @@ usage: kilix [COMMAND] [ARGS...]    (default: new window)
 TARGET: unique title or pane:ID. Above is the complete syntax; no subcommand --help
 needed first. Ambiguous targets fail; each verb prints what it did.
   kilix agent-control context|list|dump|send|key   --help
-  kilix session --help                     coding runs, trust, logs, stop
-  kilix ralph --help                       durable mailboxes and follow-ups
-  kilix action --request-json -             structured request from stdin
-  kilix action capabilities                inspect available features
-  kilix windows --host HOST COMMAND         Windows desktop via SSH
+  kilix session --help                     sessions, trust, logs
+  kilix ralph --help                       mailboxes
+  kilix action --request-json -             JSON from stdin
+  kilix action capabilities                host features
+  kilix windows --host HOST COMMAND         Windows via SSH
 Also: ask 'REQUEST', grammar, needle, shell, claudex route|usage,
   wizard, settings, status, update, install, games,
-  screen-size, transcript, help-search "QUESTION". Command options: --help.
-Terminal engine (kitty) options: kilix --help-engine
+  screen-size, transcript, help-search "QUESTION". Options: --help.
+Engine options: kilix --help-engine
 EOF
     printf 'Agent guide: %s/docs/AGENTS.md\n' "$KILIX_HOME"
     exit 0 ;;
