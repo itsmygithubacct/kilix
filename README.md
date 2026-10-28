@@ -3090,6 +3090,14 @@ this agreement terminal inside the desktop. Accepted models receive individual
 receipts; microphone permission remains a separate question for dictation.
 Installing a catalog asset does not enable a runtime that does not support it.
 
+Selected diarization and Pocket TTS models need optional conversion software.
+After licence consent, the wizard shows the pinned OS installer's download
+details and asks separately before running its administrator step with `sudo`.
+It resolves every selected converter before downloading model weights. If
+software setup is declined or fails, choices remain pending: retry
+`kilix wizard finish`, or revisit the model page to change the selection.
+Listing pages and saving choices never invoke these installers.
+
 Useful CLI routes:
 
 ```sh
