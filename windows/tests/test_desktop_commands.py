@@ -414,7 +414,7 @@ class DesktopIntegrationTests(unittest.TestCase):
             (config / 'kilix_tmux').mkdir()
             for name in ('__init__.py', 'windows.py'):
                 shutil.copy2(CONFIG / 'kilix_sdk' / name, config / 'kilix_sdk' / name)
-            for name in ('remote.py', 'tmux_control.py', 'content_models.py', 'kilix_clock_settings.py', 'agent_fixture.py',
+            for name in ('remote.py', 'session_grid.py', 'tmux_control.py', 'content_models.py', 'kilix_clock_settings.py', 'agent_fixture.py',
                          'terminal_video.py', 'terminal_video_errors.lua'):
                 (config / name).write_text('# fixture ' + name + '\n')
             (fixture / 'kilix-settings').write_text('# fixture\n')
@@ -433,8 +433,8 @@ class DesktopIntegrationTests(unittest.TestCase):
                 stager.stage(destination)
             for name in ('desktop_transport.py', 'desktop.ps1', 'desktop-native.cs', 'desktop-dispatch.ps1'):
                 self.assertEqual((destination / name).read_bytes(), (source / name).read_bytes())
-            # kilix video in WSL runs the shared player wrapper from the package.
-            for name in ('terminal_video.py', 'terminal_video_errors.lua'):
+            # WSL commands use the shared session and video modules from the package.
+            for name in ('session_grid.py', 'terminal_video.py', 'terminal_video_errors.lua'):
                 self.assertEqual((destination / 'wsl-bin/config' / name).read_bytes(), (config / name).read_bytes())
             result = subprocess.run([sys.executable, '-B', str(destination / 'native-commands.py'),
                                      'help', 'desktop', 'click'], capture_output=True, text=True)
