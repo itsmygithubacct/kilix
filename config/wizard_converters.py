@@ -44,10 +44,11 @@ def prepare_converters(api, installer, specs, *, input_fn):
                 raise
             try:
                 helper = checked_helper(helper)
-            except OSError as missing:
+            except (OSError, ValueError) as unavailable:
                 raise ValueError(f'{spec.asset_id} needs {helper}. Install the Plebian OS '
                                  'optional converter helper, then retry kilix wizard finish. '
-                                 'Your model choices remain pending.') from missing
+                                 'Your model choices remain pending; you can also revisit the model '
+                                 f'page and decline this model. Installer check: {unavailable}') from unavailable
             print(f'\n{spec.label} needs optional conversion software.')
             print('Software download details (model weights and licence receipts are separate):', flush=True)
             try:

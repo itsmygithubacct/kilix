@@ -51,10 +51,12 @@ class ConverterTests(unittest.TestCase):
 
     def test_decline_never_runs_sudo(self):
         self.installer.resolve_converter.side_effect = self.error
-        with patch.object(converters, 'checked_helper', return_value=self.helper), \
-                patch.object(converters.subprocess, 'run') as run:
-            with self.assertRaisesRegex(ValueError, 'remain pending'): self.prepare('no')
-        run.assert_called_once_with([self.helper, '--dry-run'], check=True)
+        for answer in ('no', '', '   '):
+            with self.subTest(answer=answer), \
+                    patch.object(converters, 'checked_helper', return_value=self.helper), \
+                    patch.object(converters.subprocess, 'run') as run:
+                with self.assertRaisesRegex(ValueError, 'remain pending'): self.prepare(answer)
+            run.assert_called_once_with([self.helper, '--dry-run'], check=True)
 
     def test_helper_failures_and_false_success_stop_setup(self):
         for failure in ('preview', 'sudo', 'missing-after-success'):
@@ -74,7 +76,7 @@ class ConverterTests(unittest.TestCase):
             with self.subTest(error=error), \
                     patch.object(converters, 'checked_helper', side_effect=error), \
                     patch.object(converters.subprocess, 'run') as run:
-                with self.assertRaises(ValueError): self.prepare()
+                with self.assertRaisesRegex(ValueError, 'remain pending.*decline this model'): self.prepare()
                 run.assert_not_called()
 
     def test_root_control_check_refuses_writable_owned_symlink_or_nonexecutable_helper(self):
