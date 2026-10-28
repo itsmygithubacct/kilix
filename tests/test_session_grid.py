@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 import contextlib
 import copy
 import io
+import multiprocessing
 import os
 from pathlib import Path
 import sys
@@ -98,6 +99,19 @@ class FakeEngine(control.Client):
         return [c for c in self.calls if c[0] == "launch" and c != ["launch", "--help"]]
 
 
+def private_lock_bases(test, base):
+    """Point the per-user lock folder at a private runtime directory under base."""
+    runtime = Path(base) / "run" / str(os.getuid())
+    runtime.mkdir(parents=True)
+    runtime.chmod(0o700)
+    (Path(base) / "tmp").mkdir()
+    for name, value in (("RUNTIME_BASE", str(Path(base) / "run")), ("TMP_BASE", str(Path(base) / "tmp"))):
+        patch = mock.patch.object(session_grid, name, value)
+        patch.start()
+        test.addCleanup(patch.stop)
+    return runtime / "kilix-session-grid"
+
+
 class Isolated(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -110,6 +124,7 @@ class Isolated(unittest.TestCase):
         patch = mock.patch.dict(os.environ, env, clear=True)
         patch.start()
         self.addCleanup(patch.stop)
+        self.locks = private_lock_bases(self, base / "locks")
         self.engine = FakeEngine()
 
     def place(self, title="codex", **kwargs):
@@ -144,11 +159,37 @@ class ArithmeticTests(unittest.TestCase):
         self.assertEqual(session_grid.group("agent-sessions"), session_grid.group("agent-sessions"))
         self.assertNotEqual(session_grid.group("agent-sessions"), session_grid.group("claudex-team"))
 
-    def test_agent_commands_are_recognised_by_program_name(self):
-        self.assertTrue(session_grid.is_agent_command(["/usr/local/bin/codex", "--yolo"]))
-        self.assertTrue(session_grid.is_agent_command(["omp"]))
-        self.assertFalse(session_grid.is_agent_command(["htop"]))
-        self.assertFalse(session_grid.is_agent_command([]))
+    def test_agent_commands_are_recognised_by_executable_position(self):
+        launches = {
+            ("/usr/local/bin/codex", "--yolo"): "codex", ("omp",): "omp",
+            ("env", "TEST=1", "codex"): "codex", ("env", "-i", "A=1", "B=2", "claude", "-p"): "claude",
+            ("env", "-u", "X", "--chdir=/tmp", "--", "codex"): "codex", ("env", "env", "grok"): "grok",
+            ("bash", "-lc", "codex --yolo"): "codex", ("sh", "-c", "A=1 exec env B=2 claude"): "claude",
+            ("env", "-u", "sh", "sh", "-c", "codex"): "codex",
+            ("bash", "-o", "errexit", "-c", "claude"): "claude",
+        }
+        arguments = [("htop",), (), ("printf", "%s\n", "codex"), ("echo", "claude"), ("env",),
+                     ("env", "-S", "codex x"), ("env", "--bogus", "codex"), ("bash", "script.sh", "codex"),
+                     ("sh", "-c", "echo codex"), ("sh", "-c", "printf '%s' codex"), ("git", "log", "--author=codex"),
+                     # a shell given a script file named like a client runs that file
+                     ("bash", "codex"), ("sh", "-e", "claude"), ("bash", "--norc", "codex"),
+                     ("bash", "-c", "-x", "codex")]
+        for argv, name in launches.items():
+            self.assertEqual(session_grid.agent_program(list(argv)), name, argv)
+            self.assertTrue(session_grid.is_agent_command(list(argv)), argv)
+        for argv in arguments:
+            self.assertIsNone(session_grid.agent_program(list(argv)), argv)
+            self.assertFalse(session_grid.is_agent_command(list(argv)), argv)
+
+    def test_shell_lines_count_only_their_first_command_word(self):
+        lines = {"codex --yolo": "codex", "A=1 B='x y' claude": "claude", "exec codex": "codex",
+                 "exec -a name grok": "grok", "env TEST=1 codex": "codex", "codex; echo done": "codex",
+                 "  /opt/bin/claude -p hi | tee log": "claude"}
+        for line, name in lines.items():
+            self.assertEqual(session_grid.agent_program(shell_string=line), name, line)
+        for line in ('printf "%s\n" codex', "echo claude", "cd /tmp && claude", "(codex)",
+                     "'unterminated codex", "for a in codex; do :; done", "A=codex", ""):
+            self.assertIsNone(session_grid.agent_program(shell_string=line), line)
 
 
 class PlacementTests(Isolated):
@@ -282,22 +323,83 @@ class PlacementTests(Isolated):
         self.assertEqual(seen[0], ({"pane_id": 1, "broker": f"{1:032x}"}, 0))
         self.assertEqual(seen[1], ({"pane_id": first["pane"]["pane_id"], "broker": first["pane"]["broker"]}, 1))
 
-    def test_lock_is_private_and_per_socket(self):
+    def test_a_grid_whose_marked_panes_all_closed_is_forgotten(self):
+        # L1, documented: a grid is the panes carrying its marker.
+        first = self.place()
+        tab = first["tab_id"]
+        self.engine.panes.append(pane(90, tab=tab, layout="sessions"))
+        self.engine.close(first["pane"]["pane_id"])
+        self.assertEqual(session_grid.grids(self.engine.snapshot()), [])
+        again = self.place()
+        self.assertTrue(again["new_tab"])
+        self.assertNotEqual(again["tab_id"], tab)
+
+    def test_a_marked_pane_moved_to_another_sessions_tab_makes_it_eligible(self):
+        # L1, documented: the marker follows the pane.
+        first = self.place()
+        self.engine.panes.append(pane(90, tab=90, layout="sessions"))
+        for p in self.engine.panes:
+            if p["id"] == first["pane"]["pane_id"]:
+                p["tab_id"] = 90
+        joined = self.place()
+        self.assertEqual((joined["tab_id"], joined["count"]), (90, 3))
+        # A plain (non-sessions) tab never becomes a grid this way.
+        for p in self.engine.panes:
+            if p["tab_id"] == 90:
+                p["layout"] = "splits"
+        self.assertTrue(self.place()["new_tab"])
+
+    def test_into_without_a_name_joins_the_grid_that_pane_belongs_to(self):
+        first = self.place(name="claudex-team", new=True)
+        joined = self.place(into=first["pane"]["pane_id"])
+        self.assertEqual((joined["tab_id"], joined["grid"], joined["count"]), (first["tab_id"], "claudex-team", 2))
+        launch = self.engine.launches()[-1]
+        self.assertIn(f"{session_grid.NAME_VAR}=claudex-team", launch)
+        self.assertIn(f"{session_grid.GROUP_VAR}={session_grid.group('claudex-team')}", launch)
+        # An unmarked pane, or a marker whose name does not hash to it, is refused.
+        with self.assertRaisesRegex(control.ControlError, "no session grid marker; give --name"):
+            self.place(into=1)
+        forged = pane(70, tab=first["tab_id"], layout="sessions")
+        forged["user_vars"] = {session_grid.NAME_VAR: "other", session_grid.GROUP_VAR: session_grid.group("claudex-team")}
+        self.engine.panes.append(forged)
+        with self.assertRaisesRegex(control.ControlError, "no session grid marker"):
+            self.place(into=70)
+        # Without --into the default name still applies.
+        self.assertEqual(self.place()["grid"], session_grid.DEFAULT_GRID)
+
+    def test_lock_is_private_per_socket_and_ignores_every_home(self):
         self.place()
-        folder = Path(os.environ["KILIX_SESSION_HOME"]) / "session-grid"
-        self.assertEqual(folder.stat().st_mode & 0o777, 0o700)
-        locks = list(folder.iterdir())
+        self.assertEqual(self.locks.stat().st_mode & 0o777, 0o700)
+        locks = list(self.locks.iterdir())
         self.assertEqual(len(locks), 1)
         self.assertEqual(locks[0].stat().st_mode & 0o777, 0o600)
-        # Another run store on the same engine shares the lock ...
-        with mock.patch.dict(os.environ, {"KILIX_STORAGE_HOME": str(Path(self.tmp.name) / "other"),
-                                          "KILIX_AGENT_RUNS_HOME": str(Path(self.tmp.name) / "runs")}):
+        self.assertFalse((Path(os.environ["KILIX_SESSION_HOME"]) / "session-grid").exists())
+        # Other stores, session homes and runtime variables share the lock ...
+        other = Path(self.tmp.name) / "other"
+        with mock.patch.dict(os.environ, {"KILIX_STORAGE_HOME": str(other / "store"),
+                                          "KILIX_SESSION_HOME": str(other / "session"),
+                                          "KILIX_AGENT_RUNS_HOME": str(other / "runs"),
+                                          "XDG_RUNTIME_DIR": str(other / "xdg")}):
+            self.assertEqual(session_grid.lock_folder(), self.locks)
             self.place()
-        self.assertEqual(list(folder.iterdir()), locks)
+        self.assertEqual(list(self.locks.iterdir()), locks)
         # ... and another engine has its own.
         self.engine.command = ["fake", "@", "--to", "fake:other"]
         self.place()
-        self.assertEqual(len(list(folder.iterdir())), 2)
+        self.assertEqual(len(list(self.locks.iterdir())), 2)
+
+    def test_lock_falls_back_to_a_private_tmp_folder(self):
+        self.locks.parent.chmod(0o755)
+        self.addCleanup(self.locks.parent.chmod, 0o700)
+        folder = session_grid.lock_folder()
+        self.assertEqual(folder, Path(session_grid.TMP_BASE) / f"kilix-session-grid-{os.getuid()}")
+        self.place()
+        self.assertEqual(folder.stat().st_mode & 0o777, 0o700)
+        # A folder someone else made, or a loose one, is refused, not used.
+        folder.chmod(0o755)
+        with self.assertRaisesRegex(control.ControlError, "private and owned"):
+            self.place()
+        folder.chmod(0o700)
 
     def test_grids_lists_newest_first_with_counts(self):
         for _ in range(13):
@@ -315,6 +417,47 @@ class SettingTests(Isolated):
         self.assertFalse(session_grid.enabled())
         self.setting("on")
         self.assertTrue(session_grid.enabled())
+
+    def test_the_environment_wins_over_an_existing_settings_file(self):
+        from kilix_sdk import settings
+        self.settings.write_text("KILIX_CODING_YOLO=on\nKILIX_CODING_SESSION_GRID=on\n")
+        with mock.patch.dict(os.environ, {"KILIX_CODING_SESSION_GRID": "off"}):
+            self.assertFalse(session_grid.enabled())
+            # Only this setting: the file still decides the others.
+            self.assertTrue(settings.coding_yolo())
+            self.assertEqual(settings.load()["KILIX_CODING_SESSION_GRID"], "on")
+        self.setting("off")
+        with mock.patch.dict(os.environ, {"KILIX_CODING_SESSION_GRID": "on"}):
+            self.assertTrue(session_grid.enabled())
+        with mock.patch.dict(os.environ, {"KILIX_CODING_SESSION_GRID": ""}):
+            self.assertFalse(session_grid.enabled())
+
+    def test_the_environment_opt_out_with_a_fresh_home(self):
+        self.assertFalse(self.settings.exists())
+        with mock.patch.dict(os.environ, {"KILIX_CODING_SESSION_GRID": "off"}):
+            self.assertFalse(session_grid.enabled())
+        self.assertTrue(session_grid.enabled())
+
+    def grid_cli(self, *argv):
+        from kilix_session import cli
+        out = io.StringIO()
+        with mock.patch.object(control, "Client", return_value=self.engine), contextlib.redirect_stdout(out):
+            code = cli.main(list(argv))
+        return code, out.getvalue()
+
+    def test_grid_enabled_reports_the_effective_setting(self):
+        self.assertEqual(self.grid_cli("grid", "enabled"), (0, "on\n"))
+        self.setting("off")
+        self.assertEqual(self.grid_cli("grid", "enabled"), (1, "off\n"))
+        with mock.patch.dict(os.environ, {"KILIX_CODING_SESSION_GRID": "on"}):
+            self.assertEqual(self.grid_cli("grid", "enabled"), (0, "on\n"))
+        self.setting("on")
+        with mock.patch.dict(os.environ, {"KILIX_CODING_SESSION_GRID": "off"}):
+            self.assertEqual(self.grid_cli("grid", "enabled"), (1, "off\n"))
+            # An explicit grid request stays available when the default is off.
+            code, out = self.grid_cli("grid", "add", "--title", "w", "--cwd", self.tmp.name, "--", "codex")
+            self.assertEqual(code, 0, out)
+            self.assertIn('"new_tab": true', out)
 
 
 class AgentControlTests(Isolated):
@@ -357,6 +500,28 @@ class AgentControlTests(Isolated):
         args = self.args()
         self.assertIn("grid", control.launch(self.engine, args, explicit_argv=["/usr/bin/claude"]))
         self.assertNotIn("grid", control.launch(self.engine, args, explicit_argv=["htop"]))
+
+    def test_the_environment_opt_out_keeps_one_tab_per_session(self):
+        self.setting("on")
+        with mock.patch.dict(os.environ, {"KILIX_CODING_SESSION_GRID": "off"}):
+            self.assertNotIn("grid", control.launch(self.engine, self.args()))
+        self.assertIn("grid", control.launch(self.engine, self.args()))
+
+    def test_pane_open_classifies_by_executable_position(self):
+        import agent_actions
+        identity = {"pane_id": 1, "broker": f"{1:032x}"}
+
+        def pane_open(argv):
+            request = {"operation": "pane.open", "dry_run": False, "source": identity, "target": dict(identity),
+                       "params": {"argv": argv, "cwd": self.tmp.name, "title": "w", "placement": "new-tab"}}
+            return agent_actions.execute(self.engine, request)
+
+        for argv in (["env", "TEST=1", "codex"], ["bash", "-lc", "exec claude"], ["/opt/bin/codex"],
+                     ["env", "-u", "sh", "sh", "-c", "codex"]):
+            self.assertIn("grid", pane_open(argv), argv)
+        for argv in (["printf", "%s\n", "codex"], ["echo", "claude"], ["sh", "-c", "echo codex"],
+                     ["bash", "-c", "-x", "codex"]):
+            self.assertNotIn("grid", pane_open(argv), argv)
 
     def test_structured_launch_retargets_without_changing_the_request(self):
         from agent_actions import GuardedClient
@@ -413,13 +578,53 @@ class NewTabVerbTests(Isolated):
             self.assertIsNone(remote.grid_new_tab(["codex"], "current", "", False))
         self.assertEqual(self.engine.launches(), [])
 
-    def test_tab_new_shell_line_with_a_coding_client_joins_the_grid(self):
-        code, out, panes = self.run_verb("cmd_tab", ["new", "--porcelain", "cd /tmp && claude"])
+    def test_tab_new_shell_line_that_runs_a_coding_client_joins_the_grid(self):
+        code, out, panes = self.run_verb("cmd_tab", ["new", "--porcelain", "TEST=1 exec claude -p 'a; b'"])
         self.assertEqual(code, 0)
         panes.new_tab.assert_not_called()
         argv = self.engine.launches()[0]
-        self.assertEqual(argv[argv.index("--") + 2:], ["-lc", "cd /tmp && claude"])
+        self.assertEqual(argv[argv.index("--") + 2:], ["-lc", "TEST=1 exec claude -p 'a; b'"])
         self.assertEqual(out.strip(), str(self.engine.panes[-1]["id"]))
+
+    def test_agent_names_as_arguments_are_not_coding_launches(self):
+        for function, argv in (("cmd_tab", ["new", "--porcelain", 'printf "%s\\n" codex']),
+                               ("cmd_tab", ["new", "--porcelain", "cd /tmp && claude"]),
+                               ("cmd_new_tab", ["--", "echo", "codex"]),
+                               ("cmd_new_tab", ["--", "sh", "-c", "echo claude"])):
+            code, _, panes = self.run_verb(function, argv)
+            self.assertEqual(code, 0, argv)
+            panes.new_tab.assert_called_once()
+        self.assertEqual(self.engine.launches(), [])
+
+    def test_new_tab_through_an_env_wrapper_joins_the_grid(self):
+        code, out, panes = self.run_verb("cmd_new_tab", ["--", "env", "TEST=1", "codex"])
+        self.assertEqual(code, 0)
+        panes.new_tab.assert_not_called()
+        argv = self.engine.launches()[0]
+        self.assertEqual(argv[argv.index("--") + 1:], ["env", "TEST=1", "codex"])
+        self.assertIn("session grid 'agent-sessions'", out)
+
+    def test_nested_shell_wrappers_preserve_executable_positions_on_public_routes(self):
+        cases = (("cmd_new_tab", ["--", "env", "-u", "sh", "sh", "-c", "codex"], True),
+                 ("cmd_tab", ["new", "--porcelain", 'env -u sh sh -c "codex"; true'], True),
+                 ("cmd_tab", ["new", "--porcelain", 'bash -o errexit -c "claude"; true'], True),
+                 ("cmd_new_tab", ["--", "bash", "-c", "-x", "codex"], False),
+                 ("cmd_tab", ["new", "--porcelain", 'bash -c "-x" codex; true'], False))
+        for function, argv, is_grid in cases:
+            with self.subTest(argv=argv):
+                code, _, panes = self.run_verb(function, argv)
+                self.assertEqual(code, 0)
+                self.assertEqual(panes.new_tab.call_count, 0 if is_grid else 1)
+
+    def test_documented_shell_launch_uses_the_public_tab_route(self):
+        import re
+        import shlex
+        text = " ".join((ROOT / "docs/session.md").read_text().split())
+        example = re.search(r"`(kilix tab new [^`]+)`", text).group(1)
+        words = shlex.split(example)
+        code, _, panes = self.run_verb("cmd_tab", words[2:])
+        self.assertEqual(code, 0)
+        panes.new_tab.assert_not_called()
 
 
 class SessionCliTests(Isolated):
@@ -436,6 +641,27 @@ class SessionCliTests(Isolated):
             self.assertEqual(cli.main(["grid", "list"]), 0)
         self.assertIn('"name": "claudex-team"', out.getvalue())
         self.assertIn('"capacity": 12', out.getvalue())
+
+    def cli_json(self, *argv):
+        import json
+        from kilix_session import cli
+        out = io.StringIO()
+        with mock.patch.object(control, "Client", return_value=self.engine), contextlib.redirect_stdout(out):
+            code = cli.main(list(argv))
+        self.assertEqual(code, 0, out.getvalue())
+        return json.loads(out.getvalue())
+
+    def test_grid_list_name_and_add_into_infers_the_name(self):
+        team = self.cli_json("grid", "add", "--name", "claudex-team", "--new", "--title", "lead",
+                             "--cwd", self.tmp.name, "--", "codex")
+        self.cli_json("grid", "add", "--title", "w", "--cwd", self.tmp.name, "--", "codex")
+        self.assertEqual(len(self.cli_json("grid", "list")["grids"]), 2)
+        listed = self.cli_json("grid", "list", "--name", "claudex-team")["grids"]
+        self.assertEqual([g["name"] for g in listed], ["claudex-team"])
+        joined = self.cli_json("grid", "add", "--into", str(team["pane"]["pane_id"]), "--title", "worker",
+                               "--cwd", self.tmp.name, "--", "codex")
+        self.assertEqual((joined["grid"], joined["tab_id"], joined["count"]), ("claudex-team", team["tab_id"], 2))
+        self.assertEqual(self.cli_json("grid", "list", "--name", "nope")["grids"], [])
 
     def test_grid_add_passes_user_variables_and_environment(self):
         from kilix_session import cli
@@ -456,6 +682,141 @@ class SessionCliTests(Isolated):
         with mock.patch.object(control, "Client", return_value=self.engine), \
                 contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             cli.main(["grid", "add", "--title", "w", "--var", "novalue", "--", "codex"])
+
+
+
+class DocumentedExampleTests(Isolated):
+    """Every `kilix session grid` example in the docs and the bundled skill runs."""
+
+    def examples(self, path, pattern):
+        import re
+        found = [m.group(1).split("#")[0].strip() for m in re.finditer(pattern, (ROOT / path).read_text(), re.M)]
+        self.assertTrue(found, path)
+        return found
+
+    def run_examples(self, lines):
+        import json
+        import shlex
+        from kilix_session import cli
+        pane_id = None
+        for line in lines:
+            words = shlex.split(line.replace("[--name NAME]", "--name NAME"))
+            self.assertEqual(words[:3], ["kilix", "session", "grid"], line)
+            words = ["claudex-team" if w == "NAME" else "worker" if w == "T" else w for w in words[2:]]
+            if "PANE" in words:
+                self.assertIsNotNone(pane_id, f"{line}: no earlier example opened a pane")
+                words[words.index("PANE")] = str(pane_id)
+            if words[1] == "add" and "--cwd" not in words:
+                words[2:2] = ["--cwd", self.tmp.name]
+            out = io.StringIO()
+            with mock.patch.object(control, "Client", return_value=self.engine), contextlib.redirect_stdout(out):
+                code = cli.main(words)
+            self.assertEqual(code, 0, f"{line}: {out.getvalue()}")
+            if words[1] == "add":
+                receipt = json.loads(out.getvalue())
+                self.assertEqual(receipt["grid"], "claudex-team" if pane_id is None or "--into" in words
+                                 else receipt["grid"], line)
+                pane_id = pane_id or receipt["pane"]["pane_id"]
+            if words[1] == "list" and "--name" in words:
+                self.assertEqual({g["name"] for g in json.loads(out.getvalue())["grids"]}, {"claudex-team"}, line)
+
+    def test_session_md_grid_examples_execute(self):
+        self.run_examples(self.examples("docs/session.md", r"^(kilix session grid .*)$"))
+
+    def test_bundled_skill_grid_examples_execute(self):
+        self.run_examples(self.examples("skills/kilix-session-launch/SKILL.md", r"`(kilix session grid [^`]*)`"))
+
+    def test_session_md_classification_examples_hold(self):
+        text = " ".join((ROOT / "docs/session.md").read_text().split())
+        # (quoted in the doc, argv, shell line, documented client)
+        cases = [("`codex --yolo`", ["codex", "--yolo"], "", "codex"),
+                 ("`/opt/bin/claude`", ["/opt/bin/claude"], "", "claude"),
+                 ("`env TEST=1 codex`", ["env", "TEST=1", "codex"], "", "codex"),
+                 ("`kilix tab new -- sh -c 'A=1 exec claude'`", ["sh", "-c", "A=1 exec claude"], "", "claude"),
+                 ("`sh -c 'codex'`", ["sh", "-c", "codex"], "", "codex"),
+                 ("`printf '%s\\n' codex`", [], "printf '%s\\n' codex", None),
+                 ("`echo claude`", ["echo", "claude"], "", None),
+                 ("`cd src && codex`", [], "cd src && codex", None),
+                 ("`./run-agent.sh`", ["./run-agent.sh"], "", None)]
+        for quoted, argv, line, name in cases:
+            self.assertIn(quoted, text)
+            self.assertEqual(session_grid.agent_program(argv, line), name, quoted)
+
+
+def cross_home_worker(i, root, bases, state, mutex, barrier, results):
+    # A separate process with its own stores, session home and runtime
+    # variable, addressing the one engine socket every worker shares.
+    os.environ.clear()
+    os.environ.update(HOME=root, PATH="/usr/bin:/bin", LANG="C.UTF-8",
+                      KILIX_STORAGE_HOME=f"{root}/store-{i}", KILIX_SESSION_HOME=f"{root}/session-{i}",
+                      KILIX_AGENT_RUNS_HOME=f"{root}/runs-{i}", XDG_RUNTIME_DIR=f"{root}/xdg-{i}")
+    session_grid.RUNTIME_BASE, session_grid.TMP_BASE = bases
+
+    class SharedEngine(control.Client):
+        caller = 1
+        command = ["fake", "@", "--to", "fake:same-socket"]
+
+        def snapshot(self):
+            time.sleep(0.04)
+            with mutex:
+                fake = FakeEngine()
+                fake.panes = state.panes
+                return fake.snapshot()
+
+        def run(self, args, payload=None):
+            with mutex:
+                fake = FakeEngine()
+                fake.panes = state.panes
+                out = fake.run(args, payload)
+                state.panes = fake.panes
+                return out
+
+    barrier.wait()
+    try:
+        result = session_grid.place(SharedEngine(), source=control.describe(pane(1)), argv=["codex"],
+                                    cwd=root, title=f"p{i}")
+        results.put(("ok", result["tab_id"], result["count"]))
+    except Exception as exc:  # reported to the parent, which fails the test
+        results.put(("error", repr(exc)))
+
+
+class CrossHomeProcessTests(unittest.TestCase):
+    """The review's H1 case: thirteen processes, eleven panes already in the grid."""
+
+    def test_thirteen_launchers_with_different_homes_fill_twelve_then_overflow(self):
+        context = multiprocessing.get_context("fork")
+        with tempfile.TemporaryDirectory() as folder, context.Manager() as manager:
+            runtime = Path(folder) / "run" / str(os.getuid())
+            runtime.mkdir(parents=True)
+            runtime.chmod(0o700)
+            bases = (str(Path(folder) / "run"), str(Path(folder) / "tmp"))
+            marked = [pane(i, tab=2, layout="sessions") for i in range(2, 13)]
+            for p in marked:
+                p["user_vars"] = {session_grid.GROUP_VAR: session_grid.group(session_grid.DEFAULT_GRID),
+                                  session_grid.NAME_VAR: session_grid.DEFAULT_GRID}
+            state = manager.Namespace()
+            state.panes = [pane(1), *marked]
+            mutex, barrier, results = manager.Lock(), context.Barrier(13), context.Queue()
+            children = [context.Process(target=cross_home_worker,
+                                        args=(i, folder, bases, state, mutex, barrier, results))
+                        for i in range(13)]
+            for child in children:
+                child.start()
+            for child in children:
+                child.join(60)
+                if child.is_alive():
+                    child.terminate()
+                    child.join()
+                self.assertEqual(child.exitcode, 0)
+            output = [results.get(timeout=5) for _ in children]
+            self.assertTrue(all(r[0] == "ok" for r in output), output)
+            counts = {}
+            for p in state.panes:
+                if p["layout"] == "sessions":
+                    counts[p["tab_id"]] = counts.get(p["tab_id"], 0) + 1
+            self.assertEqual(sorted(counts.values()), [12, 12], counts)
+            self.assertEqual(counts[2], 12)
+            self.assertEqual(len(list((runtime / "kilix-session-grid").iterdir())), 1)
 
 
 if __name__ == "__main__":

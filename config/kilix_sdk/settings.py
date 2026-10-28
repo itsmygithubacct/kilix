@@ -523,8 +523,14 @@ def coding_yolo(path: str | None = None) -> bool:
 
 
 def coding_session_grid(path: str | None = None) -> bool:
-    """Return whether new-tab coding sessions join a session grid."""
-    value = load(path).get(CODING_SESSION_GRID_KEY, CODING_SESSION_GRID_DEFAULT)
+    """Return whether new-tab coding sessions join a session grid.
+
+    A non-empty KILIX_CODING_SESSION_GRID in the environment wins over the
+    settings file, so one shell or script can opt out (or in) on its own.
+    """
+    value = os.environ.get(CODING_SESSION_GRID_KEY, "").strip()
+    if not value:
+        value = load(path).get(CODING_SESSION_GRID_KEY, CODING_SESSION_GRID_DEFAULT)
     return str(value).strip().casefold() not in ("off", "0", "false", "no")
 
 

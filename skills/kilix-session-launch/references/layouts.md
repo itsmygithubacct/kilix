@@ -4,8 +4,11 @@ Choose proportions for usable editor/output widths, terminal size, and roles,
 not just equal pane counts. Prefer fewer readable panes to many narrow ones.
 The helper reports each pane's lines, columns, layout, and neighbors for checks.
 
-Start with pane A in a new tab. Each step below is `agent-control split` with
-the current exact anchor ID and broker. Directions refer to the NEW pane.
+Start with pane A in a new tab of its own: a coding agent opened by
+`agent-control new-tab` or `kilix new-tab` joins a session grid, whose layout
+places panes itself, so pass `--own-tab`. Each step below is
+`agent-control split` with the current exact anchor ID and broker. Directions
+refer to the NEW pane.
 
 | Desired layout | Operations after creating A |
 | --- | --- |
@@ -20,7 +23,7 @@ occupies the intended rectangle, allocating the requested percentage to its
 new right/down/left/up child. Rounding to terminal cells makes pixel-exact
 ratios impossible; inspect the resulting dimensions and explain constraints.
 
-All multi-pane recipes require the new tab's `splits` layout and the installed
+All multi-pane recipes require the new tab's `splits` layout (an `--own-tab` tab) and the installed
 engine's explicit `--next-to`, location, and bias support. Do not enable new
 remote-control permissions or rearrange another tab to force a layout. If the
 new tab inherited another layout, report the constraint and obtain the needed

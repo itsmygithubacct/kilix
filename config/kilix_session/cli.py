@@ -98,7 +98,7 @@ def parser():
     add = grid_commands.add_parser("add", help="open COMMAND as a pane in a session grid without taking focus",
                                    epilog="Joins the newest grid NAME with room in this OS window, else opens "
                                           "a new grid tab. Prints a JSON receipt with the pane, tab and slot.")
-    add.add_argument("--name", default=session_grid.DEFAULT_GRID, help="grid name (default: agent-sessions)")
+    add.add_argument("--name", help="grid name (default: agent-sessions, or with --into the grid of that pane)")
     where = add.add_mutually_exclusive_group()
     where.add_argument("--new", action="store_true", help="always open a new grid tab")
     where.add_argument("--into", type=control.positive, metavar="PANE", help="join the grid that holds PANE")
@@ -112,7 +112,10 @@ def parser():
     add.add_argument("--source-pane", type=control.positive, help="verified caller if its environment was stripped")
     add.add_argument("--expect-broker", help="optional exact caller broker identity")
     add.add_argument("program", nargs=argparse.REMAINDER, metavar="COMMAND", help="-- PROGRAM ARGS...")
-    grid_commands.add_parser("list", help="grid tabs, newest first, with pane slots")
+    listed = grid_commands.add_parser("list", help="grid tabs, newest first, with pane slots")
+    listed.add_argument("--name", help="only the grids of this name")
+    grid_commands.add_parser("enabled", help="print on or off: whether coding sessions open in a grid by default "
+                                             "(exit 0 when on, 1 when off)")
     worker = commands.add_parser("_worker", help="internal: execute one previously prepared run")
     worker.add_argument("run_id")
     for command in (start, listing, show, logs, batch, worker, *[commands.choices[n] for n in ("wait", "stop", "providers")]):
@@ -199,9 +202,13 @@ def batch(args):
 
 
 def grid(args):
+    if args.grid_command == "enabled":
+        on = session_grid.enabled()
+        print("on" if on else "off")
+        return 0 if on else 1
     client = control.Client(getattr(args, "source_pane", None))
     if args.grid_command == "list":
-        emit({"capacity": session_grid.CAPACITY, "grids": session_grid.grids(client.snapshot())})
+        emit({"capacity": session_grid.CAPACITY, "grids": session_grid.grids(client.snapshot(), args.name)})
         return 0
     argv = args.program[1:] if args.program[:1] == ["--"] else args.program
     if not argv:

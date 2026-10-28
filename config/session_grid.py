@@ -11,7 +11,8 @@ closes, so nothing here has to rebalance.
 A grid is a tab whose layout is ``sessions`` and which holds at least one pane
 carrying this grid's group marker. Manual panes in that tab take capacity too;
 a tab whose layout a user changed is no longer a grid. Placement is serialised
-per engine socket, so launches from different run stores cannot overfill a tab.
+per engine socket in a fixed per-user folder, so launches from different run
+stores or session homes cannot overfill a tab.
 """
 from contextlib import contextmanager
 import fcntl
@@ -58,19 +59,145 @@ def enabled():
     return settings.coding_session_grid()
 
 
+ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*", re.S)
+# env options that take no value, and those that take the next word.
+ENV_FLAGS = {"-i", "-", "-0", "-v", "--ignore-environment", "--null", "--debug"}
+ENV_VALUES = {"-u", "--unset", "-C", "--chdir"}
+SHELLS = {"sh", "bash", "dash", "zsh", "ksh", "mksh", "ash"}
+
+
+def executable_argv(argv):
+    """The executable and its arguments after supported env wrappers.
+
+    ``env [OPTIONS] [NAME=VALUE ...] PROGRAM`` runs PROGRAM. An env option
+    this does not know (``-S`` splits strings) gives an empty list: not followed.
+    """
+    words = [str(word) for word in argv]
+    if not words or Path(words[0]).name != "env":
+        return words
+    i = 1
+    while i < len(words) and words[i].startswith("-"):
+        word = words[i]
+        if word == "--":
+            i += 1
+            break
+        if word in ENV_FLAGS or word.startswith(("--unset=", "--chdir=")):
+            i += 1
+        elif word in ENV_VALUES:
+            i += 2
+        elif word[:2] in ("-u", "-C"):
+            i += 1
+        else:
+            return []
+    while i < len(words) and ASSIGNMENT.fullmatch(words[i]):
+        i += 1
+    return executable_argv(words[i:]) if i < len(words) else []
+
+
+def shell_argv(text):
+    """The first simple shell command, after NAME=VALUE, exec and env.
+
+    Only the first simple command counts: ``cd src && codex`` runs cd first,
+    and ``printf codex`` merely prints the word.
+    """
+    import shlex
+    lexer = shlex.shlex(text, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    words = []
+    try:
+        for token in lexer:
+            if token and all(c in lexer.punctuation_chars for c in token):
+                break
+            words.append(token)
+    except ValueError:
+        return None
+    while words and ASSIGNMENT.fullmatch(words[0]):
+        words.pop(0)
+    if words[:1] == ["exec"]:
+        words.pop(0)
+        while words and words[0].startswith("-"):
+            words = words[2:] if words[0] == "-a" else words[1:]
+    return executable_argv(words)
+
+
+def agent_program(argv=(), shell_string=""):
+    """The coding client (codex, claude, grok, ...) a launch executes, or None.
+
+    Only executable positions count: argv[0], the program an env wrapper
+    runs, and the first command word of a shell line, including the line of
+    ``sh -c LINE``. A client's name given as an argument is not a launch.
+    """
+    words = shell_argv(shell_string) if shell_string else executable_argv(argv)
+    # Peel only explicit wrappers. Keep their argument positions: an env -u
+    # operand may have the same name as the shell that follows it.
+    for _ in range(32):
+        if not words:
+            return None
+        name = Path(words[0]).name
+        if name not in SHELLS:
+            return name if name in control.PROCESS_AGENTS else None
+        i = 1
+        line = None
+        while i < len(words):
+            option = words[i]
+            if option == "--" or not option.startswith(("-", "+")):
+                break  # script file, not a command string
+            if option in ("-o", "+o", "-O", "+O", "--rcfile", "--init-file"):
+                i += 2
+                continue
+            if option.startswith("-") and not option.startswith("--") and "c" in option[1:]:
+                # -c consumes the very next argument, even if it starts '-'.
+                line = words[i + 1] if i + 1 < len(words) else None
+                break
+            if option in ("--help", "--version"):
+                break
+            i += 1
+        if line is None:
+            return None
+        words = shell_argv(line)
+    return None
+
+
 def is_agent_command(argv):
-    """True when argv starts a known coding client (codex, claude, grok, ...)."""
-    return bool(argv) and Path(str(argv[0])).name in control.PROCESS_AGENTS
+    """True when argv executes a known coding client; see agent_program."""
+    return agent_program(argv) is not None
+
+
+# The per-user runtime directory's parent, and the fallback's; tests move them.
+RUNTIME_BASE = "/run/user"
+TMP_BASE = "/tmp"
+
+
+def lock_folder():
+    """The per-user folder for placement locks.
+
+    It depends on the user id only, never on KILIX_STORAGE_HOME,
+    KILIX_SESSION_HOME, XDG_RUNTIME_DIR or the run store: every client of an
+    engine socket must find the same lock, however its environment was set.
+    """
+    uid = os.getuid()
+    runtime = Path(RUNTIME_BASE) / str(uid)
+    try:
+        info = runtime.lstat()
+        if stat.S_ISDIR(info.st_mode) and info.st_uid == uid and stat.S_IMODE(info.st_mode) == 0o700:
+            return runtime / "kilix-session-grid"
+    except OSError:
+        pass
+    return Path(TMP_BASE) / f"kilix-session-grid-{uid}"
 
 
 @contextmanager
 def placement_lock(client):
-    """One placement at a time per engine socket, whatever the run store."""
+    """One placement at a time per engine socket, whatever the stores or homes."""
     command = list(getattr(client, "command", []))
     socket = command[command.index("--to") + 1] if "--to" in command[:-1] else ""
-    from kilix_sdk.paths import session_dir
-    folder = Path(session_dir()) / "session-grid"
-    folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+    folder = lock_folder()
+    try:
+        folder.mkdir(mode=0o700)
+    except FileExistsError:
+        pass
+    except OSError as exc:
+        raise control.ControlError(f"cannot create the session grid lock folder: {exc}") from exc
     info = folder.lstat()
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
         raise control.ControlError("session grid lock directory must be private and owned")
@@ -125,13 +252,14 @@ def grids(panes, name=None):
     return sorted(found, key=lambda g: g["tab_id"], reverse=True)
 
 
-def place(client, *, source, argv, cwd, title, name=DEFAULT_GRID, new=False, into=None,
+def place(client, *, source, argv, cwd, title, name=None, new=False, into=None,
           hold=True, extra_vars=(), extra_env=(), retarget=None):
     """Launch argv as a pane in a session grid without taking focus.
 
     ``source`` is the verified pane the launch is anchored to; its OS window
-    holds the grid. ``into`` names a pane whose grid tab must take the new
-    pane; ``new`` always opens a new grid tab. ``retarget(identity)`` lets a
+    holds the grid. ``name`` defaults to agent-sessions, or with ``into`` to
+    the grid that pane carries the marker of. ``into`` names a pane whose grid
+    tab must take the new pane; ``new`` always opens a new grid tab. ``retarget(identity)`` lets a
     guarded client move its expected target to the pane the launch is
     anchored on before the launch is sent. ``extra_vars`` and ``extra_env``
     are (name, value) pairs for the pane's user variables and environment.
@@ -140,9 +268,11 @@ def place(client, *, source, argv, cwd, title, name=DEFAULT_GRID, new=False, int
         raise control.ControlError("a grid pane needs a command")
     if new and into:
         raise control.ControlError("choose --new or --into, not both")
-    name = control.plain_text(name, "grid name", 200)
+    if name is not None:
+        name = control.plain_text(name, "grid name", 200)
+    elif into is None:
+        name = DEFAULT_GRID
     title = control.plain_text(title, "title", 200)
-    marker = group(name)
     for key, value in (*extra_vars, *extra_env):
         if not NAME.fullmatch(key) or key in (GROUP_VAR, NAME_VAR):
             raise control.ControlError(f"invalid or reserved variable name: {key!r}")
@@ -159,17 +289,26 @@ def place(client, *, source, argv, cwd, title, name=DEFAULT_GRID, new=False, int
             if chosen is None:
                 raise control.ControlError("--into pane is absent; take a new snapshot")
             members = tabs[chosen["tab_id"]]
-            if not is_grid(members, marker):
+            if name is None:
+                # The grid the pane belongs to: its own marker, and the
+                # name must hash to that marker.
+                found = (chosen.get("user_vars") or {}).get(NAME_VAR)
+                if not found or (chosen.get("user_vars") or {}).get(GROUP_VAR) != group(found):
+                    raise control.ControlError("--into pane carries no session grid marker; give --name")
+                name = control.plain_text(found, "grid name", 200)
+            if not is_grid(members, group(name)):
                 raise control.ControlError(f"--into pane is not in a '{name}' session grid")
             if occupancy(members) >= CAPACITY:
                 raise control.ControlError(f"that grid already holds {CAPACITY} panes")
         elif new:
             members = None
         else:
+            marker = group(name)
             # D4: the newest grid with room. Tab ids only grow.
             eligible = [m for m in tabs.values() if m[0]["os_window_id"] == window
                         and is_grid(m, marker) and occupancy(m) < CAPACITY]
             members = max(eligible, key=lambda m: m[0]["tab_id"]) if eligible else None
+        marker = group(name)
         # --into may name a grid in another OS window; the pane goes there.
         window = members[0]["os_window_id"] if members else window
         anchor = members[-1] if members else source
@@ -231,26 +370,19 @@ def place(client, *, source, argv, cwd, title, name=DEFAULT_GRID, new=False, int
 def open_tab(command, *, cwd, title, shell_string=""):
     """``kilix new-tab``/``tab new``: place a coding client in the default grid.
 
-    A command whose program is a coding client (codex, claude, grok, ...)
-    joins the newest session grid with room, unless the coding_session_grid
-    setting is off or this shell is not in a Kilix pane; then None, and the
-    caller opens a plain tab. A shell line counts when any of its words is such
-    a program. The pane closes with its command, like a plain tab.
+    A command that executes a coding client (codex, claude, grok, ...; see
+    agent_program) joins the newest session grid with room, unless the
+    coding_session_grid setting is off or this shell is not in a Kilix pane;
+    then None, and the caller opens a plain tab. The pane closes with its
+    command, like a plain tab.
     """
-    import shlex
-    if shell_string:
-        try:
-            words = shlex.split(shell_string)
-        except ValueError:
-            return None
-        programs = [Path(word).name for word in words if is_agent_command([word])]
-        if not programs:
-            return None
-        argv, name = [os.environ.get("SHELL") or "/bin/sh", "-lc", shell_string], programs[0]
-    elif is_agent_command(command):
-        argv, name = list(command), Path(command[0]).name
-    else:
+    name = agent_program(command, shell_string)
+    if name is None:
         return None
+    if shell_string:
+        argv = [os.environ.get("SHELL") or "/bin/sh", "-lc", shell_string]
+    else:
+        argv = list(command)
     if not enabled():
         return None
     try:

@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "config"))
 import agent_control as control
 import agent_trust
+import session_grid
 from kilix_session import Launch, inspect_run, launch, list_runs, plan, stop, wait
 from kilix_session.store import SessionError, process_identity, run_files
 
@@ -88,6 +89,13 @@ class Fixture(unittest.TestCase):
         patch = mock.patch.dict(os.environ, self.env, clear=True)
         patch.start()
         self.addCleanup(patch.stop)
+        # Grid placement locks live in a per-user folder outside every home.
+        runtime = self.base / "locks" / "run" / str(os.getuid())
+        runtime.mkdir(parents=True, mode=0o700)
+        for name, value in (("RUNTIME_BASE", runtime.parent), ("TMP_BASE", self.base / "locks")):
+            patch = mock.patch.object(session_grid, name, str(value))
+            patch.start()
+            self.addCleanup(patch.stop)
 
     def cli(self, *args, env=None, timeout=12):
         return subprocess.run([sys.executable, "-B", str(ENTRY), *args], env=env or self.env,

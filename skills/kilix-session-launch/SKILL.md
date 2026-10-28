@@ -30,9 +30,12 @@ A coding agent joins the `agent-sessions` grid; add `--own-tab` for a tab of its
 
 ## Several sessions side by side
 
-`kilix session grid add --name NAME --new --title T -- codex` opens a grid tab;
-`kilix session grid add --into PANE --title T -- claude` adds to it, filling two rows
-column by column, twelve panes per tab. `kilix session grid list` shows grids and slots.
+`kilix session grid add --name NAME --new --title T -- codex` opens a grid tab and
+prints its pane; `kilix session grid add --into PANE --title T -- claude` adds to the
+grid that PANE is in, filling two rows column by column, twelve panes per tab.
+`kilix session grid list --name NAME` shows that grid's panes and slots.
+`kilix session grid enabled` prints `off` when the user turned grids off; then
+default to one tab per session and use `grid add` only when asked for a grid.
 
 The command confirms pane creation. Before reporting a ready agent, inspect
 the returned pane's client and directory with `kilix agent-control list`;
