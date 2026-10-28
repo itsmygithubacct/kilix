@@ -25,7 +25,7 @@ class Launch:
     effort: str | None = None
     prompt: str | None = None
     interactive: bool = True
-    placement: str = "new-tab"
+    placement: str = "auto"          # grid unless the coding_session_grid setting is off
     title: str | None = None
     grid: str = "agent-sessions"
     trust_folder: bool = False
@@ -37,8 +37,11 @@ class Launch:
 def _plan(spec, root):
     if not isinstance(spec, Launch):
         raise SessionError("expected a Launch specification")
-    if spec.placement not in ("new-tab", "grid", "foreground", "background"):
+    if spec.placement not in ("auto", "new-tab", "grid", "foreground", "background"):
         raise SessionError("invalid placement")
+    if spec.placement == "auto":
+        import session_grid
+        spec = replace(spec, placement="grid" if session_grid.enabled() else "new-tab")
     if spec.interactive and spec.placement == "background":
         raise SessionError("interactive sessions need a terminal; use --new-tab or --grid")
     path = Path(spec.cwd).expanduser()

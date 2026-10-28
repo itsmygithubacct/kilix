@@ -14,7 +14,8 @@ benchmark); `kilix --help` lists them too. Run them directly, with no preflight:
 - List panes: `kilix pane list` (ids, titles, programs; `(self)` is you)
 - Type into a shell pane: `kilix pane send TITLE 'TEXT' --submit`
 - Close a pane: `kilix pane close TITLE`
-- A coding agent in a new tab: `kilix new-tab --title T --cwd DIR codex`
+- A coding agent in the session grid: `kilix new-tab --title T --cwd DIR codex`
+  (`--own-tab` for a tab of its own)
 - Files and logs: `find`, `rg`
 
 Target a pane by its unique title or `pane:ID`; a shared title is refused with the matching ids,

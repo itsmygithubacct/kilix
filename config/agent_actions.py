@@ -274,6 +274,9 @@ class GuardedClient:
     """Recheck both identities immediately before terminal side effects."""
     def __init__(self, client, request, before_mutation):
         self.client, self.request, self.before_mutation = client, request, before_mutation
+        # A session-grid launch anchors on a pane in the grid tab, not on the
+        # requested target; the request itself (and its receipt) is unchanged.
+        self.launch_target = None
         self.caller = client.caller
         self.command = client.command
         self.deadline = min(getattr(client, "deadline", float("inf")), time.monotonic() + request["timeout"])
@@ -284,8 +287,11 @@ class GuardedClient:
             raise control.ControlError("source conflicts with inherited caller identity")
         self.resolve(source["pane_id"], source["broker"])
         if target:
-            dest = self.request["target"]
+            dest = self.launch_target or self.request["target"]
             return self.resolve(dest["pane_id"], dest["broker"])
+
+    def retarget(self, identity):
+        self.launch_target = {"pane_id": identity["pane_id"], "broker": identity["broker"]}
 
     def bounded(self, function, *args, **kwargs):
         if time.monotonic() >= self.deadline:
@@ -313,7 +319,8 @@ class GuardedClient:
             self.before_mutation()
             if args[0] == "launch":
                 args = list(args)
-                args[args.index("--match") + 1] = "env:KITTY_PTY_BROKER_SESSION=" + self.request["target"]["broker"]
+                args[args.index("--match") + 1] = "env:KITTY_PTY_BROKER_SESSION=" + (
+                    self.launch_target or self.request["target"])["broker"]
         return self.bounded(self.client.run, args, payload)
 
     def input(self, pane_id, expected, payload):

@@ -21,7 +21,7 @@ import types
 from pathlib import Path
 
 
-_KEYS = ("kilix_sdk", "kilix_sdk.panes")
+_KEYS = ("kilix_sdk", "kilix_sdk.panes", "session_grid")
 
 
 def _restore(saved: dict[str, object | None]) -> None:
@@ -97,6 +97,9 @@ def install(test, panes: object) -> types.ModuleType:
     package.__path__ = []
     sys.modules["kilix_sdk"] = package
     sys.modules["kilix_sdk.panes"] = panes
+    # Coding-client tabs reach the engine through session_grid, not the panes
+    # library; blocking it keeps them on the double, as when it is not on the path.
+    sys.modules["session_grid"] = None
     return package
 
 

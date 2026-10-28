@@ -449,7 +449,7 @@ class FakeTerminal(control.Client):
     def run(self, args, payload=None):
         self.calls.append(args)
         if args == ["launch", "--help"]:
-            return "--keep-focus --source-window --next-to --var"
+            return "--keep-focus --source-window --next-to --var --location"
         if args[0] == "launch":
             broker = args[args.index("--match") + 1].split("=", 1)[1]
             anchor = next(p for p in self.panes if p["env"]["KITTY_PTY_BROKER_SESSION"] == broker)
@@ -479,13 +479,26 @@ class PaneTests(Fixture):
         terminal = FakeTerminal()
         first = launch(self.spec(placement="grid"), client=terminal)
         tab = first["launch"]["pane"]["tab_id"]
-        for i in range(4, 11):
-            terminal.panes.append(pane(i, tab=tab, layout="grid"))
+        for i in range(4, 15):
+            terminal.panes.append(pane(i, tab=tab, layout="sessions"))
         second = launch(self.spec(placement="grid"), client=terminal)
         self.assertNotEqual(second["launch"]["pane"]["tab_id"], tab)
         terminal.panes = [p for p in terminal.panes if p["id"] != 4 and p["tab_id"] != second["launch"]["pane"]["tab_id"]]
         third = launch(self.spec(placement="grid"), client=terminal)
         self.assertEqual(third["launch"]["pane"]["tab_id"], tab)
+
+    def test_default_placement_follows_the_session_grid_setting(self):
+        terminal = FakeTerminal()
+        record = launch(self.spec(placement="auto"), client=terminal)
+        self.assertEqual(record["placement"], "grid")
+        self.assertEqual(record["launch"]["grid"]["grid"], "agent-sessions")
+        settings = self.home / ".local" / "gpu_terminal" / "settings.conf"
+        settings.parent.mkdir(parents=True)
+        settings.write_text("KILIX_CODING_SESSION_GRID=off\n")
+        record = launch(self.spec(placement="auto"), client=terminal)
+        self.assertEqual(record["placement"], "new-tab")
+        self.assertNotIn("grid", record["launch"])
+        self.assertEqual(plan(self.spec(placement="auto"))["placement"], "new-tab")
 
     def test_new_tab_preserves_focus_and_uses_literal_worker_argv(self):
         terminal = FakeTerminal()
@@ -496,17 +509,19 @@ class PaneTests(Fixture):
         self.assertEqual(command[command.index("--") + 1:], result["worker_argv"])
         self.assertIn("--keep-focus", command)
 
-    def test_nine_concurrent_grid_submissions_allocate_eight_plus_one(self):
+    def test_thirteen_concurrent_grid_submissions_allocate_twelve_plus_one(self):
         terminal = FakeTerminal()
         def submit(_):
             return launch(self.spec(placement="grid", grid="Reviews"), client=terminal)
-        with ThreadPoolExecutor(9) as pool:
-            records = list(pool.map(submit, range(9)))
+        with ThreadPoolExecutor(13) as pool:
+            records = list(pool.map(submit, range(13)))
         self.assertTrue(all(r["launch"]["status"] == "submitted" for r in records), records)
         tabs = {}
         for p in terminal.panes[2:]:
             tabs[p["tab_id"]] = tabs.get(p["tab_id"], 0) + 1
-        self.assertEqual(sorted(tabs.values()), [1, 8])
+        self.assertEqual(sorted(tabs.values()), [1, 12])
+        self.assertTrue(all(p["layout"] == "sessions" for p in terminal.panes[2:]))
+        self.assertEqual(sorted(r["launch"]["grid"]["count"] for r in records), sorted([*range(1, 13), 1]))
         self.assertEqual(terminal.focus, 1)
         self.assertEqual(terminal.panes[:2], [pane(1), pane(2, tab=12, layout="grid")])
         self.assertTrue(all("--keep-focus" in a for a in terminal.calls if a[0] == "launch" and "--help" not in a))

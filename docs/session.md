@@ -1,9 +1,10 @@
 # Managed coding sessions in Kilix 0.2.2
 
 `kilix session` and `kilix-session` launch Codex, Claude Code or Grok and retain
-their run records. Native interactive UI in a fresh tab is the default. Every
-new tab and grid pane uses `--keep-focus`: the current pane keeps focus. Panes
-are held after exit so startup failures remain visible.
+their run records. Native interactive UI in a pane of a session grid is the
+default (see [Session grids](#session-grids)). Every new tab and grid pane uses
+`--keep-focus`: the current pane keeps focus. Panes are held after exit so
+startup failures remain visible.
 
 ```sh
 kilix session launch codex --cwd /path/to/worktree --trust-folder \
@@ -73,8 +74,9 @@ Placement options are mutually exclusive:
 
 | Option | Behavior |
 | --- | --- |
-| `--new-tab` (default) | Fresh tab anchored to the verified caller; preserve focus. |
-| `--grid NAME` | Reuse this store's named grid in the caller's OS window, up to eight total panes per tab; create another tab when full. Preserve focus. |
+| (none, default) | Join the `agent-sessions` grid, or a fresh tab when the `KILIX_CODING_SESSION_GRID` setting is `off`. |
+| `--new-tab` | Fresh tab of its own anchored to the verified caller; preserve focus. |
+| `--grid NAME` | Join the newest grid named NAME with room in the caller's OS window, up to twelve panes per tab; create another tab when full. Preserve focus. |
 | `--foreground` | Use the current terminal and wait for provider exit. Native UI requires terminal stdin/stdout and foreground job control. |
 | `--background` | Detach a logged headless runner without a pane. Interactive mode is rejected. |
 
@@ -84,11 +86,61 @@ verification. There is no fallback to a focused, unrelated tab. Use
 whose environment was stripped. Explicit identity must agree with any inherited
 caller. No command closes panes or changes focus as rollback.
 
-Grid allocations are serialized in the managed store. The marker includes the
-store path and group name; matching a tab title alone never establishes ownership.
-Manual panes count toward capacity. Tabs whose layout was manually changed are
-left alone. Closed panes free capacity; held completed panes continue to count.
-Use existing explicit pane commands if you want to close a retained pane.
+## Session grids
+
+A session grid is a tab in the engine's `sessions` layout. One pane fills the
+tab; from two panes on there are exactly two rows and ceil(n/2) columns, filled
+top to bottom and left to right, so a new pane never moves an earlier one. With
+an odd count the last column holds one full-height pane. A tab holds at most
+twelve panes (six columns); the next launch opens another tab named `NAME 2`,
+`NAME 3`, and so on. Closing a pane lays the rest out again with no gap.
+
+```text
+n=5:  ┌────┬────┬────┐    n=12: six columns of two
+      │ 1  │ 3  │ 5  │
+      ├────┼────┤    │
+      │ 2  │ 4  │    │
+      └────┴────┴────┘
+```
+
+Every coding-session launch into a new tab joins a grid unless told otherwise:
+`kilix session` without a placement option, `kilix agent-control new-tab`, the
+structured `agent.launch` action for a coding client, and `kilix new-tab` or
+`kilix tab new` running a coding client. These use the `agent-sessions` grid.
+Pass `--own-tab` to `agent-control new-tab`, `kilix new-tab` or `kilix tab new`
+(or `--new-tab` to `kilix session`) for a tab of its own. Setting
+`KILIX_CODING_SESSION_GRID=off` (Settings, "Coding sessions in a grid") restores
+one tab per session everywhere; it is on by default.
+
+`kilix session grid` places any command, not only a managed run:
+
+```sh
+kilix session grid add --name claudex-team --new --title orchestrator -- codex --yolo
+kilix session grid add --into PANE --title worker_1 -- codex --yolo
+kilix session grid add -- codex --yolo          # newest agent-sessions grid with room
+kilix session grid list [--name NAME]           # grids, counts and pane slots as JSON
+```
+
+`--new` always opens a new grid tab; `--into PANE` adds to the grid holding that
+pane and fails if it is full or not a grid of that name. Without either, the
+pane joins the newest grid of that name with room in the caller's OS window.
+`--var NAME=VALUE` sets a pane user variable and `--env NAME=VALUE` an
+environment variable for the command; both repeat. Panes are held after exit
+unless `--no-hold` is given.
+
+A pane belongs to a grid through a pane variable derived from the grid name;
+matching a tab title alone never establishes ownership. Manual panes in a grid
+tab count toward capacity. A tab whose layout was manually changed is no longer
+a grid and is left alone. Closed panes free capacity; held completed panes
+continue to count. Use existing explicit pane commands to close a retained pane.
+Placement is serialized per engine socket, so launches from different run
+stores cannot overfill a tab.
+
+The `sessions` layout ships with the Kilix engine and is selected only by name
+(`goto-layout sessions`); it does not need to be in `enabled_layouts` and is kept
+across configuration reloads. With an engine that lacks it, the first pane still
+opens, in a plain tab, and the receipt carries a `fallback` reason; later
+launches do not treat that tab as a grid.
 
 ## Inspection and lifecycle
 
@@ -221,7 +273,7 @@ integration should select the reviewed host commit and verify the installed
 entry in the image/upgrade gates; this change does not move release pins itself.
 
 The external `agent-session` launcher informed the features, but is not imported
-or required. Deliberate differences: native UI/fresh tab defaults, opt-in grids,
+or required. Deliberate differences: native UI in a session grid by default,
 explicit stdin, managed Kilix storage, trusted-folder setup, no unconditional
 permission bypass, fixed file bootstrap for native prompts, guarded caller
 identity, focus preservation, and durable cancellation/inspection. Resume,

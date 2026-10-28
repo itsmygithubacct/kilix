@@ -350,10 +350,13 @@ class Client:
         state = json.loads(self.run(["ls"]))
         for os_window in state:
             for tab in os_window.get("tabs", []):
+                # Overlays share their parent's window group; layouts count groups.
+                groups = ((tab.get("layout_state") or {}).get("all_windows") or {}).get("window_groups")
                 for pane in tab.get("windows", []):
                     result.append({**pane, "tab_id": tab["id"],
                                    "tab_title": tab.get("title", ""),
                                    "layout": tab.get("layout", ""),
+                                   "tab_window_groups": len(groups) if isinstance(groups, list) else None,
                                    "tab_focused": bool(tab.get("is_focused")),
                                    "os_window_focused": bool(os_window.get("is_focused")),
                                    "os_window_id": os_window["id"]})
@@ -440,6 +443,22 @@ def launch(client, args, *, explicit_argv=None):
             trusted = trust(args.agent, str(cwd))
         except TrustError as exc:
             raise ControlError(f"folder not trusted: {exc}") from exc
+    if args.action == "new-tab" and joins_grid(args, explicit_argv):
+        import session_grid
+        name = getattr(args, "grid", None) or session_grid.DEFAULT_GRID
+        if args.dry_run:
+            return {"schema": SCHEMA, "status": "dry_run", "target": describe(target),
+                    "placement": {"grid": name, "layout": session_grid.LAYOUT,
+                                  "capacity": session_grid.CAPACITY}, "argv": argv}
+        placed = session_grid.place(client, source=describe(target), argv=argv, cwd=str(cwd),
+                                    title=title, name=name, hold=True,
+                                    retarget=getattr(client, "retarget", None))
+        return {"schema": SCHEMA, "status": "created", "pane": placed["pane"],
+                "grid": {key: placed[key] for key in ("grid", "tab_id", "new_tab", "layout", "fallback",
+                                                     "count", "capacity", "slot")},
+                "agent_startup_verified": False, "prompt_submitted": False,
+                "prompt_passed": bool(args.prompt), "resumed": args.resume or None,
+                "folder_trust": trusted}
     options = ["launch", "--match", f"window_id:{args.pane}",
                "--next-to", f"id:{args.pane}", "--source-window", f"id:{args.pane}",
                "--keep-focus", "--hold", "--cwd", str(cwd), "--title", title]
@@ -476,6 +495,21 @@ def launch(client, args, *, explicit_argv=None):
             "agent_startup_verified": False, "prompt_submitted": False,
             "prompt_passed": bool(args.prompt), "resumed": args.resume or None,
             "folder_trust": trusted}
+
+
+def joins_grid(args, explicit_argv):
+    """A coding session opened into a new tab joins a session grid by default.
+
+    An agent launch always counts; an explicit argv counts when its program is
+    a known coding client. --own-tab, or the coding_session_grid setting off,
+    keeps the old one-tab-per-session behaviour.
+    """
+    import session_grid
+    if getattr(args, "own_tab", False):
+        return False
+    if explicit_argv is not None and not session_grid.is_agent_command(explicit_argv):
+        return False
+    return session_grid.enabled()
 
 
 def validate_reasoning_effort(agent, effort):
@@ -615,6 +649,12 @@ def parser():
             command.add_argument("--trust-folder", action="store_true",
                                  help="record the client's trust for exactly --cwd first")
             command.add_argument("--dry-run", action="store_true")
+            if name == "new-tab":
+                command.add_argument("--grid", metavar="NAME",
+                                     help="session grid to join (default agent-sessions); coding sessions "
+                                          "join a grid unless --own-tab or the coding_session_grid setting is off")
+                command.add_argument("--own-tab", action="store_true",
+                                     help="open a tab of its own instead of joining a session grid")
             if name == "split":
                 command.add_argument("--direction", choices=LOCATIONS, default="right")
                 command.add_argument("--bias", type=float, default=50,
