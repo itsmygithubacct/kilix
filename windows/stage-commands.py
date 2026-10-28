@@ -16,7 +16,7 @@ def stage(destination):
     shared = destination / 'wsl-bin'
     config = shared / 'config'
     config.mkdir(parents=True, exist_ok=True)
-    for name in ('remote.py', 'tmux_control.py', 'content_models.py', 'kilix_clock_settings.py',
+    for name in ('remote.py', 'session_grid.py', 'tmux_control.py', 'content_models.py', 'kilix_clock_settings.py',
                  'terminal_video.py', 'terminal_video_errors.lua'):
         shutil.copy2(SOURCE.parent / 'config' / name, config / name)
     for source in (SOURCE.parent / 'config').glob('agent_*.py'):
