@@ -10,9 +10,9 @@ Kilix remains the terminal and pane manager. Workflows connect its visible contr
 | --- | --- |
 | Work directly in the terminal | Use Kilix's pane and page controls, or the basic `kilix ls`, `kilix ls --panes`, `kilix focus`, `kilix new-pane`, and `kilix watch` verbs. |
 | Run a known terminal operation | Use a direct Kilix verb. For a child command, `--` separates its argument vector: `kilix new-pane down -- htop`. |
-| Run a read-only system question with the explicit grammar | When claudex is available, `kilix claudex route grammar` opens `kilix-needle system --baseline`. That grammar does not fall back to a model. |
-| Phrase a request for Needle | `kilix claudex route needle` opens the `kilix-needle` prompt. Its grammar reads an exact request, and the model is the fallback. When the job is already known, use that job's CLI or MCP tool. `kilix ask` shows a person the route and the plan and acts only on a typed yes. |
-| Search files or read system state from a shell | Use `find`, `rg`, `ps`, `df`, and the other shell tools. `kilix claudex route shell` opens a shell for that work. |
+| Run a read-only system question with the explicit grammar | `kilix grammar` runs `kilix-needle system --baseline` in the current pane. That grammar does not fall back to a model. |
+| Phrase a request for Needle | `kilix needle` runs the `kilix-needle` prompt in the current pane. Its grammar reads an exact request, and the model is the fallback. When the job is already known, use that job's CLI or MCP tool. `kilix ask` shows a person the route and the plan and acts only on a typed yes. |
+| Search files or read system state from a shell | `kilix shell` runs Bash in the current pane for `find`, `rg`, `ps`, `df`, and the other shell tools. |
 | Open a coding session from remaining usage | `kilix claudex route max`, `kilix claudex route security`, or `kilix claudex route worker low\|mid\|high\|max`. `kilix claudex usage` reads the remaining Codex, Claude, Grok, and Qwen numbers those routes consult. |
 | Automate a known Kilix action | Use the structured action CLI or its MCP tools. Supply one versioned request with exact identities and keep its receipt. |
 | Work with an existing tmux server | Use `kilix tmux` or Needle's tmux job with that server's explicit socket on every request. |
@@ -68,20 +68,30 @@ If a structured call is interrupted or its result is lost, query `operation.stat
 
 For pane and tmux input, read the target after submission and check the actual effect. A successful transport response only describes that transport's verified step.
 
+## Use grammar, Needle, or a shell
+
+```sh
+kilix grammar                      # kilix-needle system --baseline
+kilix needle                       # kilix-needle prompt
+kilix shell                        # bash
+```
+
+These verbs run in the current pane. With no arguments they start the prompt;
+`--help` prints a short usage message. Other arguments pass to the program.
+Grammar and Needle use the installed `kilix-needle`; a missing installation is
+reported without installing it. These verbs do not read coding-plan usage.
+
 ## Open a claudex route
 
 When claudex is available, `kilix claudex` lists the routes. Kilix verbs stay the pane commands in the table above. Claudex does not open a pane for them.
 
 ```sh
-kilix claudex route grammar          # kilix-needle system --baseline
-kilix claudex route needle           # kilix-needle prompt
-kilix claudex route shell            # bash
 kilix claudex route worker low       # Codex and Claude; low, mid, high, or max
 kilix claudex route max --dry-run    # print the choice; open nothing
 kilix claudex usage                  # remaining Codex, Claude, Grok, and Qwen
 ```
 
-Grammar, needle, and shell do not read usage and do not take a tier. Worker does not read usage and takes `low`, `mid`, `high`, or `max`. Max and security open one session from remaining usage. A reading stays valid for 30 minutes. A missing or signed-out reading is not zero. `--dry-run` prints the choice and opens nothing. An opened pane is the opened event. It does not show that the session finished the task.
+Worker does not read usage and takes `low`, `mid`, `high`, or `max`. Max and security open one session from remaining usage. A reading stays valid for 30 minutes. A missing or signed-out reading is not zero. `--dry-run` prints the choice and opens nothing. An opened pane is the opened event. It does not show that the session finished the task.
 
 ## Resume saved conversations
 
