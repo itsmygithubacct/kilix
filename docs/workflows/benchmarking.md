@@ -2,7 +2,7 @@
 
 Evaluate the observable task result and recovery path, not the wording of a tool receipt alone. Keep capability documentation, deterministic fixture checks, and live model continuation comparisons as separate evidence.
 
-**Shipped interfaces** describe what the selected CLI, MCP server, action controller, tmux controller, rollout-resume utility, and claudex routes can do. Their contracts establish supported inputs, selection rules, and what each response verifies. They do not by themselves show that a workflow saves time, improves task success, or is easy for people to use.
+**Shipped interfaces** describe what the selected CLI (including `kilix grammar`, `kilix needle`, and `kilix shell`), MCP server, action controller, tmux controller, rollout-resume utility, and claudex coding routes can do. Their contracts establish supported inputs, selection rules, and what each response verifies. They do not by themselves show that a workflow saves time, improves task success, or is easy for people to use.
 
 **Synthetic fixture validation** is the scope of the local rollout-resume battery. It uses generated records and a synthetic provider to exercise CLI listing and inspection, refusal cases, launch arguments and working-directory selection, picker key handling, detached tmux recovery, and structured-resume CLI/MCP adapters. These model-free checks cover transport and state wiring; they do not prove that an original conversation's context was recovered or that a resumed model continues its task. Automated picker input is not human usability evidence.
 

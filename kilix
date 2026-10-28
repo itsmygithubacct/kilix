@@ -44,7 +44,10 @@
 #   ./kilix speak [TEXT...]    # read a pane, or the given text, aloud
 #   ./kilix dictate           # recognize one spoken utterance
 #   ./kilix ask [REQUEST]     # route a plain request to Needle; acts on yes
-#   ./kilix claudex route ... # open a named claudex route (worker, grammar, ...)
+#   ./kilix grammar [args]   # explicit system grammar in this pane
+#   ./kilix needle [args]    # Needle prompt in this pane
+#   ./kilix shell [args]     # Bash in this pane
+#   ./kilix claudex route ... # open a coding route (max, worker, security)
 #   ./kilix claudex usage     # read Codex, Claude, Grok, and Qwen usage
 #   ./kilix tts | stt [args]  # run the read-aloud / dictation TUIs
 #   ./kilix voice status      # voice status, install, doctor, stop
@@ -221,7 +224,8 @@ needed first. Ambiguous targets fail; each verb prints what it did.
   kilix action --request-json -             structured request from stdin
   kilix action capabilities                inspect available features
   kilix windows --host HOST COMMAND         Windows desktop via SSH
-Also: ask 'REQUEST', claudex route|usage, wizard, settings, status, update, install, games,
+Also: ask 'REQUEST', grammar, needle, shell, claudex route|usage,
+  wizard, settings, status, update, install, games,
   screen-size, transcript, help-search "QUESTION". Command options: --help.
 Terminal engine (kitty) options: kilix --help-engine
 EOF
@@ -3385,16 +3389,47 @@ case "${1:-}" in
       ""|-h|--help|help)
         echo "usage: $_self claudex route NAME [TIER] [--dry-run] [--json] [--cwd DIR]"
         echo "       $_self claudex usage [read|login|show|status] [AGENT ...] [--json|--human] [--remaining|--used] [--full] [--verbose]"
-        echo "routes: max, worker low|mid|high|max, security, grammar, shell, needle"
-        echo "  grammar   kilix-needle system --baseline (explicit grammar only)"
-        echo "  needle    kilix-needle prompt (grammar, then the model when grammar misses)"
-        echo "  shell     bash, for find, ps, df, rg"
+        echo "routes: max, worker low|mid|high|max, security"
         echo "Kilix verbs (ls, focus, new-pane, watch) are kilix commands. This does not open a pane for them."
         echo "worker takes low, mid, high, or max. The other routes do not take a tier."
         echo "Any other claudex arguments are passed through."
         exit 0 ;;
     esac
     exec "$_claudex_bin" "$@" ;;
+  grammar|needle)
+    _tool_verb="$1"
+    shift
+    case "${1:-}" in
+      -h|--help|help)
+        echo "usage: $_self $_tool_verb [ARGS...]"
+        if [ "$_tool_verb" = grammar ]; then
+          echo "runs kilix-needle system --baseline in this pane (grammar only; no model fallback)"
+        else
+          echo "runs the kilix-needle prompt in this pane (grammar, then model fallback)"
+        fi
+        exit 0 ;;
+    esac
+    _tool_needle="$(command -v kilix-needle 2>/dev/null || true)"
+    if [ -z "$_tool_needle" ] || [ ! -x "$_tool_needle" ]; then
+      _tool_needle="$KILIX_DATA_HOME/desktop-apps/kilix-needle/kilix-needle"
+    fi
+    [ -x "$_tool_needle" ] || {
+      echo "kilix $_tool_verb: Needle is not installed; '$_self app install kilix-needle' installs it" >&2
+      exit 1
+    }
+    if [ "$_tool_verb" = grammar ]; then
+      exec "$_tool_needle" system --baseline "$@"
+    fi
+    exec "$_tool_needle" "$@" ;;
+  shell)
+    shift
+    case "${1:-}" in
+      -h|--help|help)
+        echo "usage: $_self shell [BASH-ARGS...]"
+        echo "runs bash in this pane, for find, rg, ps, df and other shell tools"
+        exit 0 ;;
+    esac
+    exec bash "$@" ;;
   ask)
     # One plain request, routed to the Needle job that runs it. Needle shows the
     # route and the plan and acts only on a typed yes; an unsure route never
