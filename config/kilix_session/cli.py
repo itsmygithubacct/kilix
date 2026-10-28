@@ -10,6 +10,7 @@ import time
 import agent_control as control
 from agent_programs import resolve_agent_command
 from agent_skills import Conflict
+import session_grid
 
 from .manager import Launch, inspect_run, launch, list_runs, plan, stop, wait
 from .providers import PROVIDERS
@@ -33,6 +34,13 @@ def positive(value):
     return result
 
 
+def assignment(value):
+    name, separator, text = value.partition("=")
+    if not separator or not name:
+        raise argparse.ArgumentTypeError("expected NAME=VALUE")
+    return name, text
+
+
 def parser():
     result = argparse.ArgumentParser(prog="kilix session", description=__doc__,
         epilog="Run records: $KILIX_AGENT_RUNS_HOME or $KILIX_STORAGE_HOME/agent-runs. "
@@ -50,8 +58,10 @@ def parser():
     mode.add_argument("--interactive", "-i", action="store_true", default=True)
     mode.add_argument("--headless", action="store_true", help="logged single-turn execution")
     placement = start.add_mutually_exclusive_group()
-    placement.add_argument("--new-tab", action="store_true", help="fresh tab, preserve focus (default)")
-    placement.add_argument("--grid", metavar="NAME", help="named managed grid; at most eight panes per tab")
+    placement.add_argument("--new-tab", action="store_true",
+                           help="a tab of its own, preserve focus (default when coding_session_grid is off)")
+    placement.add_argument("--grid", metavar="NAME",
+                           help="join session grid NAME (default agent-sessions): two rows, at most twelve panes per tab")
     placement.add_argument("--foreground", action="store_true", help="wait in the current terminal")
     placement.add_argument("--background", action="store_true", help="detached headless runner, no pane")
     prompt = start.add_mutually_exclusive_group()
@@ -83,6 +93,29 @@ def parser():
     batch.add_argument("--stagger", type=seconds, default=30, help="seconds between submissions (default: 30)")
     batch.add_argument("--dry-run", action="store_true")
     commands.add_parser("providers", help="installed provider paths, without installing or starting clients")
+    grids = commands.add_parser("grid", help="session grids: open any command as a grid pane, or list grids")
+    grid_commands = grids.add_subparsers(dest="grid_command", required=True)
+    add = grid_commands.add_parser("add", help="open COMMAND as a pane in a session grid without taking focus",
+                                   epilog="Joins the newest grid NAME with room in this OS window, else opens "
+                                          "a new grid tab. Prints a JSON receipt with the pane, tab and slot.")
+    add.add_argument("--name", help="grid name (default: agent-sessions, or with --into the grid of that pane)")
+    where = add.add_mutually_exclusive_group()
+    where.add_argument("--new", action="store_true", help="always open a new grid tab")
+    where.add_argument("--into", type=control.positive, metavar="PANE", help="join the grid that holds PANE")
+    add.add_argument("--title", required=True, help="pane title")
+    add.add_argument("--cwd", default=".", help="existing directory (default: here)")
+    add.add_argument("--no-hold", action="store_true", help="close the pane when the command exits")
+    add.add_argument("--var", action="append", default=[], type=assignment, metavar="NAME=VALUE",
+                     help="set a pane user variable (repeatable)")
+    add.add_argument("--env", action="append", default=[], type=assignment, metavar="NAME=VALUE",
+                     help="set an environment variable for the command (repeatable)")
+    add.add_argument("--source-pane", type=control.positive, help="verified caller if its environment was stripped")
+    add.add_argument("--expect-broker", help="optional exact caller broker identity")
+    add.add_argument("program", nargs=argparse.REMAINDER, metavar="COMMAND", help="-- PROGRAM ARGS...")
+    listed = grid_commands.add_parser("list", help="grid tabs, newest first, with pane slots")
+    listed.add_argument("--name", help="only the grids of this name")
+    grid_commands.add_parser("enabled", help="print on or off: whether coding sessions open in a grid by default "
+                                             "(exit 0 when on, 1 when off)")
     worker = commands.add_parser("_worker", help="internal: execute one previously prepared run")
     worker.add_argument("run_id")
     for command in (start, listing, show, logs, batch, worker, *[commands.choices[n] for n in ("wait", "stop", "providers")]):
@@ -104,7 +137,8 @@ def specification(args, *, batch=False):
         if len(raw) > 1024 * 1024:
             raise SessionError("prompt exceeds 1 MiB")
         prompt = raw.decode("utf-8")  # Preserve CRLF, final newlines and all whitespace.
-    placement = "background" if args.background else "foreground" if args.foreground else "grid" if args.grid else "new-tab"
+    placement = ("background" if args.background else "foreground" if args.foreground else "grid" if args.grid
+                 else "new-tab" if args.new_tab else "auto")
     return Launch(provider=args.provider, cwd=args.cwd, model=args.model, effort=args.effort,
                   title=args.title, prompt=prompt, interactive=not args.headless, placement=placement,
                   grid=args.grid or "agent-sessions", trust_folder=args.trust_folder,
@@ -167,6 +201,33 @@ def batch(args):
     return code
 
 
+def grid(args):
+    if args.grid_command == "enabled":
+        on = session_grid.enabled()
+        print("on" if on else "off")
+        return 0 if on else 1
+    client = control.Client(getattr(args, "source_pane", None))
+    if args.grid_command == "list":
+        emit({"capacity": session_grid.CAPACITY, "grids": session_grid.grids(client.snapshot(), args.name)})
+        return 0
+    argv = args.program[1:] if args.program[:1] == ["--"] else args.program
+    if not argv:
+        raise SessionError("give the pane's command after --")
+    cwd = Path(args.cwd).expanduser().resolve(strict=True)
+    if not cwd.is_dir():
+        raise SessionError("cwd must be an existing directory")
+    if not client.caller:
+        raise SessionError("no identified Kilix caller; use --source-pane")
+    source = control.describe(client.resolve(client.caller, args.expect_broker))
+    if not control.BROKER.fullmatch(source["broker"]):
+        raise SessionError("source pane lacks a broker identity")
+    result = session_grid.place(client, source=source, argv=argv, cwd=str(cwd), title=args.title,
+                                name=args.name, new=args.new, into=args.into, hold=not args.no_hold,
+                                extra_vars=args.var, extra_env=args.env)
+    emit({"status": "created", **result})
+    return 0
+
+
 def logs(args):
     with run_files(args.root, args.run_id) as files:
         try:
@@ -219,6 +280,8 @@ def main(argv=None):
             return logs(args)
         elif args.command == "batch":
             return batch(args)
+        elif args.command == "grid":
+            return grid(args)
         elif args.command == "providers":
             emit({"providers": [{"provider": p, "path": resolve_agent_command(p),
                                   "interactive": True, "headless": True, "trust_folder": True} for p in PROVIDERS]})

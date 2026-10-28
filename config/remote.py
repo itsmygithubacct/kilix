@@ -262,6 +262,9 @@ def cmd_new_tab(argv: list[str]) -> int:
         help="directory for the new page (default: follow this pane)")
     parser.add_argument("--title", default="", help="name the page")
     parser.add_argument(
+        "--own-tab", action="store_true",
+        help="a coding session gets a tab of its own instead of joining a session grid")
+    parser.add_argument(
         "command", nargs=argparse.REMAINDER,
         help="program to run in it (default: the shell)")
     ns = parser.parse_args(argv)
@@ -269,12 +272,35 @@ def cmd_new_tab(argv: list[str]) -> int:
     panes = load_panes("new-tab")
     command = ns.command[1:] if ns.command[:1] == ["--"] else ns.command
     try:
+        placed = grid_new_tab(command, ns.cwd, ns.title, ns.own_tab)
+        if placed:
+            print(f"kilix new-tab: opened {placed['pane']['pane_id']} in session grid "
+                  f"{placed['grid']!r} (tab {placed['tab_id']}, {placed['count']}/{placed['capacity']})")
+            return 0
         new_id = panes.new_tab(cwd=ns.cwd, title=ns.title,
                                command=tuple(command))
     except panes.PaneError as exc:
         return fail("new-tab", str(exc))
+    except (RuntimeError, OSError, ValueError) as exc:
+        return fail("new-tab", str(exc))
     print(f"kilix new-tab: opened {new_id}")
     return 0
+
+
+def grid_new_tab(command: list[str], cwd: str, title: str, own_tab: bool,
+                 shell_string: str = "") -> dict[str, Any] | None:
+    """Open a coding session in a session grid; None means "use a plain tab".
+
+    The placement lives in :mod:`session_grid`, imported lazily like the panes
+    library; where it is not on the path the tab opens as before.
+    """
+    if own_tab or not (command or shell_string):
+        return None
+    try:
+        import session_grid  # noqa: PLC0415  (deliberately lazy)
+    except ImportError:
+        return None
+    return session_grid.open_tab(command, cwd=cwd, title=title, shell_string=shell_string)
 
 
 def cmd_fullscreen(argv: list[str]) -> int:
@@ -575,12 +601,22 @@ def _tab_subcommand(name: str, argv: list[str]) -> int:
         parser.add_argument("--title", default="", help="name the page")
         parser.add_argument("--porcelain", action="store_true",
                             help="print only the new tab id")
+        parser.add_argument("--own-tab", action="store_true",
+                            help="a coding session gets a tab of its own instead of joining a session grid")
         parser.add_argument("command", nargs="*")
         head, tail, forced_argv = partition_double_dash(argv)
         ns = parser.parse_args(head)
         panes = load_panes("tab new")
         command = list(ns.command) + tail
-        if not forced_argv and looks_like_shell_string(command):
+        shell_line = not forced_argv and looks_like_shell_string(command)
+        try:
+            placed = grid_new_tab([] if shell_line else command, ns.cwd, ns.title, ns.own_tab,
+                                  shell_string=command[0] if shell_line else "")
+        except (RuntimeError, OSError, ValueError) as exc:
+            return fail("tab new", str(exc))
+        if placed:
+            return emit_new_id("tab", placed["pane"]["pane_id"], ns.porcelain)
+        if shell_line:
             new_id = panes.new_tab(cwd=ns.cwd, title=ns.title,
                                    shell_string=command[0])
         else:

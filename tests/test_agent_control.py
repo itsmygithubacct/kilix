@@ -176,7 +176,9 @@ class LaunchTests(unittest.TestCase):
         self.addCleanup(self.program.stop)
 
     def args(self, action="new-tab", *extra):
-        return control.parser().parse_args([action, "1", "--expect-broker", SOURCE_BROKER,
+        # These cover the one-tab path; tests/test_session_grid.py covers the grid.
+        own = ["--own-tab"] if action == "new-tab" else []
+        return control.parser().parse_args([action, "1", *own, "--expect-broker", SOURCE_BROKER,
                                            "--agent", "codex", "--title", "coding 'literal'",
                                            "--cwd", self.directory.name, *extra])
 
@@ -258,7 +260,7 @@ class AgentArgvTests(unittest.TestCase):
 
     def argv(self, agent, *extra, yolo_setting=False):
         client = FakeClient()
-        args = control.parser().parse_args(["new-tab", "1", "--expect-broker", SOURCE_BROKER,
+        args = control.parser().parse_args(["new-tab", "1", "--own-tab", "--expect-broker", SOURCE_BROKER,
                                             "--agent", agent, "--title", "t",
                                             "--cwd", self.directory.name, *extra])
         exe = {"qwen-omp": "/bin/omp"}.get(agent, f"/bin/{agent}")
@@ -332,7 +334,7 @@ class AgentArgvTests(unittest.TestCase):
                              ("qwen-omp", ["--agent-arg=--profile"]),
                              ("grok", ["--agent-arg=--trust"])):
             client = FakeClient()
-            args = control.parser().parse_args(["new-tab", "1", "--expect-broker", SOURCE_BROKER,
+            args = control.parser().parse_args(["new-tab", "1", "--own-tab", "--expect-broker", SOURCE_BROKER,
                                                 "--agent", agent, "--title", "t",
                                                 "--cwd", self.directory.name, *extra])
             with mock.patch.object(agent_programs, "resolve_agent_command", return_value="/bin/x"), \
@@ -348,7 +350,7 @@ class AgentArgvTests(unittest.TestCase):
             for prefix in "/!#@-":
                 client = FakeClient()
                 args = control.parser().parse_args([
-                    "new-tab", "1", "--expect-broker", SOURCE_BROKER,
+                    "new-tab", "1", "--own-tab", "--expect-broker", SOURCE_BROKER,
                     "--agent", agent, "--title", "t", "--cwd", self.directory.name,
                     "--prompt", f"  {prefix}command with arguments"])
                 with mock.patch.object(agent_programs, "resolve_agent_command",
@@ -361,7 +363,7 @@ class AgentArgvTests(unittest.TestCase):
     def test_empty_prompt_is_refused_before_launch(self):
         client = FakeClient()
         args = control.parser().parse_args([
-            "new-tab", "1", "--expect-broker", SOURCE_BROKER, "--agent", "claude",
+            "new-tab", "1", "--own-tab", "--expect-broker", SOURCE_BROKER, "--agent", "claude",
             "--title", "t", "--cwd", self.directory.name, "--prompt="])
         with mock.patch.object(agent_programs, "resolve_agent_command", return_value="/bin/x"):
             with self.assertRaises(control.ControlError):
@@ -408,7 +410,7 @@ class AgentArgvTests(unittest.TestCase):
         nested = root / "nested"
         nested.mkdir(parents=True)
         subprocess.run(["git", "init", "-q", str(root)], check=True)
-        base = ["new-tab", "1", "--expect-broker", SOURCE_BROKER, "--agent", "grok",
+        base = ["new-tab", "1", "--own-tab", "--expect-broker", SOURCE_BROKER, "--agent", "grok",
                 "--title", "t", "--trust-folder", "--dry-run"]
         with mock.patch.object(agent_programs, "resolve_agent_command", return_value="/bin/grok"):
             accepted = control.launch(FakeClient(), control.parser().parse_args(
@@ -451,7 +453,7 @@ class AgentArgvTests(unittest.TestCase):
         for prompt in ("# remember this rule", "@notes.md summarize it", "  /logout now"):
             client = FakeClient()
             args = control.parser().parse_args([
-                "new-tab", "1", "--expect-broker", SOURCE_BROKER, "--agent", "claude",
+                "new-tab", "1", "--own-tab", "--expect-broker", SOURCE_BROKER, "--agent", "claude",
                 "--title", "t", "--cwd", self.directory.name, "--prompt", prompt])
             # The --help lookup is stubbed so the prompt guard itself decides
             # (review R13 round 5, KX-R13-44).
@@ -623,7 +625,7 @@ class TrustTests(unittest.TestCase):
 
     def test_a_launch_trusts_only_when_asked_and_never_on_a_dry_run(self):
         client = FakeClient()
-        base = ["new-tab", "1", "--expect-broker", SOURCE_BROKER, "--agent", "claude",
+        base = ["new-tab", "1", "--own-tab", "--expect-broker", SOURCE_BROKER, "--agent", "claude",
                 "--title", "t", "--cwd", str(self.project)]
         with mock.patch.object(agent_programs, "resolve_agent_command", return_value="/bin/claude"), \
                 mock.patch.object(agent_trust, "trust", return_value="trusted") as trust:

@@ -113,7 +113,7 @@ class RemoteControlPolicyTests(unittest.TestCase):
         self.assertEqual(
             self.password_allowlist(),
             ["launch", "ls", "focus-window", "focus-tab", "get-text",
-             "get-pane-geometry", "close-window", "close-tab", "set-tab-title"])
+             "get-pane-geometry", "close-window", "close-tab", "set-tab-title", "goto-layout"])
 
     def test_pane_geometry_command_is_one_the_password_authorises(self):
         # The SDK sends this command with the password, so a command missing

@@ -72,6 +72,12 @@ paste is verified before Enter. `defer` is refused for Claude because Tab change
 its permission mode. Both clients retain durable at-most-once input attempts;
 uncertain receipts are recovered by observation without resending text or keys.
 
+With `placement: "new-tab"`, `agent.launch` (and `pane.open` whose `argv` runs a
+coding client) adds the pane to the `agent-sessions` session grid, anchored on
+the grid's last pane, unless the `KILIX_CODING_SESSION_GRID` setting is `off`; see
+[session grids](session.md#session-grids). The request's `target` and receipt
+are unchanged. Any other program still opens in a tab of its own.
+
 Structured agent launches do not record folder trust: `trust_folder: true` is
 refused before connecting. Use the existing `kilix agent-control new-tab` or
 `split` workflow with `--trust-folder` when an authorized launch must also record

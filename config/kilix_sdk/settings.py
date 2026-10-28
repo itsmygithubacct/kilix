@@ -301,8 +301,15 @@ VOICE_VALUE_KEYS = tuple(key for key in VOICE_KEYS if key not in TOGGLE_BY_KEY)
 CODING_YOLO_KEY = "KILIX_CODING_YOLO"
 CODING_YOLO_DEFAULT = "off"
 CODING_YOLO_CHOICES = ("off", "on")
+# Whether a coding session launched into a new tab joins a session grid (two
+# rows, up to twelve panes per tab) instead of opening a tab of its own. On by
+# default; off restores one tab per session for every launcher at once.
+CODING_SESSION_GRID_KEY = "KILIX_CODING_SESSION_GRID"
+CODING_SESSION_GRID_DEFAULT = "on"
+CODING_SESSION_GRID_CHOICES = ("on", "off")
 CODING_CHOICE_SPECS = {
     CODING_YOLO_KEY: (CODING_YOLO_DEFAULT, CODING_YOLO_CHOICES),
+    CODING_SESSION_GRID_KEY: (CODING_SESSION_GRID_DEFAULT, CODING_SESSION_GRID_CHOICES),
 }
 CODING_KEYS = tuple(CODING_CHOICE_SPECS)
 
@@ -513,6 +520,18 @@ def coding_yolo(path: str | None = None) -> bool:
     """Return whether resumed coding agents skip their own approval prompts."""
     value = load(path).get(CODING_YOLO_KEY, CODING_YOLO_DEFAULT)
     return str(value).strip().casefold() in ("on", "1", "true", "yes")
+
+
+def coding_session_grid(path: str | None = None) -> bool:
+    """Return whether new-tab coding sessions join a session grid.
+
+    A non-empty KILIX_CODING_SESSION_GRID in the environment wins over the
+    settings file, so one shell or script can opt out (or in) on its own.
+    """
+    value = os.environ.get(CODING_SESSION_GRID_KEY, "").strip()
+    if not value:
+        value = load(path).get(CODING_SESSION_GRID_KEY, CODING_SESSION_GRID_DEFAULT)
+    return str(value).strip().casefold() not in ("off", "0", "false", "no")
 
 
 def game_enabled(game_id: str, path: str | None = None) -> bool:
@@ -892,6 +911,10 @@ __all__ = [
     "CODING_YOLO_CHOICES",
     "CODING_YOLO_DEFAULT",
     "CODING_YOLO_KEY",
+    "CODING_SESSION_GRID_CHOICES",
+    "CODING_SESSION_GRID_DEFAULT",
+    "CODING_SESSION_GRID_KEY",
+    "coding_session_grid",
     "coding_yolo",
     "GAMES_MARKER",
     "GAME_ID_BY_KEY",

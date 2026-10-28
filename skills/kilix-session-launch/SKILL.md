@@ -15,7 +15,9 @@ and ask only about choices that change the work. Do not add workers because ther
 
 For a recorded coding run with a model, effort, initial brief or folder trust,
 prefer `kilix session launch codex --cwd DIR --trust-folder --model MODEL
---effort LEVEL --prompt-file FILE`. This creates a held tab without taking focus.
+--effort LEVEL --prompt-file FILE`. This adds a held pane to the `agent-sessions`
+grid (two rows, up to twelve panes per tab) without taking focus; `--new-tab`
+gives it a tab of its own.
 Claude and Grok are also supported. Folder trust is explicit and does not imply
 permission bypass. Native prompts are retained exactly in a private file; the
 client receives a short instruction to read it. Save the run ID and inspect it
@@ -24,6 +26,16 @@ readiness or task completion. Read `$KILIX_HOME/docs/session.md` for details.
 
 `kilix new-tab --title TITLE --cwd DIR codex`, or another agent command. One command, no
 preflight: in the 2026-09-29 route benchmark it cost a quarter of the procedure below.
+A coding agent joins the `agent-sessions` grid; add `--own-tab` for a tab of its own.
+
+## Several sessions side by side
+
+`kilix session grid add --name NAME --new --title T -- codex` opens a grid tab and
+prints its pane; `kilix session grid add --into PANE --title T -- claude` adds to the
+grid that PANE is in, filling two rows column by column, twelve panes per tab.
+`kilix session grid list --name NAME` shows that grid's panes and slots.
+`kilix session grid enabled` prints `off` when the user turned grids off; then
+default to one tab per session and use `grid add` only when asked for a grid.
 
 The command confirms pane creation. Before reporting a ready agent, inspect
 the returned pane's client and directory with `kilix agent-control list`;
@@ -37,13 +49,14 @@ that state and preserve the pane instead of launching another session.
 
 ```sh
 kilix agent-control list          # your pane_id and broker: SOURCE_PANE, SOURCE_BROKER
-kilix agent-control new-tab "$SOURCE_PANE" --expect-broker "$SOURCE_BROKER" \
+kilix agent-control new-tab "$SOURCE_PANE" --expect-broker "$SOURCE_BROKER" --own-tab \
   --title 'Coding workspace' --cwd "$PROJECT" --agent codex
 kilix agent-control split "$ANCHOR_PANE" --expect-broker "$ANCHOR_BROKER" \
   --direction right --bias 50 --title 'Review' --cwd "$PROJECT" --agent claude
 ```
 
-- Add `--model M` for a chosen model; any command takes `--dry-run`. `--bias` is the new
+- Pass `--own-tab` when you will split the tab: without it a coding agent joins a session
+  grid, whose layout places panes itself. Add `--model M` for a chosen model; any command takes `--dry-run`. `--bias` is the new
   pane's percentage of the anchor's area.
 - Split the new panes, by the ids each command returns; never the caller's pane or
   whichever pane has focus. Record every returned pane, tab and broker id.
