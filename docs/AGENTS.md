@@ -341,3 +341,32 @@ explicit request:
   stops sends without stopping the daemon.
 - `claudex_team.py launch` opens the five-pane `claudex-team` tab; `plan` and
   `status` only read.
+
+## Rollout log for a pane
+
+`kilix rollout log --pane PANE_ID` prints the path of the log the program in
+that live Kilix pane is writing. `kilix rollout` forwards to
+`kilix-rollout-resume` from kilix-tui-utils; `log` is new in 0.2.2, so an older
+installed copy rejects it as an unknown command. Report that rather than
+guessing a path.
+
+```sh
+kilix rollout log --pane 41           # one path on stdout
+kilix rollout log --pane 41 --json    # {"pane": 41, "kind": "...", "path": "..."}
+```
+
+The pane's foreground program decides which file it is (`kind`):
+
+- `codex`, `claude`, `grok`, `kimi`, `omp`: that agent's own session log
+  (for Codex, the rollout JSONL).
+- `tmux`: the tmux-cli capture for the pane's `TMUX_PANE`, when the pane is a
+  tmux client.
+- `kilix`: the Kilix PTY transcript of the pane's broker session, for anything
+  else.
+
+An agent pane whose own log cannot be found is reported as missing, never
+answered with the Kilix transcript: that transcript is the terminal, not the
+conversation. Exit codes: 0 found, 2 usage (the pane id must be a number), 3 no
+log found, 4 more than one log matches (ambiguous; do not pick one), 5 a backend
+could not be read. It reads the pane with `kilix @ ls --match id:PANE_ID`, then
+`/proc` and log files; it does not type into or change the pane. To read a session by id instead, use `kilix rollout show ID`.
