@@ -1,4 +1,4 @@
-"""`kilix ask`: one plain request to the installed Needle app, never an install."""
+"""`kilix ask`: city weather or one request to installed Needle, never an install."""
 import json
 import os
 import pathlib
@@ -55,6 +55,7 @@ class AskLauncherTests(unittest.TestCase):
         for name in ("kitty.conf", "kilix.env"):
             shutil.copy2(ROOT / "config" / name, home / "config" / name)
         shutil.copytree(ROOT / "config" / "kilix_sdk", home / "config" / "kilix_sdk")
+        shutil.copy2(ROOT / "config" / "kilix_weather.py", home / "config" / "kilix_weather.py")
         (home / "config" / "content_app.py").write_text(CONTENT_APP)
         needle = self.root / "needle"
         needle.write_text(NEEDLE)
@@ -79,6 +80,71 @@ class AskLauncherTests(unittest.TestCase):
         return subprocess.run([str(self.launcher), "ask", *arguments], env={**self.env, **env},
                               stdin=subprocess.DEVNULL, capture_output=True, text=True,
                               timeout=60)
+
+    def weather_provider(self):
+        """Real launcher/worker/parser, with only provider HTTP replaced."""
+        for name in ('__init__.py', 'kilix_chrome/__init__.py',
+                     'kilix_chrome/settings.py', 'kilix_chrome/weather.py'):
+            target = self.launcher.parent / 'src/kitty' / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / 'src/kitty' / name, target)
+        provider = self.launcher.parent / 'src/kitty/kilix_chrome/weather.py'
+        with provider.open('a') as stream:
+            stream.write('''
+def json_request(url):
+    with open(os.environ['ASK_TEST_LOG'], 'a') as log:
+        log.write(json.dumps({'weather': url}) + '\\n')
+    if os.environ.get('ASK_TEST_WEATHER_ERROR'):
+        raise URLError('offline fixture')
+    if 'geocoding-api' in url:
+        return {'results': [{'name': 'Tokyo', 'country': 'Japan', 'country_code': 'JP',
+                             'feature_code': 'PPLC', 'population': 10000000,
+                             'latitude': 35.68, 'longitude': 139.69, 'timezone': 'Asia/Tokyo'}]}
+    return {'current': {'temperature_2m': 20, 'weather_code': 0, 'time': time.time()}}
+''')
+
+    def test_city_weather_works_without_needle_and_does_not_fall_through_on_failure(self):
+        self.weather_provider()
+        for error, expected in (('', 0), ('1', 1)):
+            with self.subTest(error=error):
+                result = self.run_ask("What's the weather in Tokyo?", ASK_TEST_MISSING='1',
+                                      ASK_TEST_WEATHER_ERROR=error)
+                self.assertEqual(result.returncode, expected, result.stderr)
+                if expected == 0:
+                    self.assertIn('Tokyo, Japan: 68°F', result.stdout)
+                    self.assertIn('Conditions at ', result.stdout)
+                else:
+                    self.assertIn('offline', result.stderr)
+                    self.assertNotIn('Tokyo, Japan:', result.stdout)
+        self.assertEqual(len(self.calls()), 3)
+        self.assertTrue(all('weather' in call for call in self.calls()), self.calls())
+
+    def test_city_weather_hold_and_voice_use_the_same_readable_result_path(self):
+        self.weather_provider()
+        for error in ('', '1'):
+            status, output = self.run_tty(['--hold', '--', 'weather in Tokyo'], b'\n',
+                                          ASK_TEST_WEATHER_ERROR=error)
+            self.assertEqual(status, 1 if error else 0, output)
+            self.assertEqual(output.count('Press Enter to close.'), 1)
+        self.dictation('printf "%s\\n" "weather in Paris"\n')
+        status, output = self.run_tty(
+            ['--voice'], [(b'Request (edit, then Enter): ', b'\x15weather in Tokyo in Celsius\n')])
+        self.assertEqual(status, 0, output)
+        self.assertIn('Tokyo, Japan: 20°C', output)
+        self.assertTrue(all('weather' in call for call in self.calls()), self.calls())
+
+    def test_weather_command_does_not_initialize_or_change_saved_widget_settings(self):
+        self.weather_provider()
+        settings = self.root / 'city-settings.conf'
+        saved = '# keep this\nKILIX_WEATHER_ZIP=00501\nKILIX_WEATHER_REFRESH=manual\n'
+        settings.write_text(saved)
+        result = subprocess.run([str(self.launcher), 'weather', '--unit', 'celsius', '--', 'Tokyo'],
+                                env={**self.env, 'GPU_TERMINAL_SETTINGS_FILE': str(settings)},
+                                capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Tokyo, Japan: 20°C', result.stdout)
+        self.assertEqual(settings.read_text(), saved)
+        self.assertFalse((self.root / 'storage').exists())
 
     def run_tty(self, arguments, keys, **env):
         """Run with a terminal on stdin and stdout; returns (status, output).

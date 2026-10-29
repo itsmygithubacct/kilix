@@ -65,6 +65,21 @@ preference after verification. An explicit `--model lfm2` overrides it for one
 request; `KILIX_ASK_COMMANDS_BACKEND` overrides the saved preference in a shell.
 The installer presents the model and runtime licences before downloading.
 
+Ask for current city weather with `kilix ask "What's the weather in Tokyo?"`
+or `kilix ask "weather in Paris, France in Celsius"`. This also works from the
+desktop Run dialog and Ask Kilix by voice after confirming the transcript.
+City weather uses a direct lookup without loading a language model. For a
+literal city name, use `kilix weather "New York"` or
+`kilix weather "London, United Kingdom" --unit celsius`.
+Answers identify the resolved city, country and conditions timestamp. A major
+city is selected when it clearly dominates same-name matches; otherwise add a
+country or state to distinguish them. These lookups use the widget's temperature
+unit by default and leave its saved ZIP, schedule and cached conditions alone.
+Only current conditions are supported, with stale data labeled and unavailable
+or timed-out requests reported. City names are sent to
+[Open-Meteo geocoding](https://open-meteo.com/en/docs/geocoding-api), then the
+resolved coordinates to its [weather API](https://open-meteo.com/en/docs).
+
 `kilix session` launches managed Codex, Claude or Grok runs with explicit folder
 trust, native UI or headless logging, and lifecycle inspection. New panes preserve
 focus. See [managed coding sessions](docs/session.md) for commands, the importable
