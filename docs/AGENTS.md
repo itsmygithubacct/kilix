@@ -291,3 +291,53 @@ For experiments, redirect inherited `KILIX_*`, `GPU_TERMINAL_*`, and `XDG_*`
 storage paths to private state. Preserve unrelated sessions and settings. Inspect
 target and process before retrying: a pane may exit normally; an observation
 timeout does not prove the job stopped.
+
+## Claudex (kilix-claudex)
+
+Claudex messages and monitors coding-agent panes and reports agent token limits.
+Its checkout is `~/gpu_terminal/kilix-apps/kilix-claudex`; `claudex` links there,
+and its private data lives in `~/.local/gpu_terminal/kilix-apps/kilix-claudex/`.
+`kilix claudex route ...` and `kilix claudex usage ...` dispatch to it; other
+arguments pass through unchanged.
+
+Read-only, never typing into a pane:
+
+```sh
+claudex panes [--all]
+claudex read PANE --lines 30
+claudex monitor PANE --watch 5
+claudex idle PANE
+claudex limits [PANE ...]     # JSON per pane; exit 2 when one is exhausted
+claudex usage show            # last usage reading; opens nothing
+```
+
+`claudex usage` without `show` or `status` is not a pure read: it creates or
+drives the `codex_usage` and `claude_usage` tmux sessions and may start a
+browser on a private display. Prefer `usage show` unless the user asks for a
+fresh reading.
+
+Select a pane by numeric ID, by the aliases `orchestrator` and `companion`
+(titles `claudex-orchestrator` and `claudex-companion`), or by a unique Kilix
+label or session prefix; never by page title. `send`, `idle` and the timer
+support Codex and the companion (Claude) panes; Grok and Qwen (omp) panes are
+monitored for limits only.
+
+`claudex send PANE 'TEXT'` delivers one message under the shared per-pane lock,
+appends a `[cx-…]` marker, and reads the composer back before and after
+submission. It requires an idle pane; use `--allow-busy` only for an intended
+queued message. Exit codes: 0 sent or pending, 1 error before typing, 2 skipped
+(busy, locked, or an exhausted target), 3 uncertain. After exit 3, inspect with
+`claudex read PANE` and `claudex verify`; never resend blindly. Delivery
+evidence does not prove the receiver did the task.
+
+These open panes or start background work; run them only on the user's
+explicit request:
+
+- `claudex route max|worker TIER|security [REQUEST]` opens coding sessions
+  chosen from current usage. Use `--dry-run` (or `--json`) to show the choice
+  without opening anything.
+- `claudex loop start` starts a detached timer that types a prompt into its
+  target every interval. `claudex loop status` reads it; `claudex loop pause`
+  stops sends without stopping the daemon.
+- `claudex_team.py launch` opens the five-pane `claudex-team` tab; `plan` and
+  `status` only read.
