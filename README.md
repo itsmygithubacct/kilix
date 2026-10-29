@@ -689,6 +689,8 @@ lives on `plebian-os` and plays at [plebian-os.com](https://plebian-os.com/#watc
   reset, clear, split right/down, close.
 - **Drag-to-split by quadrant** — drag a pane's header onto another pane's edge to split it (Tilix's model).
 - **Pages (Tilix sessions)** — each page is a kitty tab, with an always-on page strip and a `+` button.
+  The strip holds ten pages per row: the eleventh starts a second row (up to 20),
+  and so on in rows of ten. The `+` button follows the last page and never starts a row.
 - **Input broadcast** — `Ctrl+Alt+B` mirrors your typing to every pane in the page
   (Tilix's "synchronize input").
 - **Tilix look & keys** — per-pane title bars, active-pane highlight, dimmed inactive panes, Tango palette, Tilix keybindings.
@@ -1770,11 +1772,19 @@ fallback. A single `kilix-telemetry` sampler publishes both aggregates to a
 private mmap ring; title bars refresh only when a displayed value changes and
 retain local process-tree fallbacks if the shared service is unavailable.
 
-The far right of the page strip can show thermometer, volume, network,
-calendar, local date/time, and (when applicable) battery items. The thermometer
-is disabled by default; when enabled it shows the hottest readable Linux
+The far right of the page strip can show system CPU and RAM, thermometer,
+volume, network, calendar, local date/time, and (when applicable) battery
+items. System CPU and RAM come first and are shown at all times by default, in
+the same form as a pane's resource chip: whole-system CPU use in logical-core
+equivalents to the left of the chip and RAM in use (total minus available) in
+GiB to its right, for example `6.4 󰍛 12.3`. Clicking it opens Kilix Memory and
+right-clicking it opens Kilix Settings.
+Set shared `KILIX_CHROME_SYSTEM_LOAD_MODE` to `auto` to apply the pane
+thresholds (CPU above `1.0`, RAM at 1 GiB or more), or `off` to hide it. The
+thermometer is disabled by default; when enabled it shows the hottest readable Linux
 thermal-zone/hwmon temperature to one decimal place in green below 80°C, yellow
-at 80–89°C, or red from 90°C. It sits at the left edge of the status group and
+at 80–89°C, or red from 90°C. It sits immediately right of the system CPU and
+RAM readout (at the left edge of the status group when that is off) and
 opens a compact status card on one click and `kilix-temps --graphics` on a
 double-click. A neutral `--°` remains clickable when no sensor can be read.
 The volume icon opens a compact slider on one click, the full clickable
@@ -2941,7 +2951,9 @@ default 1 GiB threshold, `pane_memory=always` for an always-visible MiB/KiB
 readout, or `pane_memory=off` to hide the RAM side. The symmetric
 `pane_cpu=auto` shows pane process-tree use above one core (`1.0`); use
 `pane_cpu=always` or
-`pane_cpu=off` to override that policy.
+`pane_cpu=off` to override that policy. The top bar's system CPU and RAM
+readout takes `system_load=always` (the default), `system_load=auto` or
+`system_load=off`.
 
 - **Quieter page strip:** `tab_bar_min_tabs 2` (hide it until a 2nd page) and
   `tab_bar_show_new_tab_button no` (hide the `+`).

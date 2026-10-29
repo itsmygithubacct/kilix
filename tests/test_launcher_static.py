@@ -518,6 +518,16 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("pane_cpu_text", titlebar)
         self.assertIn("pane_resource_text", titlebar)
         self.assertIn("KILIX_CHROME_PANE_MEMORY_MODE", memory)
+        system = (ROOT / "src" / "kitty" / "kilix_system_load.py").read_text()
+        # The shared key, default and choices the settings surfaces write are
+        # the ones the engine reads; literals, so a rename on either side fails.
+        self.assertIn("SYSTEM_LOAD_MODE_KEY = 'KILIX_CHROME_SYSTEM_LOAD_MODE'", system)
+        self.assertIn("SYSTEM_LOAD_MODE_DEFAULT = 'always'", system)
+        self.assertIn("SYSTEM_LOAD_MODES = ('auto', 'always', 'off')", system)
+        shared = (ROOT / "config" / "kilix_sdk" / "settings.py").read_text()
+        self.assertIn('SYSTEM_LOAD_MODE_KEY = "KILIX_CHROME_SYSTEM_LOAD_MODE"', shared)
+        self.assertIn('SYSTEM_LOAD_MODE_DEFAULT = "always"', shared)
+        self.assertIn("MEMORY_WIDGET_ACTION", registry)
         self.assertIn("smaps_rollup", memory)
         self.assertIn("pane_memory_segment", memory)
         self.assertIn("MEMORY_WIDGET_ACTION", titlebar)
@@ -582,7 +592,7 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("`+` | increase font size for this Kilix window", readme)
         self.assertIn("`-` | decrease font size for this Kilix window", readme)
 
-    def test_page_strip_wraps_after_thirty_visible_items(self):
+    def test_page_strip_wraps_after_ten_tabs(self):
         tabbar = (ROOT / "src" / "kitty" / "tab_bar.py").read_text()
         tabs = (ROOT / "src" / "kitty" / "tabs.py").read_text()
         boss = (ROOT / "src" / "kitty" / "boss.py").read_text()
@@ -591,18 +601,27 @@ class KilixLauncherTests(unittest.TestCase):
         optdef = (ROOT / "src" / "kitty" / "options" / "definition.py").read_text()
         toc = (ROOT / "src" / "kitty" / "options" / "to-c-generated.h").read_text()
 
-        self.assertRegex(tabbar, r"MAX_TABS_PER_ROW\s*=\s*30\b")
-        self.assertIn("visible_items_in_row >= MAX_TABS_PER_ROW", tabbar)
-        self.assertIn("visible_items_in_row += 1", tabbar)
+        # Ten tabs per row in both the drawn rows and the reserved bar height;
+        # the new-tab button (tab_id -1) is not a tab and never starts a row.
+        self.assertRegex(tabbar, r"MAX_TABS_PER_ROW\s*=\s*10\b")
+        self.assertIn("is_tab = tab.tab_id >= 0", tabbar)
+        self.assertIn("is_tab and visible_items_in_row >= MAX_TABS_PER_ROW", tabbar)
+        self.assertIn("visible_items_in_row += int(is_tab)", tabbar)
         self.assertIn("rows = split_tab_bar_rows(data)[:s.lines]", tabbar)
         self.assertIn("def tab_id_at(self, x: int, y: int)", tabbar)
         self.assertIn("def action_at(self, x: int, y: int)", tabbar)
         self.assertNotIn("TAB_CLOSE_ACTION", tabbar)
         self.assertNotIn("kilix_close_active_app_tab", tabbar)
         self.assertNotIn("GLFW_MOUSE_BUTTON_MIDDLE", tabs)
-        self.assertIn("#define KILIX_TAB_BAR_TABS_PER_ROW 30", state)
-        self.assertIn("tab_bar_item_count = os_window->num_tabs + (OPT(tab_bar_show_new_tab_button) ? 1u : 0u)", state)
-        self.assertIn("tab_bar_rows_for_count(tab_bar_item_count)", state)
+        self.assertIn("#define KILIX_TAB_BAR_TABS_PER_ROW 10", state)
+        # The bar height follows the rows tab_bar.py reports drawing (a tab
+        # dragged out, a drop placeholder or tab_bar_filter change them), with
+        # a tab-count estimate only before the first report.
+        self.assertIn("os_window->tab_bar_rows ? os_window->tab_bar_rows : "
+                      "tab_bar_rows_for_count(os_window->num_tabs)", state)
+        self.assertIn("unsigned tab_bar_rows;", state_h)
+        self.assertIn("MW(set_tab_bar_rows, METH_VARARGS)", state)
+        self.assertIn("set_tab_bar_rows(self.os_window_id, len(split_tab_bar_rows(data)))", tabs)
         self.assertIn("tab_bar_content_height", state)
         self.assertIn("bool tab_bar_show_new_tab_button", state_h)
         # Match the option's declared facts rather than one line's formatting:

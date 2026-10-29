@@ -335,6 +335,57 @@ class SharedSettingsTests(unittest.TestCase):
             self.assertEqual(settings.pane_cpu_mode(str(path)), "always")
             self.assertEqual(settings.pane_memory_mode(str(path)), "always")
 
+    def test_system_load_mode_defaults_to_always_and_validates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.conf"
+            self.assertEqual(settings.SYSTEM_LOAD_MODE_DEFAULT, "always")
+            self.assertEqual(settings.system_load_mode(str(path)), "always")
+            # A file written before the key existed keeps the readout visible.
+            path.write_text("KILIX_CHROME_VOLUME=1\n")
+            self.assertEqual(settings.system_load_mode(str(path)), "always")
+            path.unlink()
+            settings.update({"KILIX_CHROME_VOLUME": "1"}, str(path))
+            self.assertIn(
+                f"{settings.SYSTEM_LOAD_MODE_KEY}=always\n", path.read_text())
+            self.assertIn(settings.SYSTEM_LOAD_MODE_KEY, settings.MANAGED_KEYS)
+            settings.update({settings.SYSTEM_LOAD_MODE_KEY: "AUTO"}, str(path))
+            self.assertEqual(settings.system_load_mode(str(path)), "auto")
+            with self.assertRaises(ValueError):
+                settings.update(
+                    {settings.SYSTEM_LOAD_MODE_KEY: "sometimes"}, str(path))
+
+            env = sandbox_env(GPU_TERMINAL_SETTINGS_FILE=str(path))
+            for alias, value, expected in (
+                    ("system_load", "off", "off"),
+                    ("load", "on", "always"),
+                    ("system", "auto", "auto")):
+                result = subprocess.run([
+                    str(ROOT / "kilix-settings"),
+                    "--set", f"{alias}={value}", "--print",
+                ], env=env, text=True, capture_output=True, check=True)
+                self.assertIn(
+                    f"{settings.SYSTEM_LOAD_MODE_KEY}={expected}\n",
+                    result.stdout)
+                self.assertEqual(settings.system_load_mode(str(path)), expected)
+            bad = subprocess.run([
+                str(ROOT / "kilix-settings"), "--set", "system_load=sometimes",
+            ], env=env, text=True, capture_output=True)
+            self.assertNotEqual(bad.returncode, 0)
+            self.assertIn("system load mode must be auto|always|off", bad.stderr)
+            # A hand-edited invalid value prints as what the engine shows.
+            path.write_text(f"{settings.SYSTEM_LOAD_MODE_KEY}=sometimes\n")
+            printed = subprocess.run([
+                str(ROOT / "kilix-settings"), "--print",
+            ], env=env, text=True, capture_output=True, check=True)
+            self.assertIn(f"{settings.SYSTEM_LOAD_MODE_KEY}=always\n", printed.stdout)
+            self.assertNotIn("sometimes", printed.stdout)
+            # One key controls both halves, so no alias may suggest otherwise.
+            for alias in ("system_cpu", "system_memory"):
+                rejected = subprocess.run([
+                    str(ROOT / "kilix-settings"), "--set", f"{alias}=off",
+                ], env=env, text=True, capture_output=True)
+                self.assertNotEqual(rejected.returncode, 0, alias)
+
     def test_cpu_and_memory_mode_validation_and_cli_aliases(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.conf"
@@ -465,6 +516,13 @@ class SharedSettingsTests(unittest.TestCase):
                 f"{settings.TRANSCRIPT_TOTAL_KEY}=5G", path.read_text())
             self.assertIn(
                 f"{settings.TRANSCRIPT_ARCHIVE_KEY}=off", path.read_text())
+            # The system readout models its own off state, so it is switched
+            # off with everything else and back to its default on enable-all.
+            self.assertEqual(settings.system_load_mode(str(path)), "off")
+            subprocess.run(
+                [str(ROOT / "kilix-settings"), "--enable-all"],
+                env=env, text=True, capture_output=True, check=True)
+            self.assertEqual(settings.system_load_mode(str(path)), "always")
 
     def test_voice_defaults_reach_a_fresh_and_an_existing_shared_file(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -786,7 +844,8 @@ class SharedSettingsTests(unittest.TestCase):
             with mock.patch.dict(os.environ, {
                     "GPU_TERMINAL_SETTINGS_FILE": str(path),
                     "KITTY_PID": ""}, clear=True):
-                screen = FakeScreen([ord("j"), ord(" "), ord("s"), ord("q")])
+                # System CPU and RAM leads the section, then Thermal status.
+                screen = FakeScreen([ord("j"), ord("j"), ord(" "), ord("s"), ord("q")])
                 self.assertEqual(tui._run_tui(screen, "top-bar"), 0)
 
             self.assertFalse(settings.enabled(
@@ -801,8 +860,26 @@ class SharedSettingsTests(unittest.TestCase):
             self.assertIn("▶1 Top bar", first_frame)
             self.assertIn("─" * 20, first_frame)
             self.assertNotIn(" // ", first_frame)
-            self.assertIn("Top bar: 9/10 enabled", first_frame)
+            self.assertIn("Top bar: 10/11 enabled", first_frame)
+            self.assertIn("[always] System CPU and RAM", first_frame)
             self.assertIn("Thermal status", first_frame)
+            self.assertLess(first_frame.index("System CPU and RAM"),
+                            first_frame.index("Thermal status"))
+
+    def test_tui_system_load_control_reads_and_writes_the_stored_mode(self):
+        tui = _load_settings_tui()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.conf"
+            settings.update({settings.SYSTEM_LOAD_MODE_KEY: "auto"}, str(path))
+            with mock.patch.dict(os.environ, {
+                    "GPU_TERMINAL_SETTINGS_FILE": str(path),
+                    "KITTY_PID": ""}, clear=True):
+                # The cursor starts on the control; Space cycles auto -> always.
+                screen = FakeScreen([ord(" "), ord("s"), ord("q")])
+                self.assertEqual(tui._run_tui(screen, "top-bar"), 0)
+            first_frame = "\n".join(item[2] for item in screen.frames[0])
+            self.assertIn("[ auto ] System CPU and RAM", first_frame)
+            self.assertEqual(settings.system_load_mode(str(path)), "always")
             self.assertIn("Volume", first_frame)
             self.assertIn("Read pane aloud", first_frame)
             self.assertIn("Dictate to pane", first_frame)

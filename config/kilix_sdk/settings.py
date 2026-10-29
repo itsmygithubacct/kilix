@@ -132,6 +132,11 @@ CLOCK_FORMAT_DEFAULT = "%Y-%m-%d %I:%M %p"
 TEMPERATURE_UNIT_KEY = "KILIX_TEMPERATURE_UNIT"
 TEMPERATURE_UNIT_DEFAULT = "fahrenheit"
 TEMPERATURE_UNIT_CHOICES = ("fahrenheit", "celsius")
+# Whole-system CPU load and RAM use, left of the temperature in the top bar.
+# Same choices as the pane chip; ``auto`` applies the pane thresholds.
+SYSTEM_LOAD_MODE_KEY = "KILIX_CHROME_SYSTEM_LOAD_MODE"
+SYSTEM_LOAD_MODE_DEFAULT = "always"
+SYSTEM_LOAD_MODE_CHOICES = ("auto", "always", "off")
 PANE_CPU_MODE_KEY = "KILIX_CHROME_PANE_CPU_MODE"
 PANE_CPU_MODE_DEFAULT = "auto"
 PANE_CPU_MODE_CHOICES = ("auto", "always", "off")
@@ -316,6 +321,7 @@ CODING_KEYS = tuple(CODING_CHOICE_SPECS)
 MANAGED_KEYS = tuple(spec.key for spec in TOGGLE_SPECS) + (
     CLOCK_FORMAT_KEY,
     TEMPERATURE_UNIT_KEY,
+    SYSTEM_LOAD_MODE_KEY,
     PANE_CPU_MODE_KEY,
     PANE_MEMORY_MODE_KEY,
     TAB_BAR_EDGE_KEY,
@@ -397,13 +403,13 @@ def _normalize_change(key: str, raw_value: object) -> str:
         return value
     if key in TOGGLE_BY_KEY:
         return "1" if truthy(raw_value) else "0"
-    if key in (PANE_CPU_MODE_KEY, PANE_MEMORY_MODE_KEY):
+    if key in (PANE_CPU_MODE_KEY, PANE_MEMORY_MODE_KEY, SYSTEM_LOAD_MODE_KEY):
         value = str(raw_value).strip().lower()
-        choices_for_key = (
-            PANE_CPU_MODE_CHOICES
-            if key == PANE_CPU_MODE_KEY
-            else PANE_MEMORY_MODE_CHOICES
-        )
+        choices_for_key = {
+            PANE_CPU_MODE_KEY: PANE_CPU_MODE_CHOICES,
+            PANE_MEMORY_MODE_KEY: PANE_MEMORY_MODE_CHOICES,
+            SYSTEM_LOAD_MODE_KEY: SYSTEM_LOAD_MODE_CHOICES,
+        }[key]
         if value not in choices_for_key:
             choices = ", ".join(choices_for_key)
             raise ValueError(f"{key} must be one of: {choices}")
@@ -473,6 +479,7 @@ def defaults(*, migrate_environment: bool = False) -> dict[str, str]:
     }
     values[CLOCK_FORMAT_KEY] = CLOCK_FORMAT_DEFAULT
     values[TEMPERATURE_UNIT_KEY] = TEMPERATURE_UNIT_DEFAULT
+    values[SYSTEM_LOAD_MODE_KEY] = SYSTEM_LOAD_MODE_DEFAULT
     values[PANE_CPU_MODE_KEY] = PANE_CPU_MODE_DEFAULT
     values[PANE_MEMORY_MODE_KEY] = PANE_MEMORY_MODE_DEFAULT
     values[TAB_BAR_EDGE_KEY] = TAB_BAR_EDGE_DEFAULT
@@ -558,6 +565,7 @@ def _initial_text(values: Mapping[str, str]) -> str:
         lines.append(f"{spec.key}={values[spec.key]}")
     lines.append(f"{CLOCK_FORMAT_KEY}={values[CLOCK_FORMAT_KEY]}")
     lines.append(f"{TEMPERATURE_UNIT_KEY}={values[TEMPERATURE_UNIT_KEY]}")
+    lines.append(f"{SYSTEM_LOAD_MODE_KEY}={values[SYSTEM_LOAD_MODE_KEY]}")
     for spec in PANE_BUTTON_TOGGLES:
         lines.append(f"{spec.key}={values[spec.key]}")
     lines.append(f"{PANE_CPU_MODE_KEY}={values[PANE_CPU_MODE_KEY]}")
@@ -718,6 +726,16 @@ def pane_memory_mode(path: str | None = None) -> str:
     return (
         value if value in PANE_MEMORY_MODE_CHOICES
         else PANE_MEMORY_MODE_DEFAULT
+    )
+
+
+def system_load_mode(path: str | None = None) -> str:
+    """Return the normalized top-bar system CPU/RAM visibility policy."""
+    value = load(path).get(
+        SYSTEM_LOAD_MODE_KEY, SYSTEM_LOAD_MODE_DEFAULT).strip().lower()
+    return (
+        value if value in SYSTEM_LOAD_MODE_CHOICES
+        else SYSTEM_LOAD_MODE_DEFAULT
     )
 
 
@@ -933,6 +951,9 @@ __all__ = [
     "SETTINGS_MAX_BYTES",
     "SESSION_LOG_MARKER",
     "SESSION_LOG_TOGGLES",
+    "SYSTEM_LOAD_MODE_CHOICES",
+    "SYSTEM_LOAD_MODE_DEFAULT",
+    "SYSTEM_LOAD_MODE_KEY",
     "TAB_BAR_EDGE_CHOICES",
     "TAB_BAR_EDGE_DEFAULT",
     "TAB_BAR_EDGE_KEY",
@@ -961,6 +982,7 @@ __all__ = [
     "load",
     "pane_cpu_mode",
     "pane_memory_mode",
+    "system_load_mode",
     "parse_text",
     "read_text",
     "settings_path",

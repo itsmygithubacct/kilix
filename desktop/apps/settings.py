@@ -92,6 +92,9 @@ SETTING_PAGES = [
         K("listen_on", "Remote socket", default="unix:@kilix-{kitty_pid}"),
     ]),
     ("Chrome", [
+        S(shared_settings.SYSTEM_LOAD_MODE_KEY, "System CPU and RAM", "choice",
+          shared_settings.SYSTEM_LOAD_MODE_DEFAULT,
+          list(shared_settings.SYSTEM_LOAD_MODE_CHOICES)),
         S("KILIX_CHROME_TEMPERATURE", "Thermal status", default="0"),
         S(shared_settings.TEMPERATURE_UNIT_KEY, "Temperature units", "choice",
           shared_settings.TEMPERATURE_UNIT_DEFAULT,

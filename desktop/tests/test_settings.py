@@ -168,12 +168,17 @@ with conf("font_size 12\n") as path:
     assert cpu_mode.value == "auto", "pane CPU load should default to auto"
     kind, memory_mode = win.fields["KILIX_CHROME_PANE_MEMORY_MODE"]
     assert memory_mode.value == "auto", "pane memory chip should default to auto"
+    kind, system_mode = win.fields["KILIX_CHROME_SYSTEM_LOAD_MODE"]
+    assert system_mode.value == "always", "system CPU and RAM should default to always"
+    assert list(system_mode.options) == ["auto", "always", "off"], system_mode.options
     thermal.checked = True
     volume.checked = False
     synchronize.checked = False
     cpu_mode.index = cpu_mode.options.index("always")
     memory_mode.index = memory_mode.options.index("always")
+    system_mode.index = system_mode.options.index("off")
     win._apply()
+    assert "KILIX_CHROME_SYSTEM_LOAD_MODE=off" in read(win.shared_path)
     assert "KILIX_CHROME_TEMPERATURE=1" in read(win.shared_path)
     assert "KILIX_CHROME_VOLUME=0" in read(win.shared_path)
     assert "KILIX_CHROME_BUTTON_SYNCHRONIZE_INPUT=0" in read(win.shared_path)

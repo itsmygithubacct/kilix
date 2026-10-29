@@ -20,6 +20,16 @@ page strip and sizes itself to fit the window without resizing terminal panes.
 Use `kilix screen-size larger` or `kilix screen-size smaller` to change terminal
 scale. `Ctrl+Shift+Backspace` resets the terminal scale.
 
+The status area shows whole-system CPU and RAM just left of the temperature,
+at all times by default, in the same form as each pane's resource chip:
+logical cores of CPU in use, the chip, then GiB of RAM in use, for example
+`6.4 󰍛 12.3`. Clicking it opens Kilix Memory. Run
+`kilix settings --set system_load=auto` to show it only above the pane
+thresholds (CPU above 1.0 cores, RAM at 1 GiB or more), `system_load=off` to
+hide it, or `system_load=always` to restore the default. The **Top bar**
+section of `kilix settings`, the desktop Settings app and Kilix95 Settings
+offer the same choice as **System CPU and RAM**.
+
 Temperature displays default to Fahrenheit. Set the shared preference with
 `kilix settings --set temperature_unit=celsius` or `temperature_unit=fahrenheit`.
 The **Top bar** section of `kilix settings` and the **Temperature units** choice
