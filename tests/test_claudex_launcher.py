@@ -18,6 +18,15 @@ with open(os.environ["CLAUDEX_TEST_LOG"], "w") as stream:
 raise SystemExit(int(os.environ.get("CLAUDEX_TEST_STATUS", "0")))
 """
 
+RESOLVER = """import json, os, sys
+assert sys.argv[1:] == ['install', 'kilix-claudex'], sys.argv
+assert os.environ['KILIX_APP_AUTO_INSTALL'] == '0'
+target = os.environ.get('CLAUDEX_TEST_CATALOG_BIN')
+if not target:
+    raise SystemExit(1)
+print(target)
+"""
+
 
 class ClaudexLauncherTests(unittest.TestCase):
     def setUp(self):
@@ -31,6 +40,7 @@ class ClaudexLauncherTests(unittest.TestCase):
         for name in ("kitty.conf", "kilix.env"):
             shutil.copy2(ROOT / "config" / name, checkout / "config" / name)
         shutil.copytree(ROOT / "config/kilix_sdk", checkout / "config/kilix_sdk")
+        (checkout / "config/content_app.py").write_text(RESOLVER)
         self.launcher = checkout / "kilix"
         self.home = self.root / "home with spaces"
         self.home.mkdir()
@@ -78,6 +88,23 @@ class ClaudexLauncherTests(unittest.TestCase):
         self.assertEqual(json.loads(self.log.read_text()),
                          {"executable": str(client), "arguments": ["usage", "--json"]})
 
+    def test_verified_catalog_copy_precedes_development_fallback(self):
+        client = self.install_client(self.root / 'catalog with spaces/claudex')
+        self.install_client(self.home / 'gpu_terminal/kilix-apps/kilix-claudex/claudex')
+        arguments = ['team', 'plan', '/tmp/team with spaces.json', '--json']
+        result = self.launch(*arguments, CLAUDEX_TEST_CATALOG_BIN=str(client),
+                             CLAUDEX_TEST_STATUS='23')
+        self.assertEqual(result.returncode, 23, result.stderr)
+        self.assertEqual(json.loads(self.log.read_text()),
+                         {'executable': str(client), 'arguments': arguments})
+
+    def test_help_works_without_an_installed_application(self):
+        result = self.launch('--help')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('install kilix-claudex', result.stdout)
+        self.assertIn('team plan|launch', result.stdout)
+        self.assertFalse(self.log.exists())
+
     def test_local_bin_fallback(self):
         client = self.install_client(self.home / ".local/bin/claudex")
         result = self.launch("route", "max", "--dry-run")
@@ -97,6 +124,7 @@ class ClaudexLauncherTests(unittest.TestCase):
         result = self.launch("route", "max")
         self.assertEqual(result.returncode, 1)
         self.assertIn("claudex is not installed", result.stderr)
+        self.assertIn("kilix install kilix-claudex", result.stderr)
         self.assertFalse(self.log.exists())
 
     def test_nonexecutable_client_is_not_run(self):

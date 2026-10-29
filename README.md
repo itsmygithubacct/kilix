@@ -28,6 +28,21 @@ it wrote in `state/` so `--uninstall-desktop` can take exactly that back out.
 
 ![kilix — pages strip with + button, per-pane title bars with clickable split/maximize/close buttons, splits, and icat](config/kilix_demo.png)
 
+## Claudex and rollout logs
+
+`kilix install kilix-claudex` installs the public, MIT-licensed application at
+its catalog-pinned revision. It uses Python's standard library and performs no
+account login or agent launch during installation. `kilix claudex --help`
+works before installation; `kilix claudex` forwards commands to an explicit
+PATH installation, the verified catalog copy, or the existing local fallback.
+For example, `kilix claudex team plan team.json --json` previews a team before
+`kilix claudex team launch team.json` launches it. The application retains its
+private configuration independently of the installed source.
+
+The selected toolkit includes `kilix rollout log --pane N [--json]` for locating
+the log written by a pane's current agent. See `kilix rollout log --help` for
+selection and exit statuses.
+
 ## Release 0.2.2 — in development
 
 The reviewed source integration is selected for the coordinated Plebian-OS

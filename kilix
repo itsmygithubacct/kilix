@@ -3380,10 +3380,25 @@ case "${1:-}" in
     shift
     exec python3 "$KILIX_HOME/config/content_app.py" "$@" ;;
   claudex)
-    # Named routes and the usage reading live in the claudex program. With no
-    # arguments this lists them; every other argument is passed through.
     shift
+    case "${1:-}" in
+      ""|-h|--help|help)
+        echo "usage: $_self claudex route NAME [TIER] [--dry-run] [--json] [--cwd DIR]"
+        echo "       $_self claudex team plan|launch FILE [--json]"
+        echo "       $_self claudex usage [read|manual|login|show|status] [AGENT ...]"
+        echo "routes: max, worker low|mid|high|max, security"
+        echo "Install the pinned application: $_self install kilix-claudex"
+        echo "Kilix verbs (ls, focus, new-pane, watch) are kilix commands. This does not open a pane for them."
+        echo "worker takes low, mid, high, or max. The other routes do not take a tier."
+        echo "Any other claudex arguments are passed through."
+        exit 0 ;;
+    esac
     _claudex_bin="$(command -v claudex 2>/dev/null || true)"
+    if [ -z "$_claudex_bin" ] || [ ! -x "$_claudex_bin" ]; then
+      # Resolve the receipt-verified catalog copy without installing anything.
+      _claudex_bin="$(KILIX_APP_AUTO_INSTALL=0 python3 -B \
+        "$KILIX_HOME/config/content_app.py" install kilix-claudex 2>/dev/null || true)"
+    fi
     if [ -z "$_claudex_bin" ] || [ ! -x "$_claudex_bin" ]; then
       if [ -x "$HOME/gpu_terminal/kilix-apps/kilix-claudex/claudex" ]; then
         _claudex_bin="$HOME/gpu_terminal/kilix-apps/kilix-claudex/claudex"
@@ -3394,19 +3409,9 @@ case "${1:-}" in
       fi
     fi
     [ -n "$_claudex_bin" ] && [ -x "$_claudex_bin" ] || {
-      echo "kilix claudex: claudex is not installed" >&2
+      echo "kilix claudex: claudex is not installed; run: kilix install kilix-claudex" >&2
       exit 1
     }
-    case "${1:-}" in
-      ""|-h|--help|help)
-        echo "usage: $_self claudex route NAME [TIER] [--dry-run] [--json] [--cwd DIR]"
-        echo "       $_self claudex usage [read|login|show|status] [AGENT ...] [--json|--human] [--remaining|--used] [--full] [--verbose]"
-        echo "routes: max, worker low|mid|high|max, security"
-        echo "Kilix verbs (ls, focus, new-pane, watch) are kilix commands. This does not open a pane for them."
-        echo "worker takes low, mid, high, or max. The other routes do not take a tier."
-        echo "Any other claudex arguments are passed through."
-        exit 0 ;;
-    esac
     exec "$_claudex_bin" "$@" ;;
   grammar|needle)
     _tool_verb="$1"
