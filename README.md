@@ -86,6 +86,35 @@ The host's ARM64 engine support does not imply that the complete Plebian-OS
 - Popups follow the page-strip position, fit the window when resized, and
   return focus to the original pane when dismissed. Outside clicks close the
   popup without activating the pane beneath it.
+- Right-click CPU/RAM, temperature, read-aloud, microphone or Wi-Fi for an
+  explanation and that widget's settings. Temperature offers Celsius and
+  Fahrenheit directly; microphone settings link to input devices and the
+  dictation model selector/installer. The CPU/RAM indicator measures logical
+  CPU cores and memory in use, not GPU utilization.
+- Weather accepts a five-digit US ZIP and shows temperature and conditions
+  after loading. Click the unconfigured Weather control or run
+  `kilix settings --widget weather`. Settings are saved in
+  `~/.local/gpu_terminal/settings.conf` (or `GPU_TERMINAL_SETTINGS_FILE`), with
+  a private last-result cache in the adjacent `kilix/weather.json`. No location
+  is detected or requested until a ZIP is supplied. A ZIP is sent to the
+  [Open-Meteo geocoder](https://open-meteo.com/en/docs/geocoding-api), and its
+  coordinates are sent to the [weather API](https://open-meteo.com/en/docs).
+  Weather-model estimates and GeoNames location data are attributed in the
+  card. Open-Meteo's free API is for non-commercial use; weather data is CC BY 4.0.
+  Choose refresh on load/manual, every 15/30/60/180 minutes, or daily at a
+  local system time. Schedules run while Kilix is open. Failed refreshes keep
+  the last reading marked stale; readings over two hours old are also marked
+  stale. Changing ZIP clears the previous location, and hiding the widget
+  cancels its fetch. Weather and the Linux device menus are hidden on native
+  Windows, where their settings tools are unavailable.
+- A lone left or right Windows/Super key opens the top-left Start menu on
+  release. Holding or repeating the key does not open multiple menus;
+  Super combinations keep their normal behavior. A second tap toggles the
+  menu, and focus changes cancel a pending tap. This default can be disabled
+  with `kilix settings --set super_start=off`. Native Windows and macOS keep
+  their normal key behavior; disabling Start also disables this shortcut.
+  A window manager or compositor that intercepts Super must forward the key
+  to Kilix for this shortcut to work.
 
 The RC5 desktop-completion candidate also routes desktop portals from managed
 private-X applications to the physical session. Application singleton names
@@ -218,9 +247,9 @@ keyboard scrolling when the window is too short to show all entries.
 The menu supports mouse selection, arrow-key navigation, `Enter`, `Esc`, and
 mnemonic letters. Clicking outside dismisses it and returns focus to the
 original pane. Clicking Start again or pressing `Ctrl+Alt+M` toggles it.
-The left or right Windows/Super key
-opens the Kilix menu unless Kilix 95 or IceWM owns the active desktop context;
-in those cases the key is delegated to that desktop's Start menu.
+The left or right Windows/Super key opens this same top-left menu on a lone
+key release. The explicit `kilix_windows_key` action remains available for
+desktop launchers that want to delegate Start to Kilix 95 or IceWM.
 
 Configure the shared behavior with:
 
@@ -283,7 +312,10 @@ clock and timezone widget. The volume icon opens a compact slider on one click,
 the full clickable `kilix-volume` output selector on a double-click, and a
 settings card with a live Mute checkbox on right-click. The network icon shows
 compact connection status on one click and opens `nmtui` on a double-click.
-Right-clicking a non-volume widget opens Kilix Settings.
+Right-click CPU/RAM, temperature, read-aloud, microphone, Wi-Fi or weather
+for its own menu. Clock and calendar open clock settings; battery opens
+Kilix Settings. All widget menus are also accessible with
+`kilix settings --widget system|temperature|speech|microphone|network|weather`.
 
 Calendar, clock, volume, network, battery and temperature cards use the same
 popup layer as Start. They open next to the clicked control, above the panes,

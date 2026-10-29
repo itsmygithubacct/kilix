@@ -48,6 +48,8 @@ TOP_BAR_TOGGLES = (
     ToggleSpec("KILIX_CHROME_WINDOWS", "Native window taskbar (Pleb)", "Top bar"),
     ToggleSpec("KILIX_CHROME_SPEAK", "Read pane aloud", "Top bar"),
     ToggleSpec("KILIX_CHROME_DICTATE", "Dictate to pane", "Top bar"),
+    ToggleSpec("KILIX_CHROME_WEATHER", "Weather (configure ZIP in widget settings)", "Top bar"),
+    ToggleSpec("KILIX_CHROME_SUPER_START", "Lone Windows/Super key opens Start", "Top bar"),
 )
 
 PANE_BUTTON_TOGGLES = (
@@ -132,6 +134,34 @@ CLOCK_FORMAT_DEFAULT = "%Y-%m-%d %I:%M %p"
 TEMPERATURE_UNIT_KEY = "KILIX_TEMPERATURE_UNIT"
 TEMPERATURE_UNIT_DEFAULT = "fahrenheit"
 TEMPERATURE_UNIT_CHOICES = ("fahrenheit", "celsius")
+WEATHER_DEFAULTS = {
+    "KILIX_WEATHER_ZIP": "",
+    "KILIX_WEATHER_REFRESH": "60",
+    "KILIX_WEATHER_TIME": "07:00",
+    "KILIX_WEATHER_REQUEST": "0",
+}
+WEATHER_REFRESH_CHOICES = ("manual", "15", "30", "60", "180", "daily")
+
+
+def normalize_weather(key: str, raw_value: object) -> str:
+    value = str(raw_value).strip()
+    if key == "KILIX_WEATHER_ZIP":
+        if value and not re.fullmatch(r"[0-9]{5}", value):
+            raise ValueError("Enter a five-digit US ZIP code, or leave it empty to clear the location.")
+    elif key == "KILIX_WEATHER_REFRESH":
+        if value not in WEATHER_REFRESH_CHOICES:
+            raise ValueError("Weather refresh must be manual, 15, 30, 60, 180, or daily.")
+    elif key == "KILIX_WEATHER_TIME":
+        if not re.fullmatch(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]", value):
+            raise ValueError("Enter a local time in 24-hour HH:MM format.")
+    elif key == "KILIX_WEATHER_REQUEST":
+        if not re.fullmatch(r"[0-9]{1,20}", value):
+            raise ValueError("Invalid weather refresh request.")
+    else:
+        raise KeyError(key)
+    return value
+
+
 # Whole-system CPU load and RAM use, left of the temperature in the top bar.
 # Same choices as the pane chip; ``auto`` applies the pane thresholds.
 SYSTEM_LOAD_MODE_KEY = "KILIX_CHROME_SYSTEM_LOAD_MODE"
@@ -329,7 +359,7 @@ MANAGED_KEYS = tuple(spec.key for spec in TOGGLE_SPECS) + (
     TRANSCRIPT_LIMIT_KEY,
     TRANSCRIPT_TOTAL_KEY,
     TRANSCRIPT_ARCHIVE_KEY,
-) + VOICE_VALUE_KEYS + CODING_KEYS
+) + VOICE_VALUE_KEYS + CODING_KEYS + tuple(WEATHER_DEFAULTS)
 
 _ASSIGNMENT = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
 
@@ -396,6 +426,8 @@ def truthy(value: object) -> bool:
 
 
 def _normalize_change(key: str, raw_value: object) -> str:
+    if key in WEATHER_DEFAULTS:
+        return normalize_weather(key, raw_value)
     if key == TEMPERATURE_UNIT_KEY:
         value = str(raw_value).strip().lower()
         if value not in TEMPERATURE_UNIT_CHOICES:
@@ -478,6 +510,7 @@ def defaults(*, migrate_environment: bool = False) -> dict[str, str]:
         for spec in TOGGLE_SPECS
     }
     values[CLOCK_FORMAT_KEY] = CLOCK_FORMAT_DEFAULT
+    values.update(WEATHER_DEFAULTS)
     values[TEMPERATURE_UNIT_KEY] = TEMPERATURE_UNIT_DEFAULT
     values[SYSTEM_LOAD_MODE_KEY] = SYSTEM_LOAD_MODE_DEFAULT
     values[PANE_CPU_MODE_KEY] = PANE_CPU_MODE_DEFAULT
@@ -566,6 +599,8 @@ def _initial_text(values: Mapping[str, str]) -> str:
     lines.append(f"{CLOCK_FORMAT_KEY}={values[CLOCK_FORMAT_KEY]}")
     lines.append(f"{TEMPERATURE_UNIT_KEY}={values[TEMPERATURE_UNIT_KEY]}")
     lines.append(f"{SYSTEM_LOAD_MODE_KEY}={values[SYSTEM_LOAD_MODE_KEY]}")
+    for key in WEATHER_DEFAULTS:
+        lines.append(f"{key}={values[key]}")
     for spec in PANE_BUTTON_TOGGLES:
         lines.append(f"{spec.key}={values[spec.key]}")
     lines.append(f"{PANE_CPU_MODE_KEY}={values[PANE_CPU_MODE_KEY]}")

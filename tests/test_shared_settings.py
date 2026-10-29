@@ -860,7 +860,7 @@ class SharedSettingsTests(unittest.TestCase):
             self.assertIn("▶1 Top bar", first_frame)
             self.assertIn("─" * 20, first_frame)
             self.assertNotIn(" // ", first_frame)
-            self.assertIn("Top bar: 10/11 enabled", first_frame)
+            self.assertIn("Top bar: 12/13 enabled", first_frame)
             self.assertIn("[always] System CPU and RAM", first_frame)
             self.assertIn("Thermal status", first_frame)
             self.assertLess(first_frame.index("System CPU and RAM"),

@@ -65,6 +65,9 @@ def _control_names() -> dict[str, str]:
     names[shared.SYSTEM_LOAD_MODE_KEY.lower()] = shared.SYSTEM_LOAD_MODE_KEY
     for alias in ("temperature_unit", "temperature_units", "temp_unit", shared.TEMPERATURE_UNIT_KEY.lower()):
         names[alias] = shared.TEMPERATURE_UNIT_KEY
+    for key in shared.WEATHER_DEFAULTS:
+        names[key.lower()] = key
+        names[key.removeprefix("KILIX_").lower()] = key
     for alias in ("transcript", "session_log", "session_logs", "logging"):
         names[alias] = "KILIX_TRANSCRIPT"
     for alias in ("transcript_graphics", "log_graphics"):
@@ -350,6 +353,11 @@ def _parse_assignment(value: str) -> tuple[str, object]:
             key for key in CONTROL_NAMES if not key.startswith("kilix_")))
         raise argparse.ArgumentTypeError(
             f"unknown control {name!r}; choose one of: {choices}")
+    if key in shared.WEATHER_DEFAULTS:
+        try:
+            return key, shared.normalize_weather(key, raw)
+        except ValueError as error:
+            raise argparse.ArgumentTypeError(str(error)) from error
     if key == shared.TEMPERATURE_UNIT_KEY:
         unit = raw.strip().lower()
         if unit not in shared.TEMPERATURE_UNIT_CHOICES:
@@ -460,6 +468,8 @@ def _notify_running_kilix() -> None:
 
 
 def _print_settings(values: dict[str, str]) -> None:
+    for key, default in shared.WEATHER_DEFAULTS.items():
+        print(f"{key}={values.get(key, default)}")
     print(f"settings_file={shared.settings_path()}")
     for spec in shared.TOGGLE_SPECS:
         state = "on" if shared.truthy(values[spec.key]) else "off"
@@ -832,6 +842,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="print the effective shared settings")
     parser.add_argument("--clock", action="store_true",
                         help="open clock-only settings")
+    parser.add_argument("--widget", choices=("system", "temperature", "speech", "microphone", "network", "weather"),
+                        help="open one widget's context menu (also usable without a mouse)")
     parser.add_argument("--print-games", action="store_true",
                         help="print Kilix game availability")
     parser.add_argument("--ensure", action="store_true",
@@ -908,6 +920,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.clock:
         from kilix_clock_settings import run
         return curses.wrapper(run)
+    if args.widget:
+        from kilix_widget_settings import run
+        return run(args.widget)
     result = curses.wrapper(_run_tui, args.section)
     if isinstance(result, str) and result.startswith("tool:"):
         try:

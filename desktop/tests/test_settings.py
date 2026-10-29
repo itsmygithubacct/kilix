@@ -210,13 +210,54 @@ with conf("font_size 12\n") as path:
     assert "KILIX_GAME_DOOM=0" in read(win.shared_path)
 
     for key in settings.shared_settings.MANAGED_KEYS:
-        assert key in win.fields, f"Settings UI is missing shared control {key}"
+        if key == 'KILIX_WEATHER_REQUEST':
+            assert win.weather_refresh_button.cb == win._refresh_weather
+        else:
+            assert key in win.fields, f"Settings UI is missing shared control {key}"
 
     kind, flavor = win.fields["KILIX_DESKTOP_FLAVOR"]
     flavor.index = flavor.options.index("xp")
     win._apply()
     env_text = read(env_path_for(path))
     assert "KILIX_DESKTOP_FLAVOR=xp" in env_text
+
+
+# Weather edits preserve leading zeroes and other choices, can be cleared,
+# and refresh only the already saved ZIP. Invalid input must not reach disk.
+with conf("font_size 12\n"):
+    from unittest.mock import patch
+    d = H.make_desk()
+    import apps
+    apps.open(d, "settings", None)
+    win = H.find_window(d, "SettingsWin")
+    shared = settings.shared_settings
+    zip_field = win.fields["KILIX_WEATHER_ZIP"][1]
+    schedule = win.fields["KILIX_WEATHER_REFRESH"][1]
+    daily_time = win.fields["KILIX_WEATHER_TIME"][1]
+    win._refresh_weather()
+    assert "Apply" in win.status.text
+    zip_field.set("00501")
+    schedule.index = schedule.options.index("daily")
+    daily_time.set("06:45")
+    win._apply()
+    values = shared.load(win.shared_path)
+    assert values["KILIX_WEATHER_ZIP"] == "00501"
+    assert values["KILIX_WEATHER_REFRESH"] == "daily"
+    assert values["KILIX_WEATHER_TIME"] == "06:45"
+    win._refresh_weather()
+    assert shared.load(win.shared_path)["KILIX_WEATHER_REQUEST"] != values["KILIX_WEATHER_REQUEST"]
+    before = read(win.shared_path)
+    zip_field.set("invalid")
+    with patch.object(settings.wm, "msgbox") as error:
+        win._apply()
+    assert error.called
+    assert read(win.shared_path) == before
+    zip_field.set("")
+    win._apply()
+    values = shared.load(win.shared_path)
+    assert values["KILIX_WEATHER_ZIP"] == ""
+    assert values["KILIX_WEATHER_REFRESH"] == "daily"
+    assert values["KILIX_WEATHER_TIME"] == "06:45"
 
 
 # The built-in WM exposes the same install-and-default action as Kilix 95.

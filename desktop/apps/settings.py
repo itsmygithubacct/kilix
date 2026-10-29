@@ -16,6 +16,7 @@ import shutil
 import signal
 import subprocess
 import tempfile
+import time
 from typing import NamedTuple
 
 import shell as _shell
@@ -107,6 +108,7 @@ SETTING_PAGES = [
           shared_settings.CLOCK_FORMAT_DEFAULT, None),
         S("KILIX_CHROME_BATTERY", "Battery"),
         S("KILIX_CHROME_WINDOWS", "Native window taskbar (Pleb)"),
+        S("KILIX_CHROME_SUPER_START", "Lone Windows/Super opens Start"),
         E("KILIX_BATTERY_SUPPLY_DIR", "Battery supply dir"),
         # A shared SDK key beside the page-strip settings it belongs with.
         # Every provider must offer every shared key; this one was missing
@@ -227,6 +229,13 @@ SETTING_PAGES = [
         S(shared_settings.VOICE_HISTORY_KEY, "Dictation history", "choice",
           shared_settings.VOICE_HISTORY_DEFAULT,
           list(shared_settings.VOICE_HISTORY_CHOICES)),
+    ]),
+    ("Weather", [
+        S("KILIX_CHROME_WEATHER", "Show weather"),
+        S("KILIX_WEATHER_ZIP", "US ZIP (five digits)", "text", "", None),
+        S("KILIX_WEATHER_REFRESH", "Refresh (minutes / daily)", "choice", "60",
+          list(shared_settings.WEATHER_REFRESH_CHOICES)),
+        S("KILIX_WEATHER_TIME", "Daily local time (HH:MM)", "text", "07:00", None),
     ]),
     ("Games", [
         S(spec.key, spec.label)
@@ -522,7 +531,12 @@ class SettingsWin(wm.Window):
                 self.panels[tab_i].append(wd)
                 y += 28
             note_y = y + 4
-            if SETTING_PAGES[tab_i][0] == "Games":
+            if SETTING_PAGES[tab_i][0] == "Weather":
+                self.weather_refresh_button = self.add(W.Button(18, y, 160, 23, "Refresh saved ZIP", cb=self._refresh_weather))
+                self.panels[tab_i].append(self.weather_refresh_button)
+                note_y += 28
+                note_text = "Open-Meteo / GeoNames; free API for non-commercial use."
+            elif SETTING_PAGES[tab_i][0] == "Games":
                 note_text = "The Games menu updates the next time Start opens."
             elif any(s.source in ("env", "shared") for s in spec):
                 note_text = (
@@ -635,7 +649,7 @@ class SettingsWin(wm.Window):
                     if cur is not None:
                         self.env_buffer = unset_env_key(self.env_buffer, key)
                     continue
-                if not v or v == (cur if cur is not None else default):
+                if (not v and key != "KILIX_WEATHER_ZIP") or v == (cur if cur is not None else default):
                     continue
             if spec.source == "env":
                 self.env_buffer = set_env_key(self.env_buffer, key, v)
@@ -648,6 +662,17 @@ class SettingsWin(wm.Window):
             else:
                 self.kitty_buffer = set_key(self.kitty_buffer, key, v)
                 self.buffer = self.kitty_buffer
+
+    def _refresh_weather(self):
+        try:
+            values = shared_settings.load(self.shared_path)
+            if not values.get("KILIX_WEATHER_ZIP"):
+                raise ValueError("Enter a ZIP and Apply before refreshing weather.")
+            shared_settings.update({"KILIX_WEATHER_REQUEST": str(time.time_ns())}, self.shared_path)
+            self.status.set("Weather refresh requested.")
+        except (OSError, ValueError) as error:
+            self.status.set(str(error))
+        self.invalidate()
 
     def _install_voice_model(self):
         model = self.fields[shared_settings.VOICE_STT_MODEL_KEY][1].value
@@ -708,7 +733,7 @@ class SettingsWin(wm.Window):
             try:
                 shared_settings.update(self.shared_changes, self.shared_path)
                 self.shared_changes.clear()
-            except (OSError, KeyError) as e:
+            except (OSError, KeyError, ValueError) as e:
                 wm.msgbox(self.desk, "kilix Settings",
                           f"Cannot write shared settings:\n{e}", icon="error")
                 return
