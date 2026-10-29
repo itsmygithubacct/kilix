@@ -190,6 +190,7 @@ class KilixLauncherTests(unittest.TestCase):
         """
         launcher = (ROOT / "kilix").read_text()
         self.assertIn("rollout-resume|rollout)", launcher)
+        self.assertIn("rollout log --pane PANE_ID", launcher)
         self.assertIn(
             '_rollout_installed="${KILIX_TUI_UTILS_PREFIX:-$HOME/.local}'
             '/bin/kilix-rollout-resume"', launcher)

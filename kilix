@@ -3326,7 +3326,9 @@ case "${1:-}" in
         --install-only) _rollout_install_only=1; shift ;;
         -h|--help|help)
           echo "usage: $_self rollout-resume [--install-only] [ARGS...]"
+          echo "       $_self rollout log --pane PANE_ID"
           echo "opens agent session recovery (Claude Code, Codex, Kimi Code)"
+          echo "log --pane prints that pane's Codex, Claude, tmux, or Kilix log"
           exit 0 ;;
         *) break ;;
       esac
