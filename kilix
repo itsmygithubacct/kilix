@@ -44,6 +44,7 @@
 #   ./kilix speak [TEXT...]    # read a pane, or the given text, aloud
 #   ./kilix dictate           # recognize one spoken utterance
 #   ./kilix ask [REQUEST]     # route a plain request to Needle; acts on yes
+#   ./kilix weather CITY     # current conditions for a named city
 #   ./kilix grammar [args]   # explicit system grammar in this pane
 #   ./kilix needle [args]    # Needle prompt in this pane
 #   ./kilix shell [args]     # Bash in this pane
@@ -145,6 +146,9 @@ fi
 # These commands also work before engine/storage setup. Model inspection needs
 # the pinned Content package, but never initializes shared settings or receipts.
 case "${1:-}" in
+  weather)
+    shift
+    exec python3 -B "$KILIX_HOME/config/kilix_weather.py" "$@" ;;
   ralph)
     shift
     exec python3 -B "$KILIX_HOME/config/ralph.py" "$@" ;;
@@ -224,7 +228,7 @@ needed first. Ambiguous targets fail; each verb prints what it did.
   kilix action --request-json -             JSON from stdin
   kilix action capabilities                host features
   kilix windows --host HOST COMMAND         Windows via SSH
-Also: ask 'REQUEST', grammar, needle, shell, claudex route|usage,
+Also: ask 'REQUEST', weather CITY, grammar, needle, shell, claudex route|usage,
   wizard, settings, status, update, install, games,
   screen-size, transcript, help-search "QUESTION". Options: --help.
 Engine options: kilix --help-engine
@@ -3439,7 +3443,7 @@ case "${1:-}" in
     esac
     exec bash "$@" ;;
   ask)
-    # One plain request, routed to the Needle job that runs it. Needle shows the
+    # City weather is a read-only lookup. Other requests go to Needle, which shows the
     # route and the plan and acts only on a typed yes; an unsure route never
     # offers one. Voice adds a transcript to correct before routing; it never
     # removes a confirmation. Nothing here installs Needle or a speech runtime.
@@ -3488,6 +3492,9 @@ case "${1:-}" in
           echo "$_ask_usage"
           echo "routes one plain request to the Needle job that runs it (panes, apps,"
           echo "agents, files or system), shows the plan, and acts only on a typed yes"
+          echo "City weather questions fetch current conditions directly, without a model:"
+          echo "  kilix ask \"What's the weather in Tokyo?\""
+          echo "  kilix weather \"Paris, France\" --unit celsius"
           echo "  --voice  dictate the request; the transcript can be edited first"
           echo "  --hold   wait for Enter before returning, so a tab stays readable"
           echo "  --model  lfm2, needle3, or grammar for this request; overrides KILIX_ASK_COMMANDS_BACKEND"
@@ -3496,7 +3503,7 @@ case "${1:-}" in
           echo "Install the alternate: kilix-needle install --commands needle3"
           echo "Save the selection: kilix-needle workflows select --model lfm2|needle3|grammar"
           echo
-          echo "With no request, it asks for one. Exit status: 0 acted, 1 not acted"
+          echo "With no request, it asks for one. Exit status: 0 answered/acted, 1 not answered/acted"
           echo "(declined, refused or unsure), 2 usage."
           _ask_close 0 ;;
         --) shift; break ;;
@@ -3523,6 +3530,13 @@ case "${1:-}" in
       read -r -e -p "Ask Kilix: " _ask_text || _ask_close 1
     fi
     [ -n "${_ask_text//[[:space:]]/}" ] || { echo "$_ask_usage" >&2; _ask_close 2; }
+    _ask_weather_status=0
+    python3 -B "$KILIX_HOME/config/kilix_weather.py" --ask "$_ask_text" || _ask_weather_status=$?
+    case "$_ask_weather_status" in
+      0|1|2) _ask_close "$_ask_weather_status" ;;
+      3) ;; # Not a city weather question; preserve the normal Needle route.
+      *) _ask_close 1 ;;
+    esac
     # The installed app, not `app run`: that pauses on any nonzero status, and a
     # declined plan is not an error to dismiss. Missing, it is reported, not built.
     _ask_needle="$(KILIX_APP_AUTO_INSTALL=0 \
