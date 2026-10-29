@@ -42,7 +42,7 @@ Replace uppercase placeholders with actual values. Quote paths and titles.
 | `kilix pane right --cwd DIR --porcelain -- bash` | Open a shell beside the caller; print its new pane ID. |
 | `kilix pane right --cwd DIR --hold --porcelain -- PROGRAM ARGS` | Run a job and keep its output visible after exit. |
 | `kilix new-tab --title TITLE --cwd DIR -- PROGRAM ARGS` | Open a tab running a program; use `codex` to launch Codex. |
-| `kilix focus pane:ID` / `kilix focus tab:ID` | Focus the explicitly typed target. |
+| `kilix focus pane:ID` / `kilix focus tab:ID` | Focus the explicitly typed target; only from the pane the user is typing in. |
 | `kilix watch ID --once --plain` | Read the visible screen. |
 | `kilix watch ID --once --extent all --plain` | Read screen and scrollback. |
 | `kilix pane send pane:ID 'TEXT'` | Place literal text without Enter. |
@@ -57,6 +57,13 @@ Pass programs directly after `--`; invoke a shell only for shell syntax. A pane
 disappears when its program exits unless held. Save created IDs. Always target
 `pane close` explicitly: omitting its target selects the caller. Close only the
 requested pane or completed temporary panes you created.
+
+Focus stays with the user. A command from a pane the user is not typing in, or
+from outside any pane, can open, close and rearrange tabs and panes, but the
+user's tab and pane stay active and the window is never raised. New tabs and
+panes from such a caller open in the background, and `kilix focus` fails with
+`Focus stays in the pane the user is typing in`. Read and drive other panes with
+`kilix watch` and `kilix pane send`; neither needs focus.
 
 ## Send input and verify the result
 
