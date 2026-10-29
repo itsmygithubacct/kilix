@@ -756,6 +756,12 @@ def cross_home_worker(i, root, bases, state, mutex, barrier, results):
         caller = 1
         command = ["fake", "@", "--to", "fake:same-socket"]
 
+        def __init__(self):
+            # Client() would recover a connection from this process's
+            # ancestors: a real Kilix pane on a developer machine, none on CI.
+            # The fake socket above is the only engine these workers address.
+            self.command_env = {}
+
         def snapshot(self):
             time.sleep(0.04)
             with mutex:
