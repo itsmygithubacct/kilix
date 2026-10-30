@@ -414,7 +414,15 @@ class FprintdClient:
                 self._call_gated(device.EnrollStart, session.finger)
             else:
                 matches.append(device.connect_to_signal("VerifyFingerSelected", on_selected))
-                self._call(device.VerifyStart, session.finger)
+                finger = session.finger
+                if finger == ANY_FINGER:
+                    # Some readers use a different identification path for "any".
+                    # With one enrolled print, explicit verification has the same
+                    # scope and avoids that unnecessary multi-print lookup.
+                    enrolled = self.enrolled_fingers(session.device, username)
+                    if len(enrolled) == 1:
+                        finger = enrolled[0]
+                self._call(device.VerifyStart, finger)
             if on_start is not None:
                 on_start(session)
             if not self.bus.run_until(lambda: session.done, timeout):

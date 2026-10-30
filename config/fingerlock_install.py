@@ -206,7 +206,7 @@ class Installer:
                 os.unlink(temporary)
 
     def _link(self, path: Path, target: str | None) -> None:
-        if path.exists() or path.is_symlink():
+        if os.path.lexists(path):
             info = path.lstat()
             if not stat.S_ISLNK(info.st_mode) or info.st_uid != self.owner:
                 raise InstallError(f"unmanaged installation path: {path}")
