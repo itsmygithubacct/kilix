@@ -1770,7 +1770,9 @@ consumers may keep their frozen 0.1.9 fallback tables, but new integrations
 must consume this versioned command contract instead of copying the catalog.
 
 The catalog contains `small-en-us` (Vosk, 39.3 MiB), `lgraph-en-us` (Vosk,
-124.5 MiB), and `vibevoice-asr-bitnet` (VibeVoice, about 1.6 GiB). VibeVoice's
+124.5 MiB), `vibevoice-asr-bitnet` (VibeVoice, about 1.6 GiB),
+`whisper-small-en` (Whisper, 463.6 MiB), and `whistle` (Whistle, 16.2 MiB).
+Runtime support does not mean the model weights are installed. VibeVoice's
 weights are shared with Kilix Bonsai, so installing them does not create a
 second copy. VibeVoice dictates once its VibeASR runtime is built (below); it
 transcribes each turn when the turn ends rather than showing live partials.
