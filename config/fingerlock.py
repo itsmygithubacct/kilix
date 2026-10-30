@@ -42,6 +42,7 @@ import pwd
 import re
 import select
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -521,7 +522,7 @@ class SystemBus:
         if predicate():
             return True
         loop = self._glib.MainLoop()
-        state = {"timed_out": False}
+        state = {"timed_out": False, "interrupted": False, "finished": False}
 
         def on_timeout() -> bool:
             state["timed_out"] = True
@@ -530,14 +531,32 @@ class SystemBus:
 
         def poll() -> bool:
             if predicate():
+                state["finished"] = True
                 loop.quit()
                 return False
             return True
 
-        self._glib.timeout_add(max(1, int(timeout * 1000)), on_timeout)
-        self._glib.timeout_add(100, poll)
-        loop.run()
-        return not state["timed_out"] and predicate()
+        def on_sigint() -> bool:
+            state["interrupted"] = True
+            loop.quit()
+            return False
+
+        timeout_id = self._glib.timeout_add(max(1, int(timeout * 1000)), on_timeout)
+        poll_id = self._glib.timeout_add(100, poll)
+        sig_id = self._glib.unix_signal_add(self._glib.PRIORITY_DEFAULT, signal.SIGINT, on_sigint)
+        try:
+            loop.run()
+        finally:
+            # A callback that returns false has already removed its source.
+            if not state["timed_out"]:
+                self._glib.source_remove(timeout_id)
+            if not state["finished"]:
+                self._glib.source_remove(poll_id)
+            if not state["interrupted"]:
+                self._glib.source_remove(sig_id)
+        if state["interrupted"]:
+            raise KeyboardInterrupt
+        return not state["timed_out"]
 
 
 @dataclass(frozen=True)
