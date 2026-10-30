@@ -18,9 +18,11 @@ class EffortActionsTests(unittest.TestCase):
 
     def test_requested_models_and_efforts_reach_exact_cli_arguments(self):
         configurations = [("gpt-6.1-sol", e) for e in ("low", "medium", "high", "xhigh")]
-        configurations += [("gpt-6-astra", e) for e in ("low", "medium", "high")]
+        configurations += [("gpt-6-astra", e) for e in ("low", "medium", "high", "max")]
         for i, (model, effort) in enumerate(configurations):
             with self.subTest(model=model, effort=effort):
+                self.assertIn(effort, actions.capabilities()["operations"]["agent.launch"]
+                              ["reasoning_effort"]["values"])
                 self.client.panes = self.client.panes[:2]
                 value = request("agent.launch", f"effort-{i}")
                 value["params"].update(model=model, reasoning_effort=effort)
@@ -69,11 +71,11 @@ class EffortActionsTests(unittest.TestCase):
     def test_plan_reports_requested_configuration_without_launch_or_persistence(self):
         value = request("agent.launch")
         value.update(dry_run=True)
-        value["params"].update(model="gpt-6.1-sol", reasoning_effort="xhigh")
+        value["params"].update(model="gpt-6-astra", reasoning_effort="max")
         with mock.patch("agent_programs.resolve_agent_command", return_value="/bin/codex"):
             result = self.dispatch(value)
         self.assertEqual(result["status"], "planned")
-        self.assertEqual(result["evidence"]["requested"]["reasoning_effort"], "xhigh")
+        self.assertEqual(result["evidence"]["requested"]["reasoning_effort"], "max")
         self.assertEqual(len(self.client.panes), 2)
         self.assertEqual(list(Path(self.temp.name).iterdir()), [])
 
@@ -103,10 +105,12 @@ class EffortArgvTests(unittest.TestCase):
     argv = control_tests.AgentArgvTests.argv
 
     def test_resume_keeps_effort_before_session_and_prompt(self):
-        actual, _ = self.argv("codex", "--resume", "abc-123", "--model", "gpt-6-astra",
-                              "--reasoning-effort", "high", "--prompt", "continue implementation")
-        self.assertEqual(actual, ["/bin/codex", "resume", "--model", "gpt-6-astra", "-c",
-                                 'model_reasoning_effort="high"', "abc-123", "continue implementation"])
+        for effort in ("high", "max"):
+            with self.subTest(effort=effort):
+                actual, _ = self.argv("codex", "--resume", "abc-123", "--model", "gpt-6-astra",
+                                      "--reasoning-effort", effort, "--prompt", "continue implementation")
+                self.assertEqual(actual, ["/bin/codex", "resume", "--model", "gpt-6-astra", "-c",
+                                         f'model_reasoning_effort="{effort}"', "abc-123", "continue implementation"])
 
     def test_effort_does_not_enable_yolo_or_other_clients(self):
         actual, _ = self.argv("codex", "--reasoning-effort", "low", yolo_setting=True)

@@ -87,7 +87,7 @@ keeps parallel launches from racing writes to a client's shared trust config.
 ## Model and reasoning effort
 
 For Codex, `agent.launch` accepts an optional typed `reasoning_effort`: `low`,
-`medium`, `high`, or `xhigh`. For example, after resolving the source and anchor,
+`medium`, `high`, `xhigh`, or `max`. For example, after resolving the source and anchor,
 use these launch parameters with a fresh operation ID:
 
 ```json

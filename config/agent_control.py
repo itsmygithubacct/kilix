@@ -60,7 +60,7 @@ AGENT_ARG_PATTERNS = {
     "qwen-omp": (re.compile(r"--thinking=[A-Za-z0-9_-]+\Z"),),
     "kimi": (),
 }
-REASONING_EFFORTS = ("low", "medium", "high", "xhigh")
+REASONING_EFFORTS = ("low", "medium", "high", "xhigh", "max")
 _SUBCOMMANDS = {}
 
 
@@ -517,7 +517,7 @@ def validate_reasoning_effort(agent, effort):
     if agent != "codex":
         raise ControlError("reasoning_effort is supported only for codex")
     if not isinstance(effort, str) or effort not in REASONING_EFFORTS:
-        raise ControlError("reasoning_effort must be low, medium, high or xhigh")
+        raise ControlError("reasoning_effort must be " + ", ".join(REASONING_EFFORTS))
     return effort
 
 
