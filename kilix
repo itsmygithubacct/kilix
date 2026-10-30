@@ -6158,7 +6158,9 @@ def is_desktop_arg(a):
         # The installed command is a sh launcher, so the running cmdline is
         # python3 over the checkout entry point rather than the target path.
         return a in targets or a.endswith("/kilix-tui/main.py")
-    return a in targets or (mode == "python" and (a.endswith("/desktop/main.py") or a.endswith("/kilix-95/main.py")))
+    # Python providers launch with their selected entry point. A suffix match
+    # would focus a different provider or another checkout of the same one.
+    return a in targets
 ids=[w["id"] for o in d for t in o.get("tabs",[]) for w in t.get("windows",[]) if any(is_desktop_arg(a) for p in w.get("foreground_processes",[]) for a in p.get("cmdline",[]))]
 print(ids[0] if ids else "")' 2>/dev/null)"
     fi
