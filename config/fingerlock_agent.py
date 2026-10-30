@@ -10,15 +10,15 @@ and expiry refuse a later operation. Plaintext already returned stays
 exposed; the custodian cannot take it back.
 
 The touch is bound to the operation binding (kind, name, and the sha256 of
-the container bytes) checked before verification and again before the
+the container bytes) shown in a fresh polkit approval before verification and checked before the
 plaintext is released. A passphrase rewrap does not rotate the key and does
 not revoke plaintext already returned. Rewrap is not a substitute for forget.
 
 Callers are identified by SO_PEERCRED. Deposit, confirm and operate require
-an active, seated, unlocked logind session owned by that uid. The session id
-comes from the cgroup session scope (`session-<id>.scope`), not from the
-audit id in /proc/<pid>/sessionid. A missing scope fails closed. ACTIVE alone
-is not enough. Status and forget do not require a seat; forget from any
+an active, seated, unlocked logind session owned by that uid. The session
+comes from logind GetSessionByPID and its live D-Bus properties, including
+LockedHint. Missing properties or an unavailable logind fail closed. ACTIVE
+alone is not enough. Status and forget do not require a seat; forget from any
 local peer of that uid drops custody.
 
 The client checks the connected peer uid before it sends a key. The trusted
@@ -35,7 +35,8 @@ secrecy boundary when mlock fails, and are not claimed as one when it
 succeeds, because other copies are not locked. Core dumps are disabled when
 the kernel accepts the setting.
 
-The socket is world-accessible and systemd-activated. Admission is bounded
+Each user has a mode-0600 socket owned by that user and activated by systemd.
+The service still runs as root, authenticates peers, and checks the configured uid. Admission is bounded
 by MAX_CONCURRENT connections and MAX_PER_UID requests per uid. Each request
 has one monotonic deadline; a slow sender cannot extend it by dribbling
 bytes. A full agent refuses new work with EBUSY and keeps serving after a
@@ -52,6 +53,7 @@ import ctypes
 import errno
 import hashlib
 import json
+import math
 import os
 import pwd
 import select
@@ -69,14 +71,16 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from fingerlock_core import (  # noqa: E402
     ANY_FINGER, AccessDenied, DependencyUnavailable, DeviceNotFound, FingerlockError,
-    FprintdClient, NoMatch, OperationFailed, OperationTimeout, ServiceFailure, _read,
+    FprintdClient, NoMatch, OperationFailed, OperationTimeout, ServiceFailure,
 )
 from fingerlock_locker import Locker, LockerError, SEED_BYTES, unlock_bytes, wipe_buffer  # noqa: E402
+from fingerlock_policy import APPROVAL_TIMEOUT, authorize_operation  # noqa: E402
 
-SOCKET_PATH = "/run/kilix-fingerlock/agent.sock"
-INSTALL_DIR = "/usr/local/lib/kilix-fingerlock"
-SOCKET_UNIT = "kilix-fingerlock-agent.socket"
-SERVICE_UNIT = "kilix-fingerlock-agent.service"
+def socket_path(uid: int) -> str:
+    return f"/run/kilix-fingerlock/{uid}.sock"
+
+
+SOCKET_PATH = socket_path(os.getuid())
 PROTOCOL = 1
 DEFAULT_TTL_SECONDS = 12 * 3600
 MAX_TTL_SECONDS = 7 * 24 * 3600
@@ -87,46 +91,9 @@ MAX_BODY = 64 * 1024 * 1024 + 2 * 1024 * 1024
 MAX_CONCURRENT = 8
 MAX_PER_UID = 2
 REQUEST_DEADLINE_SECONDS = 5.0
+REPLY_DEADLINE_SECONDS = 5.0
 BODY_DEADLINE_SECONDS = 30.0
 
-SOCKET_UNIT_TEXT = f"""[Unit]
-Description=Kilix fingerlock agent socket
-
-[Socket]
-ListenStream={SOCKET_PATH}
-SocketMode=0666
-DirectoryMode=0755
-RemoveOnStop=yes
-
-[Install]
-WantedBy=sockets.target
-"""
-
-SERVICE_UNIT_TEXT = f"""[Unit]
-Description=Kilix fingerlock agent (fingerprint-gated key custody)
-Documentation=man:kilix(1)
-Requires={SOCKET_UNIT}
-After={SOCKET_UNIT} dbus.service
-
-[Service]
-Type=simple
-ExecStart=/usr/bin/python3 {INSTALL_DIR}/fingerlock_agent.py --serve
-NonBlocking=no
-LimitCORE=0
-NoNewPrivileges=yes
-ProtectSystem=strict
-ProtectHome=yes
-PrivateTmp=yes
-PrivateDevices=yes
-ProtectKernelTunables=yes
-ProtectKernelModules=yes
-ProtectControlGroups=yes
-RestrictAddressFamilies=AF_UNIX
-MemoryDenyWriteExecute=yes
-RestrictRealtime=yes
-LockPersonality=yes
-SystemCallFilter=@system-service
-"""
 
 
 class AgentUnavailable(DependencyUnavailable):
@@ -295,71 +262,69 @@ class Custody:
                 self._wipe_locked(uid)
 
 
-def session_of_pid(pid: int, *, proc: Path = Path("/proc")) -> str:
-    """Logind session from the cgroup scope. No scope, including a user manager, fails closed.
-
-    /proc/<pid>/sessionid is not consulted: with auditing it is an audit id,
-    which this gate does not treat as a logind session.
-    """
-    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
-        return ""
-    text = _read(proc / str(pid) / "cgroup") or ""
-    found = []
-    for line in text.splitlines():
-        for part in line.split("/"):
-            if part.startswith("session-") and part.endswith(".scope") and part[8:-6].isdigit():
-                found.append(part[8:-6])
-    return found[-1] if found else ""
+@dataclass(frozen=True)
+class CallerSession:
+    session_id: str
+    uid: int
+    active: bool
+    state: str
+    seat: str
+    locked: bool
+    remote: bool
 
 
-def _session_facts(record: str) -> dict[str, str]:
-    return dict(line.split("=", 1) for line in record.splitlines() if "=" in line)
-
-
-def _locked(facts: dict[str, str]) -> bool:
-    return facts.get("LOCKED_HINT") in ("1", "yes") or facts.get("LockedHint") == "yes"
-
-
-def session_owner_uid(session_id: str, *, sessions_dir: Path = Path("/run/systemd/sessions")) -> int | None:
-    if not session_id or not session_id.isdigit():
-        return None
-    record = _read(sessions_dir / session_id)
-    if not record:
-        return None
-    uid = _session_facts(record).get("UID", "")
-    if not uid.isdigit():
-        return None
-    return int(uid)
-
-
-def session_is_active_seat(session_id: str, *, run: Callable[..., Any] = subprocess.run,
-                           sessions_dir: Path = Path("/run/systemd/sessions")) -> tuple[bool, str]:
-    """Active, seated and unlocked. A lock hint refuses the session."""
-    if not session_id:
-        return False, "no logind session"
-    record = _read(sessions_dir / session_id)
-    if record:
-        facts = _session_facts(record)
-        active = facts.get("ACTIVE") == "1" and facts.get("STATE") == "active"
-        seat = facts.get("SEAT", "")
-        locked = _locked(facts)
-        ok = active and bool(seat) and not locked
-        why = "locked" if locked else f"active={active} seat={seat or '-'}"
-        return ok, f"session {session_id} {why}"
+def caller_session(pid: int, *, dbus_module: Any = None) -> CallerSession:
+    """Read one live logind snapshot. Its private session files omit LockedHint."""
+    if type(pid) is not int or pid <= 0:
+        raise AccessDenied("invalid caller pid")
+    if dbus_module is None:
+        try:
+            import dbus as dbus_module
+        except ImportError as exc:
+            raise DependencyUnavailable("logind requires python3-dbus") from exc
+    bus = None
     try:
-        proc = run(["loginctl", "show-session", session_id, "-p", "Active", "-p", "State",
-                    "-p", "Seat", "-p", "LockedHint"],
-                   capture_output=True, text=True, timeout=10)
-    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
-        return False, f"loginctl unavailable ({exc.__class__.__name__})"
-    if proc.returncode != 0:
-        return False, f"loginctl cannot describe session {session_id}"
-    facts = _session_facts(proc.stdout)
-    seat = facts.get("Seat", "")
-    locked = _locked(facts)
-    active = facts.get("Active") == "yes" and facts.get("State", "active") == "active"
-    ok = active and bool(seat) and not locked
-    return ok, f"session {session_id} Active={facts.get('Active')} Seat={seat or '-'}"
+        bus = dbus_module.SystemBus(private=True)
+        manager = dbus_module.Interface(
+            bus.get_object("org.freedesktop.login1", "/org/freedesktop/login1", introspect=False),
+            "org.freedesktop.login1.Manager")
+        path = manager.GetSessionByPID(dbus_module.UInt32(pid), timeout=5)
+        properties = dbus_module.Interface(
+            bus.get_object("org.freedesktop.login1", path, introspect=False),
+            "org.freedesktop.DBus.Properties")
+        facts = properties.GetAll("org.freedesktop.login1.Session", timeout=5)
+        # No defaults: an absent lock hint is an unknown lock state.
+        for key in ("Active", "LockedHint", "Remote"):
+            if not isinstance(facts[key], (bool, int)) or facts[key] not in (0, 1):
+                raise ValueError("invalid logind boolean")
+        uid = facts["User"][0]
+        if isinstance(uid, bool) or not isinstance(uid, int) or uid < 0:
+            raise ValueError("invalid logind owner")
+        session_id, state, seat = facts["Id"], facts["State"], facts["Seat"][0]
+        if not all(isinstance(x, str) for x in (session_id, state, seat)) or not session_id:
+            raise ValueError("invalid logind session")
+        return CallerSession(str(session_id), int(uid), bool(facts["Active"]), str(state),
+                             str(seat), bool(facts["LockedHint"]), bool(facts["Remote"]))
+    except Exception as exc:
+        raise AccessDenied("logind could not establish the caller's session and lock state") from exc
+    finally:
+        if bus is not None:
+            bus.close()
+
+
+def _peer_pidfd(conn: socket.socket) -> int:
+    # Linux SO_PEERPIDFD refers to the connecting process, even after PID reuse.
+    # Require it rather than opening a pidfd for a possibly recycled numeric PID.
+    try:
+        fd = conn.getsockopt(socket.SOL_SOCKET, getattr(socket, "SO_PEERPIDFD", 77))
+        os.set_inheritable(fd, False)
+        return fd
+    except OSError as exc:
+        raise AccessDenied("the kernel cannot bind custody to the connecting process") from exc
+
+
+def _process_alive(pidfd: int) -> bool:
+    return not select.select([pidfd], [], [], 0)[0]
 
 
 def _harden_process() -> HardenReport:
@@ -445,24 +410,26 @@ class Agent:
     def __init__(self, *, custody: Custody | None = None,
                  client_factory: Callable[[], FprintdClient] = FprintdClient,
                  verify_timeout: float = VERIFY_TIMEOUT_SECONDS,
-                 proc: Path = Path("/proc"),
-                 session_check: Callable[[str], tuple[bool, str]] = session_is_active_seat,
-                 session_owner: Callable[[str], int | None] | None = None,
+                 session_lookup: Callable[[int], CallerSession] = caller_session,
+                 approve: Callable[..., None] = authorize_operation,
+                 allowed_uid: int | None = None,
                  max_concurrent: int = MAX_CONCURRENT,
                  max_per_uid: int = MAX_PER_UID,
                  request_deadline: float = REQUEST_DEADLINE_SECONDS,
                  body_deadline: float = BODY_DEADLINE_SECONDS,
+                 reply_deadline: float = REPLY_DEADLINE_SECONDS,
                  max_body: int = MAX_BODY) -> None:
         self.custody = custody or Custody(start_timer=True)
         self.client_factory = client_factory
         self.verify_timeout = verify_timeout
-        self.proc = proc
-        self.session_check = session_check
-        self.session_owner = session_owner if session_owner is not None else session_owner_uid
+        self.session_lookup = session_lookup
+        self.approve = approve
+        self.allowed_uid = allowed_uid
         self.max_concurrent = max_concurrent
         self.max_per_uid = max_per_uid
         self.request_deadline = request_deadline
         self.body_deadline = body_deadline
+        self.reply_deadline = reply_deadline
         self.max_body = max_body
         self._verify_lock = threading.Lock()
         self._admit_lock = threading.Lock()
@@ -477,14 +444,13 @@ class Agent:
         return True if fn is None else bool(fn())
 
     def _seat(self, pid: int, uid: int) -> str:
-        session_id = session_of_pid(pid, proc=self.proc)
-        active, detail = self.session_check(session_id)
-        if not active:
-            raise AccessDenied(f"caller is not in an active seat session ({detail})")
-        owner = self.session_owner(session_id)
-        if owner is None or int(owner) != int(uid):
+        session = self.session_lookup(pid)
+        if (not session.active or session.state != "active" or not session.seat
+                or session.locked or session.remote):
+            raise AccessDenied("caller is not in an active seat session that is unlocked and local")
+        if session.uid != uid:
             raise AccessDenied("session is not owned by the caller")
-        return session_id
+        return session.session_id
 
     def _hardening(self, entry: Entry | None) -> dict[str, Any]:
         extra = [entry.secret.error] if entry is not None and entry.secret.error else []
@@ -493,8 +459,12 @@ class Agent:
     def handle(self, request: dict[str, Any], uid: int, pid: int, body: bytes = b"") -> tuple[dict[str, Any], bytes]:
         op = request.get("op")
         try:
-            if request.get("protocol") != PROTOCOL:
+            if type(request.get("protocol")) is not int or request["protocol"] != PROTOCOL:
                 raise ServiceFailure(f"unsupported protocol {request.get('protocol')!r}")
+            if op == "health" and uid == 0:
+                return {"ok": True, "uid": self.allowed_uid, "protocol": PROTOCOL}, b""
+            if self.allowed_uid is not None and uid != self.allowed_uid:
+                raise AccessDenied("this custodian belongs to another user")
             if op == "status":
                 return self._status(uid), b""
             if op == "forget":
@@ -524,8 +494,11 @@ class Agent:
         try:
             key = bytes.fromhex(str(request["key"]))
             locker_id = str(request["locker_id"])
-            ttl = float(request.get("ttl", DEFAULT_TTL_SECONDS))
-        except (KeyError, ValueError, TypeError) as exc:
+            ttl = request.get("ttl", DEFAULT_TTL_SECONDS)
+            if (isinstance(ttl, bool) or not isinstance(ttl, (float, int))
+                    or not math.isfinite(ttl) or ttl < 0):
+                raise ValueError("ttl must be a finite non-negative number")
+        except (KeyError, ValueError, TypeError, OverflowError) as exc:
             raise ServiceFailure(f"bad deposit: {exc}") from exc
         if len(key) != SEED_BYTES or any(ch not in "0123456789abcdef" for ch in str(request["key"]).lower()):
             raise ServiceFailure("bad deposit: key must be 32 bytes")
@@ -604,6 +577,11 @@ class Agent:
         try:
             if not self._peer_alive():
                 raise AccessDenied("caller disconnected")
+            self._revalidate(uid, pid, session_id, generation, locker_id)
+            self.approve(uid, pid, binding, self._peer_alive)
+            self._revalidate(uid, pid, session_id, generation, locker_id)
+            if not self._peer_alive():
+                raise AccessDenied("caller disconnected after operation approval")
             client = self.client_factory()
             device = client.default_device()
             session = client.verify(device.path, finger, username=username, timeout=self.verify_timeout)
@@ -683,24 +661,28 @@ class Agent:
                 continue
             try:
                 pid, uid, _gid = _peer_cred(conn)
-            except OSError:
+                pidfd = _peer_pidfd(conn)
+            except (OSError, FingerlockError):
                 conn.close()
                 continue
             reason = self._admit(uid)
             if reason is not None:
+                os.close(pidfd)
                 try:
+                    conn.settimeout(0.1)
                     conn.sendall(_error_line(Busy(reason)))
                 except OSError:
                     pass
                 conn.close()
                 continue
-            threading.Thread(target=self._serve_guarded, args=(conn, pid, uid), daemon=True).start()
+            threading.Thread(target=self._serve_guarded, args=(conn, pid, uid, pidfd), daemon=True).start()
 
-    def _serve_guarded(self, conn: socket.socket, pid: int, uid: int) -> None:
+    def _serve_guarded(self, conn: socket.socket, pid: int, uid: int, pidfd: int) -> None:
         try:
-            self._tls.alive = lambda: not _client_gone(conn)
+            self._tls.alive = lambda: _process_alive(pidfd) and not _client_gone(conn)
             self._serve_connection(conn, pid, uid)
         finally:
+            os.close(pidfd)
             self._release_slot(uid)
             try:
                 conn.close()
@@ -717,29 +699,27 @@ class Agent:
                 if not isinstance(request, dict):
                     raise ValueError("not an object")
             except ValueError as exc:
-                conn.sendall(_error_line(ServiceFailure(f"bad request: {exc}")))
-                return
+                raise ServiceFailure(f"bad request: {exc}") from exc
             body = b""
             if request.get("op") == "operate":
                 body_bytes = request.get("body_bytes")
                 if isinstance(body_bytes, bool) or not isinstance(body_bytes, int) or body_bytes < 0 or body_bytes > self.max_body:
-                    conn.sendall(_error_line(ServiceFailure("body_bytes out of range")))
-                    return
+                    raise ServiceFailure("body_bytes out of range")
                 deadlines["at"] = time.monotonic() + self.body_deadline
                 body = stream.read_exact(body_bytes)
             if not self._peer_alive():
-                conn.sendall(_error_line(AccessDenied("caller disconnected")))
-                return
+                raise AccessDenied("caller disconnected")
             response, plain = self.handle(request, uid, pid, body)
             if "key" in response:
                 response = {"ok": False, "code": "ESERVICE",
                             "error": "refusing to send the locker key", "exit": 6}
                 plain = b""
-            conn.sendall(json.dumps(response, sort_keys=True).encode("utf-8") + b"\n")
-            if response.get("ok") and plain:
-                conn.sendall(plain)
+            conn.settimeout(self.reply_deadline)
+            conn.sendall(json.dumps(response, sort_keys=True).encode("utf-8") + b"\n"
+                         + (plain if response.get("ok") else b""))
         except FingerlockError as exc:
             try:
+                conn.settimeout(self.reply_deadline)
                 conn.sendall(_error_line(exc))
             except OSError:
                 return
@@ -747,29 +727,29 @@ class Agent:
             return
 
 
-def _listener_from_systemd_or_path(path: str) -> socket.socket:
-    fds = int(os.environ.get("LISTEN_FDS", "0") or 0)
-    if fds >= 1 and os.environ.get("LISTEN_PID", "") == str(os.getpid()):
-        return socket.socket(fileno=3)
-    parent = Path(path).parent
-    parent.mkdir(mode=0o755, parents=True, exist_ok=True)
-    try:
-        os.unlink(path)
-    except FileNotFoundError:
-        pass
-    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    listener.bind(path)
-    os.chmod(path, 0o666)
-    listener.listen(16)
+def _listener_from_systemd(uid: int) -> socket.socket:
+    if os.environ.get("LISTEN_FDS") != "1" or os.environ.get("LISTEN_PID") != str(os.getpid()):
+        raise ServiceFailure("the custodian requires one systemd socket")
+    listener = socket.socket(fileno=3)
+    if (listener.family != socket.AF_UNIX or listener.type != socket.SOCK_STREAM
+            or listener.getsockname() != socket_path(uid)
+            or not listener.getsockopt(socket.SOL_SOCKET, socket.SO_ACCEPTCONN)):
+        listener.close()
+        raise ServiceFailure("unexpected systemd socket")
     return listener
 
 
-def serve(path: str = SOCKET_PATH) -> int:
-    if os.geteuid() != 0:
-        sys.stderr.write("kilix-fingerlock-agent: must run as root\n")
+def serve(uid: int) -> int:
+    if os.geteuid() != 0 or uid <= 0:
+        sys.stderr.write("kilix-fingerlock-agent: root and a non-root owner uid are required\n")
         return 1
-    listener = _listener_from_systemd_or_path(path)
-    Agent().serve(listener)
+    listener = _listener_from_systemd(uid)
+    agent = Agent(allowed_uid=uid)
+    try:
+        agent.serve(listener)
+    finally:
+        agent.custody.close()
+        listener.close()
     return 0
 
 
@@ -786,7 +766,7 @@ class AgentClient:
     Key bytes are sent only after the peer uid matches.
     """
 
-    def __init__(self, path: str = SOCKET_PATH, *, timeout: float = VERIFY_TIMEOUT_SECONDS + 30,
+    def __init__(self, path: str = SOCKET_PATH, *, timeout: float = APPROVAL_TIMEOUT + 2 * VERIFY_TIMEOUT_SECONDS + 30,
                  trusted_uid: int = 0) -> None:
         self.path = path
         self.timeout = timeout
@@ -979,9 +959,9 @@ def _read_exact_socket(conn: socket.socket, nbytes: int, prefix: bytes = b"") ->
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    if argv[:1] == ["--serve"]:
-        return serve(argv[1] if len(argv) > 1 else SOCKET_PATH)
-    sys.stderr.write("usage: fingerlock_agent.py --serve [SOCKET]\n")
+    if len(argv) == 2 and argv[0] == "--serve" and argv[1].isdigit():
+        return serve(int(argv[1]))
+    sys.stderr.write("usage: fingerlock_agent.py --serve UID\n")
     return 2
 
 

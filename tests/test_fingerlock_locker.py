@@ -20,6 +20,7 @@ import time
 import unittest
 import unittest.mock
 from contextlib import redirect_stderr, redirect_stdout
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -271,18 +272,6 @@ class FakeVerifyClient:
         return session
 
 
-def write_cgroup(proc: Path, pid: int, session: str | None) -> None:
-    """A cgroup scope is the session id. A sessionid file is an audit id and is ignored."""
-    directory = proc / str(pid)
-    directory.mkdir(parents=True, exist_ok=True)
-    if session is None:
-        text = "0::/user.slice/user-1.slice/user@1.service\n"
-    else:
-        text = f"0::/user.slice/user-1.slice/session-{session}.scope\n"
-    (directory / "cgroup").write_text(text)
-    (directory / "sessionid").write_text("999\n")
-
-
 @unittest.skipUnless(HAVE_NACL, "python3-nacl is not installed")
 class AgentTests(unittest.TestCase):
     def setUp(self):
@@ -292,15 +281,12 @@ class AgentTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.addCleanup(self.custody.close)
-        proc = Path(self.tmp.name) / "proc"
         self.uid = os.getuid()
+        self.sessions = {4242: agentmod.CallerSession("2", self.uid, True, "active", "seat0", False, False),
+                         4343: agentmod.CallerSession("9", self.uid, False, "online", "", False, False)}
         self.agent = agentmod.Agent(
             custody=self.custody, client_factory=lambda: self.client,
-            session_check=lambda sid: (sid == "2", f"session {sid}"),
-            session_owner=lambda sid: self.uid if sid == "2" else None,
-            proc=proc)
-        write_cgroup(proc, 4242, "2")
-        write_cgroup(proc, 4343, "9")
+            session_lookup=lambda pid: self.sessions[pid], approve=lambda *args: None)
         home = Path(self.tmp.name) / "locker"
         self.locker = lockermod.Locker(home, kdf_policy="test")
         self.info = self.locker.init("correct horse battery", **FAST)
@@ -392,8 +378,8 @@ class AgentTests(unittest.TestCase):
         status, _plain = self.handle("status", pid=4343)
         self.assertFalse(status["held"])
 
-    def test_audit_sessionid_is_not_a_seat(self):
-        write_cgroup(self.agent.proc, 4242, None)
+    def test_missing_session_is_not_a_seat(self):
+        self.sessions[4242] = replace(self.sessions[4242], seat="")
         reply, plain = self.handle("deposit", key=self.key.hex(), locker_id=self.info.locker_id)
         self.assertEqual(reply["code"], "EACCESS")
         self.assertEqual(plain, b"")
@@ -420,6 +406,35 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(reply["code"], "ESERVICE")
         reply, _plain = self.handle("nope")
         self.assertEqual(reply["code"], "ESERVICE")
+
+    def test_invalid_ttl_cannot_create_nonexpiring_custody(self):
+        for ttl in (True, "nan", float("nan"), float("inf"), -1, 10**500):
+            with self.subTest(ttl=ttl):
+                reply, plain = self.deposit(ttl=ttl)
+                self.assertEqual(reply["code"], "ESERVICE")
+                self.assertEqual(plain, b"")
+                self.assertIsNone(self.custody.peek(self.uid))
+
+    def test_approval_denial_and_revocation_precede_reader_access(self):
+        self.deposit()
+        def deny(*args):
+            raise core.AccessDenied("cancelled")
+        self.agent.approve = deny
+        reply, plain = self.operate()
+        self.assertEqual(reply["code"], "EACCESS")
+        self.assertEqual(plain, b"")
+        self.assertEqual(self.client.calls, [])
+        self.agent.approve = lambda *args: self.custody.forget(self.uid)
+        reply, plain = self.operate()
+        self.assertEqual(reply["code"], "EACCESS")
+        self.assertEqual(plain, b"")
+        self.assertEqual(self.client.calls, [])
+
+    def test_owner_is_enforced_even_for_status(self):
+        self.agent.allowed_uid = self.uid + 1
+        reply, plain = self.handle("status")
+        self.assertEqual(reply["code"], "EACCESS")
+        self.assertEqual(plain, b"")
 
     def _during_verify(self, mutate):
         self.deposit()
@@ -464,9 +479,7 @@ class AgentTests(unittest.TestCase):
 
     def test_session_switch_during_verify_returns_no_plaintext(self):
         def switch():
-            write_cgroup(self.agent.proc, 4242, "4")
-            self.agent.session_check = lambda sid: (sid in ("2", "4"), f"session {sid}")
-            self.agent.session_owner = lambda sid: self.uid if sid in ("2", "4") else None
+            self.sessions[4242] = replace(self.sessions[4242], session_id="4")
         reply, plain = self._during_verify(switch)
         self.assertEqual(reply["code"], "EACCESS")
         self.assertIn("session changed", reply["error"])
@@ -474,7 +487,7 @@ class AgentTests(unittest.TestCase):
 
     def test_lock_during_verify_returns_no_plaintext(self):
         def lock_seat():
-            self.agent.session_check = lambda sid: (False, "session locked")
+            self.sessions[4242] = replace(self.sessions[4242], locked=True)
         reply, plain = self._during_verify(lock_seat)
         self.assertEqual(reply["code"], "EACCESS")
         self.assertEqual(plain, b"")
@@ -511,9 +524,15 @@ class AgentTests(unittest.TestCase):
         thread = threading.Thread(target=self.agent.serve, args=(listener,), daemon=True)
         thread.start()
         self.listener = listener
-        self.addCleanup(listener.close)
-        self.addCleanup(thread.join, 2)
-        write_cgroup(self.agent.proc, os.getpid(), "2")
+        def cleanup():
+            try:
+                listener.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            listener.close()
+            thread.join(2)
+        self.addCleanup(cleanup)
+        self.sessions[os.getpid()] = self.sessions[4242]
         return sock_path
 
     def test_socket_round_trip_returns_plaintext_not_the_key(self):
@@ -611,6 +630,21 @@ class AgentTests(unittest.TestCase):
         self.assertIn(b"ETIMEOUT", slow.recv(4096))
         slow.close()
 
+    def test_client_that_does_not_read_releases_its_slot(self):
+        self.agent.reply_deadline = 0.05
+        self.agent.handle = lambda *args: ({"ok": True}, b"x" * (8 * 1024 * 1024))
+        path = self._serve()
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.connect(path)
+            client.sendall(b'{"protocol":1,"op":"status"}\n')
+            end = time.monotonic() + 2
+            while self.agent._inflight == 0 and time.monotonic() < end:
+                time.sleep(0.005)
+            self.assertEqual(self.agent._inflight, 1)
+            while self.agent._inflight and time.monotonic() < end:
+                time.sleep(0.01)
+            self.assertEqual(self.agent._inflight, 0)
+
     def test_per_uid_admit_bound(self):
         self.assertIsNone(self.agent._admit(self.uid))
         self.assertIsNone(self.agent._admit(self.uid))
@@ -640,40 +674,64 @@ class AgentTests(unittest.TestCase):
 
 
 class SessionGateTests(unittest.TestCase):
-    def test_active_seat_requires_owner_seat_and_unlocked(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            sessions = Path(tmp)
-            (sessions / "7").write_text("UID=1000\nACTIVE=1\nSTATE=active\nSEAT=seat0\n")
-            (sessions / "8").write_text("UID=1000\nACTIVE=0\nSTATE=online\nSEAT=\n")
-            (sessions / "1").write_text("UID=1000\nACTIVE=1\nSTATE=active\nSEAT=\n")
-            (sessions / "5").write_text("UID=1000\nACTIVE=1\nSTATE=active\nSEAT=seat0\nLOCKED_HINT=1\n")
-            self.assertTrue(agentmod.session_is_active_seat("7", sessions_dir=sessions)[0])
-            self.assertFalse(agentmod.session_is_active_seat("8", sessions_dir=sessions)[0])
-            self.assertFalse(agentmod.session_is_active_seat("1", sessions_dir=sessions)[0])
-            locked_ok, locked_why = agentmod.session_is_active_seat("5", sessions_dir=sessions)
-            self.assertFalse(locked_ok)
-            self.assertIn("locked", locked_why)
-            self.assertFalse(agentmod.session_is_active_seat("", sessions_dir=sessions)[0])
-            self.assertEqual(agentmod.session_owner_uid("7", sessions_dir=sessions), 1000)
-            self.assertIsNone(agentmod.session_owner_uid("missing", sessions_dir=sessions))
+    def fake_dbus(self, **changes):
+        facts = {"Id": "c7", "User": (1000, "/user/1000"), "Active": True,
+                 "State": "active", "Seat": ("seat0", "/seat/seat0"),
+                 "LockedHint": False, "Remote": False}
+        facts.update(changes)
+        bus = unittest.mock.Mock()
+        manager = unittest.mock.Mock()
+        manager.GetSessionByPID.return_value = "/session/c7"
+        properties = unittest.mock.Mock()
+        properties.GetAll.return_value = facts
+        dbus = SimpleNamespace(SystemBus=unittest.mock.Mock(return_value=bus), UInt32=int,
+                               Interface=unittest.mock.Mock(side_effect=[manager, properties]))
+        return dbus, bus, manager, facts
 
-            def run(argv, **kwargs):
-                return SimpleNamespace(returncode=0, stdout="Active=yes\nState=active\nSeat=seat0\nLockedHint=no\n")
-            self.assertTrue(agentmod.session_is_active_seat("9", run=run, sessions_dir=sessions)[0])
+    def test_reads_live_lock_hint_and_supports_named_sessions(self):
+        dbus, bus, manager, _ = self.fake_dbus(LockedHint=True)
+        session = agentmod.caller_session(42, dbus_module=dbus)
+        self.assertTrue(session.locked)
+        self.assertEqual(session.session_id, "c7")
+        self.assertEqual(session.uid, 1000)
+        manager.GetSessionByPID.assert_called_once_with(42, timeout=5)
+        dbus.SystemBus.assert_called_once_with(private=True)
+        bus.close.assert_called_once_with()
 
-            def locked(argv, **kwargs):
-                return SimpleNamespace(returncode=0, stdout="Active=yes\nState=active\nSeat=seat0\nLockedHint=yes\n")
-            self.assertFalse(agentmod.session_is_active_seat("10", run=locked, sessions_dir=sessions)[0])
+    def test_missing_or_malformed_logind_properties_fail_closed(self):
+        for key in ("LockedHint", "Active", "User", "Seat", "State", "Remote"):
+            with self.subTest(key=key):
+                dbus, bus, _, facts = self.fake_dbus()
+                del facts[key]
+                with self.assertRaises(core.AccessDenied):
+                    agentmod.caller_session(42, dbus_module=dbus)
+                bus.close.assert_called_once_with()
+        dbus, _, _, _ = self.fake_dbus(LockedHint="no")
+        with self.assertRaises(core.AccessDenied):
+            agentmod.caller_session(42, dbus_module=dbus)
 
-    def test_cgroup_scope_ignores_sessionid(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            proc = Path(tmp)
-            write_cgroup(proc, 42, None)
-            self.assertEqual(agentmod.session_of_pid(42, proc=proc), "")
-            write_cgroup(proc, 42, "3")
-            self.assertEqual((proc / "42" / "sessionid").read_text().strip(), "999")
-            self.assertEqual(agentmod.session_of_pid(42, proc=proc), "3")
-            self.assertEqual(agentmod.session_of_pid(True, proc=proc), "")
+    def test_logind_error_and_invalid_pid_fail_closed(self):
+        dbus, bus, manager, _ = self.fake_dbus()
+        manager.GetSessionByPID.side_effect = RuntimeError("logind unavailable")
+        with self.assertRaises(core.AccessDenied):
+            agentmod.caller_session(42, dbus_module=dbus)
+        bus.close.assert_called_once_with()
+        for pid in (True, 0, -1, "42"):
+            with self.assertRaises(core.AccessDenied):
+                agentmod.caller_session(pid, dbus_module=dbus)
+
+    def test_seat_gate_refuses_lock_remote_missing_seat_and_other_owner(self):
+        valid = agentmod.CallerSession("c7", 1000, True, "active", "seat0", False, False)
+        custody = agentmod.Custody(start_timer=False)
+        self.addCleanup(custody.close)
+        agent = agentmod.Agent(custody=custody, session_lookup=lambda pid: valid)
+        self.assertEqual(agent._seat(42, 1000), "c7")
+        for change in ({"locked": True}, {"remote": True}, {"seat": ""}, {"active": False},
+                       {"state": "closing"}, {"uid": 1001}):
+            with self.subTest(change=change):
+                agent.session_lookup = lambda pid: replace(valid, **change)
+                with self.assertRaises(core.AccessDenied):
+                    agent._seat(42, 1000)
 
 
 class CustodyDocsTests(unittest.TestCase):
@@ -692,7 +750,8 @@ class CustodyDocsTests(unittest.TestCase):
             "mlock",
             "Swap and hibernation are not a secrecy boundary",
             "a Python assignment is not evidence of erasure",
-            "session-<id>.scope",
+            "GetSessionByPID",
+            "LockedHint",
             "monotonic deadline",
             "ACTIVE alone is not enough",
             "unlocked",
@@ -935,21 +994,43 @@ class RepairTests(unittest.TestCase):
 
 
 class InstallPlanTests(unittest.TestCase):
-    def test_agent_install_is_refused_before_any_root_command(self):
-        calls = []
+    def test_agent_refusal_precedes_dependency_install_and_discovery(self):
+        for action in ("install", "ensure"):
+            with self.subTest(action=action), \
+                    unittest.mock.patch.object(fl, "install_agent", side_effect=fl.DependencyUnavailable("refused")), \
+                    unittest.mock.patch.object(fl, "missing_packages", return_value=["fprintd"]) as missing, \
+                    unittest.mock.patch.object(fl, "install_packages") as install, \
+                    unittest.mock.patch.object(fl, "run_doctor") as doctor, \
+                    redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(fl.main([action, "--agent", "--yes", "--json"]), 4)
+                self.assertEqual(json.loads(output.getvalue())["code"], "EDEPENDENCY")
+                missing.assert_not_called()
+                install.assert_not_called()
+                doctor.assert_not_called()
 
-        def run(*args, **kwargs):
-            calls.append((args, kwargs))
-            raise AssertionError("root command was started")
+    def test_agent_install_decline_does_not_start_a_root_command(self):
+        run = unittest.mock.Mock(side_effect=AssertionError("root command was started"))
+        with unittest.mock.patch.object(sys.stdin, "isatty", return_value=True), \
+                unittest.mock.patch.object(sys.stderr, "isatty", return_value=True), \
+                redirect_stderr(io.StringIO()), self.assertRaises(fl.DependencyUnavailable):
+            fl.install_agent(yes=False, want_json=False, run=run, ask=lambda prompt: "n")
+        run.assert_not_called()
 
-        with self.assertRaises(fl.DependencyUnavailable) as caught:
-            fl.install_agent(yes=True, want_json=True, run=run, source_dir=Path("/src"))
-        self.assertIn("0666", str(caught.exception))
-        self.assertEqual(calls, [])
-        argvs = fl.agent_install_argvs(Path("/src"))
-        self.assertEqual(argvs[-1], ["systemctl", "enable", "--now", "kilix-fingerlock-agent.socket"])
-        self.assertIn("SocketMode=0666", agentmod.SOCKET_UNIT_TEXT)
-        self.assertIn("ProtectHome=yes", agentmod.SERVICE_UNIT_TEXT)
+    def test_agent_install_sends_only_confirmed_bytes_and_checks_receipt(self):
+        def run(argv, **kwargs):
+            raw = kwargs["input"]
+            digest = hashlib.sha256(raw).hexdigest()
+            self.assertIn(digest, argv)
+            self.assertIn("-I", argv)
+            self.assertNotIn(str(ROOT), " ".join(argv))
+            return SimpleNamespace(returncode=0, stdout=json.dumps(
+                {"ok": True, "sha256": digest, "uid": os.getuid(), "operation": "install"}).encode())
+        with redirect_stderr(io.StringIO()):
+            receipt = fl.install_agent(yes=True, want_json=True, run=run)
+        self.assertTrue(receipt["ok"])
+        bad = unittest.mock.Mock(return_value=SimpleNamespace(returncode=0, stdout=b'{}'))
+        with redirect_stderr(io.StringIO()), self.assertRaises(fl.DependencyUnavailable):
+            fl.install_agent(yes=True, want_json=True, run=bad)
 
 
 if __name__ == "__main__":

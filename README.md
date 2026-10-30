@@ -858,9 +858,8 @@ The lazy install is one fixed command, `apt-get install -y
 (or in `xterm` when the caller has no terminal) after you say yes, or at once
 with `--yes`. Plebian OS points apt at a dated snapshot, so this installs the
 release's versions. No repository is added and no recommends are pulled, so
-installing fprintd never changes how login works. Fingerprint login and sudo
-are a separate, explicit choice: `kilix fingerlock install --pam` adds
-`libpam-fprintd`, which Debian then enables through `pam-auth-update`.
+installing fprintd never changes how login works. This verb leaves login and
+sudo authentication configuration unchanged.
 
 Everything after installation goes through fprintd over the system D-Bus,
 behind polkit. Verifying is allowed from an active seat session. Enrolling and
@@ -882,45 +881,67 @@ and device node.
 ### Locking files and passwords
 
 ```sh
-kilix fingerlock init                     # a passphrase-rooted locker, once
-kilix fingerlock lock holiday.jpg notes/  # -> holiday.jpg.flk; the original is removed
-kilix fingerlock unlock holiday.jpg.flk   # touch the sensor, or type the passphrase
-kilix fingerlock password set wifi        # store a secret by name
-kilix fingerlock password get wifi        # print it after a touch
-kilix fingerlock install --agent          # make unlocking a touch (root, once)
-kilix fingerlock forget                   # lock everything until the passphrase again
+kilix fingerlock init                         # create a passphrase-protected locker
+kilix fingerlock lock holiday.jpg             # publish holiday.jpg.flk, then unlink the source
+kilix fingerlock unlock holiday.jpg.flk       # authenticate the whole container before output
+kilix fingerlock password set wifi            # store an encrypted named secret
+kilix fingerlock password get wifi            # print that secret
+kilix fingerlock forget                       # discard the agent's cached custody
 ```
 
-A fingerprint reader answers "match" or "no match"; it never yields a key. So
-the passphrase is the root of trust, and the fingerprint is how you avoid
-typing it. `init` makes a locker: an X25519 keypair whose seed is wrapped
-under an Argon2id key derived from your passphrase, stored in
-`~/.local/gpu_terminal/fingerlock/locker.json` with the public key in the
-clear. `lock` seals a file to that public key, so locking never asks for
-anything: a random per-file key is sealed into the container header and the
-data follows in authenticated XChaCha20-Poly1305 chunks, each bound to the
-header and its position, so a container that is edited, truncated or
-reordered fails to open. `passwd` changes the passphrase by rewrapping the
-seed; every container stays openable.
+`lock` verifies the recipient public key against the passphrase-derived key
+or against the root agent's custody before sealing. An existing destination,
+a symlink, or a changed source is refused. Use `--keep` to retain the source.
+Unlink removes a directory entry; it is not secure deletion, and other hard
+links and storage remnants can remain. Password replacement publishes the
+new ciphertext atomically and preserves the previous entry if writing fails.
 
-`unlock` needs the private key. Without the agent it asks for the passphrase
-every time and still works everywhere. With the agent installed, the first
-unlock after boot asks for the passphrase and hands the key to
-`kilix-fingerlock-agent`, a small root service (socket-activated, hardened,
-no core dumps) that keeps it in memory for up to `--ttl` seconds (default
-twelve hours). Every later unlock asks the agent, which verifies one of your
-enrolled fingers through fprintd and returns the key only on a match. The
-agent identifies callers by their uid on the socket and refuses any that are
-not in an active seat session, so an SSH login or a cron job cannot pull the
-key even as you. `forget` drops it early; so does a reboot.
+The locker wraps a random X25519 seed under an Argon2id passphrase key.
+Each container uses a random file key and authenticated XChaCha20-Poly1305
+chunks. Unlock authenticates the complete container before publishing a file
+or writing plaintext to stdout. `passwd` rewraps the same seed; existing
+containers stay readable and the underlying key does not rotate.
 
-What this protects: your locked files against another process of yours that
-never touched the sensor, against a stolen disk, and against remote sessions.
-What it does not protect against: root, the kernel, or anything that can read
-the agent's memory, the same boundary fprintd itself has. The primitives are
-libsodium's through `python3-nacl`, installed on first use, and match the ones
-the Kilix credential vault chose, so the locker can move its keys into that
-vault as a presence-gated record once the vault is qualified.
+Without an agent, use the passphrase. The optional root custodian keeps the
+master key in memory and performs bounded decrypt operations. It returns
+plaintext for the approved container and never exports the master key.
+Each fingerprint operation first displays a fresh polkit approval containing
+the requesting process, requested name, byte count and container SHA-256.
+Polkit can require the account password; approval is not cached. After approval,
+touch the sensor. Cancellation, expiry, forget, caller exit, a session change
+or a locked seat refuses the operation. Plaintext already delivered remains
+with its recipient.
+
+Agent installation is explicit:
+
+```sh
+kilix fingerlock install --locker              # fprintd and python3-nacl dependencies
+kilix fingerlock install --agent               # review package digest; authorize root installation
+kilix fingerlock install --agent --rollback    # restore the previous verified agent version
+```
+
+The agent also requires python3-dbus, python3-gi, polkit, systemd/logind and a
+kernel supporting `SO_PEERPIDFD`. Its installer checks Python dependencies
+and does not run apt. The root interpreter verifies the confirmed package
+SHA-256 before executing package code. Code and unit files are stored as a
+complete version under `/usr/local/lib/kilix-fingerlock/versions/`. A single
+per-user `current` link selects the version. Each user has a mode-0600 socket
+under `/run/kilix-fingerlock/`, owned by that user; the service runs as root
+and verifies both the caller UID and live logind session.
+
+Activation stops the old units, switches the version, reloads systemd and
+checks the new custodian. Failures restore the previous version and its
+activation state. An interrupted transaction leaves a journal that the next
+install or rollback recovers first. Verified version directories are retained
+for rollback. Installation and rollback discard cached keys; the next unlock
+requires the locker passphrase again. Existing unmanaged units, modified
+stored code, different polkit policy, and systemd drop-ins require review.
+
+Root, the kernel, and processes able to read agent memory are outside this
+boundary. Custody uses mutable buffers, attempts mlock, disables core dumps
+and reports hardening failures, but Python and cryptographic libraries may
+retain other copies. Swap and hibernation secrecy are not guaranteed. The
+passphrase protects the wrapped seed on disk; use a strong passphrase.
 
 ## Clickable buttons (the headline feature)
 

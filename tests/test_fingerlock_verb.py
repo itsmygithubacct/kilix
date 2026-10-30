@@ -276,7 +276,7 @@ class DiscoveryTests(unittest.TestCase):
 class PackageTests(unittest.TestCase):
     def test_missing_packages_from_dpkg(self):
         run = fake_run(installed=("fprintd",))
-        self.assertEqual(fl.missing_packages(("fprintd", "libpam-fprintd"), run=run), ["libpam-fprintd"])
+        self.assertEqual(fl.missing_packages(("fprintd", "python3-nacl"), run=run), ["python3-nacl"])
 
         def broken(argv, **kwargs):
             raise FileNotFoundError("dpkg-query")
@@ -394,7 +394,7 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(status["packages"], "fail")
         self.assertEqual(status["libfprint"], "fail")
         self.assertEqual(status["fprintd-reachable"], "skip")
-        self.assertEqual(report.missing_packages, ["fprintd", "python3-nacl"])
+        self.assertEqual(report.missing_packages, ["fprintd"])
         self.assertFalse(report.usable)
         self.assertEqual({c.id: c.hint for c in report.checks}["packages"], "kilix fingerlock install")
         status_by_id = {c.id: c.status for c in report.checks}
@@ -413,16 +413,18 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(report.enrolled, {PATH: ["left-thumb"]})
         self.assertEqual(report.as_dict(redact=True)["readers"][0]["serial"], fl.REDACTED)
 
-    def test_pam_is_required_only_when_asked(self):
+    def test_reader_does_not_require_locker_dependency_or_enable_pam(self):
         build_tree(self.root, hwdb=True, fprintd=True)
         client = client_for(FakeDevice())
-        self.assertTrue(self.doctor(client=client).usable)
-        report = self.doctor(client=client, with_pam=True)
-        self.assertEqual(report.missing_packages, ["libpam-fprintd"])
         report = self.doctor(client=client, run=fake_run(installed=("fprintd",)))
+        self.assertEqual(report.missing_packages, [])
+        self.assertTrue(report.usable)
+        report = self.doctor(client=client, with_locker=True, run=fake_run(installed=("fprintd",)))
         self.assertEqual(report.missing_packages, ["python3-nacl"])
         self.assertFalse(report.usable)
-        self.assertFalse(report.usable)
+        with redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(fl.main(["install", "--pam", "--json"]), 2)
+        self.assertEqual(json.loads(output.getvalue())["code"], "EUSAGE")
 
     def test_no_reader(self):
         report = self.doctor()

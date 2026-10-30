@@ -15,8 +15,7 @@ polkit authentication agent, and acting for another user needs an
 administrator's. `--tty-agent` runs pkttyagent for the duration of one
 command when the session has no resident agent.
 
-Lazy installation. The only packages needed are Debian's own (`fprintd`, and
-`libpam-fprintd` when fingerprint login is explicitly requested). They are
+Lazy installation. The only packages needed are Debian's own (`fprintd` for the reader and `python3-nacl` for an explicitly requested locker). They are
 installed with one fixed argv, `apt-get install -y --no-install-recommends`,
 elevated through sudo in the caller's terminal, or through xterm when the
 caller has none. Plebian OS points apt at a dated snapshot, so the versions
@@ -47,6 +46,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import hashlib
 import grp
 import io
 import json
@@ -75,6 +75,8 @@ from fingerlock_core import (  # noqa: E402
 )
 
 import fingerlock_agent as agentmod  # noqa: E402
+import fingerlock_install as agentinstall  # noqa: E402
+import fingerlock_policy as agentpolicy  # noqa: E402
 import fingerlock_locker as lockermod  # noqa: E402
 from fingerlock_locker import Locker, LockerError, WrongPassphrase  # noqa: E402
 
@@ -85,8 +87,6 @@ REDACTED = "<redacted>"
 
 PACKAGES: tuple[str, ...] = ("fprintd",)
 LOCKER_PACKAGES: tuple[str, ...] = lockermod.LOCKER_PACKAGES   # ("python3-nacl",)
-PAM_PACKAGES: tuple[str, ...] = ("libpam-fprintd",)
-AGENT_FILES: tuple[str, ...] = ("fingerlock_core.py", "fingerlock_agent.py")
 INSTALL_ARGV: tuple[str, ...] = ("apt-get", "install", "-y", "--no-install-recommends")
 INSTALL_HINT = f"{PROG} install"
 
@@ -118,7 +118,6 @@ LIBFPRINT_LIBRARY_GLOBS = (
 )
 FPRINTD_SERVICE_FILE = "usr/share/dbus-1/system-services/net.reactivated.Fprint.service"
 FPRINTD_UNIT_FILE = "usr/lib/systemd/system/fprintd.service"
-PAM_MODULE_GLOBS = ("usr/lib/*/security/pam_fprintd.so", "usr/lib/security/pam_fprintd.so")
 VENDOR_SPECIFIC_CLASS = "ff"
 HWDB_DRIVER_MARKER = "# Supported by libfprint driver "
 
@@ -486,7 +485,7 @@ def run_doctor(*, root: str | os.PathLike[str] = "/", client: FprintdClient | No
                proc: str | os.PathLike[str] = "/proc",
                history: Callable[..., PortHistory] = port_history,
                access: Callable[[str, int], bool] = os.access,
-               with_pam: bool = False, with_locker: bool = True,
+               with_locker: bool = False,
                locker_home: Path | None = None) -> Report:
     base, proc_path = Path(root), Path(proc)
     environ = os.environ if environ is None else environ
@@ -503,7 +502,7 @@ def run_doctor(*, root: str | os.PathLike[str] = "/", client: FprintdClient | No
         checks.append(Check("reader", "fail", "no USB fingerprint reader found",
                             "compare lsusb; SPI and embedded readers are not covered yet"))
 
-    wanted = PACKAGES + (LOCKER_PACKAGES if with_locker else ()) + (PAM_PACKAGES if with_pam else ())
+    wanted = PACKAGES + (LOCKER_PACKAGES if with_locker else ())
     report.missing_packages = missing_packages(wanted, run=run)
     if report.missing_packages:
         checks.append(Check("packages", "fail",
@@ -587,21 +586,18 @@ def run_doctor(*, root: str | os.PathLike[str] = "/", client: FprintdClient | No
         else:
             checks.append(Check("usb-stability", "ok", f"port enumerated {port.enumerations} time(s) this boot"))
 
-    pam = _first_glob(base, PAM_MODULE_GLOBS)
-    checks.append(Check("pam", "info", f"pam_fprintd present ({pam}); fingerprint login is possible") if pam else
-                  Check("pam", "info", "libpam-fprintd not installed; login stays password-only (optional: install --pam)"))
-
     locker = Locker(locker_home)
     checks.append(Check("locker", "info", f"locker at {locker.path}") if locker.exists() else
                   Check("locker", "info", f"no locker yet ({PROG} init creates one at {locker.path})"))
-    unit = base / "etc/systemd/system" / agentmod.SERVICE_UNIT
+    socket_unit, service_unit = agentinstall.unit_names(os.getuid())
+    unit = base / "etc/systemd/system" / service_unit
     sock = base / agentmod.SOCKET_PATH.lstrip("/")
     if not unit.is_file():
         checks.append(Check("agent", "info", "fingerprint-gated unlock agent not installed "
                             f"({PROG} install --agent); unlocking asks for the passphrase"))
     elif not sock.exists():
         checks.append(Check("agent", "warn", "agent installed but its socket is absent",
-                            f"sudo systemctl enable --now {agentmod.SOCKET_UNIT}"))
+                            f"sudo systemctl enable --now {socket_unit}"))
     else:
         checks.append(Check("agent", "ok", f"agent socket present at {agentmod.SOCKET_PATH}"))
     return report
@@ -715,7 +711,7 @@ def _run_scan(args: argparse.Namespace, kind: str) -> tuple[Session, DeviceInfo]
 
 
 def cmd_status(args: argparse.Namespace) -> int:
-    report = run_doctor(with_pam=args.pam)
+    report = run_doctor(with_locker=getattr(args, "locker", False))
     data = report.as_dict(redact=args.redact)
     if args.json:
         emit_json("status", data)
@@ -737,7 +733,7 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
-    report = run_doctor(with_pam=args.pam)
+    report = run_doctor(with_locker=getattr(args, "locker", False))
     if args.json:
         emit_json("doctor", report.as_dict(redact=args.redact))
     else:
@@ -745,67 +741,90 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 0 if report.usable else 1
 
 
-def agent_install_argvs(source_dir: Path) -> list[list[str]]:
-    """The fixed root commands that stage the agent: files, units, enable."""
-    argvs: list[list[str]] = []
-    for name in AGENT_FILES:
-        argvs.append(["install", "-D", "-m", "0644", "-o", "root", "-g", "root",
-                      str(source_dir / name), f"{agentmod.INSTALL_DIR}/{name}"])
-    argvs.append(["install", "-D", "-m", "0644", "-o", "root", "-g", "root",
-                  str(source_dir / "units" / agentmod.SOCKET_UNIT), f"/etc/systemd/system/{agentmod.SOCKET_UNIT}"])
-    argvs.append(["install", "-D", "-m", "0644", "-o", "root", "-g", "root",
-                  str(source_dir / "units" / agentmod.SERVICE_UNIT), f"/etc/systemd/system/{agentmod.SERVICE_UNIT}"])
-    argvs.append(["systemctl", "daemon-reload"])
-    argvs.append(["systemctl", "enable", "--now", agentmod.SOCKET_UNIT])
-    return argvs
-
-
 def install_agent(*, yes: bool, want_json: bool, run: Callable[..., Any] = subprocess.run,
-                  ask: Callable[[str], str] = input, source_dir: Path | None = None) -> list[list[str]]:
-    """Refuse to install the root agent.
-
-    The unit text still listens on a mode-0666 socket, and this verb has no
-    hash-bound package or rollback. Refusal happens before any unit file is
-    written and before any root command. ``yes``, ``run``, ``ask`` and
-    ``source_dir`` stay in the signature so callers do not grow a second path.
-    """
-    del yes, want_json, run, ask, source_dir
-    raise DependencyUnavailable(
-        "agent installation is refused: the socket is mode 0666 and this verb "
-        "has no hash-bound package or rollback")
+                  ask: Callable[[str], str] = input, source_dir: Path | None = None,
+                  rollback: bool = False) -> dict[str, Any]:
+    """Confirm one package digest and send those bytes to an isolated root verifier."""
+    uid = os.getuid()
+    if uid == 0:
+        try:
+            uid = int(os.environ.get("SUDO_UID", "0"))
+        except ValueError as exc:
+            raise DependencyUnavailable("run the installer from the owning user's terminal") from exc
+    try:
+        raw = agentinstall.build_package(source_dir or Path(__file__).parent, uid, agentpolicy.POLICY_XML)
+    except (OSError, agentinstall.InstallError) as exc:
+        raise DependencyUnavailable(f"cannot prepare the agent package: {exc}") from exc
+    digest = hashlib.sha256(raw).hexdigest()
+    operation = "roll back" if rollback else "install"
+    sys.stderr.write(f"Fingerlock: {operation} the root custodian for uid {uid}.\n"
+                     "Unlocks require fresh polkit approval and a fingerprint match.\n"
+                     "Activation restarts custody; enter the locker passphrase again afterward.\n"
+                     f"Installer package SHA-256: {digest}\n")
+    if not yes:
+        if want_json or not sys.stdin.isatty() or not sys.stderr.isatty():
+            raise DependencyUnavailable("agent installation requires a terminal or explicit --yes")
+        if ask("proceed? [y/N] ").strip().lower() not in ("y", "yes"):
+            raise DependencyUnavailable("installation declined")
+    argv = agentinstall.install_argv(raw, uid, rollback=rollback)
+    if os.geteuid() != 0:
+        argv = ["/usr/bin/sudo", *([] if sys.stdin.isatty() else ["-n"]), "--", *argv]
+    try:
+        result = run(argv, input=raw, stdout=subprocess.PIPE, check=False)
+    except OSError as exc:
+        raise DependencyUnavailable(f"cannot start the agent installer: {exc}") from exc
+    if result.returncode:
+        raise DependencyUnavailable(f"agent installation failed (exit {result.returncode}); see installer output")
+    try:
+        receipt = json.loads(result.stdout)
+        if (receipt.get("ok") is not True or receipt.get("uid") != uid
+                or receipt.get("operation") != ("rollback" if rollback else "install")
+                or not agentinstall.SHA.fullmatch(receipt.get("sha256", ""))
+                or not rollback and receipt["sha256"] != digest):
+            raise ValueError("receipt mismatch")
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise DependencyUnavailable("agent installer did not return a matching success receipt") from exc
+    return receipt
 
 
 def cmd_install(args: argparse.Namespace) -> int:
-    wanted = PACKAGES + LOCKER_PACKAGES + (PAM_PACKAGES if args.pam else ())
+    # Agent setup owns its complete transaction and never falls through to apt.
+    if args.rollback and not args.agent:
+        raise UsageError("--rollback requires --agent")
+    if args.agent:
+        receipt = install_agent(yes=args.yes, want_json=args.json, rollback=args.rollback)
+        if args.json:
+            emit_json("install", {"agent": receipt})
+        else:
+            sys.stdout.write(f"agent active for uid {receipt['uid']}: {receipt['sha256']}\n")
+        return 0
+    wanted = PACKAGES + (LOCKER_PACKAGES if args.locker else ())
     missing = missing_packages(wanted)
     if missing:
         install_packages(missing, yes=args.yes, want_json=args.json)
-    agent_steps: list[list[str]] = []
-    if args.agent:
-        agent_steps = install_agent(yes=args.yes, want_json=args.json)
-    report = run_doctor(with_pam=args.pam)
-    data = {"requested": list(wanted), "installed_now": missing, "agent_steps": agent_steps,
+    report = run_doctor(with_locker=getattr(args, "locker", False))
+    data = {"requested": list(wanted), "installed_now": missing, "agent_steps": [],
             "report": report.as_dict(redact=args.redact)}
     if args.json:
         emit_json("install", data)
     else:
         sys.stdout.write(("installed " + ", ".join(missing) if missing else "nothing to install; " + ", ".join(wanted) + " present") + "\n")
-        if agent_steps:
-            sys.stdout.write("agent installed and enabled\n")
         _print_report(report)
     return 0 if report.usable else 1
 
 
 def cmd_ensure(args: argparse.Namespace) -> int:
     """The default: access the reader if present, installing on first use."""
-    report = run_doctor(with_pam=args.pam)
+    if args.agent or args.rollback:
+        return cmd_install(args)
+    report = run_doctor(with_locker=getattr(args, "locker", False))
     if not report.readers:
         raise DeviceNotFound("no USB fingerprint reader found on this machine")
     if report.missing_packages:
         sys.stderr.write(f"{PROG}: {report.readers[0].label} found; "
                          f"{', '.join(report.missing_packages)} not installed yet\n")
         install_packages(report.missing_packages, yes=args.yes, want_json=args.json)
-        report = run_doctor(with_pam=args.pam)
+        report = run_doctor(with_locker=getattr(args, "locker", False))
     data = report.as_dict(redact=args.redact)
     if args.json:
         emit_json("ensure", data)
@@ -1239,11 +1258,11 @@ def _common(parser: argparse.ArgumentParser, *, auth: bool = False, install: boo
     parser.add_argument("--json", action="store_true", help="emit one kilix.fingerlock/v1 object")
     parser.add_argument("--redact", action="store_true", help="remove serial numbers and USB topology")
     if install:
-        parser.add_argument("--pam", action="store_true",
-                            help="also want libpam-fprintd, which enables fingerprint login and sudo")
+        parser.add_argument("--locker", action="store_true", help="also install the file/password locker dependency")
         parser.add_argument("--yes", action="store_true", help="install without asking (sudo may still prompt)")
         parser.add_argument("--agent", action="store_true",
-                            help="also install the root agent that makes unlocking a fingerprint touch")
+                            help="install the per-user root custodian with polkit approval and fingerprint checks")
+        parser.add_argument("--rollback", action="store_true", help="with --agent, activate its previous verified version")
     if auth:
         parser.add_argument("--user", default="", metavar="NAME",
                             help="act for another user (needs administrative polkit approval)")
@@ -1265,12 +1284,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     status = subparsers.add_parser("status", help="one-screen state: reader, packages, daemon, enrolled fingers")
     _common(status)
-    status.add_argument("--pam", action="store_true", help="count libpam-fprintd as required")
+    status.add_argument("--locker", action="store_true", help="also check the locker dependency")
     status.set_defaults(handler=cmd_status)
 
     doctor = subparsers.add_parser("doctor", help="every check between this session and the reader")
     _common(doctor)
-    doctor.add_argument("--pam", action="store_true", help="count libpam-fprintd as required")
+    doctor.add_argument("--locker", action="store_true", help="also check the locker dependency")
     doctor.set_defaults(handler=cmd_doctor)
 
     install = subparsers.add_parser("install", help="install the Debian packages the reader needs")

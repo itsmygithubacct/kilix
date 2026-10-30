@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import os
 import select
+import signal
+import threading
 import subprocess
 import sys
 import time
@@ -163,7 +165,7 @@ class SystemBus:
         if predicate():
             return True
         loop = self._glib.MainLoop()
-        state = {"timed_out": False}
+        state = {"timed_out": False, "interrupted": False, "finished": False}
 
         def on_timeout() -> bool:
             state["timed_out"] = True
@@ -172,14 +174,35 @@ class SystemBus:
 
         def poll() -> bool:
             if predicate():
+                state["finished"] = True
                 loop.quit()
                 return False
             return True
 
-        self._glib.timeout_add(max(1, int(timeout * 1000)), on_timeout)
-        self._glib.timeout_add(100, poll)
-        loop.run()
-        return not state["timed_out"] and predicate()
+        def on_sigint() -> bool:
+            state["interrupted"] = True
+            loop.quit()
+            return False
+
+        timeout_id = self._glib.timeout_add(max(1, int(timeout * 1000)), on_timeout)
+        poll_id = self._glib.timeout_add(100, poll)
+        sig_id = None
+        # A root-agent scan runs on a worker; only the CLI's main thread owns SIGINT.
+        if threading.current_thread() is threading.main_thread():
+            sig_id = self._glib.unix_signal_add(self._glib.PRIORITY_DEFAULT, signal.SIGINT, on_sigint)
+        try:
+            loop.run()
+        finally:
+            # A false callback return already removed that source.
+            if not state["timed_out"]:
+                self._glib.source_remove(timeout_id)
+            if not state["finished"]:
+                self._glib.source_remove(poll_id)
+            if sig_id is not None and not state["interrupted"]:
+                self._glib.source_remove(sig_id)
+        if state["interrupted"]:
+            raise KeyboardInterrupt
+        return not state["timed_out"]
 
 
 @dataclass(frozen=True)
@@ -491,5 +514,3 @@ class TtyAgent:
                 self.process.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 self.process.kill()
-
-

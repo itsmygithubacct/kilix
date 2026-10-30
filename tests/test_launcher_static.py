@@ -323,7 +323,8 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn('INSTALL_ARGV: tuple[str, ...] = ("apt-get", "install", "-y", "--no-install-recommends")',
                       module)
         self.assertIn('PACKAGES: tuple[str, ...] = ("fprintd",)', module)
-        self.assertIn('PAM_PACKAGES: tuple[str, ...] = ("libpam-fprintd",)', module)
+        self.assertNotIn("PAM_PACKAGES", module)
+        self.assertNotIn("--pam", module)
         for action in ("ensure", "status", "doctor", "install", "list", "enroll", "verify", "delete",
                        "init", "passwd", "lock", "unlock", "password", "forget", "agent"):
             self.assertIn(f'subparsers.add_parser("{action}"', module)
@@ -333,8 +334,8 @@ class KilixLauncherTests(unittest.TestCase):
         agent = (ROOT / "config" / "fingerlock_agent.py").read_text()
         self.assertIn('if session.result != "verify-match":', agent)
         self.assertIn("SO_PEERCRED", agent)
-        for hardening in ("NoNewPrivileges=yes", "ProtectHome=yes", "LimitCORE=0", "SocketMode=0666"):
-            self.assertIn(hardening, agent)
+        for hardening in ("NoNewPrivileges=yes", "ProtectHome=yes", "LimitCORE=0", "SocketMode=0600"):
+            self.assertIn(hardening, (ROOT / "config" / "fingerlock_install.py").read_text())
         self.assertIn('LOCKER_PACKAGES: tuple[str, ...] = ("python3-nacl",)',
                       (ROOT / "config" / "fingerlock_locker.py").read_text())
 
