@@ -204,10 +204,25 @@ class InstallationTests(unittest.TestCase):
         self.assertEqual(unit.read_text(), "owned by another installer")
         self.assertEqual(self.system.calls, [])
 
+    def test_managed_link_can_be_replaced_without_access_to_its_target(self):
+        self.units.mkdir(parents=True)
+        blocked = self.root / "unreadable"
+        blocked.mkdir(mode=0o700)
+        link = self.units / install.unit_names(self.uid)[0]
+        link.symlink_to(blocked / "target")
+        blocked.chmod(0)
+        try:
+            self.installer._link(link, "/replacement")
+            self.assertEqual(os.readlink(link), "/replacement")
+            self.installer._link(link, None)
+            self.assertFalse(os.path.lexists(link))
+        finally:
+            blocked.chmod(0o700)
+
     def tearDown(self):
         # Test fixtures use the real immutable modes, so permit their cleanup.
         for path in self.root.rglob("*"):
-            if path.is_dir() and not path.is_symlink():
+            if not path.is_symlink() and path.is_dir():
                 path.chmod(0o700)
 
 

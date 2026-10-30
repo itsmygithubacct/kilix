@@ -861,6 +861,11 @@ release's versions. No repository is added and no recommends are pulled, so
 installing fprintd never changes how login works. This verb leaves login and
 sudo authentication configuration unchanged.
 
+When only one finger is enrolled, default verification selects it explicitly.
+With several enrolled fingers, fprintd handles the automatic selection.
+Use `verify right-index-finger` or a locker command's `--finger right-index-finger`
+option to select a particular finger.
+
 Everything after installation goes through fprintd over the system D-Bus,
 behind polkit. Verifying is allowed from an active seat session. Enrolling and
 deleting also need your password through a polkit authentication agent, and a
