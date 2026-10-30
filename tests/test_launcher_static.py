@@ -289,6 +289,27 @@ class KilixLauncherTests(unittest.TestCase):
         power_case = text.split("power|--power)")[1].split(";;")[0]
         self.assertNotIn("read ", power_case)     # no prompting, ever
 
+    def test_fingerlock_verb_is_host_owned_and_installs_lazily(self):
+        # `kilix fingerlock` is the host verb for the fingerprint reader:
+        # read-only USB discovery, one fixed apt-get argv run as root, and
+        # fprintd over D-Bus behind polkit. It does not install a login
+        # module and it does not lock files or the screen.
+        text = (ROOT / "kilix").read_text()
+        self.assertIn("fingerlock|--fingerlock|fingerprint)", text)
+        case = text.split("fingerlock|--fingerlock|fingerprint)")[1].split(";;")[0]
+        self.assertIn('exec python3 -B "$KILIX_HOME/config/fingerlock.py"', case)
+        self.assertNotIn("--pam", case)
+        module = (ROOT / "config" / "fingerlock.py").read_text()
+        self.assertIn('INSTALL_ARGV: tuple[str, ...] = ("apt-get", "install", "-y", "--no-install-recommends")',
+                      module)
+        self.assertIn('PACKAGES: tuple[str, ...] = ("fprintd",)', module)
+        for banned in ("PAM_PACKAGES", "libpam", "--pam", "with_pam", "pam_fprintd"):
+            self.assertNotIn(banned, module)
+        for action in ("ensure", "status", "doctor", "install", "list",
+                       "enroll", "verify", "delete"):
+            self.assertIn(f'subparsers.add_parser("{action}"', module)
+        self.assertNotIn("os.open(", module)   # the reader's USB node is never opened
+
     def test_security_password_status_is_machine_readable(self):
         text = (ROOT / "kilix").read_text()
         self.assertIn("security|--security)", text)

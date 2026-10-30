@@ -50,6 +50,11 @@ The reviewed source integration is selected for the coordinated Plebian-OS
 pending; supported upgrade paths are defined by the
 [OS upgrade policy](https://github.com/itsmygithubacct/plebian-os/blob/main/UPGRADING.md).
 
+`kilix fingerlock` finds a USB fingerprint reader, installs Debian `fprintd`
+on first use after an explicit yes, and enrolls, verifies, lists, or deletes
+fingers through fprintd. A verify result checks the reader. It does not unlock
+the screen, change login, or install `libpam-fprintd`.
+
 Amp and `kilix-music` share one per-user playback service, queue, transport
 controls and EQ. General music uses the selected `kilix-mpv` runtime; native
 EnCodec files and live streams retain their decoder and admission path.
@@ -1559,6 +1564,7 @@ kilix tts --interactive --download-qwen qwen3-tts-0.6b-base --synthetic-referenc
 kilix tts --interactive --download-qwen qwen3-tts-1.7b-voicedesign --description 'A warm clear voice'
 kilix tts --speak 'Hello' --model qwen3-tts-0.6b-customvoice # explicit provider path
 kilix voice doctor                # dependency and audio-device diagnostics
+kilix fingerlock                  # fingerprint reader: install fprintd on first use, enroll, verify
 kilix tts                         # read-aloud settings and test-phrase TUI
 kilix stt                         # dictation settings and microphone-level TUI
 kilix speak "hello"               # read explicit text aloud
@@ -1697,6 +1703,41 @@ kilix-diarization-cpu --supplied /absolute/path/to/population` under the same
 agreement and digest checks. Runtime inference uses ONNX and does not load
 the source pickle or import Torch. Quality and sustained-load qualification
 remain separate from these commands.
+
+## Fingerprint reader
+
+`kilix fingerlock` is the host verb for the machine's USB fingerprint reader.
+With no arguments it finds the reader, installs Debian `fprintd` the first
+time it is asked to, and reports what is enrolled:
+
+```sh
+kilix fingerlock                  # find the reader; install fprintd on first use
+kilix fingerlock enroll           # enroll the right index finger (or name one)
+kilix fingerlock verify           # touch the sensor; exit 0 on a match, 8 on none
+kilix fingerlock list             # enrolled fingers
+kilix fingerlock delete --all     # forget them
+kilix fingerlock doctor --json    # every check, as one kilix.fingerlock/v1 object
+```
+
+Discovery is read-only: the verb reads sysfs and asks the kernel whether the
+USB node is openable, and never opens it. Support is decided by libfprint's
+own hardware database once it is installed.
+
+The lazy install is one fixed command, `apt-get install -y
+--no-install-recommends fprintd`, run as root through `sudo` in your terminal
+(or in `xterm` when the caller has no terminal) after you say yes, or at once
+with `--yes`. Plebian OS points apt at a dated snapshot, so this installs the
+release's versions. No repository is added and no recommends are pulled.
+`libpam-fprintd` is not installed, and login is left unchanged.
+
+Everything after installation goes through fprintd over the system D-Bus,
+behind polkit. Verifying is allowed from an active seat session. Enrolling and
+deleting also need your password through a polkit authentication agent, and a
+bare terminal session may not have one: `--tty-agent` runs `pkttyagent` for
+the duration of the command. A successful `verify` checks the reader. It is
+not a screen-lock token and it does not unlock a session. Exit statuses are
+stable and documented at the top of `config/fingerlock.py`. Use `--redact`
+before sharing output: it removes the USB serial, port, and device node.
 
 ## Read aloud and dictation
 

@@ -52,6 +52,7 @@
 #   ./kilix claudex usage     # read Codex, Claude, Grok, and Qwen usage
 #   ./kilix tts | stt [args]  # run the read-aloud / dictation TUIs
 #   ./kilix voice status      # voice status, install, doctor, stop
+#   ./kilix fingerlock [args] # fingerprint reader: find it, install fprintd lazily, enroll, verify
 #   ./kilix avatar [args]     # conversational avatar and private Codex setup
 #   ./kilix bonsai [args]     # BitNet model store: browse, download, verify
 #   ./kilix rtsp [args]       # watch RTSP cameras: view one, or a grid
@@ -4473,6 +4474,18 @@ sys.exit(0 if ready else 1)
         echo "usage: $_self voice [status|install|vibeasr|whisper|whistle|doctor|stop|daemon]" >&2
         exit 2 ;;
     esac ;;
+  fingerlock|--fingerlock|fingerprint)
+    # The fingerprint reader as a host verb: ensure (default) | status |
+    # doctor | install | list | enroll [FINGER] | verify [FINGER] | delete.
+    # config/fingerlock.py owns it: read-only USB discovery, the Debian
+    # lazy install (apt-get install -y --no-install-recommends fprintd, run
+    # as root through sudo in this terminal, or xterm when there is none),
+    # and fprintd over the system D-Bus behind polkit. The USB node itself
+    # is never opened. This verb does not change login and does not lock
+    # files or the screen. A verify result is a reader check, not a lock token.
+    shift
+    export KILIX_HOME
+    exec python3 -B "$KILIX_HOME/config/fingerlock.py" "$@" ;;
   power|--power)
     # Host-owned session/power actions, one per argv. The argv list is a
     # frozen contract mirrored from kilix-tui-utils'
