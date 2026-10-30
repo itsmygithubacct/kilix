@@ -188,15 +188,35 @@ class SkillsTests(unittest.TestCase):
                     os.mkfifo(entry)
                 else:
                     entry.symlink_to(self.source if kind == "live" else self.base / "absent")
-                before = (entry.lstat(), os.readlink(entry) if entry.is_symlink() else None)
-                with self.assertRaises(skills.Conflict):
-                    self.call()
-                self.assertEqual(entry.lstat(), before[0])
-                self.assertFalse(os.path.lexists(self.root / "kilix"))
-                if entry.is_dir() and not entry.is_symlink():
-                    entry.rmdir()
-                else:
-                    entry.unlink()
+                    # Reading a symlink may update atime on relatime mounts.
+                    # Make that case deliberate instead of depending on the
+                    # test and installer running within the same clock tick.
+                    os.utime(entry, ns=(1_000_000_000, 2_000_000_000), follow_symlinks=False)
+
+                def metadata():
+                    info = entry.lstat()
+                    return (info.st_mode, info.st_ino, info.st_dev, info.st_nlink,
+                            info.st_uid, info.st_gid, info.st_size,
+                            info.st_mtime_ns, info.st_ctime_ns)
+
+                target = os.readlink(entry) if entry.is_symlink() else None
+                before = metadata()
+                try:
+                    with self.assertRaises(skills.Conflict):
+                        self.call()
+                    self.assertEqual(metadata(), before)
+                    if target is not None:
+                        self.assertEqual(os.readlink(entry), target)
+                    elif kind == "file":
+                        self.assertEqual(entry.read_text(), "user")
+                    elif kind == "directory":
+                        self.assertEqual(list(entry.iterdir()), [])
+                    self.assertFalse(os.path.lexists(self.root / "kilix"))
+                finally:
+                    if entry.is_dir() and not entry.is_symlink():
+                        entry.rmdir()
+                    else:
+                        entry.unlink()
 
     def test_flat_and_legacy_copies_refuse_without_duplicate_registration(self):
         for relative in (".agents/skills/kilix.md", ".codex/skills/kilix",
