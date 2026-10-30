@@ -592,7 +592,9 @@ def run_doctor(*, root: str | os.PathLike[str] = "/", client: FprintdClient | No
     socket_unit, service_unit = agentinstall.unit_names(os.getuid())
     unit = base / "etc/systemd/system" / service_unit
     sock = base / agentmod.SOCKET_PATH.lstrip("/")
-    if not unit.is_file():
+    # Managed unit links can point through root-only installation directories.
+    # Inspect the link itself; doctor does not need to read the service code.
+    if not (unit.is_symlink() or unit.is_file()):
         checks.append(Check("agent", "info", "fingerprint-gated unlock agent not installed "
                             f"({PROG} install --agent); unlocking asks for the passphrase"))
     elif not sock.exists():

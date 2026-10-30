@@ -419,6 +419,23 @@ class DoctorTests(unittest.TestCase):
     def statuses(self, report):
         return {c.id: c.status for c in report.checks}
 
+    def test_installed_agent_link_can_point_into_a_root_only_directory(self):
+        build_tree(self.root)
+        protected = self.root / "private-code"
+        protected.mkdir()
+        (protected / "agent.service").write_text("[Service]\n")
+        unit = self.root / "etc/systemd/system" / fl.agentinstall.unit_names(os.getuid())[1]
+        unit.parent.mkdir(parents=True, exist_ok=True)
+        unit.symlink_to(protected / "agent.service")
+        protected.chmod(0)
+        try:
+            report = self.doctor(client=client_for(FakeDevice(enrolled=["right-index-finger"])))
+            self.assertEqual(self.statuses(report)["agent"], "warn")
+            agent_check = next(check for check in report.checks if check.id == "agent")
+            self.assertIn("socket is absent", agent_check.summary)
+        finally:
+            protected.chmod(0o700)
+
     def test_bare_host_names_the_install_step(self):
         build_tree(self.root)
         report = self.doctor(run=fake_run(installed=()))
