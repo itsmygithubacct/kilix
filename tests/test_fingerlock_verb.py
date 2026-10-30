@@ -169,6 +169,7 @@ class FakeDevice:
         self.calls.append(("VerifyStop",))
 
     def ListEnrolledFingers(self, username, **kw):
+        self.calls.append(("ListEnrolledFingers", username))
         if not self.enrolled:
             return self._respond("ListEnrolledFingers", kw,
                                  error=FakeDBusException(fl.ERROR_PREFIX + "NoEnrolledPrints", "none"))
@@ -336,7 +337,39 @@ class ClientTests(unittest.TestCase):
         session = client_for(device, auth_timeout=7).verify(PATH)
         self.assertTrue(session.succeeded)
         self.assertEqual(session.selected_finger, "right-index-finger")
-        self.assertEqual(device.gated, [("Claim", 7)])
+        self.assertEqual(device.gated, [("Claim", 7), ("ListEnrolledFingers", 7)])
+
+    def test_default_verification_selects_the_only_enrolled_finger_for_claimed_user(self):
+        device = FakeDevice(script=[("verify-match", True)], enrolled=["right-index-finger"])
+        session = client_for(device).verify(PATH, username="demo")
+        self.assertTrue(session.succeeded)
+        self.assertIn(("Claim", "demo"), device.calls)
+        self.assertIn(("ListEnrolledFingers", "demo"), device.calls)
+        self.assertIn(("VerifyStart", "right-index-finger"), device.calls)
+        self.assertEqual(device.calls[-2:], [("VerifyStop",), ("Release",)])
+
+    def test_default_verification_defers_to_daemon_without_a_single_print(self):
+        for enrolled in ([], ["left-thumb", "right-thumb"]):
+            with self.subTest(enrolled=enrolled):
+                device = FakeDevice(script=[("verify-match", True)], enrolled=enrolled)
+                client_for(device).verify(PATH)
+                self.assertIn(("VerifyStart", "any"), device.calls)
+
+    def test_explicit_verification_does_not_query_or_replace_selection(self):
+        device = FakeDevice(script=[("verify-match", True)], enrolled=["left-thumb"])
+        client_for(device).verify(PATH, "right-index-finger")
+        self.assertIn(("VerifyStart", "right-index-finger"), device.calls)
+        self.assertFalse(any(call[0] == "ListEnrolledFingers" for call in device.calls))
+
+    def test_default_verification_query_denial_releases_device_without_scanning(self):
+        device = FakeDevice()
+        error = FakeDBusException(fl.ERROR_PREFIX + "PermissionDenied", "not allowed")
+        with unittest.mock.patch.object(device, "ListEnrolledFingers", side_effect=error):
+            with self.assertRaises(fl.AccessDenied):
+                client_for(device).verify(PATH)
+        self.assertFalse(any(call[0] == "VerifyStart" for call in device.calls))
+        self.assertEqual(device.calls[-2:], [("VerifyStop",), ("Release",)])
+        self.assertTrue(all(match.removed for match in device.matches))
 
     def test_unanswered_prompt_is_a_timeout_with_the_session(self):
         device = FakeDevice(start_error=FakeDBusException(fl.NO_REPLY, "Did not receive a reply."))

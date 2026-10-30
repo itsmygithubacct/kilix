@@ -1730,6 +1730,11 @@ with `--yes`. Plebian OS points apt at a dated snapshot, so this installs the
 release's versions. No repository is added and no recommends are pulled.
 `libpam-fprintd` is not installed, and login is left unchanged.
 
+When only one finger is enrolled, default verification selects it explicitly.
+With several enrolled fingers, fprintd handles the automatic selection.
+Use `verify right-index-finger` or a locker command's `--finger right-index-finger`
+option to select a particular finger.
+
 Everything after installation goes through fprintd over the system D-Bus,
 behind polkit. Verifying is allowed from an active seat session. Enrolling and
 deleting also need your password through a polkit authentication agent, and a
