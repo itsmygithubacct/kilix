@@ -297,4 +297,50 @@ with conf(b"# note: caf\xe9 sync\nfont_size 13\n", binary=True) as path:
     assert wd.text == "13", "F52: config was not parsed after tolerant decode"
 
 
+# Long settings pages keep their controls above the action buttons, and every
+# control remains reachable by keyboard or mouse at the minimum dialog size.
+with conf("font_size 12\n"):
+    d = H.make_desk()
+    import apps
+    apps.open(d, "settings", None)
+    win = H.find_window(d, "SettingsWin")
+    voice = next(i for i, (label, _) in enumerate(settings.SETTING_PAGES)
+                 if label == "Voice")
+    for width, height in ((560, 520), (win.min_w, win.min_h)):
+        win.w, win.h = width, height
+        win.on_resize()
+        win._switch_tab(voice)
+        wanted = {w for w in win.panels[voice] if w.focusable and w.enabled}
+        visited = set()
+        win.set_focus(win.tabs)
+        for _ in range(len(wanted) + 1):
+            H.key(d, "Tab")
+            field = win.focus
+            if field in wanted:
+                assert field.visible
+                assert field.y + field.h < win.b_apply.y, "Voice control overlaps action bar"
+                visited.add(field)
+        assert visited == wanted, "Keyboard cannot reach every voice setting"
+
+        win._switch_tab(0)
+        win._switch_tab(voice)
+        last = win.fields[settings.shared_settings.VOICE_HISTORY_KEY][1]
+        win.set_focus(win.fields["KILIX_CHROME_SPEAK"][1])
+        assert not last.visible, "The long page should need scrolling"
+        x, y = win.client_origin()
+        for _ in range(20):
+            if last.visible:
+                break
+            H.wheel(d, x + 90, y + 110, 1)
+        assert last.visible and last.y + last.h < win.b_apply.y
+        H.click(d, x + last.x + last.w - 8, y + last.y + last.h // 2)
+        assert d.menus.stack, "Scrolled voice settings must have usable mouse targets"
+        H.key(d, "Escape")
+        win.render()
+
+    small = H.make_desk(size=(640, 480))
+    apps.open(small, "settings", None)
+    dialog = H.find_window(small, "SettingsWin")
+    assert dialog.y + dialog.h <= 480 - settings.T.TASKBAR_H
+
 print("ok")

@@ -469,7 +469,8 @@ class _Swatch(W.Widget):
 
 class SettingsWin(wm.Window):
     def __init__(self, desk):
-        super().__init__(desk, "kilix Settings", 560, 520, icon="settings")
+        height = min(520, max(420, desk.size()[1] - T.TASKBAR_H))
+        super().__init__(desk, "kilix Settings", 560, height, icon="settings")
         self.min_w, self.min_h = 520, 420
         self.path = config_path()
         self.env_path = env_config_path()
@@ -562,6 +563,9 @@ class SettingsWin(wm.Window):
         self.status = self.add(W.Label(102, ch - 28, "", font=T.SMALL,
                                        color=T.SHADOW))
         self._cur_tab = 0
+        self._panel_geometry = {w: (w.x, w.y) for panel in self.panels[:-1] for w in panel}
+        self._scroll_positions = [0] * self.raw_tab
+        self.scrollbar = W.VScroll()
         self._populate()
         self._switch_tab(0)
 
@@ -574,11 +578,83 @@ class SettingsWin(wm.Window):
             b.x, b.y = cw - dx, ch - 33
         self.b_sounds.y = ch - 33
         self.status.y = ch - 28
+        self._layout_panel()
+        if self.focus in self.panels[self._cur_tab] and not self.focus.visible:
+            self.set_focus(self.focus)
+
+    def _layout_panel(self):
+        if self._cur_tab == self.raw_tab:
+            return
+        cw, ch = self.client_size()
+        top, bottom = 32, ch - 44
+        panel = self.panels[self._cur_tab]
+        end = max(self._panel_geometry[w][1] + w.h for w in panel)
+        sb = self.scrollbar
+        sb.place(cw - 22, top, bottom - top)
+        sb.total, sb.page = end - top + 8, bottom - top
+        sb.pos = self._scroll_positions[self._cur_tab]
+        sb.clamp()
+        self._scroll_positions[self._cur_tab] = sb.pos
+        for w in panel:
+            x, y = self._panel_geometry[w]
+            w.x, w.y = x, y - sb.pos
+            w.visible = top <= w.y and w.y + w.h <= bottom
+        self.invalidate()
+
+    def _scroll_panel(self, delta):
+        if self._cur_tab != self.raw_tab:
+            self._scroll_positions[self._cur_tab] += delta
+            self._layout_panel()
+            self._capture = None
+            if self.focus in self.panels[self._cur_tab] and not self.focus.visible:
+                super().set_focus(None)
+
+    def set_focus(self, wdg):
+        if (hasattr(self, '_panel_geometry') and self._cur_tab != self.raw_tab
+                and wdg in self.panels[self._cur_tab]):
+            _, y = self._panel_geometry[wdg]
+            top, bottom = 32, self.client_size()[1] - 44
+            offset = self._scroll_positions[self._cur_tab]
+            if y - offset < top:
+                offset = y - top
+            elif y + wdg.h - offset > bottom:
+                offset = y + wdg.h - bottom
+            self._scroll_positions[self._cur_tab] = offset
+            self._layout_panel()
+        super().set_focus(wdg)
+
+    def on_mouse(self, ev):
+        local = ev.at(*self.client_origin())
+        if self._cur_tab != self.raw_tab:
+            sb = self.scrollbar
+            if sb.total > sb.page and (sb.hit(local.x, local.y) or sb.drag is not None):
+                if sb.on_mouse(local, line=28):
+                    self._scroll_panel(sb.pos - self._scroll_positions[self._cur_tab])
+                return True
+            if ev.wheel and 6 <= local.x < sb.x and sb.y <= local.y < sb.y + sb.h:
+                self._scroll_panel(ev.wheel * 28)
+                return True
+        return super().on_mouse(ev)
+
+    def on_key(self, ev):
+        if self._cur_tab != self.raw_tab and not ev.ctrl and not ev.alt:
+            if ev.key in ('PageDown', 'PageUp'):
+                self._scroll_panel((self.scrollbar.page - 28) * (1 if ev.key == 'PageDown' else -1))
+                return True
+            if ev.key == 'Tab':
+                foci = [self.tabs, *[w for w in self.panels[self._cur_tab] if w.focusable and w.enabled],
+                        self.b_ok, self.b_cancel, self.b_apply, self.b_sounds]
+                index = foci.index(self.focus) if self.focus in foci else -1
+                self.set_focus(foci[(index + (-1 if ev.shift else 1)) % len(foci)])
+                return True
+        return super().on_key(ev)
 
     def draw_client(self, d, img):
         if self.tabs.active != self.raw_tab:
             cw, ch = self.client_size()
             T.raised(d, 6, self.tabs.y + W.TabBar.H - 2, cw - 7, ch - 44)
+            if self.scrollbar.total > self.scrollbar.page:
+                self.scrollbar.draw(d)
             # redraw widgets over the panel face happens in the widget pass;
             # the panel is drawn first because draw_client precedes widgets
 
@@ -594,9 +670,11 @@ class SettingsWin(wm.Window):
             self._form_to_buffer()
             self.ta.set_text(self.kitty_buffer)
         self._cur_tab = i
+        self.tabs.active = i
         for tab_i, panel in enumerate(self.panels):
             for wdg in panel:
                 wdg.visible = tab_i == i
+        self._layout_panel()
         vis = [w for w in self.panels[i] if w.focusable and w.visible]
         self.set_focus(vis[0] if vis else None)
         self.invalidate()
