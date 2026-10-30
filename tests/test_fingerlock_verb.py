@@ -276,7 +276,7 @@ class DiscoveryTests(unittest.TestCase):
 class PackageTests(unittest.TestCase):
     def test_missing_packages_from_dpkg(self):
         run = fake_run(installed=("fprintd",))
-        self.assertEqual(fl.missing_packages(("fprintd", "not-installed-pkg"), run=run), ["not-installed-pkg"])
+        self.assertEqual(fl.missing_packages(("fprintd", "python3-nacl"), run=run), ["python3-nacl"])
 
         def broken(argv, **kwargs):
             raise FileNotFoundError("dpkg-query")
@@ -379,8 +379,9 @@ class DoctorTests(unittest.TestCase):
 
     def doctor(self, *, client=None, run=None, **kwargs):
         return fl.run_doctor(root=self.root, client=client, environ={"XDG_SESSION_ID": "2"},
-                             run=run or fake_run(installed=("fprintd",)), proc=self.root / "proc",
-                             access=deny, **kwargs)
+                             run=run or fake_run(installed=("fprintd", "python3-nacl")),
+                             proc=self.root / "proc", access=deny,
+                             locker_home=self.root / "locker", **kwargs)
 
     def statuses(self, report):
         return {c.id: c.status for c in report.checks}
@@ -396,6 +397,9 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(report.missing_packages, ["fprintd"])
         self.assertFalse(report.usable)
         self.assertEqual({c.id: c.hint for c in report.checks}["packages"], "kilix fingerlock install")
+        status_by_id = {c.id: c.status for c in report.checks}
+        self.assertEqual(status_by_id["locker"], "info")
+        self.assertEqual(status_by_id["agent"], "info")
 
     def test_full_stack_is_usable(self):
         build_tree(self.root, hwdb=True, fprintd=True)
@@ -409,12 +413,18 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(report.enrolled, {PATH: ["left-thumb"]})
         self.assertEqual(report.as_dict(redact=True)["readers"][0]["serial"], fl.REDACTED)
 
-    def test_doctor_does_not_require_login_packages(self):
+    def test_reader_does_not_require_locker_dependency_or_enable_pam(self):
         build_tree(self.root, hwdb=True, fprintd=True)
-        report = self.doctor(client=client_for(FakeDevice()))
-        self.assertTrue(report.usable)
+        client = client_for(FakeDevice())
+        report = self.doctor(client=client, run=fake_run(installed=("fprintd",)))
         self.assertEqual(report.missing_packages, [])
-        self.assertNotIn("pam", self.statuses(report))
+        self.assertTrue(report.usable)
+        report = self.doctor(client=client, with_locker=True, run=fake_run(installed=("fprintd",)))
+        self.assertEqual(report.missing_packages, ["python3-nacl"])
+        self.assertFalse(report.usable)
+        with redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(fl.main(["install", "--pam", "--json"]), 2)
+        self.assertEqual(json.loads(output.getvalue())["code"], "EUSAGE")
 
     def test_no_reader(self):
         report = self.doctor()
@@ -427,9 +437,6 @@ class CommandTests(unittest.TestCase):
         status, out, _ = run_main(["--help"])
         self.assertEqual(status, 0)
         self.assertIn("ensure", out)
-        status, _, err = run_main(["install", "--pam"])
-        self.assertEqual(status, 2)
-        self.assertIn("unrecognized arguments", err)
         status, _, err = run_main(["enroll", "nose"])
         self.assertEqual(status, 2)
         status, out, _ = run_main(["delete", "--json"])

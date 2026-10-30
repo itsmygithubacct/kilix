@@ -4522,14 +4522,8 @@ sys.exit(0 if ready else 1)
         exit 2 ;;
     esac ;;
   fingerlock|--fingerlock|fingerprint)
-    # The fingerprint reader as a host verb: ensure (default) | status |
-    # doctor | install | list | enroll [FINGER] | verify [FINGER] | delete.
-    # config/fingerlock.py owns it: read-only USB discovery, the Debian
-    # lazy install (apt-get install -y --no-install-recommends fprintd, run
-    # as root through sudo in this terminal, or xterm when there is none),
-    # and fprintd over the system D-Bus behind polkit. The USB node itself
-    # is never opened. This verb does not change login and does not lock
-    # files or the screen. A verify result is a reader check, not a lock token.
+    # Reader operations use fprintd. File/password custody is explicit and
+    # installs from a confirmed package; verification is not a screen-lock token.
     shift
     export KILIX_HOME
     exec python3 -B "$KILIX_HOME/config/fingerlock.py" "$@" ;;
