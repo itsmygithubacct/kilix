@@ -40,6 +40,41 @@ class PiperRuntimeTests(unittest.TestCase):
                     expected = str(root/'config')+os.pathsep+expected
                 self.assertEqual(result.stderr.decode().strip(), expected)
 
+    def test_female02_install_uses_piper_and_stops_before_kilix_tts(self):
+        host = (ROOT / 'kilix').read_text()
+        dispatch = host[host.index('  tts|kilix-tts)'):host.index('  stt|kilix-stt)')]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'scripts').mkdir()
+            tool = root / 'tool'
+            tool.write_text('#!/bin/bash\nprintf "%s\\n" tool "$@" >> "$EVENTS"\n')
+            tool.chmod(0o755)
+            piper = root / 'piper'
+            piper.write_text('#!/bin/bash\nprintf "%s\\n" piper "$@" >> "$EVENTS"\n')
+            piper.chmod(0o755)
+            installer = root / 'scripts/install-kilix-piper-tts.sh'
+            installer.write_text('#!/bin/bash\n'
+                                 'if [ "${1:-}" = --print-path ]; then printf "%s\\n" "$PIPER_BIN"; exit 0; fi\n'
+                                 'printf "%s\\n" installed >> "$EVENTS"\n')
+            installer.chmod(0o755)
+            wrapper = root / 'wrapper'
+            wrapper.write_text('set -eu\n_kilix_voice_tool() { echo "$TOOL"; }\ncase "$1" in\n' + dispatch + '\nesac\n')
+            events = root / 'events'
+            env = sandbox_env(KILIX_HOME=str(root), TOOL=str(tool), EVENTS=str(events),
+                              PIPER_BIN=str(piper))
+            for arguments in (['--install=kilix-female-02'], ['--install', 'kilix-female-02']):
+                events.write_text('')
+                result = subprocess.run(['bash', str(wrapper), 'tts', *arguments], env=env, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+                self.assertEqual(events.read_text().splitlines(),
+                                 ['installed', 'piper', 'install', 'kilix-female-02'])
+            events.write_text('')
+            result = subprocess.run(['bash', str(wrapper), 'tts', '--install=kilix-female-02', '--set', 'engine=piper'],
+                                    env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            self.assertEqual(events.read_text().splitlines(),
+                             ['installed', 'piper', 'install', 'kilix-female-02', 'tool', '--set', 'engine=piper'])
+
     def test_catalog_pin_changes_refresh_runtime_and_repeated_use_is_offline(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

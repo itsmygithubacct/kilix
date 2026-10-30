@@ -3806,6 +3806,7 @@ raise SystemExit(main(sys.argv[2:]))
           echo "usage: $_self tts [--install-only|--force-install] [ARGS...]"
           echo "opens the read-aloud settings TUI"
           echo "--enable-kristin: opt in to Piper Kristin as the shared voice"
+          echo "--install=kilix-female-02: install Kilix Female-02 epoch 80 from the kilix-voice release"
           echo "provider prepare|serve|status: manage the receipt-backed Qwen provider (CPU or CUDA)"
           echo "For documents, use Kilix 95: Start > Programs > Document Reader"
           exit 0 ;;
@@ -4036,6 +4037,52 @@ sys.exit(0 if ready else 1)
       fi
       _tts_previous="$_tts_argument"
     done
+    # Kilix Female-02 is installed by the Piper command. The pinned voice
+    # tool does not accept this model id, so the flag stops here.
+    _tts_female02=0
+    _tts_previous=""
+    for _tts_argument in "$@"; do
+      if [ "$_tts_argument" = --install=kilix-female-02 ] \
+          || { [ "$_tts_previous" = --install ] && [ "$_tts_argument" = kilix-female-02 ]; }; then
+        _tts_female02=1
+        break
+      fi
+      _tts_previous="$_tts_argument"
+    done
+    if [ "$_tts_female02" = 1 ]; then
+      _piper_installer="$KILIX_HOME/scripts/install-kilix-piper-tts.sh"
+      if [ ! -f "$_piper_installer" ] || [ -L "$_piper_installer" ] \
+          || [ ! -x "$_piper_installer" ]; then
+        echo "kilix tts: pinned Piper installer missing or unsafe" >&2
+        exit 1
+      fi
+      "$_piper_installer" || exit $?
+      _piper_bin="$("$_piper_installer" --print-path)" || exit $?
+      if [ -z "$_piper_bin" ] || [ ! -x "$_piper_bin" ] || [ -L "$_piper_bin" ]; then
+        echo "kilix tts: pinned Piper command missing or unsafe" >&2
+        exit 1
+      fi
+      "$_piper_bin" install kilix-female-02 || exit $?
+      _tts_rest=()
+      _tts_previous=""
+      for _tts_argument in "$@"; do
+        if [ "$_tts_argument" = --install=kilix-female-02 ]; then
+          _tts_previous=""
+          continue
+        fi
+        if [ "$_tts_previous" = --install ] && [ "$_tts_argument" = kilix-female-02 ]; then
+          unset '_tts_rest[-1]'
+          _tts_previous=""
+          continue
+        fi
+        _tts_rest+=("$_tts_argument")
+        _tts_previous="$_tts_argument"
+      done
+      if [ "${#_tts_rest[@]}" -eq 0 ]; then
+        exit 0
+      fi
+      set -- "${_tts_rest[@]}"
+    fi
     if [ -n "$_tts_python" ]; then
       exec "$_tts_python" "$_tts_installed" "$@"
     fi

@@ -7,7 +7,7 @@ KILIX_HOME="${KILIX_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 GPU_TERMINAL_HOME="${GPU_TERMINAL_HOME:-$HOME/.local/gpu_terminal}"
 GPU_TERMINAL_SOURCE_HOME="${GPU_TERMINAL_SOURCE_HOME:-$GPU_TERMINAL_HOME/sources}"
 KILIX_DATA_HOME="${KILIX_DATA_HOME:-$GPU_TERMINAL_HOME/kilix/data}"
-KILIX_PIPER_REF=94a7e1292a06430ccdded96809ac6258241a558d
+KILIX_PIPER_REF=ad84b296c432797bc193a01c53e10253f9a291cf
 KILIX_PIPER_REPO=https://github.com/itsmygithubacct/kilix-piper-tts.git
 
 fail() { printf 'kilix piper: %s\n' "$*" >&2; exit 1; }

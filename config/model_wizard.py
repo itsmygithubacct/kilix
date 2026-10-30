@@ -22,7 +22,7 @@ import traceback
 SCHEMA = 'kilix.model-wizard/v1'
 # Presentation policy only. Identities and sizes must exist in the selected catalog.
 PAGES = (
-    ('speech', 'Speech / system voice', 'piper-en-us-kristin-medium'),
+    ('speech', 'Speech / system voice', 'kilix-female-02'),
     ('dictation', 'Dictation / speech recognition', 'faster-whisper-small-en'),
     ('workflows', 'Local Workflows / Kilix Ask', 'lfm2-kilix-commands'),
     ('legacy-workflows', 'Legacy Needle workflows', 'needle2'),
@@ -38,8 +38,9 @@ PAGES = (
 )
 # Speech models a selected runtime can serve once installed and licensed: the
 # Qwen provider stages every catalogued Qwen model that has a receipt.
-SPEECH_RUNTIMES = ('piper-en-us-kristin-medium', 'qwen3-tts-0.6b-customvoice',
-                   'qwen3-tts-0.6b-base', 'qwen3-tts-1.7b-voicedesign')
+SPEECH_RUNTIMES = ('kilix-female-02', 'piper-en-us-kristin-medium',
+                   'qwen3-tts-0.6b-customvoice', 'qwen3-tts-0.6b-base',
+                   'qwen3-tts-1.7b-voicedesign')
 STT_IDS = {'vosk-model-small-en-us-0.15': 'small-en-us',
            'vosk-model-en-us-0.22-lgraph': 'lgraph-en-us',
            'faster-whisper-small-en': 'whisper-small-en', 'whistle': 'whistle'}
@@ -222,7 +223,7 @@ def group(asset):
     if provider == 'kilix-pdf-conversion': return 'documents'
     if 'vision' in name: return 'visual-chat'
     if any(word in name for word in ('whisper', 'whistle', 'vosk', 'vibevoice-asr')): return 'dictation'
-    if any(word in name for word in ('tts', 'piper-')): return 'speech'
+    if name == 'kilix-female-02' or any(word in name for word in ('tts', 'piper-')): return 'speech'
     if provider in ('kilix-bonsai', 'kilix-ollama'): return 'chat'
     return provider or 'other'
 
@@ -365,6 +366,10 @@ def pages(include_answered=False, *, assets=None, measure=True, ensure_sizer=Fal
         default = choice or next((row['id'] for row in rows if row['id'] == preferred), rows[0]['id'])
         if key == 'system-local-llm' or key in RUNTIME_PAGES and reports:
             default = choice
+        if key == 'speech' and any(row['id'] == preferred for row in rows):
+            # Female-02 is the catalog default even when the sizer prefers Kristin.
+            default = preferred
+            choice = None
         result.append(dict(id=key, title=title, models=rows, default=default, answer=answer, disk_available_bytes=disk_free,
                            recommendation=f'{"Recommended" if choice else "No confirmed fit" if default is None else "Catalog default"}: {default or "none"}. {note}'))
     return result
@@ -474,7 +479,11 @@ def finish(*, input_fn=input):
                     legacy_state(segment, declined_state(segment))
                 record(segment, 'no', [])
                 continue
-            if segment == 'speech' and 'piper-en-us-kristin-medium' in models:
+            if segment == 'speech' and 'kilix-female-02' in models:
+                run_command('tts', '--install=kilix-female-02')
+                run_command('tts', '--set', 'engine=piper', '--set', 'voice=kilix-female-02')
+                legacy_state(segment, {'answer': 'yes', 'enabled': True, 'offered': True})
+            elif segment == 'speech' and 'piper-en-us-kristin-medium' in models:
                 run_command('tts', '--prepare-system-voice')
                 legacy_state(segment, {'answer': 'yes', 'enabled': True, 'offered': True})
             elif segment == 'dictation':

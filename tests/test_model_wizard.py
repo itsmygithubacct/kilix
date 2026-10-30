@@ -31,6 +31,37 @@ class WizardTests(unittest.TestCase):
         self.catalog = patch.object(wizard, 'catalog', return_value=self.assets)
         self.catalog.start(); self.addCleanup(self.catalog.stop)
 
+    def test_speech_defaults_to_female02_and_finish_installs_the_release(self):
+        assets = [asset('piper-en-us-kristin-medium', 'kilix-piper-tts'),
+                  asset('kilix-female-02', 'kilix-piper-tts')]
+        with patch.object(wizard, 'catalog', return_value=assets), \
+                patch.object(wizard, 'sizing', return_value=({}, 'piper-en-us-kristin-medium', 'sizer')):
+            page = wizard.pages(measure=True)[0]
+        self.assertEqual(page['id'], 'speech')
+        self.assertEqual(page['default'], 'kilix-female-02')
+        self.assertIn('Catalog default: kilix-female-02', page['recommendation'])
+        self.assertEqual(wizard.group(assets[1]), 'speech')
+        with patch.object(wizard, 'catalog', return_value=assets):
+            wizard.apply('speech', ['kilix-female-02'], 'yes')
+            with patch('wizard_licenses.consent_and_install', return_value=({'kilix-female-02'}, set())), \
+                    patch.object(wizard, 'run_command') as run:
+                wizard.finish()
+        self.assertEqual([item.args for item in run.call_args_list], [
+            ('tts', '--install=kilix-female-02'),
+            ('tts', '--set', 'engine=piper', '--set', 'voice=kilix-female-02')])
+        self.assertEqual(wizard.answers()['speech']['models'], ['kilix-female-02'])
+
+    def test_kristin_only_speech_still_prepares_kristin(self):
+        assets = [asset('piper-en-us-kristin-medium', 'kilix-piper-tts')]
+        with patch.object(wizard, 'catalog', return_value=assets):
+            wizard.apply('speech', ['piper-en-us-kristin-medium'], 'yes')
+            with patch('wizard_licenses.consent_and_install',
+                       return_value=({'piper-en-us-kristin-medium'}, set())), \
+                    patch.object(wizard, 'run_command') as run:
+                wizard.finish()
+        self.assertEqual([item.args for item in run.call_args_list], [
+            ('tts', '--prepare-system-voice')])
+
     def test_all_types_and_defaults_without_writes(self):
         pages = wizard.pages(measure=False)
         self.assertEqual([p['id'] for p in pages], ['vision', 'audio', 'image'])
@@ -173,8 +204,9 @@ class WizardTests(unittest.TestCase):
         self.assertEqual(reports['yolox_s']['manifest_digest'], 'a' * 64)
 
     def test_speech_sizing_marks_every_provider_served_qwen_model_supported(self):
-        names = ('piper-en-us-kristin-medium', 'qwen3-tts-0.6b-customvoice', 'qwen3-tts-0.6b-base',
-                 'qwen3-tts-1.7b-voicedesign', 'qwen3-tts-1.7b-base', 'pocket-tts-en-alba')
+        names = ('kilix-female-02', 'piper-en-us-kristin-medium', 'qwen3-tts-0.6b-customvoice',
+                 'qwen3-tts-0.6b-base', 'qwen3-tts-1.7b-voicedesign', 'qwen3-tts-1.7b-base',
+                 'pocket-tts-en-alba')
         rows = [asset(name) for name in names]
         requests = []
         def run(command, *, input, stdout, **kwargs):
@@ -184,9 +216,10 @@ class WizardTests(unittest.TestCase):
                 patch.object(wizard.subprocess, 'run', side_effect=run):
             wizard.sizing(rows, 'speech')
         supported = {row['id']: row['runtime_supported'] for row in requests[0]['models']}
-        self.assertEqual(supported, {'piper-en-us-kristin-medium': True, 'qwen3-tts-0.6b-customvoice': True,
-                                     'qwen3-tts-0.6b-base': True, 'qwen3-tts-1.7b-voicedesign': True,
-                                     'qwen3-tts-1.7b-base': False, 'pocket-tts-en-alba': False})
+        self.assertEqual(supported, {'kilix-female-02': True, 'piper-en-us-kristin-medium': True,
+                                     'qwen3-tts-0.6b-customvoice': True, 'qwen3-tts-0.6b-base': True,
+                                     'qwen3-tts-1.7b-voicedesign': True, 'qwen3-tts-1.7b-base': False,
+                                     'pocket-tts-en-alba': False})
 
     def test_malformed_runtime_reports_fall_back_without_memory_claims(self):
         rows = [dict(self.assets[0], manifest_digest='a' * 64)]
