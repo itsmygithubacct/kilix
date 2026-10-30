@@ -935,14 +935,21 @@ class RepairTests(unittest.TestCase):
 
 
 class InstallPlanTests(unittest.TestCase):
-    def test_agent_install_is_fixed_root_argvs(self):
+    def test_agent_install_is_refused_before_any_root_command(self):
+        calls = []
+
+        def run(*args, **kwargs):
+            calls.append((args, kwargs))
+            raise AssertionError("root command was started")
+
+        with self.assertRaises(fl.DependencyUnavailable) as caught:
+            fl.install_agent(yes=True, want_json=True, run=run, source_dir=Path("/src"))
+        self.assertIn("0666", str(caught.exception))
+        self.assertEqual(calls, [])
         argvs = fl.agent_install_argvs(Path("/src"))
-        self.assertEqual(argvs[0][:4], ["install", "-D", "-m", "0644"])
-        self.assertIn("/usr/local/lib/kilix-fingerlock/fingerlock_agent.py", argvs[1])
         self.assertEqual(argvs[-1], ["systemctl", "enable", "--now", "kilix-fingerlock-agent.socket"])
-        self.assertTrue(all(argv[0] in ("install", "systemctl") for argv in argvs))
-        self.assertIn("ProtectHome=yes", agentmod.SERVICE_UNIT_TEXT)
         self.assertIn("SocketMode=0666", agentmod.SOCKET_UNIT_TEXT)
+        self.assertIn("ProtectHome=yes", agentmod.SERVICE_UNIT_TEXT)
 
 
 if __name__ == "__main__":

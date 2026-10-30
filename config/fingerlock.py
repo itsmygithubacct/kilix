@@ -762,38 +762,17 @@ def agent_install_argvs(source_dir: Path) -> list[list[str]]:
 
 def install_agent(*, yes: bool, want_json: bool, run: Callable[..., Any] = subprocess.run,
                   ask: Callable[[str], str] = input, source_dir: Path | None = None) -> list[list[str]]:
-    """Stage the agent as root through one sudo argv per step, shown first."""
-    source_dir = source_dir or Path(__file__).resolve().parent
-    units = source_dir / "units"
-    _private_units(units)
-    argvs = agent_install_argvs(source_dir)
-    if not yes:
-        if want_json or not _interactive_terminal():
-            raise DependencyUnavailable("installing the agent needs a terminal, or --yes")
-        sys.stderr.write(f"{PROG}: about to run as root:\n" + "".join(f"  {' '.join(a)}\n" for a in argvs))
-        try:
-            answer = ask("proceed? [y/N] ")
-        except EOFError:
-            answer = ""
-        if answer.strip().lower() not in ("y", "yes"):
-            raise DependencyUnavailable("agent installation declined")
-    for argv in argvs:
-        full = elevated_argv(argv, title="Install the fingerlock agent")
-        sys.stderr.write(f"{PROG}: running {' '.join(full)}\n")
-        proc = run(full)
-        if proc.returncode != 0:
-            raise DependencyUnavailable(f"agent installation failed at {' '.join(argv)} (exit {proc.returncode})")
-    return argvs
+    """Refuse to install the root agent.
 
-
-def _private_units(units: Path) -> None:
-    """Write the two unit files beside the module, from the agent's own text."""
-    units.mkdir(mode=0o755, exist_ok=True)
-    for name, text in ((agentmod.SOCKET_UNIT, agentmod.SOCKET_UNIT_TEXT),
-                       (agentmod.SERVICE_UNIT, agentmod.SERVICE_UNIT_TEXT)):
-        path = units / name
-        if not path.exists() or path.read_text() != text:
-            path.write_text(text)
+    The unit text still listens on a mode-0666 socket, and this verb has no
+    hash-bound package or rollback. Refusal happens before any unit file is
+    written and before any root command. ``yes``, ``run``, ``ask`` and
+    ``source_dir`` stay in the signature so callers do not grow a second path.
+    """
+    del yes, want_json, run, ask, source_dir
+    raise DependencyUnavailable(
+        "agent installation is refused: the socket is mode 0666 and this verb "
+        "has no hash-bound package or rollback")
 
 
 def cmd_install(args: argparse.Namespace) -> int:
