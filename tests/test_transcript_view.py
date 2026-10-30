@@ -16,6 +16,35 @@ spec.loader.exec_module(viewer)
 
 
 class TranscriptViewTests(unittest.TestCase):
+    def test_log_button_view_reads_without_initializing_a_runtime(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            logs = root / 'pane logs'
+            logs.mkdir()
+            (logs / 'pane.log').write_text('recorded output\n')
+            storage = root / 'unused-storage'
+            for alias in ('transcript', 'transcripts', 'session-log', 'session-logs'):
+                with self.subTest(alias=alias):
+                    result = run_launcher(alias, 'view', 'pane', storage=storage,
+                                          transcript_dir=logs,
+                                          extra_env={'KITTY_PTY_BROKER_BYPASS': '1'})
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout, 'recorded output\n')
+                    self.assertFalse(storage.exists())
+
+    def test_log_button_view_keeps_missing_and_invalid_session_errors(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for session in ('missing', '../outside'):
+                with self.subTest(session=session):
+                    result = run_launcher('transcript', 'view', session,
+                                          storage=root / 'unused-storage',
+                                          transcript_dir=root,
+                                          extra_env={'KITTY_PTY_BROKER_BYPASS': '1'})
+                    self.assertEqual(result.returncode, 1)
+                    self.assertIn('Pane log:', result.stderr)
+                    self.assertFalse((root / 'unused-storage').exists())
+
     def test_strips_terminal_commands_across_every_chunk_boundary(self):
         raw = ('first\r\n\x1b[31mred\x1b[0m\n'
                '\x1b]52;c;clipboard\x07\x1bPremote-control\x1b\\'

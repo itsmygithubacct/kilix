@@ -45,6 +45,10 @@ selection and exit statuses.
 
 ## Release 0.2.2 — in development
 
+Pane logs open faster. The Log button starts the viewer without preparing a
+second runtime, and transcript replay reuses unchanged rows and batches plain
+text writes while preserving the recording's rendered output.
+
 The reviewed source integration is selected for the coordinated Plebian-OS
 0.2.2 candidate. Image, upgrade, rollback and final installed acceptance remain
 pending; supported upgrade paths are defined by the

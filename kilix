@@ -150,6 +150,15 @@ case "${1:-}" in
   weather)
     shift
     exec python3 -B "$KILIX_HOME/config/kilix_weather.py" "$@" ;;
+  transcript|transcripts|session-log|session-logs)
+    # The pane log button supplies the recording directory and launches an
+    # unbrokered viewer. Reading it needs no writable runtime, credentials,
+    # settings migration, or terminal configuration refresh.
+    if [ "${2:-}" = view ] && [ "$#" -eq 3 ] \
+        && [ "${KITTY_PTY_BROKER_BYPASS:-}" = 1 ] \
+        && [[ "${KILIX_TRANSCRIPT_DIR:-}" = /* ]]; then
+      exec python3 "$KILIX_HOME/scripts/transcript-view.py" "$KILIX_TRANSCRIPT_DIR" "$3"
+    fi ;;
   ralph)
     shift
     exec python3 -B "$KILIX_HOME/config/ralph.py" "$@" ;;
