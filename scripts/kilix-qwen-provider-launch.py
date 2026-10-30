@@ -56,8 +56,11 @@ def main():
         raise ValueError('invalid provider binding')
     index = json.loads(bound_bytes(generation/'runtime-index.json', value['index_sha256'],
                                    'runtime selection index'))
-    if [(row['asset_id'], row['root'], row['snapshot_bytes']) for row in index['runtimes']] != [
-            (name, str(generation/'runtimes'/name), budget) for name, budget in models.items()]:
+    # Canonical JSON sorts mapping keys but preserves the runtime array order.
+    # Compare complete entries without making that incidental order authority.
+    # A sorted list still rejects duplicates, omissions and changed budgets.
+    if sorted((row['asset_id'], row['root'], row['snapshot_bytes']) for row in index['runtimes']) != sorted(
+            (name, str(generation/'runtimes'/name), budget) for name, budget in models.items()):
         raise ValueError('runtime selection index differs from its binding')
     manifests = [json.loads(bound_bytes(generation/'runtimes'/name/'runtime.json',
                                         value['runtimes'][name], 'runtime manifest'))

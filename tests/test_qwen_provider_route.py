@@ -138,7 +138,7 @@ class QwenProviderRouteTests(unittest.TestCase):
         self.assertIn('prepare',completed.stdout)
         self.assertIn('serve',completed.stdout)
 
-    def launcher_fixture(self, root, script='#!/bin/sh\nprintf "verified-marker\\n"\n'):
+    def launcher_fixture(self, root, script='#!/bin/sh\nprintf "verified-marker\\n"\n', *, models=None):
         selected = self.provider_source()
         generation = root/'generation'
         (generation/'bin').mkdir(mode=0o700,parents=True)
@@ -166,7 +166,8 @@ class QwenProviderRouteTests(unittest.TestCase):
         environment = {'python':str(python),'python_sha256':digest_file(python,follow=True),
             'site_packages':str(site),'site_packages_sha256':tree_digest(site),
             'python_root':str(base),'python_root_sha256':tree_digest(base,allow_file_links=True)}
-        models = {'qwen3-tts-0.6b-customvoice':3*1024**3,'qwen3-tts-1.7b-voicedesign':5*1024**3}
+        if models is None:
+            models = {'qwen3-tts-0.6b-customvoice':3*1024**3,'qwen3-tts-1.7b-voicedesign':5*1024**3}
         digests = {}
         for name in models:
             (generation/'runtimes'/name).mkdir(mode=0o700,parents=True)
@@ -183,13 +184,49 @@ class QwenProviderRouteTests(unittest.TestCase):
             'models':models,'device':'cuda','runtimes':digests,
             'index_sha256':hashlib.sha256(index.read_bytes()).hexdigest()}
         binding['venv_config_sha256'] = digest_file(config)
-        payload = json.dumps(binding).encode()
+        payload = json.dumps(binding, sort_keys=True).encode()
         (generation/'binding.json').write_bytes(payload)
         (generation/'binding.json').chmod(0o600)
         launcher = generation/'bin/launch'
         launcher.write_text((ROOT/'scripts/kilix-qwen-provider-launch.py').read_text().replace(
             '@BINDING_SHA256@',hashlib.sha256(payload).hexdigest()))
         return launcher,original,site,runtime
+
+    def test_all_installed_models_survive_canonical_binding_order(self):
+        # Preparation selects CustomVoice before Base, but canonical JSON
+        # orders the model mapping alphabetically. The index is an array.
+        models = {'qwen3-tts-0.6b-customvoice': 3*1024**3,
+                  'qwen3-tts-0.6b-base': 3*1024**3,
+                  'qwen3-tts-1.7b-voicedesign': 5*1024**3}
+        for change in ('none', 'duplicate', 'budget', 'root'):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as scratch:
+                launcher, *_ = self.launcher_fixture(Path(scratch), models=models)
+                generation = launcher.parent.parent
+                if change != 'none':
+                    index_path = generation/'runtime-index.json'
+                    index = json.loads(index_path.read_bytes())
+                    if change == 'duplicate':
+                        index['runtimes'][1] = index['runtimes'][0]
+                    elif change == 'budget':
+                        index['runtimes'][0]['snapshot_bytes'] += 1
+                    else:
+                        index['runtimes'][0]['root'] += '-changed'
+                    index_path.write_text(json.dumps(index))
+                    binding = json.loads((generation/'binding.json').read_bytes())
+                    binding['index_sha256'] = hashlib.sha256(index_path.read_bytes()).hexdigest()
+                    payload = json.dumps(binding, sort_keys=True).encode()
+                    (generation/'binding.json').write_bytes(payload)
+                    launcher.write_text((ROOT/'scripts/kilix-qwen-provider-launch.py').read_text().replace(
+                        '@BINDING_SHA256@', hashlib.sha256(payload).hexdigest()))
+                result = subprocess.run(['/usr/bin/python3', '-I', '-B', str(launcher), 'status'],
+                                        capture_output=True, text=True)
+                if change == 'none':
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout, 'verified-marker\n')
+                else:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn('runtime selection index differs', result.stderr)
+                    self.assertEqual(result.stdout, '')
 
     def test_verified_generation_launcher_and_tamper_refusals(self):
         for kind in ('unchanged','interpreter','dependency','manifest','index','library','configuration','bytecode'):
@@ -235,15 +272,15 @@ class QwenProviderRouteTests(unittest.TestCase):
             self.assertIn("for name,budget in value['models'].items():",result.stdout)
 
     def test_runtime_index_or_manifest_disagreeing_with_binding_refuses(self):
-        for kind in ('order','device','environment','model'):
+        for kind in ('missing','device','environment','model'):
             with self.subTest(kind=kind), tempfile.TemporaryDirectory() as scratch:
                 launcher,_python,_site,_runtime = self.launcher_fixture(Path(scratch))
                 generation = launcher.parent.parent
                 binding = json.loads((generation/'binding.json').read_text())
-                if kind == 'order':
+                if kind == 'missing':
                     index = generation/'runtime-index.json'
                     value = json.loads(index.read_text())
-                    value['runtimes'].reverse()
+                    value['runtimes'].pop()
                     index.write_text(json.dumps(value))
                     binding['index_sha256'] = hashlib.sha256(index.read_bytes()).hexdigest()
                 else:
@@ -366,7 +403,7 @@ class QwenProviderRouteTests(unittest.TestCase):
         return managed,previous,calls
 
     def test_preparation_stages_every_licensed_model_on_the_selected_device(self):
-        ready = ['qwen3-tts-1.7b-voicedesign','qwen3-tts-0.6b-customvoice']
+        ready = ['qwen3-tts-1.7b-voicedesign','qwen3-tts-0.6b-customvoice','qwen3-tts-0.6b-base']
         for requested,capable,device in (('cuda',False,'cuda'),('auto',True,'cuda'),
                                          ('auto',False,'cpu'),('cpu',True,'cpu')):
             with self.subTest(requested=requested,capable=capable):
@@ -378,7 +415,7 @@ class QwenProviderRouteTests(unittest.TestCase):
                 self.assertEqual(builds[0][builds[0].index('--device')+1],device)
                 stages = [(c[c.index('--installed-asset')+1],c[c.index('--device')+1],
                            c[c.index('--model-snapshot-bytes')+1]) for c in calls if '--installed-asset' in c]
-                expected = ['qwen3-tts-0.6b-customvoice','qwen3-tts-1.7b-voicedesign']
+                expected = ['qwen3-tts-0.6b-customvoice','qwen3-tts-0.6b-base','qwen3-tts-1.7b-voicedesign']
                 self.assertEqual(stages,[(name,device,str(provider.MODELS[name])) for name in expected])
                 index = json.loads((generation/'runtime-index.json').read_text())
                 self.assertEqual(index,{'schema':'kilix.qwen-tts.runtime-set/v1','runtimes':[
@@ -387,14 +424,14 @@ class QwenProviderRouteTests(unittest.TestCase):
                 self.assertEqual(oct((generation/'runtime-index.json').stat().st_mode & 0o777),'0o600')
                 binding = json.loads((generation/'binding.json').read_text())
                 self.assertEqual(binding['models'],{name:provider.MODELS[name] for name in expected})
-                self.assertEqual(list(binding['models']),expected)
+                self.assertEqual(list(binding['models']),sorted(expected))
                 self.assertEqual(binding['device'],device)
                 self.assertEqual(binding['lease_ref'],provider.LEASE_REF)
                 self.assertTrue((generation/'lib/kilix_device_lease/module.py').is_file())
                 self.assertEqual(binding['index_sha256'],hashlib.sha256(
                     (generation/'runtime-index.json').read_bytes()).hexdigest())
                 self.assertEqual(set(binding['runtimes']),set(expected))
-                self.assertNotIn('qwen3-tts-0.6b-base',binding['models'])
+                self.assertIn('qwen3-tts-0.6b-base',binding['models'])
 
     def test_no_licensed_model_refuses_before_build_and_keeps_selection(self):
         with self.assertRaisesRegex(ValueError,'licence receipt'):
