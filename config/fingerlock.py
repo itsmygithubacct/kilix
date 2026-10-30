@@ -3,9 +3,9 @@
 
 `kilix fingerlock` finds the machine's fingerprint reader, installs what
 Debian needs the first time it is asked to, and then enrolls, verifies, lists
-and deletes fingers through the distribution's fingerprint daemon. It is the
-one implementation every Kilix surface delegates to, so a reader that works
-from a typed command works the same from a desktop's lock widget.
+and deletes fingers through the distribution's fingerprint daemon. This module
+is that host verb. A successful verify checks the reader; it is not a
+screen-lock or login token.
 
 Access model. A libfprint-driven reader keeps a root-only USB node on
 purpose; this module never opens it. User access goes through fprintd over
@@ -25,13 +25,14 @@ recommends are pulled, so installing fprintd never changes how login works.
 
 Locking. `init` makes a locker: an X25519 keypair whose seed is wrapped under
 an Argon2id key from a passphrase (config/fingerlock_locker.py). `lock` seals
-files into `.flk` containers with the public key, so it never asks for
-anything; `unlock` and `password get` need the private key, which comes from
-the passphrase or, once deposited for this boot, from the root agent
-(config/fingerlock_agent.py) after a fingerprint match. The agent is what
-makes the fingerprint mean something: fprintd only ever says match or no
-match, so a privileged process must hold the key and release it on a match.
-Without the agent everything still works with the passphrase.
+files only after the public key is checked against that seed or against
+custody the agent already holds; a substituted key refuses and leaves the
+source in place. `unlock` and `password get` use the passphrase, or, once the
+key is deposited, one fingerprint touch bound to that container. The agent
+keeps the master private key and returns the plaintext of that operation. It
+does not export the key. Forget and expiry refuse a later operation.
+Plaintext already returned stays with the caller. Without the agent
+everything still works with the passphrase.
 
 Exit statuses are stable: 0 success, 1 not usable, 2 usage, 3 no reader or
 no fprintd device, 4 a dependency is missing or was refused, 5 polkit, fprintd
@@ -47,6 +48,7 @@ from __future__ import annotations
 import argparse
 import glob
 import grp
+import io
 import json
 import os
 import pwd
@@ -840,8 +842,8 @@ def cmd_ensure(args: argparse.Namespace) -> int:
     locker = Locker()
     sys.stdout.write(f"locker: {locker.path}\n" if locker.exists() else f"locker: none yet ({PROG} init)\n")
     agent = agentmod.AgentClient()
-    sys.stdout.write("unlock: fingerprint touch (agent installed)\n" if agent.available() else
-                     f"unlock: passphrase ({PROG} install --agent makes it a touch)\n")
+    sys.stdout.write("unlock: one touch authorizes one operation (agent installed)\n" if agent.available() else
+                     f"unlock: passphrase ({PROG} install --agent makes a later unlock a touch)\n")
     return 0
 
 
@@ -932,31 +934,58 @@ def _read_passphrase(args: argparse.Namespace, prompt: str) -> str:
 
 
 def _agent(args: argparse.Namespace) -> agentmod.AgentClient:
+    # trusted_uid stays 0. A custom socket path does not trust a non-root peer.
     return agentmod.AgentClient(getattr(args, "agent_socket", None) or agentmod.SOCKET_PATH)
 
 
-def obtain_private_key(args: argparse.Namespace, locker: Locker, info: lockermod.LockerInfo) -> tuple[bytes, str]:
-    """The locker's private key: from the agent after a touch, else the passphrase."""
+def _wipe_secret(buf: bytearray | None) -> None:
+    lockermod.wipe_buffer(buf)
+
+
+def _agent_holds(agent: agentmod.AgentClient, info: lockermod.LockerInfo) -> bool:
+    if not agent.available():
+        return False
+    try:
+        held = agent.status()
+    except FingerlockError:
+        return False
+    return bool(held.get("held") and held.get("locker_id") == info.locker_id)
+
+
+def _deposit_key(agent: agentmod.AgentClient, private: bytes, info: lockermod.LockerInfo,
+                 args: argparse.Namespace) -> None:
+    if getattr(args, "no_deposit", False) or not agent.available():
+        return
+    try:
+        reply = agent.deposit(private, info.locker_id, float(getattr(args, "ttl", agentmod.DEFAULT_TTL_SECONDS)))
+        hours = int(reply.get("expires_in", 0)) // 3600
+        sys.stderr.write(
+            f"fingerprint custody enabled for about {hours} h; {PROG} forget refuses later operations\n")
+    except FingerlockError as exc:
+        sys.stderr.write(f"{PROG}: fingerprint custody not enabled ({exc.message})\n")
+
+
+def _seal_recipient(args: argparse.Namespace, locker: Locker,
+                    info: lockermod.LockerInfo) -> tuple[str, bytearray | None, bytes | None]:
+    """Verify the recipient before any container is created.
+
+    Returns (how, private buffer or None, confirmed public key or None).
+    The private buffer is wiped by the caller. Neither value is the agent's copy.
+    """
     agent = _agent(args)
     use_agent = not getattr(args, "passphrase", False) and agent.available()
-    if use_agent:
+    if use_agent and _agent_holds(agent, info):
         try:
-            held = agent.status()
-        except agentmod.AgentUnavailable:
-            held = {"held": False}
-        if held.get("held") and held.get("locker_id") == info.locker_id:
-            sys.stderr.write("touch the sensor to unlock\n")
-            return agent.release(info.locker_id, getattr(args, "finger", ANY_FINGER)), "fingerprint"
-    passphrase = _read_passphrase(args, "locker passphrase: ")
-    private = locker.derive_private_key(passphrase, info)
-    if use_agent and not getattr(args, "no_deposit", False):
-        try:
-            reply = agent.deposit(private, info.locker_id, float(getattr(args, "ttl", agentmod.DEFAULT_TTL_SECONDS)))
-            hours = int(reply.get("expires_in", 0)) // 3600
-            sys.stderr.write(f"fingerprint unlock enabled for about {hours} h; {PROG} forget ends it early\n")
+            reply = agent.confirm(info.locker_id, info.public_key)
+            confirmed = bytes.fromhex(str(reply["public_key"]))
+            if confirmed == info.public_key and reply.get("locker_id") == info.locker_id:
+                return "custody", None, confirmed
         except FingerlockError as exc:
-            sys.stderr.write(f"{PROG}: fingerprint unlock not enabled ({exc.message})\n")
-    return private, "passphrase"
+            sys.stderr.write(f"{PROG}: custodian did not confirm the locker ({exc.message})\n")
+    private = bytearray(locker.derive_private_key(_read_passphrase(args, "locker passphrase: "), info))
+    if use_agent:
+        _deposit_key(agent, bytes(private), info, args)
+    return "passphrase", private, None
 
 
 def _locker(args: argparse.Namespace) -> Locker:
@@ -978,7 +1007,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         emit_json("init", data)
     else:
         sys.stdout.write(f"locker {info.locker_id} created at {locker.path}\n")
-        sys.stdout.write(f"lock files with: {PROG} lock FILE...; unlock with a touch once the agent is installed\n")
+        sys.stdout.write(f"lock files with: {PROG} lock FILE...; a touch authorizes one unlock once the agent is installed\n")
     return 0
 
 
@@ -999,26 +1028,34 @@ def cmd_passwd(args: argparse.Namespace) -> int:
     if args.json:
         emit_json("passwd", {"locker_id": info.locker_id})
     else:
-        sys.stdout.write("passphrase changed; every container stays openable\n")
+        sys.stdout.write("passphrase changed; containers stay sealed to the same key. "
+                         "Custody was dropped when the agent answered; plaintext already returned is unchanged\n")
     return 0
 
 
 def cmd_lock(args: argparse.Namespace) -> int:
     locker = _locker(args)
     info = locker.info()
+    _how, private, confirmed = _seal_recipient(args, locker, info)
     results = []
-    for raw in args.paths:
-        source = Path(raw)
-        if not source.is_file():
-            raise UsageError(f"{source} is not a file")
-        if source.name.endswith(lockermod.SUFFIX):
-            raise UsageError(f"{source} is already a container")
-        container = lockermod.container_for(source)
-        header = lockermod.lock_file(source, container, info, remove_source=not args.keep)
-        results.append({"source": str(source), "container": str(container), "size": header["size"],
-                        "removed_source": not args.keep})
-        if not args.json:
-            sys.stdout.write(f"locked {source} -> {container}" + ("" if args.keep else " (original removed)") + "\n")
+    try:
+        for raw in args.paths:
+            source = Path(raw)
+            if source.is_symlink() or not source.is_file():
+                raise UsageError(f"{source} is not a regular file")
+            if source.name.endswith(lockermod.SUFFIX):
+                raise UsageError(f"{source} is already a container")
+            container = lockermod.container_for(source)
+            header = lockermod.lock_file(
+                source, container, info,
+                private_key=bytes(private) if private is not None else None,
+                confirmed_public=confirmed, remove_source=not args.keep)
+            results.append({"source": str(source), "container": str(container), "size": header["size"],
+                            "removed_source": not args.keep})
+            if not args.json:
+                sys.stdout.write(f"locked {source} -> {container}" + ("" if args.keep else " (original removed)") + "\n")
+    finally:
+        _wipe_secret(private)
     if args.json:
         emit_json("lock", {"locker_id": info.locker_id, "files": results})
     return 0
@@ -1028,28 +1065,52 @@ def cmd_unlock(args: argparse.Namespace) -> int:
     locker = _locker(args)
     info = locker.info()
     containers = [Path(raw) for raw in args.paths]
-    for container in containers:
-        lockermod.read_header(container)
+    loaded = [(path, *lockermod.read_container_bytes(path)) for path in containers]
     if args.stdout and len(containers) != 1:
         raise UsageError("--stdout takes exactly one container")
-    private, source = obtain_private_key(args, locker, info)
+    agent = _agent(args)
+    use_custody = not getattr(args, "passphrase", False) and _agent_holds(agent, info)
+    private: bytearray | None = None
+    source = "custody" if use_custody else "passphrase"
+    if not use_custody:
+        private = bytearray(locker.derive_private_key(_read_passphrase(args, "locker passphrase: "), info))
+        if not getattr(args, "passphrase", False):
+            _deposit_key(agent, bytes(private), info, args)
     results = []
     try:
-        for container in containers:
+        for container, header, blob in loaded:
+            if use_custody:
+                binding = lockermod.binding_for("unlock", container.name, blob)
+                sys.stderr.write(f"touch the sensor to unlock {binding['name']} ({binding['sha256'][:12]})\n")
+                plain = agent.unseal(info.locker_id, blob, binding, getattr(args, "finger", ANY_FINGER))
+                if len(plain) != header["size"]:
+                    raise LockerError("custodian returned plaintext of the wrong length; destination not written")
+            else:
+                plain = b""
             if args.stdout:
-                header = lockermod.unlock_file(container, None, private, sink=sys.stdout.buffer)
+                if use_custody:
+                    sys.stdout.buffer.write(plain)
+                else:
+                    sink = io.BytesIO()
+                    header = lockermod.unlock_file(container, None, bytes(private), sink=sink)
+                    sys.stdout.buffer.write(sink.getvalue())
                 sys.stdout.buffer.flush()
                 results.append({"container": str(container), "to": "-", "size": header["size"]})
                 continue
             destination = lockermod.original_for(container)
-            header = lockermod.unlock_file(container, destination, private, overwrite=args.force,
-                                           remove_container=not args.keep)
+            if use_custody:
+                lockermod.write_plaintext(destination, plain, overwrite=args.force, mtime=header.get("mtime"))
+                if not args.keep:
+                    lockermod.remove_regular(container)
+            else:
+                header = lockermod.unlock_file(container, destination, bytes(private), overwrite=args.force,
+                                               remove_container=not args.keep)
             results.append({"container": str(container), "to": str(destination), "size": header["size"],
                             "removed_container": not args.keep})
             if not args.json:
                 sys.stdout.write(f"unlocked {container} -> {destination}\n")
     finally:
-        private = b"\0" * len(private)
+        _wipe_secret(private)
     if args.json and not args.stdout:
         emit_json("unlock", {"locker_id": info.locker_id, "key_source": source, "files": results})
     return 0
@@ -1070,9 +1131,7 @@ def cmd_password(args: argparse.Namespace) -> int:
         return 0
     path = locker.password_path(args.name)
     if action == "delete":
-        if not path.exists():
-            raise UsageError(f"no password named {args.name}")
-        os.unlink(path)
+        locker.delete_password(args.name)
         if args.json:
             emit_json("password", {"deleted": args.name})
         else:
@@ -1088,20 +1147,13 @@ def cmd_password(args: argparse.Namespace) -> int:
             if not _interactive_terminal():
                 raise UsageError("pass --stdin, or run from a terminal")
             secret = getpass.getpass(f"secret for {args.name}: ").encode("utf-8")
-        import tempfile
-        with tempfile.NamedTemporaryFile(dir=str(locker.passwords_dir), prefix=".plain-", delete=False) as handle:
-            os.chmod(handle.name, 0o600)
-            handle.write(secret)
-            plain = Path(handle.name)
+        _how, private, confirmed = _seal_recipient(args, locker, info)
         try:
-            if path.exists():
-                os.unlink(path)
-            lockermod.lock_file(plain, path, info, name=args.name, remove_source=True)
+            locker.store_password(args.name, secret, replace=bool(args.force),
+                                  private_key=bytes(private) if private is not None else None,
+                                  confirmed_public=confirmed)
         finally:
-            try:
-                os.unlink(plain)
-            except FileNotFoundError:
-                pass
+            _wipe_secret(private)
         if args.json:
             emit_json("password", {"set": args.name, "bytes": len(secret)})
         else:
@@ -1110,14 +1162,25 @@ def cmd_password(args: argparse.Namespace) -> int:
     if action == "get":
         if not path.exists():
             raise UsageError(f"no password named {args.name}")
-        private, source = obtain_private_key(args, locker, info)
+        header, blob = lockermod.read_container_bytes(path)
+        agent = _agent(args)
+        use_custody = not getattr(args, "passphrase", False) and _agent_holds(agent, info)
+        private = None
+        source = "custody" if use_custody else "passphrase"
         try:
-            import io
-            buffer = io.BytesIO()
-            lockermod.unlock_file(path, None, private, sink=buffer)
+            if use_custody:
+                binding = lockermod.binding_for("password-get", args.name, blob)
+                sys.stderr.write(f"touch the sensor to read {args.name} ({binding['sha256'][:12]})\n")
+                secret = agent.unseal(info.locker_id, blob, binding, getattr(args, "finger", ANY_FINGER))
+            else:
+                private = bytearray(locker.derive_private_key(_read_passphrase(args, "locker passphrase: "), info))
+                if not getattr(args, "passphrase", False):
+                    _deposit_key(agent, bytes(private), info, args)
+                _header, secret = lockermod.unlock_bytes(blob, bytes(private))
         finally:
-            private = b"\0" * len(private)
-        secret = buffer.getvalue()
+            _wipe_secret(private)
+        if len(secret) != header["size"]:
+            raise LockerError("password plaintext does not match the container; nothing was printed")
         if args.json:
             emit_json("password", {"name": args.name, "secret": secret.decode("utf-8", "replace"), "key_source": source})
         else:
@@ -1141,7 +1204,8 @@ def cmd_forget(args: argparse.Namespace) -> int:
     if args.json:
         emit_json("forget", {"forgotten": forgotten, "agent": True})
     else:
-        sys.stdout.write("locker key forgotten; the next unlock asks for the passphrase\n" if forgotten
+        sys.stdout.write("custody forgotten; a later operation is refused until the passphrase is deposited again. "
+                         "Plaintext already returned stays with the caller\n" if forgotten
                          else "nothing was held\n")
     return 0
 
@@ -1161,7 +1225,9 @@ def cmd_agent(args: argparse.Namespace) -> int:
         sys.stdout.write(f"agent: not installed ({PROG} install --agent)\n")
         return 1
     if data.get("held"):
-        sys.stdout.write(f"agent: holding the locker key for {int(data.get('expires_in', 0)) // 60} more minutes\n")
+        sys.stdout.write(
+            f"agent: holding the locker key for {int(data.get('expires_in', 0)) // 60} more minutes; "
+            "a touch authorizes one operation and does not export the key\n")
     else:
         sys.stdout.write("agent: running, no key held; the next unlock asks for the passphrase\n")
     return 0
@@ -1243,7 +1309,7 @@ def build_parser() -> argparse.ArgumentParser:
     _common(enroll, auth=True)
     enroll.set_defaults(handler=cmd_enroll)
 
-    verify = subparsers.add_parser("verify", help="verify a finger through fprintd")
+    verify = subparsers.add_parser("verify", help="check a finger against the reader; this is not a screen-lock token")
     verify.add_argument("finger", nargs="?", default=ANY_FINGER, choices=(ANY_FINGER,) + FINGERS, metavar="FINGER",
                         help="finger to verify; default any")
     verify.add_argument("--timeout", type=float, default=60, help="seconds to wait for a scan once scanning starts")
@@ -1268,14 +1334,14 @@ def build_parser() -> argparse.ArgumentParser:
     _locker_options(passwd, key=False)
     passwd.set_defaults(handler=cmd_passwd)
 
-    lock = subparsers.add_parser("lock", help="seal files into .flk containers; needs no unlock")
+    lock = subparsers.add_parser("lock", help="seal files after the recipient public key is verified")
     lock.add_argument("paths", nargs="+", metavar="FILE")
     lock.add_argument("--keep", action="store_true", help="keep the plaintext file beside the container")
     _common(lock)
-    _locker_options(lock, key=False)
+    _locker_options(lock, key=True)
     lock.set_defaults(handler=cmd_lock)
 
-    unlock = subparsers.add_parser("unlock", help="open .flk containers: a touch, or the passphrase")
+    unlock = subparsers.add_parser("unlock", help="open .flk containers: one touch bound to each file, or the passphrase")
     unlock.add_argument("paths", nargs="+", metavar="CONTAINER")
     unlock.add_argument("--keep", action="store_true", help="keep the container beside the file")
     unlock.add_argument("--force", action="store_true", help="overwrite an existing file")
@@ -1294,7 +1360,7 @@ def build_parser() -> argparse.ArgumentParser:
     _locker_options(password)
     password.set_defaults(handler=cmd_password)
 
-    forget = subparsers.add_parser("forget", help="make the agent drop the locker key (lock everything)")
+    forget = subparsers.add_parser("forget", help="drop custody so a later operation is refused")
     _common(forget)
     _locker_options(forget, key=False)
     forget.set_defaults(handler=cmd_forget)
