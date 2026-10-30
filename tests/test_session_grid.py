@@ -1,4 +1,4 @@
-"""Session grids: twelve coding sessions per tab in two rows, shared by every launcher."""
+"""Session grids: twelve coding sessions per tab, four columns then another row."""
 from concurrent.futures import ThreadPoolExecutor
 import contextlib
 import copy
@@ -136,20 +136,29 @@ class Isolated(unittest.TestCase):
 
 
 class ArithmeticTests(unittest.TestCase):
-    def test_shape_is_two_rows_of_ceil_half_columns(self):
-        expected = {0: [], 1: [1], 2: [2], 3: [2, 1], 4: [2, 2], 5: [2, 2, 1], 6: [2, 2, 2],
-                    7: [2, 2, 2, 1], 8: [2, 2, 2, 2], 9: [2, 2, 2, 2, 1], 10: [2] * 5,
-                    11: [2] * 5 + [1], 12: [2] * 6, 13: [2] * 6 + [1]}
+    def test_shape_fills_four_columns_then_another_row(self):
+        expected = {0: [], 1: [1], 2: [1, 1], 3: [1, 1, 1], 4: [1, 1, 1, 1],
+                    5: [2, 1, 1, 1], 6: [2, 2, 1, 1], 7: [2, 2, 2, 1], 8: [2, 2, 2, 2],
+                    9: [3, 2, 2, 2], 10: [3, 3, 2, 2], 11: [3, 3, 3, 2], 12: [3, 3, 3, 3],
+                    13: [4, 3, 3, 3]}
         for n, columns in expected.items():
             self.assertEqual(session_grid.shape(n), columns, n)
             self.assertEqual(sum(columns), n)
-            self.assertLessEqual(max(columns, default=0), 2)
+            self.assertLessEqual(len(columns), session_grid.COLUMNS)
 
-    def test_slots_fill_columns_top_to_bottom_and_never_move_on_add(self):
+    def test_slots_fill_left_to_right_and_never_move_on_add(self):
         self.assertEqual(session_grid.slot(0, 1), (0, 0))
+        self.assertEqual([session_grid.slot(i, 2) for i in range(2)],
+                         [(0, 0), (1, 0)])
+        self.assertEqual([session_grid.slot(i, 4) for i in range(4)],
+                         [(0, 0), (1, 0), (2, 0), (3, 0)])
         self.assertEqual([session_grid.slot(i, 5) for i in range(5)],
-                         [(0, 0), (0, 1), (1, 0), (1, 1), (2, 0)])
-        for n in range(2, 13):
+                         [(0, 0), (1, 0), (2, 0), (3, 0), (0, 1)])
+        self.assertEqual([session_grid.slot(i, 6) for i in range(6)],
+                         [(0, 0), (1, 0), (2, 0), (3, 0), (0, 1), (1, 1)])
+        # Adding a pane, including the one that starts the next row, does not
+        # move an earlier pane.
+        for n in range(1, 13):
             for i in range(n):
                 self.assertEqual(session_grid.slot(i, n), session_grid.slot(i, n + 1))
         with self.assertRaises(ValueError):
@@ -197,8 +206,8 @@ class PlacementTests(Isolated):
         results = [self.place(f"s{i}") for i in range(13)]
         self.assertEqual([r["count"] for r in results], list(range(1, 13)) + [1])
         self.assertEqual([r["new_tab"] for r in results], [True] + [False] * 11 + [True])
-        self.assertEqual([r["slot"] for r in results[:5]], [[0, 0], [0, 1], [1, 0], [1, 1], [2, 0]])
-        self.assertEqual(results[11]["slot"], [5, 1])
+        self.assertEqual([r["slot"] for r in results[:5]], [[0, 0], [1, 0], [2, 0], [3, 0], [0, 1]])
+        self.assertEqual(results[11]["slot"], [3, 2])
         self.assertEqual(sorted(self.engine.tab_counts().values()), [1, 12])
         titles = {p["tab_title"] for p in self.engine.panes if p["user_vars"]}
         self.assertEqual(titles, {"agent-sessions", "agent-sessions 2"})
@@ -216,7 +225,7 @@ class PlacementTests(Isolated):
             self.place(f"s{i}")
         grid = session_grid.grids(self.engine.snapshot())[0]
         self.assertEqual([p["title"] for p in grid["panes"]], [f"s{i}" for i in range(7)])
-        self.assertEqual(grid["panes"][6]["slot"], [3, 0])
+        self.assertEqual(grid["panes"][6]["slot"], [2, 1])
 
     def test_closed_panes_free_room_and_the_newest_grid_with_room_wins(self):
         first = [self.place() for _ in range(12)]

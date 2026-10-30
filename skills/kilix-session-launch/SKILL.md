@@ -16,7 +16,7 @@ and ask only about choices that change the work. Do not add workers because ther
 For a recorded coding run with a model, effort, initial brief or folder trust,
 prefer `kilix session launch codex --cwd DIR --trust-folder --model MODEL
 --effort LEVEL --prompt-file FILE`. This adds a held pane to the `agent-sessions`
-grid (two rows, up to twelve panes per tab) without taking focus; `--new-tab`
+grid (one row of up to four columns, then another row, at most twelve panes per tab) without taking focus; `--new-tab`
 gives it a tab of its own.
 Claude and Grok are also supported. Folder trust is explicit and does not imply
 permission bypass. Native prompts are retained exactly in a private file; the
@@ -36,6 +36,9 @@ grid that PANE is in, filling two rows column by column, twelve panes per tab.
 `kilix session grid list --name NAME` shows that grid's panes and slots.
 `kilix session grid enabled` prints `off` when the user turned grids off; then
 default to one tab per session and use `grid add` only when asked for a grid.
+
+Columns grow to four before a second row. The ninth pane starts a third row.
+Twelve panes per tab.
 
 The command confirms pane creation. Before reporting a ready agent, inspect
 the returned pane's client and directory with `kilix agent-control list`;

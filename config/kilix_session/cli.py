@@ -61,7 +61,7 @@ def parser():
     placement.add_argument("--new-tab", action="store_true",
                            help="a tab of its own, preserve focus (default when coding_session_grid is off)")
     placement.add_argument("--grid", metavar="NAME",
-                           help="join session grid NAME (default agent-sessions): two rows, at most twelve panes per tab")
+                           help="join session grid NAME (default agent-sessions): columns up to four, then another row, at most twelve per tab")
     placement.add_argument("--foreground", action="store_true", help="wait in the current terminal")
     placement.add_argument("--background", action="store_true", help="detached headless runner, no pane")
     prompt = start.add_mutually_exclusive_group()

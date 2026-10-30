@@ -88,19 +88,20 @@ caller. No command closes panes or changes focus as rollback.
 
 ## Session grids
 
-A session grid is a tab in the engine's `sessions` layout. One pane fills the
-tab; from two panes on there are exactly two rows and ceil(n/2) columns, filled
-top to bottom and left to right, so a new pane never moves an earlier one. With
-an odd count the last column holds one full-height pane. A tab holds at most
-twelve panes (six columns); the next launch opens another tab named `NAME 2`,
-`NAME 3`, and so on. Closing a pane lays the rest out again with no gap.
+A session grid is a tab in the engine's `sessions` layout. Columns grow to
+four before a new row. One pane fills the tab. Two, three and four panes are
+one row of full-height columns. The fifth pane starts a second row under the
+first. Panes fill left to right, and a new pane does not move an earlier one.
+The ninth pane starts a third row, so twelve panes are four columns by three
+rows. The next launch opens another tab named `NAME 2`, `NAME 3`, and so on.
+Closing a pane lays the rest out again with no gap.
 
 ```text
-n=5:  ┌────┬────┬────┐    n=12: six columns of two
-      │ 1  │ 3  │ 5  │
-      ├────┼────┤    │
-      │ 2  │ 4  │    │
-      └────┴────┴────┘
+n=4:  ┌───┬───┬───┬───┐      n=6:  ┌───┬───┬───┬───┐
+      │ 1 │ 2 │ 3 │ 4 │            │ 1 │ 2 │ 3 │ 4 │
+      └───┴───┴───┴───┘            ├───┼───┤   │   │
+                                   │ 5 │ 6 │   │   │
+                                   └───┴───┴───┴───┘
 ```
 
 These coding-session launches into a new tab join a grid unless told otherwise:

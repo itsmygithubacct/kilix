@@ -4,9 +4,11 @@ Every launch of a coding session into "a new tab" comes here, whoever starts
 it: ``kilix session``, ``kilix agent-control new-tab``, the structured
 ``agent.launch`` action, ``kilix new-tab codex`` and ``kilix session grid
 add``. A launch joins the newest grid of the same name with room in the
-caller's OS window, or opens a new grid tab. The engine's ``sessions`` layout
-keeps the panes in two rows of ceil(n/2) columns and re-lays them out when one
-closes, so nothing here has to rebalance.
+caller's OS window, or opens a new grid tab.
+
+The engine's ``sessions`` layout grows columns to four before a new row.
+Panes fill left to right, and it re-lays them out when one closes, so
+nothing here has to rebalance.
 
 A grid is a tab whose layout is ``sessions`` and which holds at least one pane
 carrying this grid's group marker. Manual panes in that tab take capacity too;
@@ -25,6 +27,7 @@ import stat
 import agent_control as control
 
 CAPACITY = 12
+COLUMNS = 4
 LAYOUT = "sessions"
 DEFAULT_GRID = "agent-sessions"
 GROUP_VAR = "kilix_session_group"
@@ -34,19 +37,28 @@ NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
 
 
 def shape(n):
-    """Panes per column, left to right: one pane alone, else two rows."""
+    """Panes per column, left to right.
+
+    Columns grow to four before a new row. A short last row fills the
+    leftmost columns. Twelve panes are four columns of three.
+    """
     if n <= 0:
         return []
-    if n == 1:
-        return [1]
-    return [2] * (n // 2) + [1] * (n % 2)
+    ncols = min(n, COLUMNS)
+    full, extra = divmod(n, ncols)
+    return [full + 1 if col < extra else full for col in range(ncols)]
 
 
 def slot(index, n):
-    """(column, row) of the index-th pane of n: columns fill top to bottom."""
+    """(column, row) of the index-th pane of n.
+
+    Panes fill left to right, then the next row. Adding a pane does not
+    move an earlier one.
+    """
     if not 0 <= index < n:
         raise ValueError("pane index outside the grid")
-    return (0, 0) if n == 1 else (index // 2, index % 2)
+    ncols = min(n, COLUMNS)
+    return (index % ncols, index // ncols)
 
 
 def group(name):

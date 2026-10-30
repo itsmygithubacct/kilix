@@ -286,7 +286,7 @@ including its tail; never "repair" it by executing it in the controlling shell.
 
 - For a managed coding run, use `kilix session launch PROVIDER --cwd DIR
   --trust-folder --model MODEL --effort LEVEL --prompt-file FILE`. Native UI in
-  a pane of the `agent-sessions` grid (two rows, up to twelve panes per tab) is
+  a pane of the `agent-sessions` grid (columns up to four, then another row, at most twelve panes per tab) is
   the default; `--new-tab` gives it a tab of its own and `--headless
   --background` records a detached run. All new tabs/grid panes preserve focus. `--trust-folder` uses client trust
   without enabling permission bypass. Save the returned run ID and inspect it
