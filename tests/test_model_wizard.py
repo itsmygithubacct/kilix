@@ -1,5 +1,6 @@
 """Wizard choices persist across interfaces; only checked models are acquired."""
 import json
+import http.client
 import io
 import os
 from pathlib import Path
@@ -7,11 +8,12 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'config'))
 import model_wizard as wizard
 import system_llm
+from wizard_licenses import InstallFailures
 
 
 def asset(name, provider='test'):
@@ -30,6 +32,107 @@ class WizardTests(unittest.TestCase):
                        asset('bonsai-image-4b-binary-gemlite')]
         self.catalog = patch.object(wizard, 'catalog', return_value=self.assets)
         self.catalog.start(); self.addCleanup(self.catalog.stop)
+        self.backend = patch.object(system_llm, 'available_models',
+                                    return_value=(set(system_llm.MODELS), 'Local backend ready.'))
+        self.backend.start(); self.addCleanup(self.backend.stop)
+
+    def test_unavailable_backend_keeps_models_visible_without_preselecting_one(self):
+        rows = system_llm.catalog()
+        with patch.object(wizard, 'catalog', return_value=rows), \
+                patch.object(wizard, 'sizing', return_value=({}, 'qwen3:8b', 'Memory fits.')), \
+                patch.object(system_llm, 'available_models',
+                             return_value=(set(), 'Install and start the local Ollama backend.')) as probe:
+            page = wizard.pages(measure=True)[0]
+            self.assertIsNone(page['default'])
+            self.assertEqual({row['id'] for row in page['models']}, set(system_llm.MODELS))
+            self.assertTrue(all(not row['runtime_ready'] for row in page['models']))
+            self.assertIn('Backend setup required', page['recommendation'])
+            self.assertIn('Install and start', page['recommendation'])
+            probe.reset_mock()
+            wizard.apply('system-local-llm', ['qwen3:8b'], 'yes')
+            probe.assert_not_called()
+        self.assertEqual(wizard.pending()['system-local-llm']['models'], ['qwen3:8b'])
+
+    def test_failed_model_preserves_its_page_and_finishes_unrelated_categories(self):
+        self.assets.extend(system_llm.catalog())
+        wizard.apply('vision', ['yolox_s'], 'yes')
+        wizard.apply('system-local-llm', ['qwen3:8b'], 'yes')
+        wizard.apply('audio', ['encodec-24khz-stateful'], 'yes')
+        failure = InstallFailures({'yolox_s', 'encodec-24khz-stateful'}, set(),
+                                  {'qwen3:8b': ValueError('Local Ollama backend unavailable')})
+        with patch('wizard_licenses.consent_and_install', side_effect=failure), \
+                patch.object(wizard.sys.stdin, 'isatty', return_value=True), \
+                patch.object(wizard.sys, 'stderr', io.StringIO()):
+            self.assertEqual(wizard.main(['finish']), 1)
+        self.assertEqual(set(wizard.pending()), {'system-local-llm'})
+        self.assertEqual(wizard.answers()['vision']['phase'], 'complete')
+        self.assertEqual(wizard.answers()['audio']['phase'], 'complete')
+        result = wizard.read_json(wizard.state_root() / 'model-wizard-last-result.json')
+        self.assertFalse(result['ok'])
+        self.assertEqual(result['completed_categories'], ['vision', 'audio'])
+        self.assertIn('Local Ollama backend unavailable', result['failures']['qwen3:8b'])
+
+    def test_truncated_backend_response_keeps_other_wizard_pages_available(self):
+        self.backend.stop()
+        self.assets.extend(system_llm.catalog())
+        wire = b'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n20\r\n{"models":[]'
+        class WireSocket:
+            def makefile(self, *_args): return io.BytesIO(wire)
+        def response(*_args, **_kwargs):
+            reply = http.client.HTTPResponse(WireSocket())
+            reply.begin()
+            return reply
+        opener = Mock()
+        opener.open.side_effect = response
+        output = io.StringIO()
+        with patch.object(system_llm.urllib.request, 'build_opener', return_value=opener), \
+                patch.object(system_llm.shutil, 'which', return_value=None), \
+                patch.object(wizard, 'sizing', return_value=({}, 'qwen3:8b', 'Memory fits.')), \
+                patch.object(system_llm.subprocess, 'call') as pull, \
+                patch.object(wizard, 'run_command') as activate, \
+                patch.object(wizard.sys, 'stdout', output), \
+                patch.object(wizard.sys, 'stderr', io.StringIO()):
+            self.assertEqual(wizard.main(['--json']), 0)
+        pages = {page['id']: page for page in json.loads(output.getvalue())['pages']}
+        self.assertEqual(set(pages), {'vision', 'audio', 'image', 'system-local-llm'})
+        self.assertIsNone(pages['system-local-llm']['default'])
+        self.assertTrue(all(not row['runtime_ready'] for row in pages['system-local-llm']['models']))
+        self.assertIn('Install and start', pages['system-local-llm']['recommendation'])
+        pull.assert_not_called()
+        activate.assert_not_called()
+        self.assertEqual(list(Path(self.directory.name).iterdir()), [])
+
+    def test_activation_failure_does_not_block_a_later_category(self):
+        wizard.apply('vision', ['yolox_s'], 'yes')
+        wizard.apply('audio', ['encodec-24khz-stateful'], 'yes')
+        def activate(segment, models, **kwargs):
+            if segment == 'vision': raise ValueError('fixture runtime unavailable')
+            return True
+        with patch('wizard_licenses.consent_and_install',
+                   return_value=({'yolox_s', 'encodec-24khz-stateful'}, set())), \
+                patch.object(wizard, 'activate_page', side_effect=activate):
+            with self.assertRaisesRegex(wizard.SetupIncomplete, 'fixture runtime unavailable'):
+                wizard.finish()
+        self.assertEqual(set(wizard.pending()), {'vision'})
+        self.assertEqual(wizard.answers()['audio']['phase'], 'complete')
+
+    def test_partial_page_retains_choice_order_and_does_not_change_its_default(self):
+        wizard.apply('vision', ['yolox_s', 'yolox_nano'], 'yes')
+        wizard.apply('audio', ['encodec-24khz-stateful'], 'yes')
+        failure = InstallFailures({'yolox_nano', 'encodec-24khz-stateful'}, set(),
+                                  {'yolox_s': ValueError('download failed')})
+        with patch('wizard_licenses.consent_and_install', side_effect=failure), \
+                patch.object(wizard, 'activate_page', return_value=True) as activate:
+            with self.assertRaises(wizard.SetupIncomplete): wizard.finish()
+        self.assertEqual(wizard.pending()['vision']['models'], ['yolox_s', 'yolox_nano'])
+        self.assertEqual([call.args[0] for call in activate.call_args_list], ['audio'])
+
+    def test_declined_choice_is_removed_even_when_another_choice_fails(self):
+        wizard.apply('vision', ['yolox_s', 'yolox_nano'], 'yes')
+        failure = InstallFailures(set(), {'yolox_s'}, {'yolox_nano': ValueError('download failed')})
+        with patch('wizard_licenses.consent_and_install', side_effect=failure):
+            with self.assertRaises(wizard.SetupIncomplete): wizard.finish()
+        self.assertEqual(wizard.pending()['vision']['models'], ['yolox_nano'])
 
     def test_speech_defaults_to_female02_and_finish_installs_the_release(self):
         assets = [asset('piper-en-us-kristin-medium', 'kilix-piper-tts'),

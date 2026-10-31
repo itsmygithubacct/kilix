@@ -26,7 +26,7 @@ class BatchTests(unittest.TestCase):
         self.installer = Mock()
         self.questions = []
 
-    def run_batch(self, names, decisions, llm_entries=None, *, finish=False):
+    def run_batch(self, names, decisions, llm_entries=None, *, finish=False, acquire=None):
         decisions = iter(decisions)
         def answer(question):
             self.questions.append(question)
@@ -37,7 +37,7 @@ class BatchTests(unittest.TestCase):
                 patch.object(self.lic, 'observe_capture', return_value=self.lic.observe_capture(interactive=True)), \
                 patch.object(self.api, 'Installer', return_value=self.installer), \
                 patch.object(system_llm, 'license_texts', return_value=llm_entries or {}), \
-                patch.object(system_llm, 'acquire'), \
+                patch.object(system_llm, 'acquire', side_effect=acquire), \
                 patch.object(model_wizard, 'state_root', return_value=Path(self.directory.name)), \
                 contextlib.redirect_stdout(output):
             result = (model_wizard.finish(input_fn=answer) if finish else
@@ -100,6 +100,50 @@ class BatchTests(unittest.TestCase):
             self.run_batch(['yolox_s'], ['yes'])
         self.assertIsInstance(caught.exception.__cause__, FileNotFoundError)
         self.assertEqual(len(list(self.store.root.glob('*.json'))), 1)
+
+    def test_model_failure_keeps_prior_success_and_attempts_later_accepted_models(self):
+        names = ['yolox_s', 'qwen3:8b', 'yamnet']
+        cause = ValueError('Local Ollama backend unavailable')
+        with self.assertRaises(batch.InstallFailures) as caught:
+            self.run_batch(names, ['yes'], {'qwen3:8b': [('apache-2.0', b'Original terms')]},
+                           acquire=cause)
+        self.assertEqual(caught.exception.installed, {'yolox_s', 'yamnet'})
+        self.assertEqual(caught.exception.declined, set())
+        self.assertEqual(caught.exception.failures, {'qwen3:8b': cause})
+        self.assertIs(caught.exception.__cause__, cause)
+        self.assertEqual([call.args[0].asset_id for call in self.installer.ensure_upstream_asset.call_args_list],
+                         ['yolox_s', 'yamnet'])
+
+    def test_partial_finish_retry_skips_completed_pages_and_reuses_exact_licences(self):
+        name = 'qwen3:8b'
+        names = ['yolox_s', name, 'yamnet']
+        catalog = cm._verified_catalog(self.api)
+        rows = [dict(id=spec.asset_id, label=spec.label, provider=spec.provider,
+                     download_bytes=spec.download_bytes, installed_bytes=spec.installed_bytes,
+                     temporary_bytes=spec.temporary_bytes)
+                for spec in (catalog.require_asset('yolox_s'), catalog.require_asset('yamnet'))]
+        rows += system_llm.catalog()
+        terms = {name: [('apache-2.0', b'Original terms')]}
+        with patch.object(model_wizard, 'state_root', return_value=Path(self.directory.name)), \
+                patch.object(model_wizard, 'catalog', return_value=rows):
+            model_wizard.apply('vision', ['yolox_s'], 'yes')
+            model_wizard.apply('system-local-llm', [name], 'yes')
+            model_wizard.apply('sound', ['yamnet'], 'yes')
+            with self.assertRaises(model_wizard.SetupIncomplete):
+                self.run_batch(names, ['yes'], terms, finish=True,
+                               acquire=ValueError('Local Ollama backend unavailable'))
+            self.assertEqual(set(model_wizard.pending()), {'system-local-llm'})
+            self.assertEqual(self.installer.ensure_upstream_asset.call_count, 2)
+            receipts = {path.name: path.read_bytes() for path in self.store.root.glob('*.json')}
+            llm_receipt = Path(self.directory.name) / 'model-wizard-llm-licenses.json'
+            old_llm_receipt = llm_receipt.read_bytes()
+            self.questions.clear()
+            self.run_batch([name], [], terms, finish=True)
+            self.assertEqual(model_wizard.pending(), {})
+            self.assertEqual(self.questions, [])
+            self.assertEqual(self.installer.ensure_upstream_asset.call_count, 2)
+            self.assertEqual(receipts, {path.name: path.read_bytes() for path in self.store.root.glob('*.json')})
+            self.assertEqual(llm_receipt.read_bytes(), old_llm_receipt)
 
     def test_llm_retry_reuses_and_preserves_exact_prior_acceptance(self):
         name = 'qwen3:4b-instruct-2507-q4_K_M'

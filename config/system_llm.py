@@ -1,5 +1,6 @@
 """System-local Avatar LLM choices, pinned to Avatar's evaluated Ollama tiers."""
 import hashlib
+import http.client
 import json
 import os
 from pathlib import Path
@@ -103,12 +104,42 @@ def recommend(rows, *, ensure_sizer=False):
 def installed():
     # Avatar's ordinary local backend. Ignore proxy configuration for localhost.
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    with opener.open('http://127.0.0.1:11434/api/tags', timeout=5) as response:
-        data = response.read(1024 * 1024 + 1)
+    try:
+        with opener.open('http://127.0.0.1:11434/api/tags', timeout=5) as response:
+            data = response.read(1024 * 1024 + 1)
+    except (OSError, http.client.HTTPException) as error:
+        action = ('Start the local Ollama server, then retry kilix wizard finish.'
+                  if shutil.which('ollama') else
+                  'Install and start the local Avatar Ollama backend, then retry kilix wizard finish.')
+        raise ValueError('The local Ollama backend at 127.0.0.1:11434 is unavailable. '
+                         + action + ' You can also revisit the System-local LLM page and decline it.') from error
     if len(data) > 1024 * 1024:
         raise ValueError('Local model inventory is too large.')
-    records = json.loads(data)['models']
+    try:
+        records = json.loads(data)['models']
+        if not isinstance(records, list) or any(not isinstance(row, dict)
+                or not isinstance(row.get('name'), str) or not row['name'] for row in records):
+            raise ValueError('Invalid model records')
+        if len({row['name'] for row in records}) != len(records):
+            raise ValueError('Duplicate model names')
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError('The local Ollama backend returned an invalid model inventory.') from error
     return {row['name']: row for row in records if not row.get('remote_host') and not row.get('remote_model')}
+
+
+def available_models():
+    """Readiness for defaults only; acquire rechecks the live model identity."""
+    try:
+        records = installed()
+    except ValueError as error:
+        return set(), str(error)
+    can_pull = bool(shutil.which('ollama'))
+    ready = {name for name, (_label, size, _parameters, digest) in MODELS.items()
+             if (records[name].get('digest') == digest and records[name].get('size') == size
+                 if name in records else can_pull)}
+    note = ('Uses the running local Ollama backend.' if can_pull else
+            'The Ollama command is missing; only already installed, matching local models are ready.')
+    return ready, note
 
 
 def acquire(name, *, input_fn=input, consented=False):

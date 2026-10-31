@@ -353,6 +353,11 @@ def pages(include_answered=False, *, assets=None, measure=True, ensure_sizer=Fal
         if not rows or (not include_answered and answer in ('yes', 'no')):
             continue
         reports, recommended, note = sizing(rows, key, ensure_sizer=ensure_sizer) if measure else ({}, None, 'Sizing not requested.')
+        ready = None
+        if key == 'system-local-llm' and measure:
+            import system_llm
+            ready, runtime_note = system_llm.available_models()
+            note += ' ' + runtime_note
         for row in rows:
             report = reports.get(STT_IDS.get(row['id'], row['id']), {})
             row['fit'] = report.get('verdict', 'unknown')
@@ -362,7 +367,12 @@ def pages(include_answered=False, *, assets=None, measure=True, ensure_sizer=Fal
             resources = {} if key in RUNTIME_PAGES else (report.get('inference') or {}).get('resources', {})
             row['ram_bytes'] = report.get('required_ram_bytes', resources.get('ram', {}).get('required_bytes'))
             row['vram_bytes'] = report.get('required_vram_bytes', resources.get('vram', {}).get('required_bytes'))
+            if ready is not None:
+                row['runtime_ready'] = row['id'] in ready
         choice = next((row['id'] for row in rows if STT_IDS.get(row['id'], row['id']) == recommended), None)
+        needs_backend = ready is not None and choice is not None and choice not in ready
+        if needs_backend:
+            choice = None
         default = choice or next((row['id'] for row in rows if row['id'] == preferred), rows[0]['id'])
         if key == 'system-local-llm' or key in RUNTIME_PAGES and reports:
             default = choice
@@ -370,8 +380,10 @@ def pages(include_answered=False, *, assets=None, measure=True, ensure_sizer=Fal
             # Female-02 is the catalog default even when the sizer prefers Kristin.
             default = preferred
             choice = None
+        label = ('Backend setup required' if needs_backend else 'Recommended' if choice else
+                 'No confirmed fit' if default is None else 'Catalog default')
         result.append(dict(id=key, title=title, models=rows, default=default, answer=answer, disk_available_bytes=disk_free,
-                           recommendation=f'{"Recommended" if choice else "No confirmed fit" if default is None else "Catalog default"}: {default or "none"}. {note}'))
+                           recommendation=f'{label}: {default or "none"}. {note}'))
     return result
 
 
@@ -455,6 +467,46 @@ def apply(segment, selected, answer, *, input_fn=input):
                'planned' if answer == 'yes' else 'complete')
 
 
+class SetupIncomplete(ValueError):
+    def __init__(self, failures, completed):
+        self.failures = dict(failures)
+        self.completed = tuple(completed)
+        detail = '; '.join(f'{name}: {error_detail(error)}' for name, error in failures.items())
+        finished = ' Completed categories: ' + ', '.join(completed) + '.' if completed else ''
+        super().__init__('Model setup is incomplete. ' + detail + '.' + finished
+                         + ' Unfinished choices remain pending; retry kilix wizard finish.')
+
+
+def activate_page(segment, models, *, input_fn):
+    from wizard_licenses import ask
+    if segment == 'speech' and 'kilix-female-02' in models:
+        run_command('tts', '--install=kilix-female-02')
+        run_command('tts', '--set', 'engine=piper', '--set', 'voice=kilix-female-02')
+        legacy_state(segment, {'answer': 'yes', 'enabled': True, 'offered': True})
+    elif segment == 'speech' and 'piper-en-us-kristin-medium' in models:
+        run_command('tts', '--prepare-system-voice')
+        legacy_state(segment, {'answer': 'yes', 'enabled': True, 'offered': True})
+    elif segment == 'dictation':
+        active = next((model for model in models if model in STT_IDS), None)
+        if active:
+            run_command('stt', '--install', STT_IDS[active])
+            print('Dictation records only while you dictate and processes speech locally.')
+            if ask('Allow microphone use for dictation?', input_fn) != 'yes':
+                legacy_state(segment, {'answer': 'no'})
+                return False
+            run_command('stt', '--default', STT_IDS[active])
+            run_command('stt', '--grant-consent')
+            legacy_state(segment, {'answer': 'yes', 'model': STT_IDS[active]})
+    elif segment == 'workflows':
+        # Acquisition already used the shared licence batch. Selecting
+        # verifies this exact backend, without any additional download.
+        check_workflows(model=ASK_MODELS[models[0]], select=True)
+        legacy_state(segment, {'answer': 'yes', 'scope': 'ask'})
+    elif segment == 'legacy-workflows':
+        check_workflows(legacy=True)
+    return True
+
+
 def finish(*, input_fn=input):
     with exclusive():
         plans = pending()
@@ -469,44 +521,40 @@ def finish(*, input_fn=input):
         for segment, plan in plans.items():
             if set(plan['models']) - offered.get(segment, set()):
                 raise ValueError('The offered models changed. Revisit this page with --all.')
-        from wizard_licenses import consent_and_install, ask
-        allowed, declined = consent_and_install(selected, input_fn=input_fn) if selected else (set(), set())
+        from wizard_licenses import InstallFailures, consent_and_install
+        failures, completed = {}, []
+        try:
+            allowed, declined = consent_and_install(selected, input_fn=input_fn) if selected else (set(), set())
+        except InstallFailures as error:
+            allowed, declined = error.installed, error.declined
+            failures.update(error.failures)
         allowed = set(allowed) | {'grammar'}
         for segment, plan in plans.items():
-            models = [model for model in plan['models'] if model in allowed]
-            if not models:
-                if segment in LEGACY:
-                    legacy_state(segment, declined_state(segment))
-                record(segment, 'no', [])
-                continue
-            if segment == 'speech' and 'kilix-female-02' in models:
-                run_command('tts', '--install=kilix-female-02')
-                run_command('tts', '--set', 'engine=piper', '--set', 'voice=kilix-female-02')
-                legacy_state(segment, {'answer': 'yes', 'enabled': True, 'offered': True})
-            elif segment == 'speech' and 'piper-en-us-kristin-medium' in models:
-                run_command('tts', '--prepare-system-voice')
-                legacy_state(segment, {'answer': 'yes', 'enabled': True, 'offered': True})
-            elif segment == 'dictation':
-                active = next((model for model in models if model in STT_IDS), None)
-                if active:
-                    run_command('stt', '--install', STT_IDS[active])
-                    print('Dictation records only while you dictate and processes speech locally.')
-                    if ask('Allow microphone use for dictation?', input_fn) != 'yes':
-                        legacy_state(segment, {'answer': 'no'})
-                        record(segment, 'no', [])
+            models = [model for model in plan['models'] if model not in declined]
+            try:
+                if not models:
+                    if segment in LEGACY:
+                        legacy_state(segment, declined_state(segment))
+                    record(segment, 'no', [])
+                else:
+                    # Retain order and successful choices on an incomplete page,
+                    # while preserving explicit declines even if activation fails.
+                    record(segment, 'yes', models, 'planned')
+                    missing = [model for model in models if model not in allowed]
+                    if missing:
+                        for model in missing:
+                            failures.setdefault(model, ValueError('Installation was not confirmed'))
                         continue
-                    run_command('stt', '--default', STT_IDS[active])
-                    run_command('stt', '--grant-consent')
-                    legacy_state(segment, {'answer': 'yes', 'model': STT_IDS[active]})
-            elif segment == 'workflows':
-                # Acquisition already used the shared licence batch. Selecting
-                # verifies this exact backend, without any additional download.
-                backend = ASK_MODELS[models[0]]
-                check_workflows(model=backend, select=True)
-                legacy_state(segment, {'answer': 'yes', 'scope': 'ask'})
-            elif segment == 'legacy-workflows':
-                check_workflows(legacy=True)
-            record(segment, 'yes', models)
+                    if activate_page(segment, models, input_fn=input_fn):
+                        record(segment, 'yes', models)
+                    else:
+                        record(segment, 'no', [])
+                completed.append(segment)
+            except Exception as error:
+                failures['setup:' + segment] = error
+                print(f'Setup for {segment} failed; continuing with other model categories.', flush=True)
+        if failures:
+            raise SetupIncomplete(failures, completed) from next(iter(failures.values()))
         print('Model setup complete. Declined licences were not installed.')
 
 
@@ -592,6 +640,9 @@ def main(argv=None):
         return 0
     except (Exception, KeyboardInterrupt) as error:
         result['error'] = error_detail(error)
+        if isinstance(error, SetupIncomplete):
+            result['completed_categories'] = list(error.completed)
+            result['failures'] = {name: error_detail(cause) for name, cause in error.failures.items()}
         if run_directory is not None:
             diagnostic = run_directory / 'error.log'
             try:

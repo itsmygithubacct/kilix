@@ -5,6 +5,16 @@ import tempfile
 import sys
 
 
+class InstallFailures(RuntimeError):
+    """Retain verified successes and exact failures from one consent batch."""
+
+    def __init__(self, installed, declined, failures):
+        self.installed = frozenset(installed)
+        self.declined = frozenset(declined)
+        self.failures = dict(failures)
+        super().__init__('; '.join('Could not install ' + model for model in failures))
+
+
 def text_key(payload):
     # Group questions by licence, but retain every distinct verbatim text.
     return hashlib.sha256(payload).hexdigest()
@@ -35,7 +45,7 @@ def llm_license_covered(model, entries, saved, manifest_digest):
 
 
 def consent_and_install(selected, *, input_fn=input):
-    """Return installed and declined IDs; failed installs raise for a safe retry.
+    """Return installed and declined IDs; retain successes when acquisitions fail.
 
     Every prompt names all affected assets. The authority still binds each
     affirmative capture to its own record and exact model manifest. A declined
@@ -150,6 +160,7 @@ def consent_and_install(selected, *, input_fn=input):
         from wizard_converters import prepare_converters
         prepare_converters(api, installer, [specs[model] for model in selected
                                            if model in allowed and model in specs], input_fn=input_fn)
+        installed, failures = set(), {}
         for model in selected:
             if model not in allowed: continue
             print('\nInstalling ' + model + '…', flush=True)
@@ -161,5 +172,10 @@ def consent_and_install(selected, *, input_fn=input):
                     # The current or saved licence-group Yes also covers the download.
                     system_llm.acquire(model, consented=True)
             except Exception as error:
-                raise RuntimeError(f'Could not install {model}') from error
-    return allowed, declined
+                failures[model] = error
+                print(f'Could not install {model}; continuing with the other accepted models.', flush=True)
+            else:
+                installed.add(model)
+        if failures:
+            raise InstallFailures(installed, declined, failures) from next(iter(failures.values()))
+    return installed, declined

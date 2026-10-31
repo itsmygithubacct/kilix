@@ -3211,6 +3211,19 @@ this agreement terminal inside the desktop. Accepted models receive individual
 receipts; microphone permission remains a separate question for dictation.
 Installing a catalog asset does not enable a runtime that does not support it.
 
+System-local LLM choices require a running local Ollama backend. The wizard
+checks backend readiness before preselecting a recommendation and explains
+missing prerequisites. Choices remain available to save for later setup;
+opening the wizard does not install or start an Ollama service.
+
+If a model acquisition fails, the wizard continues with other accepted models
+and completes categories whose selected models are ready. It reports each
+failure and keeps incomplete categories pending with their choice order intact.
+Retrying `kilix wizard finish` skips completed categories and reuses still-valid
+licence receipts. Runtime setup failures also leave their category pending
+while other categories finish. A failed batch still returns a failure status
+and saves its completed categories and individual failures in the result log.
+
 Selected diarization and Pocket TTS models need optional conversion software.
 After licence consent, the wizard shows the pinned OS installer's download
 details and asks separately before running its administrator step with `sudo`.
