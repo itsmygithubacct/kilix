@@ -595,4 +595,29 @@ class WizardTests(unittest.TestCase):
         legacy.assert_not_called()
 
 
+class CatalogDownloadTests(unittest.TestCase):
+    def test_registry_payloads_include_blobs_without_changing_manifest_contract(self):
+        import content_models
+        specs = content_models._verified_catalog(content_models._api()).assets
+        before = {spec.asset_id: spec.download_bytes for spec in specs}
+        rows = {row['id']: row for row in wizard.catalog()}
+        expected = {
+            'granite4.1-3b': (829, 2099521110),
+            'nomic-embed-text-v1.5': (708, 274303158),
+            'granite3.2-vision-2b': (1405, 2437853870),
+            'qwen3.5-4b': (709, 3389984444),
+        }
+        registry = {spec.asset_id for spec in specs if spec.source_mode == 'registry-manifest'}
+        self.assertEqual(registry, set(expected))
+        for name, (manifest, payload) in expected.items():
+            self.assertEqual(before[name], manifest)
+            self.assertEqual(rows[name]['download_bytes'], payload)
+        for spec in specs:
+            self.assertEqual(spec.download_bytes, before[spec.asset_id])
+            if spec.source_mode != 'registry-manifest':
+                self.assertEqual(rows[spec.asset_id]['download_bytes'], spec.download_bytes)
+            self.assertEqual(rows[spec.asset_id]['installed_bytes'], spec.installed_bytes)
+            self.assertEqual(rows[spec.asset_id]['temporary_bytes'], spec.temporary_bytes)
+
+
 if __name__ == '__main__': unittest.main()

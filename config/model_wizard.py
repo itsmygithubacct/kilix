@@ -228,11 +228,22 @@ def group(asset):
     return provider or 'other'
 
 
+def model_download_bytes(spec):
+    """Catalog payload size before cache reuse, without changing fetch metadata."""
+    if spec.source_mode == 'registry-manifest':
+        # Content verifies the manifest against spec.download_bytes, then
+        # fetches each pinned blob separately. Locally written notices are
+        # installed files, but are not registry downloads.
+        files = {item.path: item for item in spec.files}
+        return spec.download_bytes + sum(files[item.path].bytes for item in spec.blobs)
+    return spec.download_bytes
+
+
 def catalog():
     import content_models
     api = content_models._api()
     return [dict(id=spec.asset_id, label=spec.label, provider=spec.provider,
-                 download_bytes=spec.download_bytes, installed_bytes=spec.installed_bytes,
+                 download_bytes=model_download_bytes(spec), installed_bytes=spec.installed_bytes,
                  temporary_bytes=spec.temporary_bytes, manifest_digest=spec.manifest_digest)
             for spec in content_models._verified_catalog(api).assets] + __import__('system_llm').catalog()
 
