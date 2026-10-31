@@ -53,6 +53,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\package.ps1 -EngineDirecto
 powershell -NoProfile -ExecutionPolicy Bypass -File .\test-application.ps1 -ApplicationDirectory ..\src\dist\kilix -WslDistribution Ubuntu
 powershell -NoProfile -ExecutionPolicy Bypass -File .\test-startup.ps1 -ApplicationDirectory ..\src\dist\kilix -WslDistribution Ubuntu
 powershell -NoProfile -ExecutionPolicy Bypass -File .\test-cli.ps1 -ApplicationDirectory ..\src\dist\kilix
+powershell -NoProfile -ExecutionPolicy Bypass -File .\test-system-load.ps1 -ApplicationDirectory ..\src\dist\kilix
 ```
 
 The build uses a separate per-user MSYS2 MinGW64 toolchain under
@@ -802,6 +803,15 @@ Native Windows supports portable graphs, procedural Soundgen and explicit
 system browser/PDF/media/SAPI handlers; Linux app/game
 binaries remain WSL-only. See [catalog setup and limitations](wsl/README.txt).
 Native and WSL recovery are opt-in as described above.
+The top bar shows native whole-system CPU use in logical-core equivalents and
+physical RAM in use. This readout has no click action. It respects
+`KILIX_CHROME_SYSTEM_LOAD_MODE=always`, `auto`, or `off`; the default is `always`.
+CPU needs two samples and remains hidden on systems with multiple processor
+groups, where the API reports only one group's time. RAM remains available.
+The packaged counter check uses a temporary application copy and private
+configuration directories, then verifies that the original package is unchanged.
+It verifies sampling and display policy; it does not establish that the readout
+was rendered correctly on a physical display.
 Unsupported Linux chrome widgets are hidden.
 The native Windows backend still contains inherited compatibility shims that
 need further review before expanding supported capabilities.

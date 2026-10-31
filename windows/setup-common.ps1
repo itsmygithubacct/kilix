@@ -165,7 +165,8 @@ function ConvertTo-KilixArgument([AllowEmptyString()][string]$Value) {
 }
 
 function Invoke-KilixProcess([string]$FilePath, [string[]]$ArgumentList, [int]$TimeoutSeconds = 30,
-                            [Text.Encoding]$OutputEncoding = [Text.Encoding]::UTF8) {
+                            [Text.Encoding]$OutputEncoding = [Text.Encoding]::UTF8,
+                            [hashtable]$ChildEnvironment = @{}) {
     $process = New-Object Diagnostics.Process
     $process.StartInfo.FileName = $FilePath
     $process.StartInfo.Arguments = (@($ArgumentList | ForEach-Object { ConvertTo-KilixArgument $_ }) -join ' ')
@@ -177,6 +178,10 @@ function Invoke-KilixProcess([string]$FilePath, [string[]]$ArgumentList, [int]$T
     $process.StartInfo.StandardErrorEncoding = $OutputEncoding
     $process.StartInfo.EnvironmentVariables['PYTHONDONTWRITEBYTECODE'] = '1'
     try {
+        foreach ($key in $ChildEnvironment.Keys) {
+            if ($null -eq $ChildEnvironment[$key]) { $process.StartInfo.EnvironmentVariables.Remove($key) }
+            else { $process.StartInfo.EnvironmentVariables[$key] = [string]$ChildEnvironment[$key] }
+        }
         if (!$process.Start()) { throw "Could not start $FilePath" }
         $stdout = $process.StandardOutput.ReadToEndAsync()
         $stderr = $process.StandardError.ReadToEndAsync()

@@ -144,6 +144,8 @@ jobs:
         run: .\windows\tests\test-installed-package.ps1 -Archive .\src\dist\kilix-0.2.2-windows-x64-dev.zip
       - name: Check packaged command interface
         run: .\windows\test-cli.ps1 -ApplicationDirectory .\src\dist\kilix
+      - name: Check packaged native system counters
+        run: .\windows\test-system-load.ps1 -ApplicationDirectory .\src\dist\kilix
       - name: Check self-contained catalog GUI runtime
         run: .\windows\test-tk.ps1 -ApplicationDirectory .\src\dist\kilix
       - name: Check native process recovery
