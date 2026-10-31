@@ -158,8 +158,11 @@ request is its own consent). CLI: `kilix-needle ask --agent --json [--plan] [--y
 'REQUEST'`. Read `route.job` and `route.stage` in the result.
 
 An unsure route never acts: it returns `clarify` with candidate jobs and one
-accepted phrasing each, written `job: phrase`. Choose one and call that job's own
-tool with only `phrase`, not the `job:` label. Probe an unfamiliar phrasing with
+accepted phrasing each, written `job: phrase`. Choose one and send it as written:
+`ask` runs a leading `panes:`, `apps:`, `agents:`, `files:` or `system:` label as
+that job, with the rest passed on unchanged and no routing. A `tmux:`, `logs:`,
+`pty:` or `desktop:` label is not taken, so call that job's own tool with only
+`phrase`. Probe an unfamiliar phrasing with
 `--plan`: `--yes` runs any phrase that parses, even a partial one. Do not rephrase
 until something acts. A route to tmux, logs, pty or desktop names that job's tool
 and runs nothing. When the job is known, call its tool directly.
