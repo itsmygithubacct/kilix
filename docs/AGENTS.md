@@ -60,6 +60,7 @@ Replace uppercase placeholders with actual values. Quote paths and titles.
 | `kilix pane right --cwd DIR --porcelain -- bash` | Open a shell beside the caller; print its new pane ID. |
 | `kilix pane right --cwd DIR --hold --porcelain -- PROGRAM ARGS` | Run a job and keep its output visible after exit. |
 | `kilix new-tab --title TITLE --cwd DIR -- PROGRAM ARGS` | Open a tab running a program; use `codex` to launch Codex. |
+| `kilix agent-control new-tab PANE --expect-broker BROKER --agent codex --cwd DIR --title TITLE [--model MODEL]` | Explicit form of a worker launch (`kilix session launch` is preferred). `created` means launched; never repeat it. |
 | `kilix focus pane:ID` / `kilix focus tab:ID` | Focus the explicitly typed target; only from the pane the user is typing in. |
 | `kilix watch ID --once --plain` | Read the visible screen. |
 | `kilix watch ID --once --extent all --plain` | Read screen and scrollback. |
@@ -157,7 +158,9 @@ request is its own consent). CLI: `kilix-needle ask --agent --json [--plan] [--y
 'REQUEST'`. Read `route.job` and `route.stage` in the result.
 
 An unsure route never acts: it returns `clarify` with candidate jobs and one
-accepted phrasing each. Choose one and call that job's own tool; do not rephrase
+accepted phrasing each, written `job: phrase`. Choose one and call that job's own
+tool with only `phrase`, not the `job:` label. Probe an unfamiliar phrasing with
+`--plan`: `--yes` runs any phrase that parses, even a partial one. Do not rephrase
 until something acts. A route to tmux, logs, pty or desktop names that job's tool
 and runs nothing. When the job is known, call its tool directly.
 
@@ -180,7 +183,8 @@ Submission does not prove acknowledgment or completion.
 Use bounded queries in the requested directory, session, service, or time range.
 Run the query even when the likely answer seems obvious. Return the requested
 fact from the actual result; quoting a log search term is not evidence that it
-was found.
+was found. A name can contain spaces: quote the whole path, and list the parent
+when a path is reported missing.
 
 | Command | Purpose |
 | --- | --- |
@@ -197,6 +201,8 @@ was found.
 | `kilix transcript list` | Find retained terminal transcripts. |
 | `kilix transcript show TARGET` / `kilix transcript path TARGET` | Read or locate a retained transcript. |
 
+For a live pane's log, `kilix rollout log --pane ID` (below) resolves the path;
+read its tail with a bounded parser.
 `rg` exit 1 means no matches. Report valid negative results as such. Terminal
 transcripts contain displayed, possibly wrapped text. For full conversations,
 read the client's structured history. Default locations are `CODEX_HOME/sessions`
@@ -385,8 +391,9 @@ These open panes or start background work; run them only on the user's
 explicit request:
 
 - `claudex route max|worker TIER|security [REQUEST]` opens coding sessions
-  chosen from current usage. Use `--dry-run` (or `--json`) to show the choice
-  without opening anything.
+  chosen from current usage. REQUEST is optional; if given, it must name an
+  existing file. Use `--dry-run` (or `--json`) to show the choice without opening
+  anything.
 - `claudex loop start` starts a detached timer that types a prompt into its
   target every interval. `claudex loop status` reads it; `claudex loop pause`
   stops sends without stopping the daemon.
