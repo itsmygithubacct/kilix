@@ -351,10 +351,10 @@ clock and timezone widget. The volume icon opens a compact slider on one click,
 the full clickable `kilix-volume` output selector on a double-click, and a
 settings card with a live Mute checkbox on right-click. The network icon shows
 compact connection status on one click and opens `nmtui` on a double-click.
-Right-click CPU/RAM, temperature, read-aloud, microphone, Wi-Fi or weather
+Right-click CPU/RAM, GPU, temperature, read-aloud, microphone, Wi-Fi or weather
 for its own menu. Clock and calendar open clock settings; battery opens
 Kilix Settings. All widget menus are also accessible with
-`kilix settings --widget system|temperature|speech|microphone|network|weather`.
+`kilix settings --widget system|gpu|temperature|speech|microphone|network|weather`.
 
 Calendar, clock, volume, network, battery and temperature cards use the same
 popup layer as Start. They open next to the clicked control, above the panes,
@@ -1953,6 +1953,14 @@ fallback. A single `kilix-telemetry` sampler publishes both aggregates to a
 private mmap ring; title bars refresh only when a displayed value changes and
 retain local process-tree fallbacks if the shared service is unavailable.
 
+When a pane's processes hold more than 512 MiB of GPU memory, a blue GPU chip
+shows that amount right of the RAM measurement (NVML per-process memory for
+NVIDIA, DRM fdinfo for AMD and Intel). Set `KILIX_CHROME_PANE_GPU_MODE` to
+`always` or `off`; the 512 MiB threshold is fixed. Attribution is by process:
+memory a service holds outside every pane (a model server, for example) is in
+the top-bar total but in no pane chip, and a pane running only a client of
+that service has no GPU chip.
+
 The far right of the page strip can show system CPU and RAM, thermometer,
 volume, network, calendar, local date/time, and (when applicable) battery
 items. System CPU and RAM come first and are shown at all times by default, in
@@ -1961,7 +1969,14 @@ equivalents to the left of the chip and RAM in use (total minus available) in
 GiB to its right, for example `6.4 󰍛 12.3`. Clicking it opens Kilix Memory and
 right-clicking it opens Kilix Settings.
 Set shared `KILIX_CHROME_SYSTEM_LOAD_MODE` to `auto` to apply the pane
-thresholds (CPU above `1.0`, RAM at 1 GiB or more), or `off` to hide it. The
+thresholds (CPU above `1.0`, RAM at 1 GiB or more), or `off` to hide it.
+Total GPU use sits immediately right of it in the same form: percent busy left
+of a graphics-card glyph and VRAM in use right of it, for example `37% 󰢮 2.2`.
+With several GPUs the discrete one is shown and a click lists each GPU; it is
+hidden when no GPU is readable, and a runtime-suspended GPU reads `sleep`
+without being woken. NVIDIA is read through NVML (`libnvidia-ml.so.1`), AMD
+through sysfs; nothing is spawned. Set shared `KILIX_CHROME_SYSTEM_GPU_MODE`
+to `auto` (10% busy or more than 512 MiB) or `off`. The
 thermometer is disabled by default; when enabled it shows the hottest readable Linux
 thermal-zone/hwmon temperature to one decimal place in green below 80°C, yellow
 at 80–89°C, or red from 90°C. It sits immediately right of the system CPU and
@@ -3171,7 +3186,10 @@ readout, or `pane_memory=off` to hide the RAM side. The symmetric
 `pane_cpu=always` or
 `pane_cpu=off` to override that policy. The top bar's system CPU and RAM
 readout takes `system_load=always` (the default), `system_load=auto` or
-`system_load=off`.
+`system_load=off`. The GPU widget beside it takes `system_gpu=always` (the
+default), `system_gpu=auto` or `system_gpu=off`, and the pane GPU chip takes
+`pane_gpu=auto` (the default, above a fixed 512 MiB), `pane_gpu=always` or
+`pane_gpu=off`.
 
 - **Quieter page strip:** `tab_bar_min_tabs 2` (hide it until a 2nd page) and
   `tab_bar_show_new_tab_button no` (hide the `+`).

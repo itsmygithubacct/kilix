@@ -564,6 +564,26 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("MEMORY_WIDGET_ACTION", titlebar)
         self.assertIn("pane_memory_text", titlebar)
         self.assertIn("U+F035B", conf)
+        # The GPU widget and pane GPU chip: the engine reads the keys, defaults
+        # and choices the settings surfaces write, and its glyph is pinned to
+        # the bundled Symbols Nerd Font like the RAM chip's.
+        gpu = (ROOT / "src" / "kitty" / "kilix_gpu.py").read_text()
+        self.assertIn("SYSTEM_GPU_MODE_KEY = 'KILIX_CHROME_SYSTEM_GPU_MODE'", gpu)
+        self.assertIn("SYSTEM_GPU_MODE_DEFAULT = 'always'", gpu)
+        self.assertIn("SYSTEM_GPU_MODES = ('auto', 'always', 'off')", gpu)
+        self.assertIn("PANE_GPU_MODE_KEY = 'KILIX_CHROME_PANE_GPU_MODE'", gpu)
+        self.assertIn("PANE_GPU_MODE_DEFAULT = 'auto'", gpu)
+        self.assertIn("PANE_GPU_MODES = ('auto', 'always', 'off')", gpu)
+        self.assertIn("PANE_GPU_THRESHOLD = 512 * MIB", gpu)
+        self.assertIn("GPU_GLYPH = chr(0xf08ae)", gpu)
+        self.assertIn('SYSTEM_GPU_MODE_KEY = "KILIX_CHROME_SYSTEM_GPU_MODE"', shared)
+        self.assertIn('SYSTEM_GPU_MODE_DEFAULT = "always"', shared)
+        self.assertIn('PANE_GPU_MODE_KEY = "KILIX_CHROME_PANE_GPU_MODE"', shared)
+        self.assertIn('PANE_GPU_MODE_DEFAULT = "auto"', shared)
+        self.assertIn("system_gpu_bar_segment", system)
+        self.assertIn("pane_gpu_text", titlebar)
+        self.assertIn("GPU_WIDGET_ACTION", registry)
+        self.assertIn("U+F08AE", conf)
 
     def test_title_bar_screen_tracks_font_resize(self):
         window = (ROOT / "src" / "kitty" / "window.py").read_text()
@@ -714,6 +734,8 @@ class KilixLauncherTests(unittest.TestCase):
             self.assertIn(key, settings)
         self.assertIn("PANE_CPU_MODE_KEY", settings)
         self.assertIn("PANE_MEMORY_MODE_KEY", settings)
+        self.assertIn("PANE_GPU_MODE_KEY", settings)
+        self.assertIn("SYSTEM_GPU_MODE_KEY", settings)
         self.assertIn("get_env_key", settings)
         self.assertIn("set_env_key", settings)
         self.assertIn("shared_settings", settings)

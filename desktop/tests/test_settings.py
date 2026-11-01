@@ -171,13 +171,23 @@ with conf("font_size 12\n") as path:
     kind, system_mode = win.fields["KILIX_CHROME_SYSTEM_LOAD_MODE"]
     assert system_mode.value == "always", "system CPU and RAM should default to always"
     assert list(system_mode.options) == ["auto", "always", "off"], system_mode.options
+    kind, system_gpu = win.fields["KILIX_CHROME_SYSTEM_GPU_MODE"]
+    assert system_gpu.value == "always", "system GPU should default to always"
+    assert list(system_gpu.options) == ["auto", "always", "off"], system_gpu.options
+    kind, pane_gpu = win.fields["KILIX_CHROME_PANE_GPU_MODE"]
+    assert pane_gpu.value == "auto", "pane GPU memory should default to auto"
+    assert list(pane_gpu.options) == ["auto", "always", "off"], pane_gpu.options
     thermal.checked = True
     volume.checked = False
     synchronize.checked = False
     cpu_mode.index = cpu_mode.options.index("always")
     memory_mode.index = memory_mode.options.index("always")
     system_mode.index = system_mode.options.index("off")
+    system_gpu.index = system_gpu.options.index("auto")
+    pane_gpu.index = pane_gpu.options.index("off")
     win._apply()
+    assert "KILIX_CHROME_SYSTEM_GPU_MODE=auto" in read(win.shared_path)
+    assert "KILIX_CHROME_PANE_GPU_MODE=off" in read(win.shared_path)
     assert "KILIX_CHROME_SYSTEM_LOAD_MODE=off" in read(win.shared_path)
     assert "KILIX_CHROME_TEMPERATURE=1" in read(win.shared_path)
     assert "KILIX_CHROME_VOLUME=0" in read(win.shared_path)

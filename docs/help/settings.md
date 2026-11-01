@@ -30,6 +30,26 @@ hide it, or `system_load=always` to restore the default. The **Top bar**
 section of `kilix settings`, the desktop Settings app and Kilix95 Settings
 offer the same choice as **System CPU and RAM**.
 
+Immediately right of it is total GPU use: percent busy, the GPU card glyph,
+then VRAM in use, for example `37% 󰢮 2.2` (GiB; `400M` below 1 GiB). On a
+machine with several GPUs it shows the discrete one; clicking it lists each
+GPU, and right-clicking opens its menu (`kilix settings --widget gpu`). It is
+hidden when no GPU can be read, and a GPU that is runtime-suspended reads
+`sleep` and is never woken to be measured. Run
+`kilix settings --set system_gpu=auto` to show it only at 10% busy or more
+than 512 MiB of VRAM, `system_gpu=off` to hide it, or `system_gpu=always` to
+restore the default. The choice is **System GPU** in the same Top bar
+sections.
+
+When a pane's own processes hold more than 512 MiB of GPU memory, the pane
+chip shows it right of the RAM measurement after the same glyph. Set
+`kilix settings --set pane_gpu=always` to show any amount, `pane_gpu=off` to
+hide it, or `pane_gpu=auto` for the default. The 512 MiB threshold is fixed,
+like the RAM and CPU thresholds. Memory is attributed by process: a service
+started outside every pane (such as a model server) counts in the top-bar
+total but in no pane, and a pane running only a client of that service shows
+no GPU chip.
+
 Temperature displays default to Fahrenheit. Set the shared preference with
 `kilix settings --set temperature_unit=celsius` or `temperature_unit=fahrenheit`.
 The **Top bar** section of `kilix settings` and the **Temperature units** choice

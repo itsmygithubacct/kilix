@@ -60,6 +60,14 @@ class WidgetSettingsTests(unittest.TestCase):
         self.assertIn('not GPU use', ' '.join(notes))
         self.assertEqual({e.key for e in entries if e.key},
                          {settings.SYSTEM_LOAD_MODE_KEY, settings.PANE_CPU_MODE_KEY, settings.PANE_MEMORY_MODE_KEY})
+        notes, entries = widgets.menu('gpu', values)
+        self.assertEqual(widgets.TITLES['gpu'], 'GPU')
+        self.assertIn('never woken', ' '.join(notes))
+        self.assertIn('512 MiB', ' '.join(notes))
+        self.assertEqual({e.key for e in entries if e.key},
+                         {settings.SYSTEM_GPU_MODE_KEY, settings.PANE_GPU_MODE_KEY})
+        self.assertTrue(any(e.label == '[x] Top-bar GPU: always' for e in entries))
+        self.assertIn('Pane GPU display: auto', [e.label for e in entries])
         notes, entries = widgets.menu('speech', values)
         self.assertIn('Speech output engine:', ' '.join(notes))
         self.assertEqual(entries[0].action, 'tts')
