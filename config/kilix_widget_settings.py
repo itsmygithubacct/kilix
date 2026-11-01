@@ -14,8 +14,8 @@ from dataclasses import dataclass
 from kilix_sdk import settings
 
 ROOT = Path(__file__).resolve().parent.parent
-WIDGETS = ('system', 'temperature', 'speech', 'microphone', 'network', 'weather')
-TITLES = dict(zip(WIDGETS, ('System CPU and RAM', 'Temperature', 'Read pane aloud',
+WIDGETS = ('system', 'gpu', 'temperature', 'speech', 'microphone', 'network', 'weather')
+TITLES = dict(zip(WIDGETS, ('System CPU and RAM', 'GPU', 'Temperature', 'Read pane aloud',
                           'Microphone / dictation', 'Network / Wi-Fi', 'Weather')))
 
 
@@ -58,6 +58,16 @@ def menu(kind: str, values: dict) -> tuple[list[str], list[Entry]]:
                           settings.PANE_CPU_MODE_DEFAULT, values),
                     cycle('Pane RAM display', settings.PANE_MEMORY_MODE_KEY, settings.PANE_MEMORY_MODE_CHOICES,
                           settings.PANE_MEMORY_MODE_DEFAULT, values), Entry('Open Kilix Memory', action='memory')]
+    elif kind == 'gpu':
+        notes = ['Busy % and VRAM in use (GiB, or M for MiB) on the discrete GPU; click lists each GPU.',
+                 'NVIDIA via NVML; AMD via sysfs. A sleeping GPU is shown asleep, never woken.',
+                 'Pane chip: GPU memory of the pane\'s own processes, above 512 MiB in auto.',
+                 'A service outside every pane (for example a model server) is in the total only.']
+        entries = [selected(f'Top-bar GPU: {label}', settings.SYSTEM_GPU_MODE_KEY, mode, values)
+                   for mode, label in (('always', 'always'), ('auto', 'auto (>=10% busy / >512 MiB)'),
+                                       ('off', 'hidden'))]
+        entries += [cycle('Pane GPU display', settings.PANE_GPU_MODE_KEY, settings.PANE_GPU_MODE_CHOICES,
+                          settings.PANE_GPU_MODE_DEFAULT, values)]
     elif kind == 'temperature':
         notes = ['Hottest available hardware sensor; this is not outdoor weather.']
         entries = [selected('Celsius (°C)', settings.TEMPERATURE_UNIT_KEY, 'celsius', values),

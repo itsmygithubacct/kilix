@@ -173,6 +173,17 @@ PANE_CPU_MODE_CHOICES = ("auto", "always", "off")
 PANE_MEMORY_MODE_KEY = "KILIX_CHROME_PANE_MEMORY_MODE"
 PANE_MEMORY_MODE_DEFAULT = "auto"
 PANE_MEMORY_MODE_CHOICES = ("auto", "always", "off")
+# Total GPU use (utilisation and VRAM), immediately right of CPU/RAM in the top
+# bar; hidden when no GPU can be read. ``auto`` shows it at 10% busy or more
+# than 512 MiB of VRAM in use.
+SYSTEM_GPU_MODE_KEY = "KILIX_CHROME_SYSTEM_GPU_MODE"
+SYSTEM_GPU_MODE_DEFAULT = "always"
+SYSTEM_GPU_MODE_CHOICES = ("auto", "always", "off")
+# A pane's process-tree GPU memory, right of its RAM measurement. ``auto``
+# shows it above a fixed 512 MiB (like the fixed RAM and CPU thresholds).
+PANE_GPU_MODE_KEY = "KILIX_CHROME_PANE_GPU_MODE"
+PANE_GPU_MODE_DEFAULT = "auto"
+PANE_GPU_MODE_CHOICES = ("auto", "always", "off")
 TAB_BAR_EDGE_KEY = "KILIX_CHROME_TAB_BAR_EDGE"
 TAB_BAR_EDGE_DEFAULT = "top"
 TAB_BAR_EDGE_CHOICES = ("top", "bottom")
@@ -352,8 +363,10 @@ MANAGED_KEYS = tuple(spec.key for spec in TOGGLE_SPECS) + (
     CLOCK_FORMAT_KEY,
     TEMPERATURE_UNIT_KEY,
     SYSTEM_LOAD_MODE_KEY,
+    SYSTEM_GPU_MODE_KEY,
     PANE_CPU_MODE_KEY,
     PANE_MEMORY_MODE_KEY,
+    PANE_GPU_MODE_KEY,
     TAB_BAR_EDGE_KEY,
     TRANSCRIPT_GRAPHICS_KEY,
     TRANSCRIPT_LIMIT_KEY,
@@ -435,12 +448,15 @@ def _normalize_change(key: str, raw_value: object) -> str:
         return value
     if key in TOGGLE_BY_KEY:
         return "1" if truthy(raw_value) else "0"
-    if key in (PANE_CPU_MODE_KEY, PANE_MEMORY_MODE_KEY, SYSTEM_LOAD_MODE_KEY):
+    if key in (PANE_CPU_MODE_KEY, PANE_MEMORY_MODE_KEY, SYSTEM_LOAD_MODE_KEY,
+               SYSTEM_GPU_MODE_KEY, PANE_GPU_MODE_KEY):
         value = str(raw_value).strip().lower()
         choices_for_key = {
             PANE_CPU_MODE_KEY: PANE_CPU_MODE_CHOICES,
             PANE_MEMORY_MODE_KEY: PANE_MEMORY_MODE_CHOICES,
             SYSTEM_LOAD_MODE_KEY: SYSTEM_LOAD_MODE_CHOICES,
+            SYSTEM_GPU_MODE_KEY: SYSTEM_GPU_MODE_CHOICES,
+            PANE_GPU_MODE_KEY: PANE_GPU_MODE_CHOICES,
         }[key]
         if value not in choices_for_key:
             choices = ", ".join(choices_for_key)
@@ -513,8 +529,10 @@ def defaults(*, migrate_environment: bool = False) -> dict[str, str]:
     values.update(WEATHER_DEFAULTS)
     values[TEMPERATURE_UNIT_KEY] = TEMPERATURE_UNIT_DEFAULT
     values[SYSTEM_LOAD_MODE_KEY] = SYSTEM_LOAD_MODE_DEFAULT
+    values[SYSTEM_GPU_MODE_KEY] = SYSTEM_GPU_MODE_DEFAULT
     values[PANE_CPU_MODE_KEY] = PANE_CPU_MODE_DEFAULT
     values[PANE_MEMORY_MODE_KEY] = PANE_MEMORY_MODE_DEFAULT
+    values[PANE_GPU_MODE_KEY] = PANE_GPU_MODE_DEFAULT
     values[TAB_BAR_EDGE_KEY] = TAB_BAR_EDGE_DEFAULT
     values[TRANSCRIPT_GRAPHICS_KEY] = TRANSCRIPT_GRAPHICS_DEFAULT
     values[TRANSCRIPT_LIMIT_KEY] = TRANSCRIPT_LIMIT_DEFAULT
@@ -599,12 +617,14 @@ def _initial_text(values: Mapping[str, str]) -> str:
     lines.append(f"{CLOCK_FORMAT_KEY}={values[CLOCK_FORMAT_KEY]}")
     lines.append(f"{TEMPERATURE_UNIT_KEY}={values[TEMPERATURE_UNIT_KEY]}")
     lines.append(f"{SYSTEM_LOAD_MODE_KEY}={values[SYSTEM_LOAD_MODE_KEY]}")
+    lines.append(f"{SYSTEM_GPU_MODE_KEY}={values[SYSTEM_GPU_MODE_KEY]}")
     for key in WEATHER_DEFAULTS:
         lines.append(f"{key}={values[key]}")
     for spec in PANE_BUTTON_TOGGLES:
         lines.append(f"{spec.key}={values[spec.key]}")
     lines.append(f"{PANE_CPU_MODE_KEY}={values[PANE_CPU_MODE_KEY]}")
     lines.append(f"{PANE_MEMORY_MODE_KEY}={values[PANE_MEMORY_MODE_KEY]}")
+    lines.append(f"{PANE_GPU_MODE_KEY}={values[PANE_GPU_MODE_KEY]}")
     lines.append(f"{TAB_BAR_EDGE_KEY}={values[TAB_BAR_EDGE_KEY]}")
     lines.extend(("", SESSION_LOG_MARKER))
     for spec in SESSION_LOG_TOGGLES:
@@ -771,6 +791,26 @@ def system_load_mode(path: str | None = None) -> str:
     return (
         value if value in SYSTEM_LOAD_MODE_CHOICES
         else SYSTEM_LOAD_MODE_DEFAULT
+    )
+
+
+def system_gpu_mode(path: str | None = None) -> str:
+    """Return the normalized top-bar system GPU visibility policy."""
+    value = load(path).get(
+        SYSTEM_GPU_MODE_KEY, SYSTEM_GPU_MODE_DEFAULT).strip().lower()
+    return (
+        value if value in SYSTEM_GPU_MODE_CHOICES
+        else SYSTEM_GPU_MODE_DEFAULT
+    )
+
+
+def pane_gpu_mode(path: str | None = None) -> str:
+    """Return the normalized pane process-tree GPU memory visibility policy."""
+    value = load(path).get(
+        PANE_GPU_MODE_KEY, PANE_GPU_MODE_DEFAULT).strip().lower()
+    return (
+        value if value in PANE_GPU_MODE_CHOICES
+        else PANE_GPU_MODE_DEFAULT
     )
 
 
@@ -976,6 +1016,9 @@ __all__ = [
     "GAME_TOGGLES",
     "MANAGED_KEYS",
     "PANE_BUTTON_TOGGLES",
+    "PANE_GPU_MODE_CHOICES",
+    "PANE_GPU_MODE_DEFAULT",
+    "PANE_GPU_MODE_KEY",
     "PANE_CPU_MODE_CHOICES",
     "PANE_CPU_MODE_DEFAULT",
     "PANE_CPU_MODE_KEY",
@@ -986,6 +1029,9 @@ __all__ = [
     "SETTINGS_MAX_BYTES",
     "SESSION_LOG_MARKER",
     "SESSION_LOG_TOGGLES",
+    "SYSTEM_GPU_MODE_CHOICES",
+    "SYSTEM_GPU_MODE_DEFAULT",
+    "SYSTEM_GPU_MODE_KEY",
     "SYSTEM_LOAD_MODE_CHOICES",
     "SYSTEM_LOAD_MODE_DEFAULT",
     "SYSTEM_LOAD_MODE_KEY",
@@ -1017,7 +1063,9 @@ __all__ = [
     "load",
     "pane_cpu_mode",
     "pane_memory_mode",
+    "pane_gpu_mode",
     "system_load_mode",
+    "system_gpu_mode",
     "parse_text",
     "read_text",
     "settings_path",
