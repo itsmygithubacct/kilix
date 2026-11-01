@@ -63,7 +63,8 @@ def _control_names() -> dict[str, str]:
     ):
         names[alias] = shared.SYSTEM_LOAD_MODE_KEY
     names[shared.SYSTEM_LOAD_MODE_KEY.lower()] = shared.SYSTEM_LOAD_MODE_KEY
-    for alias in ("system_gpu", "system_gpu_mode", "gpu_load"):
+    # "system_gpu_load", not "gpu_load": the existing "cpu_load" names the PANE CPU.
+    for alias in ("system_gpu", "system_gpu_mode", "system_gpu_load"):
         names[alias] = shared.SYSTEM_GPU_MODE_KEY
     names[shared.SYSTEM_GPU_MODE_KEY.lower()] = shared.SYSTEM_GPU_MODE_KEY
     for alias in ("pane_gpu", "pane_gpu_mode", "gpu_chip", "gpu_mode"):

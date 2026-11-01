@@ -35,7 +35,15 @@ then VRAM in use, for example `37% 󰢮 2.2` (GiB; `400M` below 1 GiB). On a
 machine with several GPUs it shows the discrete one; clicking it lists each
 GPU, and right-clicking opens its menu (`kilix settings --widget gpu`). It is
 hidden when no GPU can be read, and a GPU that is runtime-suspended reads
-`sleep` and is never woken to be measured. Run
+`sleep` and is not read at all. On a GPU whose power is managed at runtime
+(`power/control` is `auto`), a reading that finds it idle (0% busy, and no
+process's GPU memory changing; a display server's few resident MiB do not
+count) is shown for at least 30 s, or twice the GPU's autosuspend delay, up
+to 120 s, before the GPU is read again, so that polling lets it sleep. During
+that time the readout and the pane chips can be up to that long out of date;
+a job that wakes a sleeping GPU shows at the next refresh. While one of
+several NVIDIA GPUs sleeps, the others are not read either, because opening
+NVML would wake it. Run
 `kilix settings --set system_gpu=auto` to show it only at 10% busy or more
 than 512 MiB of VRAM, `system_gpu=off` to hide it, or `system_gpu=always` to
 restore the default. The choice is **System GPU** in the same Top bar
@@ -48,7 +56,8 @@ hide it, or `pane_gpu=auto` for the default. The 512 MiB threshold is fixed,
 like the RAM and CPU thresholds. Memory is attributed by process: a service
 started outside every pane (such as a model server) counts in the top-bar
 total but in no pane, and a pane running only a client of that service shows
-no GPU chip.
+no GPU chip. Like the RAM chip, a process that belongs to two panes' trees
+(a terminal started inside a pane) is counted in both.
 
 Temperature displays default to Fahrenheit. Set the shared preference with
 `kilix settings --set temperature_unit=celsius` or `temperature_unit=fahrenheit`.

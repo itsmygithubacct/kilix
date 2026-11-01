@@ -1953,7 +1953,7 @@ fallback. A single `kilix-telemetry` sampler publishes both aggregates to a
 private mmap ring; title bars refresh only when a displayed value changes and
 retain local process-tree fallbacks if the shared service is unavailable.
 
-When a pane's processes hold more than 512 MiB of GPU memory, a blue GPU chip
+When a pane's processes hold more than 512 MiB of GPU memory, a pale-blue GPU chip
 shows that amount right of the RAM measurement (NVML per-process memory for
 NVIDIA, DRM fdinfo for AMD and Intel). Set `KILIX_CHROME_PANE_GPU_MODE` to
 `always` or `off`; the 512 MiB threshold is fixed. Attribution is by process:
@@ -1974,7 +1974,9 @@ Total GPU use sits immediately right of it in the same form: percent busy left
 of a graphics-card glyph and VRAM in use right of it, for example `37% 󰢮 2.2`.
 With several GPUs the discrete one is shown and a click lists each GPU; it is
 hidden when no GPU is readable, and a runtime-suspended GPU reads `sleep`
-without being woken. NVIDIA is read through NVML (`libnvidia-ml.so.1`), AMD
+and is not read. An idle GPU with runtime power management is read at most
+every 30 s (twice its autosuspend delay when longer, up to 120 s) so that it
+can sleep; the readout can lag that long. NVIDIA is read through NVML (`libnvidia-ml.so.1`), AMD
 through sysfs; nothing is spawned. Set shared `KILIX_CHROME_SYSTEM_GPU_MODE`
 to `auto` (10% busy or more than 512 MiB) or `off`. The
 thermometer is disabled by default; when enabled it shows the hottest readable Linux

@@ -62,7 +62,9 @@ class WidgetSettingsTests(unittest.TestCase):
                          {settings.SYSTEM_LOAD_MODE_KEY, settings.PANE_CPU_MODE_KEY, settings.PANE_MEMORY_MODE_KEY})
         notes, entries = widgets.menu('gpu', values)
         self.assertEqual(widgets.TITLES['gpu'], 'GPU')
-        self.assertIn('never woken', ' '.join(notes))
+        self.assertIn('shown asleep and not read', ' '.join(notes))
+        self.assertIn('every 30 s', ' '.join(notes))
+        self.assertNotIn('never woken', ' '.join(notes))
         self.assertIn('512 MiB', ' '.join(notes))
         self.assertEqual({e.key for e in entries if e.key},
                          {settings.SYSTEM_GPU_MODE_KEY, settings.PANE_GPU_MODE_KEY})

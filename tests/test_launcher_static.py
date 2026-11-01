@@ -584,6 +584,16 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("pane_gpu_text", titlebar)
         self.assertIn("GPU_WIDGET_ACTION", registry)
         self.assertIn("U+F08AE", conf)
+        # The idle backoff the docs describe: activity, not "a process is
+        # listed", decides it, and it follows the autosuspend delay.
+        self.assertIn("_IDLE_BACKOFF_SECONDS = 30.0", gpu)
+        self.assertIn("_IDLE_BACKOFF_MAX_SECONDS = 120.0", gpu)
+        self.assertIn("_ACTIVITY_TOLERANCE = MIB", gpu)
+        self.assertIn("def backoff_seconds(", gpu)
+        # The README calls the chip pale blue.
+        self.assertIn("GPU_CHIP_RGB = 0xc9e6ff", gpu)
+        windows_conf = (ROOT / "windows" / "config" / "kilix.conf").read_text()
+        self.assertIn("U+F08AE", windows_conf)
 
     def test_title_bar_screen_tracks_font_resize(self):
         window = (ROOT / "src" / "kitty" / "window.py").read_text()
