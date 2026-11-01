@@ -60,7 +60,8 @@ def menu(kind: str, values: dict) -> tuple[list[str], list[Entry]]:
                           settings.PANE_MEMORY_MODE_DEFAULT, values), Entry('Open Kilix Memory', action='memory')]
     elif kind == 'gpu':
         notes = ['Busy % and VRAM in use (GiB, or M for MiB) on the discrete GPU; click lists each GPU.',
-                 'NVIDIA via NVML; AMD via sysfs. A sleeping GPU is shown asleep, never woken.',
+                 'NVIDIA via NVML; AMD via sysfs. A sleeping GPU is shown asleep and not read.',
+                 'An idle power-managed GPU is read every 30 s or less often, so it can sleep.',
                  'Pane chip: GPU memory of the pane\'s own processes, above 512 MiB in auto.',
                  'A service outside every pane (for example a model server) is in the total only.']
         entries = [selected(f'Top-bar GPU: {label}', settings.SYSTEM_GPU_MODE_KEY, mode, values)

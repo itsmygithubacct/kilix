@@ -431,6 +431,7 @@ class SharedSettingsTests(unittest.TestCase):
                     ("system_gpu", "off", settings.SYSTEM_GPU_MODE_KEY, "off"),
                     ("system_gpu_mode", "on", settings.SYSTEM_GPU_MODE_KEY, "always"),
                     ("pane_gpu", "always", settings.PANE_GPU_MODE_KEY, "always"),
+                    ("system_gpu_load", "auto", settings.SYSTEM_GPU_MODE_KEY, "auto"),
                     ("gpu_chip", "auto", settings.PANE_GPU_MODE_KEY, "auto")):
                 result = subprocess.run([
                     str(ROOT / "kilix-settings"),
@@ -450,11 +451,13 @@ class SharedSettingsTests(unittest.TestCase):
             ], env=env, text=True, capture_output=True, check=True)
             self.assertIn(f"{settings.SYSTEM_GPU_MODE_KEY}=always\n", printed.stdout)
             self.assertIn(f"{settings.PANE_GPU_MODE_KEY}=auto\n", printed.stdout)
-            # A bare "gpu" would be ambiguous between the two readouts.
-            rejected = subprocess.run([
-                str(ROOT / "kilix-settings"), "--set", "gpu=off",
-            ], env=env, text=True, capture_output=True)
-            self.assertNotEqual(rejected.returncode, 0)
+            # A bare "gpu" would be ambiguous between the two readouts, and
+            # "gpu_load" would read as the pane's, like "cpu_load" does.
+            for ambiguous in ("gpu", "gpu_load"):
+                rejected = subprocess.run([
+                    str(ROOT / "kilix-settings"), "--set", f"{ambiguous}=off",
+                ], env=env, text=True, capture_output=True)
+                self.assertNotEqual(rejected.returncode, 0, ambiguous)
 
     def test_cpu_and_memory_mode_validation_and_cli_aliases(self):
         with tempfile.TemporaryDirectory() as tmp:
