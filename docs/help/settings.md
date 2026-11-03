@@ -41,9 +41,17 @@ process's GPU memory changing; a display server's few resident MiB do not
 count) is shown for at least 30 s, or twice the GPU's autosuspend delay, up
 to 120 s, before the GPU is read again, so that polling lets it sleep. During
 that time the readout and the pane chips can be up to that long out of date;
-a job that wakes a sleeping GPU shows at the next refresh. While one of
-several NVIDIA GPUs sleeps, the others are not read either, because opening
-NVML would wake it. Run
+short bursts can be missed entirely. A job that wakes a sleeping GPU shows
+at the next refresh unless another NVIDIA GPU is asleep or still in its idle
+backoff. Opening NVML attaches every NVIDIA GPU, so in either case the
+others are left unread too. An awake GPU withheld for this reason ranks above
+its idle or sleeping NVIDIA sibling and shows `held` in both `always` and `auto` mode; its pane
+memory is unavailable until sampling resumes. This also delays a busy GPU's
+readout when its idle sibling uses runtime power management. The click card
+runs a separate sampler: opening it can take an initial reading during the
+bar's backoff, after which it follows the same policy. New pane processes
+can have their DRM fdinfo read once during a backoff; existing clients reuse
+the cached reading. Run
 `kilix settings --set system_gpu=auto` to show it only at 10% busy or more
 than 512 MiB of VRAM, `system_gpu=off` to hide it, or `system_gpu=always` to
 restore the default. The choice is **System GPU** in the same Top bar

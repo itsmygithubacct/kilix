@@ -1974,9 +1974,14 @@ Total GPU use sits immediately right of it in the same form: percent busy left
 of a graphics-card glyph and VRAM in use right of it, for example `37% 󰢮 2.2`.
 With several GPUs the discrete one is shown and a click lists each GPU; it is
 hidden when no GPU is readable, and a runtime-suspended GPU reads `sleep`
-and is not read. An idle GPU with runtime power management is read at most
+and is not read. An idle GPU with runtime power management has its counters read at most
 every 30 s (twice its autosuspend delay when longer, up to 120 s) so that it
-can sleep; the readout can lag that long. NVIDIA is read through NVML (`libnvidia-ml.so.1`), AMD
+can sleep; readouts can lag or miss short bursts. New pane processes may have
+DRM fdinfo read once during that backoff. If any NVIDIA GPU is asleep or in
+backoff, NVML stays closed for all of them. An awake GPU left unread shows
+`held` above its idle or sleeping NVIDIA sibling (also in auto mode), with its pane memory unavailable
+until sampling resumes. The click card has a separate sampler and may take
+an initial reading during the bar's backoff. NVIDIA is read through NVML (`libnvidia-ml.so.1`), AMD
 through sysfs; nothing is spawned. Set shared `KILIX_CHROME_SYSTEM_GPU_MODE`
 to `auto` (10% busy or more than 512 MiB) or `off`. The
 thermometer is disabled by default; when enabled it shows the hottest readable Linux

@@ -61,7 +61,9 @@ def menu(kind: str, values: dict) -> tuple[list[str], list[Entry]]:
     elif kind == 'gpu':
         notes = ['Busy % and VRAM in use (GiB, or M for MiB) on the discrete GPU; click lists each GPU.',
                  'NVIDIA via NVML; AMD via sysfs. A sleeping GPU is shown asleep and not read.',
-                 'An idle power-managed GPU is read every 30 s or less often, so it can sleep.',
+                 'Idle power-managed GPU counters are read every 30 s or less often; short bursts may be missed.',
+                 'An NVIDIA GPU held unread for an asleep or backed-off sibling shows held, also in auto.',
+                 'Opening the card starts a separate sampler; new DRM clients may be read during backoff.',
                  'Pane chip: GPU memory of the pane\'s own processes, above 512 MiB in auto.',
                  'A service outside every pane (for example a model server) is in the total only.']
         entries = [selected(f'Top-bar GPU: {label}', settings.SYSTEM_GPU_MODE_KEY, mode, values)
