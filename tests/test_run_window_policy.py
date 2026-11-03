@@ -55,6 +55,27 @@ class WindowPolicy(unittest.TestCase):
             self.assertEqual(pane.call_args.args[0], command)
             pane.return_value.run.assert_called_once_with()
 
+    def test_rendered_content_receipt_is_private_once_only_and_never_overwrites(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            receipt = Path(directory) / 'tab.ready'
+            pane = object.__new__(apprun.AppPane)
+            with patch.dict(os.environ, {'KILIX_RUN_READY_FILE': str(receipt)}):
+                self.assertTrue(pane._mark_content_ready(apprun.CONTENT_READY_CHANGED))
+                self.assertEqual(receipt.read_bytes(), b'content-ready\n')
+                self.assertEqual(receipt.stat().st_mode & 0o777, 0o600)
+                self.assertFalse(pane._mark_content_ready(apprun.CONTENT_READY_CHANGED))
+                other = object.__new__(apprun.AppPane)
+                with self.assertRaises(FileExistsError):
+                    other._mark_content_ready(apprun.CONTENT_READY_CHANGED)
+                receipt.unlink()
+                target = Path(directory) / 'keep'
+                target.write_text('unchanged')
+                receipt.symlink_to(target)
+                with self.assertRaises(FileExistsError):
+                    other._mark_content_ready(apprun.CONTENT_READY_CHANGED)
+                self.assertEqual(target.read_text(), 'unchanged')
+
     def test_managed_frame_is_never_resized_or_refocused_by_runner(self):
         pane = object.__new__(apprun.AppPane)
         pane._pane_wm = True

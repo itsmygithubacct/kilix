@@ -2155,6 +2155,12 @@ its disk contains data you want to keep. To request an external window or a
 headless/detached VM, bypass the interactive alias with
 `command qemu-system-x86_64 ...`; `command google-chrome ...` similarly opens
 the native browser. Scripts that execute QEMU directly retain their behavior.
+Automation can set `KILIX_RUN_READY_FILE` to a nonexistent file in its own
+private directory. Kilix creates that file with mode 0600 and contents
+`content-ready\n` only once the pane has rendered changing content or its
+initial frame has settled. This is a startup receipt, not a liveness check;
+callers must also check their app's control endpoint. Existing files and
+symlinks are refused.
 
 RC2 uses bare Openbox on each app's private display when it is installed.
 Normal app windows fill the pane; dialogs retain their own size and focus.

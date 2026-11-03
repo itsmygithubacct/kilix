@@ -819,6 +819,15 @@ class AppPane:
         if reason not in (CONTENT_READY_CHANGED,
                           CONTENT_READY_INITIAL_GRACE):
             raise ValueError(f"invalid content readiness reason: {reason}")
+        ready_file = os.environ.get("KILIX_RUN_READY_FILE")
+        if ready_file:
+            # Optional launcher receipt: never overwrite an existing path or
+            # follow its final symlink. A fresh private directory belongs to
+            # the caller; readiness means rendered content, not just a child PID.
+            fd = os.open(ready_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL |
+                         os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+            with os.fdopen(fd, "w") as receipt:
+                receipt.write("content-ready\n")
         self._content_ready = True
         self._content_ready_reason = reason
         self._initial_frame_ready_at = None
