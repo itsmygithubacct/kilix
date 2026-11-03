@@ -355,6 +355,37 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(refused["code"], "EACCESS")
         self.assertIn("nothing was sealed", refused["error"])
 
+    def test_default_custody_ttl_includes_suspended_time(self):
+        # Advance only the suspend-aware clock, as during system sleep. No
+        # actual suspend or wall-clock adjustment is performed by this test.
+        ticks = [1000.0]
+        with unittest.mock.patch.object(agentmod.time, "clock_gettime", side_effect=lambda clock: ticks[0]):
+            custody = agentmod.Custody()
+            self.addCleanup(custody.close)
+            entry = custody.deposit(self.uid, "owner", self.key, self.info.locker_id, self.public, 60)
+            ticks[0] += 61
+            self.assertFalse(custody.live(self.uid, entry.generation, self.info.locker_id))
+            self.assertEqual(bytes(entry.secret._buf), bytes(32))
+
+    def test_session_change_and_expiry_during_approval_precede_reader(self):
+        original = self.sessions[4242]
+        for change in ("session", "locked", "expiry"):
+            with self.subTest(change=change):
+                self.sessions[4242] = original
+                self.deposit(ttl=60)
+                def approve(*args):
+                    if change == "session":
+                        self.sessions[4242] = replace(original, session_id="new")
+                    elif change == "locked":
+                        self.sessions[4242] = replace(original, locked=True)
+                    else:
+                        self.clock[0] += 61
+                self.agent.approve = approve
+                reply, plain = self.operate()
+                self.assertEqual(reply["code"], "EACCESS")
+                self.assertEqual(plain, b"")
+                self.assertEqual(self.client.calls, [])
+
     def test_ttl_expiry_and_wrong_locker(self):
         self.deposit(ttl=600)
         refused, plain = self.operate(locker_id="OTHER")
@@ -556,6 +587,41 @@ class AgentTests(unittest.TestCase):
         with self.assertRaises(agentmod.AgentUnavailable):
             agentmod.AgentClient(str(Path(self.tmp.name) / "missing.sock"), timeout=1, trusted_uid=self.uid).status()
 
+    def test_client_waits_for_completed_request_before_returning(self):
+        self.deposit()
+        path = self._serve()
+        client = agentmod.AgentClient(path, timeout=3, trusted_uid=self.uid)
+        original_release = self.agent._release_slot
+        for operation in (client.status,
+                          lambda: client.unseal(self.info.locker_id, self.blob, self.binding)):
+            with self.subTest(operation=operation):
+                entered, finish, completed = threading.Event(), threading.Event(), threading.Event()
+                result = {}
+                def release(uid):
+                    entered.set()
+                    finish.wait(3)
+                    original_release(uid)
+                self.agent._release_slot = release
+                def invoke():
+                    try:
+                        result["value"] = operation()
+                    except Exception as exc:
+                        result["error"] = exc
+                    finally:
+                        completed.set()
+                worker = threading.Thread(target=invoke)
+                worker.start()
+                try:
+                    self.assertTrue(entered.wait(2))
+                    self.assertFalse(completed.wait(0.1), "reply arrived before admission was released")
+                finally:
+                    finish.set()
+                    worker.join(3)
+                    self.agent._release_slot = original_release
+                self.assertFalse(worker.is_alive())
+                self.assertNotIn("error", result)
+                self.assertEqual(self.agent._inflight, 0)
+
     def test_untrusted_peer_receives_no_key(self):
         sock_path = str(Path(self.tmp.name) / "fake.sock")
         listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -599,36 +665,41 @@ class AgentTests(unittest.TestCase):
     def test_malformed_request_and_saturation(self):
         self.agent.max_concurrent = 1
         self.agent.max_per_uid = 1
-        self.agent.request_deadline = 0.4
+        self.agent.request_deadline = 5
         sock_path = self._serve()
-        raw = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        raw.settimeout(2)
-        raw.connect(sock_path)
-        raw.sendall(b"not-json\n")
-        self.assertIn(b"ESERVICE", raw.recv(4096))
-        raw.close()
-        held = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        held.settimeout(2)
-        held.connect(sock_path)
-        time.sleep(0.05)
-        second = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        second.settimeout(2)
-        second.connect(sock_path)
-        refused = second.recv(4096)
-        self.assertIn(b"EBUSY", refused)
-        second.close()
-        held.close()
-        time.sleep(0.05)
-        client = agentmod.AgentClient(sock_path, timeout=2, trusted_uid=self.uid)
+
+        def wait_inflight(expected):
+            deadline = time.monotonic() + 3
+            while self.agent._inflight != expected and time.monotonic() < deadline:
+                time.sleep(0.005)
+            self.assertEqual(self.agent._inflight, expected)
+
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as raw:
+            raw.settimeout(3)
+            raw.connect(sock_path)
+            raw.sendall(b"not-json\n")
+            self.assertIn(b"ESERVICE", raw.recv(4096))
+        # A reply is sent before the connection's admission slot is released.
+        wait_inflight(0)
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as held:
+            held.settimeout(3)
+            held.connect(sock_path)
+            wait_inflight(1)
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as second:
+                second.settimeout(3)
+                second.connect(sock_path)
+                self.assertIn(b"EBUSY", second.recv(4096))
+        wait_inflight(0)
+        client = agentmod.AgentClient(sock_path, timeout=3, trusted_uid=self.uid)
         self.assertFalse(client.status()["held"])
-        slow = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        slow.settimeout(2)
-        slow.connect(sock_path)
-        time.sleep(0.15)
-        slow.sendall(b"{")
-        time.sleep(0.45)
-        self.assertIn(b"ETIMEOUT", slow.recv(4096))
-        slow.close()
+        wait_inflight(0)
+        self.agent.request_deadline = 0.4
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as slow:
+            slow.settimeout(3)
+            slow.connect(sock_path)
+            slow.sendall(b"{")
+            self.assertIn(b"ETIMEOUT", slow.recv(4096))
+        wait_inflight(0)
 
     def test_client_that_does_not_read_releases_its_slot(self):
         self.agent.reply_deadline = 0.05

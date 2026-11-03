@@ -168,10 +168,15 @@ class Entry:
     generation: int
 
 
+def _custody_time() -> float:
+    """Count elapsed time across suspend without following wall-clock changes."""
+    return time.clock_gettime(time.CLOCK_BOOTTIME)
+
+
 class Custody:
     """In-memory per-uid keys. Expiry runs on a timer and again on use."""
 
-    def __init__(self, now: Callable[[], float] = time.monotonic, *, min_ttl: float = MIN_TTL_SECONDS,
+    def __init__(self, now: Callable[[], float] = _custody_time, *, min_ttl: float = MIN_TTL_SECONDS,
                  start_timer: bool = False, sweep_interval: float = 1.0) -> None:
         self._entries: dict[int, Entry] = {}
         self._generation: dict[int, int] = {}
@@ -801,6 +806,8 @@ class AgentClient:
             if body:
                 conn.sendall(body)
             line, _rest = _read_response_line(conn)
+            if op != "operate":
+                _expect_eof(conn, _rest)
         finally:
             conn.close()
         if line is None:
@@ -887,6 +894,7 @@ class AgentClient:
                 raise ServiceFailure("bad reply from the fingerlock agent")
             _reject_key(response)
             if not response.get("ok"):
+                _expect_eof(conn, rest)
                 code = str(response.get("code"))
                 cls = {"EACCESS": AccessDenied, "ENOMATCH": NoMatch, "ETIMEOUT": OperationTimeout,
                        "EOPERATION": OperationFailed, "ENODEVICE": DeviceNotFound,
@@ -903,6 +911,7 @@ class AgentClient:
                     raise ServiceFailure("agent plaintext does not match its digest")
                 response.pop("_expect_plain", None)
                 response.pop("_expect_sha", None)
+            _expect_eof(conn, rest if op != "operate" else b"")
             return response, plain
         finally:
             conn.close()
@@ -944,7 +953,22 @@ def _read_response_line(conn: socket.socket) -> tuple[bytes | None, bytes]:
     return line, rest
 
 
+def _expect_eof(conn: socket.socket, prefix: bytes = b"") -> None:
+    # The server releases admission before closing this one-request connection.
+    # A reply alone is not completion: immediately opening another connection
+    # could otherwise exhaust slots still held by successfully answered calls.
+    if prefix:
+        raise ServiceFailure("unexpected bytes after the agent reply")
+    try:
+        if conn.recv(1):
+            raise ServiceFailure("unexpected bytes after the agent reply")
+    except socket.timeout as exc:
+        raise OperationTimeout("timed out waiting for agent completion") from exc
+
+
 def _read_exact_socket(conn: socket.socket, nbytes: int, prefix: bytes = b"") -> bytes:
+    if len(prefix) > nbytes:
+        raise ServiceFailure("unexpected bytes after the agent plaintext")
     buf = bytearray(prefix)
     while len(buf) < nbytes:
         try:

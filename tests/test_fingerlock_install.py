@@ -130,6 +130,86 @@ class InstallationTests(unittest.TestCase):
         for name in install.unit_names(self.uid):
             self.assertTrue((self.units / name).is_symlink())
 
+    def test_failed_staging_removes_unpublished_files_and_can_retry(self):
+        for fail_at in ("write", "sync", "rename"):
+            with self.subTest(fail_at=fail_at):
+                normal_write, normal_sync, normal_rename = self.installer._write, self.installer._sync, Path.rename
+                def write(path, data, mode=0o644):
+                    normal_write(path, data, mode)
+                    if path.name == "fingerlock_agent.py":
+                        raise OSError("injected staging write failure")
+                def sync(path):
+                    if path.name.startswith(".stage-") and path.stat().st_mode & 0o777 == 0o555:
+                        raise OSError("injected staging sync failure")
+                    normal_sync(path)
+                def rename(path, target):
+                    if path.name.startswith(".stage-"):
+                        raise OSError("injected staging rename failure")
+                    return normal_rename(path, target)
+                with patch.object(self.installer, "_write", write if fail_at == "write" else normal_write), \
+                        patch.object(self.installer, "_sync", sync if fail_at == "sync" else normal_sync), \
+                        patch.object(Path, "rename", rename if fail_at == "rename" else normal_rename):
+                    with self.assertRaisesRegex(OSError, "injected staging"):
+                        self.installer.apply(self.raw, self.uid)
+                versions = self.root / install.STORE / "versions"
+                self.assertEqual(list(versions.iterdir()), [])
+                self.assertIsNone(self.current())
+                self.assertFalse((self.user / "pending.json").exists())
+                self.assertTrue(all("show" in argv or argv[0] == "/usr/bin/python3"
+                                    for argv in self.system.calls))
+        self.assertEqual(self.installer.apply(self.raw, self.uid), self.digest)
+
+    def test_failed_rollback_restores_newer_version_and_keeps_rollback_target(self):
+        self.installer.apply(self.raw, self.uid)
+        later = self.next_package()
+        later_digest = self.installer.apply(later, self.uid)
+        self.system.fail = lambda argv: "start" in argv
+        with self.assertRaisesRegex(install.InstallError, "previous installation restored"):
+            self.installer.apply(later, self.uid, rollback=True)
+        self.assertEqual(self.current(), later_digest)
+        self.assertEqual(self.installer._target(self.user / "previous"), self.digest)
+        self.assertFalse((self.user / "pending.json").exists())
+        self.assertEqual(self.installer.apply(later, self.uid, rollback=True), self.digest)
+
+    def test_two_users_upgrade_and_rollback_preserve_other_user(self):
+        self.installer.apply(self.raw, self.uid)
+        other_uid = self.uid + 1
+        other_raw = install.build_package(SOURCE, other_uid, policy.POLICY_XML)
+        other_digest = self.installer.apply(other_raw, other_uid)
+        other_user = self.user.parent / str(other_uid)
+        later = self.next_package()
+        self.installer.apply(later, self.uid)
+        self.installer.apply(later, self.uid, rollback=True)
+        self.assertEqual(self.installer._target(other_user / "current"), other_digest)
+        self.assertIsNone(self.installer._target(other_user / "previous"))
+        self.assertEqual(self.installer._stored(other_digest, other_uid), other_raw)
+        self.assertEqual(self.current(), self.digest)
+        with self.assertRaises(install.InstallError):
+            self.installer._stored(other_digest, self.uid)
+
+    def test_upgrade_failure_at_each_activation_step_restores_version(self):
+        self.installer.apply(self.raw, self.uid)
+        normal_health = self.installer.health
+        for phase in ("stop", "daemon-reload", "enable", "start", "health"):
+            with self.subTest(phase=phase):
+                if phase == "health":
+                    calls = []
+                    def health(uid):
+                        calls.append(uid)
+                        if len(calls) == 1:
+                            raise install.InstallError("injected health failure")
+                        normal_health(uid)
+                    self.installer.health = health
+                else:
+                    self.system.fail = lambda argv: argv[1] == phase
+                with self.assertRaisesRegex(install.InstallError, "previous installation restored"):
+                    self.installer.apply(self.next_package(), self.uid)
+                self.installer.health = normal_health
+                self.assertEqual(self.current(), self.digest)
+                self.assertIsNone(self.installer._target(self.user / "previous"))
+                self.assertFalse((self.user / "pending.json").exists())
+                self.assertEqual(self.installer._stored(self.digest, self.uid), self.raw)
+
     def test_failed_upgrade_restores_current_and_activation_state(self):
         self.installer.apply(self.raw, self.uid)
         self.system.enabled = False
@@ -237,6 +317,12 @@ class ApprovalTests(unittest.TestCase):
             return 0 if "--allow-user-interaction" in argv else 2
         policy.authorize_operation(os.getuid(), os.getpid(), self.binding, lambda: True, run_check=check)
         self.assertEqual(len(calls), 2)
+        expected = (f'Fingerlock: approve unlock requested by process {os.getpid()}.\n'
+                    'Requested name: "photo\\u202e.txt"\nContainer bytes: 5\n'
+                    f'SHA-256: {"a" * 64}\n'
+                    'The plaintext will be returned to that process after a fingerprint match.')
+        for argv in calls:
+            self.assertEqual(argv[argv.index("polkit.message") + 1], expected)
         self.assertIn("--allow-user-interaction", calls[1])
         self.assertIn("a" * 64, calls[0])
         subject = calls[0][calls[0].index("--process") + 1].split(",")
@@ -257,6 +343,18 @@ class ApprovalTests(unittest.TestCase):
             with self.subTest(response=response), self.assertRaises(AccessDenied):
                 policy.authorize_operation(os.getuid(), os.getpid(), self.binding, lambda: True,
                                            run_check=unittest.mock.Mock(side_effect=[2, response]))
+
+    def test_timeout_terminates_the_approval_process(self):
+        from fingerlock_core import OperationTimeout
+        real_popen = subprocess.Popen
+        children = []
+        def start(argv, **kwargs):
+            child = real_popen([sys.executable, "-c", "import time; time.sleep(30)"], **kwargs)
+            children.append(child)
+            return child
+        with patch.object(policy.subprocess, "Popen", side_effect=start), self.assertRaises(OperationTimeout):
+            policy._run_check(["unused"], lambda: True, 0.05)
+        self.assertIsNotNone(children[0].poll())
 
     def test_disconnect_terminates_the_approval_process(self):
         from fingerlock_core import AccessDenied

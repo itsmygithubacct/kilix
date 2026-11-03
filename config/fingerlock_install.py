@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import socket
 import stat
 import struct
@@ -258,12 +259,20 @@ class Installer:
             self._stored(digest, uid)
             return digest
         stage = Path(tempfile.mkdtemp(prefix=".stage-", dir=versions))
-        for name, data in {**files, ".bundle": raw}.items():
-            self._write(stage / name, data, 0o444)
-        stage.chmod(0o555)
-        self._sync(stage)
-        stage.rename(versions / digest)
-        self._sync(versions)
+        try:
+            for name, data in {**files, ".bundle": raw}.items():
+                self._write(stage / name, data, 0o444)
+            stage.chmod(0o555)
+            self._sync(stage)
+            stage.rename(versions / digest)
+            self._sync(versions)
+        finally:
+            # Only this attempt's unpublished directory is disposable. Once
+            # renamed, retain the complete version even if directory sync fails.
+            if stage.exists():
+                stage.chmod(0o700)
+                shutil.rmtree(stage)
+                self._sync(versions)
         return digest
 
     def _systemctl(self, *args: str) -> str:

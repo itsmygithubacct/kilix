@@ -1780,7 +1780,9 @@ the requesting process, requested name, byte count and container SHA-256.
 Polkit can require the account password; approval is not cached. After approval,
 touch the sensor. Cancellation, expiry, forget, caller exit, a session change
 or a locked seat refuses the operation. Plaintext already delivered remains
-with its recipient.
+with its recipient. Custody TTL includes time spent suspended, using the Linux
+boot-time clock; expiry is enforced on the first check after resume. This does
+not promise erasure of memory while the system is asleep.
 
 Agent installation is explicit:
 
