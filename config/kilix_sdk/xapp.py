@@ -30,6 +30,7 @@ from Xlib import display as xdisplay
 from .browser_portals import prepare_browser
 from .mpv_inhibit import prepare_player
 from .private_bus import PrivateBus
+from .launch_transport import literal_launch
 from .clipboard import _XAUTHORITY_LOCK
 from . import capture_registry
 
@@ -338,6 +339,11 @@ class XAppSession:
                 argv = prepare_player(argv, app_env)
                 bridge = Path(__file__).with_name("portal_bridge.py")
                 argv = [sys.executable, str(bridge), "--wrap", "--", *argv]
+            # The trusted supervisor accepts Unicode-only launch packets.
+            # Restore POSIX bytes in the unprivileged primary, after its policy
+            # checks and credential drop. Newly added private-bus variables
+            # remain inherited by that primary.
+            argv, app_env, cwd = literal_launch(argv, app_env, cwd)
             try:
                 self._app_bus = PrivateBus(self.supervisor, app_env)
             except BaseException as error:

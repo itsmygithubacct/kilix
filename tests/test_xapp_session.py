@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import json
 import shlex
 import stat
 import subprocess
@@ -331,6 +332,36 @@ class XAppSessionTests(unittest.TestCase):
         self.assertEqual(env["GDK_BACKEND"], "x11")
         self.assertEqual(env["KILIX_PORTAL_HOST_BUS"], "unix:path=/host/bus")
         self.assertEqual(env["GTK_USE_PORTAL"], "1")
+
+    def test_private_launch_preserves_posix_bytes_past_unicode_supervisor(self):
+        supervisor = FakeSupervisor()
+        session = xapp.XAppSession("bytes", 640, 480, supervisor=supervisor)
+        session.start_xvfb()
+        with tempfile.TemporaryDirectory() as root:
+            cwd = Path(root) / "cwd-\udcfe"
+            cwd.mkdir()
+            arguments = ["", "literal $();", "byte-\udcff"]
+            raw_key, raw_value = "KEY_\udcfd", "value-\udcfc"
+            code = ("import json,os,sys;print(json.dumps("
+                    "[[os.fsencode(a).hex() for a in sys.argv[1:]],"
+                    "os.environb[b'KEY_\\xfd'].hex(),os.getcwdb().hex(),"
+                    "os.environ['DBUS_SESSION_BUS_ADDRESS']]))")
+            with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(
+                    xapp.shutil, "which", return_value="/usr/bin/dbus-daemon"):
+                session.launch_app([sys.executable, "-c", code, *arguments],
+                                   env={raw_key: raw_value}, cwd=str(cwd),
+                                   isolate_bus=True, clipboard=False)
+            argv, kwargs, _ = supervisor.spawns["app"]
+            for value in [*argv, *kwargs["env"], *kwargs["env"].values()]:
+                value.encode("utf-8")  # Same strict boundary as the supervisor.
+            self.assertIsNone(kwargs["cwd"])
+            result = subprocess.run(argv, env=kwargs["env"], check=True,
+                                    capture_output=True, text=True, timeout=5)
+            self.assertEqual(json.loads(result.stdout),
+                             [[os.fsencode(a).hex() for a in arguments],
+                              os.fsencode(raw_value).hex(), os.fsencode(cwd).hex(),
+                              "unix:path=/owned/private"])
+        session.close()
 
     def test_private_mpv_launch_delivers_native_inhibitor_from_the_installed_sdk(self):
         supervisor = FakeSupervisor()
