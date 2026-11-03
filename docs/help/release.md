@@ -1,8 +1,15 @@
 # Kilix 0.2.2 release status and versions
 
-Kilix 0.2.2 is a coordinated Plebian-OS release candidate. Passing source tests
-does not establish acceptance of an install image or an upgrade. Image,
-upgrade and final human acceptance remain pending in this source revision.
+Kilix 0.2.2 shipped with the coordinated Plebian-OS Linux release on
+November 3, 2026. The immutable `v0.2.2` tag identifies the released source;
+the development branch can contain later changes.
+
+Linux installation and lifecycle qualification covers QEMU/KVM BIOS and EFI
+virtual machines. Bare-metal USB installation and physical GPU operation were
+not qualified. Windows remains at `windows-v0.2.2-preview.4`; ARM64 is not a
+supported OS release target. See the [published release notes](https://github.com/itsmygithubacct/plebian-os/releases/tag/v0.2.2)
+for known issues and deferred feature qualification.
+
 The supported upgrade source is 0.2.1. Systems on older releases need the
 fresh-install baseline; a direct skip from an earlier release is unsupported.
 

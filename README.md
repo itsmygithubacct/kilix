@@ -43,16 +43,22 @@ The selected toolkit includes `kilix rollout log --pane N [--json]` for locating
 the log written by a pane's current agent. See `kilix rollout log --help` for
 selection and exit statuses.
 
-## Release 0.2.2 — in development
+## Release 0.2.2 — Linux
 
 Pane logs open faster. The Log button starts the viewer without preparing a
 second runtime, and transcript replay reuses unchanged rows and batches plain
 text writes while preserving the recording's rendered output.
 
-The reviewed source integration is selected for the coordinated Plebian-OS
-0.2.2 candidate. Image, upgrade, rollback and final installed acceptance remain
-pending; supported upgrade paths are defined by the
-[OS upgrade policy](https://github.com/itsmygithubacct/plebian-os/blob/main/UPGRADING.md).
+Kilix 0.2.2 ships in the coordinated Plebian-OS Linux release published
+November 3, 2026. The `v0.2.2` tag identifies the released source; this branch
+can contain later development. Supported upgrade paths are defined by the
+[release's OS upgrade policy](https://github.com/itsmygithubacct/plebian-os/blob/v0.2.2/UPGRADING.md).
+
+Linux installation and lifecycle qualification covers QEMU/KVM BIOS and EFI
+virtual machines. Bare-metal USB installation and physical GPU operation were
+not qualified. Windows remains at `windows-v0.2.2-preview.4`; ARM64 is not a
+supported OS release target. See the [published release notes](https://github.com/itsmygithubacct/plebian-os/releases/tag/v0.2.2)
+for known issues and deferred feature qualification.
 
 `kilix fingerlock` finds a USB fingerprint reader, installs Debian `fprintd`
 on first use after an explicit yes, and enrolls, verifies, lists, or deletes
@@ -254,9 +260,9 @@ local capture catalogue.
 
 ## Release 0.2.1
 
-Prepared 2026-08-25 for the coordinated Plebian-OS 0.2.1 release. The supported
-upgrade source is 0.2.0. This component remains an unpublished candidate until
-the coordinated image and upgrade acceptance gates pass.
+Historical changes for the coordinated Plebian-OS 0.2.1 release, prepared
+August 25, 2026. Its supported upgrade source was 0.2.0. For the current Linux
+release and supported upgrade paths, see the 0.2.2 section above.
 
 - Kilix Techno soundbanks install lazily from immutable, checksum-bound CC0
   source archives. The bundled catalog also carries compact CC0 instrument and
