@@ -333,6 +333,57 @@ class XAppSessionTests(unittest.TestCase):
         self.assertEqual(env["KILIX_PORTAL_HOST_BUS"], "unix:path=/host/bus")
         self.assertEqual(env["GTK_USE_PORTAL"], "1")
 
+    def test_private_raw_launch_keeps_starter_bus_variables_removed(self):
+        from kilix_sdk.private_bus import PrivateBus
+
+        def private_environment(bus, env):
+            bus.address, bus.daemon_pid = "unix:path=/owned/private", 42
+            return PrivateBus.environment(bus, env)
+
+        supervisor = FakeSupervisor()
+        session = xapp.XAppSession("starter-policy", 640, 480, supervisor=supervisor)
+        session.start_xvfb()
+        inherited = {"DBUS_STARTER_ADDRESS": "unix:path=/old/starter",
+                     "DBUS_STARTER_BUS_TYPE": "session"}
+        code = ("import json,os;print(json.dumps([os.getenv(k) for k in "
+                "('DBUS_STARTER_ADDRESS','DBUS_STARTER_BUS_TYPE',"
+                "'DBUS_SESSION_BUS_ADDRESS','DBUS_SESSION_BUS_PID')]))")
+        with mock.patch.dict(os.environ, inherited, clear=True), mock.patch.object(
+                xapp.shutil, "which", return_value="/usr/bin/dbus-daemon"), \
+                mock.patch.object(xapp.PrivateBus, "environment", private_environment):
+            session.launch_app([sys.executable, "-c", code, "byte-\udcff"],
+                               isolate_bus=True, clipboard=False)
+        argv, kwargs, _ = supervisor.spawns["app"]
+        result = subprocess.run(argv, env=kwargs["env"], cwd=kwargs["cwd"],
+                                check=True, capture_output=True, text=True, timeout=5)
+        self.assertEqual(json.loads(result.stdout),
+                         [None, None, "unix:path=/owned/private", "42"])
+
+    def test_private_final_transport_failure_closes_its_bus(self):
+        supervisor = FakeSupervisor()
+        session = xapp.XAppSession("transport-failure", 640, 480, supervisor=supervisor)
+        session.start_xvfb()
+        transform = xapp.literal_launch
+        calls = 0
+
+        def fail_primary(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise OSError("primary envelope failed")
+            return transform(*args, **kwargs)
+
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(
+                xapp.shutil, "which", return_value="/usr/bin/dbus-daemon"), \
+                mock.patch.object(xapp, "literal_launch", side_effect=fail_primary), \
+                mock.patch.object(xapp.PrivateBus, "close") as close:
+            with self.assertRaisesRegex(OSError, "primary envelope failed"):
+                session.launch_app(["/bin/app", "byte-\udcff"],
+                                   isolate_bus=True, clipboard=False)
+        self.assertEqual(calls, 2)
+        close.assert_called_once_with()
+        self.assertNotIn("app", supervisor.spawns)
+
     def test_private_launch_preserves_posix_bytes_past_unicode_supervisor(self):
         supervisor = FakeSupervisor()
         session = xapp.XAppSession("bytes", 640, 480, supervisor=supervisor)

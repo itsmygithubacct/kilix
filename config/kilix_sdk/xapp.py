@@ -339,13 +339,12 @@ class XAppSession:
                 argv = prepare_player(argv, app_env)
                 bridge = Path(__file__).with_name("portal_bridge.py")
                 argv = [sys.executable, str(bridge), "--wrap", "--", *argv]
-            # The trusted supervisor accepts Unicode-only launch packets.
-            # Restore POSIX bytes in the unprivileged primary, after its policy
-            # checks and credential drop. Newly added private-bus variables
-            # remain inherited by that primary.
-            argv, app_env, cwd = literal_launch(argv, app_env, cwd)
+            # The bus owner also crosses the Unicode-only supervisor boundary.
+            # Keep the original environment until the private-bus policy has
+            # removed inherited variables and supplied its own address.
+            _, owner_env, _ = literal_launch(argv, app_env, cwd)
             try:
-                self._app_bus = PrivateBus(self.supervisor, app_env)
+                self._app_bus = PrivateBus(self.supervisor, owner_env)
             except BaseException as error:
                 retained = getattr(error, "resource", None)
                 if isinstance(retained, PrivateBus):
@@ -353,6 +352,10 @@ class XAppSession:
                 raise
             app_env = self._app_bus.environment(app_env)
         try:
+            if self._app_bus is not None:
+                # Restore only the finalized environment in the unprivileged
+                # primary, after the supervisor's checks and credential drop.
+                argv, app_env, cwd = literal_launch(argv, app_env, cwd)
             if clipboard:
                 self.start_clipboard()
             self.app = self.supervisor.spawn(
