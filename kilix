@@ -6072,11 +6072,8 @@ if [ "${1:-}" = "run" ]; then
     done
     # KILIX_IN_OVERLAY doubles as the generic "already relaunched into our
     # own kitty window" guard, whatever the window type.
-    exec "$KITTEN" @ --password-file "$KILIX_RC_PASSWORD_FILE" \
-      launch --type=tab --cwd=current --self --tab-title "$_app" \
-      --env KILIX_IN_OVERLAY=1 --env "KILIX_STREAM=${KILIX_STREAM:-}" \
-      --env "KILIX_RUN_READY_FILE=${KILIX_RUN_READY_FILE:-}" \
-      -- "$_self" run "$@"
+    exec python3 "$KILIX_HOME/config/run_tab.py" \
+      "$KITTEN" "$KILIX_RC_PASSWORD_FILE" "$_app" "$_self" "$@"
   fi
   rc=0
   python3 "$KILIX_HOME/config/apprun.py" "$@" || rc=$?

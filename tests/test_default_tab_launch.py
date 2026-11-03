@@ -46,8 +46,11 @@ sys.exit(int(os.environ.get('REMOTE_RC', '0')))
                 self.assertEqual(command.count('--type=tab'), 1)
                 self.assertIn('KILIX_IN_OVERLAY=1', command)
                 self.assertEqual(command[command.index('--tab-title') + 1], app)
-                self.assertEqual(command[command.index('--') + 1:],
-                                 [str(ROOT / 'kilix'), 'run', *arguments])
+                target = command[command.index('--') + 1:]
+                if target[:2] == ['python3', '-c']:
+                    target, environment, cwd = json.loads(target[3])
+                    self.assertEqual(environment['KILIX_IN_OVERLAY'], '1')
+                self.assertEqual(target, [str(ROOT / 'kilix'), 'run', *arguments])
 
     def test_content_receipt_path_is_forwarded_and_absence_clears_host_value(self):
         for path in (str(self.home / 'ready with spaces'), ''):
