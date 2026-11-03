@@ -781,54 +781,7 @@ class AgentClient:
         return os.path.exists(self.path)
 
     def call(self, op: str, *, body: bytes = b"", **fields: Any) -> dict[str, Any]:
-        request = {"protocol": PROTOCOL, "op": op, **fields}
-        payload = json.dumps(request).encode("utf-8") + b"\n"
-        try:
-            conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        except OSError as exc:
-            raise AgentUnavailable(f"fingerlock agent not reachable at {self.path} ({exc.__class__.__name__})") from exc
-        try:
-            conn.settimeout(self.timeout)
-            try:
-                conn.connect(self.path)
-            except (OSError, socket.timeout) as exc:
-                raise AgentUnavailable(
-                    f"fingerlock agent not reachable at {self.path} ({exc.__class__.__name__}); "
-                    "install it with: kilix fingerlock install --agent") from exc
-            try:
-                _pid, uid, _gid = _peer_cred(conn)
-            except OSError as exc:
-                raise AgentUnavailable(f"fingerlock agent peer could not be checked ({exc.__class__.__name__})") from exc
-            if uid != self.trusted_uid:
-                raise AccessDenied(
-                    f"fingerlock agent peer uid {uid} is not the trusted custodian uid {self.trusted_uid}")
-            conn.sendall(payload)
-            if body:
-                conn.sendall(body)
-            line, _rest = _read_response_line(conn)
-            if op != "operate":
-                _expect_eof(conn, _rest)
-        finally:
-            conn.close()
-        if line is None:
-            raise AgentUnavailable("fingerlock agent closed the connection")
-        try:
-            response = json.loads(line.decode("utf-8"))
-        except ValueError as exc:
-            raise ServiceFailure(f"bad reply from the fingerlock agent: {exc}") from exc
-        if not isinstance(response, dict):
-            raise ServiceFailure("bad reply from the fingerlock agent")
-        _reject_key(response)
-        if not response.get("ok"):
-            code = str(response.get("code"))
-            cls = {"EACCESS": AccessDenied, "ENOMATCH": NoMatch, "ETIMEOUT": OperationTimeout,
-                   "EOPERATION": OperationFailed, "ENODEVICE": DeviceNotFound,
-                   "EDEPENDENCY": DependencyUnavailable, "EBUSY": Busy,
-                   "ELOCKER": LockerError}.get(code, ServiceFailure)
-            error = cls(str(response.get("error", "agent refused")))
-            error.code = code
-            raise error
-        self._check_success(op, response, fields, body)
+        response, _plain = self.transact(op, body=body, **fields)
         return response
 
     def _check_success(self, op: str, response: dict[str, Any], fields: dict[str, Any], body: bytes) -> None:
@@ -861,10 +814,13 @@ class AgentClient:
                 raise ServiceFailure("agent forget response is malformed")
 
     def transact(self, op: str, *, body: bytes = b"", **fields: Any) -> tuple[dict[str, Any], bytes]:
-        """call() plus, for operate, the plaintext frame. Used by unseal."""
+        """Complete one request and, for operate, consume the plaintext frame."""
         request = {"protocol": PROTOCOL, "op": op, **fields}
         payload = json.dumps(request).encode("utf-8") + b"\n"
-        conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        except OSError as exc:
+            raise AgentUnavailable(f"fingerlock agent not reachable at {self.path} ({exc.__class__.__name__})") from exc
         try:
             conn.settimeout(self.timeout)
             try:
@@ -880,9 +836,16 @@ class AgentClient:
             if uid != self.trusted_uid:
                 raise AccessDenied(
                     f"fingerlock agent peer uid {uid} is not the trusted custodian uid {self.trusted_uid}")
-            conn.sendall(payload)
-            if body:
-                conn.sendall(body)
+            send_error = None
+            try:
+                conn.sendall(payload)
+                if body:
+                    conn.sendall(body)
+            except (BrokenPipeError, ConnectionResetError) as exc:
+                # A full agent can send EBUSY and close before reading any
+                # request bytes. Consume that refusal, but never accept success
+                # for a request we could not finish sending.
+                send_error = exc
             line, rest = _read_response_line(conn)
             if line is None:
                 raise AgentUnavailable("fingerlock agent closed the connection")
@@ -894,7 +857,7 @@ class AgentClient:
                 raise ServiceFailure("bad reply from the fingerlock agent")
             _reject_key(response)
             if not response.get("ok"):
-                _expect_eof(conn, rest)
+                _expect_eof(conn, rest, allow_reset=True)
                 code = str(response.get("code"))
                 cls = {"EACCESS": AccessDenied, "ENOMATCH": NoMatch, "ETIMEOUT": OperationTimeout,
                        "EOPERATION": OperationFailed, "ENODEVICE": DeviceNotFound,
@@ -903,6 +866,8 @@ class AgentClient:
                 error = cls(str(response.get("error", "agent refused")))
                 error.code = code
                 raise error
+            if send_error is not None:
+                raise ServiceFailure("agent reported success before accepting the complete request") from send_error
             self._check_success(op, response, fields, body)
             plain = b""
             if op == "operate":
@@ -913,6 +878,8 @@ class AgentClient:
                 response.pop("_expect_sha", None)
             _expect_eof(conn, rest if op != "operate" else b"")
             return response, plain
+        except OSError as exc:
+            raise ServiceFailure(f"agent connection failed ({exc.__class__.__name__})") from exc
         finally:
             conn.close()
 
@@ -953,7 +920,7 @@ def _read_response_line(conn: socket.socket) -> tuple[bytes | None, bytes]:
     return line, rest
 
 
-def _expect_eof(conn: socket.socket, prefix: bytes = b"") -> None:
+def _expect_eof(conn: socket.socket, prefix: bytes = b"", *, allow_reset: bool = False) -> None:
     # The server releases admission before closing this one-request connection.
     # A reply alone is not completion: immediately opening another connection
     # could otherwise exhaust slots still held by successfully answered calls.
@@ -962,6 +929,11 @@ def _expect_eof(conn: socket.socket, prefix: bytes = b"") -> None:
     try:
         if conn.recv(1):
             raise ServiceFailure("unexpected bytes after the agent reply")
+    except ConnectionResetError as exc:
+        # Admission refusal can close with unread request bytes, producing a
+        # reset after the complete error frame. Preserve that typed refusal.
+        if not allow_reset:
+            raise ServiceFailure("agent reset before request completion") from exc
     except socket.timeout as exc:
         raise OperationTimeout("timed out waiting for agent completion") from exc
 

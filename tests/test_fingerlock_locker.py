@@ -622,6 +622,33 @@ class AgentTests(unittest.TestCase):
                 self.assertNotIn("error", result)
                 self.assertEqual(self.agent._inflight, 0)
 
+    def test_busy_reply_is_typed_even_when_unread_request_causes_reset(self):
+        path = self._serve()
+        client = agentmod.AgentClient(path, timeout=3, trusted_uid=self.uid)
+        self.agent.max_concurrent = 0
+        for operation in (client.status, lambda: client.transact("forget")):
+            with self.subTest(operation=operation), self.assertRaises(agentmod.Busy):
+                operation()
+        for reply, expected in (({"ok": False, "code": "EBUSY", "error": "full"}, agentmod.Busy),
+                                ({"ok": True, "held": False}, core.ServiceFailure)):
+            with self.subTest(reply=reply):
+                connection = unittest.mock.Mock()
+                connection.sendall.side_effect = BrokenPipeError("already refused")
+                connection.recv.side_effect = [json.dumps(reply).encode() + b"\n",
+                                               ConnectionResetError("unread request")]
+                with unittest.mock.patch.object(agentmod.socket, "socket", return_value=connection), \
+                        unittest.mock.patch.object(agentmod, "_peer_cred", return_value=(1, 0, 0)), \
+                        self.assertRaises(expected):
+                    agentmod.AgentClient("unused").status()
+                connection.close.assert_called_once()
+        reset = unittest.mock.Mock()
+        reset.recv.side_effect = ConnectionResetError("unread request")
+        agentmod._expect_eof(reset, allow_reset=True)
+        with self.assertRaises(core.ServiceFailure):
+            agentmod._expect_eof(reset)
+        with self.assertRaises(core.ServiceFailure):
+            agentmod._expect_eof(reset, b"extra", allow_reset=True)
+
     def test_untrusted_peer_receives_no_key(self):
         sock_path = str(Path(self.tmp.name) / "fake.sock")
         listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
