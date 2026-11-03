@@ -68,7 +68,7 @@ case "$look_dir" in
     die "refusing broad kilix-object-detect checkout path: $look_dir" ;;
 esac
 
-for command in git make cc; do
+for command in git make cc python3; do
   command -v "$command" >/dev/null 2>&1 \
     || die "$command is required (install git, make, a C compiler, and sqlite3 and zlib development headers)"
 done
@@ -147,7 +147,44 @@ advance_existing_checkout() {
     log "the resolved ref ${install_ref:0:12} was NOT installed; commit, stash or remove them"
     return 0
   fi
-  checkout_ref "$directory" "$install_ref"
+  # Keep the installed source and executable together if checkout or build
+  # fails. Copy the entire repository so local refs/config and ignored user
+  # files survive; only generated build output is discarded in the stage.
+  [ -d "$directory/.git" ] && [ ! -L "$directory/.git" ] \
+    || die "transactional update requires a standalone Git checkout"
+  local update_tmp staged
+  update_tmp="$(mktemp -d "$(dirname "$directory")/.kilix-update.XXXXXX")" \
+    || die "could not allocate an update stage"
+  (
+    trap 'rm -rf -- "$update_tmp"' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    staged="$update_tmp/checkout"
+    cp -a -- "$directory" "$staged" || die "could not stage existing checkout"
+    [ "$(git -C "$staged" rev-parse --show-toplevel)" = "$staged" ] \
+      || die "staged Git checkout redirects outside its directory"
+    checkout_ref "$staged" "$install_ref"
+    rm -rf -- "$staged/build"
+    build_checkout "$staged"
+    # Another checkout/edit during compilation must not be overwritten.
+    [ "$(git -C "$directory" rev-parse HEAD)" = "$head" ] \
+      && [ -z "$(git -C "$directory" status --porcelain --untracked-files=normal)" ] \
+      || die "installed checkout changed while preparing update"
+    python3 - "$staged" "$directory" <<'EXCHANGE'
+import ctypes
+import os
+import sys
+library = ctypes.CDLL(None, use_errno=True)
+rename = library.renameat2
+rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int,
+                   ctypes.c_char_p, ctypes.c_uint]
+rename.restype = ctypes.c_int
+if rename(-100, os.fsencode(sys.argv[1]), -100, os.fsencode(sys.argv[2]), 2):
+    error = ctypes.get_errno()
+    raise OSError(error, os.strerror(error))
+EXCHANGE
+  )
+  update_built=1
   # Said after the checkout, because only then are both commits local enough to
   # compare. A pin that walks a machine backwards is legitimate and must still
   # be visible in the log.
@@ -171,8 +208,9 @@ if git -C "$look_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
        && [ "$KILIX_LOOK_TRUST_EXISTING_CHECKOUT" != 1 ]; then
     die "$look_dir has origin '${origin:-missing}', expected '$KILIX_LOOK_REPO' (set KILIX_LOOK_TRUST_EXISTING_CHECKOUT=1 only for a trusted checkout)"
   fi
+  update_built=0
   advance_existing_checkout "$look_dir"
-  build_checkout "$look_dir"
+  if [ "$update_built" != 1 ]; then build_checkout "$look_dir"; fi
   printf '%s\n' "$look_dir/build/kilix-look"
   exit 0
 fi

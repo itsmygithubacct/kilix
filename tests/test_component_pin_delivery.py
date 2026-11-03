@@ -196,6 +196,69 @@ class ExistingCheckoutTests(unittest.TestCase):
                    {"Makefile": makefile}, "build/kilix-nvr",
                    "/build/\n", "kilix-nvr")
 
+    def test_camera_failed_update_preserves_installed_source_and_binary(self):
+        for component, prefix, binary in (
+            ("nvr", "KILIX_NVR", "kilix-nvr"),
+            ("object-detect", "KILIX_LOOK", "kilix-look"),
+        ):
+            with self.subTest(component=component), tempfile.TemporaryDirectory() as td:
+                tmp = Path(td).resolve()
+                makefile = ("all:\n\tmkdir -p build\n"
+                            f"\tcp marker build/{binary}\n"
+                            f"\tchmod +x build/{binary}\n")
+                origin, old, _ = self._origin(
+                    tmp, {"Makefile": makefile}, "/build/\n/local-data/\n")
+                checkout = self._checkout(tmp, origin, old, component)
+                name = f"install-kilix-{component}.sh"
+                installer = stage_installer(name, prefix, old, tmp / name)
+                first = self._run(installer, tmp, checkout, origin, prefix)
+                self.assertEqual(first.returncode, 0, first.stderr)
+                before = (checkout / "build" / binary).read_bytes()
+                # The failed build writes an executable before failing: merely
+                # restoring HEAD would leave the binary/source pair mismatched.
+                (origin / "Makefile").write_text(makefile + "\tfalse\n")
+                git("commit", "-qam", "failing update", cwd=origin)
+                bad = git("rev-parse", "HEAD", cwd=origin)
+                installer = stage_installer(name, prefix, bad, tmp / name)
+                failed = self._run(installer, tmp, checkout, origin, prefix)
+                self.assertNotEqual(failed.returncode, 0)
+                self.assertEqual(git("rev-parse", "HEAD", cwd=checkout), old)
+                self.assertEqual((checkout / "build" / binary).read_bytes(), before)
+                self.assertEqual(list(checkout.parent.glob(".kilix-update.*")), [])
+
+                # A successful replacement preserves local Git metadata and
+                # ignored user data, while rebuilding generated output.
+                (checkout / "local-data").mkdir()
+                (checkout / "local-data" / "keep").write_text("saved")
+                git("branch", "local-saved", old, cwd=checkout)
+                (origin / "Makefile").write_text(makefile)
+                git("commit", "-qam", "working update", cwd=origin)
+                good = git("rev-parse", "HEAD", cwd=origin)
+                installer = stage_installer(name, prefix, good, tmp / name)
+                # An absolute core.worktree copied from the installed Git
+                # config would redirect staging operations into the live tree.
+                git("config", "core.worktree", str(checkout), cwd=checkout)
+                redirected = self._run(installer, tmp, checkout, origin, prefix)
+                self.assertNotEqual(redirected.returncode, 0)
+                self.assertEqual(git("rev-parse", "HEAD", cwd=checkout), old)
+                self.assertEqual((checkout / "build" / binary).read_bytes(), before)
+                git("config", "--unset", "core.worktree", cwd=checkout)
+                updated = self._run(installer, tmp, checkout, origin, prefix)
+                self.assertEqual(updated.returncode, 0, updated.stderr)
+                self.assertEqual(git("rev-parse", "HEAD", cwd=checkout), good)
+                self.assertEqual(git("rev-parse", "local-saved", cwd=checkout), old)
+                self.assertEqual((checkout / "local-data" / "keep").read_text(), "saved")
+                self.assertIn("# new", (checkout / "build" / binary).read_text())
+                self.assertEqual(list(checkout.parent.glob(".kilix-update.*")), [])
+
+    def test_kilix_object_advances_an_existing_checkout(self):
+        makefile = ("all:\n\tmkdir -p build\n"
+                    "\tcp marker build/kilix-look\n"
+                    "\tchmod +x build/kilix-look\n")
+        self._case("install-kilix-object-detect.sh", "KILIX_LOOK",
+                   {"Makefile": makefile}, "build/kilix-look",
+                   "/build/\n", "kilix-object-detect")
+
     def test_kilix_rtsp_advances_an_existing_checkout(self):
         makefile = (
             "all:\n"
@@ -260,7 +323,8 @@ class InstallerShapeTests(unittest.TestCase):
                 self.assertIn("advance_existing_checkout() {", body)
                 self.assertIn('advance_existing_checkout "', body)
                 self.assertIn(
-                    'checkout_ref "$directory" "$install_ref"', body)
+                    'checkout_ref "$staged" "$install_ref"' if prefix in ('KILIX_NVR', 'KILIX_LOOK')
+                    else 'checkout_ref "$directory" "$install_ref"', body)
                 self.assertIn("%s_KEEP_EXISTING_CHECKOUT" % prefix, body)
                 # The opt-out is only acceptable because it is explicit.
                 self.assertIn("NOT installed", body)
