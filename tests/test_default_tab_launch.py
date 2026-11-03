@@ -49,6 +49,16 @@ sys.exit(int(os.environ.get('REMOTE_RC', '0')))
                 self.assertEqual(command[command.index('--') + 1:],
                                  [str(ROOT / 'kilix'), 'run', *arguments])
 
+    def test_content_receipt_path_is_forwarded_and_absence_clears_host_value(self):
+        for path in (str(self.home / 'ready with spaces'), ''):
+            with self.subTest(path=path):
+                result = self.launch(['qemu-system-x86_64', '-nodefaults'],
+                                     KILIX_RUN_READY_FILE=path)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                command = json.loads(self.log.read_text())
+                index = command.index('KILIX_RUN_READY_FILE=' + path)
+                self.assertEqual(command[index - 1], '--env')
+
     def test_remote_refusal_does_not_fall_back_to_external_execution(self):
         result = self.launch(['qemu-system-x86_64', '-nodefaults'], REMOTE_RC='37')
         self.assertEqual(result.returncode, 37, result.stderr)

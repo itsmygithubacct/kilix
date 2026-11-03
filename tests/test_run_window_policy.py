@@ -23,14 +23,16 @@ class WindowPolicy(unittest.TestCase):
             self.assertFalse(pane.call_args.kwargs['manage_windows'])
 
     def test_qemu_detach_refuses_before_profile_or_process_creation(self):
-        with patch.object(sys, 'argv', ['apprun.py', '/usr/bin/qemu-system-x86_64',
-                                       '-daemonize']), \
-                patch.object(apprun, 'prepare_app_command') as profile, \
-                patch.object(apprun, 'AppPane') as pane:
-            with self.assertRaisesRegex(SystemExit, 'cannot be owned by a tab'):
-                apprun.main()
-            profile.assert_not_called()
-            pane.assert_not_called()
+        # QEMU accepts both spellings; neither may escape pane ownership.
+        for flag in ('-daemonize', '--daemonize'):
+            with patch.object(sys, 'argv', ['apprun.py', '/usr/bin/qemu-system-x86_64',
+                                           flag]), \
+                    patch.object(apprun, 'prepare_app_command') as profile, \
+                    patch.object(apprun, 'AppPane') as pane:
+                with self.assertRaisesRegex(SystemExit, 'cannot be owned by a tab'):
+                    apprun.main()
+                profile.assert_not_called()
+                pane.assert_not_called()
 
     def test_missing_terminal_cleans_temporary_browser_profile(self):
         import tempfile

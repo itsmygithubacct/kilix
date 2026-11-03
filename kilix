@@ -6080,6 +6080,7 @@ if [ "${1:-}" = "run" ]; then
     exec "$KITTEN" @ --password-file "$KILIX_RC_PASSWORD_FILE" \
       launch --type=tab --cwd=current --self --tab-title "$_app" \
       --env KILIX_IN_OVERLAY=1 --env "KILIX_STREAM=${KILIX_STREAM:-}" \
+      --env "KILIX_RUN_READY_FILE=${KILIX_RUN_READY_FILE:-}" \
       -- "$_self" run "$@"
   fi
   rc=0

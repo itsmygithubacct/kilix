@@ -1338,7 +1338,7 @@ def main():
     if args and os.path.basename(args[0]).startswith("qemu-system-"):
         # A detached QEMU outlives the pane's primary process. Do not silently
         # drop the user's flag or let a VM escape the tab's ownership boundary.
-        if "-daemonize" in args[1:]:
+        if any(flag in args[1:] for flag in ("-daemonize", "--daemonize")):
             sys.exit("kilix run: QEMU -daemonize cannot be owned by a tab; "
                      "omit it, or use command qemu-system-* for an external launch")
     if audio and not (hls or mse or webrtc):
