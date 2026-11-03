@@ -303,6 +303,22 @@ class Installer:
         finally:
             conn.close()
 
+    def _retire_journal(self, user: Path, journal: dict) -> None:
+        pending = user / "pending.json"
+        try:
+            pending.unlink()
+            self._sync(user)
+        except Exception as exc:
+            # A failed directory sync leaves commit durability unknown. Keep
+            # recovery retryable even when unlink already removed the journal.
+            try:
+                self._write(pending, json.dumps(journal, sort_keys=True).encode(), 0o600)
+            except Exception as persistence:
+                raise InstallError(
+                    f"journal retirement failed ({exc}); recovery journal persistence "
+                    f"not confirmed ({persistence}); manual review required") from exc
+            raise
+
     def _restore(self, uid: int, user: Path, units: Path, journal: dict) -> None:
         if (set(journal) != {"schema", "before", "previous", "enabled", "socket_active", "service_active"}
                 or journal["schema"] != "kilix.fingerlock.transaction/v1"
@@ -335,8 +351,7 @@ class Installer:
             if journal["service_active"]:
                 self._systemctl("start", service)
                 self.health(uid)
-        (user / "pending.json").unlink()
-        self._sync(user)
+        self._retire_journal(user, journal)
 
     def apply(self, raw: bytes, uid: int, *, rollback: bool = False) -> str:
         decode_package(raw, uid)
@@ -426,13 +441,13 @@ class Installer:
             self._systemctl("start", service)
             self.health(uid)
             self._link(user / "previous", f"../../versions/{before}" if before else None)
-            pending.unlink()
-            self._sync(user)
+            self._retire_journal(user, journal)
         except Exception as exc:
             try:
                 self._restore(uid, user, units, journal)
             except Exception as recovery:
-                raise InstallError(f"activation failed ({exc}); recovery incomplete ({recovery}); journal retained") from exc
+                state = "journal retained" if pending.exists() else "journal absent; manual recovery required"
+                raise InstallError(f"activation failed ({exc}); recovery incomplete ({recovery}); {state}") from exc
             raise InstallError(f"activation failed; previous installation restored: {exc}") from exc
         return digest
 

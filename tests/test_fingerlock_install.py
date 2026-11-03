@@ -249,6 +249,57 @@ class InstallationTests(unittest.TestCase):
         self.assertEqual(self.current(), self.digest)
         self.assertFalse((self.user / "pending.json").exists())
 
+    def fail_retirement_sync_once(self, *, fail_recovery=False):
+        normal_sync = self.installer._sync
+        fired = []
+        def sync(path):
+            if path == self.user and not (self.user / "pending.json").exists() and not fired:
+                fired.append(True)
+                if fail_recovery:
+                    self.system.fail = lambda argv: "stop" in argv
+                raise OSError("injected journal retirement sync failure")
+            normal_sync(path)
+        self.installer._sync = sync
+        return fired
+
+    def test_retirement_sync_failure_restores_previous_installation(self):
+        self.installer.apply(self.raw, self.uid)
+        fired = self.fail_retirement_sync_once()
+        with self.assertRaisesRegex(install.InstallError, "previous installation restored"):
+            self.installer.apply(self.next_package(), self.uid)
+        self.assertTrue(fired)
+        self.assertEqual(self.current(), self.digest)
+        self.assertFalse((self.user / "pending.json").exists())
+
+    def test_retirement_and_recovery_failure_preserve_journal_for_retry(self):
+        self.installer.apply(self.raw, self.uid)
+        fired = self.fail_retirement_sync_once(fail_recovery=True)
+        later = self.next_package()
+        with self.assertRaisesRegex(install.InstallError, "recovery incomplete.*journal retained"):
+            self.installer.apply(later, self.uid)
+        self.assertTrue(fired)
+        journal = json.loads((self.user / "pending.json").read_text())
+        self.assertEqual(journal["before"], self.digest)
+        self.system.calls.clear()
+        self.installer.apply(later, self.uid)
+        self.assertTrue(any("stop" in argv for argv in self.system.calls))
+        self.assertEqual(self.installer._target(self.user / "previous"), self.digest)
+        self.assertFalse((self.user / "pending.json").exists())
+
+    def test_recovery_retirement_sync_failure_is_retryable(self):
+        self.installer.apply(self.raw, self.uid)
+        # Activation fails before its journal retirement; the injected sync
+        # therefore runs when recovery has restored the old installation.
+        self.system.fail = lambda argv: "enable" in argv
+        fired = self.fail_retirement_sync_once()
+        with self.assertRaisesRegex(install.InstallError, "recovery incomplete.*journal retained"):
+            self.installer.apply(self.next_package(), self.uid)
+        self.assertTrue(fired)
+        self.assertEqual(self.current(), self.digest)
+        self.assertTrue((self.user / "pending.json").exists())
+        self.installer.apply(self.raw, self.uid)
+        self.assertFalse((self.user / "pending.json").exists())
+
     def test_failed_recovery_keeps_the_journal(self):
         self.installer.apply(self.raw, self.uid)
         normal_run = self.installer.run
