@@ -3386,3 +3386,5 @@ ordinary selector `end` CLI/JSON calls now refuse with `authority_required`.
 Read-only operations and owned-job primitives remain available. See
 [the controller boundary](docs/pty-controller.md) for issuance, scope, expiry,
 replay, revocation and the required isolation from model shell/broker access.
+
+`kilix yamnet run` verifies and executes the existing sound provider without setup or selection writes. Selected YOLOX wrappers also verify their bound source/cut and Content agreement on direct invocation. Copying a YOLOX runtime to a new path requires `kilix install yolox` there to regenerate its binding; a sound runtime can relocate on its recorded Python/platform ABI.

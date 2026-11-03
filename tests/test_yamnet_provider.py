@@ -57,6 +57,30 @@ wrapper.chmod(0o755)
             self.assertEqual(result.stdout.strip(), str(selected))
             self.assertEqual((moved / "config/kilix.env").read_text(), f"KILIX_SOUND_CLASSIFIER={selected}\n")
 
+    def test_run_never_installs_or_writes_selection(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            runtime = root / 'runtime'
+            config = root / 'config'
+            env = sandbox_env(KILIX_HOME=str(ROOT), KILIX_YAMNET_DIR=str(runtime),
+                              KILIX_USER_CONFIG_DIRECTORY=str(config))
+            def invoke():
+                return subprocess.run([str(ROOT/'kilix'), 'yamnet', 'run'], env=env,
+                                      input=b'fixture', capture_output=True, timeout=10)
+            refused = invoke()
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertEqual(refused.stdout, b'')
+            self.assertFalse(config.exists())
+            (runtime/'bin').mkdir(parents=True)
+            (runtime/'runtime.json').write_text('{}')
+            wrapper = runtime/'bin/kilix-listen-classify'
+            wrapper.write_text(f'#!{sys.executable}\nimport sys\n'
+                               'if sys.argv[1:] != ["--check-runtime"]: sys.stdout.buffer.write(sys.stdin.buffer.read())\n')
+            wrapper.chmod(0o700)
+            good = invoke()
+            self.assertEqual((good.returncode, good.stdout), (0, b'fixture'))
+            self.assertFalse(config.exists())
+
     def test_policy_and_interpreter_keys_are_exported(self):
         text = (ROOT / "kilix").read_text()
         self.assertIn("|KILIX_SOUND_THRESHOLDS|KILIX_SOUND_PYTHON|", text)

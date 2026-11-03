@@ -401,15 +401,24 @@ install_runtime() {
 write_wrapper() {
   local tool
   tool="$(module_tool kilix-yolox-detect)"
-  "$KILIX_PYTHON" - "$wrapper" "$yolox_dir" "$python" "$tool" "$weights" <<'PY'
+  "$KILIX_PYTHON" - "$wrapper" "$yolox_dir" "$python" "$tool" "$weights" "$KILIX_PYTHON" "$KILIX_HOME" "$KILIX_YOLOX_SRC" "$KILIX_YOLOX_MODEL" "$KILIX_YOLOX_SIZE" <<'PY'
 import os
 import shlex
 import sys
 import tempfile
 
-destination, runtime, interpreter, tool, weights = sys.argv[1:]
+destination, runtime, interpreter, tool, weights, checker_python, host, source, model, size = sys.argv[1:]
 payload = ("#!/bin/sh\n"
            "# Written by kilix install yolox.\n"
+           'actual=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P) || exit 1\n'
+           '[ "$actual" = ' + shlex.quote(runtime) + ' ] || { echo "YOLOX runtime moved; reinstall to rebind" >&2; exit 1; }\n'
+           'forbidden=0\n'
+           'for argument do\n'
+           '  case "$argument" in --model|--model=*) forbidden=1 ;; esac\n'
+           'done\n'
+           '[ "$forbidden" = 0 ] || { echo "model is selected by the installed runtime" >&2; exit 1; }\n'
+           + " ".join(shlex.quote(word) for word in (checker_python, host + "/config/yolox_runtime.py", "check", runtime, source, model, size)) + ' || exit 1\n'
+           + " ".join(shlex.quote(word) for word in (host + "/kilix", "models", "verify", model)) + ' >/dev/null 2>&1 || { echo "YOLOX model verification failed" >&2; exit 1; }\n'
            "KILIX_YOLOX_DIR=" + shlex.quote(runtime) + "\n"
            "export KILIX_YOLOX_DIR\n"
            "unset KILIX_YOLOX_MODEL\n"

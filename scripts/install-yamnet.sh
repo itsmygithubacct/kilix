@@ -36,9 +36,11 @@ have_uv() { command -v "$KILIX_UV" >/dev/null 2>&1; }
 usage() {
   cat <<'EOF'
 usage: install-yamnet.sh [--print-path|--check|--install] [--yes]
+       install-yamnet.sh --run [CLASSIFIER OPTIONS]
 
   --print-path  install if needed, then print the classifier command path
   --check       report what is present without changing anything
+  --run         verify and run the installed provider; never install or select
   --install     install, asking first unless --yes
   --upgrade     rebuild using the provider's pinned packages
   --remove      delete the runtime directory
@@ -56,6 +58,7 @@ action="--print-path"
 assume_yes=0
 while [ $# -gt 0 ]; do
   case "$1" in
+    --run) action=--run; shift; break ;;
     --print-path|--check|--install|--upgrade|--remove) action="$1" ;;
     --yes|-y) assume_yes=1 ;;
     -h|--help) usage; exit 0 ;;
@@ -195,6 +198,9 @@ upgrade_runtime() {
 }
 
 case "$action" in
+  --run)
+    runtime_ready || die "sound runtime is missing or invalid; run kilix install yamnet"
+    exec "$wrapper" "$@" ;;
   --check)
     report
     runtime_ready || exit 1

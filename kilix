@@ -4212,12 +4212,13 @@ sys.exit(0 if ready else 1)
     _yamnet_action=--print-path
     while :; do
       case "${1:-}" in
+        run) _yamnet_action=--run; shift; break ;;
         install) _yamnet_action=--install; shift ;;
         check|status) _yamnet_action=--check; shift ;;
         update|upgrade) _yamnet_action=--upgrade; shift ;;
         remove|uninstall) _yamnet_action=--remove; shift ;;
         -h|--help|help)
-          echo "usage: $_self yamnet [install|check|update|remove]"
+          echo "usage: $_self yamnet [install|check|run|update|remove]"
           echo
           echo "  $_self yamnet            install if needed, print the command"
           echo "  $_self yamnet check      what is present, without changing it"

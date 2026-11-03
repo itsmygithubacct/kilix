@@ -255,13 +255,39 @@ original.with_name(original.stem+'_'+size+'.onnx').write_bytes(b'private-cut:'+o
         self.assertEqual((self.runtime / 'runtime.json').read_bytes(), before)
 
     def test_wrapper_pins_cut_across_geometry_and_environment_changes(self):
-        wrapper = self.install()
         # A bare model name would choose the native export for this geometry;
         # the adapter's environment override would also supersede --model.
         self.executable(self.source / 'tools/kilix-yolox-detect', '''import json,os,sys
 print(json.dumps({'argv':sys.argv,'override':os.environ.get('KILIX_YOLOX_MODEL')}))
 ''')
+        wrapper = self.install()
         env = dict(self.env, KILIX_YOLOX_MODEL='/unselected.onnx')
         result = json.loads(subprocess.check_output([str(wrapper), '--geometry', '640x640'], env=env, text=True))
         self.assertEqual(result['argv'][1:], ['--model', str(self.runtime / 'models/yolox_s_320.onnx'), '--geometry', '640x640'])
         self.assertIsNone(result['override'])
+
+    def test_selected_wrapper_rejects_changed_cut_source_missing_stamp_and_override(self):
+        wrapper = self.install()
+        for file in (self.runtime / 'models/yolox_s_320.onnx',
+                     self.source / 'tools/kilix-yolox-detect', self.runtime / 'runtime.json'):
+            before = file.read_bytes()
+            file.write_bytes(before + b'corrupt')
+            result = subprocess.run([str(wrapper)], env=self.env, capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(result.stdout, b'')
+            file.write_bytes(before)
+        result = subprocess.run([str(wrapper), '--model', '/unselected.onnx'], env=self.env, capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, b'')
+
+    def test_moved_wrapper_refuses_until_supported_reinstallation(self):
+        import shutil
+        wrapper = self.install()
+        relocated = self.root / 'relocated'
+        shutil.copytree(self.runtime, relocated)
+        result = subprocess.run([str(relocated / 'bin/kilix-yolox-detect')], env=self.env, capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, b'')
+        self.assertIn(b'reinstall to rebind', result.stderr)
+        self.install(KILIX_YOLOX_DIR=str(relocated))
+        self.assertEqual(self.invoke(relocated / 'bin/kilix-yolox-detect')['runtime'], str(relocated))
