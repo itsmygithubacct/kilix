@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import subprocess
 import tempfile
 
 
@@ -21,7 +22,30 @@ def digest(path):
     return value.hexdigest()
 
 
+def source_revision(source):
+    """Name a clean checkout, without claiming a revision for supplied files.
+
+    The installer explicitly supports trusted directories without Git. Their
+    tool bytes are still bound below; a null revision makes that weaker source
+    provenance visible. A Git checkout must be clean before it can be named by
+    its commit, including when KEEP_EXISTING_CHECKOUT is requested.
+    """
+    if not (source / ".git").exists():
+        return None
+    def git(*args):
+        result = subprocess.run(["git", "--no-optional-locks", "-C", str(source), *args],
+                                capture_output=True, text=True, check=False)
+        if result.returncode:
+            raise ValueError("could not identify runtime source checkout")
+        return result.stdout.strip()
+    revision = git("rev-parse", "--verify", "HEAD^{commit}")
+    if git("status", "--porcelain", "--untracked-files=normal"):
+        raise ValueError("runtime source has uncommitted changes; commit them before installation")
+    return revision
+
+
 def snapshot(runtime, source, model, size):
+    revision = source_revision(source)
     export = f"{model}.onnx"
     expected = [line.split()[0] for line in (source / "models/SHA256SUMS").read_text().splitlines()
                 if len(line.split()) == 2 and line.split()[1] == export]
@@ -34,9 +58,11 @@ def snapshot(runtime, source, model, size):
         "cut_tool": digest(source / "tools/kilix-yolox-cut"),
         "detector_tool": digest(source / "tools/kilix-yolox-detect"),
         "wrapper": digest(runtime / "bin/kilix-yolox-detect"),
+        "checksums": digest(source / "models/SHA256SUMS"),
     }
-    return {"schema": "kilix.yolox-runtime/v1", "runtime": str(runtime),
-            "source": str(source), "model": model, "size": size, "sha256": files}
+    return {"schema": "kilix.yolox-runtime/v2", "runtime": str(runtime),
+            "source": str(source), "source_revision": revision,
+            "model": model, "size": size, "sha256": files}
 
 
 def main(argv=None):

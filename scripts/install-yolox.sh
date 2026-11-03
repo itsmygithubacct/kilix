@@ -401,19 +401,20 @@ install_runtime() {
 write_wrapper() {
   local tool
   tool="$(module_tool kilix-yolox-detect)"
-  "$KILIX_PYTHON" - "$wrapper" "$yolox_dir" "$python" "$tool" "$KILIX_YOLOX_MODEL" <<'PY'
+  "$KILIX_PYTHON" - "$wrapper" "$yolox_dir" "$python" "$tool" "$weights" <<'PY'
 import os
 import shlex
 import sys
 import tempfile
 
-destination, runtime, interpreter, tool, model = sys.argv[1:]
+destination, runtime, interpreter, tool, weights = sys.argv[1:]
 payload = ("#!/bin/sh\n"
            "# Written by kilix install yolox.\n"
            "KILIX_YOLOX_DIR=" + shlex.quote(runtime) + "\n"
            "export KILIX_YOLOX_DIR\n"
+           "unset KILIX_YOLOX_MODEL\n"
            "exec " + " ".join(shlex.quote(word) for word in
-                              (interpreter, tool, "--model", model)) + ' "$@"\n')
+                              (interpreter, tool, "--model", weights)) + ' "$@"\n')
 descriptor, temporary = tempfile.mkstemp(prefix=".yolox-wrapper-",
                                        dir=os.path.dirname(destination))
 try:

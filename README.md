@@ -2023,10 +2023,31 @@ For object detection, `kilix install yolox` prepares ONNX Runtime and a
 320-pixel model cut, then records a detector wrapper for `kilix look` and NVR.
 `KILIX_YOLOX_MODEL=yolox_nano kilix install yolox` selects nano; s is the
 default and tiny is also supported. Explicit reinstallation refreshes the
-selected model and module path. `kilix yolox check` requires the existing
-agreement and byte binding for the export, cut, tools and wrapper. Older
-runtimes without that binding need one explicit reinstall. These integrity
-checks do not certify inference or model accuracy.
+selected model and module path. The installed wrapper names the exact cut;
+changing the input frame geometry does not silently select a native export.
+It clears the adapter's model environment override. `kilix yolox check`
+requires the existing agreement and byte binding for the export, cut, tools,
+checksum list and wrapper, plus the source checkout's commit. A Git source
+must be clean when bound; an explicitly trusted directory without Git records
+a null revision and binds only its file bytes. Older runtimes without this
+binding need one explicit reinstall. These integrity checks do not certify
+inference or model accuracy.
+
+For controlled pipe comparisons, `kilix yolox run --geometry 320x320 --conf
+0.25 --nms 0.45 --threads 2` verifies the runtime and reads fixed BGRA frames
+from stdin. Its stdout is binary float32[20][6]. `--per-class` changes NMS to
+suppress only within the winning class at each cell; it does not create
+multiple class predictions per cell. The default suppresses across classes.
+The score is objectness times the winning class probability, with a strict
+`score > conf` filter and at most 20 replies. A caller's `min_score` is a
+second filter and cannot recover rows already removed by `--conf`.
+
+The object consumer area-averages and centres each frame or crop in a black
+320 square. The adapter keeps BGR order and raw 0–255 values; its top-left,
+fill-114 nearest-neighbour letterbox is an identity for that square and its
+320 cut. Sending an original rectangular frame directly to the adapter is a
+different preprocessing path. Comparing native resolution requires an
+explicit model path to the module tool outside the installed-cut launcher.
 
 Installation requires an interactive terminal and explicit confirmation; there
 is no `--yes` option or piped consent. The licence screen is the licence
