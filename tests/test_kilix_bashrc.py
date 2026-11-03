@@ -31,7 +31,8 @@ class RunAliasTests(unittest.TestCase):
         for app in ("chromium", "firefox-esr", "myapp", "zenity", "xmessage",
                     "gimp", "libreoffice", "custom-gui", "terminal-tool",
                     "hidden-tool", "kde-gui", "blocked-gui", "try-gui",
-                    "masked-gui", "malformed-gui"):
+                    "masked-gui", "malformed-gui", "google-chrome", "google-chrome-stable",
+                    "qemu-system-x86_64", "qemu-system-aarch64"):
             stub = self.bin / app
             stub.write_text("#!/bin/sh\nexit 0\n")
             stub.chmod(0o755)
@@ -57,6 +58,27 @@ class RunAliasTests(unittest.TestCase):
         self.assertEqual(
             self.record.read_text().splitlines(),
             ["run", "chromium", "--incognito", "https://example.test"])
+
+    def test_qemu_and_chrome_defaults_preserve_argv_bytes_and_explicit_bypass(self):
+        import os
+        import shlex
+        for app in ("qemu-system-x86_64", "qemu-system-aarch64",
+                    "google-chrome", "google-chrome-stable"):
+            with self.subTest(app=app):
+                # NUL separation catches empty arguments and embedded newlines.
+                (self.bin / "kilix").write_text(
+                    "#!/bin/sh\nprintf '%s\\0' \"$@\" > \"$(dirname \"$0\")/../kilix-argv\"\n")
+                arguments = ["", "space quote'\";$(false)", "line\nbreak", "é"]
+                result = self._shell(shlex.join([app, *arguments]) + "\n",
+                                     XDG_SESSION_DESKTOP="pleb")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(self.record.read_bytes().split(b"\0")[:-1],
+                                 [os.fsencode(x) for x in ["run", app, *arguments]])
+                self.record.unlink()
+                result = self._shell("command " + shlex.join([app, *arguments]) + "\n",
+                                     XDG_SESSION_DESKTOP="pleb")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertFalse(self.record.exists())
 
     def test_both_pleb_markers_alias_hyphenated_names(self):
         self.assertEqual(

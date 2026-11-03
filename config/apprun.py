@@ -1326,6 +1326,12 @@ def main():
             "openbox-session", "startx", "xinit", "Xephyr", "Xorg", "Xvfb"}:
         sys.exit("kilix run: desktop/terminal hosts cannot be embedded as apps; "
                  "use kilix pane for a terminal or --desktop-session for an intentional nested desktop")
+    if args and os.path.basename(args[0]).startswith("qemu-system-"):
+        # A detached QEMU outlives the pane's primary process. Do not silently
+        # drop the user's flag or let a VM escape the tab's ownership boundary.
+        if "-daemonize" in args[1:]:
+            sys.exit("kilix run: QEMU -daemonize cannot be owned by a tab; "
+                     "omit it, or use command qemu-system-* for an external launch")
     if audio and not (hls or mse or webrtc):
         hls = True                          # audio needs a broadcast to ride in
     if not args:

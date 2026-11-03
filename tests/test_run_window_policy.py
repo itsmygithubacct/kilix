@@ -22,6 +22,39 @@ class WindowPolicy(unittest.TestCase):
             apprun.main()
             self.assertFalse(pane.call_args.kwargs['manage_windows'])
 
+    def test_qemu_detach_refuses_before_profile_or_process_creation(self):
+        with patch.object(sys, 'argv', ['apprun.py', '/usr/bin/qemu-system-x86_64',
+                                       '-daemonize']), \
+                patch.object(apprun, 'prepare_app_command') as profile, \
+                patch.object(apprun, 'AppPane') as pane:
+            with self.assertRaisesRegex(SystemExit, 'cannot be owned by a tab'):
+                apprun.main()
+            profile.assert_not_called()
+            pane.assert_not_called()
+
+    def test_missing_terminal_cleans_temporary_browser_profile(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as directory:
+            profile = Path(directory) / 'scratch-profile'
+            profile.mkdir()
+            with patch.object(sys, 'argv', ['apprun.py', 'google-chrome']), \
+                    patch.object(apprun, 'prepare_app_command',
+                                 return_value=(['google-chrome'], str(profile))), \
+                    patch.object(apprun, 'RunTerm', side_effect=RuntimeError('no terminal')):
+                with self.assertRaisesRegex(RuntimeError, 'no terminal'):
+                    apprun.main()
+            self.assertFalse(profile.exists())
+
+    def test_foreground_qemu_reaches_pane_without_changing_arguments(self):
+        command = ['qemu-system-x86_64', '-name', 'guest with spaces',
+                   '-nodefaults', '-display', 'gtk', '-m', '128']
+        with patch.object(sys, 'argv', ['apprun.py', *command]), \
+                patch.object(apprun, 'AppPane') as pane:
+            apprun.main()
+            self.assertEqual(pane.call_args.args[0], command)
+            pane.return_value.run.assert_called_once_with()
+
     def test_managed_frame_is_never_resized_or_refocused_by_runner(self):
         pane = object.__new__(apprun.AppPane)
         pane._pane_wm = True

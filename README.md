@@ -2146,6 +2146,16 @@ catalogue; scripts and terminal-only programs are not changed. Set
 `KILIX_RUN_ALIAS_APPS="foo bar"`, or exclude one with
 `KILIX_RUN_ALIAS_EXCLUDE_APPS="foo"`.
 
+Chrome (including `google-chrome-stable`) and the installed x86, ARM and
+AArch64 QEMU system commands use this route even without a desktop entry.
+For example, `qemu-system-x86_64 -m 256 -nodefaults -display gtk` opens a
+Kilix tab. Keep QEMU in the foreground: `-daemonize` is refused inside a tab,
+and closing the tab stops its guest. Shut down the guest normally first when
+its disk contains data you want to keep. To request an external window or a
+headless/detached VM, bypass the interactive alias with
+`command qemu-system-x86_64 ...`; `command google-chrome ...` similarly opens
+the native browser. Scripts that execute QEMU directly retain their behavior.
+
 RC2 uses bare Openbox on each app's private display when it is installed.
 Normal app windows fill the pane; dialogs retain their own size and focus.
 Window decorations use Openbox's packaged dark Nightmare-02 theme.
