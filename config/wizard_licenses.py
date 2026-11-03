@@ -1,7 +1,7 @@
-"""Collect final yes/no licence decisions before any selected model is fetched."""
+"""Apply standard licence policy and collect decisions on additional terms."""
 import hashlib
 from pathlib import Path
-import tempfile
+from contextlib import nullcontext
 import sys
 
 
@@ -60,12 +60,25 @@ def consent_and_install(selected, *, input_fn=input):
     llm_ids = [model for model in selected if model in system_llm.MODELS]
     specs = {model: catalog.require_asset(model) for model in content_ids}
     groups, requirements = {}, {model: set() for model in selected}
-    captures, required_receipts = {}, set()
-    with tempfile.TemporaryDirectory(prefix='kilix-wizard-licenses-') as scratch:
+    captures, required_receipts, policy_records = {}, set(), set()
+    from model_wizard import atomic_json, read_json, state_root
+    with nullcontext(state_root() / 'license-documents') as scratch:
         texts = lic.load_determined_texts(Path(scratch) / 'texts')
         for model, spec in specs.items():
+            documents = []
             for item in spec.licenses:
                 record = cm._record(records, item.record_digest)
+                digests = {'licence:' + item.license_id: item.text_sha256}
+                for kind, entries in (('binding', record.binding_conditions),
+                                      ('advisory', record.advisories), ('statement', record.statements)):
+                    digests.update({kind + ':' + entry.id: entry.text_sha256 for entry in entries})
+                digests.update({'component:' + entry.id: entry.exception_text_sha256
+                                for entry in record.components if entry.exception_text_sha256})
+                for label, digest in digests.items():
+                    texts.get(digest, label=label)
+                    documents.append({'label': label, 'sha256': digest,
+                                      'path': str((texts.root / digest).absolute()),
+                                      'url': (texts.root / digest).absolute().as_uri()})
                 try:
                     lic.require(lic.AssetRef(model, record.digest, spec.manifest_digest),
                                 records=records, store=store)
@@ -74,6 +87,9 @@ def consent_and_install(selected, *, input_fn=input):
                 else:
                     continue
                 required_receipts.add((model, record.digest))
+                if lic.standard_policy_eligible(record):
+                    policy_records.add((model, record.digest))
+                    continue
                 payload = texts.get(item.text_sha256, label=item.license_id)
                 key = item.license_id
                 group = groups.setdefault(key, dict(label=key, models=[], records={}, texts={}))
@@ -81,6 +97,10 @@ def consent_and_install(selected, *, input_fn=input):
                 if model not in group['models']: group['models'].append(model)
                 group['records'][record.digest] = record
                 requirements[model].add(key)
+            index = Path(scratch) / (model + '.json')
+            atomic_json(index, {'model': model, 'manifest_sha256': spec.manifest_digest,
+                                'documents': documents})
+            print(f'{model}: licence documents: {index.absolute().as_uri()}')
         # Read only the pinned manifests and licence layers, never model weights.
         from model_wizard import atomic_json, read_json, state_root
         llm_licenses_path = state_root() / 'model-wizard-llm-licenses.json'
@@ -137,10 +157,14 @@ def consent_and_install(selected, *, input_fn=input):
             for item in spec.licenses:
                 record = cm._record(records, item.record_digest)
                 key = item.license_id
-                if key not in captures or (model, record.digest) not in required_receipts: continue
-                agreement = lic.capture_agreement(record,
-                    'yes' if record.expected_decision == 'accept' else None,
-                    acceptance=captures[key])
+                if (model, record.digest) not in required_receipts: continue
+                if (model, record.digest) in policy_records:
+                    agreement = lic.capture_standard_policy(record)
+                else:
+                    if key not in captures: continue
+                    agreement = lic.capture_agreement(record,
+                        'yes' if record.expected_decision == 'accept' else None,
+                        acceptance=captures[key])
                 store.write(lic.receipt_from_agreement(record, agreement,
                     manifest_digest=spec.manifest_digest, release_digest=release_digest(),
                     catalogue_digest=catalog_sha256()))

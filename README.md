@@ -1,5 +1,11 @@
 # kilix — kitty that looks & behaves like Tilix, with clickable pane buttons
 
+## 0.2.2.1 maintenance candidate
+
+Coordinates the Model Setup password-disclosure fix and four-part maintenance-release support. Runtime and third-party source pins remain those of 0.2.2.
+
+This source is a release candidate; installation-media and upgrade acceptance are pending.
+
 `kilix` is a self-contained wrapper around a **fork of kitty** that gives
 each pane's title bar clickable **keyboard, `+ - ← ↑ ↓ → ▢ ✕` buttons** —
 synchronized input, local text size, four-way splits, maximize, and close —

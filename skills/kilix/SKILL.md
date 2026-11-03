@@ -2,7 +2,7 @@
 name: kilix
 description: Inspect and control Kilix terminal panes and coding sessions. Use for finding sessions, reading their output, sending instructions, or administering a user-selected group of panes.
 metadata:
-  kilix-version: "0.2.2"
+  kilix-version: "0.2.2.1"
 ---
 
 # Kilix pane control
