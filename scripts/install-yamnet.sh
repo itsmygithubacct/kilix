@@ -32,13 +32,6 @@ log() { printf 'kilix yamnet: %s\n' "$*" >&2; }
 
 have_uv() { command -v "$KILIX_UV" >/dev/null 2>&1; }
 
-python_install() {
-  if have_uv; then
-    "$KILIX_UV" pip install --python "$python" "$@" >&2
-  else
-    "$python" -m pip install --quiet "$@" >&2
-  fi
-}
 
 usage() {
   cat <<'EOF'
@@ -47,12 +40,15 @@ usage: install-yamnet.sh [--print-path|--check|--install] [--yes]
   --print-path  install if needed, then print the classifier command path
   --check       report what is present without changing anything
   --install     install, asking first unless --yes
-  --upgrade     bring the installed packages up to date
+  --upgrade     rebuild using the provider's pinned packages
   --remove      delete the runtime directory
 
 Environment:
-  KILIX_YAMNET_DIR   where the virtualenv and the model live
-  KILIX_UV           the uv to use; venv + pip when it is not found
+  KILIX_YAMNET_DIR   where the self-contained runtime lives
+  KILIX_YAMNET_MODEL existing verified model (optional)
+  KILIX_YAMNET_WHEELHOUSE local wheel directory (optional)
+  KILIX_SOUND_PYTHON compatible Python on PATH after relocation
+  KILIX_UV           package installer; python -m pip when it is not found
 EOF
 }
 
@@ -81,8 +77,9 @@ case "$yamnet_dir" in
     die "refusing broad runtime path: $yamnet_dir" ;;
 esac
 
-venv="$yamnet_dir/venv"
-python="$venv/bin/python"
+[[ "$yamnet_dir" =~ ^/[a-zA-Z0-9_./-]+$ ]] \
+  || die "runtime path is not safe for the single-word selection contract"
+
 model="$yamnet_dir/models/yamnet.tflite"
 wrapper="$yamnet_dir/bin/kilix-listen-classify"
 
@@ -113,33 +110,17 @@ sound_tool() {
 }
 
 runtime_ready() {
-  [ -x "$python" ] && [ -f "$model" ] && [ -x "$wrapper" ] \
-    && "$python" -c 'import ai_edge_litert' >/dev/null 2>&1
+  [ -x "$wrapper" ] && [ -f "$yamnet_dir/runtime.json" ] \
+    && "$wrapper" --check-runtime >/dev/null 2>&1
 }
 
 report() {
   printf 'runtime:    %s\n' "$yamnet_dir"
-  if have_uv; then
-    printf 'installer:  %s\n' "$("$KILIX_UV" --version 2>/dev/null || echo uv)"
+  if runtime_ready; then
+    "$wrapper" --check-runtime
   else
-    printf 'installer:  venv + pip (uv not found)\n'
+    printf 'state:      not installed, missing or invalid; rebuild with --install\n'
   fi
-  if [ -x "$python" ]; then
-    printf 'python:     %s\n' "$("$python" --version 2>&1)"
-    printf 'litert:     %s\n' \
-      "$("$python" -c 'import ai_edge_litert as m; print(m.__version__)' \
-         2>/dev/null || echo 'not installed')"
-  else
-    printf 'python:     not installed\n'
-  fi
-  if [ -f "$model" ]; then
-    printf 'model:      %s (%s bytes)\n' "$model" \
-      "$(stat -c %s -- "$model" 2>/dev/null || echo '?')"
-  else
-    printf 'model:      not fetched\n'
-  fi
-  [ -x "$wrapper" ] && printf 'classifier: %s\n' "$wrapper" \
-    || printf 'classifier: not written\n'
 }
 
 confirm() {
@@ -157,60 +138,28 @@ confirm() {
 # -------------------------------------------------------------- install ----
 
 install_runtime() {
-  local interpreter fetcher classifier
-
+  local interpreter assembler fetcher source_model
+  local -a arguments
   interpreter="$(command -v "$KILIX_PYTHON" 2>/dev/null)" \
     || die "no $KILIX_PYTHON on PATH"
-  # Resolved to an absolute path first: `uv venv --python python3` picks uv's
-  # own idea of python3, which on this machine is a 3.14 it downloaded, not
-  # the system 3.11 everything else here is built against.
   interpreter="$(realpath -- "$interpreter")"
-
-  fetcher="$(sound_tool kilix-sound-fetch-model)" \
-    || die "cannot find kilix-sound-detect's tools in any known checkout"
-  classifier="$(sound_tool kilix-listen-classify)" \
-    || die "cannot find kilix-sound-detect's tools in any known checkout"
-
-  mkdir -p "$yamnet_dir/bin" "$yamnet_dir/models"
-  if [ ! -x "$python" ]; then
-    log "creating the virtualenv with $interpreter"
-    if have_uv; then
-      "$KILIX_UV" venv --python "$interpreter" "$venv" >&2
-    else
-      "$interpreter" -m venv "$venv" >&2
-    fi
+  assembler="$(sound_tool kilix-sound-runtime)" \
+    || die "the sound provider needs kilix-sound-runtime; update that provider first"
+  source_model="${KILIX_YAMNET_MODEL:-$model}"
+  if [ ! -f "$source_model" ]; then
+    fetcher="$(sound_tool kilix-sound-fetch-model)" || die "model fetcher unavailable"
+    # Keep the existing acquisition path and its provenance, outside staging.
+    KILIX_SOUND_HOME="$yamnet_dir.acquisition" "$interpreter" "$fetcher" >&2
+    source_model="$yamnet_dir.acquisition/models/yamnet.tflite"
   fi
-  [ -x "$python" ] || die "no interpreter at $python"
-
-  # ai_edge_litert is tflite_runtime's continuation and the only one of the
-  # two that still publishes wheels for this Python.  The classifier accepts
-  # either, so this is a packaging choice rather than a code one.
-  log "installing ai_edge_litert and numpy"
-  python_install ai_edge_litert numpy || die "the install failed"
-
-  if [ ! -f "$model" ]; then
-    log "fetching the model"
-    # By hash, with a provenance file, which is the fetcher's whole job -
-    # weights are never vendored into a repository here.
-    KILIX_SOUND_HOME="$yamnet_dir" "$python" "$fetcher" >&2 \
-      || die "could not fetch the model"
+  arguments=(--destination "$yamnet_dir" --model "$source_model" --installer "$KILIX_UV")
+  if [ -n "${KILIX_YAMNET_WHEELHOUSE:-}" ]; then
+    arguments+=(--wheelhouse "$KILIX_YAMNET_WHEELHOUSE")
   fi
-  [ -f "$model" ] || die "yamnet.tflite did not land in $yamnet_dir/models"
-
-  # A wrapper rather than an environment variable holding a command line.
-  # KILIX_SOUND_CLASSIFIER is split on spaces with no quoting, so an
-  # interpreter and a script recorded together are two words that only the
-  # launcher's own parser survives; everything else, including `.` from a
-  # service, silently loses the setting.
-  cat > "$wrapper" <<EOF
-#!/bin/sh
-# Written by kilix install yamnet. Re-run it to repoint this at a moved
-# checkout; delete $yamnet_dir to remove the runtime entirely.
-exec "$python" "$classifier" --model "$model" "\$@"
-EOF
-  chmod 700 "$wrapper"
+  "$interpreter" "$assembler" "${arguments[@]}" >&2 || die "runtime assembly failed"
+  runtime_ready || die "runtime cannot launch with KILIX_SOUND_PYTHON (default python3)"
   record_setting
-  log "installed"
+  log "installed verified runtime; any replaced tree remains in $yamnet_dir.previous"
 }
 
 # The launcher exports allowlisted KILIX_* keys from this file into every pane,
@@ -241,12 +190,8 @@ remove_runtime() {
 }
 
 upgrade_runtime() {
-  runtime_ready || die "nothing installed at $yamnet_dir yet"
-  log "upgrading ai_edge_litert and numpy"
-  python_install --upgrade ai_edge_litert numpy \
-    || die "the upgrade failed; the previous runtime is still in place"
-  record_setting
-  log "upgraded"
+  confirm || return 1
+  install_runtime
 }
 
 case "$action" in
@@ -276,6 +221,7 @@ case "$action" in
     exit 0 ;;
   --print-path)
     runtime_ready || { confirm || exit 1; install_runtime; }
+    record_setting
     printf '%s\n' "$wrapper"
     exit 0 ;;
 esac
