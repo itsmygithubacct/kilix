@@ -41,7 +41,7 @@ KILIX_YOLOX_ALLOW_MUTABLE_REF="${KILIX_YOLOX_ALLOW_MUTABLE_REF:-0}"
 # resolves it - a first-use clone and an existing checkout alike - so a moved
 # pin reaches machines that already have the module. Set
 # KILIX_YOLOX_KEEP_EXISTING_CHECKOUT=1 to work from a checkout as it is.
-KILIX_YOLOX_DEFAULT_REF=029ea556082d07772848f82c1f5bed9e3ffff4b4
+KILIX_YOLOX_DEFAULT_REF=fa085fae3d7c605deb217794886d0053e38e8e3d
 KILIX_YOLOX_MODEL="${KILIX_YOLOX_MODEL:-yolox_s}"
 # kilix-look sends a 320-pixel square. The detector prefers the cut that matches
 # the frame (0.89 on the test image against 0.52 for the 640 export fed the same
