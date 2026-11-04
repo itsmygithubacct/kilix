@@ -29,6 +29,7 @@ EXECUTABLES = {
     'kilix-nvr': 'build/kilix-nvr',
 }
 NVR_GATE = 'kilix-nvr-model-required'
+PLAYALONG_RUNTIME_MANIFEST = '73ba8013e7e82b522bcaf92eee04024b6c18522a306b3ce2e5027743c228e36a'
 NVR_HELPERS = {
     'kilix-look-detect': 'third_party/kilix-object-detect/tools/kilix-look-detect',
     'kilix-listen-classify': 'third_party/kilix-sound-detect/tools/kilix-listen-classify',
@@ -99,16 +100,35 @@ def _pipeline_location(source, environ=None):
 
 def _pipeline_ready(source, environ=None):
     runtime = _pipeline_location(source, environ)
-    marker = runtime / '.catalog-pipeline.json'
+    marker = runtime / '.kilix-runtime.json'
     try:
         data = json.loads(marker.read_text(encoding='utf-8'))
     except (OSError, ValueError):
         return False
     # uv environments are local to a machine/path. Relocated native bundles
     # remain usable; their optional Python runtime must be prepared again.
-    return (data == {'schema': 1, 'source': runtime.name, 'providers': False}
-            and (runtime / 'bin/python').is_file() and os.access(runtime / 'bin/python', os.X_OK)
+    return (not runtime.is_symlink() and not marker.is_symlink()
+            and data == {'manifest_sha256': PLAYALONG_RUNTIME_MANIFEST}
+            and (runtime / 'bin/python3').is_file() and os.access(runtime / 'bin/python3', os.X_OK)
             and (source / 'third_party/kilix-state/build/libkilix-state.so').is_file())
+
+
+def _playalong_binding(source, env, action, python=None):
+    """Use this installed WSL host's authority; require a determined asset selection."""
+    import companion
+    asset = env.get('KILIX_PLAYALONG_CONTENT_ASSET', '')
+    if not asset:
+        raise ValueError('Playalong needs an admitted Content asset selection before setup or pipeline launch.')
+    command = [str(python or sys.executable), str(source / 'tools/kilix-playalong-first-use'), action,
+               '--kilix', str(companion.BRIDGE.resolve()), '--content-root', str((companion.STATE / 'content').resolve()),
+               '--asset', asset, '--runtime-prefix', str(_pipeline_location(source, env)),
+               '--runtime-manifest-sha256', PLAYALONG_RUNTIME_MANIFEST]
+    if action == 'setup':
+        carrier = env.get('KILIX_PLAYALONG_RUNTIME_CARRIER', '')
+        if not carrier or not Path(carrier).is_absolute():
+            raise ValueError('Playalong setup requires the absolute offline runtime carrier path.')
+        command += ['--runtime-carrier', carrier]
+    return command
 
 
 def readiness(spec, generation, python=None):
@@ -146,7 +166,7 @@ def readiness(spec, generation, python=None):
                         'python-base': 'installed' if _pipeline_ready(source) else 'run setup-pipeline',
                         'model-pipeline': 'requires separately provisioned ML providers, approved weights and media rights',
                         'audio-device': 'not probed'}
-        reason = 'Native player/render for existing projects. setup-pipeline installs only the locked Python 3.10 base; ML providers/models and media-rights decisions remain explicit.'
+        reason = 'Native player/render for existing projects. setup-pipeline uses the selected Content asset and offline runtime carrier; media-rights decisions remain explicit.'
     else:
         capabilities = {'recorder-core': 'available', 'ffmpeg': 'available' if shutil.which('ffmpeg') else 'missing',
                         'cameras': 'not inspected or connected', 'object-detection': 'requires an explicitly selected provider',
@@ -186,12 +206,11 @@ def launch_plan(name, source, arguments, python=None, environ=None):
     if name == 'kilix-playalong':
         if arguments[:1] == ['pipeline']:
             if not _pipeline_ready(source, env):
-                raise ValueError('Run kilix apps launch kilix-playalong setup-pipeline first (uv 0.12.x and Python 3.10 required).')
+                raise ValueError('Run kilix apps launch kilix-playalong setup-pipeline first with the offline runtime carrier.')
             env['KILIX_STATE_LIBRARY'] = str(source / 'third_party/kilix-state/build/libkilix-state.so')
             env.pop('PYTHONPATH', None)
             env.pop('PYTHONHOME', None)
-            return [str(_pipeline_location(source, env) / 'bin/python'), '-c',
-                    'from kilix_playalong.cli import main; raise SystemExit(main())', *(arguments[1:] or ['list'])], env
+            return [*_playalong_binding(source, env, 'run', python), '--', *(arguments[1:] or ['list'])], env
         if arguments[:1] == ['native']:
             arguments.pop(0)
         return [str(binary), *(arguments or ['--list'])], env
@@ -221,23 +240,15 @@ def launch_plan(name, source, arguments, python=None, environ=None):
 
 
 def setup_pipeline(source):
-    """Explicit, model-free upstream base setup; never installs ML extras."""
-    uv = shutil.which('uv')
-    if not uv:
-        raise ValueError('Playalong base setup requires uv 0.12.x and an installed Python 3.10 interpreter.')
+    """Explicit first use: host Content consent and verified offline runtime."""
     runtime = _pipeline_location(source)
-    marker = runtime / '.catalog-pipeline.json'
-    marker.unlink(missing_ok=True)
-    env = dict(os.environ, UV_PROJECT_ENVIRONMENT=str(runtime), UV_PYTHON_DOWNLOADS='never',
-               KILIX_STATE_LIBRARY=str(source / 'third_party/kilix-state/build/libkilix-state.so'))
+    env = dict(os.environ, KILIX_STATE_LIBRARY=str(source / 'third_party/kilix-state/build/libkilix-state.so'))
     env.pop('PYTHONPATH', None)
     env.pop('PYTHONHOME', None)
+    command = _playalong_binding(source, env, 'setup')
+    runtime.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    run(command, env=env, timeout=900)
     run(['make', '-C', source / 'third_party/kilix-state', '-j2'], timeout=120)
-    run([uv, 'sync', '--locked', '--no-dev', '--no-editable', '--python', '3.10',
-         '--no-python-downloads'], cwd=source, env=env, timeout=300)
-    run([runtime / 'bin/python', '-c',
-         'import kilix_playalong, kilix_state, mido; kilix_state.default_library()'], cwd=source, env=env)
-    marker.write_text(json.dumps({'schema': 1, 'source': runtime.name, 'providers': False}) + '\n', encoding='utf-8')
 
 
 def _smoke_environment(root):
@@ -322,7 +333,7 @@ def main(args=None):
         return 0
     if options.name == 'kilix-playalong' and arguments[:1] == ['setup-pipeline']:
         if len(arguments) != 1:
-            raise ValueError('setup-pipeline installs only the locked base; it accepts no model/provider flags')
+            raise ValueError('setup-pipeline accepts no model/provider flags')
         setup_pipeline(source)
         return 0
     if options.name == 'kilix-multiplexer' and (not arguments or arguments == ['--help']):
