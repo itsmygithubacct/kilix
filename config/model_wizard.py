@@ -48,7 +48,7 @@ RUNTIME_PAGES = {'vision', 'audio', 'image'}
 LEGACY = {'speech': 'system-voice.state', 'dictation': 'dictation-offer.state',
           'workflows': 'workflows-offer.state'}
 WORKFLOWS_SCHEMA = 'kilix.workflows/v1'
-ASK_MODELS = {'lfm2-kilix-commands': 'lfm2', 'needle3-kilix-commands': 'needle3',
+ASK_MODELS = {'lfm3-kilix-commands': 'lfm3', 'lfm2-kilix-commands': 'lfm2', 'needle3-kilix-commands': 'needle3',
               'grammar': 'grammar'}
 
 

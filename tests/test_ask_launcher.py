@@ -198,7 +198,7 @@ def json_request(url):
 
     def test_model_selection_is_forwarded_without_changing_the_request(self):
         request = 'open notepad; keep "$VALUE" and `words` literal'
-        for model in ('needle3', 'lfm2', 'grammar'):
+        for model in ('needle3', 'lfm2', 'lfm3', 'grammar'):
             for option in (('--model', model), ('--model=' + model,), ('--commands-backend', model)):
                 with self.subTest(option=option):
                     result = self.run_ask(*option, '--', request, KILIX_ASK_COMMANDS_BACKEND='lfm2')
@@ -257,7 +257,7 @@ def json_request(url):
         self.assertNotIn("lfm2 (default)", result.stdout)
         self.assertIn("overrides KILIX_ASK_COMMANDS_BACKEND", result.stdout)
         self.assertIn("saved Ask selection (lfm2 when none is saved)", result.stdout)
-        self.assertIn("kilix-needle workflows select --model lfm2|needle3|grammar", result.stdout)
+        self.assertIn("kilix-needle workflows select --model lfm2|lfm3|needle3|grammar", result.stdout)
         self.assertEqual(self.calls(), [])
 
     def test_hold_waits_for_enter_on_every_status(self):
