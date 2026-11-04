@@ -2,7 +2,7 @@
 name: kilix-model-switch
 description: Change the model used by an existing Codex, Claude Code, or Kimi Code session in a Kilix pane, preserving the session and verifying its effective model. Use for session model, reasoning, or fast-mode changes, not replacing one coding client with another.
 metadata:
-  kilix-version: "0.2.2.1"
+  kilix-version: "0.2.3"
 ---
 
 # Switch an existing session's model

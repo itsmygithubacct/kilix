@@ -2,7 +2,7 @@
 name: kilix-pty
 description: Inspect persistent Kilix sessions by ID or selector; watch detached, stuck or unreachable panes read-only; find journals.
 metadata:
-  kilix-version: "0.2.2.1"
+  kilix-version: "0.2.3"
 ---
 
 # Persistent pane sessions
