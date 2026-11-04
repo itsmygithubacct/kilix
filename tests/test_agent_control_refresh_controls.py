@@ -16,6 +16,7 @@ SRC = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SRC / "config"))
 import agent_control as control  # noqa: E402
 from kilix_sdk import frontend_context as context  # noqa: E402
+from _caller_context_support import bind_test_caller
 
 SID = "0123456789abcdef"
 OTHER_SID = "fedcba9876543210"
@@ -46,6 +47,7 @@ class Fixture(unittest.TestCase):
         self.engine = self.root / "engine"
         self.g2 = self.engine / "generations" / "g2"
         self.broker = script(self.root / "kitty-pty-broker")
+        bind_test_caller(self, self.broker, self.runtime, SID)
         self.kitty = script(self.g2 / "kitty")
         self.g2_kitten = script(self.g2 / "kitten")
         self.built_kitten = script(self.engine / "current/src/kitty/launcher/kitten")

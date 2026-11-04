@@ -129,6 +129,70 @@ class BrokerCallerBindingTests(Fixture):
                 self.assertRaises(caller_context.CallerContextError):
             caller_context.require_pane_local()
 
+    def replace_owner_image(self):
+        old = self.root / 'retained-old-broker-image'
+        old.write_bytes(self.broker.read_bytes())
+        old.chmod(0o700)
+        (self.owner / 'exe').unlink()
+        (self.owner / 'exe').symlink_to(old)
+        self.assertFalse(os.path.samefile(self.owner / 'exe', self.broker))
+
+    def test_replaced_owner_image_refuses_live_sibling_before_client(self):
+        self.replace_owner_image()
+        poisoned = dict(self.env, KITTY_PTY_BROKER_SESSION=SIBLING)
+        with mock.patch.dict(os.environ, poisoned, clear=True), \
+                mock.patch.object(frontend_context, '_candidate') as candidate, \
+                mock.patch.object(control, 'kitten_path') as kitten, \
+                self.assertRaises(control.ControlError):
+            control.Client()
+        candidate.assert_not_called()
+        kitten.assert_not_called()
+
+    def test_sdk_replaced_owner_image_cannot_adopt_live_sibling(self):
+        self.replace_owner_image()
+        poisoned = dict(self.env, KITTY_PTY_BROKER_SESSION=SIBLING)
+        before = dict(poisoned)
+        with self.assertRaises(caller_context.BrokerOwnershipUnavailable):
+            frontend_context.refresh(poisoned)
+        self.assertEqual(poisoned, before)
+
+    def test_unverifiable_replaced_owner_is_unavailable_even_for_original_sid(self):
+        self.replace_owner_image()
+        with mock.patch.dict(os.environ, self.env, clear=True), \
+                self.assertRaises(caller_context.BrokerOwnershipUnavailable):
+            caller_context.require_pane_local()
+
+    def test_nearest_unverifiable_owner_is_not_skipped_for_a_verified_outer_broker(self):
+        self.replace_owner_image()
+        (self.owner / 'stat').write_text('200 (broker) ' + ' '.join(['S', '300'] + ['0'] * 17 + ['777']))
+        outer = self.process(300, self.broker, [str(self.broker), '--runtime-dir', str(self.runtime),
+            'run', '--id', SIBLING, '--', 'outer-agent'], {}, parent=1)
+        (outer / 'comm').write_text('kitty-pty-broke\n')
+        with mock.patch.dict(os.environ, dict(self.env, KITTY_PTY_BROKER_SESSION=SIBLING), clear=True), \
+                self.assertRaises(caller_context.BrokerOwnershipUnavailable):
+            caller_context.require_pane_local()
+
+    def test_missing_owner_proof_cannot_authorize_a_connection(self):
+        (self.proc / '100/stat').write_text('100 (agent) ' + ' '.join(['S', '1'] + ['0'] * 17 + ['777']))
+        with mock.patch.dict(os.environ, self.env, clear=True), \
+                mock.patch.object(control, 'kitten_path') as kitten, \
+                self.assertRaises(control.ControlError):
+            control.Client()
+        kitten.assert_not_called()
+
+    def test_raw_unverified_metadata_is_not_connection_authority(self):
+        self.replace_owner_image()
+        poisoned = dict(self.env, KITTY_PTY_BROKER_SESSION=SIBLING)
+        with mock.patch.dict(os.environ, poisoned, clear=True):
+            raw = control.recovered_values()
+            self.assertEqual(raw['KITTY_PTY_BROKER_SESSION'], SIBLING)
+            with self.assertRaises(control.ControlError):
+                control.connection_values()
+
+    def test_partial_claim_is_completed_but_never_authorizes_a_sibling(self):
+        with self.assertRaises(control.ControlError):
+            self.values({'KITTY_PTY_BROKER_SESSION': SIBLING}, ppid=100)
+
 
 if __name__ == '__main__':
     unittest.main()

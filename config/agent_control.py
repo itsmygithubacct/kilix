@@ -193,16 +193,32 @@ REFRESHED = "_route_refreshed"     # set by connection_values(); never an enviro
 def connection_values():
     """Recover this pane's connection metadata, rebound to a replacement terminal."""
     values = recovered_values()
+    # recovered_values is diagnostic metadata, never a route authorization.
+    # A broker claim requires positive owner proof even if no matching process
+    # could be found (including a surviving broker with an old executable).
+    from kilix_sdk.caller_context import CallerContextError, require_pane_local
+    try:
+        require_pane_local(values)
+    except CallerContextError as exc:
+        raise ControlError(str(exc)) from None
     if refresh_route(values):
         values[REFRESHED] = "1"
     return values
 
 
 def recovered_values():
-    """Recover only pane connection metadata from this process's ancestors."""
-    from kilix_sdk.caller_context import CallerContextError, require_pane_local
+    """Collect raw diagnostic metadata; use connection_values to authorize it.
+
+    Missing ownership proof may be reported by diagnostics. Conflicts and
+    shared-server ancestry still refuse. No helper credentials or RPC are
+    accepted here; connection_values and the SDK require positive proof.
+    """
+    from kilix_sdk.caller_context import (BrokerOwnershipUnavailable,
+                                         CallerContextError, require_pane_local)
     try:
         require_pane_local()
+    except BrokerOwnershipUnavailable:
+        pass
     except CallerContextError as exc:
         raise ControlError(str(exc)) from None
     names = (*ROUTE, "KILIX_KITTEN", "KILIX_BUILD_DIRECTORY", "KILIX_PREBUILT_HOME",
@@ -244,12 +260,8 @@ def recovered_values():
                            if line.startswith("PPid:")))
         except (OSError, ValueError, StopIteration):
             break
-    # A stripped tool can gain its complete broker tuple only during the walk.
-    # Validate that completed claim too, without copying the ancestor's identity.
-    try:
-        require_pane_local(values)
-    except CallerContextError as exc:
-        raise ControlError(str(exc)) from None
+    # The caller may have gained its complete claim only during this walk.
+    # connection_values validates that completed claim before route selection.
     return values
 
 

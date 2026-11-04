@@ -337,14 +337,18 @@ Do not infer the current UI from focus, the newest socket, a matching working
 directory, or another process's credentials. A shared-server refusal requires a
 pane-local client, not a `--caller-pane` override.
 
-When this caller has an identifiable matching broker `run` ancestor, its explicit
-runtime and session must agree with the supplied broker context. A conflicting
-session or runtime is refused before route refresh, including when another live
-pane owns that session. Recovery never replaces the claim with the ancestor's
-identity or credentials. The check uses the nearest matching broker and keeps
-the separate shared-server guard in force. A matching `run` process without
-verifiable explicit runtime/session arguments is unavailable. This is a guard
-against inconsistent pane metadata, not authentication against a malicious
+A supplied broker session requires positive proof from this caller's nearest
+broker `run` ancestor: the executable inode and explicit runtime/session must
+match. A conflicting or unverified owner is refused before helper credentials
+or RPC, including when another live pane owns the supplied session. Replacing
+the executable while its old process survives makes this association unavailable;
+it does not authorize another helper or an outer broker. Process names and argv
+can identify a refusal barrier but cannot prove ownership by themselves.
+Recovery never replaces the claim with the ancestor's identity or credentials,
+and the separate shared-server guard remains in force. agent-control's
+`recovered_values()` collects raw diagnostic metadata only; `connection_values()`
+and SDK route selection enforce the proof before using that metadata. This is a
+guard against inconsistent pane metadata, not authentication against a malicious
 same-user process that controls the executable or entire environment.
 
 Wrappers resolve credentials and the client binary. Engine, wrapper, and toolkit
