@@ -1,5 +1,6 @@
 """Pinned public source acquisition; no credentials, models or working trees."""
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -62,18 +63,32 @@ def revisions(prefixes):
             if any(path == prefix or path.startswith(prefix + '/') for prefix in prefixes)}
 
 
+def _carrier_engine():
+    """Load only Content packaged beside this companion or its source host."""
+    roots = (HERE.parent / 'wsl-bin', HERE.parent.parent)
+    for root in roots:
+        loader = root / 'config/kilix_sdk/_packages.py'
+        content = root / 'third_party/kilix-content/src'
+        if not loader.is_file() or not (content / 'kilix_content/__init__.py').is_file():
+            continue
+        spec = importlib.util.spec_from_file_location('_companion_packages', loader)
+        if spec is None or spec.loader is None:
+            raise ImportError('packaged Content loader is unavailable')
+        packages = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(packages)
+        packages.load_pinned_package('kilix_content', (content,),
+                                     'packaged Content is unavailable')
+        from kilix_content.source_carrier import materialize_source
+        return materialize_source
+    raise ImportError('packaged Content source-carrier engine is unavailable')
+
+
 def _playalong_carrier(destination, revision):
     """Ask Content's single source-carrier authority for the complete closure."""
     try:
-        from kilix_content.source_carrier import materialize_source
-    except ModuleNotFoundError as error:
-        if error.name not in ('kilix_content', 'kilix_content.source_carrier'):
-            raise
-        if (os.environ.get('KILIX_SOURCE_CARRIER_MANIFEST') or
-                os.environ.get('KILIX_SOURCE_CARRIER_SHA256') or
-                Path('/usr/share/plebian-os/source-carrier/manifest.json').exists()):
-            raise ValueError('Configured source carrier requires the Content source-carrier engine') from error
-        return False
+        materialize_source = _carrier_engine()
+    except ImportError as error:
+        raise ValueError('Source acquisition requires the Content source-carrier engine') from error
     destination.parent.mkdir(parents=True, exist_ok=True)
     return materialize_source('https://github.com/itsmygithubacct/kilix-playalong.git',
                               revision, destination)

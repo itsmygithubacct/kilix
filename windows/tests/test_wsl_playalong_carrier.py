@@ -1,8 +1,11 @@
 """Playalong's WSL adapter delegates source trust to Content's carrier."""
 import json
+import importlib.util
 import os
 from pathlib import Path
 import sys
+import subprocess
+import shutil
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -47,6 +50,34 @@ class PlayalongCarrierTests(unittest.TestCase):
                  patch.object(catalog_sources, 'download', side_effect=AssertionError('unexpected fetch')):
                 with self.assertRaisesRegex(ValueError, 'changed carrier'):
                     catalog_sources.materialize(['apps/kilix-playalong'], root/'source', root/'cache')
+
+    def test_fresh_staged_companion_uses_packaged_content(self):
+        host = SOURCE.parent.parent
+        spec = importlib.util.spec_from_file_location('stage_commands', host / 'windows/stage-commands.py')
+        stager = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(stager)
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            stager.stage(root / 'package')
+            # No external import path and no previously imported Content. The
+            # same catalog module imported by companion performs acquisition.
+            program = """import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import companion, catalog_sources
+engine = catalog_sources._carrier_engine()
+import kilix_content
+assert Path(kilix_content.__file__).resolve().is_relative_to(Path(sys.argv[2]).resolve())
+assert engine('https://example.test/absent.git', 'a'*40, Path(sys.argv[3]), env={}) is False
+"""
+            args = [sys.executable, '-I', '-B', '-c', program,
+                    str(root / 'package/wsl'), str(root / 'package/wsl-bin'), str(root / 'out')]
+            result = subprocess.run(args, text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            shutil.rmtree(root / 'package/wsl-bin/third_party/kilix-content')
+            result = subprocess.run(args, text=True, capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('packaged Content source-carrier engine is unavailable', result.stderr)
 
     def test_configured_carrier_without_engine_refuses(self):
         with patch.dict(os.environ, {'KILIX_SOURCE_CARRIER_MANIFEST': '/fixture/manifest'}, clear=True), \
