@@ -225,7 +225,7 @@ RUNTIMES = (
         "directory": os.path.join("runtimes", "yamnet"),
         "directory_env": "KILIX_YAMNET_DIR",
         "command": "kilix-listen-classify",
-        "description": "YAMNet in its own virtualenv — what kilix-listen and "
+        "description": "YAMNet sound runtime — what kilix-listen and "
                        "kilix-nvr recognise barking, speech and glass with",
     },
 )

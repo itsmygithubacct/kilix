@@ -32,17 +32,32 @@ p=argparse.ArgumentParser()
 p.add_argument('--destination');p.add_argument('--model');p.add_argument('--installer')
 o=p.parse_args();root=Path(o.destination)
 (root/'bin').mkdir(exist_ok=True)
+(root/'lib').mkdir(exist_ok=True)
+(root/'lib/kilix_sound_runtime.py').write_text('print("kilix.sound-runtime/content-v1")\\n')
 (root/'runtime.json').write_text('{}')
 wrapper=root/'bin/kilix-listen-classify'
-wrapper.write_text('#!/bin/sh\\n[ "$1" = "--check-runtime" ]\\n')
+wrapper.write_text('#!/bin/sh\\n[ "$1" = "--check-admission" ] && echo kilix.sound-runtime/content-v1\\n')
 wrapper.chmod(0o755)
 (root/'assembler-called').write_text(o.model)
 ''')
+            (tools / "kilix_sound_runtime.py").write_text('print("kilix.sound-runtime/content-v1")\n')
+            provider = tools.parent
+            subprocess.run(["git", "-C", str(provider), "init", "-q"], check=True)
+            subprocess.run(["git", "-C", str(provider), "add", "tools"], check=True)
+            subprocess.run(["git", "-C", str(provider), "-c", "user.name=itsmygithubacct",
+                            "-c", "user.email=itsmygithubacct@users.noreply.github.com",
+                            "-c", "commit.gpgsign=false", "commit", "-qm", "fixture"], check=True)
+            provider_ref = subprocess.check_output(["git", "-C", str(provider), "rev-parse", "HEAD"], text=True).strip()
+            host = Path(scratch) / "host"
+            host.mkdir()
+            authority = host / "kilix"
+            authority.write_text('#!/bin/sh\n[ "$*" = "models verify yamnet" ]\n')
+            authority.chmod(0o755)
             def env(directory):
-                return sandbox_env(GPU_TERMINAL_DATA_HOME=str(directory), KILIX_HOME=str(ROOT),
+                return sandbox_env(GPU_TERMINAL_DATA_HOME=str(directory), KILIX_HOME=str(host),
                     KILIX_YAMNET_DIR=str(directory / "runtimes/yamnet"),
                     KILIX_USER_CONFIG_DIRECTORY=str(directory / "config"),
-                    KILIX_YAMNET_MODEL=str(model), KILIX_PYTHON=sys.executable)
+                    KILIX_YAMNET_MODEL=str(model), KILIX_PYTHON=sys.executable, KILIX_SOUND_REF=provider_ref)
             result = subprocess.run([str(INSTALLER), "--install", "--yes"], env=env(base),
                                     capture_output=True, text=True, timeout=15)
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -78,7 +93,9 @@ wrapper.chmod(0o755)
                                'if sys.argv[1:] != ["--check-runtime"]: sys.stdout.buffer.write(sys.stdin.buffer.read())\n')
             wrapper.chmod(0o700)
             good = invoke()
-            self.assertEqual((good.returncode, good.stdout), (0, b'fixture'))
+            # A self-checking legacy wrapper still lacks a Content receipt.
+            self.assertNotEqual(good.returncode, 0)
+            self.assertEqual(good.stdout, b'')
             self.assertFalse(config.exists())
 
     def test_policy_and_interpreter_keys_are_exported(self):
