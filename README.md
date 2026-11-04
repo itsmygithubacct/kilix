@@ -1,8 +1,20 @@
 # kilix — kitty that looks & behaves like Tilix, with clickable pane buttons
 
+## 0.2.3 RC1 power settings
+
+`kilix power-controls` opens Kilix Power Controls, the Kilix GUI for power
+preferences, with plugged-in and battery policies, display power, dimming,
+device information, and the shared Screen Lock page. `--native` opens it on the
+current display. The pinned application uses the existing desktop power service.
+
+- `kilix tui screen-lock` — automatic screen-lock settings shared with Pleb's
+  Display Settings and Power Manager. Use `--show`, `--set off`,
+  `--set on --idle-seconds 600`, or `--set session` to follow session defaults.
+  Saved changes apply at the next login; manual locking remains available.
+
 ## 0.2.2.1 maintenance candidate
 
-Coordinates the Model Setup password-disclosure fix and four-part maintenance-release support. Runtime and third-party source pins remain those of 0.2.2.
+Coordinates the Model Setup password-disclosure fix and four-part maintenance-release support.
 
 This source is a release candidate; installation-media and upgrade acceptance are pending.
 
