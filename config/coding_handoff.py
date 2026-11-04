@@ -16,7 +16,7 @@ import tempfile
 import time
 from threading import Thread
 
-from coding_launch import identity, private_root
+from coding_launch import PROVIDERS, identity, private_root
 from coding_resume import clean_environment, log_identity, resume_argv
 
 
@@ -85,7 +85,7 @@ def inspect_window(window, *, background):
     logs = resolver()
     pane = logs.pane_from_window(window, str(window['id']))
     found = logs.resolve(pane)
-    if found.kind not in ('codex', 'claude', 'grok', 'omp'):
+    if found.kind not in PROVIDERS.values():
         raise ValueError('pane is not a supported coding conversation')
     agent = logs._agent_processes(pane)
     if agent is None:

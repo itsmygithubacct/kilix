@@ -15,6 +15,12 @@ spec = importlib.util.spec_from_file_location('kitty.coding_close_fixture', SOUR
 ui = importlib.util.module_from_spec(spec); spec.loader.exec_module(ui)
 
 class CloseUITests(unittest.TestCase):
+    def setUp(self):
+        environment = patch.dict(os.environ, {'KILIX_HOME': str(SOURCE.parents[2])})
+        environment.start()
+        self.addCleanup(environment.stop)
+
+
     def window(self, argv):
         child = SimpleNamespace(foreground_processes=[{'pid': 123, 'cmdline': argv, 'cwd': '/fixture'}])
         row = {'id': 1, 'foreground_processes': child.foreground_processes,
@@ -23,10 +29,43 @@ class CloseUITests(unittest.TestCase):
 
     def test_detects_four_clients_and_interpreter_paths(self):
         for argv in (['codex'], ['claude'], ['grok'], ['omp'],
-                     ['node', '/opt/grok/dist/cli.js'], ['node', '/opt/codex/bin/codex.js']):
+                     ['/usr/local/bin/codex'], ['/home/pleb/.local/bin/claude'],
+                     ['/home/pleb/.local/bin/grok'], ['/home/pleb/.local/bin/omp'],
+                     ['node', '/usr/local/lib/node_modules/@openai/codex/bin/codex.js'],
+                     ['node', '/opt/node_modules/@anthropic-ai/claude-code/cli.js']):
             self.assertTrue(ui.is_coding(self.window(argv)), argv)
-        for argv in (['bash', '-c', 'codex'], ['python3', 'script.py', 'claude'], ['vim', 'grok']):
+        for argv in (['bash', '-c', 'codex'], ['python3', 'script.py', 'claude'], ['vim', 'grok'],
+                     ['/home/claude/bin/vim'], ['/opt/codex/tools/editor'],
+                     ['/opt/grok/bin/bash'], ['/opt/omp/bin/editor'],
+                     ['node', '/opt/grok/dist/cli.js'], ['node', '/opt/codex/bin/editor.js'],
+                     ['node', '/opt/node_modules/@openai/codex/bin/editor.js'],
+                     ['node', '-e', '/opt/node_modules/@openai/codex/bin/codex.js'],
+                     ['python3', '/opt/node_modules/@openai/codex/bin/codex.js'],
+                     ['node', '/opt/node_modules/@openai/codex/bin/../bin/codex.js']):
             self.assertFalse(ui.is_coding(self.window(argv)), argv)
+
+    def test_registry_is_shared_with_managed_launch(self):
+        sys.path.insert(0, str(SOURCE.parents[2] / 'config'))
+        self.addCleanup(sys.path.remove, str(SOURCE.parents[2] / 'config'))
+        from coding_launch import PROVIDERS
+        self.assertEqual(set(PROVIDERS.values()), {item['id'] for item in ui.client_registry()})
+
+    def test_invalid_missing_oversized_and_nonregular_registry_refuses(self):
+        with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {'KILIX_HOME': temp}):
+            root = Path(temp); (root / 'config').mkdir()
+            path = root / 'config/coding_clients.json'
+            self.assertFalse(ui.is_coding(self.window(['codex'])))
+            for contents in ('{', 'x' * 16385, '[' * 1100 + ']' * 1100, '{"schema":"wrong","clients":[]}'):
+                path.write_text(contents)
+                self.assertFalse(ui.is_coding(self.window(['codex'])))
+            valid = json.loads((SOURCE.parents[2] / 'config/coding_clients.json').read_text())
+            valid['clients'][0]['executable_names'] = ['../codex']
+            path.write_text(json.dumps(valid))
+            self.assertFalse(ui.is_coding(self.window(['codex'])))
+            path.unlink(); path.symlink_to(SOURCE.parents[2] / 'config/coding_clients.json')
+            self.assertFalse(ui.is_coding(self.window(['codex'])))
+            path.unlink(); os.mkfifo(path)
+            self.assertFalse(ui.is_coding(self.window(['codex'])))
 
     def test_boss_pane_and_single_pane_tab_routes_intercept_before_destruction(self):
         # Execute the actual routing methods without loading the native UI library.
@@ -72,6 +111,7 @@ class CloseUITests(unittest.TestCase):
         for close_ok, lose_display in ((True, False), (False, False), (True, True)):
             with self.subTest(close_ok=close_ok, lose_display=lose_display), tempfile.TemporaryDirectory() as temp:
                 root=Path(temp);(root/'config').mkdir();(root/'config/coding_handoff.py').write_text('fixture')
+                (root/'config/coding_clients.json').write_bytes((SOURCE.parents[2]/'config/coding_clients.json').read_bytes())
                 receipt=root/'receipt.json';events=[];timers=[];dialogs=[]
                 window=self.window(['codex']);display=self.window(['bash']);display.id=2
                 windows={1:window}

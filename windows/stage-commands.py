@@ -17,7 +17,7 @@ def stage(destination):
     config = shared / 'config'
     config.mkdir(parents=True, exist_ok=True)
     for name in ('remote.py', 'session_grid.py', 'tmux_control.py', 'content_models.py', 'kilix_clock_settings.py',
-                 'terminal_video.py', 'terminal_video_errors.lua', 'coding_launch.py'):
+                 'terminal_video.py', 'terminal_video_errors.lua', 'coding_launch.py', 'coding_clients.json'):
         shutil.copy2(SOURCE.parent / 'config' / name, config / name)
     for source in (SOURCE.parent / 'config').glob('agent_*.py'):
         shutil.copy2(source, config / source.name)

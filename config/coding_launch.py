@@ -8,7 +8,9 @@ import stat
 import sys
 import tempfile
 
-PROVIDERS = {'codex', 'claude', 'grok', 'omp', 'qwen-omp'}
+# The host owns client identities for both managed launch and engine close UI.
+CLIENTS = json.loads(Path(__file__).with_name('coding_clients.json').read_text())['clients']
+PROVIDERS = {alias: client['id'] for client in CLIENTS for alias in client['launch_aliases']}
 
 
 def identity(pid):
@@ -46,7 +48,7 @@ def capture(provider, argv, prompt_count):
     if flags[-1:] == ['--']:
         flags.pop()
     descriptor, name = tempfile.mkstemp(prefix='launch-', suffix='.json', dir=private_root())
-    record = {'schema': 'kilix.coding-launch/v1', 'provider': 'omp' if provider == 'qwen-omp' else provider,
+    record = {'schema': 'kilix.coding-launch/v1', 'provider': PROVIDERS[provider],
               'process': identity(os.getpid()), 'cwd': os.getcwd(), 'argv_without_prompt': flags,
               'broker': os.environ.get('KITTY_PTY_BROKER_SESSION', '')}
     with os.fdopen(descriptor, 'w') as stream:

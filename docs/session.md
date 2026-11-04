@@ -362,3 +362,11 @@ missing rollout, ambiguous conversation, unavailable tmux or failed preparation
 also leaves the original pane open. If continuation fails after closing, use the
 retained receipt and terminal diagnostics to recover the exact conversation.
 **Close and give path to rollout log** never resumes it automatically.
+
+Coding-client identities are declared in `config/coding_clients.json`, shared
+by managed launch capture and the engine close dialog. Detection checks only
+the executable basename or an explicit interpreter entrypoint package path.
+Provider names in ancestor directories or prompt arguments do not select this
+dialog. The engine reads at most 16 KiB of regular, nonsymlink registry data;
+it runs no detection subprocess. Missing or invalid registry data leaves the
+ordinary close confirmation behavior in place.
