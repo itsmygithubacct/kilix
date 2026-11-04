@@ -22,7 +22,11 @@ class SharedServerRouteTests(Fixture):
         # current frontend could be anywhere; no frontend is a tool ancestor.
         self.process(100, self.kitty, ['tool'], {}, parent=200)
         self.process(200, self.kitty, ['codex', 'app-server', '--listen', 'unix://'],
-                     {**self.stale, **self.broker_identity}, parent=1)
+                     {**self.stale, **self.broker_identity}, parent=900)
+        self.process(900, self.broker, [str(self.broker), '--runtime-dir',
+            str(self.runtime), 'run', '--id', self.broker_identity['KITTY_PTY_BROKER_SESSION'],
+            '--', 'codex'], {}, parent=1)
+        (self.proc / '900/comm').write_text('kitty-pty-broke\n')
         (self.proc / '100/comm').write_text('python3\n')
         (self.proc / '200/comm').write_text('codex\n')
         for patcher in (mock.patch.object(caller_context, '_PROC', self.proc),
@@ -89,8 +93,8 @@ class SharedServerRouteTests(Fixture):
     def test_no_daemon_does_not_select_another_brokers_helper(self):
         self.set_command('codex', '--no-daemon')
         self.environment['KITTY_PTY_BROKER_SESSION'] = 'f' * 16
-        values = self.values(self.environment)
-        self.assertEqual(self.route(values), self.route(self.stale))
+        with self.assertRaisesRegex(control.ControlError, 'conflicts with the caller broker'):
+            self.values(self.environment)
 
     def test_missing_replacement_password_never_retains_old_password_with_new_key(self):
         self.set_command('codex', '--no-daemon')

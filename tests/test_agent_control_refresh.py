@@ -14,6 +14,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "config"))
 import agent_control as control  # noqa: E402
 from kilix_sdk import frontend_context as context  # noqa: E402
+from _caller_context_support import bind_test_caller
 
 SID = "0123456789abcdef"
 
@@ -41,6 +42,7 @@ class Fixture(unittest.TestCase):
         for path in (self.broker, self.kitty, self.new_kitten, self.old_kitten):
             path.write_text("#!/bin/sh\nexit 0\n")
             path.chmod(0o700)
+        bind_test_caller(self, self.broker, self.runtime, SID)
         self.old_password = self.root / "old-rc-password"
         self.new_password = self.root / "new-rc-password"
         for path in (self.old_password, self.new_password):

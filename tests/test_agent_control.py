@@ -638,6 +638,17 @@ class TrustTests(unittest.TestCase):
 
 
 class ConnectionTests(unittest.TestCase):
+    def setUp(self):
+        from _caller_context_support import bind_test_caller
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        broker = self.root / 'kitty-pty-broker'
+        broker.write_text('fixture broker')
+        self.BROKER = dict(type(self).BROKER, KITTY_PTY_BROKER_EXECUTABLE=str(broker))
+        bind_test_caller(self, broker, self.BROKER['KITTY_PTY_BROKER_RUNTIME'],
+                         self.BROKER['KITTY_PTY_BROKER_SESSION'])
+
     def test_public_key_recovery_stays_with_the_selected_instance(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
