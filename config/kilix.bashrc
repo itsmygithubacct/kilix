@@ -64,7 +64,7 @@ case "${KILIX_RUN_ALIASES:-}" in
            _kilix_run_aliases=0
        fi ;;
 esac
-if [ "$_kilix_run_aliases" = 1 ]; then
+if [ "$_kilix_run_aliases" = 1 ] && [ -z "${KILIX_GUI_ROUTE_BIN:-}" ]; then
     _kilix_source_root="${GPU_TERMINAL_SOURCE_HOME:-$HOME/.local/gpu_terminal/sources}"
     _kilix_bin="$(type -P kilix 2>/dev/null || true)"
     [ -n "$_kilix_bin" ] \
