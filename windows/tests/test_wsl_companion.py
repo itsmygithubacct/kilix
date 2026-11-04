@@ -124,7 +124,12 @@ class CompanionTests(unittest.TestCase):
             result = subprocess.run([sys.executable, str(root / 'wsl/companion.py'), 'pane', 'list'],
                                     env=env, capture_output=True, text=True, timeout=10)
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn('Open a new Kilix WSL window', result.stderr)
+            # The shared SDK checks caller ancestry before route recovery.
+            # Under a shared app server it must refuse there instead. Both
+            # specific errors prove the action was denied without a route;
+            # unrelated errors and successful empty output must still fail.
+            self.assertRegex(result.stderr,
+                r'Open a new Kilix WSL window|shared Codex app-server has no verified caller pane')
 
     def test_listing_redacts_credentials_recursively(self):
         result = subprocess.CompletedProcess([], 0, json.dumps([{'env': {'KITTY_RC_PASSWORD':'secret','KEEP':'yes'}}]), '')

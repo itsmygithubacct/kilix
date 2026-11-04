@@ -5590,6 +5590,14 @@ _kilix_restore_pane_tty() {
 # restore): that restart is immediate and is not counted as a failure, though
 # more than five within a minute stop the loop like crashes do. Every run
 # sees KILIX_DESKTOP_SUPERVISED=1, so the provider knows it may ask.
+_kilix_clear_desktop_marker() {
+  printf '\033]1337;SetUserVar=kilix_desktop_provider\007'
+}
+_kilix_set_desktop_marker() {
+  local marker
+  marker="$(python3 -c 'import base64, uuid; print(base64.b64encode(uuid.uuid4().hex.encode()).decode())')" || return 1
+  printf '\033]1337;SetUserVar=kilix_desktop_provider=%s\007' "$marker"
+}
 _kilix_desktop_supervise() {
   _sup_restarts=0
   _sup_window=$(date +%s)
@@ -5600,6 +5608,7 @@ _kilix_desktop_supervise() {
   _sup_restarted=
   _sup_last=
   while :; do
+    _kilix_set_desktop_marker || return 1
     _sup_rc=0
     if [ -n "$_sup_restarted" ]; then
       KILIX_DESKTOP_SUPERVISED=1 KILIX_DESKTOP_RESTARTED=1 \
@@ -5607,6 +5616,7 @@ _kilix_desktop_supervise() {
     else
       KILIX_DESKTOP_SUPERVISED=1 "$@" || _sup_rc=$?
     fi
+    _kilix_clear_desktop_marker
     _sup_now=$(date +%s)
     if [ $((_sup_now - _sup_window)) -ge 60 ]; then
       _sup_window=$_sup_now
@@ -6272,12 +6282,11 @@ print(ids[0] if ids else "")' 2>/dev/null)"
   fi
   # Mark only the pane actually running a desktop, not child application tabs.
   # OSC metadata works for every selected provider, including custom commands.
-  _kilix_clear_desktop_marker() {
-    printf '\033]1337;SetUserVar=kilix_desktop_provider\007'
-  }
   if [ "$_KILIX_DESKTOP_MODE" != none ]; then
-    _kilix_desktop_marker="$(python3 -c 'import base64, uuid; print(base64.b64encode(uuid.uuid4().hex.encode()).decode())')" || exit 1
-    printf '\033]1337;SetUserVar=kilix_desktop_provider=%s\007' "$_kilix_desktop_marker"
+    # Supervised Python providers get a new identity on every attempt.
+    if [ "$_KILIX_DESKTOP_MODE" != python ]; then
+      _kilix_set_desktop_marker || exit 1
+    fi
     trap '_kilix_clear_desktop_marker' EXIT
   fi
   rc=0
