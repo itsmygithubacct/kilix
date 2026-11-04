@@ -268,11 +268,14 @@ across the WSL/native bridge; launch the game directly with kilix games play.
 Multiplexer provides standalone serve/attach/bench sessions with PCM audio. It
 does not capture native panes or build the optional EnCodec provider. Playalong's
 native player and offline renderer work with existing projects. Its explicit
-setup-pipeline command uses existing uv0.12.x/Python3.10 to install only the locked
-base packages, with no interpreter downloads or ML extras. pipeline then exposes
-upstream commands and media-rights/model-download choices. ML providers and
-approved weights are separate. The optional Python runtime stays outside exported
-generations; run setup-pipeline again after a source update or binary relocation.
+setup-pipeline command uses the admitted Content asset in
+KILIX_PLAYALONG_CONTENT_ASSET and the absolute offline carrier directory in
+KILIX_PLAYALONG_RUNTIME_CARRIER. It delegates the model agreement to the host,
+verifies the runtime carrier and prepares its Python packages. pipeline checks
+the same model binding and runtime before starting upstream commands; it does
+not grant media rights. To supply model files offline, set the absolute
+KILIX_PLAYALONG_MODEL_SOURCE directory before setup. The runtime stays outside exported generations; run
+setup-pipeline again after a source update or binary relocation.
 
 NVR provides its recorder core; recording needs FFmpeg and your camera settings.
 The adapter blocks default model loading and requires explicit approved provider

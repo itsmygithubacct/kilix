@@ -119,16 +119,22 @@ class RuntimeAdapterTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'setup-pipeline'):
             apps.launch_plan('kilix-playalong', source, ['pipeline', 'create'])
         runtime = apps._pipeline_location(source)
-        python = runtime / 'bin/python'
+        python = runtime / 'bin/python3'
         python.parent.mkdir(parents=True)
         python.symlink_to(sys.executable)
         library = source / 'third_party/kilix-state/build/libkilix-state.so'
         library.parent.mkdir(parents=True)
         library.write_text('fixture')
-        marker = runtime / '.catalog-pipeline.json'
-        marker.write_text(json.dumps(dict(schema=1, source=runtime.name, providers=False)))
-        argv, _ = apps.launch_plan('kilix-playalong', source, ['pipeline', 'create', 'song.wav'])
+        marker = runtime / '.kilix-runtime.json'
+        marker.write_text(json.dumps(dict(manifest_sha256=apps.PLAYALONG_RUNTIME_MANIFEST)))
+        with self.assertRaisesRegex(ValueError, 'admitted Content asset'):
+            apps.launch_plan('kilix-playalong', source, ['pipeline', 'create', 'song.wav'])
+        with patch.dict(os.environ, {'KILIX_PLAYALONG_CONTENT_ASSET': 'fixture'}):
+            argv, _ = apps.launch_plan('kilix-playalong', source, ['pipeline', 'create', 'song.wav'])
         self.assertEqual(argv[-2:], ['create', 'song.wav'])
+        self.assertIn(str(source / 'tools/kilix-playalong-first-use'), argv)
+        self.assertIn(apps.PLAYALONG_RUNTIME_MANIFEST, argv)
+        self.assertIn('--kilix', argv)
         self.assertNotIn('--i-have-rights', argv)
         self.assertNotIn('--allow-model-downloads', argv)
         moved = source.with_name('moved')
@@ -138,6 +144,23 @@ class RuntimeAdapterTests(unittest.TestCase):
     def test_source_escape_is_rejected(self):
         with self.assertRaisesRegex(ValueError, 'inside its generation'):
             apps.command(dict(name='kilix-nvr', source='../outside'), self.root)
+
+    def test_playalong_setup_binds_offline_carrier_and_host_authority(self):
+        import companion
+        source = self.source('kilix-playalong')
+        env = {'XDG_DATA_HOME': str(self.root / 'user-data'),
+               'KILIX_PLAYALONG_CONTENT_ASSET': 'fixture',
+               'KILIX_PLAYALONG_CONTENT_HOST': '/untrusted/override',
+               'KILIX_PLAYALONG_MODEL_SOURCE': str(self.root / 'supplied-model'),
+               'KILIX_PLAYALONG_RUNTIME_CARRIER': str(self.root / 'offline-carrier')}
+        command = apps._playalong_binding(source, env, 'setup')
+        self.assertEqual(command[command.index('--kilix') + 1], str(companion.BRIDGE.resolve()))
+        self.assertEqual(command[command.index('--content-root') + 1], str((companion.STATE / 'content').resolve()))
+        self.assertEqual(command[command.index('--runtime-carrier') + 1], env['KILIX_PLAYALONG_RUNTIME_CARRIER'])
+        self.assertEqual(command[command.index('--model-source') + 1], env['KILIX_PLAYALONG_MODEL_SOURCE'])
+        self.assertIn(apps.PLAYALONG_RUNTIME_MANIFEST, command)
+        with self.assertRaisesRegex(ValueError, 'absolute offline runtime carrier'):
+            apps._playalong_binding(source, dict(env, KILIX_PLAYALONG_RUNTIME_CARRIER='relative'), 'setup')
 
     def test_native_playalong_launch_does_not_provision_pipeline(self):
         source = self.source('kilix-playalong')

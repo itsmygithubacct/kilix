@@ -62,15 +62,40 @@ def revisions(prefixes):
             if any(path == prefix or path.startswith(prefix + '/') for prefix in prefixes)}
 
 
+def _playalong_carrier(destination, revision):
+    """Ask Content's single source-carrier authority for the complete closure."""
+    try:
+        from kilix_content.source_carrier import materialize_source
+    except ModuleNotFoundError as error:
+        if error.name not in ('kilix_content', 'kilix_content.source_carrier'):
+            raise
+        if (os.environ.get('KILIX_SOURCE_CARRIER_MANIFEST') or
+                os.environ.get('KILIX_SOURCE_CARRIER_SHA256') or
+                Path('/usr/share/plebian-os/source-carrier/manifest.json').exists()):
+            raise ValueError('Configured source carrier requires the Content source-carrier engine') from error
+        return False
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    return materialize_source('https://github.com/itsmygithubacct/kilix-playalong.git',
+                              revision, destination)
+
+
 def materialize(prefixes, destination, cache):
     """Extract the exact reviewed closure, including explicit submodule pins."""
     hashes = json.loads((HERE / 'source-archives.json').read_text())
     pins = revisions(prefixes)
     if not all(prefix in pins for prefix in prefixes):
         raise ValueError('Source prefix has no reviewed revision')
+    app = 'apps/kilix-playalong'
+    carrier_done = False
+    if app in pins:
+        carrier_done = _playalong_carrier(destination / app, pins[app])
     for prefix, pin in pins.items():
+        if carrier_done and (prefix == app or prefix.startswith(app + '/')):
+            continue  # The authority materialized the complete verified gitlink closure.
         repo = repository(prefix)
         archive = cache / (repo + '-' + pin + '.tar.gz')
+        if repo + '/' + pin not in hashes:
+            raise ValueError('Exact source requires a configured verified source carrier: ' + prefix)
         download(f'https://codeload.github.com/itsmygithubacct/{repo}/tar.gz/{pin}',
                  archive, hashes[repo + '/' + pin])
         target = destination / prefix
