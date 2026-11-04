@@ -74,6 +74,7 @@ def _candidate(path: Path, executable: str, runtime: str,
     if (not window.isdecimal() or int(window) <= 0
             or not socket.startswith('unix:') or len(socket) <= 5
             or not values.get('KITTY_PUBLIC_KEY')
+            or not os.path.isabs(values.get('KILIX_RC_PASSWORD_FILE', ''))
             or any(len(value) > 4096 or '\n' in value or '\r' in value
                    for value in values.values())):
         return None
@@ -85,10 +86,14 @@ def _candidate(path: Path, executable: str, runtime: str,
 def refresh(environment: MutableMapping[str, str] | None = None) -> bool:
     """Rebind a surviving broker child after its original engine has exited.
 
+    Shared Codex servers are refused before even the live-engine fast path:
+    their broker identity need not belong to the requesting frontend.
     A live original engine takes the fast path. Ambiguous, foreign, malformed,
     or vanished peers leave the caller's environment unchanged. The ordinary
     remote-control password and public-key authentication remain in use.
     """
+    from .caller_context import require_pane_local
+    require_pane_local()
     env = os.environ if environment is None else environment
     session = env.get(_BROKER[0], '')
     if not _SESSION.fullmatch(session) or session in {'.', '..'}:

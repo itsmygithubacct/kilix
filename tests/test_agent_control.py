@@ -188,7 +188,7 @@ class LaunchTests(unittest.TestCase):
         self.assertEqual(argv[argv.index("--match") + 1], "window_id:1")
         self.assertEqual(argv[argv.index("--next-to") + 1], "id:1")
         self.assertEqual(argv[argv.index("--cwd") + 1], self.directory.name)
-        self.assertEqual(argv[argv.index("--") + 1:], ["/opt/bin/codex", "--model", "model-name"])
+        self.assertEqual(argv[argv.index("--") + 1:], ["/opt/bin/codex", "--no-daemon", "--model", "model-name"])
         self.assertIn("--keep-focus", argv)
         self.assertNotIn("--allow-remote-control", argv)
         self.assertEqual(result["pane"]["tab_id"], 22)
@@ -275,7 +275,7 @@ class AgentArgvTests(unittest.TestCase):
 
     def test_each_client_resumes_and_takes_a_prompt_its_own_way(self):
         cases = {"claude": ["/bin/claude", "--resume", "abc-123", "review the diff"],
-                 "codex": ["/bin/codex", "resume", "abc-123", "review the diff"],  # options would sit before the id
+                 "codex": ["/bin/codex", "--no-daemon", "resume", "abc-123", "review the diff"],
                  "grok": ["/bin/grok", "--resume", "abc-123", "review the diff"],
                  "qwen-omp": ["/bin/omp", "--model", "qwen3.8-max", "--approval-mode=always-ask",
                               "--tools=" + ",".join(control.OMP_NON_YOLO_TOOLS),
@@ -287,7 +287,7 @@ class AgentArgvTests(unittest.TestCase):
     def test_codex_options_come_between_resume_and_its_session_id(self):
         self.assertEqual(self.argv("codex", "--resume", "abc-123", "--model", "m",
                                    "--prompt", "go on")[0],
-                         ["/bin/codex", "resume", "--model", "m", "abc-123", "go on"])
+                         ["/bin/codex", "--no-daemon", "resume", "--model", "m", "abc-123", "go on"])
 
     def test_qwen_omp_runs_omp_with_qwen_unless_a_model_is_given(self):
         self.assertEqual(self.argv("qwen-omp")[0], ["/bin/omp", "--model", "qwen3.8-max",

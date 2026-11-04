@@ -84,6 +84,12 @@ refused before connecting. Use the existing `kilix agent-control new-tab` or
 folder trust. This
 keeps parallel launches from racing writes to a client's shared trust config.
 
+Codex `agent.launch` adds the top-level `--no-daemon` flag to keep tool execution
+local to the launched pane. `pane.open` preserves its explicit `argv`; include
+the flag there when launching interactive Codex. Inherited routes from a Codex
+app-server are refused before connection, even if a request supplies pane and
+broker IDs. Those IDs do not establish which frontend owns a shared-server tool.
+
 ## Model and reasoning effort
 
 For Codex, `agent.launch` accepts an optional typed `reasoning_effort`: `low`,

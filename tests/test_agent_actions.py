@@ -463,7 +463,7 @@ class ActionsTests(unittest.TestCase):
             result = self.dispatch(value)
         self.assertEqual(result["status"], "created")
         launch = self.client.calls[-1][0]
-        self.assertEqual(launch[launch.index("--") + 1:], ["/bin/codex", "--model", "literal-model"])
+        self.assertEqual(launch[launch.index("--") + 1:], ["/bin/codex", "--no-daemon", "--model", "literal-model"])
         self.assertFalse(result["agent_startup_verified"])
 
     def test_delivery_maps_submission_without_false_completion_and_no_replay(self):

@@ -24,6 +24,16 @@ Model and effort are forwarded exactly; omission leaves client defaults in
 effect. The client determines which models and effort levels it accepts.
 Existing worktrees are supported; the launcher does not create or switch them.
 
+Interactive Codex launches use `codex --no-daemon` so tool subprocesses inherit
+their own pane's context. This requires a Codex client supporting that flag;
+there is no automatic retry through a shared server if the client rejects it.
+Headless `codex exec` keeps its existing argument vector. Other providers and
+explicit commands passed through `pane.open` or `kilix new-tab` are unchanged.
+For a direct interactive Codex command, include `--no-daemon` yourself (before
+`resume`, when resuming). The flag does not repair tools already running under
+a shared server or refresh a route after the terminal engine restarts; see
+[connection recovery](AGENTS.md#connection-recovery-and-compatibility).
+
 ## Trusted folders and authorization
 
 Use **`--trust-folder`** when the launch should answer the client's trusted-folder
