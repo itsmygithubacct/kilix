@@ -7,6 +7,7 @@ Neither scope emptiness nor PID 1's live-process culling substitutes for waits.
 All native effects live behind adapters; importing this module has none.
 """
 import array
+import errno
 import hashlib
 import json
 import os
@@ -1044,6 +1045,29 @@ class SupervisedPlatform:
         if not stat.S_ISREG(st.st_mode) or st.st_uid != 0 or st.st_mode & 0o022:
             raise PlatformUnsupported("unsafe installed supervisor template", self)
 
+    def _connect_control(self, root, deadline):
+        while True:
+            # bind publishes the root-owned socket before chmod makes it
+            # connectable by the caller. Retry only startup readiness errors,
+            # within the original deadline; permissions never authenticate it.
+            self.control.settimeout(remaining(deadline))
+            try:
+                self.control.connect(root + "/control")
+                break
+            except (FileNotFoundError, ConnectionRefusedError, PermissionError) as error:
+                if isinstance(error, PermissionError) and error.errno != errno.EACCES:
+                    raise
+                budget = remaining(deadline)
+                if self.ops.ready(self.pidfd):
+                    raise RuntimeError("supervisor exited before authenticated connection")
+                self.ops.sleep(min(.01, budget))
+        self.control.settimeout(remaining(deadline))
+        pid, uid, _ = struct.unpack("3i", self.control.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+        if uid != 0 or pid != self.identity[1] or self.ops.ready(self.pidfd):
+            raise PlatformUnsupported("private-bus supervisor peer is not its live root main process", self)
+        self._service(self.manager.unit(self.name, deadline))
+        self.control.settimeout(remaining(deadline))
+
     def prepare(self, timeout=6):
         deadline = self.ops.now() + timeout
         try:
@@ -1071,20 +1095,7 @@ class SupervisedPlatform:
                 self.manager._safe_directory(path, 0)
             self.control = self.handles.allocate_objects(socket.socket, socket.AF_UNIX, socket.SOCK_SEQPACKET | socket.SOCK_CLOEXEC)
             self.handles.transfer_object(self.control)
-            self.control.settimeout(max(.001, deadline - self.ops.now()))
-            while True:
-                try:
-                    self.control.connect(root + "/control")
-                    break
-                except (FileNotFoundError, ConnectionRefusedError):
-                    remaining(deadline)
-                    if self.ops.ready(self.pidfd):
-                        raise RuntimeError("supervisor exited before authenticated connection")
-                    self.ops.sleep(.01)
-            pid, uid, _ = struct.unpack("3i", self.control.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
-            if uid != 0 or pid != self.identity[1] or self.ops.ready(self.pidfd):
-                raise PlatformUnsupported("private-bus supervisor peer is not its live root main process", self)
-            self._service(self.manager.unit(self.name, deadline))
+            self._connect_control(root, deadline)
             # This handshake is mandatory before any SDK launch request. The
             # authenticated root endpoint belongs to the fixed controller and
             # is transferred only to its already placed fixed wait-owner child.
