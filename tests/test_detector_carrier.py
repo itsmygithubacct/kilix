@@ -47,6 +47,8 @@ class DetectorCarrierInstall(unittest.TestCase):
         self.host = self.root / "host"
         (self.host / "scripts").mkdir(parents=True)
         shutil.copyfile(ROOT / "scripts/detector-carrier.sh", self.host / "scripts/detector-carrier.sh")
+        shutil.copyfile(ROOT / "scripts/detector-carrier-supervisor.py",
+                        self.host / "scripts/detector-carrier-supervisor.py")
         helper = self.host / "third_party/kilix-content/src/kilix_content/source_carrier.py"
         helper.parent.mkdir(parents=True)
         shutil.copyfile(HELPER, helper)

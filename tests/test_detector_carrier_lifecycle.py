@@ -2,6 +2,7 @@
 import ctypes
 import os
 from pathlib import Path
+import shutil
 import signal
 import subprocess
 import sys
@@ -18,6 +19,9 @@ class CarrierLifecycle(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.host = self.root / "host"
+        (self.host / "scripts").mkdir(parents=True)
+        shutil.copyfile(ROOT / "scripts/detector-carrier-supervisor.py",
+                        self.host / "scripts/detector-carrier-supervisor.py")
         self.helper = self.host / "third_party/kilix-content/src/kilix_content/source_carrier.py"
         self.helper.parent.mkdir(parents=True)
         self.helper.write_text("""import os,pathlib,sys,time
@@ -76,13 +80,14 @@ if action == 'prepare-git':
                     if process.poll() is None:
                         process.communicate(timeout=5)
 
-    def test_unreaped_descendant_preserves_pool(self):
-        # Adopt the fixture's orphan so this test can reap it itself. A live
-        # group member after the helper exits must keep the pool for review.
+    def test_stubborn_descendant_is_reaped(self):
         libc = ctypes.CDLL(None, use_errno=True)
         self.assertEqual(libc.prctl(36, 1, 0, 0, 0), 0)  # PR_SET_CHILD_SUBREAPER
         self.helper.write_text("""import os,pathlib,subprocess,sys,time
-p=subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)'])
+code='import signal,time,pathlib,sys;signal.signal(signal.SIGTERM,signal.SIG_IGN);pathlib.Path(sys.argv[1]).write_text("ready");time.sleep(30)'
+ready=pathlib.Path(os.environ['PID_FILE']+'.ready')
+p=subprocess.Popen([sys.executable,'-c',code,str(ready)])
+while not ready.exists():time.sleep(.01)
 pathlib.Path(os.environ['PID_FILE']).write_text(str(os.getpid())+' '+str(p.pid))
 time.sleep(30)
 """)
@@ -98,12 +103,12 @@ time.sleep(30)
             self.assertTrue(pidfile.exists())
             helper, descendant = map(int, pidfile.read_text().split())
             os.kill(process.pid, signal.SIGTERM)
-            _, error = process.communicate(timeout=5)
+            _, error = process.communicate(timeout=12)
             self.assertEqual(process.returncode, 143)
-            self.assertIn("cleanup uncertain; preserving", error)
-            self.assertEqual(len(list(self.root.glob(".detector-carrier.*"))), 1)
-            waited, _ = os.waitpid(descendant, 0)
-            self.assertEqual(waited, descendant)
+            self.assertNotIn("cleanup uncertain", error)
+            self.assertEqual(list(self.root.glob(".detector-carrier.*")), [])
+            with self.assertRaises(ProcessLookupError):
+                os.kill(descendant, 0)
             descendant = None
         finally:
             if helper is not None:
@@ -126,6 +131,56 @@ time.sleep(30)
                     os.waitpid(descendant, 0)
                 except ChildProcessError:
                     pass
+
+    def test_escaped_descendant_refuses_and_preserves_pool(self):
+        libc = ctypes.CDLL(None, use_errno=True)
+        self.assertEqual(libc.prctl(36, 1, 0, 0, 0), 0)
+        self.helper.write_text("""import os,pathlib,subprocess,sys,time
+p=subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)'],start_new_session=True)
+pathlib.Path(os.environ['PID_FILE']).write_text(str(os.getpid())+' '+str(p.pid))
+time.sleep(30)
+""")
+        # Escaped descendants can inherit stderr; use a file rather than
+        # waiting for pipe EOF from an intentionally live fixture process.
+        logpath = self.root / "stderr"
+        descendant = helper = None
+        with logpath.open("w+") as log:
+            process = subprocess.Popen(self.command, env=self.env, start_new_session=True,
+                                       stdout=subprocess.DEVNULL, stderr=log, text=True)
+            try:
+                pidfile = self.root / "pid"
+                deadline = time.monotonic() + 5
+                while not pidfile.exists() and time.monotonic() < deadline:
+                    time.sleep(.02)
+                self.assertTrue(pidfile.exists())
+                helper, descendant = map(int, pidfile.read_text().split())
+                os.kill(process.pid, signal.SIGTERM)
+                process.wait(timeout=12)
+                log.flush()
+                self.assertEqual(process.returncode, 143)
+                self.assertIn("cleanup uncertain; preserving", logpath.read_text())
+                pools = list(self.root.glob(".detector-carrier.*"))
+                self.assertEqual(len(pools), 1)
+                self.assertTrue((pools[0] / ".cleanup-uncertain").is_file())
+                os.kill(descendant, 0)  # Test owns and cleans this escaped fixture.
+            finally:
+                if descendant is not None:
+                    try:
+                        os.kill(descendant, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    try:
+                        os.waitpid(descendant, 0)
+                    except ChildProcessError:
+                        pass
+                if helper is not None:
+                    try:
+                        os.killpg(helper, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                if process.poll() is None:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait(timeout=5)
 
 
 if __name__ == "__main__":

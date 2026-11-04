@@ -3,7 +3,8 @@
 
 detector_carrier_cleanup() {
   if [ -n "${_detector_carrier_tmp:-}" ]; then
-    if [ "${_detector_carrier_cleanup_uncertain:-0}" = 1 ]; then
+    if [ "${_detector_carrier_cleanup_uncertain:-0}" = 1 ] \
+         || [ -e "$_detector_carrier_tmp/.cleanup-uncertain" ]; then
       printf 'detector source carrier: cleanup uncertain; preserving %s\n' "$_detector_carrier_tmp" >&2
       return
     fi
@@ -12,22 +13,19 @@ detector_carrier_cleanup() {
   fi
 }
 
-# Carrier helpers can start Git children. Give each invocation an owned
-# process group so an interrupted installer cannot remove its pool while a
-# child is still using it. Never signal the caller's process group.
+# The supervisor owns descendants and refuses cleanup if any escape its
+# process group. Never signal the caller's process group.
 detector_carrier_interrupt() {
   trap '' INT TERM
+  if [ "${_detector_carrier_launching:-0}" = 1 ] \
+       && [ -z "${_detector_carrier_child:-}" ]; then
+    _detector_carrier_cleanup_uncertain=1
+  fi
   if [ -n "${_detector_carrier_child:-}" ]; then
-    if ! kill -KILL -- "-$_detector_carrier_child" 2>/dev/null; then
-      # The child may not have entered its session yet. Preserve the pool
-      # because group cleanup cannot be established in this race.
+    if ! kill -s "$2" -- "$_detector_carrier_child" 2>/dev/null; then
       _detector_carrier_cleanup_uncertain=1
-      kill -KILL -- "$_detector_carrier_child" 2>/dev/null || true
     fi
     wait "$_detector_carrier_child" 2>/dev/null || true
-    if kill -0 -- "-$_detector_carrier_child" 2>/dev/null; then
-      _detector_carrier_cleanup_uncertain=1
-    fi
     _detector_carrier_child=""
   fi
   exit "$1"
@@ -35,10 +33,16 @@ detector_carrier_interrupt() {
 
 detector_carrier_call() {
   local result
-  setsid python3 -I -B "$@" >"$_detector_carrier_tmp/helper-stdout" &
+  _detector_carrier_launching=1
+  python3 -I -B "$_detector_carrier_supervisor" \
+    "$_detector_carrier_tmp/.cleanup-uncertain" python3 -I -B "$@" \
+    >"$_detector_carrier_tmp/helper-stdout" &
   _detector_carrier_child=$!
+  _detector_carrier_launching=0
   if wait "$_detector_carrier_child"; then result=0; else result=$?; fi
   _detector_carrier_child=""
+  # A killed/failed supervisor cannot prove that its descendants are gone.
+  [ "$result" -lt 125 ] || _detector_carrier_cleanup_uncertain=1
   return "$result"
 }
 
@@ -48,12 +52,13 @@ detector_carrier_prepare() {
   local config
   [ -f "$helper" ] && [ ! -L "$helper" ] \
     || { printf '%s\n' 'detector source carrier: Content helper is unavailable' >&2; return 1; }
-  command -v setsid >/dev/null 2>&1 \
-    || { printf '%s\n' 'detector source carrier: setsid is unavailable' >&2; return 1; }
+  _detector_carrier_supervisor="$host/scripts/detector-carrier-supervisor.py"
+  [ -f "$_detector_carrier_supervisor" ] && [ ! -L "$_detector_carrier_supervisor" ] \
+    || { printf '%s\n' 'detector source carrier: supervisor is unavailable' >&2; return 1; }
   _detector_carrier_tmp="$(mktemp -d "$parent/.detector-carrier.XXXXXX")" || return 1
   trap detector_carrier_cleanup EXIT
-  trap 'detector_carrier_interrupt 130' INT
-  trap 'detector_carrier_interrupt 143' TERM
+  trap 'detector_carrier_interrupt 130 INT' INT
+  trap 'detector_carrier_interrupt 143 TERM' TERM
   # Materializing the exact node also rejects an otherwise valid carrier that
   # omits this requested commit. Explicit keep means the user chose not to
   # install that ref, so only the carrier's own complete graph is checked.
