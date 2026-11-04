@@ -6276,7 +6276,8 @@ print(ids[0] if ids else "")' 2>/dev/null)"
     printf '\033]1337;SetUserVar=kilix_desktop_provider\007'
   }
   if [ "$_KILIX_DESKTOP_MODE" != none ]; then
-    printf '\033]1337;SetUserVar=kilix_desktop_provider=MQ==\007'
+    _kilix_desktop_marker="$(python3 -c 'import base64, uuid; print(base64.b64encode(uuid.uuid4().hex.encode()).decode())')" || exit 1
+    printf '\033]1337;SetUserVar=kilix_desktop_provider=%s\007' "$_kilix_desktop_marker"
     trap '_kilix_clear_desktop_marker' EXIT
   fi
   rc=0

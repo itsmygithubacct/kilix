@@ -1,4 +1,6 @@
 """Exercise the real desktop launcher without running a desktop or system action."""
+import base64
+import re
 import subprocess
 import unittest
 
@@ -20,11 +22,25 @@ class DesktopCloseMarker(unittest.TestCase):
     def test_custom_provider_is_marked_only_while_running(self):
         result = self.run_provider('printf desktop-body')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn(b'\x1b]1337;SetUserVar=kilix_desktop_provider=MQ==\x07desktop-body', result.stdout)
+        marker = self.marker(result.stdout)
+        self.assertIn(b'\x07desktop-body', result.stdout)
+        self.assertRegex(marker, r'^[0-9a-f]{32}$')
         self.assertTrue(result.stdout.endswith(b'\x1b]1337;SetUserVar=kilix_desktop_provider\x07'))
 
     def test_failed_provider_clears_marker_and_keeps_failure_status(self):
         result = self.run_provider('exit 7')
         self.assertEqual(result.returncode, 7, result.stderr)
-        self.assertIn(b'\x1b]1337;SetUserVar=kilix_desktop_provider=MQ==\x07', result.stdout)
+        self.assertRegex(self.marker(result.stdout), r'^[0-9a-f]{32}$')
         self.assertTrue(result.stdout.endswith(b'\x1b]1337;SetUserVar=kilix_desktop_provider\x07'))
+
+    def marker(self, output):
+        encoded = re.search(rb'SetUserVar=kilix_desktop_provider=([^\x07]+)\x07', output)
+        self.assertIsNotNone(encoded)
+        return base64.b64decode(encoded.group(1), validate=True).decode('ascii')
+
+    def test_each_provider_launch_has_a_distinct_identity(self):
+        first = self.run_provider('true')
+        second = self.run_provider('true')
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertNotEqual(self.marker(first.stdout), self.marker(second.stdout))

@@ -8,7 +8,7 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace, ModuleType
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 SOURCE = Path(__file__).resolve().parents[1] / 'src/kitty/coding_close.py'
 spec = importlib.util.spec_from_file_location('kitty.coding_close_fixture', SOURCE)
@@ -81,6 +81,7 @@ class CloseUITests(unittest.TestCase):
         window = self.window(['codex'])
         calls = []
         boss = SimpleNamespace(window_for_dispatch=window, active_window=window,
+                               confirm_desktop_close=Mock(return_value=False),
                                confirm_coding_close=lambda w: calls.append(w) or True,
                                confirm_qemu_close=lambda w: self.fail('coding pane fell through'))
         class SinglePane:
@@ -89,6 +90,7 @@ class CloseUITests(unittest.TestCase):
         for name in names:
             namespace[name](boss, SinglePane()) if name == 'confirm_tab_close' else namespace[name](boss)
         self.assertEqual(calls, [window, window, window])
+        self.assertEqual(boss.confirm_desktop_close.call_count, 3)
 
     def test_nonbroker_refuses_without_helper_or_legacy_close(self):
         window=self.window(['codex']);window.child.is_pty_brokered=False
