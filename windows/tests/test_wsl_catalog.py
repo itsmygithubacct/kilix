@@ -284,7 +284,7 @@ class CatalogTests(unittest.TestCase):
             if prefix == 'apps/kilix-playalong' and key not in hashes:
                 # This local RC source is delivered by Content's verified Git
                 # bundle carrier, not by an invented public archive digest.
-                self.assertEqual(pin, '71a1e2cf69080ee9f61ff35825187fdbe51a484a')
+                self.assertEqual(pin, '7a0429d91acccba67042fdefb8d48a039f1c54f1')
                 continue
             self.assertRegex(hashes[key], r'^[0-9a-f]{64}$')
 
