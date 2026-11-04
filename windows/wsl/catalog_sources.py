@@ -83,15 +83,22 @@ def _carrier_engine():
     raise ImportError('packaged Content source-carrier engine is unavailable')
 
 
-def _playalong_carrier(destination, revision):
+def _source_carrier(repository_url, destination, revision):
     """Ask Content's single source-carrier authority for the complete closure."""
     try:
         materialize_source = _carrier_engine()
     except ImportError as error:
         raise ValueError('Source acquisition requires the Content source-carrier engine') from error
     destination.parent.mkdir(parents=True, exist_ok=True)
-    return materialize_source('https://github.com/itsmygithubacct/kilix-playalong.git',
-                              revision, destination)
+    return materialize_source(repository_url, revision, destination)
+
+
+def _playalong_carrier(destination, revision):
+    return _source_carrier('https://github.com/itsmygithubacct/kilix-playalong.git', destination, revision)
+
+
+def _needle_carrier(destination, revision):
+    return _source_carrier('https://github.com/itsmygithubacct/kilix-needle.git', destination, revision)
 
 
 def materialize(prefixes, destination, cache):
@@ -100,13 +107,13 @@ def materialize(prefixes, destination, cache):
     pins = revisions(prefixes)
     if not all(prefix in pins for prefix in prefixes):
         raise ValueError('Source prefix has no reviewed revision')
-    app = 'apps/kilix-playalong'
-    carrier_done = False
-    if app in pins:
-        carrier_done = _playalong_carrier(destination / app, pins[app])
+    carrier_roots = set()
+    for prefix, acquire in (('apps/kilix-playalong', _playalong_carrier), ('needle', _needle_carrier)):
+        if prefix in pins and acquire(destination / prefix, pins[prefix]):
+            carrier_roots.add(prefix)
     for prefix, pin in pins.items():
-        if carrier_done and (prefix == app or prefix.startswith(app + '/')):
-            continue  # The authority materialized the complete verified gitlink closure.
+        if any(prefix == root or prefix.startswith(root + '/') for root in carrier_roots):
+            continue  # Content verified and materialized this complete closure.
         repo = repository(prefix)
         archive = cache / (repo + '-' + pin + '.tar.gz')
         if repo + '/' + pin not in hashes:
