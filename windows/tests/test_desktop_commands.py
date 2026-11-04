@@ -415,8 +415,9 @@ class DesktopIntegrationTests(unittest.TestCase):
             for name in ('__init__.py', 'windows.py'):
                 shutil.copy2(CONFIG / 'kilix_sdk' / name, config / 'kilix_sdk' / name)
             for name in ('remote.py', 'session_grid.py', 'tmux_control.py', 'content_models.py', 'kilix_clock_settings.py', 'agent_fixture.py',
-                         'terminal_video.py', 'terminal_video_errors.lua'):
+                         'terminal_video.py', 'terminal_video_errors.lua', 'coding_launch.py'):
                 (config / name).write_text('# fixture ' + name + '\n')
+            (config / 'coding_clients.json').write_text('{"clients": []}\n')
             (fixture / 'kilix-settings').write_text('# fixture\n')
             (fixture / 'scripts').mkdir()
             (fixture / 'scripts/transcript-view.py').write_text('# fixture\n')
@@ -434,7 +435,8 @@ class DesktopIntegrationTests(unittest.TestCase):
             for name in ('desktop_transport.py', 'desktop.ps1', 'desktop-native.cs', 'desktop-dispatch.ps1'):
                 self.assertEqual((destination / name).read_bytes(), (source / name).read_bytes())
             # WSL commands use the shared session and video modules from the package.
-            for name in ('session_grid.py', 'terminal_video.py', 'terminal_video_errors.lua'):
+            for name in ('session_grid.py', 'terminal_video.py', 'terminal_video_errors.lua',
+                         'coding_launch.py', 'coding_clients.json'):
                 self.assertEqual((destination / 'wsl-bin/config' / name).read_bytes(), (config / name).read_bytes())
             result = subprocess.run([sys.executable, '-B', str(destination / 'native-commands.py'),
                                      'help', 'desktop', 'click'], capture_output=True, text=True)
