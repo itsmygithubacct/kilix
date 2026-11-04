@@ -17,6 +17,7 @@ import json
 import os
 from pathlib import Path
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -454,12 +455,28 @@ class YoloxPin(unittest.TestCase):
         return origin, refs
 
     def _run(self, scratch, origin, ref, **extra):
+        host = pathlib.Path(scratch) / 'pin-host'
+        (host / 'scripts').mkdir(parents=True, exist_ok=True)
+        for name in ('yolox-generation.py', 'detector-carrier-supervisor.py'):
+            shutil.copyfile(ROOT / 'scripts' / name, host / 'scripts' / name)
+        cli = host / 'kilix'
+        cli.write_text('#!' + sys.executable + '''\nimport json,os,pathlib,subprocess,sys
+if sys.argv[2]=='show':
+    source=os.environ['KILIX_YOLOX_SRC']
+    head=subprocess.check_output(['git','-C',source,'rev-parse','HEAD'],text=True).strip()
+    pathlib.Path(os.environ['PIN_CAPTURE']).write_text(head)
+    print(json.dumps({'root':os.environ['PIN_APPS']}))
+elif sys.argv[2]=='verify':raise SystemExit(1)
+else:raise SystemExit(1)
+''')
+        cli.chmod(0o700)
         environment = sandbox_env(
             HOME=os.path.join(scratch, "home"),
             KILIX_YOLOX_DIR=os.path.join(scratch, "yolox"),
             KILIX_YOLOX_SRC=os.path.join(scratch, "sources", "kilix-yolox"),
             GPU_TERMINAL_SOURCE_HOME=os.path.join(scratch, "sources"),
-            KILIX_YOLOX_REPO=origin, KILIX_YOLOX_REF=ref, **extra)
+            KILIX_YOLOX_REPO=origin, KILIX_YOLOX_REF=ref, KILIX_HOME=str(host),
+            PIN_CAPTURE=os.path.join(scratch,'pin-capture'), PIN_APPS=os.path.join(scratch,'apps'), **extra)
         # --check never resolves the source; --install would go on to the
         # licence.  A non-terminal --install stops there, after resolving.
         return subprocess.run(
@@ -491,32 +508,42 @@ class YoloxPin(unittest.TestCase):
                           result.stderr, result.stderr)
             self.assertFalse(os.path.exists(os.path.join(scratch, "yolox", "venv")))
             checkout = os.path.join(scratch, "sources", "kilix-yolox")
-            self.assertEqual(self._git("rev-parse", "HEAD", cwd=checkout), old)
+            self.assertEqual(pathlib.Path(scratch,'pin-capture').read_text(), old)
+            self.assertFalse(os.path.exists(checkout))
 
     def test_an_existing_clean_checkout_is_moved_to_the_pin(self):
         with tempfile.TemporaryDirectory() as scratch:
             origin, (old, new) = self._origin(scratch)
-            self._run(scratch, origin, old)
-            result = self._run(scratch, origin, new)
             checkout = os.path.join(scratch, "sources", "kilix-yolox")
-            self.assertEqual(self._git("rev-parse", "HEAD", cwd=checkout), new)
+            pathlib.Path(checkout).parent.mkdir(parents=True)
+            self._git('clone','-q','--no-local',origin,checkout)
+            self._git('checkout','--detach',old,cwd=checkout)
+            result = self._run(scratch, origin, new)
+            self.assertEqual(pathlib.Path(scratch,'pin-capture').read_text(), new)
+            self.assertEqual(self._git("rev-parse", "HEAD", cwd=checkout), old)
             self.assertIn("advanced", result.stderr)
 
     def test_a_dirty_checkout_is_kept_and_says_so(self):
         with tempfile.TemporaryDirectory() as scratch:
             origin, (old, new) = self._origin(scratch)
-            self._run(scratch, origin, old)
             checkout = os.path.join(scratch, "sources", "kilix-yolox")
+            pathlib.Path(checkout).parent.mkdir(parents=True)
+            self._git('clone','-q','--no-local',origin,checkout)
+            self._git('checkout','--detach',old,cwd=checkout)
             with open(os.path.join(checkout, "marker"), "w") as handle:
                 handle.write("edited")
             result = self._run(scratch, origin, new)
             self.assertEqual(self._git("rev-parse", "HEAD", cwd=checkout), old)
             self.assertIn("was NOT installed", result.stderr)
+            self.assertEqual(pathlib.Path(scratch,'pin-capture').read_text(), old)
 
     def test_a_foreign_origin_is_refused(self):
         with tempfile.TemporaryDirectory() as scratch:
             origin, (old, new) = self._origin(scratch)
-            self._run(scratch, origin, old)
+            checkout = os.path.join(scratch, "sources", "kilix-yolox")
+            pathlib.Path(checkout).parent.mkdir(parents=True)
+            self._git('clone','-q','--no-local',origin,checkout)
+            self._git('checkout','--detach',old,cwd=checkout)
             result = self._run(scratch, os.path.join(scratch, "elsewhere"), old)
             self.assertEqual(result.returncode, 1)
             self.assertIn("expected", result.stderr)

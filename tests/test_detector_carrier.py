@@ -226,6 +226,7 @@ class DetectorCarrierInstall(unittest.TestCase):
         url, old, new = self.yolox
         source = self.root / "yolox source"
         runtime = self.root / "runtime"
+        shutil.copyfile(ROOT / "scripts/yolox-generation.py", self.host / "scripts/yolox-generation.py")
         (self.host / "config").mkdir()
         shutil.copyfile(ROOT / "config/yolox_runtime.py", self.host / "config/yolox_runtime.py")
         apps = self.root / "apps"
@@ -249,6 +250,17 @@ class DetectorCarrierInstall(unittest.TestCase):
                           "if sys.argv[1] in ('-c','-m'): sys.exit(0)\n"
                           "os.execv(sys.executable,[sys.executable,*sys.argv[1:]])\n")
         python.chmod(0o700)
+        template = self.root / "python-template"
+        shutil.copyfile(python, template)
+        uv = self.root / "fake-uv"
+        uv.write_text("#!" + sys.executable + "\nimport os,pathlib,shutil,sys\n"
+                      "if sys.argv[1]=='venv':\n"
+                      " p=pathlib.Path(sys.argv[-1])/'bin/python';p.parent.mkdir(parents=True)\n"
+                      " shutil.copyfile(os.environ['FIXTURE_PYTHON_TEMPLATE'],p);p.chmod(0o700)\n"
+                      "elif sys.argv[1]=='pip':pass\n"
+                      "elif sys.argv[1]=='--version':print('fixture uv')\n"
+                      "else:sys.exit(1)\n")
+        uv.chmod(0o700)
         env = sandbox_env(**IDENTITY)
         env.update({"KILIX_HOME": str(self.host), "GPU_TERMINAL_DATA_HOME": str(self.root / "data"),
                     "GPU_TERMINAL_SOURCE_HOME": str(self.root / "stack"),
@@ -264,7 +276,8 @@ class DetectorCarrierInstall(unittest.TestCase):
                     "KILIX_USER_CONFIG_DIRECTORY": str(self.root / "config"),
                     "KILIX_SOURCE_CARRIER_MANIFEST": str(self.manifest),
                     "KILIX_SOURCE_CARRIER_SHA256": self.digest,
-                    "KILIX_UV": "fixture-absent-uv", "FIXTURE_APPS": str(apps),
+                    "KILIX_UV": str(uv), "FIXTURE_APPS": str(apps),
+                    "FIXTURE_PYTHON_TEMPLATE": str(template),
                     "GIT_ALLOW_PROTOCOL": "file"})
         script = ROOT / "scripts/install-yolox.sh"
 
@@ -274,9 +287,11 @@ class DetectorCarrierInstall(unittest.TestCase):
 
         fresh = install()
         self.assertEqual(fresh.returncode, 0, fresh.stderr)
-        self.assertEqual(git(source, "rev-parse", "HEAD"), old)
-        self.assertEqual(json.loads((runtime / "runtime.json").read_text())["model"], "yolox_nano")
-        before = (runtime / "runtime.json").read_bytes()
+        first = (runtime / ".current").resolve(strict=True)
+        first_source = first / "source"
+        self.assertEqual(git(first_source, "rev-parse", "HEAD"), old)
+        self.assertEqual(json.loads((first / "runtime.json").read_text())["model"], "yolox_nano")
+        before = (first / "runtime.json").read_bytes()
         receipt = self.receipt.read_bytes()
         env["KILIX_YOLOX_REF"] = new
         bundle = self.carrier / "bundles/yolox.bundle"
@@ -284,16 +299,20 @@ class DetectorCarrierInstall(unittest.TestCase):
         bundle.unlink()
         refused = install()
         self.assertNotEqual(refused.returncode, 0)
-        self.assertEqual(git(source, "rev-parse", "HEAD"), old)
-        self.assertEqual((runtime / "runtime.json").read_bytes(), before)
+        self.assertEqual((runtime / ".current").resolve(strict=True), first)
+        self.assertEqual(git(first_source, "rev-parse", "HEAD"), old)
+        self.assertEqual((first / "runtime.json").read_bytes(), before)
         self.assertEqual(self.receipt.read_bytes(), receipt)
         bundle.write_bytes(data)
         updated = install()
         self.assertEqual(updated.returncode, 0, updated.stderr)
-        self.assertEqual(git(source, "rev-parse", "HEAD"), new)
-        self.assertEqual(git(source, "config", "--local", "--get", "remote.origin.url"), url)
-        self.assertEqual(json.loads((runtime / "runtime.json").read_text())["source_revision"], new)
-        self.assertEqual(json.loads((runtime / "runtime.json").read_text())["model"], "yolox_nano")
+        selected = (runtime / ".current").resolve(strict=True)
+        selected_source = selected / "source"
+        self.assertEqual(git(selected_source, "rev-parse", "HEAD"), new)
+        self.assertEqual(git(first_source, "rev-parse", "HEAD"), old)
+        self.assertEqual(git(selected_source, "config", "--local", "--get", "remote.origin.url"), url)
+        self.assertEqual(json.loads((selected / "runtime.json").read_text())["source_revision"], new)
+        self.assertEqual(json.loads((selected / "runtime.json").read_text())["model"], "yolox_nano")
         self.assertEqual(self.receipt.read_bytes(), receipt)
 
 
