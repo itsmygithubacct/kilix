@@ -15,7 +15,7 @@ import catalog_sources
 class PlayalongCarrierTests(unittest.TestCase):
     def test_exact_accepted_app_and_nested_pins_are_selected(self):
         pins = catalog_sources.revisions(['apps/kilix-playalong'])
-        self.assertEqual(pins['apps/kilix-playalong'], '86a4cf04b04c9e75553ce8f27ba6d3bf01659137')
+        self.assertEqual(pins['apps/kilix-playalong'], '5a92947494f47f118600f84fd6e40a7d7db8af61')
         self.assertEqual(pins['apps/kilix-playalong/third_party/kitty-terminal-session'],
                          '0bd98cacef9ec12f021ecf9db1828579970b702a')
         self.assertEqual(pins['apps/kilix-playalong/third_party/kitty-terminal-session/third_party/kitty-input'],
