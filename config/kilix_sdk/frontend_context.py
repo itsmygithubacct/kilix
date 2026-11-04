@@ -93,8 +93,8 @@ def refresh(environment: MutableMapping[str, str] | None = None) -> bool:
     remote-control password and public-key authentication remain in use.
     """
     from .caller_context import require_pane_local
-    require_pane_local()
     env = os.environ if environment is None else environment
+    require_pane_local(env)
     session = env.get(_BROKER[0], '')
     if not _SESSION.fullmatch(session) or session in {'.', '..'}:
         return False

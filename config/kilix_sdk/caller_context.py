@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import sys
+from collections.abc import Mapping
 
 _PROC = Path('/proc')
 _MAX_ANCESTORS = 64
@@ -35,7 +36,47 @@ def _identity(path: Path) -> tuple[int, int, int]:
     return owner, int(fields[1]), int(fields[19])
 
 
-def require_pane_local() -> None:
+def _broker_startup(path: Path, executable: str) -> tuple[str, str] | None:
+    """Read only our matching broker ancestor's explicit run identity.
+
+    The native wrapper supplies --runtime-dir and run --id. Command payload
+    arguments after -- never select identity, and no environment/credentials
+    are copied from the ancestor. Global --timeout and run logging options
+    use the pinned broker CLI's two-item option format.
+    """
+    try:
+        if not os.path.samefile(path / 'exe', executable):
+            return None
+    except OSError:
+        return None
+    args = _read(path / 'cmdline', 65536).split(b'\0')
+    if args[-1:] == [b'']:
+        args.pop()
+    index, runtime = 1, None
+    while index < len(args) and args[index] in (b'--runtime-dir', b'--timeout'):
+        if index + 1 >= len(args):
+            raise CallerContextError('cannot verify own broker startup identity')
+        if args[index] == b'--runtime-dir':
+            runtime = os.fsdecode(args[index + 1])
+        index += 2
+    if args[index:index + 1] != [b'run']:
+        return None
+    index += 1
+    session = None
+    options = {b'--id', b'--journal-limit', b'--transcript',
+               b'--transcript-limit', b'--transcript-graphics'}
+    while index < len(args) and args[index] != b'--':
+        if args[index] not in options or index + 1 >= len(args):
+            raise CallerContextError('cannot verify own broker startup identity')
+        if args[index] == b'--id':
+            session = os.fsdecode(args[index + 1])
+        index += 2
+    if not runtime or not session or args[index:index + 1] != [b'--']:
+        raise CallerContextError('cannot verify own broker startup identity')
+    return runtime, session
+
+
+def require_pane_local(environment: Mapping[str, str] | None = None) -> None:
     """Refuse shared-server ancestry before using any inherited pane context.
 
     This is an accidental cross-pane routing guard, not authentication against
@@ -44,6 +85,11 @@ def require_pane_local() -> None:
     """
     if not sys.platform.startswith('linux'):
         return
+    env = os.environ if environment is None else environment
+    executable = env.get('KITTY_PTY_BROKER_EXECUTABLE', '')
+    claimed = (env.get('KITTY_PTY_BROKER_RUNTIME', ''), env.get('KITTY_PTY_BROKER_SESSION', ''))
+    check_broker = os.path.isabs(executable) and all(claimed)
+    broker_verified = False
     pid = os.getpid()
     seen = set()
     try:
@@ -66,6 +112,17 @@ def require_pane_local() -> None:
                     raise CallerContextError(
                         'shared Codex app-server has no verified caller pane; '
                         'run codex --no-daemon from the intended pane')
+            if check_broker and not broker_verified:
+                binding = _broker_startup(path, executable)
+                if binding is not None:
+                    if binding != claimed:
+                        raise CallerContextError(
+                            'inherited broker context conflicts with the caller broker; '
+                            'no route or credential recovery attempted')
+                    # Nested terminals may use the same binary. Only the
+                    # nearest broker owns this caller; keep checking higher
+                    # ancestors for the separate shared-server boundary.
+                    broker_verified = True
             if _identity(path) != first:
                 break
             pid = first[1]

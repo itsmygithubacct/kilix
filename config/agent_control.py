@@ -244,6 +244,12 @@ def recovered_values():
                            if line.startswith("PPid:")))
         except (OSError, ValueError, StopIteration):
             break
+    # A stripped tool can gain its complete broker tuple only during the walk.
+    # Validate that completed claim too, without copying the ancestor's identity.
+    try:
+        require_pane_local(values)
+    except CallerContextError as exc:
+        raise ControlError(str(exc)) from None
     return values
 
 
