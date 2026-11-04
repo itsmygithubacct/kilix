@@ -1491,7 +1491,7 @@ _kilix_load_env_file() {
       KILIX_VOICE_LIB_URL|KILIX_VOICE_LIB_VERSION|KILIX_VOICE_LIB_SHA256|KILIX_VOICE_APACHE_LICENSE_FILE|\
       KILIX_VOICE_MODEL_URL|KILIX_VOICE_MODEL_SHA256|\
       KILIX_VOICE_LGRAPH_MODEL_URL|KILIX_VOICE_LGRAPH_MODEL_SHA256|\
-      KILIX_NVR_DETECT|KILIX_SOUND_CLASSIFIER|KILIX_SOUND_THRESHOLDS|KILIX_SOUND_PYTHON|KILIX_OBJECT_DETECTOR|\
+      KILIX_NVR_DETECT|KILIX_SOUND_CLASSIFIER|KILIX_SOUND_THRESHOLDS|KILIX_SOUND_PYTHON|KILIX_SOUND_REF|KILIX_OBJECT_DETECTOR|\
       KILIX_LOOK_DIR|KILIX_LOOK_REPO|KILIX_LOOK_REF|KILIX_LOOK_PREFIX|\
       KILIX_LOOK_AUTO_INSTALL|KILIX_LOOK_TRUST_EXISTING_CHECKOUT|\
       KILIX_LOOK_ALLOW_MUTABLE_REF|KILIX_LOOK_KEEP_EXISTING_CHECKOUT|\
@@ -4222,14 +4222,14 @@ sys.exit(0 if ready else 1)
           echo
           echo "  $_self yamnet            install if needed, print the command"
           echo "  $_self yamnet check      what is present, without changing it"
-          echo "  $_self yamnet install    build the virtualenv and fetch the model"
-          echo "  $_self yamnet update     bring its packages forward"
+          echo "  $_self yamnet install    build the runtime using the verified catalog model"
+          echo "  $_self yamnet update     rebuild its pinned runtime"
           echo "  $_self yamnet remove     delete the runtime directory"
           echo
           echo "The sound-event half of the same idea as '$_self yolo':"
           echo "kilix-sound-detect links no ML library, its classifier is a"
           echo "subprocess, and this builds that subprocess's environment."
-          echo "The model is fetched by hash with its licence recorded."
+          echo "The model and its licence receipt are verified through Kilix Content."
           exit 0 ;;
         --) shift; break ;;
         *) break ;;
