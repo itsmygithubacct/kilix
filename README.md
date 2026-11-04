@@ -3252,7 +3252,19 @@ the session parent or X server exits. Existing windows are inventoried at
 startup; very short-lived windows that vanish before inspection may lack
 metadata. Inspect records with `tail -f` or a JSON-lines reader.
 
-### Search the documentation
+### Ask for help
+
+For 0.2.3 RC1, `kilix help-setup` installs the default **kilix-qwen-sft1-2b**
+model and its CPU runtime. This explicit setup downloads about 4.6 GB of
+checkpoint files; the shared model sizer checks available memory and storage.
+Then run `kilix help-answer "How do I list panes?"` for a command, a brief
+explanation and related documentation links. Answers run locally. The model
+does not inspect live machine state or execute the commands it suggests.
+Use `--json` for structured output.
+
+The model is an RC1 default selected from exposed development results, with
+known errors. It is not independently qualified. Setup is separate from the
+OS image's existing bundled models.
 
 Run `kilix help-search "how do I split a pane"` to search the bundled Kilix, Kitty, Pleb and Plebian-OS documentation. The pinned Help Search app installs on first use, uses no model weights, and returns source passages rather than generated answers.
 
