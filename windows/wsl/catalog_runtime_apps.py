@@ -128,6 +128,11 @@ def _playalong_binding(source, env, action, python=None):
         if not carrier or not Path(carrier).is_absolute():
             raise ValueError('Playalong setup requires the absolute offline runtime carrier path.')
         command += ['--runtime-carrier', carrier]
+        supplied = env.get('KILIX_PLAYALONG_MODEL_SOURCE', '')
+        if supplied:
+            if not Path(supplied).is_absolute():
+                raise ValueError('Playalong supplied model directory must be an absolute path.')
+            command += ['--model-source', supplied]
     return command
 
 

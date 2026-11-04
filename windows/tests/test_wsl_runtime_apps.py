@@ -151,11 +151,13 @@ class RuntimeAdapterTests(unittest.TestCase):
         env = {'XDG_DATA_HOME': str(self.root / 'user-data'),
                'KILIX_PLAYALONG_CONTENT_ASSET': 'fixture',
                'KILIX_PLAYALONG_CONTENT_HOST': '/untrusted/override',
+               'KILIX_PLAYALONG_MODEL_SOURCE': str(self.root / 'supplied-model'),
                'KILIX_PLAYALONG_RUNTIME_CARRIER': str(self.root / 'offline-carrier')}
         command = apps._playalong_binding(source, env, 'setup')
         self.assertEqual(command[command.index('--kilix') + 1], str(companion.BRIDGE.resolve()))
         self.assertEqual(command[command.index('--content-root') + 1], str((companion.STATE / 'content').resolve()))
         self.assertEqual(command[command.index('--runtime-carrier') + 1], env['KILIX_PLAYALONG_RUNTIME_CARRIER'])
+        self.assertEqual(command[command.index('--model-source') + 1], env['KILIX_PLAYALONG_MODEL_SOURCE'])
         self.assertIn(apps.PLAYALONG_RUNTIME_MANIFEST, command)
         with self.assertRaisesRegex(ValueError, 'absolute offline runtime carrier'):
             apps._playalong_binding(source, dict(env, KILIX_PLAYALONG_RUNTIME_CARRIER='relative'), 'setup')
