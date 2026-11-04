@@ -400,7 +400,7 @@ def _verify(api, lic, spec, root: str, output) -> int:
                          f"run kilix models install {spec.asset_id} in a terminal")
     supplied = importlib.import_module("kilix_content.install").SuppliedFile
     for item in spec.files:
-        relative = f"assets/{spec.asset_id}/{item.path}"
+        relative = f"assets/{spec.install_name}/{item.path}"
         with supplied.open_beneath(root, relative) as held:
             if held.bytes != item.bytes or held.sha256 != item.sha256:
                 raise SetupError(f"installed model file differs from its manifest: {item.path}")
