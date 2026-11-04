@@ -293,6 +293,61 @@ sys.exit(1)
                         for pool in self.root.glob(".detector-carrier.*"):
                             shutil.rmtree(pool)
 
+    def test_prepare_git_exit_drains_same_group_descendant(self):
+        # Exercise both a complete successful preparation and a failing
+        # prepare-git helper when the final helper itself leaves a child.
+        libc = ctypes.CDLL(None, use_errno=True)
+        self.assertEqual(libc.prctl(36, 1, 0, 0, 0), 0)
+        for exit_code in (0, 1):
+            with self.subTest(prepare_exit=exit_code):
+                self.helper.write_text("""import os,pathlib,signal,subprocess,sys,time
+if sys.argv[1] == 'materialize': sys.exit(0)
+ready=pathlib.Path(os.environ['PID_FILE']+'.ready')
+code='import pathlib,signal,sys,time;signal.signal(signal.SIGTERM,signal.SIG_IGN);pathlib.Path(sys.argv[1]).write_text("ready");time.sleep(30)'
+child=subprocess.Popen([sys.executable,'-c',code,str(ready)])
+while not ready.exists(): time.sleep(.01)
+pathlib.Path(os.environ['PID_FILE']).write_text(str(child.pid))
+if int(os.environ['PREPARE_EXIT']) == 0:
+    dest=pathlib.Path(sys.argv[sys.argv.index('--destination')+1]);dest.mkdir()
+    (dest/'gitconfig').write_text('');print(dest/'gitconfig')
+sys.exit(int(os.environ['PREPARE_EXIT']))
+""")
+                pidfile = self.root / "pid"
+                pidfile.unlink(missing_ok=True)
+                (self.root / "pid.ready").unlink(missing_ok=True)
+                logpath = self.root / "prepare-exit-log"
+                with logpath.open("w+") as log:
+                    process = subprocess.Popen(self.command, env=dict(self.env, PREPARE_EXIT=str(exit_code)),
+                                               start_new_session=True, stdout=subprocess.DEVNULL, stderr=log)
+                    descendant = None
+                    try:
+                        deadline = time.monotonic() + 5
+                        while not pidfile.exists() and time.monotonic() < deadline:
+                            time.sleep(.02)
+                        self.assertTrue(pidfile.exists())
+                        descendant = int(pidfile.read_text())
+                        process.wait(timeout=12)
+                        log.flush()
+                        self.assertEqual(process.returncode, exit_code)
+                        with self.assertRaises(ProcessLookupError):
+                            os.kill(descendant, 0)
+                        descendant = None
+                        self.assertEqual(list(self.root.glob(".detector-carrier.*")), [])
+                        self.assertNotIn("cleanup uncertain", logpath.read_text())
+                    finally:
+                        if descendant is not None:
+                            try:
+                                os.kill(descendant, signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
+                            try:
+                                os.waitpid(descendant, 0)
+                            except ChildProcessError:
+                                pass
+                        if process.poll() is None:
+                            os.killpg(process.pid, signal.SIGKILL)
+                            process.wait(timeout=5)
+
 
 if __name__ == "__main__":
     unittest.main()
