@@ -203,7 +203,41 @@ advance_existing_checkout() {
     log "the resolved ref ${install_ref:0:12} was NOT installed; commit, stash or remove them"
     return 0
   fi
-  checkout_ref "$directory" "$install_ref"
+  if [ -n "${_detector_carrier_tmp:-}" ]; then
+    [ -d "$directory/.git" ] && [ ! -L "$directory/.git" ] \
+      || die "offline update requires a standalone Git checkout"
+    local update_tmp staged
+    update_tmp="$(mktemp -d "$(dirname "$directory")/.kilix-yolox.update.XXXXXX")" \
+      || die "could not allocate an update stage"
+    (
+      trap 'rm -rf -- "$update_tmp"' EXIT
+      trap 'exit 130' INT
+      trap 'exit 143' TERM
+      staged="$update_tmp/checkout"
+      cp -a -- "$directory" "$staged" || die "could not stage the existing checkout"
+      [ "$(git -C "$staged" rev-parse --show-toplevel)" = "$staged" ] \
+        || die "staged Git checkout redirects outside its directory"
+      checkout_ref "$staged" "$install_ref"
+      [ "$(git -C "$directory" rev-parse HEAD)" = "$head" ] \
+        && [ -z "$(git -C "$directory" status --porcelain --untracked-files=normal)" ] \
+        || die "installed checkout changed while preparing update"
+      python3 - "$staged" "$directory" <<'EXCHANGE'
+import ctypes
+import os
+import sys
+library = ctypes.CDLL(None, use_errno=True)
+rename = library.renameat2
+rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int,
+                   ctypes.c_char_p, ctypes.c_uint]
+rename.restype = ctypes.c_int
+if rename(-100, os.fsencode(sys.argv[1]), -100, os.fsencode(sys.argv[2]), 2):
+    error = ctypes.get_errno()
+    raise OSError(error, os.strerror(error))
+EXCHANGE
+    )
+  else
+    checkout_ref "$directory" "$install_ref"
+  fi
   if [ -n "$head" ] \
        && git -C "$directory" merge-base --is-ancestor "$install_ref" "$head" >/dev/null 2>&1; then
     log "existing checkout REWOUND ${head:0:12} -> ${install_ref:0:12} (the pinned ref is older)"
@@ -228,10 +262,37 @@ resolve_source() {
   esac
   command -v git >/dev/null 2>&1 || die "git is required"
 
+  if [ "${KILIX_SOURCE_CARRIER_MANIFEST+x}" = x ] || [ "${KILIX_SOURCE_CARRIER_SHA256+x}" = x ] \
+       || [ -e /usr/share/plebian-os/source-carrier/manifest.json ] \
+       || [ -L /usr/share/plebian-os/source-carrier/manifest.json ] \
+       || [ -e /usr/share/plebian-os/source-carrier/manifest.sha256 ] \
+       || [ -L /usr/share/plebian-os/source-carrier/manifest.sha256 ]; then
+    local carrier_adapter carrier_parent carrier_keep
+    carrier_adapter="$KILIX_HOME/scripts/detector-carrier.sh"
+    [ -f "$carrier_adapter" ] && [ ! -L "$carrier_adapter" ] \
+      || die "the detector source-carrier adapter is unavailable"
+    . "$carrier_adapter"
+    carrier_parent="$(dirname "$src")"
+    mkdir -p -- "$carrier_parent" || die "could not create the source parent"
+    [ -d "$carrier_parent" ] && [ ! -L "$carrier_parent" ] \
+      || die "source parent must be a real directory"
+    carrier_keep=0
+    case "$KILIX_YOLOX_KEEP_EXISTING_CHECKOUT" in 1|yes|true|on)
+      [ ! -e "$src/.git" ] || carrier_keep=1 ;;
+    esac
+    detector_carrier_prepare "$KILIX_HOME" "$KILIX_YOLOX_REPO" "$install_ref" \
+      "$carrier_parent" "$carrier_keep" || die "offline source carrier refused the request"
+  fi
+
   if git -C "$src" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     [ "$(realpath -m -- "$(git -C "$src" rev-parse --show-toplevel)")" = "$src" ] \
       || die "$src is nested inside a different Git checkout"
-    origin="$(git -C "$src" remote get-url origin 2>/dev/null || true)"
+    if [ -n "${_detector_carrier_tmp:-}" ]; then
+      # get-url expands the offline rewrite; compare the stored origin instead.
+      origin="$(git -C "$src" config --local --get remote.origin.url 2>/dev/null || true)"
+    else
+      origin="$(git -C "$src" remote get-url origin 2>/dev/null || true)"
+    fi
     if [ "$origin" != "$KILIX_YOLOX_REPO" ] \
          && [ "$KILIX_YOLOX_TRUST_EXISTING_CHECKOUT" != 1 ]; then
       die "$src has origin '${origin:-missing}', expected '$KILIX_YOLOX_REPO' (set KILIX_YOLOX_TRUST_EXISTING_CHECKOUT=1 only for a trusted checkout)"
