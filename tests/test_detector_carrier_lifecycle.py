@@ -182,6 +182,117 @@ time.sleep(30)
                     os.killpg(process.pid, signal.SIGKILL)
                     process.wait(timeout=5)
 
+    def test_helper_exit_drains_same_group_descendant(self):
+        # Worker 45's two counterexamples: materialize exits nonzero, or exits
+        # zero and the subsequent prepare-git fails. A stubborn same-group
+        # child must be stopped and reaped before scratch is removed.
+        libc = ctypes.CDLL(None, use_errno=True)
+        self.assertEqual(libc.prctl(36, 1, 0, 0, 0), 0)
+        for exit_code in (1, 0):
+            with self.subTest(materialize_exit=exit_code):
+                self.helper.write_text("""import os,pathlib,signal,subprocess,sys,time
+if sys.argv[1] == 'materialize':
+    ready=pathlib.Path(os.environ['PID_FILE']+'.ready')
+    code='import pathlib,signal,sys,time;signal.signal(signal.SIGTERM,signal.SIG_IGN);pathlib.Path(sys.argv[1]).write_text("ready");time.sleep(30)'
+    child=subprocess.Popen([sys.executable,'-c',code,str(ready)])
+    while not ready.exists(): time.sleep(.01)
+    pathlib.Path(os.environ['PID_FILE']).write_text(str(child.pid))
+    sys.exit(int(os.environ['MATERIALIZE_EXIT']))
+pathlib.Path(os.environ['PID_FILE']+'.prepare').write_text('called')
+sys.exit(1)
+""")
+                pidfile = self.root / "pid"
+                pidfile.unlink(missing_ok=True)
+                (self.root / "pid.ready").unlink(missing_ok=True)
+                (self.root / "pid.prepare").unlink(missing_ok=True)
+                logpath = self.root / "normal-exit-log"
+                with logpath.open("w+") as log:
+                    process = subprocess.Popen(self.command, env=dict(self.env, MATERIALIZE_EXIT=str(exit_code)),
+                                               start_new_session=True, stdout=subprocess.DEVNULL, stderr=log)
+                    descendant = None
+                    try:
+                        deadline = time.monotonic() + 5
+                        while not pidfile.exists() and time.monotonic() < deadline:
+                            time.sleep(.02)
+                        self.assertTrue(pidfile.exists())
+                        descendant = int(pidfile.read_text())
+                        process.wait(timeout=12)
+                        log.flush()
+                        self.assertEqual(process.returncode, 1)
+                        self.assertEqual((self.root / "pid.prepare").exists(), exit_code == 0)
+                        with self.assertRaises(ProcessLookupError):
+                            os.kill(descendant, 0)
+                        descendant = None
+                        self.assertEqual(list(self.root.glob(".detector-carrier.*")), [])
+                        self.assertNotIn("cleanup uncertain", logpath.read_text())
+                    finally:
+                        if descendant is not None:
+                            try:
+                                os.kill(descendant, signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
+                            try:
+                                os.waitpid(descendant, 0)
+                            except ChildProcessError:
+                                pass
+                        if process.poll() is None:
+                            os.killpg(process.pid, signal.SIGKILL)
+                            process.wait(timeout=5)
+
+    def test_helper_exit_with_escaped_descendant_retains_scratch(self):
+        libc = ctypes.CDLL(None, use_errno=True)
+        self.assertEqual(libc.prctl(36, 1, 0, 0, 0), 0)
+        for exit_code in (1, 0):
+            with self.subTest(materialize_exit=exit_code):
+                self.helper.write_text("""import os,pathlib,subprocess,sys,time
+if sys.argv[1] == 'materialize':
+    child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)'],start_new_session=True)
+    pathlib.Path(os.environ['PID_FILE']).write_text(str(child.pid))
+    sys.exit(int(os.environ['MATERIALIZE_EXIT']))
+pathlib.Path(os.environ['PID_FILE']+'.prepare').write_text('called')
+sys.exit(1)
+""")
+                pidfile = self.root / "pid"
+                pidfile.unlink(missing_ok=True)
+                (self.root / "pid.prepare").unlink(missing_ok=True)
+                logpath = self.root / "escaped-exit-log"
+                with logpath.open("w+") as log:
+                    process = subprocess.Popen(self.command, env=dict(self.env, MATERIALIZE_EXIT=str(exit_code)),
+                                               start_new_session=True, stdout=subprocess.DEVNULL, stderr=log)
+                    descendant = None
+                    try:
+                        deadline = time.monotonic() + 5
+                        while not pidfile.exists() and time.monotonic() < deadline:
+                            time.sleep(.02)
+                        self.assertTrue(pidfile.exists())
+                        descendant = int(pidfile.read_text())
+                        process.wait(timeout=12)
+                        log.flush()
+                        self.assertEqual(process.returncode, 1)
+                        self.assertFalse((self.root / "pid.prepare").exists())
+                        self.assertIn("cleanup uncertain; preserving", logpath.read_text())
+                        pools = list(self.root.glob(".detector-carrier.*"))
+                        self.assertEqual(len(pools), 1)
+                        self.assertTrue((pools[0] / ".cleanup-uncertain").is_file())
+                        os.kill(descendant, 0)
+                    finally:
+                        if descendant is not None:
+                            try:
+                                os.kill(descendant, signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
+                            try:
+                                os.waitpid(descendant, 0)
+                            except ChildProcessError:
+                                pass
+                        if process.poll() is None:
+                            os.killpg(process.pid, signal.SIGKILL)
+                            process.wait(timeout=5)
+                        # Remove only this test's retained pool after reaping
+                        # its own escaped child, so the next subtest is clean.
+                        for pool in self.root.glob(".detector-carrier.*"):
+                            shutil.rmtree(pool)
+
 
 if __name__ == "__main__":
     unittest.main()
