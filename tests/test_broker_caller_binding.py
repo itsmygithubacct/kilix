@@ -39,6 +39,11 @@ class BrokerCallerBindingTests(Fixture):
         self.assertEqual(self.route(values), self.fresh_route())
         self.assertEqual(values['KITTY_PTY_BROKER_SESSION'], SID)
 
+    def test_stripped_environment_recovers_its_own_broker_then_rebinds(self):
+        values = self.values({}, ppid=100)
+        self.assertEqual(self.route(values), self.fresh_route())
+        self.assertEqual(values['KITTY_PTY_BROKER_SESSION'], SID)
+
     def test_live_sibling_substitution_is_refused_before_candidate_or_rpc(self):
         poisoned = dict(self.env, KITTY_PTY_BROKER_SESSION=SIBLING)
         with mock.patch.dict(os.environ, poisoned, clear=True), \
