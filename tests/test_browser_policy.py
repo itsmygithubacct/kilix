@@ -78,6 +78,16 @@ class BrowserPolicyTests(unittest.TestCase):
                 "browser=firefox-esr",
             )
 
+    def test_chrome_stable_only_install_is_discovered_and_embedded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.make_browser(directory, "google-chrome-stable")
+            self.make_browser(directory, "kilix")
+            result = self.run_policy(directory, "https://example.test/a b",
+                                     KILIX_HOME=directory, KILIX_RUN_ALIASES="1")
+            self.assertEqual(result, ["browser=kilix", "argument=run",
+                             f"argument={directory}/google-chrome-stable",
+                             "argument=https://example.test/a b"])
+
     def test_debian_chromium_binary_is_discovered(self):
         with tempfile.TemporaryDirectory() as directory:
             self.make_browser(directory, "chromium")

@@ -357,10 +357,10 @@ clock and timezone widget. The volume icon opens a compact slider on one click,
 the full clickable `kilix-volume` output selector on a double-click, and a
 settings card with a live Mute checkbox on right-click. The network icon shows
 compact connection status on one click and opens `nmtui` on a double-click.
-Right-click CPU/RAM, temperature, read-aloud, microphone, Wi-Fi or weather
+Right-click CPU/RAM, GPU, temperature, read-aloud, microphone, Wi-Fi or weather
 for its own menu. Clock and calendar open clock settings; battery opens
 Kilix Settings. All widget menus are also accessible with
-`kilix settings --widget system|temperature|speech|microphone|network|weather`.
+`kilix settings --widget system|gpu|temperature|speech|microphone|network|weather`.
 
 Calendar, clock, volume, network, battery and temperature cards use the same
 popup layer as Start. They open next to the clicked control, above the panes,
@@ -1740,6 +1740,11 @@ with `--yes`. Plebian OS points apt at a dated snapshot, so this installs the
 release's versions. No repository is added and no recommends are pulled.
 `libpam-fprintd` is not installed, and login is left unchanged.
 
+When only one finger is enrolled, default verification selects it explicitly.
+With several enrolled fingers, fprintd handles the automatic selection.
+Use `verify right-index-finger` or a locker command's `--finger right-index-finger`
+option to select a particular finger.
+
 Everything after installation goes through fprintd over the system D-Bus,
 behind polkit. Verifying is allowed from an active seat session. Enrolling and
 deleting also need your password through a polkit authentication agent, and a
@@ -1748,6 +1753,73 @@ the duration of the command. A successful `verify` checks the reader. It is
 not a screen-lock token and it does not unlock a session. Exit statuses are
 stable and documented at the top of `config/fingerlock.py`. Use `--redact`
 before sharing output: it removes the USB serial, port, and device node.
+
+## Locking files and passwords
+
+```sh
+kilix fingerlock init                         # create a passphrase-protected locker
+kilix fingerlock lock holiday.jpg             # publish holiday.jpg.flk, then unlink the source
+kilix fingerlock unlock holiday.jpg.flk       # authenticate the whole container before output
+kilix fingerlock password set wifi            # store an encrypted named secret
+kilix fingerlock password get wifi            # print that secret
+kilix fingerlock forget                       # discard the agent's cached custody
+```
+
+`lock` verifies the recipient public key against the passphrase-derived key
+or against the root agent's custody before sealing. An existing destination,
+a symlink, or a changed source is refused. Use `--keep` to retain the source.
+Unlink removes a directory entry; it is not secure deletion, and other hard
+links and storage remnants can remain. Password replacement publishes the
+new ciphertext atomically and preserves the previous entry if writing fails.
+
+The locker wraps a random X25519 seed under an Argon2id passphrase key.
+Each container uses a random file key and authenticated XChaCha20-Poly1305
+chunks. Unlock authenticates the complete container before publishing a file
+or writing plaintext to stdout. `passwd` rewraps the same seed; existing
+containers stay readable and the underlying key does not rotate.
+
+Without an agent, use the passphrase. The optional root custodian keeps the
+master key in memory and performs bounded decrypt operations. It returns
+plaintext for the approved container and never exports the master key.
+Each fingerprint operation first displays a fresh polkit approval containing
+the requesting process, requested name, byte count and container SHA-256.
+Polkit can require the account password; approval is not cached. After approval,
+touch the sensor. Cancellation, expiry, forget, caller exit, a session change
+or a locked seat refuses the operation. Plaintext already delivered remains
+with its recipient. Custody TTL includes time spent suspended, using the Linux
+boot-time clock; expiry is enforced on the first check after resume. This does
+not promise erasure of memory while the system is asleep.
+
+Agent installation is explicit:
+
+```sh
+kilix fingerlock install --locker              # fprintd and python3-nacl dependencies
+kilix fingerlock install --agent               # review package digest; authorize root installation
+kilix fingerlock install --agent --rollback    # restore the previous verified agent version
+```
+
+The agent also requires python3-dbus, python3-gi, polkit, systemd/logind and a
+kernel supporting `SO_PEERPIDFD`. Its installer checks Python dependencies
+and does not run apt. The root interpreter verifies the confirmed package
+SHA-256 before executing package code. Code and unit files are stored as a
+complete version under `/usr/local/lib/kilix-fingerlock/versions/`. A single
+per-user `current` link selects the version. Each user has a mode-0600 socket
+under `/run/kilix-fingerlock/`, owned by that user; the service runs as root
+and verifies both the caller UID and live logind session.
+
+Activation stops the old units, switches the version, reloads systemd and
+checks the new custodian. Failures restore the previous version and its
+activation state. An interrupted transaction leaves a journal that the next
+install or rollback recovers first. Verified version directories are retained
+for rollback. Installation and rollback discard cached keys; the next unlock
+requires the locker passphrase again. Existing unmanaged units, modified
+stored code, different polkit policy, and systemd drop-ins require review.
+
+Root, the kernel, and processes able to read agent memory are outside this
+boundary. Custody uses mutable buffers, attempts mlock, disables core dumps
+and reports hardening failures, but Python and cryptographic libraries may
+retain other copies. Swap and hibernation secrecy are not guaranteed. The
+passphrase protects the wrapped seed on disk; use a strong passphrase.
 
 ## Read aloud and dictation
 
@@ -1887,6 +1959,14 @@ fallback. A single `kilix-telemetry` sampler publishes both aggregates to a
 private mmap ring; title bars refresh only when a displayed value changes and
 retain local process-tree fallbacks if the shared service is unavailable.
 
+When a pane's processes hold more than 512 MiB of GPU memory, a pale-blue GPU chip
+shows that amount right of the RAM measurement (NVML per-process memory for
+NVIDIA, DRM fdinfo for AMD and Intel). Set `KILIX_CHROME_PANE_GPU_MODE` to
+`always` or `off`; the 512 MiB threshold is fixed. Attribution is by process:
+memory a service holds outside every pane (a model server, for example) is in
+the top-bar total but in no pane chip, and a pane running only a client of
+that service has no GPU chip.
+
 The far right of the page strip can show system CPU and RAM, thermometer,
 volume, network, calendar, local date/time, and (when applicable) battery
 items. System CPU and RAM come first and are shown at all times by default, in
@@ -1895,7 +1975,21 @@ equivalents to the left of the chip and RAM in use (total minus available) in
 GiB to its right, for example `6.4 󰍛 12.3`. Clicking it opens Kilix Memory and
 right-clicking it opens Kilix Settings.
 Set shared `KILIX_CHROME_SYSTEM_LOAD_MODE` to `auto` to apply the pane
-thresholds (CPU above `1.0`, RAM at 1 GiB or more), or `off` to hide it. The
+thresholds (CPU above `1.0`, RAM at 1 GiB or more), or `off` to hide it.
+Total GPU use sits immediately right of it in the same form: percent busy left
+of a graphics-card glyph and VRAM in use right of it, for example `37% 󰢮 2.2`.
+With several GPUs the discrete one is shown and a click lists each GPU; it is
+hidden when no GPU is readable, and a runtime-suspended GPU reads `sleep`
+and is not read. An idle GPU with runtime power management has its counters read at most
+every 30 s (twice its autosuspend delay when longer, up to 120 s) so that it
+can sleep; readouts can lag or miss short bursts. New pane processes may have
+DRM fdinfo read once during that backoff. If any NVIDIA GPU is asleep or in
+backoff, NVML stays closed for all of them. An awake GPU left unread shows
+`held` above its idle or sleeping NVIDIA sibling (also in auto mode), with its pane memory unavailable
+until sampling resumes. The click card has a separate sampler and may take
+an initial reading during the bar's backoff. NVIDIA is read through NVML (`libnvidia-ml.so.1`), AMD
+through sysfs; nothing is spawned. Set shared `KILIX_CHROME_SYSTEM_GPU_MODE`
+to `auto` (10% busy or more than 512 MiB) or `off`. The
 thermometer is disabled by default; when enabled it shows the hottest readable Linux
 thermal-zone/hwmon temperature to one decimal place in green below 80°C, yellow
 at 80–89°C, or red from 90°C. It sits immediately right of the system CPU and
@@ -1957,10 +2051,31 @@ For object detection, `kilix install yolox` prepares ONNX Runtime and a
 320-pixel model cut, then records a detector wrapper for `kilix look` and NVR.
 `KILIX_YOLOX_MODEL=yolox_nano kilix install yolox` selects nano; s is the
 default and tiny is also supported. Explicit reinstallation refreshes the
-selected model and module path. `kilix yolox check` requires the existing
-agreement and byte binding for the export, cut, tools and wrapper. Older
-runtimes without that binding need one explicit reinstall. These integrity
-checks do not certify inference or model accuracy.
+selected model and module path. The installed wrapper names the exact cut;
+changing the input frame geometry does not silently select a native export.
+It clears the adapter's model environment override. `kilix yolox check`
+requires the existing agreement and byte binding for the export, cut, tools,
+checksum list and wrapper, plus the source checkout's commit. A Git source
+must be clean when bound; an explicitly trusted directory without Git records
+a null revision and binds only its file bytes. Older runtimes without this
+binding need one explicit reinstall. These integrity checks do not certify
+inference or model accuracy.
+
+For controlled pipe comparisons, `kilix yolox run --geometry 320x320 --conf
+0.25 --nms 0.45 --threads 2` verifies the runtime and reads fixed BGRA frames
+from stdin. Its stdout is binary float32[20][6]. `--per-class` changes NMS to
+suppress only within the winning class at each cell; it does not create
+multiple class predictions per cell. The default suppresses across classes.
+The score is objectness times the winning class probability, with a strict
+`score > conf` filter and at most 20 replies. A caller's `min_score` is a
+second filter and cannot recover rows already removed by `--conf`.
+
+The object consumer area-averages and centres each frame or crop in a black
+320 square. The adapter keeps BGR order and raw 0–255 values; its top-left,
+fill-114 nearest-neighbour letterbox is an identity for that square and its
+320 cut. Sending an original rectangular frame directly to the adapter is a
+different preprocessing path. Comparing native resolution requires an
+explicit model path to the module tool outside the installed-cut launcher.
 
 Installation requires an interactive terminal and explicit confirmation; there
 is no `--yes` option or piped consent. The licence screen is the licence
@@ -2151,6 +2266,22 @@ catalogue; scripts and terminal-only programs are not changed. Set
 `KILIX_RUN_ALIASES=0` for native X11 windows, add commands with
 `KILIX_RUN_ALIAS_APPS="foo bar"`, or exclude one with
 `KILIX_RUN_ALIAS_EXCLUDE_APPS="foo"`.
+
+Chrome (including `google-chrome-stable`) and the installed x86, ARM and
+AArch64 QEMU system commands use this route even without a desktop entry.
+For example, `qemu-system-x86_64 -m 256 -nodefaults -display gtk` opens a
+Kilix tab. Keep QEMU in the foreground: `-daemonize` is refused inside a tab,
+and closing the tab stops its guest. Shut down the guest normally first when
+its disk contains data you want to keep. To request an external window or a
+headless/detached VM, bypass the interactive alias with
+`command qemu-system-x86_64 ...`; `command google-chrome ...` similarly opens
+the native browser. Scripts that execute QEMU directly retain their behavior.
+Automation can set `KILIX_RUN_READY_FILE` to a nonexistent file in its own
+private directory. Kilix creates that file with mode 0600 and contents
+`content-ready\n` only once the pane has rendered changing content or its
+initial frame has settled. This is a startup receipt, not a liveness check;
+callers must also check their app's control endpoint. Existing files and
+symlinks are refused.
 
 RC2 uses bare Openbox on each app's private display when it is installed.
 Normal app windows fill the pane; dialogs retain their own size and focus.
@@ -3068,7 +3199,10 @@ readout, or `pane_memory=off` to hide the RAM side. The symmetric
 `pane_cpu=always` or
 `pane_cpu=off` to override that policy. The top bar's system CPU and RAM
 readout takes `system_load=always` (the default), `system_load=auto` or
-`system_load=off`.
+`system_load=off`. The GPU widget beside it takes `system_gpu=always` (the
+default), `system_gpu=auto` or `system_gpu=off`, and the pane GPU chip takes
+`pane_gpu=auto` (the default, above a fixed 512 MiB), `pane_gpu=always` or
+`pane_gpu=off`.
 
 - **Quieter page strip:** `tab_bar_min_tabs 2` (hide it until a 2nd page) and
   `tab_bar_show_new_tab_button no` (hide the `+`).
@@ -3283,3 +3417,5 @@ ordinary selector `end` CLI/JSON calls now refuse with `authority_required`.
 Read-only operations and owned-job primitives remain available. See
 [the controller boundary](docs/pty-controller.md) for issuance, scope, expiry,
 replay, revocation and the required isolation from model shell/broker access.
+
+`kilix yamnet run` verifies and executes the existing sound provider without setup or selection writes. Selected YOLOX wrappers also verify their bound source/cut and Content agreement on direct invocation. Copying a YOLOX runtime to a new path requires `kilix install yolox` there to regenerate its binding; a sound runtime can relocate on its recorded Python/platform ABI.

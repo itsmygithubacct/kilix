@@ -1491,7 +1491,7 @@ _kilix_load_env_file() {
       KILIX_VOICE_LIB_URL|KILIX_VOICE_LIB_VERSION|KILIX_VOICE_LIB_SHA256|KILIX_VOICE_APACHE_LICENSE_FILE|\
       KILIX_VOICE_MODEL_URL|KILIX_VOICE_MODEL_SHA256|\
       KILIX_VOICE_LGRAPH_MODEL_URL|KILIX_VOICE_LGRAPH_MODEL_SHA256|\
-      KILIX_NVR_DETECT|KILIX_SOUND_CLASSIFIER|KILIX_OBJECT_DETECTOR|\
+      KILIX_NVR_DETECT|KILIX_SOUND_CLASSIFIER|KILIX_SOUND_THRESHOLDS|KILIX_SOUND_PYTHON|KILIX_OBJECT_DETECTOR|\
       KILIX_LOOK_DIR|KILIX_LOOK_REPO|KILIX_LOOK_REF|KILIX_LOOK_PREFIX|\
       KILIX_LOOK_AUTO_INSTALL|KILIX_LOOK_TRUST_EXISTING_CHECKOUT|\
       KILIX_LOOK_ALLOW_MUTABLE_REF|KILIX_LOOK_KEEP_EXISTING_CHECKOUT|\
@@ -4212,12 +4212,13 @@ sys.exit(0 if ready else 1)
     _yamnet_action=--print-path
     while :; do
       case "${1:-}" in
+        run) _yamnet_action=--run; shift; break ;;
         install) _yamnet_action=--install; shift ;;
         check|status) _yamnet_action=--check; shift ;;
         update|upgrade) _yamnet_action=--upgrade; shift ;;
         remove|uninstall) _yamnet_action=--remove; shift ;;
         -h|--help|help)
-          echo "usage: $_self yamnet [install|check|update|remove]"
+          echo "usage: $_self yamnet [install|check|run|update|remove]"
           echo
           echo "  $_self yamnet            install if needed, print the command"
           echo "  $_self yamnet check      what is present, without changing it"
@@ -4531,14 +4532,8 @@ sys.exit(0 if ready else 1)
         exit 2 ;;
     esac ;;
   fingerlock|--fingerlock|fingerprint)
-    # The fingerprint reader as a host verb: ensure (default) | status |
-    # doctor | install | list | enroll [FINGER] | verify [FINGER] | delete.
-    # config/fingerlock.py owns it: read-only USB discovery, the Debian
-    # lazy install (apt-get install -y --no-install-recommends fprintd, run
-    # as root through sudo in this terminal, or xterm when there is none),
-    # and fprintd over the system D-Bus behind polkit. The USB node itself
-    # is never opened. This verb does not change login and does not lock
-    # files or the screen. A verify result is a reader check, not a lock token.
+    # Reader operations use fprintd. File/password custody is explicit and
+    # installs from a confirmed package; verification is not a screen-lock token.
     shift
     export KILIX_HOME
     exec python3 -B "$KILIX_HOME/config/fingerlock.py" "$@" ;;
@@ -6077,10 +6072,8 @@ if [ "${1:-}" = "run" ]; then
     done
     # KILIX_IN_OVERLAY doubles as the generic "already relaunched into our
     # own kitty window" guard, whatever the window type.
-    exec "$KITTEN" @ --password-file "$KILIX_RC_PASSWORD_FILE" \
-      launch --type=tab --cwd=current --self --tab-title "$_app" \
-      --env KILIX_IN_OVERLAY=1 --env "KILIX_STREAM=${KILIX_STREAM:-}" \
-      -- "$_self" run "$@"
+    exec python3 "$KILIX_HOME/config/run_tab.py" \
+      "$KITTEN" "$KILIX_RC_PASSWORD_FILE" "$_app" "$_self" "$@"
   fi
   rc=0
   python3 "$KILIX_HOME/config/apprun.py" "$@" || rc=$?

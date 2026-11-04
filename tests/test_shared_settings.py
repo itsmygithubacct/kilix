@@ -143,6 +143,8 @@ class SharedSettingsTests(unittest.TestCase):
                 values[settings.PANE_CPU_MODE_KEY], "auto")
             self.assertEqual(
                 values[settings.PANE_MEMORY_MODE_KEY], "auto")
+            self.assertEqual(values[settings.PANE_GPU_MODE_KEY], "auto")
+            self.assertEqual(values[settings.SYSTEM_GPU_MODE_KEY], "always")
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
 
     def test_atomic_update_preserves_unknown_content(self):
@@ -294,6 +296,8 @@ class SharedSettingsTests(unittest.TestCase):
                 values["KILIX_CHROME_BUTTON_SYNCHRONIZE_INPUT"], "1")
             self.assertEqual(values[settings.PANE_CPU_MODE_KEY], "auto")
             self.assertEqual(values[settings.PANE_MEMORY_MODE_KEY], "auto")
+            self.assertEqual(values[settings.PANE_GPU_MODE_KEY], "auto")
+            self.assertEqual(values[settings.SYSTEM_GPU_MODE_KEY], "always")
             for key in settings.GAME_KEY_BY_ID.values():
                 expected = "0" if key == "KILIX_GAME_DOOM" else "1"
                 self.assertEqual(values[key], expected)
@@ -311,8 +315,14 @@ class SharedSettingsTests(unittest.TestCase):
                 "--set", "split_up=off",
                 "--set", "pane_cpu=always",
                 "--set", "pane_memory=always",
+                "--set", "pane_gpu=always",
+                "--set", "system_gpu=auto",
                 "--print",
             ], env=env, text=True, capture_output=True, check=True)
+            self.assertIn(f"{settings.PANE_GPU_MODE_KEY}=always", result.stdout)
+            self.assertIn(f"{settings.SYSTEM_GPU_MODE_KEY}=auto", result.stdout)
+            self.assertEqual(settings.pane_gpu_mode(str(path)), "always")
+            self.assertEqual(settings.system_gpu_mode(str(path)), "auto")
             self.assertIn("KILIX_CHROME_VOLUME=off", result.stdout)
             self.assertIn("KILIX_CHROME_TEMPERATURE=on", result.stdout)
             self.assertIn("KILIX_CHROME_NETWORK=off", result.stdout)
@@ -385,6 +395,69 @@ class SharedSettingsTests(unittest.TestCase):
                     str(ROOT / "kilix-settings"), "--set", f"{alias}=off",
                 ], env=env, text=True, capture_output=True)
                 self.assertNotEqual(rejected.returncode, 0, alias)
+
+    def test_gpu_modes_default_validate_and_cli_aliases(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.conf"
+            self.assertEqual(settings.SYSTEM_GPU_MODE_DEFAULT, "always")
+            self.assertEqual(settings.PANE_GPU_MODE_DEFAULT, "auto")
+            self.assertEqual(settings.system_gpu_mode(str(path)), "always")
+            self.assertEqual(settings.pane_gpu_mode(str(path)), "auto")
+            # A file written before the keys existed reads as the defaults.
+            path.write_text("KILIX_CHROME_VOLUME=1\n")
+            self.assertEqual(settings.system_gpu_mode(str(path)), "always")
+            self.assertEqual(settings.pane_gpu_mode(str(path)), "auto")
+            path.unlink()
+            settings.update({"KILIX_CHROME_VOLUME": "1"}, str(path))
+            text = path.read_text()
+            self.assertIn(f"{settings.SYSTEM_GPU_MODE_KEY}=always\n", text)
+            self.assertIn(f"{settings.PANE_GPU_MODE_KEY}=auto\n", text)
+            # Each sits beside its CPU/RAM counterpart in the file.
+            self.assertLess(text.index(settings.SYSTEM_LOAD_MODE_KEY),
+                            text.index(settings.SYSTEM_GPU_MODE_KEY))
+            self.assertLess(text.index(settings.PANE_MEMORY_MODE_KEY),
+                            text.index(settings.PANE_GPU_MODE_KEY))
+            for key in (settings.SYSTEM_GPU_MODE_KEY, settings.PANE_GPU_MODE_KEY):
+                self.assertIn(key, settings.MANAGED_KEYS)
+                with self.assertRaises(ValueError):
+                    settings.update({key: "sometimes"}, str(path))
+            settings.update({settings.SYSTEM_GPU_MODE_KEY: "AUTO",
+                             settings.PANE_GPU_MODE_KEY: "Off"}, str(path))
+            self.assertEqual(settings.system_gpu_mode(str(path)), "auto")
+            self.assertEqual(settings.pane_gpu_mode(str(path)), "off")
+
+            env = sandbox_env(GPU_TERMINAL_SETTINGS_FILE=str(path))
+            for alias, value, key, expected in (
+                    ("system_gpu", "off", settings.SYSTEM_GPU_MODE_KEY, "off"),
+                    ("system_gpu_mode", "on", settings.SYSTEM_GPU_MODE_KEY, "always"),
+                    ("pane_gpu", "always", settings.PANE_GPU_MODE_KEY, "always"),
+                    ("system_gpu_load", "auto", settings.SYSTEM_GPU_MODE_KEY, "auto"),
+                    ("gpu_chip", "auto", settings.PANE_GPU_MODE_KEY, "auto")):
+                result = subprocess.run([
+                    str(ROOT / "kilix-settings"),
+                    "--set", f"{alias}={value}", "--print",
+                ], env=env, text=True, capture_output=True, check=True)
+                self.assertIn(f"{key}={expected}\n", result.stdout)
+            for alias, name in (("system_gpu", "system GPU"), ("pane_gpu", "pane GPU")):
+                bad = subprocess.run([
+                    str(ROOT / "kilix-settings"), "--set", f"{alias}=sometimes",
+                ], env=env, text=True, capture_output=True)
+                self.assertNotEqual(bad.returncode, 0)
+                self.assertIn(f"{name} mode must be auto|always|off", bad.stderr)
+            # A hand-edited invalid value prints as what the engine shows.
+            path.write_text(f"{settings.SYSTEM_GPU_MODE_KEY}=x\n{settings.PANE_GPU_MODE_KEY}=y\n")
+            printed = subprocess.run([
+                str(ROOT / "kilix-settings"), "--print",
+            ], env=env, text=True, capture_output=True, check=True)
+            self.assertIn(f"{settings.SYSTEM_GPU_MODE_KEY}=always\n", printed.stdout)
+            self.assertIn(f"{settings.PANE_GPU_MODE_KEY}=auto\n", printed.stdout)
+            # A bare "gpu" would be ambiguous between the two readouts, and
+            # "gpu_load" would read as the pane's, like "cpu_load" does.
+            for ambiguous in ("gpu", "gpu_load"):
+                rejected = subprocess.run([
+                    str(ROOT / "kilix-settings"), "--set", f"{ambiguous}=off",
+                ], env=env, text=True, capture_output=True)
+                self.assertNotEqual(rejected.returncode, 0, ambiguous)
 
     def test_cpu_and_memory_mode_validation_and_cli_aliases(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -519,10 +592,13 @@ class SharedSettingsTests(unittest.TestCase):
             # The system readout models its own off state, so it is switched
             # off with everything else and back to its default on enable-all.
             self.assertEqual(settings.system_load_mode(str(path)), "off")
+            self.assertEqual(settings.system_gpu_mode(str(path)), "off")
+            self.assertEqual(settings.pane_gpu_mode(str(path)), "off")
             subprocess.run(
                 [str(ROOT / "kilix-settings"), "--enable-all"],
                 env=env, text=True, capture_output=True, check=True)
             self.assertEqual(settings.system_load_mode(str(path)), "always")
+            self.assertEqual(settings.system_gpu_mode(str(path)), "always")
 
     def test_voice_defaults_reach_a_fresh_and_an_existing_shared_file(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -844,8 +920,9 @@ class SharedSettingsTests(unittest.TestCase):
             with mock.patch.dict(os.environ, {
                     "GPU_TERMINAL_SETTINGS_FILE": str(path),
                     "KITTY_PID": ""}, clear=True):
-                # System CPU and RAM leads the section, then Thermal status.
-                screen = FakeScreen([ord("j"), ord("j"), ord(" "), ord("s"), ord("q")])
+                # System CPU and RAM leads the section, then System GPU,
+                # then Thermal status.
+                screen = FakeScreen([ord("j"), ord("j"), ord("j"), ord(" "), ord("s"), ord("q")])
                 self.assertEqual(tui._run_tui(screen, "top-bar"), 0)
 
             self.assertFalse(settings.enabled(
@@ -860,10 +937,13 @@ class SharedSettingsTests(unittest.TestCase):
             self.assertIn("▶1 Top bar", first_frame)
             self.assertIn("─" * 20, first_frame)
             self.assertNotIn(" // ", first_frame)
-            self.assertIn("Top bar: 12/13 enabled", first_frame)
+            self.assertIn("Top bar: 13/14 enabled", first_frame)
             self.assertIn("[always] System CPU and RAM", first_frame)
+            self.assertIn("[always] System GPU", first_frame)
             self.assertIn("Thermal status", first_frame)
             self.assertLess(first_frame.index("System CPU and RAM"),
+                            first_frame.index("System GPU"))
+            self.assertLess(first_frame.index("System GPU"),
                             first_frame.index("Thermal status"))
 
     def test_tui_system_load_control_reads_and_writes_the_stored_mode(self):
@@ -879,6 +959,9 @@ class SharedSettingsTests(unittest.TestCase):
                 self.assertEqual(tui._run_tui(screen, "top-bar"), 0)
             first_frame = "\n".join(item[2] for item in screen.frames[0])
             self.assertIn("[ auto ] System CPU and RAM", first_frame)
+            self.assertIn("[always] System GPU", first_frame)
+            self.assertLess(first_frame.index("System CPU and RAM"),
+                            first_frame.index("System GPU"))
             self.assertEqual(settings.system_load_mode(str(path)), "always")
             self.assertIn("Volume", first_frame)
             self.assertIn("Read pane aloud", first_frame)
@@ -929,16 +1012,18 @@ class SharedSettingsTests(unittest.TestCase):
             with mock.patch.dict(os.environ, {
                     "GPU_TERMINAL_SETTINGS_FILE": str(path),
                     "KITTY_PID": ""}, clear=False):
-                # CPU and memory are the first two rows: auto -> always.
+                # CPU, memory and GPU are the first three rows: auto -> always.
                 screen = FakeScreen([
-                    ord(" "), ord("j"), ord(" "), ord("s"), ord("q")
+                    ord(" "), ord("j"), ord(" "), ord("j"), ord(" "), ord("s"), ord("q")
                 ])
                 self.assertEqual(tui._run_tui(screen, "pane-buttons"), 0)
             self.assertEqual(settings.pane_cpu_mode(str(path)), "always")
             self.assertEqual(settings.pane_memory_mode(str(path)), "always")
+            self.assertEqual(settings.pane_gpu_mode(str(path)), "always")
             first_frame = "\n".join(item[2] for item in screen.frames[0])
             self.assertIn("Pane CPU use", first_frame)
             self.assertIn("Pane memory chip", first_frame)
+            self.assertIn("Pane GPU memory", first_frame)
             self.assertIn("[ auto ]", first_frame)
 
     def test_tui_quit_warning_allows_save_as_the_next_key(self):

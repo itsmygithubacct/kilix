@@ -81,6 +81,7 @@ if [ "$_kilix_run_aliases" = 1 ]; then
         firefox-esr galculator geany gedit gimp gnome-calculator gnome-terminal
         google-chrome google-chrome-stable gnumeric inkscape kate konsole krita
         libreoffice mousepad nautilus obconf okular opera pcmanfm qpdfview
+        qemu-system-aarch64 qemu-system-arm qemu-system-i386 qemu-system-x86_64
         rhythmbox signal-desktop slack smplayer soffice spotify steam
         sublime_text system-config-printer telegram-desktop thunar thunderbird
         uxterm vivaldi-stable vlc xev xfd xfontsel xmessage xpdf xterm zenity

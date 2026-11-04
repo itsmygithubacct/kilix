@@ -41,7 +41,7 @@ KILIX_YOLOX_ALLOW_MUTABLE_REF="${KILIX_YOLOX_ALLOW_MUTABLE_REF:-0}"
 # resolves it - a first-use clone and an existing checkout alike - so a moved
 # pin reaches machines that already have the module. Set
 # KILIX_YOLOX_KEEP_EXISTING_CHECKOUT=1 to work from a checkout as it is.
-KILIX_YOLOX_DEFAULT_REF=029ea556082d07772848f82c1f5bed9e3ffff4b4
+KILIX_YOLOX_DEFAULT_REF=fa085fae3d7c605deb217794886d0053e38e8e3d
 KILIX_YOLOX_MODEL="${KILIX_YOLOX_MODEL:-yolox_s}"
 # kilix-look sends a 320-pixel square. The detector prefers the cut that matches
 # the frame (0.89 on the test image against 0.52 for the 640 export fed the same
@@ -401,19 +401,29 @@ install_runtime() {
 write_wrapper() {
   local tool
   tool="$(module_tool kilix-yolox-detect)"
-  "$KILIX_PYTHON" - "$wrapper" "$yolox_dir" "$python" "$tool" "$KILIX_YOLOX_MODEL" <<'PY'
+  "$KILIX_PYTHON" - "$wrapper" "$yolox_dir" "$python" "$tool" "$weights" "$KILIX_PYTHON" "$KILIX_HOME" "$KILIX_YOLOX_SRC" "$KILIX_YOLOX_MODEL" "$KILIX_YOLOX_SIZE" <<'PY'
 import os
 import shlex
 import sys
 import tempfile
 
-destination, runtime, interpreter, tool, model = sys.argv[1:]
+destination, runtime, interpreter, tool, weights, checker_python, host, source, model, size = sys.argv[1:]
 payload = ("#!/bin/sh\n"
            "# Written by kilix install yolox.\n"
+           'actual=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P) || exit 1\n'
+           '[ "$actual" = ' + shlex.quote(runtime) + ' ] || { echo "YOLOX runtime moved; reinstall to rebind" >&2; exit 1; }\n'
+           'forbidden=0\n'
+           'for argument do\n'
+           '  case "$argument" in --model|--model=*) forbidden=1 ;; esac\n'
+           'done\n'
+           '[ "$forbidden" = 0 ] || { echo "model is selected by the installed runtime" >&2; exit 1; }\n'
+           + " ".join(shlex.quote(word) for word in (checker_python, host + "/config/yolox_runtime.py", "check", runtime, source, model, size)) + ' || exit 1\n'
+           + " ".join(shlex.quote(word) for word in (host + "/kilix", "models", "verify", model)) + ' >/dev/null 2>&1 || { echo "YOLOX model verification failed" >&2; exit 1; }\n'
            "KILIX_YOLOX_DIR=" + shlex.quote(runtime) + "\n"
            "export KILIX_YOLOX_DIR\n"
+           "unset KILIX_YOLOX_MODEL\n"
            "exec " + " ".join(shlex.quote(word) for word in
-                              (interpreter, tool, "--model", model)) + ' "$@"\n')
+                              (interpreter, tool, "--model", weights)) + ' "$@"\n')
 descriptor, temporary = tempfile.mkstemp(prefix=".yolox-wrapper-",
                                        dir=os.path.dirname(destination))
 try:

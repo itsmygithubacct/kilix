@@ -819,6 +819,15 @@ class AppPane:
         if reason not in (CONTENT_READY_CHANGED,
                           CONTENT_READY_INITIAL_GRACE):
             raise ValueError(f"invalid content readiness reason: {reason}")
+        ready_file = os.environ.get("KILIX_RUN_READY_FILE")
+        if ready_file:
+            # Optional launcher receipt: never overwrite an existing path or
+            # follow its final symlink. A fresh private directory belongs to
+            # the caller; readiness means rendered content, not just a child PID.
+            fd = os.open(ready_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL |
+                         os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+            with os.fdopen(fd, "w") as receipt:
+                receipt.write("content-ready\n")
         self._content_ready = True
         self._content_ready_reason = reason
         self._initial_frame_ready_at = None
@@ -1326,6 +1335,12 @@ def main():
             "openbox-session", "startx", "xinit", "Xephyr", "Xorg", "Xvfb"}:
         sys.exit("kilix run: desktop/terminal hosts cannot be embedded as apps; "
                  "use kilix pane for a terminal or --desktop-session for an intentional nested desktop")
+    if args and os.path.basename(args[0]).startswith("qemu-system-"):
+        # A detached QEMU outlives the pane's primary process. Do not silently
+        # drop the user's flag or let a VM escape the tab's ownership boundary.
+        if any(flag in args[1:] for flag in ("-daemonize", "--daemonize")):
+            sys.exit("kilix run: QEMU -daemonize cannot be owned by a tab; "
+                     "omit it, or use command qemu-system-* for an external launch")
     if audio and not (hls or mse or webrtc):
         hls = True                          # audio needs a broadcast to ride in
     if not args:

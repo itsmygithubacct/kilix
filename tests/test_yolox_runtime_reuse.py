@@ -93,7 +93,7 @@ original.with_name(original.stem+'_'+size+'.onnx').write_bytes(b'private-cut:'+o
         wrapper = self.install()
         self.install("yolox_nano")
         result = self.invoke(wrapper, "--width", "320", "quote' and space;")
-        self.assertEqual(result["argv"][1:], ["--model", "yolox_nano", "--width", "320", "quote' and space;"])
+        self.assertEqual(result["argv"][1:], ["--model", str(self.runtime / "models/yolox_nano_320.onnx"), "--width", "320", "quote' and space;"])
         self.assertEqual(result["runtime"], str(self.runtime))
         self.assertIn(f"KILIX_OBJECT_DETECTOR={wrapper}\n", (self.config / "kilix.env").read_text())
 
@@ -149,14 +149,14 @@ original.with_name(original.stem+'_'+size+'.onnx').write_bytes(b'private-cut:'+o
         wrapper = self.install("yolox_nano")
         self.assertEqual(self.run_installer("--upgrade", model="yolox_nano").returncode, 0)
         self.assertEqual(self.run_installer("--check", model="yolox_nano").returncode, 0)
-        self.assertEqual(self.invoke(wrapper)["argv"][1:], ["--model", "yolox_nano"])
+        self.assertEqual(self.invoke(wrapper)["argv"][1:], ["--model", str(self.runtime / "models/yolox_nano_320.onnx")])
 
     def test_changed_wrapper_refuses_readiness_and_is_repaired(self):
         wrapper = self.install()
         wrapper.write_text("#!/bin/sh\nexit 0\n")
         self.assertEqual(self.run_installer("--check").returncode, 1)
         self.install()
-        self.assertEqual(self.invoke(wrapper)["argv"][1:], ["--model", "yolox_s"])
+        self.assertEqual(self.invoke(wrapper)["argv"][1:], ["--model", str(self.runtime / "models/yolox_s_320.onnx")])
 
     def test_ambiguous_runtime_path_and_unsupported_cut_size_refuse_before_setup(self):
         for extra in ({"KILIX_YOLOX_DIR": str(self.root / "runtime with space")},
@@ -184,7 +184,7 @@ original.with_name(original.stem+'_'+size+'.onnx').write_bytes(b'private-cut:'+o
         result = self.run_detector('--geometry', '320x320', '--conf', '0.1')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout)['argv'][1:],
-                         ['--model', 'yolox_s', '--geometry', '320x320', '--conf', '0.1'])
+                         ['--model', str(self.runtime / 'models/yolox_s_320.onnx'), '--geometry', '320x320', '--conf', '0.1'])
         self.assertEqual(before, {p: (p.read_bytes(), p.stat().st_mtime_ns)
                                  for p in self.root.rglob('*') if p.is_file()})
 
@@ -222,3 +222,72 @@ original.with_name(original.stem+'_'+size+'.onnx').write_bytes(b'private-cut:'+o
         self.assertEqual(result.stdout, '')
         self.assertIn('not ready', result.stderr)
         self.assertEqual(before, {p: p.read_bytes() for p in self.runtime.rglob('*') if p.is_file()})
+
+    def git_source(self, *args):
+        return subprocess.run(['git', '-C', str(self.source),
+                               '-c', 'user.name=itsmygithubacct',
+                               '-c', 'user.email=itsmygithubacct@users.noreply.github.com',
+                               *args], check=True, capture_output=True, text=True).stdout.strip()
+
+    def initialize_source_repository(self):
+        self.git_source('init', '-q')
+        self.git_source('add', '.')
+        self.git_source('commit', '-qm', 'Synthetic runtime source fixture')
+
+    def test_kept_checkout_revision_change_requires_rebinding(self):
+        self.initialize_source_repository()
+        self.install(KILIX_YOLOX_KEEP_EXISTING_CHECKOUT='1')
+        self.git_source('commit', '--allow-empty', '-qm', 'Another source revision')
+        self.assertEqual(self.run_installer('--check', KILIX_YOLOX_KEEP_EXISTING_CHECKOUT='1').returncode, 1)
+        self.install(KILIX_YOLOX_KEEP_EXISTING_CHECKOUT='1')
+        binding = json.loads((self.runtime / 'runtime.json').read_text())
+        self.assertEqual(binding['source_revision'], self.git_source('rev-parse', 'HEAD'))
+
+    def test_dirty_git_source_cannot_be_bound_as_its_commit(self):
+        self.initialize_source_repository()
+        self.install(KILIX_YOLOX_KEEP_EXISTING_CHECKOUT='1')
+        before = (self.runtime / 'runtime.json').read_bytes()
+        with (self.source / 'tools/kilix-yolox-detect').open('a') as output:
+            output.write('\n# uncommitted change\n')
+        result = self.run_installer(KILIX_YOLOX_KEEP_EXISTING_CHECKOUT='1')
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('uncommitted', result.stderr)
+        self.assertEqual((self.runtime / 'runtime.json').read_bytes(), before)
+
+    def test_wrapper_pins_cut_across_geometry_and_environment_changes(self):
+        # A bare model name would choose the native export for this geometry;
+        # the adapter's environment override would also supersede --model.
+        self.executable(self.source / 'tools/kilix-yolox-detect', '''import json,os,sys
+print(json.dumps({'argv':sys.argv,'override':os.environ.get('KILIX_YOLOX_MODEL')}))
+''')
+        wrapper = self.install()
+        env = dict(self.env, KILIX_YOLOX_MODEL='/unselected.onnx')
+        result = json.loads(subprocess.check_output([str(wrapper), '--geometry', '640x640'], env=env, text=True))
+        self.assertEqual(result['argv'][1:], ['--model', str(self.runtime / 'models/yolox_s_320.onnx'), '--geometry', '640x640'])
+        self.assertIsNone(result['override'])
+
+    def test_selected_wrapper_rejects_changed_cut_source_missing_stamp_and_override(self):
+        wrapper = self.install()
+        for file in (self.runtime / 'models/yolox_s_320.onnx',
+                     self.source / 'tools/kilix-yolox-detect', self.runtime / 'runtime.json'):
+            before = file.read_bytes()
+            file.write_bytes(before + b'corrupt')
+            result = subprocess.run([str(wrapper)], env=self.env, capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(result.stdout, b'')
+            file.write_bytes(before)
+        result = subprocess.run([str(wrapper), '--model', '/unselected.onnx'], env=self.env, capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, b'')
+
+    def test_moved_wrapper_refuses_until_supported_reinstallation(self):
+        import shutil
+        wrapper = self.install()
+        relocated = self.root / 'relocated'
+        shutil.copytree(self.runtime, relocated)
+        result = subprocess.run([str(relocated / 'bin/kilix-yolox-detect')], env=self.env, capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, b'')
+        self.assertIn(b'reinstall to rebind', result.stderr)
+        self.install(KILIX_YOLOX_DIR=str(relocated))
+        self.assertEqual(self.invoke(relocated / 'bin/kilix-yolox-detect')['runtime'], str(relocated))
