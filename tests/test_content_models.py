@@ -78,7 +78,7 @@ _V3, _ORIGIN = asset_v3_available()
 # The LFM2 Ask default adds lfm2-kilix-commands (content 74013cc), and the
 # optional Needle 3 alternate adds needle3-kilix-commands (content 61abc3d).
 # Female-02 epoch 80 adds kilix-female-02 (content 2e20fce).
-PACKAGED_ASSETS = 37
+PACKAGED_ASSETS = 38
 
 # Producer notices the pinned upstream archive carries and the installer
 # verifies and reuses from it, so the licence text store does not hold them.
