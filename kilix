@@ -3466,7 +3466,7 @@ case "${1:-}" in
     _ask_voice=0
     _ask_hold=0
     _ask_options=()
-    _ask_usage="usage: $_self ask [--model lfm2|needle3|grammar] [--commands-candidate FILE] [--voice] [--hold] [--] [REQUEST...]"
+    _ask_usage="usage: $_self ask [--model lfm2|lfm3|needle3|grammar] [--commands-candidate FILE] [--voice] [--hold] [--] [REQUEST...]"
     # Every exit, a usage error included, waits for Enter under --hold, so the
     # tab it runs in stays readable. Statuses are 0, 1 and 2 only.
     for _ask_arg in "$@"; do
@@ -3487,14 +3487,14 @@ case "${1:-}" in
         --voice) _ask_voice=1; shift ;;
         --model|--commands-backend)
           case "${2:-}" in
-            lfm2|needle3|grammar) _ask_options+=(--commands-backend "$2"); shift 2 ;;
-            *) echo "kilix ask: --model must be lfm2, needle3 or grammar" >&2; _ask_close 2 ;;
+            lfm2|lfm3|needle3|grammar) _ask_options+=(--commands-backend "$2"); shift 2 ;;
+            *) echo "kilix ask: --model must be lfm2, lfm3, needle3 or grammar" >&2; _ask_close 2 ;;
           esac ;;
         --model=*|--commands-backend=*)
           _ask_model="${1#*=}"
           case "$_ask_model" in
-            lfm2|needle3|grammar) _ask_options+=(--commands-backend "$_ask_model"); shift ;;
-            *) echo "kilix ask: --model must be lfm2, needle3 or grammar" >&2; _ask_close 2 ;;
+            lfm2|lfm3|needle3|grammar) _ask_options+=(--commands-backend "$_ask_model"); shift ;;
+            *) echo "kilix ask: --model must be lfm2, lfm3, needle3 or grammar" >&2; _ask_close 2 ;;
           esac ;;
         --commands-candidate)
           [ $# -ge 2 ] && [ -n "$2" ] || { echo "$_ask_usage" >&2; _ask_close 2; }
@@ -3512,11 +3512,11 @@ case "${1:-}" in
           echo "  kilix weather \"Paris, France\" --unit celsius"
           echo "  --voice  dictate the request; the transcript can be edited first"
           echo "  --hold   wait for Enter before returning, so a tab stays readable"
-          echo "  --model  lfm2, needle3, or grammar for this request; overrides KILIX_ASK_COMMANDS_BACKEND"
+          echo "  --model  lfm2, lfm3, needle3, or grammar for this request; overrides KILIX_ASK_COMMANDS_BACKEND"
           echo "           and the saved Ask selection (lfm2 when none is saved)"
           echo "  --commands-candidate FILE  use a local Needle 3 candidate with --model needle3"
           echo "Install the alternate: kilix-needle install --commands needle3"
-          echo "Save the selection: kilix-needle workflows select --model lfm2|needle3|grammar"
+          echo "Save the selection: kilix-needle workflows select --model lfm2|lfm3|needle3|grammar"
           echo
           echo "With no request, it asks for one. Exit status: 0 answered/acted, 1 not answered/acted"
           echo "(declined, refused or unsure), 2 usage."

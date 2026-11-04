@@ -483,12 +483,12 @@ class WizardTests(unittest.TestCase):
 
     def test_ask_and_legacy_models_have_distinct_pages_and_defaults(self):
         assets = [asset(name, 'kilix-needle') for name in (
-            'needle2', 'needle2-runtime', 'lfm2-kilix-commands', 'needle3-kilix-commands')]
+            'needle2', 'needle2-runtime', 'lfm2-kilix-commands', 'lfm3-kilix-commands', 'needle3-kilix-commands')]
         pages = {page['id']: page for page in wizard.pages(assets=assets, measure=False)}
         self.assertEqual(set(pages), {'workflows', 'legacy-workflows'})
         self.assertEqual(pages['workflows']['default'], 'lfm2-kilix-commands')
         self.assertEqual([row['id'] for row in pages['workflows']['models']],
-                         ['lfm2-kilix-commands', 'needle3-kilix-commands', 'grammar'])
+                         ['lfm2-kilix-commands', 'lfm3-kilix-commands', 'needle3-kilix-commands', 'grammar'])
         self.assertEqual(pages['legacy-workflows']['default'], 'needle2')
         self.assertEqual(pages['workflows']['models'][-1]['download_bytes'], 0)
 
@@ -512,6 +512,16 @@ class WizardTests(unittest.TestCase):
             wizard.finish()
         self.assertEqual(install.call_args.args[0], ['needle3-kilix-commands'])
         check.assert_called_once_with(model='needle3', select=True)
+
+    def test_optional_lfm3_is_selected_after_its_own_acceptance(self):
+        with patch.object(wizard, 'catalog', return_value=[asset('lfm2-kilix-commands'), asset('lfm3-kilix-commands')]), \
+                patch('wizard_licenses.consent_and_install', return_value=({'lfm3-kilix-commands'}, set())) as install, \
+                patch.object(wizard, 'check_workflows') as check, \
+                patch.object(wizard, 'legacy_state'):
+            wizard.apply('workflows', ['lfm3-kilix-commands'], 'yes')
+            wizard.finish()
+        self.assertEqual(install.call_args.args[0], ['lfm3-kilix-commands'])
+        check.assert_called_once_with(model='lfm3', select=True)
 
     def test_first_accepted_ask_model_becomes_the_saved_selection(self):
         # Both Ask models can be acquired together; Needle saves only the one
