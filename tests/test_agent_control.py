@@ -19,6 +19,15 @@ import agent_control as control
 import agent_programs
 import agent_trust
 
+def captured_argv(test, argv, provider, prompt_count):
+    if not sys.platform.startswith('linux') or provider == 'kimi':
+        return argv
+    test.assertEqual(argv[:5], [sys.executable,
+        str(Path(__file__).resolve().parents[1] / 'config/coding_launch.py'),
+        provider, str(prompt_count), '--'])
+    return argv[5:]
+
+
 SOURCE_BROKER = "a" * 16
 TARGET_BROKER = "b" * 16
 
@@ -188,7 +197,8 @@ class LaunchTests(unittest.TestCase):
         self.assertEqual(argv[argv.index("--match") + 1], "window_id:1")
         self.assertEqual(argv[argv.index("--next-to") + 1], "id:1")
         self.assertEqual(argv[argv.index("--cwd") + 1], self.directory.name)
-        self.assertEqual(argv[argv.index("--") + 1:], ["/opt/bin/codex", "--no-daemon", "--model", "model-name"])
+        self.assertEqual(captured_argv(self, argv[argv.index("--") + 1:], "codex", 0),
+                         ["/opt/bin/codex", "--no-daemon", "--model", "model-name"])
         self.assertIn("--keep-focus", argv)
         self.assertNotIn("--allow-remote-control", argv)
         self.assertEqual(result["pane"]["tab_id"], 22)
@@ -271,7 +281,7 @@ class AgentArgvTests(unittest.TestCase):
                                   return_value=frozenset({"update", "logout", "mcp", "a"})):
             control.launch(client, args)
         argv = client.calls[-1][0]
-        return argv[argv.index("--") + 1:], exe
+        return captured_argv(self, argv[argv.index("--") + 1:], agent, int(args.prompt is not None)), exe
 
     def test_each_client_resumes_and_takes_a_prompt_its_own_way(self):
         cases = {"claude": ["/bin/claude", "--resume", "abc-123", "review the diff"],
@@ -638,6 +648,17 @@ class TrustTests(unittest.TestCase):
 
 
 class ConnectionTests(unittest.TestCase):
+    def setUp(self):
+        from _caller_context_support import bind_test_caller
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        broker = self.root / 'kitty-pty-broker'
+        broker.write_text('fixture broker')
+        self.BROKER = dict(type(self).BROKER, KITTY_PTY_BROKER_EXECUTABLE=str(broker))
+        bind_test_caller(self, broker, self.BROKER['KITTY_PTY_BROKER_RUNTIME'],
+                         self.BROKER['KITTY_PTY_BROKER_SESSION'])
+
     def test_public_key_recovery_stays_with_the_selected_instance(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

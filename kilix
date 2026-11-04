@@ -23,6 +23,7 @@
 #   ./kilix settings          # shared chrome/game settings TUI and CLI
 #   ./kilix games ...         # list, play, enable, or disable stack games
 #   ./kilix power ...         # logout|reboot|poweroff, no confirmation here
+#   ./kilix power-controls    # graphical power preferences and Screen Lock settings
 #   ./kilix launcher          # catalog TUI: stack programs, apps, launchers
 #   ./kilix skills ...        # explicitly install/list/remove bundled agent skills
 #   ./kilix agent-control ... # bounded coding-session inspection and control
@@ -75,6 +76,7 @@
 #   ./kilix desktop-action ... # typed X11 input/window actions; preview by default
 #   ./kilix cap               # launch/install the Kilix Cap mansion desktop
 #   ./kilix tui               # launch/install the Kilix TUI desktop
+#   ./kilix tui screen-lock   # automatic screen-lock settings, --show or --set on|off|session
 #   ./kilix land              # launch/install the Kilix Land desktop
 #   ./kilix icewm             # launch/install the Kilix IceWM desktop
 #   ./kilix --build           # build the forked kitty from ./src
@@ -103,6 +105,32 @@ _kilix_validate_tui_root_arguments() {
   esac
 }
 _kilix_validate_tui_root_arguments "$@"
+
+# This settings verb runs in the current terminal and requires no desktop
+# provider, engine download or content root.
+case "${1:-}:${2:-}" in
+  tui:screen-lock|kilix-tui:screen-lock)
+    shift 2
+    command -v pleb >/dev/null 2>&1 || {
+      echo "kilix tui screen-lock: Pleb is missing; install the Pleb desktop session first" >&2
+      exit 1
+    }
+    exec pleb screen-lock "$@" ;;
+esac
+
+if [ "${1:-}" = power-controls ]; then
+  shift
+  if [ "${1:-}" = --native ]; then
+    shift
+    exec /usr/bin/python3 -B "$KILIX_HOME/config/content_app.py" run kilix-power-controls -- --native "$@"
+  fi
+  case "${1:-}" in
+    --help|-h|--version|--show)
+      exec /usr/bin/python3 -B "$KILIX_HOME/config/content_app.py" run kilix-power-controls -- "$@" ;;
+  esac
+  exec "$KILIX_HOME/kilix" run --size 1000x720 \
+    /usr/bin/python3 -B "$KILIX_HOME/config/content_app.py" run kilix-power-controls -- --native "$@"
+fi
 # END TUI ROOT ARGUMENTS
 GPU_TERMINAL_SOURCE_HOME="${GPU_TERMINAL_SOURCE_HOME:-$HOME/.local/gpu_terminal/sources}"
 GPU_TERMINAL_HOME="${GPU_TERMINAL_HOME:-$HOME/.local/gpu_terminal}"
@@ -147,6 +175,11 @@ fi
 # These commands also work before engine/storage setup. Model inspection needs
 # the pinned Content package, but never initializes shared settings or receipts.
 case "${1:-}" in
+  panes|pane-center)
+    # Read the inherited frontend before writable setup can replace its
+    # credential path. The pane center also needs the SDK caller/route guard.
+    shift
+    exec python3 -B "$KILIX_HOME/config/pane_center_launch.py" "$@" ;;
   weather)
     shift
     exec python3 -B "$KILIX_HOME/config/kilix_weather.py" "$@" ;;
@@ -5767,31 +5800,6 @@ case "${1:-}" in
   remote)
     shift
     _kilix_remote_mux "$@" ;;
-  panes|pane-center)
-    shift
-    # This richer surface lives with the shared TUI toolkit, but is a Kilix
-    # command: agents should not need to know which component draws it. Prefer
-    # the installed closure, then the explicitly configured development
-    # checkout, with the conventional source tree as the final source fallback.
-    _panes_bin="${KILIX_TUI_UTILS_PREFIX:-$HOME/.local}/bin/kilix-panes"
-    if [ -x "$_panes_bin" ]; then
-      exec "$_panes_bin" "$@"
-    fi
-    if _panes_bin="$(command -v kilix-panes 2>/dev/null)" \
-         && [ -x "$_panes_bin" ]; then
-      exec "$_panes_bin" "$@"
-    fi
-    for _panes_src in \
-      "$KILIX_TUI_UTILS_DIR/tools/switcher/main.py" \
-      "${GPU_TERMINAL_SOURCE_HOME:-$HOME/.local/gpu_terminal/sources}/kilix-desktops/kilix-tui-utils/tools/switcher/main.py"
-    do
-      if [ -f "$_panes_src" ] && command -v python3 >/dev/null 2>&1; then
-        exec python3 "$_panes_src" "$@"
-      fi
-    done
-    echo "kilix panes: the pane center is not installed." >&2
-    echo "Install it with kilix-tui-utils/install.sh." >&2
-    exit 127 ;;
   switch|switcher)
     shift
     # Prefer the installed command, exactly as the thermometer and memory chip

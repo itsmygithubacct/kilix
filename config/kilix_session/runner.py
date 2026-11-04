@@ -146,7 +146,13 @@ def run(root, run_id):
                                   stdout=output, stderr=errors, start_new_session=True)
                     reader = stack.enter_context(files.open("events.jsonl", "rb"))
                     events = Events(reader, record["provider"], record["observed"])
-                proc = subprocess.Popen(record["argv"], cwd=record["cwd"], env=env, umask=0o077, **kwargs)
+                argv = record["argv"]
+                if record["interactive"]:
+                    from coding_launch import wrapper
+                    # Interactive adapters put only the bootstrap prompt last.
+                    argv = wrapper(record["provider"], argv,
+                                   prompt=True if "--" in argv else None)
+                proc = subprocess.Popen(argv, cwd=record["cwd"], env=env, umask=0o077, **kwargs)
                 if record["interactive"]:
                     os.tcsetpgrp(sys.stdin.fileno(), proc.pid)
                     terminal_taken = True

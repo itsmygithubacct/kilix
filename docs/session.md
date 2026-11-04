@@ -338,3 +338,35 @@ failure receipts, duplicate workers, grids, focus, batch staggering and install
 entries. It opens no real model sessions or Kilix panes. Current installed client
 help was consulted for argv spelling; provider authentication, real model
 acceptance and image acceptance remain separate integration checks.
+
+## Closing a coding pane
+
+On Linux, closing a Codex, Claude, Grok or OMP pane offers **Close and give path
+to rollout log**, **Background to tmux**, and **Cancel**. Closing a tab containing
+one such pane offers the same choices. Closing several panes or an entire OS
+window retains the ordinary group-close confirmation; it does not transfer
+coding conversations to tmux.
+
+Both close actions open a separate terminal showing the exact conversation ID,
+rollout log and a durable recovery receipt. **Background to tmux** also shows
+its detached session and exact attach command. It preserves the captured model,
+approval, configuration and working-directory settings, and starts the resumed
+client only after the original client exits. It does not replay the initial
+prompt. The terminal reports transfer status and remains available after the
+original pane closes.
+
+Managed interactive launches record their original command privately. An older
+or directly launched session without reliable original flags cannot be moved to
+tmux automatically; the dialog reports that limitation and leaves it open. A
+missing rollout, ambiguous conversation, unavailable tmux or failed preparation
+also leaves the original pane open. If continuation fails after closing, use the
+retained receipt and terminal diagnostics to recover the exact conversation.
+**Close and give path to rollout log** never resumes it automatically.
+
+Coding-client identities are declared in `config/coding_clients.json`, shared
+by managed launch capture and the engine close dialog. Detection checks only
+the executable basename or an explicit interpreter entrypoint package path.
+Provider names in ancestor directories or prompt arguments do not select this
+dialog. The engine reads at most 16 KiB of regular, nonsymlink registry data;
+it runs no detection subprocess. Missing or invalid registry data leaves the
+ordinary close confirmation behavior in place.
