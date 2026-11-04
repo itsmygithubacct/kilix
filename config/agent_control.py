@@ -473,6 +473,9 @@ def launch(client, args, *, explicit_argv=None):
             return {"schema": SCHEMA, "status": "dry_run", "target": describe(target),
                     "placement": {"grid": name, "layout": session_grid.LAYOUT,
                                   "capacity": session_grid.CAPACITY}, "argv": argv}
+        if explicit_argv is None:
+            from coding_launch import wrapper
+            argv = wrapper(args.agent, argv, prompt=args.prompt)
         placed = session_grid.place(client, source=describe(target), argv=argv, cwd=str(cwd),
                                     title=title, name=name, hold=True,
                                     retarget=getattr(client, "retarget", None))
@@ -506,6 +509,9 @@ def launch(client, args, *, explicit_argv=None):
     current = client.resolve(args.pane, args.expect_broker)
     if any(current[key] != target[key] for key in ("tab_id", "os_window_id", "layout")):
         raise ControlError("anchor geometry changed; inspect state before launching")
+    if explicit_argv is None:
+        from coding_launch import wrapper
+        argv = wrapper(args.agent, argv, prompt=args.prompt)
     raw_id = client.run(options + ["--"] + argv).strip()
     if not raw_id.isdecimal() or int(raw_id) in before or int(raw_id) <= 0:
         raise ControlError("launch returned no new pane ID; inspect state, do not blindly relaunch")
