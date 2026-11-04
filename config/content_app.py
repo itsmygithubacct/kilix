@@ -133,12 +133,22 @@ def _exec(
     surface: str,
     content_id: str,
     action: str = "",
+    tab_app: bool = False,
 ) -> None:
     environment = launch_environment()
     environment["KILIX_APP_ID"] = content_id
     environment["KILIX_APP_SURFACE"] = surface
     if action:
         environment["KILIX_APP_ACTION"] = action
+    policy = environment.get("KILIX_RUN_ALIASES", "").lower()
+    pleb_session = (environment.get("XDG_SESSION_DESKTOP") == "pleb"
+                    or environment.get("XDG_CURRENT_DESKTOP") == "Pleb")
+    if (tab_app and environment.get("DISPLAY")
+            and environment.get("KILIX_PRIVATE_XAPP") != "1"
+            and policy not in {"0", "no", "false", "off"}
+            and (_enabled(policy) or pleb_session)):
+        argv = [str(Path(__file__).resolve().parents[1] / "kilix"), "run", *argv]
+        environment.pop("KILIX_IN_OVERLAY", None)
     os.execvpe(argv[0], argv, environment)
 
 
@@ -274,7 +284,7 @@ def main(argv: list[str] | None = None) -> int:
             if spec.launch_mode == "terminal":
                 return _run_terminal(command, spec.content_id, action_id)
             _exec(command, surface="current", content_id=spec.content_id,
-                  action=action_id)
+                  action=action_id, tab_app=spec.launch_mode == "xpane")
             return 0
         if spec.source_type == "custom":
             plan = content.application_plan(
@@ -305,6 +315,7 @@ def main(argv: list[str] | None = None) -> int:
             surface="current",
             content_id=spec.content_id,
             action=action_id,
+            tab_app=spec.launch_mode == "xpane",
         )
     except (
         content.CatalogError,

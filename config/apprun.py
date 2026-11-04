@@ -613,12 +613,19 @@ class AppPane:
         env = {}
         if self.pulse_sink:
             env["PULSE_SINK"] = self.pulse_sink   # route app audio to our sink
+        command = self.cmd
+        if self.term and os.path.basename(command[0]).startswith('qemu-system-'):
+            from qemu_pane import QemuPane
+            self.qemu_pane = QemuPane(command)
+            command = self.qemu_pane.command
         self.app = self.xapp.launch_app(
-            self.cmd, env=env, isolate_bus=self.manage_windows,
+            command, env=env, isolate_bus=self.manage_windows,
             capture_source=not (self.no_pane or self.serve or self.lan or self.hls or
                                 self.mse or self.webrtc or self.stream),
             clipboard=not (self.no_pane or self.serve or self.lan or self.hls or
                            self.mse or self.webrtc or self.stream))
+        if getattr(self, 'qemu_pane', None) is not None:
+            self.qemu_pane.publish(self.qemu_pane.path)
         if self.term:
             self.inj = self.xapp.make_injector()
         self.focus_app_window()
@@ -1127,6 +1134,8 @@ class AppPane:
         # the private display or its application processes. ExitStack keeps
         # errors visible while still attempting every remaining cleanup.
         with ExitStack() as cleanup:
+            if getattr(self, 'qemu_pane', None) is not None:
+                cleanup.callback(self.qemu_pane.close)
             if self.xapp is not None:
                 cleanup.callback(self.xapp.close)
             cleanup.callback(self._stop_capture)

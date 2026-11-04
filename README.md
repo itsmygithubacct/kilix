@@ -1,8 +1,20 @@
 # kilix — kitty that looks & behaves like Tilix, with clickable pane buttons
 
+## 0.2.3 RC1 power settings
+
+`kilix power-controls` opens Kilix Power Controls, the Kilix GUI for power
+preferences, with plugged-in and battery policies, display power, dimming,
+device information, and the shared Screen Lock page. `--native` opens it on the
+current display. The pinned application uses the existing desktop power service.
+
+- `kilix tui screen-lock` — automatic screen-lock settings shared with Pleb's
+  Display Settings and Power Manager. Use `--show`, `--set off`,
+  `--set on --idle-seconds 600`, or `--set session` to follow session defaults.
+  Saved changes apply at the next login; manual locking remains available.
+
 ## 0.2.2.1 maintenance candidate
 
-Coordinates the Model Setup password-disclosure fix and four-part maintenance-release support. Runtime and third-party source pins remain those of 0.2.2.
+Coordinates the Model Setup password-disclosure fix and four-part maintenance-release support.
 
 This source is a release candidate; installation-media and upgrade acceptance are pending.
 
@@ -2262,7 +2274,8 @@ Defense under DOSBox entirely through a pane.
 In a Pleb desktop session, ordinary commands for installed graphical
 applications are routed here automatically. Kilix combines common Debian GUI
 command names with visible, non-terminal entries from the XDG `.desktop`
-catalogue; scripts and terminal-only programs are not changed. Set
+catalogue. Pleb also installs session PATH launchers so non-interactive scripts
+use the same routing; terminal-only modes stay direct. Set
 `KILIX_RUN_ALIASES=0` for native X11 windows, add commands with
 `KILIX_RUN_ALIAS_APPS="foo bar"`, or exclude one with
 `KILIX_RUN_ALIAS_EXCLUDE_APPS="foo"`.
@@ -2270,12 +2283,22 @@ catalogue; scripts and terminal-only programs are not changed. Set
 Chrome (including `google-chrome-stable`) and the installed x86, ARM and
 AArch64 QEMU system commands use this route even without a desktop entry.
 For example, `qemu-system-x86_64 -m 256 -nodefaults -display gtk` opens a
-Kilix tab. Keep QEMU in the foreground: `-daemonize` is refused inside a tab,
-and closing the tab stops its guest. Shut down the guest normally first when
-its disk contains data you want to keep. To request an external window or a
-headless/detached VM, bypass the interactive alias with
-`command qemu-system-x86_64 ...`; `command google-chrome ...` similarly opens
-the native browser. Scripts that execute QEMU directly retain their behavior.
+Kilix tab. In a Pleb session, graphical QEMU commands using `-daemonize`
+are converted to foreground execution owned by the tab, with an explanatory
+message. Direct `kilix run` still requires foreground QEMU. Headless VM commands
+keep their original behavior. Use `KILIX_RUN_ALIASES=0` for an external launch.
+
+Closing a QEMU pane (or its single-pane tab) offers **Shut down VM**,
+**Force close**, and **Cancel**, with Cancel selected by default. Shut down VM
+sends QEMU's ACPI power-button request through a private monitor and keeps the
+pane open until QEMU exits. A guest that ignores ACPI, or QEMU running with
+`-no-shutdown`, can leave the pane open; there is no automatic forced shutdown.
+Monitor failures leave the pane open with an error. Force close explicitly
+terminates the VM and can lose unsaved guest data. Existing user QMP monitors
+are preserved; Kilix adds its own endpoint and removes it during pane cleanup.
+These choices require the matching RC1 engine and app runner and apply to
+new QEMU panes launched through `kilix run`.
+
 Automation can set `KILIX_RUN_READY_FILE` to a nonexistent file in its own
 private directory. Kilix creates that file with mode 0600 and contents
 `content-ready\n` only once the pane has rendered changing content or its

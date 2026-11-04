@@ -136,6 +136,27 @@ class ContentAppTests(unittest.TestCase):
             self.assertEqual(content_app._pause_failure(7), 7)
             prompt.assert_not_called()
 
+    def test_catalog_absolute_gui_executable_enters_tab(self):
+        environment = {"DISPLAY": ":99", "XDG_SESSION_DESKTOP": "pleb",
+                       "KILIX_IN_OVERLAY": "1"}
+        with mock.patch.object(content_app, "launch_environment", return_value=environment), \
+                mock.patch.object(content_app.os, "execvpe") as execute:
+            content_app._exec(["/apps/kilix-amp", "a b.ogg"], surface="current",
+                              content_id="kilix-amp", tab_app=True)
+        self.assertEqual(execute.call_args.args[1],
+                         [str(ROOT/"kilix"), "run", "/apps/kilix-amp", "a b.ogg"])
+        self.assertNotIn("KILIX_IN_OVERLAY", execute.call_args.args[2])
+
+    def test_catalog_private_display_opt_out_and_terminal_are_preserved(self):
+        for extra, tab_app in [({"KILIX_PRIVATE_XAPP": "1"}, True),
+                               ({"KILIX_RUN_ALIASES": "0"}, True), ({}, False)]:
+            environment = {"DISPLAY": ":99", "XDG_SESSION_DESKTOP": "pleb", **extra}
+            with mock.patch.object(content_app, "launch_environment", return_value=environment), \
+                    mock.patch.object(content_app.os, "execvpe") as execute:
+                content_app._exec(["/apps/app"], surface="current", content_id="app",
+                                  tab_app=tab_app)
+            self.assertEqual(execute.call_args.args[1], ["/apps/app"])
+
     def test_native_window_app_is_not_wrapped_in_a_terminal(self):
         spec = SimpleNamespace(launch_mode="xpane", label="Media Player")
         self.assertEqual(
