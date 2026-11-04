@@ -1,13 +1,15 @@
-# Kilix 0.2.2 help
+# Kilix help
 
-This guide describes the Kilix source selected for the coordinated 0.2.2
-candidate. Image, upgrade and final human acceptance remain pending.
-Commands assume `kilix` is on PATH. Pane commands run inside a live Kilix.
+Use these guides for everyday Kilix tasks. Commands assume `kilix` is on PATH;
+pane commands run inside a live Kilix. For the 0.2.3 RC1 candidate, start with
+[Help answers and documentation search](answers.md) to get commands, short
+explanations and links to the relevant documentation.
 
 Start with [Operating Kilix](operations/README.md) for task-oriented help on
 creating, finding, reading and controlling pages and panes, logs and sessions.
 
-- [Release status and versions](release.md)
+- [Help answers and documentation search (0.2.3 RC1)](answers.md)
+- [0.2.2 release background and version commands](release.md)
 - [Start menu and settings](settings.md)
 - [Pages and panes](panes.md)
 - [Managed coding sessions, trusted folders and run logs](../session.md)
