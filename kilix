@@ -2884,11 +2884,14 @@ case "${1:-}" in
     _help_command=answer
     [ "$1" = help-setup ] && _help_command=setup
     shift
-    _help_explicit_sizer=0
+    _help_skip_sizer=0
     for _help_argument in "$@"; do
-      case "$_help_argument" in --sizer|--sizer=*) _help_explicit_sizer=1 ;; esac
+      case "$_help_argument" in
+        --) break ;;
+        -h|--help|--sizer|--sizer=*) _help_skip_sizer=1 ;;
+      esac
     done
-    if [ "$_help_explicit_sizer" = 0 ] && [ -z "${PLEBIAN_MODEL_SIZER:-}" ]; then
+    if [ "$_help_skip_sizer" = 0 ] && [ -z "${PLEBIAN_MODEL_SIZER:-}" ]; then
       if [ "$_help_command" = setup ]; then
         PLEBIAN_MODEL_SIZER="$("$KILIX_HOME/scripts/install-kilix-tts-sizer.sh")" || exit 1
       else

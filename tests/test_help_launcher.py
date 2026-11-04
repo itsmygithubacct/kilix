@@ -65,3 +65,10 @@ class HelpLauncherTests(unittest.TestCase):
         self.assertFalse(self.log.exists())
         self.assertEqual(json.loads(result.stdout)['argv'][-3:],
                          ['--sizer', '/provider with spaces', 'List panes'])
+
+    def test_usage_does_not_prepare_model_sizing(self):
+        for command in ('help-setup', 'help-answer'):
+            result = self.run_help(command, '--help')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout)['argv'][-1], '--help')
+        self.assertFalse(self.log.exists())
