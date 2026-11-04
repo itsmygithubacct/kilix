@@ -17,7 +17,7 @@ KILIX_LOOK_ALLOW_MUTABLE_REF="${KILIX_LOOK_ALLOW_MUTABLE_REF:-0}"
 # resolves it — a first-use download and an existing checkout alike — so a moved
 # pin reaches machines that already have the component. Set
 # KILIX_LOOK_KEEP_EXISTING_CHECKOUT=1 to work from a checkout as it is.
-KILIX_LOOK_DEFAULT_REF=af65eee3577a833e9c6f288bb14a7bf874a2e1ab
+KILIX_LOOK_DEFAULT_REF=ee8ca0679503bcfacccbba0e61fff5c055ad9113
 
 die() { printf 'kilix look: %s\n' "$*" >&2; exit 1; }
 log() { printf 'kilix look: %s\n' "$*" >&2; }
@@ -78,6 +78,30 @@ install_ref="${explicit_ref:-$KILIX_LOOK_DEFAULT_REF}"
 if ! [[ "$install_ref" =~ ^[0-9a-fA-F]{40}$ ]] \
      && [ "$KILIX_LOOK_ALLOW_MUTABLE_REF" != 1 ]; then
   die "KILIX_LOOK_REF must be a full 40-character commit SHA (set KILIX_LOOK_ALLOW_MUTABLE_REF=1 only to trust a mutable tag/branch)"
+fi
+
+
+# A configured carrier is authoritative. Its helper verifies the selected
+# source before any checkout, then rewrites Git to a file-only source pool.
+if [ "${KILIX_SOURCE_CARRIER_MANIFEST+x}" = x ] || [ "${KILIX_SOURCE_CARRIER_SHA256+x}" = x ] \
+     || [ -e /usr/share/plebian-os/source-carrier/manifest.json ] \
+     || [ -L /usr/share/plebian-os/source-carrier/manifest.json ] \
+     || [ -e /usr/share/plebian-os/source-carrier/manifest.sha256 ] \
+     || [ -L /usr/share/plebian-os/source-carrier/manifest.sha256 ]; then
+  carrier_adapter="$KILIX_HOME/scripts/detector-carrier.sh"
+  [ -f "$carrier_adapter" ] && [ ! -L "$carrier_adapter" ] \
+    || die "the detector source-carrier adapter is unavailable"
+  . "$carrier_adapter"
+  carrier_parent="$(dirname "$look_dir")"
+  mkdir -p -- "$carrier_parent" || die "could not create the source parent"
+  [ -d "$carrier_parent" ] && [ ! -L "$carrier_parent" ] \
+    || die "source parent must be a real directory"
+  carrier_keep=0
+  case "$KILIX_LOOK_KEEP_EXISTING_CHECKOUT" in 1|yes|true|on)
+    [ ! -e "$look_dir/.git" ] || carrier_keep=1 ;;
+  esac
+  detector_carrier_prepare "$KILIX_HOME" "$KILIX_LOOK_REPO" "$install_ref" \
+    "$carrier_parent" "$carrier_keep" || die "offline source carrier refused the request"
 fi
 
 build_checkout() {
@@ -203,7 +227,12 @@ if git -C "$look_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   checkout_root="$(realpath -m -- "$checkout_root")"
   [ "$checkout_root" = "$look_dir" ] \
     || die "$look_dir is nested inside a different Git checkout: $checkout_root"
-  origin="$(git -C "$look_dir" remote get-url origin 2>/dev/null || true)"
+  if [ -n "${_detector_carrier_tmp:-}" ]; then
+    # get-url expands the offline rewrite; compare the stored origin instead.
+    origin="$(git -C "$look_dir" config --local --get remote.origin.url 2>/dev/null || true)"
+  else
+    origin="$(git -C "$look_dir" remote get-url origin 2>/dev/null || true)"
+  fi
   if [ "$origin" != "$KILIX_LOOK_REPO" ] \
        && [ "$KILIX_LOOK_TRUST_EXISTING_CHECKOUT" != 1 ]; then
     die "$look_dir has origin '${origin:-missing}', expected '$KILIX_LOOK_REPO' (set KILIX_LOOK_TRUST_EXISTING_CHECKOUT=1 only for a trusted checkout)"
@@ -240,6 +269,7 @@ clone_tmp="$(mktemp -d "$parent/.kilix-object-detect.clone.XXXXXX")" \
   || die "could not allocate a temporary clone directory"
 cleanup() {
   [ -z "${clone_tmp:-}" ] || rm -rf -- "$clone_tmp"
+  if [ -n "${_detector_carrier_tmp:-}" ]; then detector_carrier_cleanup; fi
 }
 trap cleanup EXIT
 trap 'exit 130' INT
