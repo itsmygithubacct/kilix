@@ -240,7 +240,8 @@ needed first. Ambiguous targets fail; each verb prints what it did.
   kilix windows --host HOST COMMAND         Windows via SSH
 Also: ask 'REQUEST', weather CITY, grammar, needle, shell, claudex route|usage,
   wizard, settings, status, update, install, games,
-  screen-size, transcript, help-search "QUESTION". Options: --help.
+  screen-size, transcript, help-setup, help-answer "QUESTION",
+  help-search "QUESTION". Options: --help.
 Engine options: kilix --help-engine
 EOF
     printf 'Agent guide: %s/docs/AGENTS.md\n' "$KILIX_HOME"
@@ -2879,6 +2880,33 @@ case "${1:-}" in
   help-search)
     shift
     exec python3 "$KILIX_HOME/config/content_app.py" run kilix-help-llm -- lookup "$@" ;;
+  help-answer|help-setup)
+    _help_command=answer
+    [ "$1" = help-setup ] && _help_command=setup
+    shift
+    _help_skip_sizer=0
+    for _help_argument in "$@"; do
+      case "$_help_argument" in
+        --) break ;;
+        -h|--help|--sizer|--sizer=*) _help_skip_sizer=1 ;;
+      esac
+    done
+    if [ "$_help_skip_sizer" = 0 ] && [ -z "${PLEBIAN_MODEL_SIZER:-}" ]; then
+      if [ "$_help_command" = setup ]; then
+        PLEBIAN_MODEL_SIZER="$("$KILIX_HOME/scripts/install-kilix-tts-sizer.sh")" || exit 1
+      else
+        PLEBIAN_MODEL_SIZER="$("$KILIX_HOME/scripts/install-kilix-tts-sizer.sh" --print-path)" || {
+          echo 'kilix help: run kilix help-setup first, or use kilix help-search' >&2
+          exit 1
+        }
+      fi
+      if [ ! -x "$PLEBIAN_MODEL_SIZER" ]; then
+        echo 'kilix help: run kilix help-setup first, or use kilix help-search' >&2
+        exit 1
+      fi
+      export PLEBIAN_MODEL_SIZER
+    fi
+    exec python3 "$KILIX_HOME/config/content_app.py" run kilix-help-llm -- "$_help_command" "$@" ;;
   settings|--settings)
     shift
     exec python3 "$KILIX_HOME/kilix-settings" "$@" ;;
