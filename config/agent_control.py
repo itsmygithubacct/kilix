@@ -200,6 +200,11 @@ def connection_values():
 
 def recovered_values():
     """Recover only pane connection metadata from this process's ancestors."""
+    from kilix_sdk.caller_context import CallerContextError, require_pane_local
+    try:
+        require_pane_local()
+    except CallerContextError as exc:
+        raise ControlError(str(exc)) from None
     names = (*ROUTE, "KILIX_KITTEN", "KILIX_BUILD_DIRECTORY", "KILIX_PREBUILT_HOME",
              *BROKER_IDENTITY)
     values = {name: os.environ[name] for name in names if os.environ.get(name)}
@@ -521,13 +526,17 @@ def validate_reasoning_effort(agent, effort):
     return effort
 
 
-def agent_argv(args, executable, cwd, deadline=float("inf")):
+def agent_argv(args, executable, cwd, deadline=float("inf"), *, interactive=True):
     """The client's argv: its own flags, then resume, then a prompt, each one
     literal item. Nothing here comes from a shell string."""
     agent = args.agent
     if (args.prompt or args.resume) and agent == "kimi":
         raise ControlError("kimi takes no launch prompt or resume here; start it, then send")
     argv = [executable]
+    if agent == "codex" and interactive:
+        # Tool children must inherit this pane, not a shared server's old pane.
+        # This is a top-level flag, before `resume`; `exec` does not accept it.
+        argv.append("--no-daemon")
     resume = None
     if args.resume:
         if not SESSION_ID.fullmatch(args.resume):

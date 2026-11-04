@@ -91,7 +91,11 @@ def current(*, timeout=.4):
     active pane as a substitute.
     """
     from . import frontend_context, panes
-    frontend_context.refresh()
+    from .caller_context import CallerContextError
+    try:
+        frontend_context.refresh()
+    except CallerContextError as exc:
+        raise GeometryUnavailable(str(exc)) from None
     value = os.environ.get('KITTY_WINDOW_ID', '')
     if not value.isdecimal() or int(value) <= 0:
         raise GeometryUnavailable('No live pane context')
