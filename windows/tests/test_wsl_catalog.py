@@ -281,10 +281,14 @@ class CatalogTests(unittest.TestCase):
         for prefix, pin in pins.items():
             self.assertRegex(pin, r'^[0-9a-f]{40}$')
             key = catalog_sources.repository(prefix) + '/' + pin
-            if prefix == 'apps/kilix-playalong' and key not in hashes:
-                # This local RC source is delivered by Content's verified Git
-                # bundle carrier, not by an invented public archive digest.
-                self.assertEqual(pin, 'a63d83e7a99f82cfcae31e1b5b0b0a51d903e67e')
+            carrier_only = {
+                'apps/kilix-playalong': 'a63d83e7a99f82cfcae31e1b5b0b0a51d903e67e',
+                'needle': '0a936d30893c3063cf0ad36d07bbcee12c522ee5',
+                'needle/third_party/kilix-ml': 'aa3489323ee74dc1661aa604e7145c5e14bcf500',
+            }
+            if key not in hashes and prefix in carrier_only:
+                # Exact local RC sources use Content's verified Git carrier.
+                self.assertEqual(pin, carrier_only[prefix])
                 continue
             self.assertRegex(hashes[key], r'^[0-9a-f]{64}$')
 
