@@ -15,6 +15,11 @@ from coding_launch import capture, identity
 from coding_resume import clean_environment, log_identity, resume_argv
 
 class ResumeTests(unittest.TestCase):
+    def setUp(self):
+        # Synthetic helper controls only; real broker DRAIN controls are separate.
+        drain = patch.object(h, 'drain_broker', side_effect=lambda record: h.cessation_key(record))
+        drain.start(); self.addCleanup(drain.stop)
+
     def test_four_clients(self):
         flags = {'codex': ['--no-daemon', '--yolo', '-c', 'model_reasoning_effort="medium"'],
                  'claude': ['--dangerously-skip-permissions', '--effort', 'high'],
@@ -65,7 +70,7 @@ class ResumeTests(unittest.TestCase):
             program.chmod(0o700)
             old=subprocess.Popen([sys.executable,'-c','import time;time.sleep(60)'])
             record={'provider':'codex','session_id':'fixture','rollout_path':str(root/'log'),
-                    'pane':1,'broker':'fixture','processes':[identity(old.pid)],'cwd':temp,
+                    'pane':1,'broker':'fixture','broker_binding':{'session':'fixture','started_millis':123},'processes':[identity(old.pid)],'cwd':temp,
                     'mode':'background','argv':[str(program)],
                     'environment':{'HOME':temp,'PATH':os.environ['PATH'],'CANARY':str(canary)}}
             receipt=None
@@ -89,7 +94,7 @@ class ResumeTests(unittest.TestCase):
                     patch.dict(os.environ, {'HOME':temp}):
                 old=subprocess.Popen([sys.executable,'-c','import time;time.sleep(60)'])
                 record={'provider':'codex','session_id':'failure-fixture','rollout_path':temp+'/log',
-                        'pane':1,'broker':'fixture','processes':[identity(old.pid)],'cwd':temp,
+                        'pane':1,'broker':'fixture','broker_binding':{'session':'fixture','started_millis':123},'processes':[identity(old.pid)],'cwd':temp,
                         'mode':'background','argv':[temp+'/missing-client'],
                         'environment':{'HOME':temp,'PATH':os.environ['PATH']}}
                 receipt=None
@@ -115,7 +120,7 @@ class ResumeTests(unittest.TestCase):
 class FailureTests(unittest.TestCase):
     def close_record(self, temp):
         return {'provider':'codex','session_id':'fixture-close','rollout_path':str(Path(temp)/'log'),
-                'pane':1,'broker':'fixture','processes':[identity(os.getpid())],
+                'pane':1,'broker':'fixture','broker_binding':{'session':'fixture','started_millis':123},'processes':[identity(os.getpid())],
                 'cwd':temp,'mode':'close'}
 
     def test_cancel_does_not_release_or_resume(self):

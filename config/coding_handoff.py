@@ -81,6 +81,77 @@ def resolver():
     raise ValueError('installed rollout resolver unavailable; original pane retained')
 
 
+def broker_binding(session, processes):
+    # Only the launcher's explicit broker configuration is authoritative.
+    import re
+    executable = os.environ.get('KITTY_PTY_BROKER_EXECUTABLE', '')
+    runtime = os.environ.get('KITTY_PTY_BROKER_RUNTIME', '')
+    if (not isinstance(session, str) or not re.fullmatch(r'[A-Za-z0-9._-]{1,64}', session)
+            or session in ('.', '..') or not os.path.isabs(executable)
+            or not os.path.isabs(runtime)):
+        raise ValueError('identity-bound broker required; original pane retained')
+    result = subprocess.run([executable, '--runtime-dir', runtime, '--timeout', '2',
+                             'status', session, '--json'], stdin=subprocess.DEVNULL,
+                            capture_output=True, timeout=3, check=True)
+    status = json.loads(result.stdout)
+    if (not isinstance(status, dict) or status.get('id') != session
+            or type(status.get('started_millis')) is not int or status['started_millis'] <= 0):
+        raise ValueError('broker start identity unavailable; original pane retained')
+    if not processes:
+        raise ValueError('coding writer identities required')
+    child_pid = status.get('child_pid')
+    broker_pid = status.get('broker_pid')
+    if any(type(pid) is not int or pid <= 0 for pid in (child_pid, broker_pid)):
+        raise ValueError('broker process identity unavailable')
+    child = identity(child_pid)
+    broker_process = identity(broker_pid)
+    for process in processes:
+        pid = process['pid']
+        visited = set()
+        while pid != child_pid:
+            if pid <= 1 or pid in visited or len(visited) >= 256:
+                raise ValueError('coding writer is outside the bound broker child domain')
+            visited.add(pid)
+            fields = (Path('/proc') / str(pid) / 'stat').read_text().rsplit(') ', 1)[1].split()
+            pid = int(fields[1])
+        if not live(process):
+            raise ValueError('coding writer changed while binding broker')
+    if not live(child) or not live(broker_process):
+        raise ValueError('broker process changed during binding')
+    return {'executable': executable, 'runtime': runtime, 'session': session,
+            'started_millis': status['started_millis'], 'child': child,
+            'process': broker_process}
+
+
+def cessation_key(record):
+    binding = record['broker_binding']
+    if (binding['session'] != record['broker']
+            or type(binding['started_millis']) is not int or binding['started_millis'] <= 0):
+        raise ValueError('broker cessation binding changed')
+    return {'schema': 'kilix.coding-cessation/v1', 'broker_binding': binding,
+            'receipt': record['receipt']}
+
+
+def drain_broker(record):
+    proof = cessation_key(record)
+    binding = record['broker_binding']
+    # Only DRAIN success authorizes transfer. Never retry with legacy kill,
+    # infer success from disappearance, or substitute another broker identity.
+    subprocess.run([binding['executable'], '--runtime-dir', binding['runtime'],
+                    '--timeout', '5', 'drain', binding['session'], '--expect-started',
+                    str(binding['started_millis'])], stdin=subprocess.DEVNULL,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                   timeout=6, check=True)
+    return proof
+
+
+def cessation_verified(path, record):
+    try:
+        return read_private(path.parent / 'cessation.json') == cessation_key(record)
+    except (OSError, ValueError, KeyError):
+        return False
+
+
 def inspect_window(window, *, background):
     logs = resolver()
     pane = logs.pane_from_window(window, str(window['id']))
@@ -97,6 +168,7 @@ def inspect_window(window, *, background):
     sid = log_identity(found.kind, found.path)
     result = {'provider': found.kind, 'session_id': sid, 'rollout_path': found.path,
               'pane': window['id'], 'broker': pane.broker_session,
+              'broker_binding': broker_binding(pane.broker_session, processes),
               'processes': processes, 'cwd': pane.cwd, 'mode': 'background' if background else 'close'}
     if background:
         records = {}
@@ -199,6 +271,13 @@ def commit(receipt):
         raise ValueError('handoff is not armed')
     if record['mode'] == 'background':
         tmux_call(record, 'has-session', '-t', record['tmux_session'])
+    try:
+        proof = drain_broker(record)
+    except Exception:
+        write(path.parent / 'cessation-unknown.json', {'status': 'unconfirmed',
+              'error': 'Broker cessation was not confirmed; no replacement authorized. Original may already have stopped.'})
+        raise
+    write(path.parent / 'cessation.json', proof)
     write(path.parent / 'release.json', {'released': True})
     if record['mode'] == 'close':
         record['state'] = 'close-requested'; write(path, record)
@@ -220,7 +299,8 @@ def wait(receipt):
     while time.monotonic() < deadline:
         if read_private(path)['state'] == 'cancelled':
             return
-        if (path.parent / 'release.json').exists() and not any(live(item) for item in record['processes']):
+        if ((path.parent / 'release.json').exists() and cessation_verified(path, record)
+                and not any(live(item) for item in record['processes'])):
             break
         time.sleep(.1)
     else:

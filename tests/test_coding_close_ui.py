@@ -22,7 +22,7 @@ class CloseUITests(unittest.TestCase):
 
 
     def window(self, argv):
-        child = SimpleNamespace(foreground_processes=[{'pid': 123, 'cmdline': argv, 'cwd': '/fixture'}])
+        child = SimpleNamespace(is_pty_brokered=True, foreground_processes=[{'pid': 123, 'cmdline': argv, 'cwd': '/fixture'}])
         row = {'id': 1, 'foreground_processes': child.foreground_processes,
                'env': {'KITTY_PTY_BROKER_SESSION': 'fixture'}}
         return SimpleNamespace(id=1, child=child, as_dict=lambda: row)
@@ -90,6 +90,15 @@ class CloseUITests(unittest.TestCase):
             namespace[name](boss, SinglePane()) if name == 'confirm_tab_close' else namespace[name](boss)
         self.assertEqual(calls, [window, window, window])
 
+    def test_nonbroker_refuses_without_helper_or_legacy_close(self):
+        window=self.window(['codex']);window.child.is_pty_brokered=False
+        errors=[];boss=SimpleNamespace(show_error=lambda *args:errors.append(args))
+        fast=ModuleType('kitty.fast_data_types');fast.add_timer=lambda *args:self.fail('must not schedule')
+        tabs=ModuleType('kitty.tabs');tabs.SpecialWindow=object
+        with patch.dict(sys.modules,{'kitty.fast_data_types':fast,'kitty.tabs':tabs}), patch.object(ui.subprocess,'run',side_effect=AssertionError('must not launch')):
+            self.assertTrue(ui.show(boss,window))
+        self.assertEqual(len(errors),1)
+
     def test_cancel_and_stale_callback_do_not_prepare_or_close(self):
         window = self.window(['codex']); calls=[]
         boss = SimpleNamespace(window_id_map={1:window}, choose=lambda *a,**k:calls.append((a,k)))
@@ -121,6 +130,8 @@ class CloseUITests(unittest.TestCase):
                     return SimpleNamespace(active_window=display)
                 def run(argv, **kwargs):
                     action=argv[2];events.append(action)
+                    if action == 'commit' and not close_ok:
+                        raise RuntimeError('DRAIN acknowledgment refused')
                     if action == 'release' and lose_display:
                         windows.pop(2)
                     return SimpleNamespace(stdout=json.dumps({'receipt':str(receipt)}))
@@ -129,7 +140,7 @@ class CloseUITests(unittest.TestCase):
                     self.assertIs(w,window)
                     return close_ok
                 boss=SimpleNamespace(window_id_map=windows,choose=lambda *a,**k:dialogs.append(a),
-                    _new_tab=new_tab,show_error=lambda *a:events.append('error'),close_window_explicitly=close)
+                    _new_tab=new_tab,show_error=lambda *a:events.append('error'),mark_window_for_close=close,close_window_explicitly=lambda w:self.fail('legacy termination forbidden'))
                 class Immediate:
                     def __init__(self,target,**kw):self.target=target
                     def start(self):self.target()
@@ -141,7 +152,7 @@ class CloseUITests(unittest.TestCase):
                         patch.object(ui.subprocess,'run',side_effect=run):
                     ui.show(boss,window);chosen=dialogs[0][1];chosen('b');chosen('b')
                     while timers:timers.pop(0)(0)
-                expected=['prepare','display','release','close','commit'] if close_ok else ['prepare','display','release','close','cancel','error']
+                expected=['prepare','display','release','commit','close'] if close_ok else ['prepare','display','release','commit','error']
                 if lose_display:
                     expected=['prepare','display','release','cancel','error']
                 self.assertEqual(events,expected)
