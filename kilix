@@ -6270,6 +6270,16 @@ print(ids[0] if ids else "")' 2>/dev/null)"
       --env "KILIX_LAND_DESKTOP_AUDIO=${KILIX_LAND_DESKTOP_AUDIO:-}" \
       -- "$_self" "$@"
   fi
+  # Mark only the pane actually running a desktop, not child application tabs.
+  # OSC metadata works for every selected provider, including custom commands.
+  _kilix_clear_desktop_marker() {
+    printf '\033]1337;SetUserVar=kilix_desktop_provider\007'
+  }
+  if [ "$_KILIX_DESKTOP_MODE" != none ]; then
+    _kilix_desktop_marker="$(python3 -c 'import base64, uuid; print(base64.b64encode(uuid.uuid4().hex.encode()).decode())')" || exit 1
+    printf '\033]1337;SetUserVar=kilix_desktop_provider=%s\007' "$_kilix_desktop_marker"
+    trap '_kilix_clear_desktop_marker' EXIT
+  fi
   rc=0
   case "$_KILIX_DESKTOP_MODE" in
     none)
