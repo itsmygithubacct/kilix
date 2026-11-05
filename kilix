@@ -37,6 +37,7 @@
 #   ./kilix memory [args]      # run the graphical RAM/pressure dashboard
 #   ./kilix tmux [args]        # install/run the pinned Tmux Manager
 #   ./kilix image FILE        # display images in this terminal (icat options supported)
+#   ./kilix youtube [URL]     # download transcript, music or video
 #   ./kilix video FILE_OR_URL # play a video or direct stream in this terminal
 #   ./kilix amp [args]         # install/run the pinned Media Player
 #   ./kilix amp --headless     # run its control-socket backend, no windows
@@ -3846,6 +3847,9 @@ from kilix_sdk.voicebox import main
 raise SystemExit(main(sys.argv[2:]))
 ' "$KILIX_HOME/config" "$@"
     ;;
+  youtube)
+    shift
+    exec /usr/bin/python3 "$KILIX_HOME/config/youtube.py" "$@" ;;
   transcribe|kilix-transcribe)
     shift
     exec /usr/bin/python3 -I -B -c '
