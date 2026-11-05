@@ -32,6 +32,7 @@
 #   ./kilix app run ID        # install/run one pinned catalog application
 #   ./kilix app window ID     # render a terminal app in a desktop window
 #   ./kilix models ...       # inspect or explicitly set up receipt-gated models
+#   ./kilix llm lab [CMD]     # edit and measure a local transformer; no CMD lists options
 #   ./kilix laptop ...        # list/open/status/close laptop session profiles
 #   ./kilix temps [args]       # run the pinned graphical thermal dashboard
 #   ./kilix memory [args]      # run the graphical RAM/pressure dashboard
@@ -235,6 +236,11 @@ case "${1:-}" in
   models)
     shift
     exec python3 "$KILIX_HOME/config/content_models.py" "$@" ;;
+  llm)
+    # Weight edits live in the kilix-llm lab, outside this checkout. A blank
+    # `kilix llm` or `kilix llm lab` lists options and does not load a model.
+    shift
+    exec python3 -B "$KILIX_HOME/config/llm_lab.py" "$@" ;;
   tmux)
     # Keep the interactive manager path; explicit control is headless and
     # runs before any engine/storage setup, with a mandatory socket.
