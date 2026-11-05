@@ -272,7 +272,7 @@ needed first. Ambiguous targets fail; each verb prints what it did.
   kilix action --request-json -             JSON from stdin
   kilix action capabilities                host features
   kilix windows --host HOST COMMAND         Windows via SSH
-Also: ask 'REQUEST', weather CITY, grammar, needle, shell, claudex route|usage,
+Also: ask 'REQUEST', weather CITY, grammar, needle, shell, content, claudex route|usage,
   wizard, settings, status, update, install, games,
   screen-size, transcript, help-setup, help-answer "QUESTION",
   help-search "QUESTION". Options: --help.
@@ -3451,6 +3451,32 @@ case "${1:-}" in
   app|application)
     shift
     exec python3 "$KILIX_HOME/config/content_app.py" "$@" ;;
+  content)
+    shift
+    case "${1:-}" in
+      -h|--help|help)
+        echo "usage: $_self content [ARGS...]"
+        echo "searches an explicit saved-source index with BM25"
+        echo "Install the pinned application: $_self install kilix-find"
+        exit 0 ;;
+    esac
+    _find_bin="$(command -v kilix-find 2>/dev/null || true)"
+    if [ -z "$_find_bin" ] || [ ! -x "$_find_bin" ]; then
+      _find_bin="$(KILIX_APP_AUTO_INSTALL=0 python3 -B \
+        "$KILIX_HOME/config/content_app.py" install kilix-find 2>/dev/null || true)"
+    fi
+    if [ -z "$_find_bin" ] || [ ! -x "$_find_bin" ]; then
+      if [ -x "$HOME/gpu_terminal/kilix-apps/kilix-find/kilix-find" ]; then
+        _find_bin="$HOME/gpu_terminal/kilix-apps/kilix-find/kilix-find"
+      else
+        _find_bin=""
+      fi
+    fi
+    [ -n "$_find_bin" ] && [ -x "$_find_bin" ] || {
+      echo "kilix content: kilix-find is not installed; run: kilix install kilix-find" >&2
+      exit 1
+    }
+    exec "$_find_bin" "$@" ;;
   claudex)
     shift
     case "${1:-}" in
