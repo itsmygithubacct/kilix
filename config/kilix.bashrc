@@ -218,12 +218,13 @@ unset _kilix_pane_verbs
 
 # A killed TUI or disconnected SSH session cannot run its terminal cleanup.
 # Recover input protocols at the local shell prompt, before readline accepts
-# another command. Keep the preceding exit status for existing prompt hooks.
+# another command. Clear keyboard stacks on both screens; they are separate.
+# Keep the preceding exit status for existing prompt hooks.
 if [[ $- == *i* ]]; then
     _kilix_prompt_restore_terminal() {
         local status=$?
         if [[ -t 1 ]]; then
-            builtin printf '\033[?2026l\033[?1000l\033[?1001l\033[?1002l\033[?1003l\033[?1004l\033[?1005l\033[?1006l\033[?1015l\033[?1016l\033[<255u\033[>4;0m\033[?1049l\033[?25h\033[0m'
+            builtin printf '\033[?2026l\033[?1000l\033[?1001l\033[?1002l\033[?1003l\033[?1004l\033[?1005l\033[?1006l\033[?1015l\033[?1016l\033[<255u\033[>4;0m\033[?1049l\033[<255u\033[>4;0m\033[?25h\033[0m'
         fi
         return "$status"
     }
