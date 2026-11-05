@@ -1361,6 +1361,25 @@ def main():
     if auto_fit is None:
         auto_fit = os.path.basename(args[0]).lower() in (
             "virtualbox", "virtualboxvm", "vbox", "steam")
+    # GParted's wrapper needs root. The private bus sets no_new_privs, so
+    # divert to setuid sudo before that bus exists. The password stays on
+    # sudo's pipe from the askpass helper and is not a program argument.
+    if os.path.basename(args[0]) == "gparted":
+        from kilix_sdk.elevation import ElevationRefused, plan_gparted_elevation
+        try:
+            plan = plan_gparted_elevation(args, os.environ)
+        except ElevationRefused as e:
+            print(f"kilix run: {e}", file=sys.stderr)
+            sys.exit(1)
+        if plan is None:
+            print("kilix run: GParted cannot start without administrator rights",
+                  file=sys.stderr)
+            sys.exit(1)
+        try:
+            os.execve(plan.argv[0], list(plan.argv), plan.env)
+        except OSError as e:
+            print(f"kilix run: could not start sudo: {e.strerror}", file=sys.stderr)
+            sys.exit(1)
     try:
         args, temporary_profile = prepare_app_command(args)
     except RuntimeError as e:
