@@ -38,6 +38,8 @@ class PromptRecovery(unittest.TestCase):
                     data = read_until(b'READY> ')
                     self.assertIn(b'STATUS=137', data)
                     self.assertGreater(data.rfind(b'\x1b[?1003l'), data.rfind(b'\x1b[?1003h'))
+                    os.write(fd, b"set -e; false && :\n")
+                    self.assertIn(b'STATUS=1', read_until(b'READY> '))
                     os.write(fd, b"printf 'COMMAND_OK\\n'\n")
                     self.assertIn(b'COMMAND_OK\r\n', read_until(b'READY> '))
                 finally:
