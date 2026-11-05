@@ -3849,7 +3849,12 @@ raise SystemExit(main(sys.argv[2:]))
     ;;
   youtube)
     shift
-    exec /usr/bin/python3 "$KILIX_HOME/config/youtube.py" "$@" ;;
+    exec /usr/bin/python3 -I -B -c '
+import sys
+sys.path.insert(0, sys.argv[1])
+from youtube import main
+raise SystemExit(main(sys.argv[2:]))
+' "$KILIX_HOME/config" "$@" ;;
   transcribe|kilix-transcribe)
     shift
     exec /usr/bin/python3 -I -B -c '

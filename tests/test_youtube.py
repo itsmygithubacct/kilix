@@ -13,7 +13,7 @@ spec.loader.exec_module(youtube)
 
 class YoutubeTests(unittest.TestCase):
     def test_original_language_and_manual_precedence(self):
-        track = [{'ext': 'json3'}]
+        track = [{'ext': 'json3', 'url': 'https://www.youtube.com/api/timedtext?lang=en'}]
         info = {'automatic_captions': {'ar-orig': track, 'en-orig': track, 'en': track}}
         self.assertEqual(youtube.caption_track(info, 'en'), ('en-orig', True))
         info['subtitles'] = {'en': track}
@@ -44,7 +44,7 @@ class YoutubeTests(unittest.TestCase):
             work = Path(directory)
             (work / 'captions.en-orig.json3').write_text('{"events": []}')
             info = {'id': 'test', 'title': 'Test', 'duration': 100,
-                    'automatic_captions': {'en-orig': [{'ext': 'json3'}]}}
+                    'automatic_captions': {'en-orig': [{'ext': 'json3', 'url': 'https://www.youtube.com/api/timedtext?lang=en'}]}}
             with patch.object(youtube, 'download'), patch.object(youtube, 'local_transcript',
                     return_value=[(0, 100, 'Recognized speech')]) as local:
                 result = youtube.transcript(info, 'https://youtu.be/test', work, 'en', False, work)
