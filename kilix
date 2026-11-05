@@ -272,7 +272,7 @@ needed first. Ambiguous targets fail; each verb prints what it did.
   kilix action --request-json -             JSON from stdin
   kilix action capabilities                host features
   kilix windows --host HOST COMMAND         Windows via SSH
-Also: ask 'REQUEST', weather CITY, grammar, needle, shell, content, claudex route|usage,
+Also: ask 'REQUEST', weather CITY, grammar, needle, shell, content, playalong, claudex route|usage,
   wizard, settings, status, update, install, games,
   screen-size, transcript, help-setup, help-answer "QUESTION",
   help-search "QUESTION". Options: --help.
@@ -3477,6 +3477,29 @@ case "${1:-}" in
       exit 1
     }
     exec "$_find_bin" "$@" ;;
+  playalong)
+    # The catalog owns the pin, the setup build, and the command path.
+    # The first run installs that pin; kilix install playalong installs it
+    # without launching.
+    shift
+    _playalong_install_only=0
+    while :; do
+      case "${1:-}" in
+        --install-only) _playalong_install_only=1; shift ;;
+        --print-ref)
+          exec python3 "$KILIX_HOME/config/content_app.py" \
+            ref playalong ;;
+        --) shift; break ;;
+        *) break ;;
+      esac
+    done
+    if [ "$_playalong_install_only" = 1 ]; then
+      python3 "$KILIX_HOME/config/content_app.py" \
+        install playalong >/dev/null
+      exit $?
+    fi
+    exec python3 "$KILIX_HOME/config/content_app.py" \
+      run playalong -- "$@" ;;
   claudex)
     shift
     case "${1:-}" in
