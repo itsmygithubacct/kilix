@@ -97,15 +97,23 @@ their named versions; they are not a current component inventory.
 For the human and agent workflows that connect terminal work, automation,
 verification and recovery, see [Kilix Workflows](docs/workflows/README.md).
 
-`kilix ask` uses LFM2 for command interpretation, with an exact grammar fast path.
-To use the optional Needle 3 V9 model, install it with
+`kilix ask` is the person-facing request command. It shows the route and the
+plan and acts only on a typed yes. The interpreter is the saved Ask selection,
+or LFM2 when none is saved. `--model grammar` uses the exact grammar and skips
+model loading. `--model lfm3` and `--model needle3` select those interpreters
+for one request; install Needle 3 with
 `kilix-needle install --commands needle3`, then run
-`kilix ask --model needle3 "open calculator"`. Both models use the same request
-validation and confirmation. `--model grammar` skips model loading.
-Model Setup and `kilix-needle workflows setup --model needle3` save the Ask
-preference after verification. An explicit `--model lfm2` overrides it for one
-request; `KILIX_ASK_COMMANDS_BACKEND` overrides the saved preference in a shell.
-The installer presents the model and runtime licences before downloading.
+`kilix ask --model needle3 "open calculator"`. Every interpreter uses the same
+request validation and confirmation. Model Setup and
+`kilix-needle workflows setup --model needle3` save the Ask preference after
+verification. An explicit `--model` overrides that preference for one request;
+`KILIX_ASK_COMMANDS_BACKEND` overrides it in a shell. The installer presents
+the model and runtime licences before downloading. An agent with a known job
+uses that job's route, described in
+[Kilix Workflows](docs/workflows/README.md) and the
+[agent guide](docs/AGENTS.md). An unclear job uses
+`kilix-needle ask --agent --json`. `--plan` reports the route, and `--yes`
+acts under that job's own consent rules.
 
 Ask for current city weather with `kilix ask "What's the weather in Tokyo?"`
 or `kilix ask "weather in Paris, France in Celsius"`. This also works from the

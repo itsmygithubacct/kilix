@@ -5,6 +5,11 @@ shell tools for files and system queries, and Needle's apps job for interpreted
 game/settings requests. For a plain-words request whose Needle job is unclear,
 use Needle's `ask` router (below). Keep the user's chosen model and reasoning effort.
 
+`kilix ask` is the command a person runs. It shows the route and the plan and
+acts only on a typed yes. Carry out a known job with that job's own route: a
+Kilix verb, `kilix shell`, `kilix grammar`, or the matching Needle tool.
+`kilix-needle ask` is the agent router for an unclear job.
+
 Execute requests for action. For facts about this machine, a file, or a log, run
 the relevant read tool and answer from its output. Do not guess a package, version,
 path, or log value from general knowledge. If tools are deferred, discover the
@@ -153,6 +158,9 @@ actual state through an available read tool before any retry. Do not send a
 second instruction to a mutation parser merely to ask what happened.
 
 ### Needle ask: requests whose job is unclear
+
+Call this through `kilix-needle ask --agent --json`. `kilix ask` runs the same
+router with `--interactive` and waits for a person to accept the plan.
 
 `ask` picks the Needle job (panes, apps, agents, files or system) from the request
 text alone, then hands the request to that job unchanged. MCP `kilix_ask_plan`

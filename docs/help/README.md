@@ -12,6 +12,7 @@ creating, finding, reading and controlling pages and panes, logs and sessions.
 - [0.2.2 release background and version commands](release.md)
 - [Start menu and settings](settings.md)
 - [Pages and panes](panes.md)
+- [Ask, grammar, shell, and the other workflow routes](../workflows/README.md)
 - [Managed coding sessions, trusted folders and run logs](../session.md)
 - [Explicit model setup](models.md)
 - [Read aloud and dictation](speech.md)
