@@ -5,9 +5,11 @@ import pathlib
 import select
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -25,6 +27,9 @@ log = os.environ["ASK_TEST_LOG"]
 with open(log, "a") as stream:
     stream.write(json.dumps({"content_app": sys.argv[1:],
                              "auto_install": os.environ.get("KILIX_APP_AUTO_INSTALL")}) + "\\n")
+if sys.argv[1:3] == ["run", "kilix-help-llm"]:
+    print("Help search: list panes")
+    raise SystemExit(0)
 if sys.argv[1:] != ["install", "kilix-needle"] or os.environ.get("ASK_TEST_MISSING"):
     print("kilix app kilix-needle: not installed", file=sys.stderr)
     raise SystemExit(1)
@@ -57,6 +62,17 @@ class AskLauncherTests(unittest.TestCase):
         shutil.copytree(ROOT / "config" / "kilix_sdk", home / "config" / "kilix_sdk")
         shutil.copy2(ROOT / "config" / "kilix_weather.py", home / "config" / "kilix_weather.py")
         shutil.copy2(ROOT / "config" / "kilix_calc.py", home / "config" / "kilix_calc.py")
+        shutil.copy2(ROOT / "config" / "kilix_facts.py", home / "config" / "kilix_facts.py")
+        shutil.copy2(ROOT / "config" / "kilix_sensors.py", home / "config" / "kilix_sensors.py")
+        shutil.copy2(ROOT / "config" / "kilix_volume.py", home / "config" / "kilix_volume.py")
+        shutil.copy2(ROOT / "config" / "kilix_local.py", home / "config" / "kilix_local.py")
+        shutil.copy2(ROOT / "config" / "kilix_alarm.py", home / "config" / "kilix_alarm.py")
+        sensor = (ROOT / "third_party" / "kilix-telemetry" / "src"
+                  / "kilix_telemetry" / "sensors.py")
+        sensor_home = (home / "third_party" / "kilix-telemetry" / "src"
+                       / "kilix_telemetry" / "sensors.py")
+        sensor_home.parent.mkdir(parents=True)
+        shutil.copy2(sensor, sensor_home)
         (home / "config" / "content_app.py").write_text(CONTENT_APP)
         needle = self.root / "needle"
         needle.write_text(NEEDLE)
@@ -134,6 +150,544 @@ def json_request(url):
         self.assertEqual(opened.returncode, 1, opened.stderr)
         self.assertIn("not installed", opened.stderr)
         self.assertTrue(self.calls())
+        self.assertTrue(all("needle" not in call for call in self.calls()))
+
+    def test_direct_reads_do_not_use_needle(self):
+        clock = self.run_ask("what time is it?", ASK_TEST_MISSING="1")
+        self.assertEqual(clock.returncode, 0, clock.stderr)
+        self.assertRegex(clock.stdout, r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}")
+        memory = self.run_ask("how much memory is free?", ASK_TEST_MISSING="1")
+        self.assertEqual(memory.returncode, 0, memory.stderr)
+        self.assertIn("available of", memory.stdout)
+        swap = self.run_ask("show swap", ASK_TEST_MISSING="1")
+        self.assertEqual(swap.returncode, 0, swap.stderr)
+        self.assertNotIn("available of", swap.stdout)
+        self.assertTrue(
+            "free of" in swap.stdout or swap.stdout.strip() == "no swap",
+            swap.stdout,
+        )
+        swap_again = self.run_ask("how much swap is free?", ASK_TEST_MISSING="1")
+        self.assertEqual(swap_again.returncode, 0, swap_again.stderr)
+        self.assertEqual(swap_again.stdout.strip(), swap.stdout.strip())
+        disk = self.run_ask("how much disk is free?", ASK_TEST_MISSING="1")
+        self.assertEqual(disk.returncode, 0, disk.stderr)
+        self.assertIn("on /", disk.stdout)
+        cpu = self.run_ask("what is the cpu load?", ASK_TEST_MISSING="1")
+        self.assertEqual(cpu.returncode, 0, cpu.stderr)
+        self.assertRegex(cpu.stdout, r"load [\d.]+, [\d.]+, [\d.]+ on \d+ CPUs")
+        sysfs = self.root / "sys"
+        for relative, text in (
+            ("class/thermal/thermal_zone0/type", "x86_pkg_temp\n"),
+            ("class/thermal/thermal_zone0/temp", "72000\n"),
+            ("class/hwmon/hwmon2/name", "nvme\n"),
+            ("class/hwmon/hwmon2/temp1_label", "Composite\n"),
+            ("class/hwmon/hwmon2/temp1_input", "51000\n"),
+            ("class/hwmon/hwmon2/fan1_label", "Controller\n"),
+            ("class/hwmon/hwmon2/fan1_input", "3210\n"),
+        ):
+            path = sysfs / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        settings = self.root / "settings.conf"
+        settings.write_text("KILIX_TEMPERATURE_UNIT=celsius\n")
+        sensor = {
+            "ASK_TEST_MISSING": "1",
+            "KILIX_SENSORS_SYSFS": str(sysfs),
+            "GPU_TERMINAL_SETTINGS_FILE": str(settings),
+        }
+        temperature = self.run_ask("what is the temperature?", **sensor)
+        self.assertEqual(temperature.returncode, 0, temperature.stderr)
+        self.assertEqual(temperature.stdout.strip(), "CPU / zone 0: 72.0°C")
+        nvme = self.run_ask("nvme temperature", **sensor)
+        self.assertEqual(nvme.stdout.strip(), "NVMe / Composite: 51.0°C")
+        fan = self.run_ask("what's the fan speed?", **sensor)
+        self.assertEqual(fan.stdout.strip(), "NVMe / Controller: 3210 RPM")
+        fahrenheit = self.run_ask("what is the temperature in fahrenheit?", **sensor)
+        self.assertEqual(fahrenheit.stdout.strip(), "CPU / zone 0: 161.6°F")
+        mine = self.run_ask("what's my temperature?", **sensor)
+        self.assertEqual(mine.returncode, 1, mine.stdout)
+        self.assertIn("not installed", mine.stderr)
+        units = self.run_ask("how many MB in 1.5 GB?", ASK_TEST_MISSING="1")
+        self.assertEqual(units.returncode, 0, units.stderr)
+        self.assertEqual(units.stdout.strip(), "1500 MB")
+        help_result = self.run_ask("how do I list panes?", ASK_TEST_MISSING="1")
+        self.assertEqual(help_result.returncode, 0, help_result.stderr)
+        self.assertIn("Help search: list panes", help_result.stdout)
+        panes = self.run_ask("what panes are open?", ASK_TEST_MISSING="1")
+        self.assertEqual(panes.returncode, 1, panes.stdout)
+        self.assertIn("kilix ask:", panes.stderr)
+        self.assertTrue(all("needle" not in call for call in self.calls()))
+
+    def test_volume_is_checked_and_set_without_needle(self):
+        missing = self.run_ask("what is the volume?", ASK_TEST_MISSING="1")
+        self.assertEqual(missing.returncode, 1, missing.stdout)
+        self.assertIn("volume control is not installed", missing.stderr)
+        state = self.root / "volume-state"
+        state.write_text("40\n")
+        binary = self.root / "kilix-volume"
+        binary.write_text(
+            "#!/usr/bin/env python3\n"
+            "import os, sys\n"
+            "path = os.environ['ASK_TEST_VOLUME_STATE']\n"
+            "text = open(path).read().strip() or '40'\n"
+            "parts = text.split()\n"
+            "level, muted = parts[0], len(parts) > 1\n"
+            "def store(level, muted):\n"
+            "    open(path, 'w').write(level + (' muted' if muted else '') + '\\n')\n"
+            "cmd = sys.argv[1:]\n"
+            "if cmd == ['get']:\n"
+            "    print(f'{level}%' + (' muted' if muted else ''))\n"
+            "elif cmd[:1] == ['set'] and len(cmd) == 2 and cmd[1].isdigit():\n"
+            "    store(cmd[1], muted)\n"
+            "elif cmd == ['mute']:\n"
+            "    store(level, True)\n"
+            "elif cmd == ['unmute']:\n"
+            "    store(level, False)\n"
+            "elif cmd == ['sinks']:\n"
+            "    if os.environ.get('ASK_TEST_VOLUME_SINKS') == 'none':\n"
+            "        print('  10%  Other  alsa_output.other')\n"
+            "    else:\n"
+            "        print(f'* {level}%' + (' muted' if muted else '') + '  Desk speakers  alsa_output.desk')\n"
+            "else:\n"
+            "    print('kilix-volume: bad command', file=sys.stderr)\n"
+            "    raise SystemExit(2)\n"
+        )
+        binary.chmod(0o755)
+        env = {
+            "ASK_TEST_MISSING": "1",
+            "KILIX_VOLUME_BIN": str(binary),
+            "ASK_TEST_VOLUME_STATE": str(state),
+        }
+        for request, expected in (
+            ("what is the volume?", "40%"),
+            ("set the volume to 30", "30%"),
+            ("mute", "30% muted"),
+            ("unmute the volume", "30%"),
+            ("turn the volume up", "40%"),
+            ("volume down", "30%"),
+        ):
+            with self.subTest(request=request):
+                result = self.run_ask(request, **env)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.strip(), expected)
+        speakers = self.run_ask("which speakers are on?", **env)
+        self.assertEqual(speakers.returncode, 0, speakers.stderr)
+        self.assertEqual(speakers.stdout.strip(), "Desk speakers")
+        default = self.run_ask("what's the default sink?", **env)
+        self.assertEqual(default.returncode, 0, default.stderr)
+        self.assertEqual(default.stdout.strip(), "Desk speakers")
+        missing_default = self.run_ask(
+            "which speakers are on?", **env, ASK_TEST_VOLUME_SINKS="none",
+        )
+        self.assertEqual(missing_default.returncode, 1, missing_default.stdout)
+        self.assertIn("no default output", missing_default.stderr)
+        opened = self.run_ask("open the volume mixer", **env)
+        self.assertEqual(opened.returncode, 1, opened.stdout)
+        self.assertIn("not installed", opened.stderr)
+        help_result = self.run_ask("how do I set the volume?", **env)
+        self.assertEqual(help_result.returncode, 0, help_result.stderr)
+        self.assertIn("Help search: list panes", help_result.stdout)
+        self.assertTrue(all("needle" not in call for call in self.calls()))
+
+    def test_local_reads_do_not_use_needle(self):
+        root = self.root / "backlight"
+        intel = root / "intel_backlight"
+        other = root / "acpi_video0"
+        intel.mkdir(parents=True)
+        other.mkdir()
+        (intel / "max_brightness").write_text("200\n", encoding="utf-8")
+        (intel / "brightness").write_text("50\n", encoding="utf-8")
+        (other / "max_brightness").write_text("100\n", encoding="utf-8")
+        (other / "brightness").write_text("10\n", encoding="utf-8")
+        bright = {
+            "ASK_TEST_MISSING": "1",
+            "KILIX_BACKLIGHT_ROOT": str(root),
+        }
+        current = self.run_ask("how bright is the screen?", **bright)
+        self.assertEqual(current.returncode, 0, current.stderr)
+        self.assertEqual(current.stdout.strip(), "25%")
+        changed = self.run_ask("set the brightness to 40", **bright)
+        self.assertEqual(changed.returncode, 0, changed.stderr)
+        self.assertEqual(changed.stdout.strip(), "40%")
+        self.assertEqual((intel / "brightness").read_text(encoding="utf-8").strip(), "80")
+        self.assertEqual((other / "brightness").read_text(encoding="utf-8").strip(), "10")
+        clamped = self.run_ask("please set the brightness to 150.", **bright)
+        self.assertEqual(clamped.returncode, 0, clamped.stderr)
+        self.assertEqual(clamped.stdout.strip(), "100%")
+        self.assertEqual((intel / "brightness").read_text(encoding="utf-8").strip(), "200")
+        dark = self.run_ask("set the brightness to 0", **bright)
+        self.assertEqual(dark.stdout.strip(), "0%")
+        missing_light = self.run_ask(
+            "how bright is the screen?",
+            ASK_TEST_MISSING="1",
+            KILIX_BACKLIGHT_ROOT=str(self.root / "no-backlight"),
+        )
+        self.assertEqual(missing_light.returncode, 1, missing_light.stdout)
+        self.assertIn("no backlight", missing_light.stderr)
+        help_result = self.run_ask("how do I set the brightness?", **bright)
+        self.assertEqual(help_result.returncode, 0, help_result.stderr)
+        self.assertIn("Help search: list panes", help_result.stdout)
+        connect_help = self.run_ask("how do I connect to the network?", **bright)
+        self.assertEqual(connect_help.returncode, 0, connect_help.stderr)
+        self.assertIn("Help search: list panes", connect_help.stdout)
+
+        log = self.root / "nmcli.log"
+        nmcli = self.root / "nmcli"
+        nmcli.write_text(
+            "#!/usr/bin/env python3\n"
+            "import os, sys\n"
+            "open(os.environ['ASK_TEST_NMCLI_LOG'], 'a').write(' '.join(sys.argv[1:]) + '\\n')\n"
+            "mode = os.environ.get('ASK_TEST_NMCLI_MODE', 'up')\n"
+            "if mode == 'down':\n"
+            "    print('wlan0:wifi:disconnected:')\n"
+            "else:\n"
+            "    print('lo:loopback:unmanaged:')\n"
+            "    print('wlan0:wifi:connected:Cafe\\\\:Guest')\n"
+            "    print('eth0:ethernet:disconnected:')\n"
+            "    print('docker0:bridge:connected:bridge')\n",
+            encoding="utf-8",
+        )
+        nmcli.chmod(0o755)
+        network = {
+            "ASK_TEST_MISSING": "1",
+            "KILIX_NMCLI": str(nmcli),
+            "ASK_TEST_NMCLI_LOG": str(log),
+        }
+        named = self.run_ask("what network am I on?", **network)
+        self.assertEqual(named.returncode, 0, named.stderr)
+        self.assertEqual(named.stdout.strip(), "Cafe:Guest\nbridge")
+        online = self.run_ask("am I online?", **network)
+        self.assertEqual(online.stdout.strip(), "online")
+        self.assertNotIn("connect", log.read_text(encoding="utf-8"))
+        down = self.run_ask("am I connected?", **network, ASK_TEST_NMCLI_MODE="down")
+        self.assertEqual(down.stdout.strip(), "offline")
+        named_down = self.run_ask("what network am I on?", **network, ASK_TEST_NMCLI_MODE="down")
+        self.assertEqual(named_down.stdout.strip(), "not connected")
+        sysfs = self.root / "net"
+        for name, state in (("lo", "up"), ("wlan0", "up"), ("eth0", "down")):
+            device = sysfs / name
+            device.mkdir(parents=True)
+            (device / "operstate").write_text(state + "\n", encoding="utf-8")
+        fallback = {
+            "ASK_TEST_MISSING": "1",
+            "KILIX_NMCLI": str(self.root / "missing-nmcli"),
+            "KILIX_NET_SYS": str(sysfs),
+        }
+        link = self.run_ask("what's my network?", **fallback)
+        self.assertEqual(link.returncode, 0, link.stderr)
+        self.assertEqual(link.stdout.strip(), "wlan0")
+        (sysfs / "wlan0" / "operstate").write_text("down\n", encoding="utf-8")
+        quiet_link = self.run_ask("show the network", **fallback)
+        self.assertEqual(quiet_link.stdout.strip(), "not connected")
+
+        absent = self.run_ask(
+            "what's playing?",
+            ASK_TEST_MISSING="1",
+            KILIX_AMP_SOCKET=str(self.root / "missing-amp.sock"),
+        )
+        self.assertEqual(absent.returncode, 0, absent.stderr)
+        self.assertEqual(absent.stdout.strip(), "nothing is playing")
+        self.assertFalse((self.root / "missing-amp.sock").exists())
+
+        amp_dir = self.root / "amp"
+        amp_dir.mkdir(mode=0o700)
+        amp_dir.chmod(0o700)
+        amp_path = amp_dir / "control.sock"
+        track_path = self.root / "track.json"
+        base = {
+            "protocol": 2, "ok": True, "state": "playing", "title": "Night Drive",
+            "file": "/music/night.flac", "pos": 1.0, "len": 180.0, "volume": 50,
+            "repeat": 0, "shuffle": False, "index": 0, "count": 1,
+            "source_type": "file", "codec": "pcm", "profile": 0, "sample_rate": 44100,
+            "channels": 2, "bitrate": 0, "threads": 0, "ready": True,
+            "model_ready": True, "live": False, "buffering": False, "seekable": True,
+            "ended": False, "degraded": False, "reconnect_required": False,
+            "wire_valid": False, "wire_pts_ms": None, "wire_epoch": None,
+            "source_error_code": 0, "source_error_message": "",
+            "source_error_recoverable": False,
+        }
+
+        def write_track(**updates):
+            track_path.write_text(json.dumps({**base, **updates}), encoding="utf-8")
+
+        write_track()
+        stop = threading.Event()
+        errors = []
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server.bind(str(amp_path))
+        os.chmod(amp_path, 0o600)
+        server.listen(8)
+        server.settimeout(0.05)
+
+        def serve_amp():
+            while not stop.is_set():
+                try:
+                    client, _addr = server.accept()
+                except socket.timeout:
+                    continue
+                except OSError:
+                    return
+                with client:
+                    client.settimeout(1)
+                    try:
+                        data = bytearray()
+                        while b"\n" not in data and len(data) <= 8192:
+                            chunk = client.recv(8192)
+                            if not chunk:
+                                break
+                            data.extend(chunk)
+                        if not data:
+                            continue
+                        request = json.loads(data)
+                        if request.get("cmd") == "ping":
+                            reply = {
+                                "protocol": 2, "ok": True, "max_protocol": 2,
+                                "encodec": False, "live_sources": False,
+                            }
+                        else:
+                            reply = json.loads(track_path.read_text(encoding="utf-8"))
+                        client.sendall(json.dumps(reply).encode() + b"\n")
+                    except (BrokenPipeError, ConnectionResetError, socket.timeout):
+                        pass
+                    except Exception as failure:
+                        errors.append(repr(failure))
+
+        thread = threading.Thread(target=serve_amp)
+        thread.start()
+        self.addCleanup(thread.join, 3)
+        self.addCleanup(server.close)
+        self.addCleanup(stop.set)
+        playing_env = {
+            "ASK_TEST_MISSING": "1",
+            "KILIX_AMP_SOCKET": str(amp_path),
+            "KILIX_TUI_UTILS_DIR":
+                "/home/pleb/.local/gpu_terminal/sources/kilix-desktops/kilix-tui-utils",
+        }
+        playing = self.run_ask("what's playing?", **playing_env)
+        self.assertEqual(playing.returncode, 0, (playing.stderr, errors))
+        self.assertEqual(playing.stdout.strip(), "Night Drive", errors)
+        write_track(state="paused")
+        paused = self.run_ask("now playing", **playing_env)
+        self.assertEqual(paused.stdout.strip(), "paused: Night Drive", errors)
+        write_track(state="playing", title="", file="/music/night drive.flac")
+        named_file = self.run_ask("what's the song?", **playing_env)
+        self.assertEqual(named_file.stdout.strip(), "night drive.flac", errors)
+        write_track(state="stopped", title="Night Drive")
+        stopped = self.run_ask("what's playing?", **playing_env)
+        self.assertEqual(stopped.stdout.strip(), "nothing is playing", errors)
+
+        silent = self.run_ask("is the microphone on?", ASK_TEST_MISSING="1")
+        self.assertEqual(silent.returncode, 0, silent.stderr)
+        self.assertEqual(silent.stdout.strip(), "not listening")
+        voice_dir = self.root / "voice-session"
+        voice_dir.mkdir(mode=0o700)
+        voice_path = voice_dir / "control.sock"
+        voice_state = self.root / "voice.json"
+        voice_state.write_text(json.dumps({
+            "ok": True,
+            "status": {"listening": True, "speaking": True, "model": "whisper"},
+        }), encoding="utf-8")
+        voice_stop = threading.Event()
+        voice_server = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+        voice_server.bind(str(voice_path))
+        voice_server.listen(4)
+        voice_server.settimeout(0.05)
+
+        def serve_voice():
+            while not voice_stop.is_set():
+                try:
+                    client, _addr = voice_server.accept()
+                except socket.timeout:
+                    continue
+                except OSError:
+                    return
+                with client:
+                    try:
+                        raw = client.recv(65536)
+                        request = json.loads(raw.decode("utf-8"))
+                        if request.get("op") != "status":
+                            errors.append(repr(request))
+                        reply = voice_state.read_text(encoding="utf-8")
+                        client.sendall(reply.encode("utf-8"))
+                    except (BrokenPipeError, ConnectionResetError, socket.timeout):
+                        pass
+                    except Exception as failure:
+                        errors.append(repr(failure))
+
+        voice_thread = threading.Thread(target=serve_voice)
+        voice_thread.start()
+        self.addCleanup(voice_thread.join, 3)
+        self.addCleanup(voice_server.close)
+        self.addCleanup(voice_stop.set)
+        heard = self.run_ask(
+            "is the microphone on?",
+            ASK_TEST_MISSING="1",
+            KILIX_VOICE_SESSION=str(voice_dir),
+        )
+        self.assertEqual(heard.returncode, 0, (heard.stderr, errors))
+        self.assertEqual(heard.stdout.strip(), "listening, speaking, whisper")
+        voice_state.write_text(json.dumps({
+            "ok": True, "status": {"listening": False, "speaking": False, "model": ""},
+        }), encoding="utf-8")
+        idle = self.run_ask(
+            "is the mic off?",
+            ASK_TEST_MISSING="1",
+            KILIX_VOICE_SESSION=str(voice_dir),
+        )
+        self.assertEqual(idle.stdout.strip(), "not listening")
+        self.assertTrue(all("needle" not in call for call in self.calls()))
+
+    def test_machine_facts_do_not_use_needle(self):
+        supply = self.root / "power"
+        for name, kind, status, capacity in (
+            ("BAT0", "Battery", "Discharging", "72"),
+            ("BAT1", "Battery", "Charging", "40"),
+            ("AC", "Mains", "online", "100"),
+        ):
+            device = supply / name
+            device.mkdir(parents=True)
+            (device / "type").write_text(kind + "\n", encoding="utf-8")
+            (device / "status").write_text(status + "\n", encoding="utf-8")
+            (device / "capacity").write_text(capacity + "\n", encoding="utf-8")
+        uptime = self.root / "uptime"
+        uptime.write_text("90061.22 12.0\n", encoding="utf-8")
+        version = self.root / "VERSION"
+        version.write_text("0.2.3\n", encoding="utf-8")
+        dpkg_log = self.root / "dpkg.log"
+        dpkg = self.root / "dpkg-query"
+        dpkg.write_text(
+            "#!/usr/bin/env python3\n"
+            "import os, sys\n"
+            "open(os.environ['ASK_TEST_DPKG_LOG'], 'a').write(' '.join(sys.argv[1:]) + '\\n')\n"
+            "if sys.argv[1:2] != ['-W'] or 'Status-Status' not in sys.argv[2] or len(sys.argv) != 4:\n"
+            "    raise SystemExit(2)\n"
+            "name = sys.argv[3]\n"
+            "if name == 'bash':\n"
+            "    print('installed\\t5.2.15-2')\n"
+            "else:\n"
+            "    raise SystemExit(1)\n",
+            encoding="utf-8",
+        )
+        dpkg.chmod(0o755)
+        ip_log = self.root / "ip.log"
+        ip = self.root / "ip"
+        ip.write_text(
+            "#!/usr/bin/env python3\n"
+            "import os, sys\n"
+            "open(os.environ['ASK_TEST_IP_LOG'], 'a').write(' '.join(sys.argv[1:]) + '\\n')\n"
+            "if sys.argv[1:] != ['-4', 'route', 'get', '192.0.2.1']:\n"
+            "    raise SystemExit(2)\n"
+            "print('192.0.2.1 via 192.0.2.2 dev wlan0 src 192.168.4.20 uid 1000')\n",
+            encoding="utf-8",
+        )
+        ip.chmod(0o755)
+        run_id = "20261106T120000.000000Z-0123456789abcdef0123456789abcdef"
+        runs = self.root / "agent-runs"
+        run_dir = runs / run_id
+        run_dir.mkdir(parents=True)
+        (run_dir / "events.jsonl").write_text(
+            "hello from the session\nsecond line\n", encoding="utf-8",
+        )
+        session_log = self.root / "session.log"
+        session = self.root / "kilix-session"
+        session.write_text(
+            "#!/usr/bin/env python3\n"
+            "import json, os, sys\n"
+            "open(os.environ['ASK_TEST_SESSION_LOG'], 'a').write(' '.join(sys.argv[1:]) + '\\n')\n"
+            "cmd = sys.argv[1:]\n"
+            "if cmd == ['list', '--limit', '20']:\n"
+            "    if os.environ.get('ASK_TEST_SESSION_MODE') == 'empty':\n"
+            "        print(json.dumps({'runs': []}))\n"
+            "    else:\n"
+            "        print(json.dumps({'runs': [{'run_id': os.environ['ASK_TEST_RUN'],\n"
+            "            'provider': 'grok', 'title': 'ask', 'effective_status': 'queued'}]}))\n"
+            "elif cmd == ['launch', 'grok', '--new-tab']:\n"
+            "    print(json.dumps({'run_id': os.environ['ASK_TEST_RUN'],\n"
+            "        'run_dir': os.environ['ASK_TEST_RUN_DIR'],\n"
+            "        'launch': {'pane': {'pane_id': 84}}}))\n"
+            "else:\n"
+            "    raise SystemExit(2)\n",
+            encoding="utf-8",
+        )
+        session.chmod(0o755)
+        env = {
+            "ASK_TEST_MISSING": "1",
+            "KILIX_BATTERY_SUPPLY_DIR": str(supply),
+            "KILIX_UPTIME_FILE": str(uptime),
+            "KILIX_VERSION_FILE": str(version),
+            "KILIX_DPKG_QUERY": str(dpkg),
+            "ASK_TEST_DPKG_LOG": str(dpkg_log),
+            "KILIX_IP_BIN": str(ip),
+            "ASK_TEST_IP_LOG": str(ip_log),
+            "KILIX_SESSION_BIN": str(session),
+            "ASK_TEST_SESSION_LOG": str(session_log),
+            "ASK_TEST_RUN": run_id,
+            "ASK_TEST_RUN_DIR": str(run_dir),
+            "KILIX_AGENT_RUNS_HOME": str(runs),
+        }
+        battery = self.run_ask("what's the battery?", **env)
+        self.assertEqual(battery.returncode, 0, battery.stderr)
+        self.assertEqual(
+            battery.stdout.strip(),
+            "BAT0: 72% discharging\nBAT1: 40% charging",
+        )
+        up = self.run_ask("how long has the machine been up?", **env)
+        self.assertEqual(up.returncode, 0, up.stderr)
+        self.assertEqual(up.stdout.strip(), "1d 1h 1m")
+        installed = self.run_ask("is the bash package installed?", **env)
+        self.assertEqual(installed.returncode, 0, installed.stderr)
+        self.assertEqual(installed.stdout.strip(), "bash 5.2.15-2")
+        absent = self.run_ask("is missingpkg installed?", **env)
+        self.assertEqual(absent.stdout.strip(), "missingpkg is not installed")
+        self.assertNotIn("install ", dpkg_log.read_text(encoding="utf-8"))
+        address = self.run_ask("what's my ip address?", **env)
+        self.assertEqual(address.returncode, 0, address.stderr)
+        self.assertEqual(address.stdout.strip(), "192.168.4.20")
+        self.assertEqual(
+            ip_log.read_text(encoding="utf-8").strip(),
+            "-4 route get 192.0.2.1",
+        )
+        public = self.run_ask("what's my public ip?", **env)
+        self.assertEqual(public.returncode, 1, public.stdout)
+        self.assertIn("not installed", public.stderr)
+        self.assertEqual(ip_log.read_text(encoding="utf-8").count("route get"), 1)
+        numbered = self.run_ask("what version is kilix?", **env)
+        self.assertEqual(numbered.returncode, 0, numbered.stderr)
+        self.assertEqual(numbered.stdout.strip(), "0.2.3")
+        listed = self.run_ask("list sessions", **env)
+        self.assertEqual(listed.returncode, 0, listed.stderr)
+        self.assertEqual(listed.stdout.strip(), f"{run_id} grok ask queued")
+        empty = self.run_ask("what sessions are running?", **env, ASK_TEST_SESSION_MODE="empty")
+        self.assertEqual(empty.stdout.strip(), "no sessions")
+        read = self.run_ask(f"read session {run_id}", **env)
+        self.assertEqual(read.returncode, 0, read.stderr)
+        self.assertEqual(read.stdout.strip(), "hello from the session\nsecond line")
+        log_path = self.run_ask(f"what's the log path for session {run_id}", **env)
+        self.assertEqual(log_path.stdout.strip(), str(run_dir / "events.jsonl"))
+        missing = self.run_ask(
+            "read session 20261106T120001.000000Z-0123456789abcdef0123456789abcdef",
+            **env,
+        )
+        self.assertEqual(missing.returncode, 1, missing.stdout)
+        self.assertIn("no session", missing.stderr)
+        launched = self.run_ask("launch a grok session", **env)
+        self.assertEqual(launched.returncode, 0, launched.stderr)
+        self.assertEqual(
+            launched.stdout.strip(),
+            f"run {run_id}\npane 84\nlog {run_dir / 'events.jsonl'}",
+        )
+        recorded = session_log.read_text(encoding="utf-8")
+        self.assertIn("launch grok --new-tab", recorded)
+        self.assertNotIn("foreground", recorded)
+        self.assertNotIn("attach", recorded)
+        self.assertNotIn("stop", recorded)
+        help_result = self.run_ask("how do I launch a grok session?", **env)
+        self.assertEqual(help_result.returncode, 0, help_result.stderr)
+        self.assertIn("Help search: list panes", help_result.stdout)
+        self.assertEqual(recorded, session_log.read_text(encoding="utf-8"))
+        detached = self.run_ask("detach the session", **env)
+        self.assertEqual(detached.returncode, 1, detached.stdout)
+        self.assertIn("not installed", detached.stderr)
         self.assertTrue(all("needle" not in call for call in self.calls()))
 
     def test_city_weather_hold_and_voice_use_the_same_readable_result_path(self):
@@ -386,6 +940,50 @@ def json_request(url):
         self.assertIn("nothing was transcribed", output)
         self.assertIn("voice doctor", output)
         self.assertEqual(self.calls(), [])
+
+    def test_set_an_alarm_launches_kilix_alarm(self):
+        missing = self.run_ask("set an alarm", ASK_TEST_MISSING="1")
+        self.assertEqual(missing.returncode, 1, missing.stdout)
+        self.assertIn("alarm is not installed", missing.stderr)
+        log = self.root / "alarm-log"
+        binary = self.root / "kilix-alarm"
+        binary.write_text(
+            "#!/usr/bin/env python3\n"
+            "import json, os, sys\n"
+            "with open(os.environ['ASK_TEST_ALARM_LOG'], 'a') as stream:\n"
+            "    stream.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+            "print('alarm')\n"
+        )
+        binary.chmod(0o755)
+        env = {
+            "ASK_TEST_MISSING": "1",
+            "KILIX_ALARM_BIN": str(binary),
+            "ASK_TEST_ALARM_LOG": str(log),
+        }
+        opened = self.run_ask("set an alarm", **env)
+        self.assertEqual(opened.returncode, 0, opened.stderr)
+        self.assertEqual(opened.stdout.strip(), "alarm")
+        timed = self.run_ask("set an alarm for 7:30pm", **env)
+        self.assertEqual(timed.returncode, 0, timed.stderr)
+        soon = self.run_ask("set an alarm in 5 minutes with a loud beep", **env)
+        self.assertEqual(soon.returncode, 0, soon.stderr)
+        hum = self.run_ask("please set an alarm for 7am with a quiet hum", **env)
+        self.assertEqual(hum.returncode, 0, hum.stderr)
+        lines = [json.loads(line) for line in log.read_text().splitlines()]
+        self.assertEqual(lines[0], [])
+        self.assertEqual(lines[1], ["--at", "19:30"])
+        self.assertEqual(lines[2], ["--in", "300", "--style", "alert"])
+        self.assertEqual(lines[3], ["--at", "07:00", "--style", "hum"])
+        invalid = self.run_ask("set an alarm for 25:99", **env)
+        self.assertEqual(invalid.returncode, 1, invalid.stdout)
+        self.assertIn("not valid", invalid.stderr)
+        help_result = self.run_ask("how do I set an alarm?", ASK_TEST_MISSING="1")
+        self.assertEqual(help_result.returncode, 0, help_result.stderr)
+        self.assertIn("Help search: list panes", help_result.stdout)
+        other = self.run_ask("set an alarm and make coffee", ASK_TEST_MISSING="1")
+        self.assertEqual(other.returncode, 1, other.stdout)
+        self.assertIn("not installed", other.stderr)
+        self.assertEqual(len(lines), 4)
 
 
 if __name__ == "__main__":

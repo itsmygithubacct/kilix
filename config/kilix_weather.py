@@ -67,6 +67,9 @@ def ask_query(text: str) -> Query | None:
         units = re.search(r'\s+in\s+(celsius|fahrenheit)$', city, re.I)
         if units:
             unit, city = units[1].lower(), city[:units.start()].strip()
+    # "the temperature in fahrenheit" names a display unit, not a city.
+    if not city or city.casefold() in {"celsius", "fahrenheit"}:
+        return None
     if re.search(r'\b(?:tomorrow|yesterday|tonight|forecast|next|week)\b', city, re.I):
         raise ValueError('City lookups show current conditions. Try: weather in Tokyo.')
     if re.search(r'\s+and\s+', city, re.I):

@@ -3635,6 +3635,17 @@ case "${1:-}" in
           echo "Arithmetic is answered directly, without a model:"
           echo "  kilix ask \"what is three times five?\""
           echo "  kilix calculator '7x7+95/2'"
+          echo "Time, disk, memory, CPU, temperature, volume, brightness, battery, network, playback, sessions, and how-to questions are answered directly:"
+          echo "  kilix ask \"what time is it?\""
+          echo "  kilix ask \"how much disk is free?\""
+          echo "  kilix ask \"what is the temperature?\""
+          echo "  kilix ask \"what is the volume?\""
+          echo "  kilix ask \"set the volume to 30\""
+          echo "  kilix ask \"set the brightness to 40\""
+          echo "  kilix ask \"what's the battery?\""
+          echo "  kilix ask \"list sessions\""
+          echo "  kilix ask \"how do I list panes?\""
+          echo "  kilix ask \"set an alarm\""
           echo "  --yes    act without the yes/no prompt; not with --voice"
           echo "  --voice  dictate the request; the transcript can be edited first"
           echo "  --hold   wait for Enter before returning, so a tab stays readable"
@@ -3688,6 +3699,55 @@ case "${1:-}" in
     python3 -B "$KILIX_HOME/config/kilix_calc.py" --ask "$_ask_text" || _ask_calc_status=$?
     case "$_ask_calc_status" in
       0|1|2) _ask_close "$_ask_calc_status" ;;
+      3) ;;
+      *) _ask_close 1 ;;
+    esac
+    # Time, resources, and the pane list are reads. A how-to question is
+    # documentation search and does not run a command.
+    _ask_fact_status=0
+    python3 -B "$KILIX_HOME/config/kilix_facts.py" --ask "$_ask_text" || _ask_fact_status=$?
+    case "$_ask_fact_status" in
+      0|1|2) _ask_close "$_ask_fact_status" ;;
+      3) ;;
+      4)
+        python3 "$KILIX_HOME/config/content_app.py" run kilix-help-llm -- lookup "$_ask_text" \
+          || _ask_close $?
+        _ask_close 0 ;;
+      *) _ask_close 1 ;;
+    esac
+    # A temperature or fan sentence is one sysfs reading. The reader lives in
+    # kilix-telemetry and does not start the sampler.
+    _ask_sensor_status=0
+    python3 -B "$KILIX_HOME/config/kilix_sensors.py" --ask "$_ask_text" || _ask_sensor_status=$?
+    case "$_ask_sensor_status" in
+      0|1|2) _ask_close "$_ask_sensor_status" ;;
+      3) ;;
+      *) _ask_close 1 ;;
+    esac
+    # Checking or setting the volume uses kilix-volume and does not open the mixer.
+    # Which speakers are on is the same read: the default sink, not a change.
+    _ask_volume_status=0
+    python3 -B "$KILIX_HOME/config/kilix_volume.py" --ask "$_ask_text" || _ask_volume_status=$?
+    case "$_ask_volume_status" in
+      0|1|2) _ask_close "$_ask_volume_status" ;;
+      3) ;;
+      *) _ask_close 1 ;;
+    esac
+    # Brightness, the network name, the current track, and whether the
+    # microphone is listening. None of these opens a panel, joins a network,
+    # starts the player, or starts dictation.
+    _ask_local_status=0
+    python3 -B "$KILIX_HOME/config/kilix_local.py" --ask "$_ask_text" || _ask_local_status=$?
+    case "$_ask_local_status" in
+      0|1|2) _ask_close "$_ask_local_status" ;;
+      3) ;;
+      *) _ask_close 1 ;;
+    esac
+    # Setting an alarm opens kilix-alarm. The window is the alarm.
+    _ask_alarm_status=0
+    python3 -B "$KILIX_HOME/config/kilix_alarm.py" --ask "$_ask_text" || _ask_alarm_status=$?
+    case "$_ask_alarm_status" in
+      0|1|2) _ask_close "$_ask_alarm_status" ;;
       3) ;;
       *) _ask_close 1 ;;
     esac
