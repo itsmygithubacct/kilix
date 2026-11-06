@@ -3632,6 +3632,9 @@ case "${1:-}" in
           echo "City weather questions fetch current conditions directly, without a model:"
           echo "  kilix ask \"What's the weather in Tokyo?\""
           echo "  kilix weather \"Paris, France\" --unit celsius"
+          echo "Arithmetic is answered directly, without a model:"
+          echo "  kilix ask \"what is three times five?\""
+          echo "  kilix calculator '7x7+95/2'"
           echo "  --yes    act without the yes/no prompt; not with --voice"
           echo "  --voice  dictate the request; the transcript can be edited first"
           echo "  --hold   wait for Enter before returning, so a tab stays readable"
@@ -3677,6 +3680,15 @@ case "${1:-}" in
     case "$_ask_weather_status" in
       0|1|2) _ask_close "$_ask_weather_status" ;;
       3) ;; # Not a city weather question; preserve the normal Needle route.
+      *) _ask_close 1 ;;
+    esac
+    # A whole-request sum is exact arithmetic. Opening the calculator is not,
+    # and still goes to Needle with everything else.
+    _ask_calc_status=0
+    python3 -B "$KILIX_HOME/config/kilix_calc.py" --ask "$_ask_text" || _ask_calc_status=$?
+    case "$_ask_calc_status" in
+      0|1|2) _ask_close "$_ask_calc_status" ;;
+      3) ;;
       *) _ask_close 1 ;;
     esac
     # The installed app, not `app run`: that pauses on any nonzero status, and a
@@ -3929,7 +3941,16 @@ raise SystemExit(main(sys.argv[2:]))
     exec /usr/bin/python3 -I -B -c '
 import sys
 sys.path.insert(0,sys.argv[1])
-from kilix_sdk.transcribe_provider import main
+from kilix_sdk.transcribe_front import main
+raise SystemExit(main(sys.argv[2:]))
+' "$KILIX_HOME/config" "$@"
+    ;;
+  split|kilix-split)
+    shift
+    exec /usr/bin/python3 -I -B -c '
+import sys
+sys.path.insert(0,sys.argv[1])
+from kilix_sdk.split_cli import main
 raise SystemExit(main(sys.argv[2:]))
 ' "$KILIX_HOME/config" "$@"
     ;;
@@ -6547,9 +6568,14 @@ fi
 # A native calculator overlay for an ordinary terminal pane. It deliberately
 # rides the same ask kitten used by Kilix's Copy/Paste context window, so its
 # theme, mouse protocol, resizing and terminal restoration stay in one place.
-if [ "${1:-}" = calculator ] && [ -x "$KITTEN" ]; then
+if [ "${1:-}" = calculator ]; then
   shift
-  exec "$KITTEN" ask --type=calculator --title=Calculator "$@"
+  if [ $# -gt 0 ]; then
+    exec python3 -B "$KILIX_HOME/config/kilix_calc.py" "$@"
+  fi
+  if [ -x "$KITTEN" ]; then
+    exec "$KITTEN" ask --type=calculator --title=Calculator
+  fi
 fi
 
 # Kittens (kilix icat foo.png, kilix diff a b, …) run via the sibling kitten
