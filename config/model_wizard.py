@@ -45,9 +45,10 @@ SPEECH_RUNTIMES = ('kilix-female-02', 'piper-en-us-kristin-medium',
                    'qwen3-tts-1.7b-voicedesign')
 DEFAULT_SYSTEM_VOICE = 'kilix-female-02'
 # Paradee 1.2, about 7.88 million parameters: one int8 ONNX shared by four
-# voices. The published file is pinned here by URL, size and checksum. The
-# content catalogue has no licence receipt for it, so accepting the offer
-# records the choice and does not fetch the weights.
+# voices. The published file is pinned here by URL, size and checksum. A
+# catalogued row is optional and is downloaded only after consent. The
+# synthetic offer below is used only when the catalogue has no such row,
+# and accepting that offer records the choice without fetching the weights.
 PARADEE_ID = 'paradee-8m-v1.2'
 PARADEE_VOICES = ('af_heart', 'am_puck', 'bf_isabella', 'bm_fable')
 PARADEE_URL = ('https://huggingface.co/sahilmahendrakar/Paradee-8M-v1.2/resolve/'
@@ -67,6 +68,13 @@ PARADEE_OFFER = dict(
     license='Apache-2.0',
     availability='catalogue-unpinned',
 )
+
+
+def paradee_catalogued(assets=None):
+    """True when the catalogue has a Paradee row with a licence receipt."""
+    assets = catalog() if assets is None else assets
+    return any(row.get('id') == PARADEE_ID and row.get('availability') != 'catalogue-unpinned'
+               for row in assets)
 STT_IDS = {'vosk-model-small-en-us-0.15': 'small-en-us',
            'vosk-model-en-us-0.22-lgraph': 'lgraph-en-us',
            'faster-whisper-small-en': 'whisper-small-en', 'whistle': 'whistle'}
@@ -391,11 +399,13 @@ def pages(include_answered=False, *, assets=None, measure=True, ensure_sizer=Fal
         if not rows or (not include_answered and answer in ('yes', 'no')):
             continue
         reports, recommended, note = sizing(rows, key, ensure_sizer=ensure_sizer) if measure else ({}, None, 'Sizing not requested.')
+        paradee_pinned = False
         if key == 'speech':
             # Female-02 is installed without a question. The page offers every
             # other catalogued speech voice, plus Paradee, with nothing checked.
             rows = [row for row in rows if row['id'] != DEFAULT_SYSTEM_VOICE]
-            if not any(row['id'] == PARADEE_ID for row in rows):
+            paradee_pinned = any(row['id'] == PARADEE_ID for row in rows)
+            if not paradee_pinned:
                 rows.append(dict(PARADEE_OFFER))
         ready = None
         if key == 'system-local-llm' and measure:
@@ -432,12 +442,17 @@ def pages(include_answered=False, *, assets=None, measure=True, ensure_sizer=Fal
         if key == 'speech':
             optional = True
             label = 'Installed default: kilix-female-02'
+            if paradee_pinned:
+                paradee_note = 'Paradee 1.2 is downloaded only when chosen. '
+            else:
+                paradee_note = (
+                    f'Paradee 1.2 is one int8 ONNX ({PARADEE_BYTES} bytes, sha256 {PARADEE_SHA256}) '
+                    f'at {PARADEE_URL}, shared by {", ".join(PARADEE_VOICES)}. '
+                    'The content catalogue has no licence receipt, so Paradee is not downloaded. ')
             recommendation = (
                 f'{label}. Piper voice kilix-female-02 is installed without a question. '
                 'Optional voices are not pre-checked. '
-                f'Paradee 1.2 is one int8 ONNX ({PARADEE_BYTES} bytes, sha256 {PARADEE_SHA256}) '
-                f'at {PARADEE_URL}, shared by {", ".join(PARADEE_VOICES)}. '
-                'The content catalogue has no licence receipt, so Paradee is not downloaded. '
+                + paradee_note
                 + note)
         result.append(dict(id=key, title=title, models=rows, default=default, answer=answer,
                            optional=optional, disk_available_bytes=disk_free,
@@ -601,9 +616,12 @@ def finish(*, input_fn=input):
         if not plans:
             print('No model installations are pending.')
             return
-        # Paradee is an offer without a catalogue licence pin. Do not fetch it.
+        # An unpinned Paradee offer has no catalogue receipt, so it is recorded
+        # and not fetched. A catalogued row goes through consent like any
+        # other optional voice, and is still not the installed default.
+        excluded = ('grammar',) if paradee_catalogued() else ('grammar', PARADEE_ID)
         selected = list(dict.fromkeys(model for plan in plans.values() for model in plan['models']
-                                      if model not in ('grammar', PARADEE_ID)))
+                                      if model not in excluded))
         # Revalidate against the currently selected catalog, never a stale UI request.
         offered = {page['id']: {model['id'] for model in page['models']}
                    for page in pages(True, measure=False)}
@@ -617,7 +635,7 @@ def finish(*, input_fn=input):
         except InstallFailures as error:
             allowed, declined = error.installed, error.declined
             failures.update(error.failures)
-        allowed = set(allowed) | {'grammar', PARADEE_ID}
+        allowed = set(allowed) | set(excluded)
         for segment, plan in plans.items():
             models = [model for model in plan['models'] if model not in declined]
             try:

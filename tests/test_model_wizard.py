@@ -204,6 +204,35 @@ class WizardTests(unittest.TestCase):
         self.assertEqual(wizard.default_voice_record()['engine'], 'piper')
         self.assertEqual(wizard.default_voice_record()['voice'], 'kilix-female-02')
 
+    def test_catalogued_paradee_is_optional_and_installed_only_when_chosen(self):
+        paradee = asset(wizard.PARADEE_ID, 'paradee')
+        assets = [asset('piper-en-us-kristin-medium', 'kilix-piper-tts'),
+                  asset('kilix-female-02', 'kilix-piper-tts'),
+                  paradee]
+        with patch.object(wizard, 'catalog', return_value=assets), \
+                patch.object(wizard, 'sizing', return_value=({}, None, 'sizer')):
+            page = wizard.pages(measure=True)[0]
+        self.assertTrue(page['optional'])
+        self.assertIsNone(page['default'])
+        self.assertEqual([row['id'] for row in page['models']],
+                         ['piper-en-us-kristin-medium', wizard.PARADEE_ID])
+        self.assertNotIn('availability', page['models'][-1])
+        self.assertIn('downloaded only when chosen', page['recommendation'])
+        self.assertNotIn('no licence receipt', page['recommendation'])
+        self.assertIn('Installed default: kilix-female-02', page['recommendation'])
+        with patch.object(wizard, 'catalog', return_value=assets):
+            wizard.apply('speech', ['piper-en-us-kristin-medium', wizard.PARADEE_ID], 'yes')
+            with patch('wizard_licenses.consent_and_install',
+                       return_value=({'piper-en-us-kristin-medium', wizard.PARADEE_ID}, set())) as batch, \
+                    patch.object(wizard, 'run_command') as run:
+                wizard.finish()
+        self.assertEqual(batch.call_args.args[0],
+                         ['piper-en-us-kristin-medium', wizard.PARADEE_ID])
+        self.assertEqual([item.args for item in run.call_args_list], [
+            ('tts', '--install=kilix-female-02'),
+            ('tts', '--set', 'engine=piper', '--set', 'voice=kilix-female-02')])
+        self.assertEqual(wizard.default_voice_record()['voice'], 'kilix-female-02')
+
     def test_all_types_and_defaults_without_writes(self):
         pages = wizard.pages(measure=False)
         self.assertEqual([p['id'] for p in pages], ['vision', 'audio', 'image'])
