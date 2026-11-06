@@ -228,6 +228,36 @@ def json_request(url):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.calls()[-1]["needle"], ["ask", "--interactive", "--", "--yes close tab 2"])
 
+    def test_yes_skips_the_interactive_prompt(self):
+        result = self.run_ask("--yes", "close", "tab 2")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.calls()[-1]["needle"], ["ask", "--yes", "--", "close tab 2"])
+
+    def test_yes_keeps_an_explicit_model(self):
+        result = self.run_ask("--model", "needle3", "--yes", "--", "hide the clock")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.calls()[-1]["needle"],
+                         ["ask", "--yes", "--commands-backend", "needle3", "--", "hide the clock"])
+
+    def test_yes_without_a_request_is_usage(self):
+        result = self.run_ask("--yes")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(self.calls(), [])
+
+    def test_yes_cannot_combine_with_voice(self):
+        result = self.run_ask("--yes", "--voice")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("cannot be combined with --voice", result.stderr)
+        self.assertEqual(self.calls(), [])
+
+    def test_help_names_yes(self):
+        result = self.run_ask("--help")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--yes", result.stdout)
+        self.assertIn("acts only on a typed yes", result.stdout)
+        self.assertIn("unsure route still does not run", result.stdout)
+        self.assertEqual(self.calls(), [])
+
     def test_an_uninstalled_app_is_named_not_built(self):
         result = self.run_ask("split right", ASK_TEST_MISSING="1")
         self.assertEqual(result.returncode, 1)

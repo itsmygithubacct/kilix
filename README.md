@@ -104,7 +104,9 @@ model loading. `--model lfm3` and `--model needle3` select those interpreters
 for one request; install Needle 3 with
 `kilix-needle install --commands needle3`, then run
 `kilix ask --model needle3 "open calculator"`. Every interpreter uses the same
-request validation and confirmation. Model Setup and
+request validation and confirmation. `kilix ask --yes REQUEST` acts without
+the yes/no prompt. A refusal or an unsure route still does not run, and
+`--yes` cannot be combined with `--voice`. Model Setup and
 `kilix-needle workflows setup --model needle3` save the Ask preference after
 verification. An explicit `--model` overrides that preference for one request;
 `KILIX_ASK_COMMANDS_BACKEND` overrides it in a shell. The installer presents
