@@ -56,6 +56,7 @@ class AskLauncherTests(unittest.TestCase):
             shutil.copy2(ROOT / "config" / name, home / "config" / name)
         shutil.copytree(ROOT / "config" / "kilix_sdk", home / "config" / "kilix_sdk")
         shutil.copy2(ROOT / "config" / "kilix_weather.py", home / "config" / "kilix_weather.py")
+        shutil.copy2(ROOT / "config" / "kilix_calc.py", home / "config" / "kilix_calc.py")
         (home / "config" / "content_app.py").write_text(CONTENT_APP)
         needle = self.root / "needle"
         needle.write_text(NEEDLE)
@@ -118,6 +119,22 @@ def json_request(url):
                     self.assertNotIn('Tokyo, Japan:', result.stdout)
         self.assertEqual(len(self.calls()), 3)
         self.assertTrue(all('weather' in call for call in self.calls()), self.calls())
+
+    def test_arithmetic_is_answered_without_needle(self):
+        for request, expected in (
+            ("what is three times five?", "15"),
+            ("what is 5% of 512.54", "25.627"),
+            ("7x7+95/2", "96.5"),
+        ):
+            with self.subTest(request=request):
+                result = self.run_ask(request, ASK_TEST_MISSING="1")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.strip(), expected)
+        opened = self.run_ask("open the calculator", ASK_TEST_MISSING="1")
+        self.assertEqual(opened.returncode, 1, opened.stderr)
+        self.assertIn("not installed", opened.stderr)
+        self.assertTrue(self.calls())
+        self.assertTrue(all("needle" not in call for call in self.calls()))
 
     def test_city_weather_hold_and_voice_use_the_same_readable_result_path(self):
         self.weather_provider()
