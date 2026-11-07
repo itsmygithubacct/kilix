@@ -807,6 +807,12 @@ stage_runtime_generation() {
     || die "could not allocate voice runtime staging"
   log "installing the pinned voice engine into a private generation"
   make -B -C "$voice_dir" install PREFIX="$runtime_stage"
+  # The pinned library forces every Whisper selection onto whisper-small-en.
+  # RC5 keeps that pin and adds whisper-medium-en on the staged generation.
+  # A fixture tree has none of the markers, and the patcher then exits 0.
+  python3 "$(dirname "${BASH_SOURCE[0]}")/patch-whisper-medium-model.py" \
+    "$runtime_stage" \
+    || die "could not add whisper-medium-en to the staged voice runtime"
   stage_license_authority "$runtime_stage"
   stage_content_first_use "$runtime_stage"
   for tool in kilix-tts kilix-stt kilix-voiced; do

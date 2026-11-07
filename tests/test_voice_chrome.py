@@ -371,6 +371,14 @@ class VoiceSegmentTests(unittest.TestCase):
         self.assertEqual(self.voice.STT_MODEL_ENGINES, sdk.VOICE_STT_MODEL_ENGINES)
         self.assertEqual(set(self.voice.STT_MODEL_BYTES), set(sdk.VOICE_STT_MODEL_CHOICES))
         self.assertEqual(set(self.voice.STT_MODEL_REQUIRED_FILES), set(sdk.VOICE_STT_MODEL_CHOICES))
+        self.assertEqual(sdk.VOICE_STT_MODEL_DEFAULT, "small-en-us")
+        self.assertEqual(self.voice.STT_MODEL_BYTES["whisper-medium-en"], 1530459085)
+        self.assertEqual(
+            self.voice.STT_MODEL_REQUIRED_FILES["whisper-medium-en"],
+            ("model.bin", "config.json", "tokenizer.json", "vocabulary.txt"))
+        self.assertEqual(
+            self.voice.STT_MODEL_CONTENT_DIRS["whisper-medium-en"],
+            ("desktop-apps", "assets", "faster-whisper-medium-en"))
 
     def test_choosing_the_vibevoice_engine_selects_its_model(self):
         with self.settings(KILIX_VOICE_STT_ENGINE="vibevoice",

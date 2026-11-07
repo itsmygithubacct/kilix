@@ -77,7 +77,9 @@ def paradee_catalogued(assets=None):
                for row in assets)
 STT_IDS = {'vosk-model-small-en-us-0.15': 'small-en-us',
            'vosk-model-en-us-0.22-lgraph': 'lgraph-en-us',
-           'faster-whisper-small-en': 'whisper-small-en', 'whistle': 'whistle'}
+           'faster-whisper-small-en': 'whisper-small-en',
+           'faster-whisper-medium-en': 'whisper-medium-en',
+           'whistle': 'whistle'}
 RUNTIME_PAGES = {'vision', 'audio', 'image'}
 LEGACY = {'speech': 'system-voice.state', 'dictation': 'dictation-offer.state',
           'workflows': 'workflows-offer.state'}

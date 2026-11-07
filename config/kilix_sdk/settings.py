@@ -253,12 +253,14 @@ VOICE_STT_ENGINE_CHOICES = ("vosk", "vibevoice", "whisper", "whistle", "off")
 VOICE_STT_MODEL_KEY = "KILIX_VOICE_STT_MODEL"
 VOICE_STT_MODEL_DEFAULT = "small-en-us"
 VOICE_STT_MODEL_CHOICES = (
-    "small-en-us", "lgraph-en-us", "vibevoice-asr-bitnet", "whisper-small-en", "whistle")
+    "small-en-us", "lgraph-en-us", "vibevoice-asr-bitnet",
+    "whisper-small-en", "whisper-medium-en", "whistle")
 VOICE_STT_MODEL_ENGINES = {
     "small-en-us": "vosk",
     "lgraph-en-us": "vosk",
     "vibevoice-asr-bitnet": "vibevoice",
     "whisper-small-en": "whisper",
+    "whisper-medium-en": "whisper",
     "whistle": "whistle",
 }
 

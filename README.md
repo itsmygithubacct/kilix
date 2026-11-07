@@ -1875,7 +1875,8 @@ must consume this versioned command contract instead of copying the catalog.
 
 The catalog contains `small-en-us` (Vosk, 39.3 MiB), `lgraph-en-us` (Vosk,
 124.5 MiB), `vibevoice-asr-bitnet` (VibeVoice, about 1.6 GiB),
-`whisper-small-en` (Whisper, 463.6 MiB), and `whistle` (Whistle, 16.2 MiB).
+`whisper-small-en` (Whisper, 463.6 MiB), `whisper-medium-en` (Whisper,
+1459.6 MiB), and `whistle` (Whistle, 16.2 MiB).
 Runtime support does not mean the model weights are installed. VibeVoice's
 weights are shared with Kilix Bonsai, so installing them does not create a
 second copy. VibeVoice dictates once its VibeASR runtime is built (below); it
@@ -1899,7 +1900,10 @@ locked environment with `uv sync --locked` under Python 3.12.8, and publishes
 it at `$KILIX_DATA_HOME/voice/whisper/current/bin/kilix-whisper-stt`. It does
 nothing when that pinned generation is already current. The provider holds no
 model and never downloads one; `kilix stt --install whisper-small-en` installs
-the licence-gated weights and then runs it.
+the licence-gated weights and then runs it. `kilix stt --install
+whisper-medium-en` installs the larger English-only model the same way. Medium
+uses the same MIT determination as the small model (OpenAI weights, SYSTRAN
+CTranslate2 conversion).
 
 `kilix voice install` installs the immutable `kilix-voice` source revision
 pinned by `KILIX_VOICE_REF` in `scripts/install-kilix-voice.sh`, the official

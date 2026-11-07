@@ -81,7 +81,8 @@ _V3, _ORIGIN = asset_v3_available()
 # Female-02 epoch 80 adds kilix-female-02 (content 2e20fce).
 # Optional LFM3 is retained alongside the new versioned LFM2 default.
 # Paradee 1.2 adds paradee-8m-v1.2 (content 020a186). It is not a default.
-PACKAGED_ASSETS = 40
+# RC5 adds faster-whisper-medium-en under the small model's MIT record.
+PACKAGED_ASSETS = 41
 
 # Producer notices the pinned upstream archive carries and the installer
 # verifies and reuses from it, so the licence text store does not hold them.

@@ -694,6 +694,7 @@ class SharedSettingsTests(unittest.TestCase):
                 ("lgraph-en-us", "vosk"),
                 ("vibevoice-asr-bitnet", "vibevoice"),
                 ("whisper-small-en", "whisper"),
+                ("whisper-medium-en", "whisper"),
             ):
                 self.assertEqual(settings.stt_engine_for_model(model), engine)
                 settings.set_stt_default(model, str(path))
