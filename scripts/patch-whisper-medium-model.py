@@ -87,11 +87,12 @@ REPLACEMENTS = {
         # medium English; a catalogued whisper id is kept, and anything else
         # (including a bare engine choice) still opens whisper-small-en.
         # Choosing the engine alone must not load the default vosk directory.
-        requested = str(cfg_get(config, "stt.model") or "")
+        # model_id already holds the configuration's stt.model or, failing
+        # that, the settings file's choice.
         whisper_choice = (
             engine == ENGINE_WHISPER
-            and requested in models.MODEL_BY_ID
-            and models.MODEL_BY_ID[requested].engine == ENGINE_WHISPER
+            and model_id in models.MODEL_BY_ID
+            and models.MODEL_BY_ID[model_id].engine == ENGINE_WHISPER
         )
         if not whisper_choice:
             model_id = _SINGLE_MODEL[engine]

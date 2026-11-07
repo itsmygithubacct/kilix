@@ -5,6 +5,8 @@ from __future__ import annotations
 import importlib.util
 import subprocess
 import tempfile
+import textwrap
+import types
 import unittest
 from pathlib import Path
 
@@ -67,6 +69,35 @@ class PatchWhisperMediumTests(unittest.TestCase):
         )
         self.assertFalse(self.module.patch_tree(self.root))
         self.assertEqual((library / "models.py").read_text(encoding="utf-8"), models)
+
+    def test_a_whisper_model_chosen_in_the_settings_file_is_kept(self):
+        # Seat B (2026-11-07): the patched block read only the passed
+        # configuration's stt.model, so whisper-medium-en chosen in the
+        # settings file alone fell back to whisper-small-en. resolve_stt has
+        # merged both sources into model_id before this block runs.
+        ((_old, new),) = self.module.REPLACEMENTS["stt.py"]
+        block = textwrap.dedent(new)
+        whisper = types.SimpleNamespace(engine="whisper")
+        models = types.SimpleNamespace(MODEL_BY_ID={
+            "whisper-small-en": whisper, "whisper-medium-en": whisper,
+            "small-en-us": types.SimpleNamespace(engine="vosk")})
+
+        def resolve(model_id, config=None, engine="whisper"):
+            scope = {"engine": engine, "model_id": model_id, "config": config or {},
+                     "cfg_get": lambda cfg, key: cfg.get(key), "models": models,
+                     "ENGINE_WHISPER": "whisper",
+                     "_SINGLE_MODEL": {"whisper": "whisper-small-en", "whistle": "whistle"}}
+            exec(block, scope)
+            return scope["model_id"]
+
+        self.assertEqual(resolve("whisper-medium-en"), "whisper-medium-en")
+        self.assertEqual(resolve("whisper-medium-en", {"stt.model": "whisper-medium-en"}),
+                         "whisper-medium-en")
+        self.assertEqual(resolve("whisper-small-en"), "whisper-small-en")
+        self.assertEqual(resolve(""), "whisper-small-en")
+        self.assertEqual(resolve("small-en-us"), "whisper-small-en")
+        self.assertEqual(resolve("not-a-model"), "whisper-small-en")
+        self.assertEqual(resolve("whisper-medium-en", engine="whistle"), "whistle")
 
     def test_the_script_exits_quietly_when_the_prefix_is_a_fixture(self):
         prefix = self.root / "prefix"

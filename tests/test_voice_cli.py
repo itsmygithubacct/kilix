@@ -1742,6 +1742,13 @@ namespace["cmd_dictate"](30)
         self.assertEqual(model_line(), f"speech model: not installed ({whistle})")
         whistle.mkdir(parents=True)
         self.assertEqual(model_line(), f"speech model: {whistle}")
+        # Medium English has its own content-store directory (seat B, 2026-11-07).
+        self._configure_devices(KILIX_VOICE_STT_ENGINE="whisper",
+                                KILIX_VOICE_STT_MODEL="whisper-medium-en")
+        medium = data / "desktop-apps" / "assets" / "faster-whisper-medium-en"
+        self.assertEqual(model_line(), f"speech model: not installed ({medium})")
+        medium.mkdir(parents=True)
+        self.assertEqual(model_line(), f"speech model: {medium}")
 
 
 if __name__ == "__main__":

@@ -2703,6 +2703,7 @@ _kilix_voice_doctor() {
   if [ ! -d "$model" ]; then
     case "$_KILIX_VOICE_STT_MODEL" in
       whisper-small-en) model="$KILIX_DATA_HOME/desktop-apps/assets/faster-whisper-small-en" ;;
+      whisper-medium-en) model="$KILIX_DATA_HOME/desktop-apps/assets/faster-whisper-medium-en" ;;
       whistle) model="$KILIX_DATA_HOME/desktop-apps/assets/whistle" ;;
     esac
   fi
