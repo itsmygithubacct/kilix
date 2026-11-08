@@ -83,7 +83,9 @@ _V3, _ORIGIN = asset_v3_available()
 # Paradee 1.2 adds paradee-8m-v1.2 (content 020a186). It is not a default.
 # RC5 adds faster-whisper-medium-en (its own record, small's MIT terms) and
 # demucs-htdemucs-6s, the kilix split weights (its own record, Demucs MIT).
-PACKAGED_ASSETS = 42
+# RC5 Playalong adds faster-whisper-large-v3 (its own record, MIT), offered for
+# lyrics that are not in English and never a default (content c8f0b0f).
+PACKAGED_ASSETS = 43
 
 # Producer notices the pinned upstream archive carries and the installer
 # verifies and reuses from it, so the licence text store does not hold them.

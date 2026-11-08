@@ -13,7 +13,8 @@ CATALOG = (
     ROOT / "third_party" / "kilix-content" / "src" / "kilix_content"
     / "catalog" / "plebian.json"
 )
-REF = "cf39bdd27d39096445136c2d756485c25300f982"
+# a11a021: Playalong takes every model from Kilix's licence records (content c8f0b0f).
+REF = "a11a02195765f3411249587918864e95dbf1fd9b"
 
 
 def catalog_entry():

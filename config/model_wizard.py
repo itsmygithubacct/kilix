@@ -81,6 +81,9 @@ STT_IDS = {'vosk-model-small-en-us-0.15': 'small-en-us',
            'faster-whisper-medium-en': 'whisper-medium-en',
            'whistle': 'whistle'}
 RUNTIME_PAGES = {'vision', 'audio', 'image'}
+# The page whose "no" also declines Playalong's default install (playalong_models.py).
+PLAYALONG_PAGE = 'kilix-playalong'
+PLAYALONG_DEFAULT_ROW = 'basic-pitch-icassp-2022-onnx'
 LEGACY = {'speech': 'system-voice.state', 'dictation': 'dictation-offer.state',
           'workflows': 'workflows-offer.state'}
 WORKFLOWS_SCHEMA = 'kilix.workflows/v1'
@@ -258,6 +261,9 @@ def group(asset):
     if name.startswith('nomic-embed'): return 'embedding'
     if provider == 'kilix-pdf-conversion': return 'documents'
     if 'vision' in name: return 'visual-chat'
+    # Playalong's own models (Basic Pitch, Whisper large-v3) belong on its
+    # page, even when the name says whisper: large-v3 is not a dictation model.
+    if provider == 'kilix-playalong': return 'kilix-playalong'
     if any(word in name for word in ('whisper', 'whistle', 'vosk', 'vibevoice-asr')): return 'dictation'
     if name == 'kilix-female-02' or name == PARADEE_ID or name.startswith('paradee-') \
             or any(word in name for word in ('tts', 'piper-')): return 'speech'
@@ -432,6 +438,10 @@ def pages(include_answered=False, *, assets=None, measure=True, ensure_sizer=Fal
         default = choice or next((row['id'] for row in rows if row['id'] == preferred), rows[0]['id'])
         if key == 'system-local-llm' or key in RUNTIME_PAGES and reports:
             default = choice
+        if key == PLAYALONG_PAGE:
+            # Large-v3 (3 GB) is optional and must never be the pre-checked row.
+            default = next((row['id'] for row in rows if row['id'] == PLAYALONG_DEFAULT_ROW),
+                           default)
         if key == 'speech':
             # Nothing on this page is pre-checked, including Kristin. The sizer
             # must not turn an optional voice into the installed default.
@@ -456,6 +466,12 @@ def pages(include_answered=False, *, assets=None, measure=True, ensure_sizer=Fal
                 'Optional voices are not pre-checked. '
                 + paradee_note
                 + note)
+        if key == PLAYALONG_PAGE:
+            recommendation += (
+                ' Plebian-OS installs Playalong\'s default models (Demucs htdemucs_6s, Basic Pitch '
+                'and Whisper medium.en) when they are missing, unless this page is answered no or '
+                'KILIX_PLAYALONG_MODELS=0 is set. Whisper large-v3, for lyrics not in English, '
+                'is installed only if you choose it here.')
         result.append(dict(id=key, title=title, models=rows, default=default, answer=answer,
                            optional=optional, disk_available_bytes=disk_free,
                            recommendation=recommendation))
