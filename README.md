@@ -1736,6 +1736,25 @@ agreement and digest checks. Runtime inference uses ONNX and does not load
 the source pickle or import Torch. Quality and sustained-load qualification
 remain separate from these commands.
 
+`kilix split` separates a mix into six stems (vocals, drums, bass, guitar,
+piano, other) with the Demucs htdemucs_6s model. `kilix transcribe run --clean`
+uses its vocal stem.
+
+```sh
+kilix split --install
+kilix split song.mp3 --output vocals.wav            # one stem; --stem picks it
+kilix split song.mp3 --output stems/ --device cpu   # every stem
+```
+
+`--install` installs the pinned Demucs code into a private virtual
+environment, then runs `kilix models install demucs-htdemucs-6s`. That screen
+shows Meta's weights file, its source and size, and the Demucs MIT text, and
+it asks for your answer. The weights download only after you agree. Before
+each separation, `kilix split` runs `kilix models verify demucs-htdemucs-6s`.
+Demucs then loads the verified file from Content's installation and runs
+offline, with its proxies pointed at a closed local port, so it does not fetch
+a model itself.
+
 ## Fingerprint reader
 
 `kilix fingerlock` is the host verb for the machine's USB fingerprint reader.

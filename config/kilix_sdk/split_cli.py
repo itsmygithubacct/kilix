@@ -1,13 +1,22 @@
 """Split a mix into stems with a private Demucs install.
 
-``--install`` creates ``$KILIX_DATA_HOME/split/venv`` and installs the pinned
-Demucs. Separation runs that venv's Python. A ``.wav`` ``--output`` receives
-one stem. Any other output path is a directory of ``<stem>.wav`` files.
+``--install`` creates ``$KILIX_DATA_HOME/split/venv``, installs the pinned
+Demucs code, and then runs ``kilix models install demucs-htdemucs-6s``. That
+shows the weights' kilix-license record and MIT text, takes the user's answer,
+writes the receipt, and fetches Meta's weights file into the Content store.
+
+Separation runs that venv's Python only after ``kilix models verify`` finds a
+receipt covering the exact weights and the installed bytes match. Demucs then
+loads the weights from that directory (``--repo``) by their signature, and runs
+offline with no proxy, so it never downloads a model itself. A ``.wav``
+``--output`` receives one stem. Any other output path is a directory of
+``<stem>.wav`` files.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -16,10 +25,22 @@ from pathlib import Path
 
 STEMS = ("vocals", "drums", "bass", "guitar", "piano", "other")
 MODEL = "htdemucs_6s"
+# kilix-content asset and kilix-license record for MODEL's weights.
+ASSET_ID = "demucs-htdemucs-6s"
+# htdemucs_6s.yaml is this one model with default weights; Demucs loads it by
+# signature from the asset directory and checks the sha256 prefix in its name.
+SIGNATURE = "5c90dfd2"
+WEIGHTS_FILE = "5c90dfd2-34c22ccb.th"
 DEVICES = ("auto", "cpu", "cuda")
 # Pinned separator. Installed with this exact git URL, not from PyPI.
 DEMUCS_URL = "git+https://github.com/adefossez/demucs.git@eeac1d15891af95b1288d2884b95baa3e5baa96c"
+# That Demucs imports numpy (demucs/audio.py, transformer.py) but declares it
+# only for Intel macOS, and torch does not require it, so it is named here.
+DEMUCS_UNDECLARED = ("numpy",)
 NOT_INSTALLED = "kilix split: Demucs is not installed. Run: kilix split --install"
+NO_WEIGHTS = (
+    "kilix split: the htdemucs_6s weights are not installed with a licence receipt. "
+    "Run: kilix split --install")
 OFFLINE_PROXY = "http://127.0.0.1:9"
 
 
@@ -37,6 +58,18 @@ def data_root() -> Path:
 
 def absolute(path: Path) -> Path:
     return Path(os.path.abspath(os.path.expanduser(str(path))))
+
+
+def kilix_bin() -> str:
+    home = os.environ.get("KILIX_HOME")
+    if home:
+        candidate = Path(home) / "kilix"
+        if candidate.is_file():
+            return str(candidate)
+    found = shutil.which("kilix")
+    if found:
+        return found
+    raise SystemExit("kilix split: cannot find the kilix program")
 
 
 def ensure_private(path: Path) -> Path:
@@ -142,11 +175,52 @@ def command_install() -> int:
     python = venv_python()
     if python is None:
         raise SystemExit("kilix split: uv did not create a virtualenv python")
-    run_checked([uv, "pip", "install", "--python", str(python), DEMUCS_URL])
+    run_checked([uv, "pip", "install", "--python", str(python), DEMUCS_URL, *DEMUCS_UNDECLARED])
     if not demucs_installed():
         raise SystemExit(NOT_INSTALLED)
-    print(f"kilix split: installed Demucs into {venv}", file=sys.stderr)
+    print(f"kilix split: installed Demucs into {venv}", file=sys.stderr, flush=True)
+    # The weights come through kilix-license: the user reads the record's terms
+    # and answers in this terminal, and Content writes the receipt and fetches.
+    try:
+        status = subprocess.call([kilix_bin(), "models", "install", ASSET_ID])
+    except OSError as error:
+        raise SystemExit(f"kilix split: {error}") from error
+    if status != 0:
+        print(f"kilix split: the {MODEL} weights were not installed", file=sys.stderr)
+        return status
+    print(f"kilix split: installed the {MODEL} weights", file=sys.stderr)
     return 0
+
+
+def licensed_weights() -> Path:
+    """The verified weights directory, or a refusal naming --install.
+
+    ``kilix models verify`` checks the stored receipt against this exact asset
+    and manifest and re-hashes every installed file. It changes nothing.
+    """
+    try:
+        result = subprocess.run(
+            [kilix_bin(), "models", "verify", ASSET_ID],
+            check=False, capture_output=True, text=True, errors="replace",
+            stdin=subprocess.DEVNULL, timeout=300)
+    except subprocess.TimeoutExpired:
+        raise SystemExit("kilix split: verifying the weights timed out") from None
+    except OSError as error:
+        raise SystemExit(f"kilix split: {error}") from error
+    if result.returncode != 0:
+        raise SystemExit(NO_WEIGHTS)
+    try:
+        report = json.loads(result.stdout)
+    except ValueError:
+        raise SystemExit(NO_WEIGHTS) from None
+    root = report.get("root") if isinstance(report, dict) else None
+    if (not isinstance(report, dict) or report.get("verified") != ASSET_ID
+            or not isinstance(root, str) or not os.path.isabs(root)):
+        raise SystemExit(NO_WEIGHTS)
+    weights = Path(root) / "assets" / ASSET_ID / "models"
+    if not (weights / WEIGHTS_FILE).is_file():
+        raise SystemExit(NO_WEIGHTS)
+    return weights
 
 
 def demucs_cache() -> Path:
@@ -156,29 +230,26 @@ def demucs_cache() -> Path:
     return cache
 
 
-def child_environment(cache: Path, allow_downloads: bool) -> dict[str, str]:
+def child_environment(cache: Path) -> dict[str, str]:
+    """Demucs's environment: offline, with no route to a model download."""
     environment = dict(os.environ)
     environment["TORCH_HOME"] = str(cache / "torch")
     environment["HF_HOME"] = str(cache / "huggingface")
     environment["HF_HUB_DISABLE_TELEMETRY"] = "1"
-    if allow_downloads:
-        # A parent shell may already be pinned offline. This flag asks for the weights.
-        environment.pop("HF_HUB_OFFLINE", None)
-    else:
-        environment["HF_HUB_OFFLINE"] = "1"
-        environment.update(
-            http_proxy=OFFLINE_PROXY,
-            https_proxy=OFFLINE_PROXY,
-            HTTP_PROXY=OFFLINE_PROXY,
-            HTTPS_PROXY=OFFLINE_PROXY,
-            ALL_PROXY=OFFLINE_PROXY,
-            NO_PROXY="",
-        )
+    environment["HF_HUB_OFFLINE"] = "1"
+    environment.update(
+        http_proxy=OFFLINE_PROXY,
+        https_proxy=OFFLINE_PROXY,
+        HTTP_PROXY=OFFLINE_PROXY,
+        HTTPS_PROXY=OFFLINE_PROXY,
+        ALL_PROXY=OFFLINE_PROXY,
+        NO_PROXY="",
+    )
     return environment
 
 
-def read_stems(scratch: Path, model: str) -> dict[str, Path]:
-    folder = scratch / model.replace("hf://", "").replace("/", "_")
+def read_stems(scratch: Path, name: str) -> dict[str, Path]:
+    folder = scratch / name
     found: dict[str, Path] = {}
     if not folder.is_dir():
         return found
@@ -225,8 +296,7 @@ def discard(path: Path) -> None:
         shutil.rmtree(path, ignore_errors=True)
 
 
-def command_split(audio: Path, output: Path, stem: str, model: str, device: str,
-                  allow_downloads: bool) -> int:
+def command_split(audio: Path, output: Path, stem: str, model: str, device: str) -> int:
     if model != MODEL:
         raise SystemExit(f"kilix split: unknown model {model}")
     if device not in DEVICES:
@@ -238,6 +308,7 @@ def command_split(audio: Path, output: Path, stem: str, model: str, device: str,
     output = absolute(output)
     if not audio.is_file():
         raise SystemExit(f"kilix split: audio not found: {audio}")
+    weights = licensed_weights()
     cache = demucs_cache()
     scratch = cache / "scratch"
     try:
@@ -248,8 +319,10 @@ def command_split(audio: Path, output: Path, stem: str, model: str, device: str,
             str(python),
             "-m",
             "demucs.separate",
+            "--repo",
+            str(weights),
             "--name",
-            model,
+            SIGNATURE,
             "--out",
             str(scratch),
             "--filename",
@@ -267,7 +340,7 @@ def command_split(audio: Path, output: Path, stem: str, model: str, device: str,
                 capture_output=True,
                 text=True,
                 errors="replace",
-                env=child_environment(cache, allow_downloads),
+                env=child_environment(cache),
                 stdin=subprocess.DEVNULL,
                 timeout=90 * 60,
             )
@@ -279,7 +352,7 @@ def command_split(audio: Path, output: Path, stem: str, model: str, device: str,
             detail = (result.stderr or result.stdout or "Demucs failed").strip().splitlines()
             raise SystemExit("kilix split: " + (detail[-1] if detail else "Demucs failed"))
         try:
-            deliver(read_stems(scratch, model), output, stem)
+            deliver(read_stems(scratch, SIGNATURE), output, stem)
         except OSError as error:
             raise SystemExit(f"kilix split: {error}") from error
         return 0
@@ -293,7 +366,8 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Separate a mix into stems with Demucs. "
             "The default stem is vocals. "
-            "Install the pinned separator with: kilix split --install"
+            "Install the pinned separator and its licensed weights with: "
+            "kilix split --install"
         ),
     )
     parser.add_argument(
@@ -301,7 +375,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="audio file to separate")
     parser.add_argument(
         "--install", action="store_true",
-        help="install the pinned Demucs into the private split venv and exit")
+        help="install the pinned Demucs into the private split venv, then the "
+             "htdemucs_6s weights through kilix models install, and exit")
     parser.add_argument(
         "--output", type=Path,
         help="wav file for the requested stem, or a directory for every stem")
@@ -315,9 +390,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--device", default="auto",
         help="auto, cpu, or cuda (default: auto)")
-    parser.add_argument(
-        "--allow-model-downloads", action="store_true",
-        help="allow Demucs to download model weights")
     return parser
 
 
@@ -342,6 +414,4 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("kilix split: an audio file is required")
     if args.output is None:
         raise SystemExit("kilix split: --output is required")
-    return command_split(
-        args.audio, args.output, args.stem, args.model, args.device,
-        args.allow_model_downloads)
+    return command_split(args.audio, args.output, args.stem, args.model, args.device)
