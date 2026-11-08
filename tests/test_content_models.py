@@ -687,6 +687,25 @@ class ModelSetupTests(unittest.TestCase):
                     self.assertEqual((installed / "data.bin").read_bytes(), self.weights)
         self.assertIsNone(self.upstream)
 
+    def test_from_a_notice_licence_says_its_receipt_claims_no_agreement(self):
+        # A notice licence (a record decision) takes no agreement, so the --from
+        # screen must not say the receipt records an acceptance.
+        self.require_supply()
+        for record_id, said, unsaid in (
+                (INFORMATIONAL, b"the licence terms were shown; it claims no agreement",
+                 b"that you accepted the licence"),
+                (AFFIRMATIVE, b"that you accepted the licence", b"claims no agreement")):
+            with self.subTest(record_id=record_id):
+                api, facade, _store = self.spies()
+                self.output = self.terminal()
+                self.execute(self.spec(record_id), answer="n\n", api=api, facade=facade,
+                             args=self.from_args(self.held(name=f"held-{record_id}")))
+                screen = self.output.value()
+                self.assertIn(said, screen)
+                self.assertNotIn(unsaid, screen)
+                note = json.loads(screen.split(b"\n", 1)[0])["supplied_note"]
+                self.assertEqual("acceptance of the licence" in note, record_id == AFFIRMATIVE)
+
     def test_from_a_directory_that_does_not_match_the_manifest_installs_nothing(self):
         self.require_supply()
         spec = self.spec()
@@ -1299,6 +1318,7 @@ class SuppliedDirectoryOptionTests(unittest.TestCase):
         for claim in ("--from DIR", "Nothing is downloaded",
                       "every file is verified against the pinned manifest",
                       "the receipt records your acceptance of the licence",
+                      "for a notice licence that its terms were shown",
                       "it does not record that you supplied the files"):
             self.assertIn(claim, text)
         # Nothing the operator reads may say the receipt records supply.

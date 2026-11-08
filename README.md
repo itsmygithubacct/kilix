@@ -2135,8 +2135,9 @@ unreadable directory is refused, naming it, before anything is shown or
 recorded; a directory whose files do not match is refused after the typed
 agreement and installs nothing, and the acceptance typed by then stays
 recorded, as it does when a download fails. The receipt records that you
-accepted the licence, exactly as for a download. It does not record that you
-supplied the files. A pinned component without the supply surface refuses
+accepted the licence, or for a notice licence that its terms were shown and no
+agreement, exactly as for a download. It does not record that you supplied the
+files. A pinned component without the supply surface refuses
 `--from` by name.
 
 Explicit `--root /absolute/installer/root` before the subcommand targets
