@@ -452,7 +452,11 @@ def _run(args: Sequence[str], *, authenticated: bool = True,
     the socket peer, not the OS window the operator is looking at.
     """
     from kilix_sdk.frontend_context import refresh
-    refresh()
+    from kilix_sdk.caller_context import CallerContextError
+    try:
+        refresh()
+    except CallerContextError as exc:
+        raise PaneError(str(exc)) from None
     command = [KITTEN, "@"]
     password_file = os.environ.get('KILIX_RC_PASSWORD_FILE') or RC_PASSWORD_FILE
     if authenticated and password_file:

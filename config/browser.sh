@@ -12,7 +12,7 @@
 
 _kilix_find_real_browser() {
   local candidate resolved
-  for candidate in google-chrome chromium chromium-browser firefox-esr; do
+  for candidate in google-chrome google-chrome-stable chromium chromium-browser firefox-esr; do
     resolved="$(command -v "$candidate" 2>/dev/null)" || continue
     if [ -n "$resolved" ] && [ -x "$resolved" ]; then
       printf '%s\n' "$resolved"

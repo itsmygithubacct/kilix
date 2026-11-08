@@ -5,6 +5,11 @@ shell tools for files and system queries, and Needle's apps job for interpreted
 game/settings requests. For a plain-words request whose Needle job is unclear,
 use Needle's `ask` router (below). Keep the user's chosen model and reasoning effort.
 
+`kilix ask` is the command a person runs. It shows the route and the plan and
+acts only on a typed yes. Carry out a known job with that job's own route: a
+Kilix verb, `kilix shell`, `kilix grammar`, or the matching Needle tool.
+`kilix-needle ask` is the agent router for an unclear job.
+
 Execute requests for action. For facts about this machine, a file, or a log, run
 the relevant read tool and answer from its output. Do not guess a package, version,
 path, or log value from general knowledge. If tools are deferred, discover the
@@ -43,7 +48,11 @@ and working directories. Reuse known facts; refresh after a restart or stale-tar
 error. Partial context means incomplete discovery. Focus does not identify the
 caller; the tool runner can belong to a different pane from the visible agent UI.
 
-`KITTY_WINDOW_ID` identifies the caller when inherited. Use `pane:ID` or `tab:ID`
+`KITTY_WINDOW_ID` identifies the caller only when inherited through that pane's
+own processes. A shared Codex app-server retains the pane that started the
+server, which may differ from the current UI. Kilix refuses that route even if
+its engine is still live. Run `codex --no-daemon` in the intended pane; managed
+interactive Codex launches add this flag. Use `pane:ID` or `tab:ID`
 where supported; agent-control takes numeric IDs. `kilix pane` also accepts a
 unique title. Identify agents by process and cwd, since titles change. Avoid
 accidental self-input or self-close.
@@ -149,6 +158,9 @@ actual state through an available read tool before any retry. Do not send a
 second instruction to a mutation parser merely to ask what happened.
 
 ### Needle ask: requests whose job is unclear
+
+Call this through `kilix-needle ask --agent --json`. `kilix ask` runs the same
+router with `--interactive` and waits for a person to accept the plan.
 
 `ask` picks the Needle job (panes, apps, agents, files or system) from the request
 text alone, then hands the request to that job unchanged. MCP `kilix_ask_plan`
@@ -322,6 +334,30 @@ including its tail; never "repair" it by executing it in the controlling shell.
   The wrapper's presence does not prove these features are installed.
 
 ## Connection recovery and compatibility
+
+Persistent pane processes keep their original environment after an engine
+restart. SDK and agent-control recovery can update the socket, pane ID, public
+key and password-file path only from one verified attach helper for that exact
+broker session and runtime. `--no-daemon` preserves this association for new
+Codex tools; it does not refresh a socket or repair an existing shared server.
+Ambiguous or missing attach helpers do not authorize another pane's route.
+Do not infer the current UI from focus, the newest socket, a matching working
+directory, or another process's credentials. A shared-server refusal requires a
+pane-local client, not a `--caller-pane` override.
+
+A supplied broker session requires positive proof from this caller's nearest
+broker `run` ancestor: the executable inode and explicit runtime/session must
+match. A conflicting or unverified owner is refused before helper credentials
+or RPC, including when another live pane owns the supplied session. Replacing
+the executable while its old process survives makes this association unavailable;
+it does not authorize another helper or an outer broker. Process names and argv
+can identify a refusal barrier but cannot prove ownership by themselves.
+Recovery never replaces the claim with the ancestor's identity or credentials,
+and the separate shared-server guard remains in force. agent-control's
+`recovered_values()` collects raw diagnostic metadata only; `connection_values()`
+and SDK route selection enforce the proof before using that metadata. This is a
+guard against inconsistent pane metadata, not authentication against a malicious
+same-user process that controls the executable or entire environment.
 
 Wrappers resolve credentials and the client binary. Engine, wrapper, and toolkit
 versions can differ. Check selected-source documentation for unsupported commands;

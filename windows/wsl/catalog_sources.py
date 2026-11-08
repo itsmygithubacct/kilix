@@ -1,5 +1,6 @@
 """Pinned public source acquisition; no credentials, models or working trees."""
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -62,15 +63,61 @@ def revisions(prefixes):
             if any(path == prefix or path.startswith(prefix + '/') for prefix in prefixes)}
 
 
+def _carrier_engine():
+    """Load only Content packaged beside this companion or its source host."""
+    roots = (HERE.parent / 'wsl-bin', HERE.parent.parent)
+    for root in roots:
+        loader = root / 'config/kilix_sdk/_packages.py'
+        content = root / 'third_party/kilix-content/src'
+        if not loader.is_file() or not (content / 'kilix_content/__init__.py').is_file():
+            continue
+        spec = importlib.util.spec_from_file_location('_companion_packages', loader)
+        if spec is None or spec.loader is None:
+            raise ImportError('packaged Content loader is unavailable')
+        packages = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(packages)
+        packages.load_pinned_package('kilix_content', (content,),
+                                     'packaged Content is unavailable')
+        from kilix_content.source_carrier import materialize_source
+        return materialize_source
+    raise ImportError('packaged Content source-carrier engine is unavailable')
+
+
+def _source_carrier(repository_url, destination, revision):
+    """Ask Content's single source-carrier authority for the complete closure."""
+    try:
+        materialize_source = _carrier_engine()
+    except ImportError as error:
+        raise ValueError('Source acquisition requires the Content source-carrier engine') from error
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    return materialize_source(repository_url, revision, destination)
+
+
+def _playalong_carrier(destination, revision):
+    return _source_carrier('https://github.com/itsmygithubacct/kilix-playalong.git', destination, revision)
+
+
+def _needle_carrier(destination, revision):
+    return _source_carrier('https://github.com/itsmygithubacct/kilix-needle.git', destination, revision)
+
+
 def materialize(prefixes, destination, cache):
     """Extract the exact reviewed closure, including explicit submodule pins."""
     hashes = json.loads((HERE / 'source-archives.json').read_text())
     pins = revisions(prefixes)
     if not all(prefix in pins for prefix in prefixes):
         raise ValueError('Source prefix has no reviewed revision')
+    carrier_roots = set()
+    for prefix, acquire in (('apps/kilix-playalong', _playalong_carrier), ('needle', _needle_carrier)):
+        if prefix in pins and acquire(destination / prefix, pins[prefix]):
+            carrier_roots.add(prefix)
     for prefix, pin in pins.items():
+        if any(prefix == root or prefix.startswith(root + '/') for root in carrier_roots):
+            continue  # Content verified and materialized this complete closure.
         repo = repository(prefix)
         archive = cache / (repo + '-' + pin + '.tar.gz')
+        if repo + '/' + pin not in hashes:
+            raise ValueError('Exact source requires a configured verified source carrier: ' + prefix)
         download(f'https://codeload.github.com/itsmygithubacct/{repo}/tar.gz/{pin}',
                  archive, hashes[repo + '/' + pin])
         target = destination / prefix

@@ -193,13 +193,34 @@ REFRESHED = "_route_refreshed"     # set by connection_values(); never an enviro
 def connection_values():
     """Recover this pane's connection metadata, rebound to a replacement terminal."""
     values = recovered_values()
+    # recovered_values is diagnostic metadata, never a route authorization.
+    # A broker claim requires positive owner proof even if no matching process
+    # could be found (including a surviving broker with an old executable).
+    from kilix_sdk.caller_context import CallerContextError, require_pane_local
+    try:
+        require_pane_local(values)
+    except CallerContextError as exc:
+        raise ControlError(str(exc)) from None
     if refresh_route(values):
         values[REFRESHED] = "1"
     return values
 
 
 def recovered_values():
-    """Recover only pane connection metadata from this process's ancestors."""
+    """Collect raw diagnostic metadata; use connection_values to authorize it.
+
+    Missing ownership proof may be reported by diagnostics. Conflicts and
+    shared-server ancestry still refuse. No helper credentials or RPC are
+    accepted here; connection_values and the SDK require positive proof.
+    """
+    from kilix_sdk.caller_context import (BrokerOwnershipUnavailable,
+                                         CallerContextError, require_pane_local)
+    try:
+        require_pane_local()
+    except BrokerOwnershipUnavailable:
+        pass
+    except CallerContextError as exc:
+        raise ControlError(str(exc)) from None
     names = (*ROUTE, "KILIX_KITTEN", "KILIX_BUILD_DIRECTORY", "KILIX_PREBUILT_HOME",
              *BROKER_IDENTITY)
     values = {name: os.environ[name] for name in names if os.environ.get(name)}
@@ -239,6 +260,8 @@ def recovered_values():
                            if line.startswith("PPid:")))
         except (OSError, ValueError, StopIteration):
             break
+    # The caller may have gained its complete claim only during this walk.
+    # connection_values validates that completed claim before route selection.
     return values
 
 
@@ -450,6 +473,9 @@ def launch(client, args, *, explicit_argv=None):
             return {"schema": SCHEMA, "status": "dry_run", "target": describe(target),
                     "placement": {"grid": name, "layout": session_grid.LAYOUT,
                                   "capacity": session_grid.CAPACITY}, "argv": argv}
+        if explicit_argv is None:
+            from coding_launch import wrapper
+            argv = wrapper(args.agent, argv, prompt=args.prompt)
         placed = session_grid.place(client, source=describe(target), argv=argv, cwd=str(cwd),
                                     title=title, name=name, hold=True,
                                     retarget=getattr(client, "retarget", None))
@@ -483,6 +509,9 @@ def launch(client, args, *, explicit_argv=None):
     current = client.resolve(args.pane, args.expect_broker)
     if any(current[key] != target[key] for key in ("tab_id", "os_window_id", "layout")):
         raise ControlError("anchor geometry changed; inspect state before launching")
+    if explicit_argv is None:
+        from coding_launch import wrapper
+        argv = wrapper(args.agent, argv, prompt=args.prompt)
     raw_id = client.run(options + ["--"] + argv).strip()
     if not raw_id.isdecimal() or int(raw_id) in before or int(raw_id) <= 0:
         raise ControlError("launch returned no new pane ID; inspect state, do not blindly relaunch")
@@ -521,13 +550,17 @@ def validate_reasoning_effort(agent, effort):
     return effort
 
 
-def agent_argv(args, executable, cwd, deadline=float("inf")):
+def agent_argv(args, executable, cwd, deadline=float("inf"), *, interactive=True):
     """The client's argv: its own flags, then resume, then a prompt, each one
     literal item. Nothing here comes from a shell string."""
     agent = args.agent
     if (args.prompt or args.resume) and agent == "kimi":
         raise ControlError("kimi takes no launch prompt or resume here; start it, then send")
     argv = [executable]
+    if agent == "codex" and interactive:
+        # Tool children must inherit this pane, not a shared server's old pane.
+        # This is a top-level flag, before `resume`; `exec` does not accept it.
+        argv.append("--no-daemon")
     resume = None
     if args.resume:
         if not SESSION_ID.fullmatch(args.resume):

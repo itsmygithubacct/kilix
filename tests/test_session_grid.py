@@ -490,7 +490,12 @@ class AgentControlTests(Isolated):
         self.assertEqual(third["pane"]["tab_id"], first["pane"]["tab_id"])
         self.assertEqual(third["grid"]["count"], 2)
         argv = self.engine.launches()[0]
-        self.assertEqual(argv[argv.index("--") + 1:], ["/opt/bin/codex"])
+        launched = argv[argv.index("--") + 1:]
+        if sys.platform.startswith('linux'):
+            self.assertEqual(launched[:5], [sys.executable,
+                str(Path(__file__).resolve().parents[1] / 'config/coding_launch.py'), 'codex', '0', '--'])
+            launched = launched[5:]
+        self.assertEqual(launched, ["/opt/bin/codex", "--no-daemon"])
 
     def test_own_tab_and_the_setting_keep_one_tab_per_session(self):
         own = control.launch(self.engine, self.args("--own-tab"))

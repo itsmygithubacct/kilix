@@ -198,7 +198,7 @@ def json_request(url):
 
     def test_model_selection_is_forwarded_without_changing_the_request(self):
         request = 'open notepad; keep "$VALUE" and `words` literal'
-        for model in ('needle3', 'lfm2', 'grammar'):
+        for model in ('needle3', 'lfm2', 'lfm3', 'grammar'):
             for option in (('--model', model), ('--model=' + model,), ('--commands-backend', model)):
                 with self.subTest(option=option):
                     result = self.run_ask(*option, '--', request, KILIX_ASK_COMMANDS_BACKEND='lfm2')
@@ -227,6 +227,36 @@ def json_request(url):
         result = self.run_ask("--hold", "--", "--yes close tab 2")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.calls()[-1]["needle"], ["ask", "--interactive", "--", "--yes close tab 2"])
+
+    def test_yes_skips_the_interactive_prompt(self):
+        result = self.run_ask("--yes", "close", "tab 2")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.calls()[-1]["needle"], ["ask", "--yes", "--", "close tab 2"])
+
+    def test_yes_keeps_an_explicit_model(self):
+        result = self.run_ask("--model", "needle3", "--yes", "--", "hide the clock")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.calls()[-1]["needle"],
+                         ["ask", "--yes", "--commands-backend", "needle3", "--", "hide the clock"])
+
+    def test_yes_without_a_request_is_usage(self):
+        result = self.run_ask("--yes")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(self.calls(), [])
+
+    def test_yes_cannot_combine_with_voice(self):
+        result = self.run_ask("--yes", "--voice")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("cannot be combined with --voice", result.stderr)
+        self.assertEqual(self.calls(), [])
+
+    def test_help_names_yes(self):
+        result = self.run_ask("--help")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--yes", result.stdout)
+        self.assertIn("acts only on a typed yes", result.stdout)
+        self.assertIn("unsure route still does not run", result.stdout)
+        self.assertEqual(self.calls(), [])
 
     def test_an_uninstalled_app_is_named_not_built(self):
         result = self.run_ask("split right", ASK_TEST_MISSING="1")
@@ -257,7 +287,7 @@ def json_request(url):
         self.assertNotIn("lfm2 (default)", result.stdout)
         self.assertIn("overrides KILIX_ASK_COMMANDS_BACKEND", result.stdout)
         self.assertIn("saved Ask selection (lfm2 when none is saved)", result.stdout)
-        self.assertIn("kilix-needle workflows select --model lfm2|needle3|grammar", result.stdout)
+        self.assertIn("kilix-needle workflows select --model lfm2|lfm3|needle3|grammar", result.stdout)
         self.assertEqual(self.calls(), [])
 
     def test_hold_waits_for_enter_on_every_status(self):

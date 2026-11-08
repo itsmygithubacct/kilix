@@ -29,6 +29,9 @@ umask 077
 KILIX_HOME="${KILIX_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 GPU_TERMINAL_DATA_HOME="${GPU_TERMINAL_DATA_HOME:-$HOME/.local/gpu_terminal}"
 GPU_TERMINAL_SOURCE_HOME="${GPU_TERMINAL_SOURCE_HOME:-$GPU_TERMINAL_DATA_HOME/sources}"
+source_was_set="${KILIX_YOLOX_SRC:+x}"
+model_was_set="${KILIX_YOLOX_MODEL:+x}"
+size_was_set="${KILIX_YOLOX_SIZE:+x}"
 KILIX_YOLOX_DIR="${KILIX_YOLOX_DIR:-$GPU_TERMINAL_DATA_HOME/runtimes/yolox}"
 KILIX_YOLOX_SRC="${KILIX_YOLOX_SRC:-$GPU_TERMINAL_SOURCE_HOME/kilix-modules/kilix-yolox}"
 KILIX_YOLOX_REPO="${KILIX_YOLOX_REPO:-https://github.com/itsmygithubacct/kilix-yolox.git}"
@@ -41,7 +44,7 @@ KILIX_YOLOX_ALLOW_MUTABLE_REF="${KILIX_YOLOX_ALLOW_MUTABLE_REF:-0}"
 # resolves it - a first-use clone and an existing checkout alike - so a moved
 # pin reaches machines that already have the module. Set
 # KILIX_YOLOX_KEEP_EXISTING_CHECKOUT=1 to work from a checkout as it is.
-KILIX_YOLOX_DEFAULT_REF=029ea556082d07772848f82c1f5bed9e3ffff4b4
+KILIX_YOLOX_DEFAULT_REF=fa085fae3d7c605deb217794886d0053e38e8e3d
 KILIX_YOLOX_MODEL="${KILIX_YOLOX_MODEL:-yolox_s}"
 # kilix-look sends a 320-pixel square. The detector prefers the cut that matches
 # the frame (0.89 on the test image against 0.52 for the 640 export fed the same
@@ -57,7 +60,38 @@ log() { printf 'kilix yolox: %s\n' "$*" >&2; }
 have_uv() { command -v "$KILIX_UV" >/dev/null 2>&1; }
 
 python_install() {
-  if have_uv; then
+  if [ "${KILIX_YOLOX_WHEELHOUSE+x}" = x ] || [ "${KILIX_YOLOX_REQUIREMENTS+x}" = x ]; then
+    [ -n "${KILIX_YOLOX_WHEELHOUSE:-}" ] && [ -d "$KILIX_YOLOX_WHEELHOUSE" ] \
+      && [ -n "${KILIX_YOLOX_REQUIREMENTS:-}" ] && [ -f "$KILIX_YOLOX_REQUIREMENTS" ] \
+      || die "offline wheelhouse and hashed requirements must both be present"
+    case "$KILIX_YOLOX_WHEELHOUSE" in /*) ;; *) die "offline wheelhouse must be an absolute local directory" ;; esac
+    case "$KILIX_YOLOX_REQUIREMENTS" in /*) ;; *) die "hashed requirements must be an absolute local file" ;; esac
+    [ ! -L "$KILIX_YOLOX_WHEELHOUSE" ] && [ ! -L "$KILIX_YOLOX_REQUIREMENTS" ] \
+      || die "offline dependency inputs cannot be symlinks"
+    "$KILIX_PYTHON" - "$KILIX_YOLOX_REQUIREMENTS" "$yolox_dir/.requirements.lock" <<'PY' \
+      || die "offline requirements must contain only pinned, hashed packages"
+import os,re,stat,sys
+from pathlib import Path
+fd=os.open(sys.argv[1],os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+with os.fdopen(fd,'rb') as source:
+    info=os.fstat(source.fileno())
+    if not stat.S_ISREG(info.st_mode) or info.st_size>1024*1024: raise SystemExit(1)
+    data=source.read(1024*1024+1)
+if len(data)>1024*1024: raise SystemExit(1)
+raw=data.decode('utf-8')
+lines=[line.strip() for line in raw.splitlines() if line.strip() and not line.lstrip().startswith('#')]
+pattern=r'[A-Za-z0-9][A-Za-z0-9_.-]*==[A-Za-z0-9][A-Za-z0-9.+!_-]*\s+--hash=sha256:[0-9a-f]{64}'
+names=[re.split('==',line,1)[0].lower().replace('_','-').replace('.','-') for line in lines]
+if not lines or any(not re.fullmatch(pattern,line) for line in lines) or len(names)!=len(set(names)):
+    raise SystemExit(1)
+fd=os.open(sys.argv[2],os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+with os.fdopen(fd,'wb') as destination: destination.write(data)
+PY
+    mkdir -p -- "$yolox_dir/.pip-tmp"
+    env -i PATH=/usr/bin:/bin HOME="$yolox_dir" TMPDIR="$yolox_dir/.pip-tmp" PIP_CONFIG_FILE=/dev/null \
+      "$python" -I -B -m pip install --quiet --no-index --only-binary=:all: \
+      --find-links "$KILIX_YOLOX_WHEELHOUSE" --require-hashes -r "$yolox_dir/.requirements.lock" >&2
+  elif have_uv; then
     "$KILIX_UV" pip install --python "$python" "$@" >&2
   else
     "$python" -m pip install --quiet "$@" >&2
@@ -75,12 +109,12 @@ usage: install-yolox.sh [--print-path|--print-ref|--check|--install|--upgrade|--
   --run         verify the installed model/runtime and execute it; never install
   --install     install, asking first unless --yes (the licence is never
                 skipped: it needs a terminal and the typed agreement)
-  --upgrade     bring the installed packages forward
+  --upgrade     prepare and select a new runtime generation
   --remove      delete the runtime directory
 
 Environment:
   KILIX_YOLOX_DIR    where the virtualenv and weights live
-  KILIX_YOLOX_SRC    the kilix-yolox checkout that owns the detector script
+  KILIX_YOLOX_SRC    the kilix-yolox source to snapshot into a generation
   KILIX_YOLOX_REF    use this commit instead of the pin
   KILIX_YOLOX_KEEP_EXISTING_CHECKOUT=1
                      work from an existing checkout as it is; the pin is not
@@ -90,6 +124,9 @@ Environment:
   KILIX_YOLOX_MODEL  yolox_s (default), yolox_tiny or yolox_nano
   KILIX_YOLOX_SIZE   the square the model is cut for, default 320
   KILIX_UV           the uv to use; venv + pip when it is not found
+  KILIX_YOLOX_WHEELHOUSE and KILIX_YOLOX_REQUIREMENTS
+                     install from this local wheelhouse with a lock containing
+                     one `name==version --hash=sha256:...` per line
 EOF
 }
 
@@ -114,6 +151,28 @@ case "$KILIX_YOLOX_DIR" in
 esac
 yolox_dir="$(realpath -m -- "$KILIX_YOLOX_DIR" 2>/dev/null)" \
   || die "could not normalize KILIX_YOLOX_DIR=$KILIX_YOLOX_DIR"
+runtime_base="$yolox_dir"
+requested_source="$KILIX_YOLOX_SRC"
+if [ "${KILIX_YOLOX_INTERNAL:-0}" = 1 ]; then
+  internal_parent="${KILIX_YOLOX_PARENT:-}"
+  case "$yolox_dir" in "$internal_parent"/.generations/gen-*) ;; *) die "invalid internal generation path" ;; esac
+  case "${yolox_dir#"$internal_parent"/.generations/}" in */*|.|..) die "invalid internal generation path" ;; esac
+  [ -n "$internal_parent" ] && [ -d "$internal_parent" ] \
+    && [ "$(realpath -e -- "$internal_parent")" = "$internal_parent" ] \
+    && [ "$KILIX_YOLOX_SRC" = "$yolox_dir/source" ] \
+    || die "invalid internal generation source"
+  if [ -e "$internal_parent/.current" ] || [ -L "$internal_parent/.current" ]; then
+    [ -L "$internal_parent/.current" ] \
+      && [ "$(realpath -m -- "$internal_parent/.current")" != "$yolox_dir" ] \
+      || die "refusing to prepare the selected generation in place"
+  fi
+  case "$action" in
+    --install) [ ! -e "$yolox_dir/runtime.json" ] && [ ! -e "$yolox_dir/venv" ] \
+      || die "refusing to prepare an existing runtime in place" ;;
+    --check) ;;
+    *) die "invalid internal generation action" ;;
+  esac
+fi
 case "$yolox_dir" in
   /|"$HOME"|"$GPU_TERMINAL_DATA_HOME")
     die "refusing broad runtime path: $yolox_dir" ;;
@@ -122,6 +181,41 @@ esac
 # wrapper must therefore be one unambiguous token, also safe as an env-file line.
 "$KILIX_PYTHON" -c 'import sys; p=sys.argv[1]; sys.exit(any(c.isspace() or not c.isprintable() for c in p))' "$yolox_dir" \
   || die "runtime path must contain no whitespace or control characters"
+
+# A generation is prepared at its permanent path and selected by one private
+# symlink only after it is complete. Legacy runtimes without this link remain
+# readable and are never modified while a successor is being prepared.
+if [ "${KILIX_YOLOX_INTERNAL:-0}" != 1 ] && [ "$action" != --print-ref ]; then
+  pointer="$runtime_base/.current"
+  if [ -e "$pointer" ] || [ -L "$pointer" ]; then
+    [ -L "$pointer" ] || die "runtime generation selection is not a symlink"
+    target="$(readlink -- "$pointer")" || die "cannot read runtime generation selection"
+    case "$target" in .generations/gen-*) ;; *) die "invalid runtime generation selection" ;; esac
+    case "${target#.generations/}" in */*|.|..) die "invalid runtime generation selection" ;; esac
+    selected="$runtime_base/$target"
+    [ -d "$selected" ] && [ ! -L "$selected" ] \
+      && [ "$(realpath -e -- "$selected")" = "$selected" ] \
+      || die "runtime generation selection is missing or unsafe"
+    yolox_dir="$selected"
+    KILIX_YOLOX_SRC="$selected/source"
+    [ -n "$source_was_set" ] || requested_source="$KILIX_YOLOX_SRC"
+  fi
+  if [ -f "$yolox_dir/runtime.json" ] && [ ! -L "$yolox_dir/runtime.json" ]; then
+    recorded="$("$KILIX_PYTHON" - "$yolox_dir/runtime.json" <<'PY'
+import json,sys
+try:
+    x=json.load(open(sys.argv[1])); print(str(x['model'])+' '+str(x['size']))
+except (OSError,ValueError,KeyError,TypeError):
+    pass
+PY
+)"
+    if [ -n "$recorded" ]; then
+      read -r recorded_model recorded_size <<< "$recorded"
+      [ -n "$model_was_set" ] || KILIX_YOLOX_MODEL="$recorded_model"
+      [ -n "$size_was_set" ] || KILIX_YOLOX_SIZE="$recorded_size"
+    fi
+  fi
+fi
 # The model name reaches a path and a python argument; only the three the
 # checksum list knows are accepted, so it can carry neither.
 case "$KILIX_YOLOX_MODEL" in
@@ -153,7 +247,7 @@ runtime_ready() {
     [ "$(git -C "$KILIX_YOLOX_SRC" rev-parse HEAD)" = "$install_ref" ] || return 1
   fi
   [ -x "$python" ] && [ -f "$weights" ] && [ -x "$wrapper" ] \
-    && "$python" -c 'import onnxruntime, numpy' >/dev/null 2>&1 \
+    && PYTHONDONTWRITEBYTECODE=1 "$python" -c 'import onnxruntime, numpy' >/dev/null 2>&1 \
     && "$KILIX_HOME/kilix" models verify "$KILIX_YOLOX_MODEL" >/dev/null 2>&1 \
     && runtime_binding check >/dev/null 2>&1
 }
@@ -203,7 +297,41 @@ advance_existing_checkout() {
     log "the resolved ref ${install_ref:0:12} was NOT installed; commit, stash or remove them"
     return 0
   fi
-  checkout_ref "$directory" "$install_ref"
+  if [ -n "${_detector_carrier_tmp:-}" ]; then
+    [ -d "$directory/.git" ] && [ ! -L "$directory/.git" ] \
+      || die "offline update requires a standalone Git checkout"
+    local update_tmp staged
+    update_tmp="$(mktemp -d "$(dirname "$directory")/.kilix-yolox.update.XXXXXX")" \
+      || die "could not allocate an update stage"
+    (
+      trap 'rm -rf -- "$update_tmp"' EXIT
+      trap 'exit 130' INT
+      trap 'exit 143' TERM
+      staged="$update_tmp/checkout"
+      cp -a -- "$directory" "$staged" || die "could not stage the existing checkout"
+      [ "$(git -C "$staged" rev-parse --show-toplevel)" = "$staged" ] \
+        || die "staged Git checkout redirects outside its directory"
+      checkout_ref "$staged" "$install_ref"
+      [ "$(git -C "$directory" rev-parse HEAD)" = "$head" ] \
+        && [ -z "$(git -C "$directory" status --porcelain --untracked-files=normal)" ] \
+        || die "installed checkout changed while preparing update"
+      python3 - "$staged" "$directory" <<'EXCHANGE'
+import ctypes
+import os
+import sys
+library = ctypes.CDLL(None, use_errno=True)
+rename = library.renameat2
+rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int,
+                   ctypes.c_char_p, ctypes.c_uint]
+rename.restype = ctypes.c_int
+if rename(-100, os.fsencode(sys.argv[1]), -100, os.fsencode(sys.argv[2]), 2):
+    error = ctypes.get_errno()
+    raise OSError(error, os.strerror(error))
+EXCHANGE
+    )
+  else
+    checkout_ref "$directory" "$install_ref"
+  fi
   if [ -n "$head" ] \
        && git -C "$directory" merge-base --is-ancestor "$install_ref" "$head" >/dev/null 2>&1; then
     log "existing checkout REWOUND ${head:0:12} -> ${install_ref:0:12} (the pinned ref is older)"
@@ -228,10 +356,37 @@ resolve_source() {
   esac
   command -v git >/dev/null 2>&1 || die "git is required"
 
+  if [ "${KILIX_SOURCE_CARRIER_MANIFEST+x}" = x ] || [ "${KILIX_SOURCE_CARRIER_SHA256+x}" = x ] \
+       || [ -e /usr/share/plebian-os/source-carrier/manifest.json ] \
+       || [ -L /usr/share/plebian-os/source-carrier/manifest.json ] \
+       || [ -e /usr/share/plebian-os/source-carrier/manifest.sha256 ] \
+       || [ -L /usr/share/plebian-os/source-carrier/manifest.sha256 ]; then
+    local carrier_adapter carrier_parent carrier_keep
+    carrier_adapter="$KILIX_HOME/scripts/detector-carrier.sh"
+    [ -f "$carrier_adapter" ] && [ ! -L "$carrier_adapter" ] \
+      || die "the detector source-carrier adapter is unavailable"
+    . "$carrier_adapter"
+    carrier_parent="$(dirname "$src")"
+    mkdir -p -- "$carrier_parent" || die "could not create the source parent"
+    [ -d "$carrier_parent" ] && [ ! -L "$carrier_parent" ] \
+      || die "source parent must be a real directory"
+    carrier_keep=0
+    case "$KILIX_YOLOX_KEEP_EXISTING_CHECKOUT" in 1|yes|true|on)
+      [ ! -e "$src/.git" ] || carrier_keep=1 ;;
+    esac
+    detector_carrier_prepare "$KILIX_HOME" "$KILIX_YOLOX_REPO" "$install_ref" \
+      "$carrier_parent" "$carrier_keep" || die "offline source carrier refused the request"
+  fi
+
   if git -C "$src" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     [ "$(realpath -m -- "$(git -C "$src" rev-parse --show-toplevel)")" = "$src" ] \
       || die "$src is nested inside a different Git checkout"
-    origin="$(git -C "$src" remote get-url origin 2>/dev/null || true)"
+    if [ -n "${_detector_carrier_tmp:-}" ]; then
+      # get-url expands the offline rewrite; compare the stored origin instead.
+      origin="$(git -C "$src" config --local --get remote.origin.url 2>/dev/null || true)"
+    else
+      origin="$(git -C "$src" remote get-url origin 2>/dev/null || true)"
+    fi
     if [ "$origin" != "$KILIX_YOLOX_REPO" ] \
          && [ "$KILIX_YOLOX_TRUST_EXISTING_CHECKOUT" != 1 ]; then
       die "$src has origin '${origin:-missing}', expected '$KILIX_YOLOX_REPO' (set KILIX_YOLOX_TRUST_EXISTING_CHECKOUT=1 only for a trusted checkout)"
@@ -366,7 +521,7 @@ install_runtime() {
   cp -- "$asset/notices/LICENSE-apache-2.0.txt" "$models/LICENSE.yolox"
   printf 'YOLOX weights, Megvii-BaseDetection/YOLOX.\nLicensed under the Apache License, Version 2.0; see LICENSE.yolox.\n' > "$models/NOTICE"
   if [ ! -x "$python" ]; then
-    if have_uv; then
+    if have_uv && [ "${KILIX_YOLOX_WHEELHOUSE+x}" != x ] && [ "${KILIX_YOLOX_REQUIREMENTS+x}" != x ]; then
       local interpreter
       # Resolved to a path first: `uv venv --python python3` may be satisfied
       # by an interpreter uv downloads itself, which is not the one asked for.
@@ -381,7 +536,9 @@ install_runtime() {
         || die "could not create a virtualenv (install python3-venv)"
     fi
   fi
-  have_uv || "$python" -m pip install --quiet --upgrade pip >&2 || true
+  if ! have_uv && [ "${KILIX_YOLOX_WHEELHOUSE+x}" != x ] && [ "${KILIX_YOLOX_REQUIREMENTS+x}" != x ]; then
+    "$python" -m pip install --quiet --upgrade pip >&2 || true
+  fi
   python_install onnxruntime numpy onnx \
     || die "could not install onnxruntime"
 
@@ -401,19 +558,29 @@ install_runtime() {
 write_wrapper() {
   local tool
   tool="$(module_tool kilix-yolox-detect)"
-  "$KILIX_PYTHON" - "$wrapper" "$yolox_dir" "$python" "$tool" "$KILIX_YOLOX_MODEL" <<'PY'
+  "$KILIX_PYTHON" - "$wrapper" "$yolox_dir" "$python" "$tool" "$weights" "$KILIX_PYTHON" "$KILIX_HOME" "$KILIX_YOLOX_SRC" "$KILIX_YOLOX_MODEL" "$KILIX_YOLOX_SIZE" <<'PY'
 import os
 import shlex
 import sys
 import tempfile
 
-destination, runtime, interpreter, tool, model = sys.argv[1:]
+destination, runtime, interpreter, tool, weights, checker_python, host, source, model, size = sys.argv[1:]
 payload = ("#!/bin/sh\n"
            "# Written by kilix install yolox.\n"
+           'actual=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P) || exit 1\n'
+           '[ "$actual" = ' + shlex.quote(runtime) + ' ] || { echo "YOLOX runtime moved; reinstall to rebind" >&2; exit 1; }\n'
+           'forbidden=0\n'
+           'for argument do\n'
+           '  case "$argument" in --model|--model=*) forbidden=1 ;; esac\n'
+           'done\n'
+           '[ "$forbidden" = 0 ] || { echo "model is selected by the installed runtime" >&2; exit 1; }\n'
+           + " ".join(shlex.quote(word) for word in (checker_python, host + "/config/yolox_runtime.py", "check", runtime, source, model, size)) + ' || exit 1\n'
+           + " ".join(shlex.quote(word) for word in (host + "/kilix", "models", "verify", model)) + ' >/dev/null 2>&1 || { echo "YOLOX model verification failed" >&2; exit 1; }\n'
            "KILIX_YOLOX_DIR=" + shlex.quote(runtime) + "\n"
            "export KILIX_YOLOX_DIR\n"
+           "unset KILIX_YOLOX_MODEL\n"
            "exec " + " ".join(shlex.quote(word) for word in
-                              (interpreter, tool, "--model", model)) + ' "$@"\n')
+                              (interpreter, tool, "--model", weights)) + ' "$@"\n')
 descriptor, temporary = tempfile.mkstemp(prefix=".yolox-wrapper-",
                                        dir=os.path.dirname(destination))
 try:
@@ -463,6 +630,38 @@ upgrade_runtime() {
   log "upgraded"
 }
 
+install_generation() {
+  local transaction="$KILIX_HOME/scripts/yolox-generation.py"
+  local config="${KILIX_USER_CONFIG_DIRECTORY:-$GPU_TERMINAL_DATA_HOME/kilix/config}"
+  [ -f "$transaction" ] && [ ! -L "$transaction" ] \
+    || die "runtime generation installer is unavailable"
+  exec "$KILIX_PYTHON" -I -B "$transaction" "$(realpath -e -- "${BASH_SOURCE[0]}")" \
+    "$KILIX_HOME" "$runtime_base" "$requested_source" "$config/kilix.env" \
+    "$KILIX_YOLOX_MODEL" "$KILIX_YOLOX_SIZE"
+}
+
+# All public install and upgrade operations build a new, path-bound runtime.
+# The internal child runs the existing installer only inside that new path.
+if [ "${KILIX_YOLOX_INTERNAL:-0}" != 1 ]; then
+  case "$action" in
+    --upgrade)
+      runtime_ready || die "nothing installed at $yolox_dir yet"
+      install_generation
+      exit $? ;;
+    --install)
+      confirm || exit 1
+      install_generation
+      exit $? ;;
+    --print-path)
+      if runtime_ready; then printf '%s\n' "$wrapper"; exit 0; fi
+      confirm || die "the YOLOX runtime is not installed"
+      install_generation
+      exit $? ;;
+    --remove)
+      yolox_dir="$runtime_base" ;;
+  esac
+fi
+
 case "$action" in
   --print-ref)
     printf '%s\n' "$install_ref"
@@ -500,7 +699,7 @@ case "$action" in
       printf '%s\n' "$wrapper"
       exit 0
     fi
-    confirm || exit 1
+    if [ "${KILIX_YOLOX_INTERNAL:-0}" != 1 ]; then confirm || exit 1; fi
     install_runtime
     printf '%s\n' "$wrapper"
     exit 0 ;;

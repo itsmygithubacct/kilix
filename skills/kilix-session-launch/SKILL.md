@@ -2,7 +2,7 @@
 name: kilix-session-launch
 description: Open a new Kilix tab, arrange panes to suit the work, launch Codex, Claude Code, or Kimi Code sessions, and deliver their initialization prompts. Use for a new coding workspace, not switching the model in an existing session.
 metadata:
-  kilix-version: "0.2.2"
+  kilix-version: "0.2.3"
 ---
 
 # Launch a coding workspace

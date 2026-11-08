@@ -19,8 +19,9 @@ user already holds instead of downloading them. It is the same install, not a
 third path: the same screen, the same yes/no agreement and the same receipt,
 and the Content component verifies every file against the manifest. The only
 difference is where the bytes come from, and under ``--from`` no route in this
-file can reach a download. A receipt records acceptance of the licence, as a
-download's does; it does not record that the files were supplied.
+file can reach a download. A receipt records acceptance of the licence, or
+for a notice licence that its terms were shown, as a download's does; it does
+not record that the files were supplied.
 """
 from __future__ import annotations
 
@@ -284,9 +285,12 @@ def _plan(lic, spec, root: str, supplied: str | None = None) -> dict:
     }
     if supplied is not None:
         plan["supplied"] = supplied
+        # The one receipt binds the first licence (binding_note above).
+        recorded = ("acceptance of the licence" if spec.licenses[0].decision == "affirmative"
+                    else "that the licence terms were shown, claiming no agreement")
         plan["supplied_note"] = ("Files are read from this directory and verified against "
                                  "the manifest; nothing is downloaded. The receipt records "
-                                 "acceptance of the licence, not that the files were supplied.")
+                                 f"{recorded}, not that the files were supplied.")
     return plan
 
 
@@ -336,10 +340,14 @@ def _install(api, lic, spec, args, source, output, errors) -> int:
             output.write("Setup may download the pinned model files and run the declared "
                          "local conversion.\n")
         else:
+            # A notice licence (a "record" decision) takes no agreement, so its
+            # receipt records the notice, never an acceptance.
+            recorded = ("that you accepted the licence" if record.expected_decision == "accept"
+                        else "that the licence terms were shown; it claims no agreement")
             output.write("Setup reads the model files from the directory given to --from "
                          "and downloads nothing; every file is verified against the pinned "
                          "manifest before anything is installed.\n"
-                         "The receipt records that you accepted the licence, exactly as for "
+                         f"The receipt records {recorded}, exactly as for "
                          "a download. It does not record that you supplied the files.\n")
         if not _answer("Install this exact model in the shown root? [y/N] ", "y", source, output):
             return 1
@@ -382,8 +390,9 @@ _FROM_HELP = (
     "this model's files at their manifest paths, the layout an installed copy has. "
     "Nothing is downloaded, and every file is verified against the pinned manifest. "
     "The licence screen and yes/no agreement are unchanged, and the receipt "
-    "records your acceptance of the licence exactly as for a download; it does not "
-    "record that you supplied the files.")
+    "records your acceptance of the licence, or for a notice licence that its terms "
+    "were shown, exactly as for a download; it does not record that you supplied "
+    "the files.")
 
 
 def _verify(api, lic, spec, root: str, output) -> int:
@@ -400,7 +409,7 @@ def _verify(api, lic, spec, root: str, output) -> int:
                          f"run kilix models install {spec.asset_id} in a terminal")
     supplied = importlib.import_module("kilix_content.install").SuppliedFile
     for item in spec.files:
-        relative = f"assets/{spec.asset_id}/{item.path}"
+        relative = f"assets/{spec.install_name}/{item.path}"
         with supplied.open_beneath(root, relative) as held:
             if held.bytes != item.bytes or held.sha256 != item.sha256:
                 raise SetupError(f"installed model file differs from its manifest: {item.path}")

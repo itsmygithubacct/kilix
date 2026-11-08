@@ -290,25 +290,34 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertNotIn("read ", power_case)     # no prompting, ever
 
     def test_fingerlock_verb_is_host_owned_and_installs_lazily(self):
-        # `kilix fingerlock` is the host verb for the fingerprint reader:
-        # read-only USB discovery, one fixed apt-get argv run as root, and
-        # fprintd over D-Bus behind polkit. It does not install a login
-        # module and it does not lock files or the screen.
+        # `kilix fingerlock` is the one host-side owner of fingerprint reader
+        # access: read-only USB discovery, a lazy Debian install through one
+        # fixed apt-get argv run as root, and fprintd over D-Bus behind
+        # polkit. Desktops delegate here rather than each shelling out to
+        # fprintd-* or apt on their own.
         text = (ROOT / "kilix").read_text()
         self.assertIn("fingerlock|--fingerlock|fingerprint)", text)
         case = text.split("fingerlock|--fingerlock|fingerprint)")[1].split(";;")[0]
         self.assertIn('exec python3 -B "$KILIX_HOME/config/fingerlock.py"', case)
-        self.assertNotIn("--pam", case)
         module = (ROOT / "config" / "fingerlock.py").read_text()
         self.assertIn('INSTALL_ARGV: tuple[str, ...] = ("apt-get", "install", "-y", "--no-install-recommends")',
                       module)
         self.assertIn('PACKAGES: tuple[str, ...] = ("fprintd",)', module)
-        for banned in ("PAM_PACKAGES", "libpam", "--pam", "with_pam", "pam_fprintd"):
-            self.assertNotIn(banned, module)
-        for action in ("ensure", "status", "doctor", "install", "list",
-                       "enroll", "verify", "delete"):
+        self.assertNotIn("PAM_PACKAGES", module)
+        self.assertNotIn("--pam", module)
+        for action in ("ensure", "status", "doctor", "install", "list", "enroll", "verify", "delete",
+                       "init", "passwd", "lock", "unlock", "password", "forget", "agent"):
             self.assertIn(f'subparsers.add_parser("{action}"', module)
         self.assertNotIn("os.open(", module)   # the reader's USB node is never opened
+        # The custody agent is a separate root process: the key never comes from
+        # anywhere but a passphrase or a verify-match, and it runs hardened.
+        agent = (ROOT / "config" / "fingerlock_agent.py").read_text()
+        self.assertIn('if session.result != "verify-match":', agent)
+        self.assertIn("SO_PEERCRED", agent)
+        for hardening in ("NoNewPrivileges=yes", "ProtectHome=yes", "LimitCORE=0", "SocketMode=0600"):
+            self.assertIn(hardening, (ROOT / "config" / "fingerlock_install.py").read_text())
+        self.assertIn('LOCKER_PACKAGES: tuple[str, ...] = ("python3-nacl",)',
+                      (ROOT / "config" / "fingerlock_locker.py").read_text())
 
     def test_security_password_status_is_machine_readable(self):
         text = (ROOT / "kilix").read_text()
@@ -555,6 +564,36 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("MEMORY_WIDGET_ACTION", titlebar)
         self.assertIn("pane_memory_text", titlebar)
         self.assertIn("U+F035B", conf)
+        # The GPU widget and pane GPU chip: the engine reads the keys, defaults
+        # and choices the settings surfaces write, and its glyph is pinned to
+        # the bundled Symbols Nerd Font like the RAM chip's.
+        gpu = (ROOT / "src" / "kitty" / "kilix_gpu.py").read_text()
+        self.assertIn("SYSTEM_GPU_MODE_KEY = 'KILIX_CHROME_SYSTEM_GPU_MODE'", gpu)
+        self.assertIn("SYSTEM_GPU_MODE_DEFAULT = 'always'", gpu)
+        self.assertIn("SYSTEM_GPU_MODES = ('auto', 'always', 'off')", gpu)
+        self.assertIn("PANE_GPU_MODE_KEY = 'KILIX_CHROME_PANE_GPU_MODE'", gpu)
+        self.assertIn("PANE_GPU_MODE_DEFAULT = 'auto'", gpu)
+        self.assertIn("PANE_GPU_MODES = ('auto', 'always', 'off')", gpu)
+        self.assertIn("PANE_GPU_THRESHOLD = 512 * MIB", gpu)
+        self.assertIn("GPU_GLYPH = chr(0xf08ae)", gpu)
+        self.assertIn('SYSTEM_GPU_MODE_KEY = "KILIX_CHROME_SYSTEM_GPU_MODE"', shared)
+        self.assertIn('SYSTEM_GPU_MODE_DEFAULT = "always"', shared)
+        self.assertIn('PANE_GPU_MODE_KEY = "KILIX_CHROME_PANE_GPU_MODE"', shared)
+        self.assertIn('PANE_GPU_MODE_DEFAULT = "auto"', shared)
+        self.assertIn("system_gpu_bar_segment", system)
+        self.assertIn("pane_gpu_text", titlebar)
+        self.assertIn("GPU_WIDGET_ACTION", registry)
+        self.assertIn("U+F08AE", conf)
+        # The idle backoff the docs describe: activity, not "a process is
+        # listed", decides it, and it follows the autosuspend delay.
+        self.assertIn("_IDLE_BACKOFF_SECONDS = 30.0", gpu)
+        self.assertIn("_IDLE_BACKOFF_MAX_SECONDS = 120.0", gpu)
+        self.assertIn("_ACTIVITY_TOLERANCE = MIB", gpu)
+        self.assertIn("def backoff_seconds(", gpu)
+        # The README calls the chip pale blue.
+        self.assertIn("GPU_CHIP_RGB = 0xc9e6ff", gpu)
+        windows_conf = (ROOT / "windows" / "config" / "kilix.conf").read_text()
+        self.assertIn("U+F08AE", windows_conf)
 
     def test_title_bar_screen_tracks_font_resize(self):
         window = (ROOT / "src" / "kitty" / "window.py").read_text()
@@ -705,6 +744,8 @@ class KilixLauncherTests(unittest.TestCase):
             self.assertIn(key, settings)
         self.assertIn("PANE_CPU_MODE_KEY", settings)
         self.assertIn("PANE_MEMORY_MODE_KEY", settings)
+        self.assertIn("PANE_GPU_MODE_KEY", settings)
+        self.assertIn("SYSTEM_GPU_MODE_KEY", settings)
         self.assertIn("get_env_key", settings)
         self.assertIn("set_env_key", settings)
         self.assertIn("shared_settings", settings)

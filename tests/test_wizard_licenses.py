@@ -46,27 +46,20 @@ class BatchTests(unittest.TestCase):
             self.output = output.buffer.getvalue()
         return result
 
-    def test_one_question_names_both_models_and_keeps_separate_receipts(self):
-        names = ['yolox_s', 'yolox_nano']
-        self.assertEqual(self.run_batch(names, ['yes']), (set(names), set()))
-        self.assertEqual(len(self.questions), 1)
-        for name in names: self.assertIn(name, self.questions[0])
-        self.assertIn('apache-2.0', self.questions[0])
-        self.assertNotIn(b'type exactly', self.output)
-        self.assertEqual(len(list(self.store.root.glob('*.json'))), 2)
-        self.assertEqual(self.installer.ensure_upstream_asset.call_count, 2)
-        catalog = cm._verified_catalog(self.api)
-        records = self.lic.load_determined_records()
+    def test_standard_licenses_install_without_prompt_and_keep_documents(self):
+        names = ['yolox_s', 'yolox_nano', 'needle2', 'needle2-runtime', 'needle3-kilix-commands']
+        self.assertEqual(self.run_batch(names, []), (set(names), set()))
+        self.assertEqual(self.questions, [])
+        self.assertEqual(len(list(self.store.root.glob('*.json'))), len(names))
+        import json
         for name in names:
-            self.assertFalse(self.api.first_use.needs_agreement(
-                catalog.require_asset(name), records=records, store=self.store))
-
-    def test_apache_variants_share_one_question_and_keep_all_original_terms(self):
-        names = ['yolox_s', 'bonsai-image-4b-ternary-gemlite']
-        self.assertEqual(self.run_batch(names, ['yes']), (set(names), set()))
-        self.assertEqual(len(self.questions), 1)
-        for name in names: self.assertIn(name, self.questions[0])
-        self.assertEqual(len(list(self.store.root.glob('*.json'))), 2)
+            index = json.loads((Path(self.directory.name) / 'license-documents' / (name + '.json')).read_text())
+            for document in index['documents']:
+                self.assertTrue(Path(document['path']).is_file())
+                self.assertTrue(document['url'].startswith('file:'))
+        for path in self.store.root.glob('*.json'):
+            self.assertIn('standard-license-policy-v1',
+                          json.loads(path.read_text())['context']['statement_digests'])
 
     def test_retry_reuses_current_model_receipts_without_another_question(self):
         self.run_batch(['yolox_s'], ['yes'])
@@ -76,19 +69,19 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(len(list(self.store.root.glob('*.json'))), 1)
 
     def test_no_creates_no_receipts_and_downloads_nothing(self):
-        names = ['yolox_s', 'yolox_nano']
+        names = ['encodec-24khz-stateful']
         self.assertEqual(self.run_batch(names, ['no']), (set(), set(names)))
         self.assertEqual(list(self.store.root.glob('*.json')), [])
         self.installer.ensure_upstream_asset.assert_not_called()
 
     def test_interrupted_batch_does_not_mint_partial_receipts(self):
         with self.assertRaises(StopIteration):
-            self.run_batch(['yolox_s', 'encodec-24khz-stateful'], ['yes'])
+            self.run_batch(['yolox_s', 'encodec-24khz-stateful'], [])
         self.assertEqual(list(self.store.root.glob('*.json')), [])
         self.installer.ensure_upstream_asset.assert_not_called()
 
     def test_one_declined_group_does_not_block_other_accepted_models(self):
-        allowed, declined = self.run_batch(['yolox_s', 'encodec-24khz-stateful'], ['yes', 'no'])
+        allowed, declined = self.run_batch(['yolox_s', 'encodec-24khz-stateful'], ['no'])
         self.assertEqual(allowed, {'yolox_s'})
         self.assertEqual(declined, {'encodec-24khz-stateful'})
         self.installer.ensure_upstream_asset.assert_called_once()
@@ -186,50 +179,25 @@ class BatchTests(unittest.TestCase):
         real = self.api.Installer(str(Path(self.directory.name) / 'apps'))
         self.installer.resolve_converter.side_effect = real.resolve_converter
         names = ['yolox_nano', spec.asset_id]
-        helper = wizard_converters.OS_INSTALLERS[spec.convert_tool_asset_id]
-        rows = [dict(id=item.asset_id, label=item.label, provider=item.provider,
-                     download_bytes=item.download_bytes, installed_bytes=item.installed_bytes,
-                     temporary_bytes=item.temporary_bytes) for item in
-                (catalog.require_asset(name) for name in names)]
         with patch.object(model_wizard, 'state_root', return_value=Path(self.directory.name)), \
-                patch.object(model_wizard, 'catalog', return_value=rows), \
-                patch('kilix_content.install.shutil.which', return_value=None) as which, \
-                patch.object(wizard_converters, 'checked_helper', return_value=helper), \
-                patch.object(wizard_converters.subprocess, 'run') as run:
-            model_wizard.apply('vision', ['yolox_nano'], 'yes')
-            model_wizard.apply('kilix-transcribe', [spec.asset_id], 'yes')
-            before = model_wizard.pending()
-            # Both models have real Apache terms. No model, including the
-            # earlier YOLOX choice, may download if software setup is refused.
+                patch('kilix_content.install.shutil.which', return_value=None), \
+                patch('subprocess.run') as run:
             with self.assertRaisesRegex(ValueError, 'remain pending'):
-                self.run_batch(names, ['yes', 'no'], finish=True)
+                self.run_batch(names, ['yes'])
             self.installer.ensure_upstream_asset.assert_not_called()
-            self.assertEqual(model_wizard.pending(), before)
-            run.assert_called_once_with([helper, '--dry-run'], check=True)
+            run.assert_not_called()
             receipts = {path.name: path.read_bytes() for path in self.store.root.glob('*.json')}
             self.assertEqual(len(receipts), 2)
             self.questions.clear()
-            run.reset_mock()
-            run.side_effect = [None, subprocess.CalledProcessError(1, ['/usr/bin/sudo', helper])]
-            with self.assertRaisesRegex(ValueError, 'remain pending'):
-                self.run_batch(names, ['yes'], finish=True)
-            self.assertEqual(model_wizard.pending(), before)
-            self.installer.ensure_upstream_asset.assert_not_called()
-            self.questions.clear()
-            run.reset_mock()
-            def installed(argv, **_):
-                if argv == ['/usr/bin/sudo', helper]: which.return_value = spec.convert_argv[0]
-            run.side_effect = installed
-            self.run_batch(names, ['yes'], finish=True)
-            self.assertEqual(len(self.questions), 1)  # software Yes, no repeated model licence
-            self.assertEqual(model_wizard.pending(), {})
-            self.assertEqual(model_wizard.answers()['vision']['models'], ['yolox_nano'])
-            self.assertEqual(model_wizard.answers()['kilix-transcribe']['models'], [spec.asset_id])
+            # The OS installer repaired the prerequisite outside the wizard.
+            self.installer.resolve_converter.side_effect = None
+            self.run_batch(names, [])
+            self.assertEqual(self.questions, [])
             self.assertEqual([call.args[0].asset_id for call in self.installer.ensure_upstream_asset.call_args_list], names)
             self.assertEqual(receipts, {path.name: path.read_bytes() for path in self.store.root.glob('*.json')})
 
     def test_declining_diarization_licence_never_prepares_software(self):
-        with patch.object(wizard_converters.subprocess, 'run') as run:
+        with patch('subprocess.run') as run:
             self.assertEqual(self.run_batch(['kilix-diarization-cpu'], ['no']),
                              (set(), {'kilix-diarization-cpu'}))
         run.assert_not_called()

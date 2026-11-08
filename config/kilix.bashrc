@@ -64,7 +64,7 @@ case "${KILIX_RUN_ALIASES:-}" in
            _kilix_run_aliases=0
        fi ;;
 esac
-if [ "$_kilix_run_aliases" = 1 ]; then
+if [ "$_kilix_run_aliases" = 1 ] && [ -z "${KILIX_GUI_ROUTE_BIN:-}" ]; then
     _kilix_source_root="${GPU_TERMINAL_SOURCE_HOME:-$HOME/.local/gpu_terminal/sources}"
     _kilix_bin="$(type -P kilix 2>/dev/null || true)"
     [ -n "$_kilix_bin" ] \
@@ -81,6 +81,7 @@ if [ "$_kilix_run_aliases" = 1 ]; then
         firefox-esr galculator geany gedit gimp gnome-calculator gnome-terminal
         google-chrome google-chrome-stable gnumeric inkscape kate konsole krita
         libreoffice mousepad nautilus obconf okular opera pcmanfm qpdfview
+        qemu-system-aarch64 qemu-system-arm qemu-system-i386 qemu-system-x86_64
         rhythmbox signal-desktop slack smplayer soffice spotify steam
         sublime_text system-config-printer telegram-desktop thunar thunderbird
         uxterm vivaldi-stable vlc xev xfd xfontsel xmessage xpdf xterm zenity
@@ -214,3 +215,21 @@ if [ -n "${KITTY_LISTEN_ON:-}" ] && [ "$_kilix_pane_verbs" = 1 ]; then
     unset _kilix_verb _kilix_rc_dir _kilix_pane_completions
 fi
 unset _kilix_pane_verbs
+
+# A killed TUI or disconnected SSH session cannot run its terminal cleanup.
+# Recover input protocols at the local shell prompt, before readline accepts
+# another command. Clear keyboard stacks on both screens; they are separate.
+# Bash preserves the preceding status for each PROMPT_COMMAND entry.
+if [[ $- == *i* ]]; then
+    _kilix_prompt_restore_terminal() {
+        if [[ -t 1 ]]; then
+            builtin printf '\033[?2026l\033[?1000l\033[?1001l\033[?1002l\033[?1003l\033[?1004l\033[?1005l\033[?1006l\033[?1015l\033[?1016l\033[<255u\033[>4;0m\033[?1049l\033[<255u\033[>4;0m\033[?25h\033[0m'
+        fi
+        return 0
+    }
+    # Preserve both Bash's array form and a user's complete string command;
+    # never split or eval the latter while registering the hook.
+    if [[ ${PROMPT_COMMAND[*]-} != *'_kilix_prompt_restore_terminal'* ]]; then
+        PROMPT_COMMAND=(_kilix_prompt_restore_terminal "${PROMPT_COMMAND[@]}")
+    fi
+fi

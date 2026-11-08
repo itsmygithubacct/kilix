@@ -613,12 +613,19 @@ class AppPane:
         env = {}
         if self.pulse_sink:
             env["PULSE_SINK"] = self.pulse_sink   # route app audio to our sink
+        command = self.cmd
+        if self.term and os.path.basename(command[0]).startswith('qemu-system-'):
+            from qemu_pane import QemuPane
+            self.qemu_pane = QemuPane(command)
+            command = self.qemu_pane.command
         self.app = self.xapp.launch_app(
-            self.cmd, env=env, isolate_bus=self.manage_windows,
+            command, env=env, isolate_bus=self.manage_windows,
             capture_source=not (self.no_pane or self.serve or self.lan or self.hls or
                                 self.mse or self.webrtc or self.stream),
             clipboard=not (self.no_pane or self.serve or self.lan or self.hls or
                            self.mse or self.webrtc or self.stream))
+        if getattr(self, 'qemu_pane', None) is not None:
+            self.qemu_pane.publish(self.qemu_pane.path)
         if self.term:
             self.inj = self.xapp.make_injector()
         self.focus_app_window()
@@ -819,6 +826,15 @@ class AppPane:
         if reason not in (CONTENT_READY_CHANGED,
                           CONTENT_READY_INITIAL_GRACE):
             raise ValueError(f"invalid content readiness reason: {reason}")
+        ready_file = os.environ.get("KILIX_RUN_READY_FILE")
+        if ready_file:
+            # Optional launcher receipt: never overwrite an existing path or
+            # follow its final symlink. A fresh private directory belongs to
+            # the caller; readiness means rendered content, not just a child PID.
+            fd = os.open(ready_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL |
+                         os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+            with os.fdopen(fd, "w") as receipt:
+                receipt.write("content-ready\n")
         self._content_ready = True
         self._content_ready_reason = reason
         self._initial_frame_ready_at = None
@@ -1118,6 +1134,8 @@ class AppPane:
         # the private display or its application processes. ExitStack keeps
         # errors visible while still attempting every remaining cleanup.
         with ExitStack() as cleanup:
+            if getattr(self, 'qemu_pane', None) is not None:
+                cleanup.callback(self.qemu_pane.close)
             if self.xapp is not None:
                 cleanup.callback(self.xapp.close)
             cleanup.callback(self._stop_capture)
@@ -1326,6 +1344,12 @@ def main():
             "openbox-session", "startx", "xinit", "Xephyr", "Xorg", "Xvfb"}:
         sys.exit("kilix run: desktop/terminal hosts cannot be embedded as apps; "
                  "use kilix pane for a terminal or --desktop-session for an intentional nested desktop")
+    if args and os.path.basename(args[0]).startswith("qemu-system-"):
+        # A detached QEMU outlives the pane's primary process. Do not silently
+        # drop the user's flag or let a VM escape the tab's ownership boundary.
+        if any(flag in args[1:] for flag in ("-daemonize", "--daemonize")):
+            sys.exit("kilix run: QEMU -daemonize cannot be owned by a tab; "
+                     "omit it, or use command qemu-system-* for an external launch")
     if audio and not (hls or mse or webrtc):
         hls = True                          # audio needs a broadcast to ride in
     if not args:
@@ -1337,6 +1361,25 @@ def main():
     if auto_fit is None:
         auto_fit = os.path.basename(args[0]).lower() in (
             "virtualbox", "virtualboxvm", "vbox", "steam")
+    # GParted's wrapper needs root. The private bus sets no_new_privs, so
+    # divert to setuid sudo before that bus exists. The password stays on
+    # sudo's pipe from the askpass helper and is not a program argument.
+    if os.path.basename(args[0]) == "gparted":
+        from kilix_sdk.elevation import ElevationRefused, plan_gparted_elevation
+        try:
+            plan = plan_gparted_elevation(args, os.environ)
+        except ElevationRefused as e:
+            print(f"kilix run: {e}", file=sys.stderr)
+            sys.exit(1)
+        if plan is None:
+            print("kilix run: GParted cannot start without administrator rights",
+                  file=sys.stderr)
+            sys.exit(1)
+        try:
+            os.execve(plan.argv[0], list(plan.argv), plan.env)
+        except OSError as e:
+            print(f"kilix run: could not start sudo: {e.strerror}", file=sys.stderr)
+            sys.exit(1)
     try:
         args, temporary_profile = prepare_app_command(args)
     except RuntimeError as e:

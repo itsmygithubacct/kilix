@@ -10,7 +10,7 @@ import apprun
 
 class AppPaneCleanupTests(unittest.TestCase):
     def test_each_failed_stage_still_closes_the_owned_session(self):
-        for failed in ("terminal", "presenter", "capture"):
+        for failed in ("terminal", "presenter", "capture", "session", "qemu"):
             with self.subTest(failed=failed):
                 calls = []
                 def step(name):
@@ -26,7 +26,8 @@ class AppPaneCleanupTests(unittest.TestCase):
                 pane.presenter = SimpleNamespace(close=step("presenter"))
                 pane._stop_capture = step("capture")
                 pane.xapp = SimpleNamespace(close=step("session"))
+                pane.qemu_pane = SimpleNamespace(close=step("qemu"))
                 with self.assertRaisesRegex(OSError, "closed " + failed):
                     pane._cleanup()
                 self.assertEqual(calls, ["input", "terminal", "presenter",
-                                         "capture", "session"])
+                                         "capture", "session", "qemu"])

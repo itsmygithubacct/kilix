@@ -9,6 +9,7 @@ weight is fetched (OD-S), and every receipt is written under a temporary
 """
 import argparse
 import contextlib
+from dataclasses import replace
 import hashlib
 import http.server
 import importlib
@@ -78,7 +79,11 @@ _V3, _ORIGIN = asset_v3_available()
 # The LFM2 Ask default adds lfm2-kilix-commands (content 74013cc), and the
 # optional Needle 3 alternate adds needle3-kilix-commands (content 61abc3d).
 # Female-02 epoch 80 adds kilix-female-02 (content 2e20fce).
-PACKAGED_ASSETS = 37
+# Optional LFM3 is retained alongside the new versioned LFM2 default.
+# Paradee 1.2 adds paradee-8m-v1.2 (content 020a186). It is not a default.
+# RC5 adds faster-whisper-medium-en (its own record, small's MIT terms) and
+# demucs-htdemucs-6s, the kilix split weights (its own record, Demucs MIT).
+PACKAGED_ASSETS = 42
 
 # Producer notices the pinned upstream archive carries and the installer
 # verifies and reuses from it, so the licence text store does not hold them.
@@ -475,6 +480,16 @@ class ModelSetupTests(unittest.TestCase):
         (path, (size, digest)), = [(p, v) for (a, p), v in ARCHIVE_NOTICES.items()
                                    if a == spec.asset_id]
         item = next(item for item in spec.files if item.path == path)
+        original_get = self.texts.get
+        def outside_store(wanted, *args, **kwargs):
+            # A different asset may also determine this text. Exercise the
+            # archive-only route explicitly, independently of catalog growth.
+            if wanted == digest:
+                raise FileNotFoundError(wanted)
+            return original_get(wanted, *args, **kwargs)
+        patcher = mock.patch.object(self.texts, "get", side_effect=outside_store)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         changes = {
             "another asset": {"asset_id": "needle3-kilix-commands"},
             "another member": {"files": (SimpleNamespace(path="notices/LICENSE-other.txt",
@@ -673,6 +688,25 @@ class ModelSetupTests(unittest.TestCase):
                     self.assertEqual(sorted(store_root.glob("*.json")), receipts)
                     self.assertEqual((installed / "data.bin").read_bytes(), self.weights)
         self.assertIsNone(self.upstream)
+
+    def test_from_a_notice_licence_says_its_receipt_claims_no_agreement(self):
+        # A notice licence (a record decision) takes no agreement, so the --from
+        # screen must not say the receipt records an acceptance.
+        self.require_supply()
+        for record_id, said, unsaid in (
+                (INFORMATIONAL, b"the licence terms were shown; it claims no agreement",
+                 b"that you accepted the licence"),
+                (AFFIRMATIVE, b"that you accepted the licence", b"claims no agreement")):
+            with self.subTest(record_id=record_id):
+                api, facade, _store = self.spies()
+                self.output = self.terminal()
+                self.execute(self.spec(record_id), answer="n\n", api=api, facade=facade,
+                             args=self.from_args(self.held(name=f"held-{record_id}")))
+                screen = self.output.value()
+                self.assertIn(said, screen)
+                self.assertNotIn(unsaid, screen)
+                note = json.loads(screen.split(b"\n", 1)[0])["supplied_note"]
+                self.assertEqual("acceptance of the licence" in note, record_id == AFFIRMATIVE)
 
     def test_from_a_directory_that_does_not_match_the_manifest_installs_nothing(self):
         self.require_supply()
@@ -930,6 +964,21 @@ raise SystemExit(result)
         self.assertEqual(store.stat().st_mode & 0o777, 0o750)
         self.assertEqual(before, {p: (p.read_bytes(), p.stat().st_mtime_ns, p.stat().st_mode)
                                   for p in self.root.rglob("*") if p.is_file()})
+
+    def test_verify_versioned_model_uses_its_selected_directory(self):
+        spec = replace(self.spec(), storage="versioned")
+        with self.no_network():
+            self.assertEqual(self.execute(spec, args=self.from_args(self.held())), 0)
+        root = self.root / "apps"
+        selected = root / "assets" / spec.install_name
+        legacy = root / "assets" / spec.asset_id
+        shutil.copytree(selected, legacy)
+        with self.no_network(), mock.patch.object(self.api, "Installer", side_effect=AssertionError("setup")):
+            self.assertEqual(ui._verify(self.api, self.lic, spec, str(root), io.StringIO()), 0)
+            (selected / "data.bin").unlink()
+            with self.assertRaises((OSError, self.api.InstallError)):
+                ui._verify(self.api, self.lic, spec, str(root), io.StringIO())
+        self.assertEqual((legacy / "data.bin").read_bytes(), self.weights)
 
     def test_verify_missing_agreement_creates_neither_store_nor_root(self):
         with self.no_network(), self.assertRaisesRegex(ui.SetupError, "no stored receipt"):
@@ -1271,6 +1320,7 @@ class SuppliedDirectoryOptionTests(unittest.TestCase):
         for claim in ("--from DIR", "Nothing is downloaded",
                       "every file is verified against the pinned manifest",
                       "the receipt records your acceptance of the licence",
+                      "for a notice licence that its terms were shown",
                       "it does not record that you supplied the files"):
             self.assertIn(claim, text)
         # Nothing the operator reads may say the receipt records supply.

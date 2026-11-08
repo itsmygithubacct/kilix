@@ -9,7 +9,8 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'config'))
 from kilix_sdk import frontend_context as context
-from kilix_sdk import panes
+from kilix_sdk import caller_context, panes
+from _caller_context_support import bind_test_caller
 
 
 class FrontendContextTests(unittest.TestCase):
@@ -27,6 +28,7 @@ class FrontendContextTests(unittest.TestCase):
             path.write_text('private process fixture')
             path.chmod(0o700)
         self.sid = '0123456789abcdef'
+        bind_test_caller(self, self.broker, self.runtime, self.sid)
         self.env = {
             'KITTY_PID': '10', 'KITTY_WINDOW_ID': '1',
             'KITTY_LISTEN_ON': 'unix:@kilix-10', 'KITTY_PUBLIC_KEY': 'old-key',
@@ -133,10 +135,16 @@ class FrontendContextTests(unittest.TestCase):
         link = self.root / 'runtime-link'
         link.symlink_to(self.runtime)
         self.env['KITTY_PTY_BROKER_RUNTIME'] = str(link)
-        self.refused()
+        original = dict(self.env)
+        with self.assertRaises(caller_context.CallerContextError):
+            context.refresh(self.env)
+        self.assertEqual(self.env, original)
 
     def test_foreign_process_owner_is_refused(self):
-        with patch.object(context.os, 'geteuid', return_value=os.geteuid() + 1):
+        identity = context._identity
+        def foreign_helper(path):
+            return None if path == self.attach else identity(path)
+        with patch.object(context, '_identity', side_effect=foreign_helper):
             self.refused()
 
     def test_broker_executable_must_match(self):

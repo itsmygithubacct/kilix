@@ -169,6 +169,7 @@ class FakeDevice:
         self.calls.append(("VerifyStop",))
 
     def ListEnrolledFingers(self, username, **kw):
+        self.calls.append(("ListEnrolledFingers", username))
         if not self.enrolled:
             return self._respond("ListEnrolledFingers", kw,
                                  error=FakeDBusException(fl.ERROR_PREFIX + "NoEnrolledPrints", "none"))
@@ -276,7 +277,7 @@ class DiscoveryTests(unittest.TestCase):
 class PackageTests(unittest.TestCase):
     def test_missing_packages_from_dpkg(self):
         run = fake_run(installed=("fprintd",))
-        self.assertEqual(fl.missing_packages(("fprintd", "not-installed-pkg"), run=run), ["not-installed-pkg"])
+        self.assertEqual(fl.missing_packages(("fprintd", "python3-nacl"), run=run), ["python3-nacl"])
 
         def broken(argv, **kwargs):
             raise FileNotFoundError("dpkg-query")
@@ -336,7 +337,39 @@ class ClientTests(unittest.TestCase):
         session = client_for(device, auth_timeout=7).verify(PATH)
         self.assertTrue(session.succeeded)
         self.assertEqual(session.selected_finger, "right-index-finger")
-        self.assertEqual(device.gated, [("Claim", 7)])
+        self.assertEqual(device.gated, [("Claim", 7), ("ListEnrolledFingers", 7)])
+
+    def test_default_verification_selects_the_only_enrolled_finger_for_claimed_user(self):
+        device = FakeDevice(script=[("verify-match", True)], enrolled=["right-index-finger"])
+        session = client_for(device).verify(PATH, username="demo")
+        self.assertTrue(session.succeeded)
+        self.assertIn(("Claim", "demo"), device.calls)
+        self.assertIn(("ListEnrolledFingers", "demo"), device.calls)
+        self.assertIn(("VerifyStart", "right-index-finger"), device.calls)
+        self.assertEqual(device.calls[-2:], [("VerifyStop",), ("Release",)])
+
+    def test_default_verification_defers_to_daemon_without_a_single_print(self):
+        for enrolled in ([], ["left-thumb", "right-thumb"]):
+            with self.subTest(enrolled=enrolled):
+                device = FakeDevice(script=[("verify-match", True)], enrolled=enrolled)
+                client_for(device).verify(PATH)
+                self.assertIn(("VerifyStart", "any"), device.calls)
+
+    def test_explicit_verification_does_not_query_or_replace_selection(self):
+        device = FakeDevice(script=[("verify-match", True)], enrolled=["left-thumb"])
+        client_for(device).verify(PATH, "right-index-finger")
+        self.assertIn(("VerifyStart", "right-index-finger"), device.calls)
+        self.assertFalse(any(call[0] == "ListEnrolledFingers" for call in device.calls))
+
+    def test_default_verification_query_denial_releases_device_without_scanning(self):
+        device = FakeDevice()
+        error = FakeDBusException(fl.ERROR_PREFIX + "PermissionDenied", "not allowed")
+        with unittest.mock.patch.object(device, "ListEnrolledFingers", side_effect=error):
+            with self.assertRaises(fl.AccessDenied):
+                client_for(device).verify(PATH)
+        self.assertFalse(any(call[0] == "VerifyStart" for call in device.calls))
+        self.assertEqual(device.calls[-2:], [("VerifyStop",), ("Release",)])
+        self.assertTrue(all(match.removed for match in device.matches))
 
     def test_unanswered_prompt_is_a_timeout_with_the_session(self):
         device = FakeDevice(start_error=FakeDBusException(fl.NO_REPLY, "Did not receive a reply."))
@@ -379,11 +412,29 @@ class DoctorTests(unittest.TestCase):
 
     def doctor(self, *, client=None, run=None, **kwargs):
         return fl.run_doctor(root=self.root, client=client, environ={"XDG_SESSION_ID": "2"},
-                             run=run or fake_run(installed=("fprintd",)), proc=self.root / "proc",
-                             access=deny, **kwargs)
+                             run=run or fake_run(installed=("fprintd", "python3-nacl")),
+                             proc=self.root / "proc", access=deny,
+                             locker_home=self.root / "locker", **kwargs)
 
     def statuses(self, report):
         return {c.id: c.status for c in report.checks}
+
+    def test_installed_agent_link_can_point_into_a_root_only_directory(self):
+        build_tree(self.root)
+        protected = self.root / "private-code"
+        protected.mkdir()
+        (protected / "agent.service").write_text("[Service]\n")
+        unit = self.root / "etc/systemd/system" / fl.agentinstall.unit_names(os.getuid())[1]
+        unit.parent.mkdir(parents=True, exist_ok=True)
+        unit.symlink_to(protected / "agent.service")
+        protected.chmod(0)
+        try:
+            report = self.doctor(client=client_for(FakeDevice(enrolled=["right-index-finger"])))
+            self.assertEqual(self.statuses(report)["agent"], "warn")
+            agent_check = next(check for check in report.checks if check.id == "agent")
+            self.assertIn("socket is absent", agent_check.summary)
+        finally:
+            protected.chmod(0o700)
 
     def test_bare_host_names_the_install_step(self):
         build_tree(self.root)
@@ -396,6 +447,9 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(report.missing_packages, ["fprintd"])
         self.assertFalse(report.usable)
         self.assertEqual({c.id: c.hint for c in report.checks}["packages"], "kilix fingerlock install")
+        status_by_id = {c.id: c.status for c in report.checks}
+        self.assertEqual(status_by_id["locker"], "info")
+        self.assertEqual(status_by_id["agent"], "info")
 
     def test_full_stack_is_usable(self):
         build_tree(self.root, hwdb=True, fprintd=True)
@@ -409,12 +463,18 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(report.enrolled, {PATH: ["left-thumb"]})
         self.assertEqual(report.as_dict(redact=True)["readers"][0]["serial"], fl.REDACTED)
 
-    def test_doctor_does_not_require_login_packages(self):
+    def test_reader_does_not_require_locker_dependency_or_enable_pam(self):
         build_tree(self.root, hwdb=True, fprintd=True)
-        report = self.doctor(client=client_for(FakeDevice()))
-        self.assertTrue(report.usable)
+        client = client_for(FakeDevice())
+        report = self.doctor(client=client, run=fake_run(installed=("fprintd",)))
         self.assertEqual(report.missing_packages, [])
-        self.assertNotIn("pam", self.statuses(report))
+        self.assertTrue(report.usable)
+        report = self.doctor(client=client, with_locker=True, run=fake_run(installed=("fprintd",)))
+        self.assertEqual(report.missing_packages, ["python3-nacl"])
+        self.assertFalse(report.usable)
+        with redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(fl.main(["install", "--pam", "--json"]), 2)
+        self.assertEqual(json.loads(output.getvalue())["code"], "EUSAGE")
 
     def test_no_reader(self):
         report = self.doctor()
@@ -427,9 +487,6 @@ class CommandTests(unittest.TestCase):
         status, out, _ = run_main(["--help"])
         self.assertEqual(status, 0)
         self.assertIn("ensure", out)
-        status, _, err = run_main(["install", "--pam"])
-        self.assertEqual(status, 2)
-        self.assertIn("unrecognized arguments", err)
         status, _, err = run_main(["enroll", "nose"])
         self.assertEqual(status, 2)
         status, out, _ = run_main(["delete", "--json"])

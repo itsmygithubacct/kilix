@@ -25,7 +25,7 @@ def command(spec, run, session_id):
     args = SimpleNamespace(agent=spec.provider, model=spec.model, prompt=None,
                            resume=None, coding_yolo=spec.coding_yolo,
                            trust_folder=spec.trust_folder, agent_arg=[])
-    argv = control.agent_argv(args, executable, Path(spec.cwd))
+    argv = control.agent_argv(args, executable, Path(spec.cwd), interactive=spec.interactive)
     if spec.effort:
         if spec.provider == "codex":
             argv += ["-c", "model_reasoning_effort=" + json.dumps(spec.effort)]

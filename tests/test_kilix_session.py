@@ -118,6 +118,13 @@ class Fixture(unittest.TestCase):
 
 
 class SessionTests(Fixture):
+    def test_codex_interactive_is_pane_local_and_exec_keeps_its_own_cli_options(self):
+        interactive = plan(self.spec(interactive=True, placement="new-tab"))["argv"]
+        headless = plan(self.spec())["argv"]
+        self.assertEqual(interactive[1], "--no-daemon")
+        self.assertEqual(headless[1], "exec")
+        self.assertNotIn("--no-daemon", headless)
+
     def test_recent_runs_are_ordered_within_a_second(self):
         first = launch(self.spec(placement="new-tab"), client=FakeTerminal())
         second = launch(self.spec(placement="new-tab"), client=FakeTerminal())

@@ -16,7 +16,7 @@ KILIX_NVR_ALLOW_MUTABLE_REF="${KILIX_NVR_ALLOW_MUTABLE_REF:-0}"
 # resolves it — a first-use download and an existing checkout alike — so a moved
 # pin reaches machines that already have the component. Set
 # KILIX_NVR_KEEP_EXISTING_CHECKOUT=1 to work from a checkout as it is.
-KILIX_NVR_DEFAULT_REF=cad35fe21031dcc1f9784357bfeeec92d0328634
+KILIX_NVR_DEFAULT_REF=e68b5d144cdff3330bc0f29ee5bc6e96649a26ae
 
 die() { printf 'kilix nvr: %s\n' "$*" >&2; exit 1; }
 log() { printf 'kilix nvr: %s\n' "$*" >&2; }
@@ -67,7 +67,7 @@ case "$nvr_dir" in
     die "refusing broad kilix-nvr checkout path: $nvr_dir" ;;
 esac
 
-for command in git make cc; do
+for command in git make cc python3; do
   command -v "$command" >/dev/null 2>&1 \
     || die "$command is required (install git, make, a C compiler, and sqlite3 and zlib development headers)"
 done
@@ -77,6 +77,30 @@ install_ref="${explicit_ref:-$KILIX_NVR_DEFAULT_REF}"
 if ! [[ "$install_ref" =~ ^[0-9a-fA-F]{40}$ ]] \
      && [ "$KILIX_NVR_ALLOW_MUTABLE_REF" != 1 ]; then
   die "KILIX_NVR_REF must be a full 40-character commit SHA (set KILIX_NVR_ALLOW_MUTABLE_REF=1 only to trust a mutable tag/branch)"
+fi
+
+
+# A configured carrier is authoritative. Its helper verifies the selected
+# source before any checkout, then rewrites Git to a file-only source pool.
+if [ "${KILIX_SOURCE_CARRIER_MANIFEST+x}" = x ] || [ "${KILIX_SOURCE_CARRIER_SHA256+x}" = x ] \
+     || [ -e /usr/share/plebian-os/source-carrier/manifest.json ] \
+     || [ -L /usr/share/plebian-os/source-carrier/manifest.json ] \
+     || [ -e /usr/share/plebian-os/source-carrier/manifest.sha256 ] \
+     || [ -L /usr/share/plebian-os/source-carrier/manifest.sha256 ]; then
+  carrier_adapter="$KILIX_HOME/scripts/detector-carrier.sh"
+  [ -f "$carrier_adapter" ] && [ ! -L "$carrier_adapter" ] \
+    || die "the detector source-carrier adapter is unavailable"
+  . "$carrier_adapter"
+  carrier_parent="$(dirname "$nvr_dir")"
+  mkdir -p -- "$carrier_parent" || die "could not create the source parent"
+  [ -d "$carrier_parent" ] && [ ! -L "$carrier_parent" ] \
+    || die "source parent must be a real directory"
+  carrier_keep=0
+  case "$KILIX_NVR_KEEP_EXISTING_CHECKOUT" in 1|yes|true|on)
+    [ ! -e "$nvr_dir/.git" ] || carrier_keep=1 ;;
+  esac
+  detector_carrier_prepare "$KILIX_HOME" "$KILIX_NVR_REPO" "$install_ref" \
+    "$carrier_parent" "$carrier_keep" || die "offline source carrier refused the request"
 fi
 
 build_checkout() {
@@ -146,7 +170,44 @@ advance_existing_checkout() {
     log "the resolved ref ${install_ref:0:12} was NOT installed; commit, stash or remove them"
     return 0
   fi
-  checkout_ref "$directory" "$install_ref"
+  # Keep the installed source and executable together if checkout or build
+  # fails. Copy the entire repository so local refs/config and ignored user
+  # files survive; only generated build output is discarded in the stage.
+  [ -d "$directory/.git" ] && [ ! -L "$directory/.git" ] \
+    || die "transactional update requires a standalone Git checkout"
+  local update_tmp staged
+  update_tmp="$(mktemp -d "$(dirname "$directory")/.kilix-update.XXXXXX")" \
+    || die "could not allocate an update stage"
+  (
+    trap 'rm -rf -- "$update_tmp"' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    staged="$update_tmp/checkout"
+    cp -a -- "$directory" "$staged" || die "could not stage existing checkout"
+    [ "$(git -C "$staged" rev-parse --show-toplevel)" = "$staged" ] \
+      || die "staged Git checkout redirects outside its directory"
+    checkout_ref "$staged" "$install_ref"
+    rm -rf -- "$staged/build"
+    build_checkout "$staged"
+    # Another checkout/edit during compilation must not be overwritten.
+    [ "$(git -C "$directory" rev-parse HEAD)" = "$head" ] \
+      && [ -z "$(git -C "$directory" status --porcelain --untracked-files=normal)" ] \
+      || die "installed checkout changed while preparing update"
+    python3 - "$staged" "$directory" <<'EXCHANGE'
+import ctypes
+import os
+import sys
+library = ctypes.CDLL(None, use_errno=True)
+rename = library.renameat2
+rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int,
+                   ctypes.c_char_p, ctypes.c_uint]
+rename.restype = ctypes.c_int
+if rename(-100, os.fsencode(sys.argv[1]), -100, os.fsencode(sys.argv[2]), 2):
+    error = ctypes.get_errno()
+    raise OSError(error, os.strerror(error))
+EXCHANGE
+  )
+  update_built=1
   # Said after the checkout, because only then are both commits local enough to
   # compare. A pin that walks a machine backwards is legitimate and must still
   # be visible in the log.
@@ -165,13 +226,19 @@ if git -C "$nvr_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   checkout_root="$(realpath -m -- "$checkout_root")"
   [ "$checkout_root" = "$nvr_dir" ] \
     || die "$nvr_dir is nested inside a different Git checkout: $checkout_root"
-  origin="$(git -C "$nvr_dir" remote get-url origin 2>/dev/null || true)"
+  if [ -n "${_detector_carrier_tmp:-}" ]; then
+    # get-url expands the offline rewrite; compare the stored origin instead.
+    origin="$(git -C "$nvr_dir" config --local --get remote.origin.url 2>/dev/null || true)"
+  else
+    origin="$(git -C "$nvr_dir" remote get-url origin 2>/dev/null || true)"
+  fi
   if [ "$origin" != "$KILIX_NVR_REPO" ] \
        && [ "$KILIX_NVR_TRUST_EXISTING_CHECKOUT" != 1 ]; then
     die "$nvr_dir has origin '${origin:-missing}', expected '$KILIX_NVR_REPO' (set KILIX_NVR_TRUST_EXISTING_CHECKOUT=1 only for a trusted checkout)"
   fi
+  update_built=0
   advance_existing_checkout "$nvr_dir"
-  build_checkout "$nvr_dir"
+  if [ "$update_built" != 1 ]; then build_checkout "$nvr_dir"; fi
   printf '%s\n' "$nvr_dir/build/kilix-nvr"
   exit 0
 fi
@@ -201,6 +268,7 @@ clone_tmp="$(mktemp -d "$parent/.kilix-nvr.clone.XXXXXX")" \
   || die "could not allocate a temporary clone directory"
 cleanup() {
   [ -z "${clone_tmp:-}" ] || rm -rf -- "$clone_tmp"
+  if [ -n "${_detector_carrier_tmp:-}" ]; then detector_carrier_cleanup; fi
 }
 trap cleanup EXIT
 trap 'exit 130' INT

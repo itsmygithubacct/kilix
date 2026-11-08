@@ -89,6 +89,10 @@ with tempfile.TemporaryDirectory(prefix='kilix-system-load-') as temporary:
     require(segment[1] is None, 'Native readout advertises an unavailable Linux action')
     os.environ[system.SYSTEM_LOAD_MODE_KEY] = 'off'
     require(system.system_load_segment() is None, 'Explicit off mode was ignored')
+    # The GPU widget has no native Windows reader: hidden, without errors,
+    # even when its setting asks for it.
+    os.environ['KILIX_CHROME_SYSTEM_GPU_MODE'] = 'always'
+    require(system.system_gpu_bar_segment() is None, 'GPU widget shown on native Windows')
     print(json.dumps({
         'schema': 'kilix.native-system-load-test/v1', 'ok': True,
         'processor_groups': groups, 'logical_cpus': cpus,
@@ -96,6 +100,7 @@ with tempfile.TemporaryDirectory(prefix='kilix-system-load-') as temporary:
         'memory_used_bytes': second.memory_used_bytes,
         'segment': segment[0], 'action': segment[1],
         'default_enabled': True, 'off_mode_respected': True,
+        'gpu_hidden': True,
         'gui_rendering_verified': False,
     }, ensure_ascii=True))
 '@
@@ -123,7 +128,7 @@ try {
     }
     $childEnvironment['GPU_TERMINAL_SETTINGS_FILE'] = Join-Path $work 'settings.conf'
     foreach ($key in @('KITTY_LISTEN_ON','KITTY_RC_PASSWORD','KITTY_PUBLIC_KEY','KITTY_WINDOW_ID','KITTY_PID',
-                        'KILIX_SYSTEM_PROC_ROOT','KILIX_CHROME_SYSTEM_LOAD_MODE')) { $childEnvironment[$key] = $null }
+                        'KILIX_SYSTEM_PROC_ROOT','KILIX_CHROME_SYSTEM_LOAD_MODE','KILIX_CHROME_SYSTEM_GPU_MODE')) { $childEnvironment[$key] = $null }
     foreach ($key in [Environment]::GetEnvironmentVariables('Process').Keys) {
         if ($key.StartsWith('KILIX_NATIVE_', [StringComparison]::OrdinalIgnoreCase)) { $childEnvironment[$key] = $null }
     }

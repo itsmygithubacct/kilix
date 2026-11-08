@@ -1,0 +1,68 @@
+{
+  "schema": "kilix.coding-clients/v1",
+  "clients": [
+    {
+      "id": "codex",
+      "launch_aliases": [
+        "codex"
+      ],
+      "executable_names": [
+        "codex"
+      ],
+      "entrypoints": [
+        {
+          "interpreter": "node",
+          "path_suffix": [
+            "node_modules",
+            "@openai",
+            "codex",
+            "bin",
+            "codex.js"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "claude",
+      "launch_aliases": [
+        "claude"
+      ],
+      "executable_names": [
+        "claude",
+        "claude-code"
+      ],
+      "entrypoints": [
+        {
+          "interpreter": "node",
+          "path_suffix": [
+            "node_modules",
+            "@anthropic-ai",
+            "claude-code",
+            "cli.js"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "grok",
+      "launch_aliases": [
+        "grok"
+      ],
+      "executable_names": [
+        "grok"
+      ],
+      "entrypoints": []
+    },
+    {
+      "id": "omp",
+      "launch_aliases": [
+        "omp",
+        "qwen-omp"
+      ],
+      "executable_names": [
+        "omp"
+      ],
+      "entrypoints": []
+    }
+  ]
+}

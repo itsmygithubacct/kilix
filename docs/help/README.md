@@ -1,19 +1,18 @@
-# Kilix 0.2.2 help
+# Kilix help
 
-This guide covers Kilix 0.2.2, shipped in the coordinated Plebian-OS Linux
-release on November 3, 2026. Use the `v0.2.2` tag for the exact released source;
-the development branch can contain later commands and changes. See the
-[published release notes](https://github.com/itsmygithubacct/plebian-os/releases/tag/v0.2.2)
-for known issues and VM-only qualification. Windows remains preview.4, and
-physical GPU/USB and ARM64 OS qualification are not implied.
-Commands assume `kilix` is on PATH. Pane commands run inside a live Kilix.
+Use these guides for everyday Kilix tasks. Commands assume `kilix` is on PATH;
+pane commands run inside a live Kilix. For the 0.2.3 RC1 candidate, start with
+[Help answers and documentation search](answers.md) to get commands, short
+explanations and links to the relevant documentation.
 
 Start with [Operating Kilix](operations/README.md) for task-oriented help on
 creating, finding, reading and controlling pages and panes, logs and sessions.
 
-- [Release status and versions](release.md)
+- [Help answers and documentation search (0.2.3 RC1)](answers.md)
+- [0.2.2 release background and version commands](release.md)
 - [Start menu and settings](settings.md)
 - [Pages and panes](panes.md)
+- [Ask, grammar, shell, and the other workflow routes](../workflows/README.md)
 - [Managed coding sessions, trusted folders and run logs](../session.md)
 - [Explicit model setup](models.md)
 - [Read aloud and dictation](speech.md)

@@ -15,7 +15,7 @@ from _env_support import sandbox_env  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = ROOT / "scripts/install-kilix-qwen-client.sh"
-REF = "7e1c57dc4f446b1a7139e1cb49d93958d8847355"
+REF = "9b0c08a325acf2e557edf41576f506a4586e44cb"
 
 
 class QwenClientInstallerTests(unittest.TestCase):

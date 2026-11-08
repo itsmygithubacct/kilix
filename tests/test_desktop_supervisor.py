@@ -1,5 +1,7 @@
 """The desktop provider is restarted after an abnormal exit, never after a clean one."""
+import base64
 import json
+import re
 import os
 from pathlib import Path
 import subprocess
@@ -52,6 +54,20 @@ class DesktopSupervisorTests(unittest.TestCase):
             self.sleeps = ((base / "sleeps").read_text().split()
                            if (base / "sleeps").exists() else [])
         return result, runs
+
+    def test_each_supervised_launch_has_a_fresh_close_identity(self):
+        result, runs = self.supervise([1, 75, 0])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        events = re.findall(r'\x1b]1337;SetUserVar=kilix_desktop_provider([^\x07]*)\x07', result.stdout)
+        self.assertEqual(len(events), 2 * len(runs))
+        markers = []
+        for index in range(len(runs)):
+            self.assertTrue(events[2 * index].startswith('='))
+            marker = base64.b64decode(events[2 * index][1:], validate=True).decode('ascii')
+            self.assertRegex(marker, r'^[0-9a-f]{32}$')
+            markers.append(marker)
+            self.assertEqual(events[2 * index + 1], '', 'clear identity before restart/backoff')
+        self.assertEqual(len(set(markers)), len(runs))
 
     def test_a_crash_is_restarted_and_told_why(self):
         result, runs = self.supervise([1, 137, 0])

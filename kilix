@@ -23,6 +23,7 @@
 #   ./kilix settings          # shared chrome/game settings TUI and CLI
 #   ./kilix games ...         # list, play, enable, or disable stack games
 #   ./kilix power ...         # logout|reboot|poweroff, no confirmation here
+#   ./kilix power-controls    # graphical power preferences and Screen Lock settings
 #   ./kilix launcher          # catalog TUI: stack programs, apps, launchers
 #   ./kilix skills ...        # explicitly install/list/remove bundled agent skills
 #   ./kilix agent-control ... # bounded coding-session inspection and control
@@ -31,11 +32,13 @@
 #   ./kilix app run ID        # install/run one pinned catalog application
 #   ./kilix app window ID     # render a terminal app in a desktop window
 #   ./kilix models ...       # inspect or explicitly set up receipt-gated models
+#   ./kilix llm lab [CMD]     # edit and measure a local transformer; no CMD lists options
 #   ./kilix laptop ...        # list/open/status/close laptop session profiles
 #   ./kilix temps [args]       # run the pinned graphical thermal dashboard
 #   ./kilix memory [args]      # run the graphical RAM/pressure dashboard
 #   ./kilix tmux [args]        # install/run the pinned Tmux Manager
 #   ./kilix image FILE        # display images in this terminal (icat options supported)
+#   ./kilix youtube [URL]     # download transcript, music or video
 #   ./kilix video FILE_OR_URL # play a video or direct stream in this terminal
 #   ./kilix amp [args]         # install/run the pinned Media Player
 #   ./kilix amp --headless     # run its control-socket backend, no windows
@@ -43,7 +46,7 @@
 #   ./kilix pdf [PDF]          # install/run pinned PDF-to-Markdown conversion
 #   ./kilix speak [TEXT...]    # read a pane, or the given text, aloud
 #   ./kilix dictate           # recognize one spoken utterance
-#   ./kilix ask [REQUEST]     # route a plain request to Needle; acts on yes
+#   ./kilix ask [--yes] [REQUEST] # route a plain request to Needle; --yes skips the prompt
 #   ./kilix weather CITY     # current conditions for a named city
 #   ./kilix grammar [args]   # explicit system grammar in this pane
 #   ./kilix needle [args]    # Needle prompt in this pane
@@ -75,6 +78,7 @@
 #   ./kilix desktop-action ... # typed X11 input/window actions; preview by default
 #   ./kilix cap               # launch/install the Kilix Cap mansion desktop
 #   ./kilix tui               # launch/install the Kilix TUI desktop
+#   ./kilix tui screen-lock   # automatic screen-lock settings, --show or --set on|off|session
 #   ./kilix land              # launch/install the Kilix Land desktop
 #   ./kilix icewm             # launch/install the Kilix IceWM desktop
 #   ./kilix --build           # build the forked kitty from ./src
@@ -103,6 +107,32 @@ _kilix_validate_tui_root_arguments() {
   esac
 }
 _kilix_validate_tui_root_arguments "$@"
+
+# This settings verb runs in the current terminal and requires no desktop
+# provider, engine download or content root.
+case "${1:-}:${2:-}" in
+  tui:screen-lock|kilix-tui:screen-lock)
+    shift 2
+    command -v pleb >/dev/null 2>&1 || {
+      echo "kilix tui screen-lock: Pleb is missing; install the Pleb desktop session first" >&2
+      exit 1
+    }
+    exec pleb screen-lock "$@" ;;
+esac
+
+if [ "${1:-}" = power-controls ]; then
+  shift
+  if [ "${1:-}" = --native ]; then
+    shift
+    exec /usr/bin/python3 -B "$KILIX_HOME/config/content_app.py" run kilix-power-controls -- --native "$@"
+  fi
+  case "${1:-}" in
+    --help|-h|--version|--show)
+      exec /usr/bin/python3 -B "$KILIX_HOME/config/content_app.py" run kilix-power-controls -- "$@" ;;
+  esac
+  exec "$KILIX_HOME/kilix" run --size 1000x720 \
+    /usr/bin/python3 -B "$KILIX_HOME/config/content_app.py" run kilix-power-controls -- --native "$@"
+fi
 # END TUI ROOT ARGUMENTS
 GPU_TERMINAL_SOURCE_HOME="${GPU_TERMINAL_SOURCE_HOME:-$HOME/.local/gpu_terminal/sources}"
 GPU_TERMINAL_HOME="${GPU_TERMINAL_HOME:-$HOME/.local/gpu_terminal}"
@@ -147,6 +177,11 @@ fi
 # These commands also work before engine/storage setup. Model inspection needs
 # the pinned Content package, but never initializes shared settings or receipts.
 case "${1:-}" in
+  panes|pane-center)
+    # Read the inherited frontend before writable setup can replace its
+    # credential path. The pane center also needs the SDK caller/route guard.
+    shift
+    exec python3 -B "$KILIX_HOME/config/pane_center_launch.py" "$@" ;;
   weather)
     shift
     exec python3 -B "$KILIX_HOME/config/kilix_weather.py" "$@" ;;
@@ -201,6 +236,11 @@ case "${1:-}" in
   models)
     shift
     exec python3 "$KILIX_HOME/config/content_models.py" "$@" ;;
+  llm)
+    # Weight edits live in the kilix-llm lab, outside this checkout. A blank
+    # `kilix llm` or `kilix llm lab` lists options and does not load a model.
+    shift
+    exec python3 -B "$KILIX_HOME/config/llm_lab.py" "$@" ;;
   tmux)
     # Keep the interactive manager path; explicit control is headless and
     # runs before any engine/storage setup, with a mandatory socket.
@@ -238,9 +278,10 @@ needed first. Ambiguous targets fail; each verb prints what it did.
   kilix action --request-json -             JSON from stdin
   kilix action capabilities                host features
   kilix windows --host HOST COMMAND         Windows via SSH
-Also: ask 'REQUEST', weather CITY, grammar, needle, shell, claudex route|usage,
+Also: ask 'REQUEST', weather CITY, grammar, needle, shell, content, playalong, claudex route|usage,
   wizard, settings, status, update, install, games,
-  screen-size, transcript, help-search "QUESTION". Options: --help.
+  screen-size, transcript, help-setup, help-answer "QUESTION",
+  help-search "QUESTION". Options: --help.
 Engine options: kilix --help-engine
 EOF
     printf 'Agent guide: %s/docs/AGENTS.md\n' "$KILIX_HOME"
@@ -1491,7 +1532,7 @@ _kilix_load_env_file() {
       KILIX_VOICE_LIB_URL|KILIX_VOICE_LIB_VERSION|KILIX_VOICE_LIB_SHA256|KILIX_VOICE_APACHE_LICENSE_FILE|\
       KILIX_VOICE_MODEL_URL|KILIX_VOICE_MODEL_SHA256|\
       KILIX_VOICE_LGRAPH_MODEL_URL|KILIX_VOICE_LGRAPH_MODEL_SHA256|\
-      KILIX_NVR_DETECT|KILIX_SOUND_CLASSIFIER|KILIX_OBJECT_DETECTOR|\
+      KILIX_NVR_DETECT|KILIX_SOUND_CLASSIFIER|KILIX_SOUND_THRESHOLDS|KILIX_SOUND_PYTHON|KILIX_SOUND_REF|KILIX_OBJECT_DETECTOR|\
       KILIX_LOOK_DIR|KILIX_LOOK_REPO|KILIX_LOOK_REF|KILIX_LOOK_PREFIX|\
       KILIX_LOOK_AUTO_INSTALL|KILIX_LOOK_TRUST_EXISTING_CHECKOUT|\
       KILIX_LOOK_ALLOW_MUTABLE_REF|KILIX_LOOK_KEEP_EXISTING_CHECKOUT|\
@@ -2662,6 +2703,7 @@ _kilix_voice_doctor() {
   if [ ! -d "$model" ]; then
     case "$_KILIX_VOICE_STT_MODEL" in
       whisper-small-en) model="$KILIX_DATA_HOME/desktop-apps/assets/faster-whisper-small-en" ;;
+      whisper-medium-en) model="$KILIX_DATA_HOME/desktop-apps/assets/faster-whisper-medium-en" ;;
       whistle) model="$KILIX_DATA_HOME/desktop-apps/assets/whistle" ;;
     esac
   fi
@@ -2879,6 +2921,33 @@ case "${1:-}" in
   help-search)
     shift
     exec python3 "$KILIX_HOME/config/content_app.py" run kilix-help-llm -- lookup "$@" ;;
+  help-answer|help-setup)
+    _help_command=answer
+    [ "$1" = help-setup ] && _help_command=setup
+    shift
+    _help_skip_sizer=0
+    for _help_argument in "$@"; do
+      case "$_help_argument" in
+        --) break ;;
+        -h|--help|--sizer|--sizer=*) _help_skip_sizer=1 ;;
+      esac
+    done
+    if [ "$_help_skip_sizer" = 0 ] && [ -z "${PLEBIAN_MODEL_SIZER:-}" ]; then
+      if [ "$_help_command" = setup ]; then
+        PLEBIAN_MODEL_SIZER="$("$KILIX_HOME/scripts/install-kilix-tts-sizer.sh")" || exit 1
+      else
+        PLEBIAN_MODEL_SIZER="$("$KILIX_HOME/scripts/install-kilix-tts-sizer.sh" --print-path)" || {
+          echo 'kilix help: run kilix help-setup first, or use kilix help-search' >&2
+          exit 1
+        }
+      fi
+      if [ ! -x "$PLEBIAN_MODEL_SIZER" ]; then
+        echo 'kilix help: run kilix help-setup first, or use kilix help-search' >&2
+        exit 1
+      fi
+      export PLEBIAN_MODEL_SIZER
+    fi
+    exec python3 "$KILIX_HOME/config/content_app.py" run kilix-help-llm -- "$_help_command" "$@" ;;
   settings|--settings)
     shift
     exec python3 "$KILIX_HOME/kilix-settings" "$@" ;;
@@ -3389,6 +3458,55 @@ case "${1:-}" in
   app|application)
     shift
     exec python3 "$KILIX_HOME/config/content_app.py" "$@" ;;
+  content)
+    shift
+    case "${1:-}" in
+      -h|--help|help)
+        echo "usage: $_self content [ARGS...]"
+        echo "searches an explicit saved-source index with BM25"
+        echo "Install the pinned application: $_self install kilix-find"
+        exit 0 ;;
+    esac
+    _find_bin="$(command -v kilix-find 2>/dev/null || true)"
+    if [ -z "$_find_bin" ] || [ ! -x "$_find_bin" ]; then
+      _find_bin="$(KILIX_APP_AUTO_INSTALL=0 python3 -B \
+        "$KILIX_HOME/config/content_app.py" install kilix-find 2>/dev/null || true)"
+    fi
+    if [ -z "$_find_bin" ] || [ ! -x "$_find_bin" ]; then
+      if [ -x "$HOME/gpu_terminal/kilix-apps/kilix-find/kilix-find" ]; then
+        _find_bin="$HOME/gpu_terminal/kilix-apps/kilix-find/kilix-find"
+      else
+        _find_bin=""
+      fi
+    fi
+    [ -n "$_find_bin" ] && [ -x "$_find_bin" ] || {
+      echo "kilix content: kilix-find is not installed; run: kilix install kilix-find" >&2
+      exit 1
+    }
+    exec "$_find_bin" "$@" ;;
+  playalong)
+    # The catalog owns the pin, the setup build, and the command path.
+    # The first run installs that pin; kilix install playalong installs it
+    # without launching.
+    shift
+    _playalong_install_only=0
+    while :; do
+      case "${1:-}" in
+        --install-only) _playalong_install_only=1; shift ;;
+        --print-ref)
+          exec python3 "$KILIX_HOME/config/content_app.py" \
+            ref playalong ;;
+        --) shift; break ;;
+        *) break ;;
+      esac
+    done
+    if [ "$_playalong_install_only" = 1 ]; then
+      python3 "$KILIX_HOME/config/content_app.py" \
+        install playalong >/dev/null
+      exit $?
+    fi
+    exec python3 "$KILIX_HOME/config/content_app.py" \
+      run playalong -- "$@" ;;
   claudex)
     shift
     case "${1:-}" in
@@ -3460,13 +3578,16 @@ case "${1:-}" in
   ask)
     # City weather is a read-only lookup. Other requests go to Needle, which shows the
     # route and the plan and acts only on a typed yes; an unsure route never
-    # offers one. Voice adds a transcript to correct before routing; it never
-    # removes a confirmation. Nothing here installs Needle or a speech runtime.
+    # offers one. --yes skips that prompt and still does not run a refusal or an
+    # unsure route. Voice adds a transcript to correct before routing; it never
+    # removes a confirmation, so it cannot be combined with --yes. Nothing here
+    # installs Needle or a speech runtime.
     shift
     _ask_voice=0
     _ask_hold=0
+    _ask_yes=0
     _ask_options=()
-    _ask_usage="usage: $_self ask [--model lfm2|needle3|grammar] [--commands-candidate FILE] [--voice] [--hold] [--] [REQUEST...]"
+    _ask_usage="usage: $_self ask [--model lfm2|lfm3|needle3|grammar] [--commands-candidate FILE] [--yes] [--voice] [--hold] [--] [REQUEST...]"
     # Every exit, a usage error included, waits for Enter under --hold, so the
     # tab it runs in stays readable. Statuses are 0, 1 and 2 only.
     for _ask_arg in "$@"; do
@@ -3487,14 +3608,14 @@ case "${1:-}" in
         --voice) _ask_voice=1; shift ;;
         --model|--commands-backend)
           case "${2:-}" in
-            lfm2|needle3|grammar) _ask_options+=(--commands-backend "$2"); shift 2 ;;
-            *) echo "kilix ask: --model must be lfm2, needle3 or grammar" >&2; _ask_close 2 ;;
+            lfm2|lfm3|needle3|grammar) _ask_options+=(--commands-backend "$2"); shift 2 ;;
+            *) echo "kilix ask: --model must be lfm2, lfm3, needle3 or grammar" >&2; _ask_close 2 ;;
           esac ;;
         --model=*|--commands-backend=*)
           _ask_model="${1#*=}"
           case "$_ask_model" in
-            lfm2|needle3|grammar) _ask_options+=(--commands-backend "$_ask_model"); shift ;;
-            *) echo "kilix ask: --model must be lfm2, needle3 or grammar" >&2; _ask_close 2 ;;
+            lfm2|lfm3|needle3|grammar) _ask_options+=(--commands-backend "$_ask_model"); shift ;;
+            *) echo "kilix ask: --model must be lfm2, lfm3, needle3 or grammar" >&2; _ask_close 2 ;;
           esac ;;
         --commands-candidate)
           [ $# -ge 2 ] && [ -n "$2" ] || { echo "$_ask_usage" >&2; _ask_close 2; }
@@ -3502,21 +3623,24 @@ case "${1:-}" in
         --commands-candidate=*)
           [ -n "${1#*=}" ] || { echo "$_ask_usage" >&2; _ask_close 2; }
           _ask_options+=("$1"); shift ;;
+        --yes) _ask_yes=1; shift ;;
         --hold) _ask_hold=1; shift ;;
         -h|--help|help)
           echo "$_ask_usage"
           echo "routes one plain request to the Needle job that runs it (panes, apps,"
-          echo "agents, files or system), shows the plan, and acts only on a typed yes"
+          echo "agents, files or system), shows the plan, and acts only on a typed yes."
+          echo "--yes acts without that prompt. A refusal or an unsure route still does not run."
           echo "City weather questions fetch current conditions directly, without a model:"
           echo "  kilix ask \"What's the weather in Tokyo?\""
           echo "  kilix weather \"Paris, France\" --unit celsius"
+          echo "  --yes    act without the yes/no prompt; not with --voice"
           echo "  --voice  dictate the request; the transcript can be edited first"
           echo "  --hold   wait for Enter before returning, so a tab stays readable"
-          echo "  --model  lfm2, needle3, or grammar for this request; overrides KILIX_ASK_COMMANDS_BACKEND"
+          echo "  --model  lfm2, lfm3, needle3, or grammar for this request; overrides KILIX_ASK_COMMANDS_BACKEND"
           echo "           and the saved Ask selection (lfm2 when none is saved)"
           echo "  --commands-candidate FILE  use a local Needle 3 candidate with --model needle3"
           echo "Install the alternate: kilix-needle install --commands needle3"
-          echo "Save the selection: kilix-needle workflows select --model lfm2|needle3|grammar"
+          echo "Save the selection: kilix-needle workflows select --model lfm2|lfm3|needle3|grammar"
           echo
           echo "With no request, it asks for one. Exit status: 0 answered/acted, 1 not answered/acted"
           echo "(declined, refused or unsure), 2 usage."
@@ -3527,6 +3651,10 @@ case "${1:-}" in
       esac
     done
     _ask_text="$*"
+    if [ "$_ask_yes" = 1 ] && [ "$_ask_voice" = 1 ]; then
+      echo "kilix ask: --yes cannot be combined with --voice" >&2
+      _ask_close 2
+    fi
     if [ "$_ask_voice" = 1 ]; then
       [ -z "$_ask_text" ] || { echo "kilix ask: --voice takes no request text" >&2; _ask_close 2; }
       [ -t 0 ] || { echo "kilix ask: --voice needs a terminal to confirm in" >&2; _ask_close 2; }
@@ -3570,8 +3698,12 @@ print(apps_root())
     }
     export KILIX_CONTENT_ROOT
     _ask_status=0
+    _ask_mode=--interactive
+    if [ "$_ask_yes" = 1 ]; then
+      _ask_mode=--yes
+    fi
     KILIX_APP_ID=kilix-needle KILIX_APP_SURFACE=current \
-      "$_ask_needle" ask --interactive "${_ask_options[@]}" -- "$_ask_text" || _ask_status=$?
+      "$_ask_needle" ask "$_ask_mode" "${_ask_options[@]}" -- "$_ask_text" || _ask_status=$?
     case "$_ask_status" in 0|1|2) ;; *) _ask_status=1 ;; esac
     _ask_close "$_ask_status" ;;
   pdf-view|pdf-viewer)
@@ -3785,12 +3917,29 @@ from kilix_sdk.voicebox import main
 raise SystemExit(main(sys.argv[2:]))
 ' "$KILIX_HOME/config" "$@"
     ;;
+  youtube)
+    shift
+    exec /usr/bin/python3 -I -B -c '
+import sys
+sys.path.insert(0, sys.argv[1])
+from youtube import main
+raise SystemExit(main(sys.argv[2:]))
+' "$KILIX_HOME/config" "$@" ;;
   transcribe|kilix-transcribe)
     shift
     exec /usr/bin/python3 -I -B -c '
 import sys
 sys.path.insert(0,sys.argv[1])
-from kilix_sdk.transcribe_provider import main
+from kilix_sdk.transcribe_front import main
+raise SystemExit(main(sys.argv[2:]))
+' "$KILIX_HOME/config" "$@"
+    ;;
+  split|kilix-split)
+    shift
+    exec /usr/bin/python3 -I -B -c '
+import sys
+sys.path.insert(0,sys.argv[1])
+from kilix_sdk.split_cli import main
 raise SystemExit(main(sys.argv[2:]))
 ' "$KILIX_HOME/config" "$@"
     ;;
@@ -4212,23 +4361,24 @@ sys.exit(0 if ready else 1)
     _yamnet_action=--print-path
     while :; do
       case "${1:-}" in
+        run) _yamnet_action=--run; shift; break ;;
         install) _yamnet_action=--install; shift ;;
         check|status) _yamnet_action=--check; shift ;;
         update|upgrade) _yamnet_action=--upgrade; shift ;;
         remove|uninstall) _yamnet_action=--remove; shift ;;
         -h|--help|help)
-          echo "usage: $_self yamnet [install|check|update|remove]"
+          echo "usage: $_self yamnet [install|check|run|update|remove]"
           echo
           echo "  $_self yamnet            install if needed, print the command"
           echo "  $_self yamnet check      what is present, without changing it"
-          echo "  $_self yamnet install    build the virtualenv and fetch the model"
-          echo "  $_self yamnet update     bring its packages forward"
+          echo "  $_self yamnet install    build the runtime using the verified catalog model"
+          echo "  $_self yamnet update     rebuild its pinned runtime"
           echo "  $_self yamnet remove     delete the runtime directory"
           echo
           echo "The sound-event half of the same idea as '$_self yolo':"
           echo "kilix-sound-detect links no ML library, its classifier is a"
           echo "subprocess, and this builds that subprocess's environment."
-          echo "The model is fetched by hash with its licence recorded."
+          echo "The model and its licence receipt are verified through Kilix Content."
           exit 0 ;;
         --) shift; break ;;
         *) break ;;
@@ -4531,14 +4681,8 @@ sys.exit(0 if ready else 1)
         exit 2 ;;
     esac ;;
   fingerlock|--fingerlock|fingerprint)
-    # The fingerprint reader as a host verb: ensure (default) | status |
-    # doctor | install | list | enroll [FINGER] | verify [FINGER] | delete.
-    # config/fingerlock.py owns it: read-only USB discovery, the Debian
-    # lazy install (apt-get install -y --no-install-recommends fprintd, run
-    # as root through sudo in this terminal, or xterm when there is none),
-    # and fprintd over the system D-Bus behind polkit. The USB node itself
-    # is never opened. This verb does not change login and does not lock
-    # files or the screen. A verify result is a reader check, not a lock token.
+    # Reader operations use fprintd. File/password custody is explicit and
+    # installs from a confirmed package; verification is not a screen-lock token.
     shift
     export KILIX_HOME
     exec python3 -B "$KILIX_HOME/config/fingerlock.py" "$@" ;;
@@ -5534,6 +5678,14 @@ _kilix_restore_pane_tty() {
 # restore): that restart is immediate and is not counted as a failure, though
 # more than five within a minute stop the loop like crashes do. Every run
 # sees KILIX_DESKTOP_SUPERVISED=1, so the provider knows it may ask.
+_kilix_clear_desktop_marker() {
+  printf '\033]1337;SetUserVar=kilix_desktop_provider\007'
+}
+_kilix_set_desktop_marker() {
+  local marker
+  marker="$(python3 -c 'import base64, uuid; print(base64.b64encode(uuid.uuid4().hex.encode()).decode())')" || return 1
+  printf '\033]1337;SetUserVar=kilix_desktop_provider=%s\007' "$marker"
+}
 _kilix_desktop_supervise() {
   _sup_restarts=0
   _sup_window=$(date +%s)
@@ -5544,6 +5696,7 @@ _kilix_desktop_supervise() {
   _sup_restarted=
   _sup_last=
   while :; do
+    _kilix_set_desktop_marker || return 1
     _sup_rc=0
     if [ -n "$_sup_restarted" ]; then
       KILIX_DESKTOP_SUPERVISED=1 KILIX_DESKTOP_RESTARTED=1 \
@@ -5551,6 +5704,7 @@ _kilix_desktop_supervise() {
     else
       KILIX_DESKTOP_SUPERVISED=1 "$@" || _sup_rc=$?
     fi
+    _kilix_clear_desktop_marker
     _sup_now=$(date +%s)
     if [ $((_sup_now - _sup_window)) -ge 60 ]; then
       _sup_window=$_sup_now
@@ -5744,31 +5898,6 @@ case "${1:-}" in
   remote)
     shift
     _kilix_remote_mux "$@" ;;
-  panes|pane-center)
-    shift
-    # This richer surface lives with the shared TUI toolkit, but is a Kilix
-    # command: agents should not need to know which component draws it. Prefer
-    # the installed closure, then the explicitly configured development
-    # checkout, with the conventional source tree as the final source fallback.
-    _panes_bin="${KILIX_TUI_UTILS_PREFIX:-$HOME/.local}/bin/kilix-panes"
-    if [ -x "$_panes_bin" ]; then
-      exec "$_panes_bin" "$@"
-    fi
-    if _panes_bin="$(command -v kilix-panes 2>/dev/null)" \
-         && [ -x "$_panes_bin" ]; then
-      exec "$_panes_bin" "$@"
-    fi
-    for _panes_src in \
-      "$KILIX_TUI_UTILS_DIR/tools/switcher/main.py" \
-      "${GPU_TERMINAL_SOURCE_HOME:-$HOME/.local/gpu_terminal/sources}/kilix-desktops/kilix-tui-utils/tools/switcher/main.py"
-    do
-      if [ -f "$_panes_src" ] && command -v python3 >/dev/null 2>&1; then
-        exec python3 "$_panes_src" "$@"
-      fi
-    done
-    echo "kilix panes: the pane center is not installed." >&2
-    echo "Install it with kilix-tui-utils/install.sh." >&2
-    exit 127 ;;
   switch|switcher)
     shift
     # Prefer the installed command, exactly as the thermometer and memory chip
@@ -6077,10 +6206,8 @@ if [ "${1:-}" = "run" ]; then
     done
     # KILIX_IN_OVERLAY doubles as the generic "already relaunched into our
     # own kitty window" guard, whatever the window type.
-    exec "$KITTEN" @ --password-file "$KILIX_RC_PASSWORD_FILE" \
-      launch --type=tab --cwd=current --self --tab-title "$_app" \
-      --env KILIX_IN_OVERLAY=1 --env "KILIX_STREAM=${KILIX_STREAM:-}" \
-      -- "$_self" run "$@"
+    exec python3 "$KILIX_HOME/config/run_tab.py" \
+      "$KITTEN" "$KILIX_RC_PASSWORD_FILE" "$_app" "$_self" "$@"
   fi
   rc=0
   python3 "$KILIX_HOME/config/apprun.py" "$@" || rc=$?
@@ -6240,6 +6367,15 @@ print(ids[0] if ids else "")' 2>/dev/null)"
       --env "KILIX_LAND_DESKTOP_EXTERNAL_APPS=${KILIX_LAND_DESKTOP_EXTERNAL_APPS:-}" \
       --env "KILIX_LAND_DESKTOP_AUDIO=${KILIX_LAND_DESKTOP_AUDIO:-}" \
       -- "$_self" "$@"
+  fi
+  # Mark only the pane actually running a desktop, not child application tabs.
+  # OSC metadata works for every selected provider, including custom commands.
+  if [ "$_KILIX_DESKTOP_MODE" != none ]; then
+    # Supervised Python providers get a new identity on every attempt.
+    if [ "$_KILIX_DESKTOP_MODE" != python ]; then
+      _kilix_set_desktop_marker || exit 1
+    fi
+    trap '_kilix_clear_desktop_marker' EXIT
   fi
   rc=0
   case "$_KILIX_DESKTOP_MODE" in
