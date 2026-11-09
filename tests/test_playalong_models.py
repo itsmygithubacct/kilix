@@ -91,6 +91,79 @@ class DeclineTests(unittest.TestCase):
             self.assertEqual(playalong.main(['declined', '--json']), playalong.DECLINED)
         self.assertEqual(json.loads(out.getvalue())['declined'], True)
 
+    def finish_page(self, selected, refused, segment=playalong.WIZARD_PAGE):
+        """Choose rows on a wizard page, then refuse some licences in finish()."""
+        assets = [asset('faster-whisper-large-v3', 'kilix-playalong'),
+                  asset('basic-pitch-icassp-2022-onnx', 'kilix-playalong'),
+                  asset('faster-whisper-medium-en', 'kilix-whisper-stt')]
+        with patch.object(wizard, 'catalog', return_value=assets), \
+                patch.object(wizard, 'run_command'), \
+                patch.object(wizard, 'activate_page', return_value=True), \
+                patch.object(wizard, 'legacy_state'), \
+                patch('wizard_licenses.consent_and_install',
+                      return_value=(set(selected) - set(refused), set(refused))):
+            wizard.apply(segment, selected, 'yes')
+            with redirect_stdout(io.StringIO()):
+                wizard.finish()
+
+    def test_refusing_only_large_v3s_licence_declines_nothing(self):
+        self.finish_page(['faster-whisper-large-v3'], ['faster-whisper-large-v3'])
+        entry = wizard.answers()[playalong.WIZARD_PAGE]
+        # The page is settled, so the wizard does not ask it again ...
+        self.assertEqual(entry['answer'], 'no')
+        self.assertEqual(entry['refused'], ['faster-whisper-large-v3'])
+        # ... but refusing the optional model is not a "no" to the defaults.
+        self.assertIsNone(playalong.declined())
+
+    def test_refusing_a_default_licence_on_the_page_declines(self):
+        self.finish_page(['basic-pitch-icassp-2022-onnx', 'faster-whisper-large-v3'],
+                         ['basic-pitch-icassp-2022-onnx', 'faster-whisper-large-v3'])
+        reason = playalong.declined()
+        self.assertIsNotNone(reason)
+        self.assertIn('refused the licence of basic-pitch-icassp-2022-onnx', reason)
+        self.assertNotIn('faster-whisper-large-v3', reason)
+
+    def test_refusing_a_default_licence_declines_even_when_the_page_ends_yes(self):
+        # Large-v3 accepted, Basic Pitch refused: the page is a "yes", but no
+        # default install may then write a receipt for the refused terms.
+        self.finish_page(['basic-pitch-icassp-2022-onnx', 'faster-whisper-large-v3'],
+                         ['basic-pitch-icassp-2022-onnx'])
+        entry = wizard.answers()[playalong.WIZARD_PAGE]
+        self.assertEqual((entry['answer'], entry['models'], entry['refused']),
+                         ('yes', ['faster-whisper-large-v3'], ['basic-pitch-icassp-2022-onnx']))
+        self.assertIn('refused the licence of basic-pitch-icassp-2022-onnx', playalong.declined())
+
+    def test_refusing_a_default_licence_on_another_page_declines(self):
+        self.finish_page(['faster-whisper-medium-en'], ['faster-whisper-medium-en'], segment='dictation')
+        self.assertEqual(wizard.answers()['dictation']['refused'], ['faster-whisper-medium-en'])
+        self.assertNotIn(playalong.WIZARD_PAGE, wizard.answers())
+        self.assertIn('refused the licence of faster-whisper-medium-en', playalong.declined())
+
+    def test_a_page_with_no_refusal_records_none(self):
+        self.finish_page(['basic-pitch-icassp-2022-onnx'], [])
+        entry = wizard.answers()[playalong.WIZARD_PAGE]
+        self.assertEqual(entry['answer'], 'yes')
+        self.assertNotIn('refused', entry)
+        self.assertIsNone(playalong.declined())
+
+    def test_a_page_answered_no_still_declines(self):
+        assets = [asset('basic-pitch-icassp-2022-onnx', 'kilix-playalong')]
+        with patch.object(wizard, 'catalog', return_value=assets):
+            wizard.apply(playalong.WIZARD_PAGE, [], 'no')
+        self.assertNotIn('refused', wizard.answers()[playalong.WIZARD_PAGE])
+        self.assertIn('Playalong page was answered no', playalong.declined())
+
+    def test_an_unreadable_refusal_is_never_read_as_install(self):
+        state = self.root / 'state'
+        state.mkdir(parents=True, exist_ok=True)
+        for refused in ([], 'faster-whisper-large-v3', [1]):
+            with self.subTest(refused=refused):
+                (state / 'model-wizard.json').write_text(json.dumps(
+                    {'schema': wizard.SCHEMA, 'answers': {playalong.WIZARD_PAGE: {
+                        'answer': 'no', 'models': [], 'phase': 'complete', 'refused': refused}}}))
+                with self.assertRaises(ValueError):
+                    playalong.declined()
+
     def test_large_v3_is_never_a_default(self):
         self.assertEqual(playalong.DEFAULT_MODELS,
                          ('demucs-htdemucs-6s', 'basic-pitch-icassp-2022-onnx', 'faster-whisper-medium-en'))

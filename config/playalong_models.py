@@ -4,7 +4,9 @@ Plebian-OS installs these on install and upgrade when they are missing, by the
 owner's 2026-11-08 decision, unless the machine declines them. Two answers
 decline, and either one is enough:
 
-* the model wizard's kilix-playalong page was answered "no";
+* the model wizard's kilix-playalong page was answered "no", or the licence
+  of one of the default models was refused on any wizard page (refusing only
+  Whisper large-v3's licence declines nothing else);
 * ``KILIX_PLAYALONG_MODELS`` in the shared settings file is ``0`` (or any
   value the shared settings treat as off).
 
@@ -33,9 +35,29 @@ SETTING = 'KILIX_PLAYALONG_MODELS'
 DECLINED, NOT_DECLINED, UNREADABLE = 0, 3, 4
 
 
-def _wizard_answer():
+def _wizard_decline():
+    """The wizard's reason to decline the default set, or None.
+
+    A licence refused on any page is a "no" to that model's terms, so no default
+    install may write a receipt for it. A Playalong-page "no" that came only
+    from refusing optional licences is not a "no" to the defaults.
+    """
     import model_wizard
-    return model_wizard.answers().get(WIZARD_PAGE, {}).get('answer')
+    saved = model_wizard.answers()
+    refused = set()
+    for entry in saved.values():
+        if 'refused' in entry:
+            value = entry['refused']
+            if not isinstance(value, list) or not value or any(not isinstance(model, str) for model in value):
+                raise ValueError('Invalid saved wizard answer.')
+            refused.update(value)
+    defaults = [model for model in DEFAULT_MODELS if model in refused]
+    if defaults:
+        return 'the model wizard refused the licence of ' + ', '.join(defaults)
+    entry = saved.get(WIZARD_PAGE, {})
+    if entry.get('answer') == 'no' and 'refused' not in entry:
+        return "the model wizard's Playalong page was answered no"
+    return None
 
 
 def _setting_value(path=None):
@@ -51,8 +73,9 @@ def declined(*, settings_path=None):
     a "no" from a "yes", so it must not install on a guess.
     """
     from kilix_sdk import settings
-    if _wizard_answer() == 'no':
-        return "the model wizard's Playalong page was answered no"
+    reason = _wizard_decline()
+    if reason:
+        return reason
     value = _setting_value(settings_path)
     if value is not None and not settings.truthy(value):
         return f'{SETTING}={value} in {settings.settings_path() if settings_path is None else settings_path}'

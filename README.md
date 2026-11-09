@@ -1763,13 +1763,15 @@ medium.en. All three use the standard distribution policy. Demucs and Basic
 Pitch ship in the installation image. Whisper medium.en is downloaded by the
 first online upgrade. A machine declines all three in either of two ways:
 
-- answer no on the model wizard's Playalong page;
+- answer no on the model wizard's Playalong page, or refuse the licence of
+  any of the three on a model wizard page (refusing only Whisper large-v3's
+  licence declines nothing);
 - set `KILIX_PLAYALONG_MODELS=0` in `~/.local/gpu_terminal/settings.conf`
   (or `GPU_TERMINAL_SETTINGS_FILE`).
 
 `python3 config/playalong_models.py declined` prints the answer that applies.
 It exits 0 when the machine declined, 3 when it did not, and 4 when the answer
-cannot be read. Plebian-OS installs nothing when the answer cannot be read.
+cannot be read. Plebian-OS installs none of the three when the answer cannot be read.
 Whisper large-v3, for lyrics that are not in English, is never a default. The
 Playalong wizard page offers it, and it is installed only after you choose it
 there.

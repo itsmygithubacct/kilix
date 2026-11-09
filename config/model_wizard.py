@@ -242,9 +242,13 @@ def declined_state(segment):
     return changes
 
 
-def record(segment, answer, models, phase="complete"):
+def record(segment, answer, models, phase="complete", *, refused=()):
     saved = answers()
     saved[segment] = {'answer': answer, 'models': models, 'phase': phase}
+    if refused:
+        # Licences refused on this page's licence screens. A "no" that carries
+        # them came from those screens, not from the page itself.
+        saved[segment]['refused'] = list(refused)
     if segment == 'workflows':
         saved[segment]['scope'] = 'ask'
     atomic_json(state_root() / 'model-wizard.json', {'schema': SCHEMA, 'answers': saved})
@@ -470,8 +474,9 @@ def pages(include_answered=False, *, assets=None, measure=True, ensure_sizer=Fal
             recommendation += (
                 ' Plebian-OS installs Playalong\'s default models (Demucs htdemucs_6s, Basic Pitch '
                 'and Whisper medium.en) when they are missing, unless this page is answered no or '
-                'KILIX_PLAYALONG_MODELS=0 is set. Whisper large-v3, for lyrics not in English, '
-                'is installed only if you choose it here.')
+                'KILIX_PLAYALONG_MODELS=0 is set. Refusing one of their licences in this wizard '
+                'also declines them. Whisper large-v3, for lyrics not in English, is installed '
+                'only if you choose it here; refusing its licence declines nothing else.')
         result.append(dict(id=key, title=title, models=rows, default=default, answer=answer,
                            optional=optional, disk_available_bytes=disk_free,
                            recommendation=recommendation))
@@ -656,24 +661,27 @@ def finish(*, input_fn=input):
         allowed = set(allowed) | set(excluded)
         for segment, plan in plans.items():
             models = [model for model in plan['models'] if model not in declined]
+            # Refused licences stay on the page, so that no default install
+            # (playalong_models.py) later installs terms the user refused here.
+            refused = [model for model in plan['models'] if model in declined]
             try:
                 if not models:
                     if segment in LEGACY:
                         legacy_state(segment, declined_state(segment))
-                    record(segment, 'no', [])
+                    record(segment, 'no', [], refused=refused)
                 else:
                     # Retain order and successful choices on an incomplete page,
                     # while preserving explicit declines even if activation fails.
-                    record(segment, 'yes', models, 'planned')
+                    record(segment, 'yes', models, 'planned', refused=refused)
                     missing = [model for model in models if model not in allowed]
                     if missing:
                         for model in missing:
                             failures.setdefault(model, ValueError('Installation was not confirmed'))
                         continue
                     if activate_page(segment, models, input_fn=input_fn):
-                        record(segment, 'yes', models)
+                        record(segment, 'yes', models, refused=refused)
                     else:
-                        record(segment, 'no', [])
+                        record(segment, 'no', [], refused=refused)
                 completed.append(segment)
             except Exception as error:
                 failures['setup:' + segment] = error
