@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SKILL = ROOT / "skills" / "kilix-pty"
 SKILL_FILES = [SKILL / "SKILL.md", *sorted((SKILL / "references").glob("*.md"))]
 DOC_FILES = [ROOT / "docs" / "AGENTS.md", ROOT / "docs" / "help" / "operations" / "persistence.md",
-             ROOT / "README.md"]
+             ROOT / "README.md", ROOT / "docs" / "persistent-panes.md", ROOT / "docs" / "install.md"]
 if os.environ.get("KILIX_PTY_CONTRACT"):
     DOC_FILES.append(Path(os.environ["KILIX_PTY_CONTRACT"]))
 VERBS = {"list", "status", "pane", "observe", "journals", "kill", "capabilities", "request", "reaped",
@@ -210,7 +210,7 @@ class SkillCommandTests(PtyCliCase):
                     self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
                     self.assertEqual(json.loads(result.stdout)["schema"], "kilix.pty/v1")
                     examples += 1
-        self.assertGreaterEqual(examples, 2)  # The skill reference and the README.
+        self.assertGreaterEqual(examples, 2)  # The skill reference and docs/persistent-panes.md.
 
     def req(self, payload, argv=None):
         import subprocess

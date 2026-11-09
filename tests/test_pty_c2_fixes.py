@@ -267,11 +267,11 @@ class FinalReceiptFailureTests(StoreCase):
 
 class DocumentationTests(unittest.TestCase):
     def test_the_retention_rule_and_the_flag_wording_are_stated(self):
-        readme = (ROOT / "README.md").read_text()
-        self.assertIn("never pruned", readme)
-        self.assertIn("store_full", readme)
-        self.assertIn("30 days", readme)
-        self.assertIn("identifiable own session is still refused", readme)
+        reference = (ROOT / "docs" / "persistent-panes.md").read_text()
+        self.assertIn("never pruned", reference)
+        self.assertIn("store_full", reference)
+        self.assertIn("30 days", reference)
+        self.assertIn("identifiable own session is still refused", reference)
 
 
 if __name__ == "__main__":

@@ -76,7 +76,7 @@ class AgentEndingRulesTests(unittest.TestCase):
                 self.assert_a2_rules(text("skills", "kilix-pty", path))
 
     def test_readme_and_persistence_have_both_a2_rules(self):
-        for path in ("README.md", "docs/help/operations/persistence.md"):
+        for path in ("docs/persistent-panes.md", "docs/help/operations/persistence.md"):
             with self.subTest(path=path):
                 self.assert_a2_rules(text(path))
 
@@ -139,7 +139,7 @@ class AgentEndingRulesTests(unittest.TestCase):
             self.assertIn(fragment, section)
 
     def test_request_route_is_described_for_structured_clients(self):
-        surfaces = [text("README.md"), text("skills", "kilix-pty", "references", "receipts.md"),
+        surfaces = [text("docs", "persistent-panes.md"), text("skills", "kilix-pty", "references", "receipts.md"),
                     help_output()]
         if CONTRACT:
             surfaces.append(Path(CONTRACT).read_text())
@@ -159,9 +159,9 @@ class AbsenceWordingTests(unittest.TestCase):
     def test_agents_table_and_readme_qualify_a_missing_session(self):
         agents = text("docs", "AGENTS.md")
         self.assertIn("Not listed is not proof a session is gone; only `verified_absent` is.", agents)
-        readme = text("README.md")
-        self.assertIn("A session missing from both arrays is not proven gone", readme)
-        self.assertIn("only a `verified_absent` kill proves absence", readme)
+        reference = text("docs", "persistent-panes.md")
+        self.assertIn("A session missing from both arrays is not proven gone", reference)
+        self.assertIn("only a `verified_absent` kill proves absence", reference)
 
     def test_the_help_text_says_it(self):
         with tempfile.TemporaryDirectory(prefix="a2r7-help.") as scratch:
