@@ -3415,6 +3415,13 @@ checks backend readiness before preselecting a recommendation and explains
 missing prerequisites. Choices remain available to save for later setup;
 opening the wizard does not install or start an Ollama service.
 
+The other language models page also offers `qwen-0.8b-no-loop-02`, a modified
+Qwen3.5 0.8B GGUF that kilix-llm runs. The wizard licenses and installs it as a
+catalog asset. `scripts/install-kilix-llm.sh` installs the pinned kilix-llm
+launcher and its llama.cpp source without compiling or downloading weights; run
+`kilix-llm build --backend cpu` once before first use. Kilix95 then offers LLM
+Chat and Kilix Avatar entries for this model.
+
 If a model acquisition fails, the wizard continues with other accepted models
 and completes categories whose selected models are ready. It reports each
 failure and keeps incomplete categories pending with their choice order intact.

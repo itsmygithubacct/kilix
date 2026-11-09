@@ -14,7 +14,7 @@ KILIX_AVATAR_SOURCES="${KILIX_AVATAR_SOURCES:-$KILIX_STORAGE_HOME/sources}"
 
 # Immutable source revision, inherited by the parent release manifest.
 KILIX_AVATAR_REPO="${KILIX_AVATAR_REPO:-https://github.com/itsmygithubacct/kilix-avatar.git}"
-KILIX_AVATAR_REF="${KILIX_AVATAR_REF:-bedd1b8977ccebdf8ef60b43bf091a33b171b6c9}"
+KILIX_AVATAR_REF="${KILIX_AVATAR_REF:-a383f65aba6352b232e57482e48f415d2d8dffdc}"
 
 die() { printf 'kilix avatar: %s\n' "$*" >&2; exit 1; }
 log() { printf 'kilix avatar: %s\n' "$*" >&2; }

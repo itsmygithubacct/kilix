@@ -31,7 +31,7 @@ PAGES = (
     ('image', 'Image generation / Bonsai', 'bonsai-image-4b-ternary-gemlite'),
     ('sound', 'Sound recognition', 'yamnet'),
     ('system-local-llm', 'System-local LLM / Kilix Avatar', ''),
-    ('chat', 'Other language models / Bonsai', 'bonsai-8b'),
+    ('chat', 'Other language models / Bonsai, Kilix LLM', 'bonsai-8b'),
     ('embedding', 'Text embeddings', 'nomic-embed-text-v1.5'),
     ('documents', 'Document understanding', 'granite-docling-258m'),
     ('visual-chat', 'Visual chat', 'granite3.2-vision-2b'),
@@ -259,7 +259,7 @@ def group(asset):
     if any(word in name for word in ('whisper', 'whistle', 'vosk', 'vibevoice-asr')): return 'dictation'
     if name == 'kilix-female-02' or name == PARADEE_ID or name.startswith('paradee-') \
             or any(word in name for word in ('tts', 'piper-')): return 'speech'
-    if provider in ('kilix-bonsai', 'kilix-ollama'): return 'chat'
+    if provider in ('kilix-bonsai', 'kilix-ollama', 'kilix-llm'): return 'chat'
     return provider or 'other'
 
 

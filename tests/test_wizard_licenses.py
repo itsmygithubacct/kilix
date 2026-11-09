@@ -87,6 +87,42 @@ class BatchTests(unittest.TestCase):
         self.installer.ensure_upstream_asset.assert_called_once()
         self.assertEqual(self.installer.ensure_upstream_asset.call_args.args[0].asset_id, 'yolox_s')
 
+    def test_kilix_llm_gguf_is_acquired_through_content_not_ollama(self):
+        # Its licence records come from the catalog asset, as for kilix-female-02.
+        name = 'qwen-0.8b-no-loop-02'
+        spec = Mock(asset_id=name, licenses=(), manifest_digest='0' * 64,
+                    source_mode='upstream-files')
+        catalog = Mock()
+        catalog.require_asset.return_value = spec
+        with patch.object(cm, '_verified_catalog', return_value=catalog):
+            self.assertEqual(self.run_batch([name], [], acquire=AssertionError('Ollama path')),
+                             ({name}, set()))
+        catalog.require_asset.assert_called_once_with(name)
+        self.installer.ensure_upstream_asset.assert_called_once()
+        self.assertIs(self.installer.ensure_upstream_asset.call_args.args[0], spec)
+
+    def test_selected_catalog_installs_the_no_loop_gguf_under_standard_policy(self):
+        # The selected kilix-content's own record: Apache-2.0 and CC BY 4.0
+        # rows, both approved by the owner, with no typed answer, as for
+        # kilix-female-02.
+        name = 'qwen-0.8b-no-loop-02'
+        spec = cm._verified_catalog(self.api).require_asset(name)
+        self.assertEqual((spec.provider, spec.source_mode), ('kilix-llm', 'upstream-files'))
+        self.assertEqual(sorted(item.license_id for item in spec.licenses),
+                         ['apache-2.0', 'cc-by-4.0'])
+        self.assertEqual(self.run_batch([name], []), ({name}, set()))
+        self.assertEqual(self.questions, [])
+        self.installer.ensure_upstream_asset.assert_called_once()
+        self.assertEqual(self.installer.ensure_upstream_asset.call_args.args[0].asset_id, name)
+        import json
+        receipts = [json.loads(path.read_text()) for path in self.store.root.glob('*.json')]
+        self.assertTrue(receipts)
+        for receipt in receipts:
+            self.assertIn('standard-license-policy-v1', receipt['context']['statement_digests'])
+        index = json.loads((Path(self.directory.name) / 'license-documents' / (name + '.json')).read_text())
+        labels = {document['label'] for document in index['documents']}
+        self.assertTrue({'licence:apache-2.0', 'licence:cc-by-4.0'} <= labels, labels)
+
     def test_download_failure_names_model_and_preserves_the_original_cause(self):
         self.installer.ensure_upstream_asset.side_effect = FileNotFoundError('/missing/converter')
         with self.assertRaisesRegex(RuntimeError, 'Could not install yolox_s') as caught:
