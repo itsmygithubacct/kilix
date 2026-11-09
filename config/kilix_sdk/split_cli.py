@@ -7,8 +7,11 @@ writes the receipt, and fetches Meta's weights file into the Content store.
 
 Separation runs that venv's Python only after ``kilix models verify`` finds a
 receipt covering the exact weights and the installed bytes match. Demucs then
-loads the weights from that directory (``--repo``) by their signature, and runs
-offline with no proxy, so it never downloads a model itself. A ``.wav``
+loads the weights from that directory (``--repo``) by their signature, which
+makes no network call. Its environment also sets the hub offline flag, gives it
+private caches, and points every proxy variable at an unreachable local port,
+so a stray download attempt fails instead of fetching a model. That isolation
+is by environment variables, not a socket-level block. A ``.wav``
 ``--output`` receives one stem. Any other output path is a directory of
 ``<stem>.wav`` files.
 """
@@ -231,7 +234,7 @@ def demucs_cache() -> Path:
 
 
 def child_environment(cache: Path) -> dict[str, str]:
-    """Demucs's environment: offline, with no route to a model download."""
+    """Demucs's environment: hub offline, private caches, every proxy at a dead port."""
     environment = dict(os.environ)
     environment["TORCH_HOME"] = str(cache / "torch")
     environment["HF_HOME"] = str(cache / "huggingface")
