@@ -233,6 +233,29 @@ class WizardTests(unittest.TestCase):
             ('tts', '--set', 'engine=piper', '--set', 'voice=kilix-female-02')])
         self.assertEqual(wizard.default_voice_record()['voice'], 'kilix-female-02')
 
+    def test_kilix_llm_gguf_is_offered_and_installed_from_the_chat_page(self):
+        no_loop = asset('qwen-0.8b-no-loop-02', 'kilix-llm')
+        bonsai = asset('bonsai-8b', 'kilix-bonsai')
+        self.assertEqual(wizard.group(no_loop), 'chat')
+        # Only Ollama tiers are system-local LLMs; this is a Content asset.
+        self.assertNotIn(no_loop['id'], system_llm.MODELS)
+        with patch.object(wizard, 'catalog', return_value=[bonsai, no_loop]):
+            page = wizard.pages(measure=False)[0]
+            self.assertEqual(page['id'], 'chat')
+            self.assertIn('Kilix LLM', page['title'])
+            self.assertEqual([row['id'] for row in page['models']],
+                             ['bonsai-8b', 'qwen-0.8b-no-loop-02'])
+            self.assertEqual(page['default'], 'bonsai-8b')
+            wizard.apply('chat', ['qwen-0.8b-no-loop-02'], 'yes')
+            with patch('wizard_licenses.consent_and_install',
+                       return_value=({'qwen-0.8b-no-loop-02'}, set())) as batch, \
+                    patch.object(wizard, 'run_command') as run:
+                wizard.finish()
+        self.assertEqual(batch.call_args.args[0], ['qwen-0.8b-no-loop-02'])
+        run.assert_not_called()
+        self.assertEqual(wizard.answers()['chat'],
+                         {'answer': 'yes', 'models': ['qwen-0.8b-no-loop-02'], 'phase': 'complete'})
+
     def test_all_types_and_defaults_without_writes(self):
         pages = wizard.pages(measure=False)
         self.assertEqual([p['id'] for p in pages], ['vision', 'audio', 'image'])
