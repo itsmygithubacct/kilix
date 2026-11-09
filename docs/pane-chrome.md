@@ -32,6 +32,8 @@ clear, split right/down, close (maximize also lives on the `▢` button and
 The active pane's header is highlighted (bright blue); inactive panes are grayed —
 matching Tilix's active-pane cue.
 
+![The pane action menu opened by clicking a pane title](images/kilix-pane-menu.png)
+
 Both resource sides are enabled in `auto` mode by default. The CPU value is
 the sampled use of the pane's shell and descendant processes in logical-core
 equivalents, and appears to the left of the chip above `1.0`; set shared

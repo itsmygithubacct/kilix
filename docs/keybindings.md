@@ -53,6 +53,8 @@ are not established merely by this host accepting the `panes` verb. For the
 selected 0.2.2 source, use the [operation guide](help/operations/README.md),
 basic `kilix ls`, `focus` and `watch`, and authenticated `kitten @` commands.
 
+![The Pane Center over a pane: every page and pane, with a live preview of the selected one](images/kilix-pane-center.png)
+
 `F12` opens the **Pane Center** (`kilix-panes`, with `kilix-switch` retained as
 the compatible command), from
 [kilix-tui-utils](https://github.com/itsmygithubacct/kilix-tui-utils), over the

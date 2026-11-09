@@ -162,7 +162,7 @@ overrides.
 
 ## Kilix 95
 
-![kilix 95 — the desktop with the media player, file manager and Notepad open](../config/kilix95_with_amp.png)
+![Kilix 95 on the first page of a Plebian-OS session, with its Start menu open](images/kilix-95-desktop.jpg)
 
 ![kilix 95 — from a shell to the desktop to Doom, all in kilix tabs](kilix95-doom-demo.gif)
 

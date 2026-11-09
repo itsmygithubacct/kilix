@@ -10,7 +10,7 @@ Plebian-OS 0.2.2 shipped the Kilix `v0.2.2` tag; the 0.2.3 release candidate
 which this branch contains. Kilix also runs standalone on a Linux X11 or Wayland
 desktop, and as a native Windows preview ([windows/README.md](windows/README.md)).
 
-![kilix — pages strip with + button, per-pane title bars with clickable split/maximize/close buttons, splits, and icat](config/kilix_demo.png)
+![Kilix with two pages and three split panes: pane title-bar buttons, the page strip with its + button, and the status bar](docs/images/kilix-pane-chrome.png)
 
 ## What it does
 
@@ -46,6 +46,8 @@ desktop, and as a native Windows preview ([windows/README.md](windows/README.md)
 trust, native UI or headless logging, and lifecycle inspection. New panes preserve
 focus. See [managed coding sessions](docs/session.md) for commands, the importable
 `kilix_session` library and the installed `kilix-session` entry.
+
+![Kilix 95 on the first page of a Plebian-OS session, with its Start menu open](docs/images/kilix-95-desktop.jpg)
 
 ## Quick start
 

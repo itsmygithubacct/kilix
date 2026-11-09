@@ -28,7 +28,7 @@ complete tree. Freedesktop launchers/icons are the intentional exception:
 `--install-desktop` uses the standard XDG application paths, and records what
 it wrote in `state/` so `--uninstall-desktop` can take exactly that back out.
 
-![kilix — pages strip with + button, per-pane title bars with clickable split/maximize/close buttons, splits, and icat](../config/kilix_demo.png)
+![Kilix with two pages and three split panes: pane title-bar buttons, the page strip with its + button, and the status bar](images/kilix-pane-chrome.png)
 
 ## Watch the episodes
 
