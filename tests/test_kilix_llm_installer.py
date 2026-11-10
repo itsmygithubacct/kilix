@@ -3,7 +3,7 @@
 The ref must be a full commit SHA or the explicit `unset` refusal; a branch
 would install whatever HEAD happened to be at install time. The checkout must
 be clean, from the expected origin, and carry the llama.cpp source its own pin
-names, because `kilix-llm build` compiles that tree on first use.
+names, because kilix-llm's first run, chat or serve compiles that tree.
 
 Installing places a launcher. It must not compile the runtime, download
 weights or run the tool, so the fixture's `kilix-llm` records any run.
@@ -140,7 +140,7 @@ class PinnedCheckoutTests(unittest.TestCase):
         launcher = self.prefix / "bin" / "kilix-llm"
         self.assertTrue(os.access(launcher, os.X_OK))
         self.assertIn("installed", launcher.read_text())
-        self.assertIn("kilix-llm build --backend cpu", result.stderr)
+        self.assertIn("the first run, chat or serve builds the runtime", result.stderr)
         self.assertFalse(self.ran.exists(), "the installer ran kilix-llm or uv")
         self.assertFalse((self.checkout / "build").exists())
 
@@ -160,6 +160,12 @@ class PinnedCheckoutTests(unittest.TestCase):
         self.assertEqual(list(sources.glob(".clone.*")), [])
         self.assertTrue(os.access(self.prefix / "bin" / "kilix-llm", os.X_OK))
         self.assertFalse(self.ran.exists(), "the installer ran kilix-llm or uv")
+
+    def test_vendored_source_is_fetched_shallow(self):
+        # llama.cpp's history is about 480 MB; the first-use build needs only
+        # the pinned commit. (Local fixture paths ignore --depth, so this
+        # checks the installer's command rather than the clone.)
+        self.assertIn("submodule update --init --recursive --depth 1", INSTALLER.read_text())
 
     def test_missing_uv_is_named_before_any_checkout_work(self):
         if any(os.path.exists(path) for path in ("/usr/bin/uv", "/bin/uv")):

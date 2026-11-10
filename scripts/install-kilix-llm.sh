@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Install the exact kilix-llm closure selected by this Kilix checkout.
 #
-# Place the `kilix-llm` launcher and its vendored llama.cpp source. Nothing is
-# compiled and no weights are downloaded: `kilix-llm build` builds the CPU
-# runtime on first use, and models arrive through the model wizard.
+# Place the `kilix-llm` launcher and its vendored llama.cpp source (a shallow
+# clone of the pinned commit). Nothing is compiled and no weights are
+# downloaded: the first `kilix-llm run`, `chat` or `serve` builds the runtime
+# it needs, and models arrive through the model wizard.
 set -euo pipefail
 umask 077
 
@@ -13,9 +14,10 @@ KILIX_LLM_PREFIX="${KILIX_LLM_PREFIX:-$HOME/.local}"
 KILIX_LLM_SOURCES="${KILIX_LLM_SOURCES:-$KILIX_STORAGE_HOME/sources}"
 
 # Immutable source revision, inherited by the parent release manifest: the
-# kilix-llm commit with qwen-0.8b-no-loop-02 and its `chat` command.
+# kilix-llm commit with qwen-0.8b-no-loop-02, its `chat` command and the
+# first-use build that keeps only the runtime's bin/.
 KILIX_LLM_REPO="${KILIX_LLM_REPO:-https://github.com/itsmygithubacct/kilix-llm.git}"
-KILIX_LLM_REF="${KILIX_LLM_REF:-b26cadcdf988547bb5678ec3f0ad2932a5613b1f}"
+KILIX_LLM_REF="${KILIX_LLM_REF:-ba4eaca3bea06a6014ca9d65b01d4350132491d0}"
 
 die() { printf 'kilix llm: %s\n' "$*" >&2; exit 1; }
 log() { printf 'kilix llm: %s\n' "$*" >&2; }
@@ -79,8 +81,9 @@ else
   mv -- "$clone_tmp/checkout" "$checkout" || die "could not publish the checkout"
 fi
 
-# `kilix-llm build` compiles this source later; it must be the pinned commit.
-git -C "$checkout" submodule update --init --recursive \
+# kilix-llm's first-use build compiles this source; it must be the pinned
+# commit. Only that commit is fetched: llama.cpp's history is about 480 MB.
+git -C "$checkout" submodule update --init --recursive --depth 1 \
   || die "could not fetch kilix-llm's pinned llama.cpp source"
 pinned="$(sed -n 's/^commit=//p' "$checkout/third_party/llama.cpp.pin" 2>/dev/null || true)"
 vendored="$(git -C "$checkout/third_party/llama.cpp" rev-parse HEAD 2>/dev/null || true)"
@@ -91,4 +94,4 @@ KILIX_LLM_PREFIX="$KILIX_LLM_PREFIX" "$checkout/install.sh" \
   || die "the kilix-llm installer failed"
 [ -x "$KILIX_LLM_PREFIX/bin/kilix-llm" ] \
   || die "installer did not create $KILIX_LLM_PREFIX/bin/kilix-llm"
-log "installed at $KILIX_LLM_REF; first use needs: kilix-llm build --backend cpu"
+log "installed at $KILIX_LLM_REF; the first run, chat or serve builds the runtime (or: kilix-llm build --backend cpu)"

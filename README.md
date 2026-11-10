@@ -3462,9 +3462,11 @@ opening the wizard does not install or start an Ollama service.
 The other language models page also offers `qwen-0.8b-no-loop-02`, a modified
 Qwen3.5 0.8B GGUF that kilix-llm runs. The wizard licenses and installs it as a
 catalog asset. `scripts/install-kilix-llm.sh` installs the pinned kilix-llm
-launcher and its llama.cpp source without compiling or downloading weights; run
-`kilix-llm build --backend cpu` once before first use. Kilix95 then offers LLM
-Chat and Kilix Avatar entries for this model.
+launcher and a shallow copy of its pinned llama.cpp source, without compiling or
+downloading weights. The first LLM Chat or Avatar start builds the CPU runtime
+once (a few minutes on a small CPU; about 25 MB kept). `kilix-llm build
+--backend cpu` does the same ahead of time. Kilix95 then offers LLM Chat and
+Kilix Avatar entries for this model.
 
 If a model acquisition fails, the wizard continues with other accepted models
 and completes categories whose selected models are ready. It reports each
