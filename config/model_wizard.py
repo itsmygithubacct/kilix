@@ -36,38 +36,24 @@ PAGES = (
     ('documents', 'Document understanding', 'granite-docling-258m'),
     ('visual-chat', 'Visual chat', 'granite3.2-vision-2b'),
 )
-# Speech models a selected runtime can serve once installed and licensed: the
-# Qwen provider stages every catalogued Qwen model that has a receipt.
-# Paradee is not in this tuple. The current Piper and Qwen runtimes do not
-# serve it, and it is not the installed default.
+# Speech models a selected Piper or Qwen runtime can serve once installed
+# and licensed. Paradee has its own image runtime and is not in this tuple.
 SPEECH_RUNTIMES = ('kilix-female-02', 'piper-en-us-kristin-medium',
                    'qwen3-tts-0.6b-customvoice', 'qwen3-tts-0.6b-base',
                    'qwen3-tts-1.7b-voicedesign')
-DEFAULT_SYSTEM_VOICE = 'kilix-female-02'
 # Paradee 1.2, about 7.88 million parameters: one int8 ONNX shared by four
-# voices. The published file is pinned here by URL, size and checksum. A
-# catalogued row is optional and is downloaded only after consent. The
-# synthetic offer below is used only when the catalogue has no such row,
-# and accepting that offer records the choice without fetching the weights.
+# voices. The image carries this file. The wizard verifies it through
+# `tts --install` and does not download it.
 PARADEE_ID = 'paradee-8m-v1.2'
 PARADEE_VOICES = ('af_heart', 'am_puck', 'bf_isabella', 'bm_fable')
 PARADEE_URL = ('https://huggingface.co/sahilmahendrakar/Paradee-8M-v1.2/resolve/'
                'ed2934d4df8a4fd891e29584c5e1104649409765/onnx/paradee_int8.onnx')
 PARADEE_SHA256 = 'a6989796692ac173597e15d405c971989202d5c73cfad65f22e90bd7b6c97da1'
 PARADEE_BYTES = 8462119
-PARADEE_OFFER = dict(
-    id=PARADEE_ID,
-    label='Paradee 1.2 (af_heart, am_puck, bf_isabella, bm_fable)',
-    provider='paradee',
-    download_bytes=PARADEE_BYTES,
-    installed_bytes=PARADEE_BYTES,
-    temporary_bytes=PARADEE_BYTES,
-    voices=PARADEE_VOICES,
-    url=PARADEE_URL,
-    sha256=PARADEE_SHA256,
-    license='Apache-2.0',
-    availability='catalogue-unpinned',
-)
+# Fresh installs select Paradee af_heart. An existing system-voice-default.json
+# keeps whatever it already names, including kilix-female-02.
+DEFAULT_SYSTEM_VOICE = PARADEE_ID
+DEFAULT_SYSTEM_VOICE_NAME = 'af_heart'
 
 
 def paradee_catalogued(assets=None):
@@ -408,17 +394,13 @@ def pages(include_answered=False, *, assets=None, measure=True, ensure_sizer=Fal
     for key, title, preferred in definitions:
         rows = grouped.get(key, [])
         answer = decisions.get(key, {}).get('answer')
+        if key == 'speech':
+            # Paradee is installed from the image, not offered as a download.
+            # Female-02 and every other catalogued voice stay optional.
+            rows = [row for row in rows if row['id'] != PARADEE_ID]
         if not rows or (not include_answered and answer in ('yes', 'no')):
             continue
         reports, recommended, note = sizing(rows, key, ensure_sizer=ensure_sizer) if measure else ({}, None, 'Sizing not requested.')
-        paradee_pinned = False
-        if key == 'speech':
-            # Female-02 is installed without a question. The page offers every
-            # other catalogued speech voice, plus Paradee, with nothing checked.
-            rows = [row for row in rows if row['id'] != DEFAULT_SYSTEM_VOICE]
-            paradee_pinned = any(row['id'] == PARADEE_ID for row in rows)
-            if not paradee_pinned:
-                rows.append(dict(PARADEE_OFFER))
         ready = None
         if key == 'system-local-llm' and measure:
             import system_llm
@@ -457,17 +439,17 @@ def pages(include_answered=False, *, assets=None, measure=True, ensure_sizer=Fal
         optional = False
         if key == 'speech':
             optional = True
-            label = 'Installed default: kilix-female-02'
-            if paradee_pinned:
-                paradee_note = 'Paradee 1.2 is downloaded only when chosen. '
-            else:
+            if paradee_catalogued(assets):
+                label = 'Installed default: paradee af_heart'
                 paradee_note = (
-                    f'Paradee 1.2 is one int8 ONNX ({PARADEE_BYTES} bytes, sha256 {PARADEE_SHA256}) '
+                    f'The image carries one int8 ONNX ({PARADEE_BYTES} bytes, sha256 {PARADEE_SHA256}) '
                     f'at {PARADEE_URL}, shared by {", ".join(PARADEE_VOICES)}. '
-                    'The content catalogue has no licence receipt, so Paradee is not downloaded. ')
+                    'This page does not download Paradee. ')
+            else:
+                label = 'Paradee is not in this catalogue'
+                paradee_note = ''
             recommendation = (
-                f'{label}. Piper voice kilix-female-02 is installed without a question. '
-                'Optional voices are not pre-checked. '
+                f'{label}. Optional voices are not pre-checked. '
                 + paradee_note
                 + note)
         if key == PLAYALONG_PAGE:
@@ -580,25 +562,37 @@ def default_voice_record():
     return saved
 
 
+def _selection_saved(saved):
+    engine, voice = saved.get('engine'), saved.get('voice')
+    return isinstance(engine, str) and bool(engine) and isinstance(voice, str) and bool(voice)
+
+
 def ensure_default_system_voice():
-    """Install and select kilix-female-02. This is not a speech-page question.
+    """Select Paradee af_heart on a fresh install. An existing selection stays.
 
     Opening or listing the wizard does not call this. Setup does, including
-    when the speech page is never answered. Paradee weights are not fetched.
-    Kristin's ``--prepare-system-voice``, ``--enable-kristin`` and
-    ``--install=piper-en-us-kristin-medium`` are not used.
+    when the speech page is never answered. Paradee weights come from the
+    image; this does not download them. Female-02 is installed when the
+    launcher can, and a failure there does not undo Paradee. Kristin's
+    ``--prepare-system-voice``, ``--enable-kristin`` and
+    ``--install=piper-en-us-kristin-medium`` are not used. The kilix-voice
+    engine whitelist does not include paradee, so the selection is only
+    this file.
     """
-    if not any(row.get('id') == DEFAULT_SYSTEM_VOICE for row in catalog()):
-        return False
     saved = default_voice_record()
-    if saved.get('engine') == 'piper' and saved.get('voice') == DEFAULT_SYSTEM_VOICE:
+    if _selection_saved(saved):
         return False
-    run_command('tts', '--install=kilix-female-02')
-    run_command('tts', '--set', 'engine=piper', '--set', 'voice=kilix-female-02')
+    if not paradee_catalogued():
+        return False
+    run_command('tts', '--install=' + PARADEE_ID)
+    try:
+        run_command('tts', '--install=kilix-female-02')
+    except ValueError:
+        pass
     atomic_json(state_root() / 'system-voice-default.json', {
         'schema': 'kilix.system-voice-default/v1',
-        'engine': 'piper',
-        'voice': DEFAULT_SYSTEM_VOICE,
+        'engine': 'paradee',
+        'voice': DEFAULT_SYSTEM_VOICE_NAME,
     })
     return True
 
@@ -606,10 +600,19 @@ def ensure_default_system_voice():
 def activate_page(segment, models, *, input_fn):
     from wizard_licenses import ask
     if segment == 'speech':
-        # Optional voices stay optional. Female-02 remains the installed default
-        # whether or not it was one of the checked ids.
+        # Paradee is the fresh-install default. Choosing Female-02 here
+        # replaces that selection. Kristin stays an optional install.
         ensure_default_system_voice()
-        legacy_state(segment, {'answer': 'yes', 'offered': True, 'voice': DEFAULT_SYSTEM_VOICE})
+        if 'kilix-female-02' in models:
+            run_command('tts', '--install=kilix-female-02')
+            run_command('tts', '--set', 'engine=piper', '--set', 'voice=kilix-female-02')
+            atomic_json(state_root() / 'system-voice-default.json', {
+                'schema': 'kilix.system-voice-default/v1',
+                'engine': 'piper',
+                'voice': 'kilix-female-02',
+            })
+        chosen = default_voice_record().get('voice') or DEFAULT_SYSTEM_VOICE_NAME
+        legacy_state(segment, {'answer': 'yes', 'offered': True, 'voice': chosen})
     elif segment == 'dictation':
         active = next((model for model in models if model in STT_IDS), None)
         if active:
@@ -639,17 +642,19 @@ def finish(*, input_fn=input):
         if not plans:
             print('No model installations are pending.')
             return
-        # An unpinned Paradee offer has no catalogue receipt, so it is recorded
-        # and not fetched. A catalogued row goes through consent like any
-        # other optional voice, and is still not the installed default.
-        excluded = ('grammar',) if paradee_catalogued() else ('grammar', PARADEE_ID)
+        # Paradee is installed from the image by ensure_default_system_voice.
+        # It is never a licence-batch download, even when the page named it.
+        excluded = ('grammar', PARADEE_ID)
         selected = list(dict.fromkeys(model for plan in plans.values() for model in plan['models']
                                       if model not in excluded))
         # Revalidate against the currently selected catalog, never a stale UI request.
         offered = {page['id']: {model['id'] for model in page['models']}
                    for page in pages(True, measure=False)}
         for segment, plan in plans.items():
-            if set(plan['models']) - offered.get(segment, set()):
+            # Paradee is no longer a page row. A saved choice that names it
+            # still installs from the image and does not fail this check.
+            chosen = [model for model in plan['models'] if model != PARADEE_ID]
+            if set(chosen) - offered.get(segment, set()):
                 raise ValueError('The offered models changed. Revisit this page with --all.')
         from wizard_licenses import InstallFailures, consent_and_install
         failures, completed = {}, []
@@ -739,7 +744,7 @@ def main(argv=None):
     commands = parser.add_subparsers(dest='command')
     commands.add_parser('list', help='list the unanswered pages')
     commands.add_parser('install-default-voice',
-                        help='install kilix-female-02 and select it, with no prompt')
+                        help='select Paradee af_heart on a fresh install, with no prompt')
     final = commands.add_parser('finish', help='review batched licences and install the saved choices')
     final.add_argument('--result', type=Path, help=argparse.SUPPRESS)
     action = commands.add_parser('answer', help='save one page choice; run finish for the licence batch')
@@ -762,7 +767,9 @@ def main(argv=None):
     try:
         if args.command == 'install-default-voice':
             ensure_default_system_voice()
-            result = {'ok': True, 'engine': 'piper', 'voice': DEFAULT_SYSTEM_VOICE}
+            saved = default_voice_record()
+            result = {'ok': True, 'engine': saved.get('engine', ''),
+                      'voice': saved.get('voice', '')}
         elif args.command in ('answer', 'finish'):
             if args.result:
                 stat = Path(f'/proc/{os.getpid()}/stat').read_text().rpartition(')')[2].split()

@@ -4157,6 +4157,7 @@ raise SystemExit(main(sys.argv[2:]))
           echo "opens the read-aloud settings TUI"
           echo "--enable-kristin: opt in to Piper Kristin as the shared voice"
           echo "--install=kilix-female-02: install Kilix Female-02 epoch 80 from the kilix-voice release"
+          echo "--install=paradee-8m-v1.2: verify the image Paradee files; this does not download them"
           echo "provider prepare|serve|status: manage the receipt-backed Qwen provider (CPU or CUDA)"
           echo "For documents, use Kilix 95: Start > Programs > Document Reader"
           exit 0 ;;
@@ -4164,6 +4165,59 @@ raise SystemExit(main(sys.argv[2:]))
         *) break ;;
       esac
     done
+    # Paradee speaks from the image. A greeting must not fetch Piper. The
+    # runtime file is absent in tests that still exercise the Piper path.
+    _paradee_runtime="$KILIX_HOME/config/paradee_runtime.py"
+    _paradee_session=0
+    _paradee_install=0
+    _tts_previous=""
+    for _tts_argument in "$@"; do
+      if [ "$_tts_argument" = --system-voice ]; then
+        _paradee_session=1
+      fi
+      if [ "$_tts_argument" = --install=paradee-8m-v1.2 ] \
+          || { [ "$_tts_previous" = --install ] && [ "$_tts_argument" = paradee-8m-v1.2 ]; }; then
+        _paradee_install=1
+      fi
+      _tts_previous="$_tts_argument"
+    done
+    if [ "$_paradee_session" = 1 ] || [ "$_paradee_install" = 1 ]; then
+      if [ -L "$_paradee_runtime" ]; then
+        echo "kilix tts: Paradee runtime path is a symlink" >&2
+        exit 1
+      fi
+    fi
+    if [ "$_paradee_install" = 1 ]; then
+      if [ ! -f "$_paradee_runtime" ]; then
+        echo "kilix tts: Paradee runtime is missing" >&2
+        exit 1
+      fi
+      /usr/bin/python3 -I -B "$_paradee_runtime" install || exit $?
+      _tts_rest=()
+      _tts_previous=""
+      for _tts_argument in "$@"; do
+        if [ "$_tts_argument" = --install=paradee-8m-v1.2 ]; then
+          _tts_previous=""
+          continue
+        fi
+        if [ "$_tts_previous" = --install ] && [ "$_tts_argument" = paradee-8m-v1.2 ]; then
+          unset '_tts_rest[-1]'
+          _tts_previous=""
+          continue
+        fi
+        _tts_rest+=("$_tts_argument")
+        _tts_previous="$_tts_argument"
+      done
+      if [ "${#_tts_rest[@]}" -eq 0 ]; then
+        exit 0
+      fi
+      set -- "${_tts_rest[@]}"
+    fi
+    if [ "$_paradee_session" = 1 ] && [ -f "$_paradee_runtime" ] && [ ! -L "$_paradee_runtime" ]; then
+      if /usr/bin/python3 -I -B "$_paradee_runtime" engine >/dev/null; then
+        exec /usr/bin/python3 -I -B "$_paradee_runtime" session "$@"
+      fi
+    fi
     # Read-aloud needs neither the recognition library nor an acoustic model, so
     # opening this TUI must not demand pins that only dictation uses.
     _tts_installed="$(
