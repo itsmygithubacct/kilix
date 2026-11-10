@@ -698,6 +698,24 @@ def json_request(url):
         self.assertEqual(idle.stdout.strip(), "not listening")
         self.assertTrue(all("needle" not in call for call in self.calls()))
 
+    def test_meaning_of_life_is_answered_without_needle(self):
+        sys.path.insert(0, str(ROOT / "config"))
+        self.addCleanup(sys.path.remove, str(ROOT / "config"))
+        import kilix_facts
+        for question in ("What is the meaning of life?", "what's the meaning of life",
+                         "meaning of life",
+                         "What is the meaning of life, the universe, and everything?"):
+            asked = self.run_ask(question, ASK_TEST_MISSING="1")
+            self.assertEqual(asked.returncode, 0, (question, asked.stderr))
+            self.assertEqual(asked.stdout.rstrip("\n"), kilix_facts.MEANING_OF_LIFE, question)
+        self.assertIn("42", kilix_facts.MEANING_OF_LIFE)
+        self.assertLessEqual(max(map(len, kilix_facts.MEANING_OF_LIFE.splitlines())), 72)
+        self.assertEqual(self.calls(), [])
+        # A longer sentence that only mentions it is not the fixed question.
+        for question in ("what is the meaning of life in the pane title",
+                         "open the meaning of life"):
+            self.assertIsNone(kilix_facts.classify(question), question)
+
     def test_machine_facts_do_not_use_needle(self):
         supply = self.root / "power"
         for name, kind, status, capacity in (

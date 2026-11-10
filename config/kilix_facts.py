@@ -1,5 +1,7 @@
 """Direct Ask answers for time, resources, panes, and how-to questions.
 
+One question is answered from a fixed text: the meaning of life.
+
 These are closed reads. A request that is not entirely one of them returns
 3 so Ask can keep its normal route. Nothing here launches a program, closes
 a pane, or runs a suggested command.
@@ -61,6 +63,23 @@ _HELP = re.compile(
     r"is there a (?:way|command) to\b|where do i\b",
     re.IGNORECASE,
 )
+_MEANING = re.compile(
+    r"(?:so )?(?:what(?:'s| is) )?(?:the )?meaning of life"
+    r"(?:,? the universe,? and everything)?",
+    re.IGNORECASE,
+)
+
+MEANING_OF_LIFE = """\
+Life does not come with a meaning. It comes with time, attention, and
+other people, and the meaning is what you make from those.
+
+The answers that last tend to agree: love a few people well, make
+something that was not there before, ease what suffering you can, and
+stay curious enough to keep being surprised.
+
+It is built on ordinary days, not found at the end of them.
+
+(Computed elsewhere, at great expense: 42.)"""
 
 
 class FactError(Exception):
@@ -78,6 +97,8 @@ def classify(text: str) -> str | None:
     text = _clean(text)
     if not text:
         return None
+    if _MEANING.fullmatch(text):
+        return "meaning"
     if _CLOCK.fullmatch(text):
         return "clock"
     if _DATE.fullmatch(text):
@@ -187,6 +208,8 @@ def answer(text: str) -> tuple[int, str]:
         return NOT_FACT, ""
     if kind == "help":
         return HELP, ""
+    if kind == "meaning":
+        return 0, MEANING_OF_LIFE
     now = datetime.now().astimezone()
     if kind == "clock":
         zone = now.tzname() or ""
