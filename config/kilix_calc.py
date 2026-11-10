@@ -82,25 +82,15 @@ class CalculatorError(Exception):
     """A rejected or unevaluable expression."""
 
 
-def _spoken_number(span: str) -> str | None:
-    """Read one written number, including a scale such as thousand.
-
-    "and" belongs to the number only when a scale is in the same phrase
-    ("two hundred and fifty"). Without a scale it stays a word, so
-    "two and two" can still become addition.
-    """
-    parts = [part for part in re.split(r"[\s-]+", span.strip().lower()) if part]
-    if not parts:
-        return None
-    scaled = any(part in _SCALE for part in parts)
-    if "and" in parts and not scaled:
-        return None
+def _cardinal(parts: list[str]) -> int | None:
+    """One written number. A second hundred in the same group is not one number."""
     current = 0
     total = 0
     used = False
+    saw_hundred = False
     for index, part in enumerate(parts):
         if part == "and":
-            continue
+            return None
         if part in {"a", "an"}:
             nxt = parts[index + 1] if index + 1 < len(parts) else ""
             if nxt not in _SCALE:
@@ -116,6 +106,9 @@ def _spoken_number(span: str) -> str | None:
             return None
         scale = _SCALE[part]
         if scale == 100:
+            if saw_hundred:
+                return None
+            saw_hundred = True
             current = (current or 1) * 100
         else:
             if current == 0 and total != 0:
@@ -125,7 +118,125 @@ def _spoken_number(span: str) -> str | None:
         used = True
     if not used:
         return None
-    return str(total + current)
+    return total + current
+
+
+def _pending_hundred(parts: list[str]) -> int | None:
+    """The value when a hundred is still open, before a larger scale consumes it."""
+    current = 0
+    total = 0
+    used = False
+    pending = False
+    saw_hundred = False
+    for index, part in enumerate(parts):
+        if part in {"a", "an"}:
+            nxt = parts[index + 1] if index + 1 < len(parts) else ""
+            if nxt not in _SCALE:
+                return None
+            current += 1
+            used = True
+            continue
+        if part in _SMALL:
+            current += _SMALL[part]
+            used = True
+            continue
+        if part not in _SCALE:
+            return None
+        scale = _SCALE[part]
+        if scale == 100:
+            if saw_hundred:
+                return None
+            saw_hundred = True
+            current = (current or 1) * 100
+            pending = True
+        else:
+            if current == 0 and total != 0:
+                return None
+            total += (current or 1) * scale
+            current = 0
+            pending = False
+        used = True
+    if not used or not pending:
+        return None
+    return total + current
+
+
+def _remainder(parts: list[str]) -> tuple[int, int] | None:
+    """A remainder below 100, optionally times one larger scale.
+
+    The scale multiplies the whole cardinal ("two hundred and fifty thousand"
+    is 250 thousand), so this returns the small value and that multiplier.
+    """
+    if not parts:
+        return None
+    current = 0
+    multiplier = 1
+    saw_small = False
+    saw_scale = False
+    for part in parts:
+        if part in _SMALL:
+            if saw_scale:
+                return None
+            current += _SMALL[part]
+            saw_small = True
+            continue
+        if part == "hundred" or part not in _SCALE or part in {"a", "an"}:
+            return None
+        if not saw_small or current >= 100 or saw_scale:
+            return None
+        multiplier = _SCALE[part]
+        saw_scale = True
+    if not saw_small or current <= 0 or current >= 100:
+        return None
+    return current, multiplier
+
+
+def _spoken_number(span: str) -> str | None:
+    """Read one written number, or a sum when "and" joins separate numbers.
+
+    "and" is inside one cardinal only after a hundred that is still open,
+    followed by a remainder below 100 ("two hundred and fifty", and
+    "two hundred and fifty thousand"). Any other "and" is addition, so
+    "two and two" and "two and two hundred" stay sums. The result may be
+    an expression such as "2 + 200".
+    """
+    parts = [part for part in re.split(r"[\s-]+", span.strip().lower()) if part]
+    if not parts:
+        return None
+    if "and" not in parts:
+        value = _cardinal(parts)
+        return None if value is None else str(value)
+    groups: list[list[str]] = []
+    current_group: list[str] = []
+    for part in parts:
+        if part == "and":
+            groups.append(current_group)
+            current_group = []
+        else:
+            current_group.append(part)
+    groups.append(current_group)
+    values: list[int] = []
+    index = 0
+    while index < len(groups):
+        group = groups[index]
+        if not group:
+            return None
+        if index + 1 < len(groups):
+            base = _pending_hundred(group)
+            remainder = _remainder(groups[index + 1])
+            if base is not None and remainder is not None:
+                small, multiplier = remainder
+                values.append((base + small) * multiplier)
+                index += 2
+                continue
+        value = _cardinal(group)
+        if value is None:
+            return None
+        values.append(value)
+        index += 1
+    if len(values) == 1:
+        return str(values[0])
+    return " + ".join(str(value) for value in values)
 
 
 def lower(expression: str) -> str:
@@ -185,6 +296,14 @@ def evaluate(expression: str) -> float:
 
 
 def format_result(value: float) -> str:
+    """Print an integer exactly. A float that is a whole number stays short."""
+    if isinstance(value, bool):
+        raise CalculatorError("only numbers are allowed")
+    if isinstance(value, int):
+        text = str(value)
+        if len(text.lstrip("-")) > _MAX_DIGITS:
+            raise CalculatorError("result too long")
+        return text
     if isinstance(value, float) and value.is_integer() and abs(value) < 1e15:
         return str(int(value))
     return f"{value:.10g}"
@@ -300,7 +419,13 @@ def main(argv: list[str] | None = None) -> int:
         print("usage: kilix calculator EXPRESSION", file=sys.stderr)
         return 2
     try:
-        print(format_result(evaluate(" ".join(argv))))
+        text = " ".join(argv)
+        converted = conversion(text)
+        if converted is not None:
+            value, unit = converted
+            print(f"{format_result(value)} {unit}")
+        else:
+            print(format_result(evaluate(text)))
     except CalculatorError as error:
         print(f"kilix calculator: {error}", file=sys.stderr)
         return 1

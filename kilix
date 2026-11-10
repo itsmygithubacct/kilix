@@ -3701,9 +3701,20 @@ case "${1:-}" in
         0|1|2) _ask_status="$_ask_fact_status"; return 0 ;;
         3) ;;
         4)
-          python3 "$KILIX_HOME/config/content_app.py" run kilix-help-llm -- lookup "$_ask_text" \
-            || { _ask_status=$?; return 0; }
+          # The installed binary, not `app run`. Help is a terminal app, and
+          # `run` waits for Enter after any nonzero status, including inside --repl.
+          _ask_help="$(KILIX_APP_AUTO_INSTALL=0 \
+            python3 "$KILIX_HOME/config/content_app.py" install kilix-help-llm)" || {
+            echo "kilix ask: help is not installed; '$_self app install kilix-help-llm' installs it" >&2
+            _ask_status=1
+            return 0
+          }
           _ask_status=0
+          "$_ask_help" lookup "$_ask_text" || _ask_status=$?
+          case "$_ask_status" in
+            0|1) ;;
+            *) _ask_status=1 ;;
+          esac
           return 0 ;;
         *) _ask_status=1; return 0 ;;
       esac
@@ -3777,12 +3788,22 @@ print(apps_root())
       echo "Listening: say one request. Silence ends it."
       if ! _ask_text="$("$_self" dictate --discard-on-interrupt)" \
         || [ -z "${_ask_text//[[:space:]]/}" ]; then
+        # A later voice turn with nothing left to hear is the person leaving.
+        # The first turn still reports what dictation is missing.
+        if [ "$_ask_repl" = 1 ] && [ "${_ask_ran:-0}" = 1 ]; then
+          _ask_close 0
+        fi
         echo "kilix ask: nothing was transcribed." >&2
         echo "kilix ask: '$_self voice doctor' shows what dictation is missing;" \
           "'$_self voice whisper' or '$_self stt --install MODEL' installs a runtime." >&2
         _ask_close 1
       fi
-      read -r -e -i "$_ask_text" -p "Request (edit, then Enter): " _ask_text || _ask_close 1
+      read -r -e -i "$_ask_text" -p "Request (edit, then Enter): " _ask_text || {
+        if [ "$_ask_repl" = 1 ]; then
+          _ask_repl_eof
+        fi
+        _ask_close 1
+      }
       return 0
     }
     # exit and quit end --repl. Any other whole line is a request.
@@ -3831,7 +3852,8 @@ print(apps_root())
         if [ -t 0 ]; then
           read -r -e -p "Ask Kilix: " _ask_text || _ask_repl_eof
         else
-          IFS= read -r _ask_text || _ask_repl_eof
+          # read returns nonzero at EOF even when it stored a final partial line.
+          IFS= read -r _ask_text || [ -n "${_ask_text-}" ] || _ask_repl_eof
         fi
         [ -n "${_ask_text//[[:space:]]/}" ] || continue
         _ask_repl_command && _ask_close 0

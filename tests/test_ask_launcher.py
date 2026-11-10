@@ -27,8 +27,11 @@ log = os.environ["ASK_TEST_LOG"]
 with open(log, "a") as stream:
     stream.write(json.dumps({"content_app": sys.argv[1:],
                              "auto_install": os.environ.get("KILIX_APP_AUTO_INSTALL")}) + "\\n")
-if sys.argv[1:3] == ["run", "kilix-help-llm"]:
-    print("Help search: list panes")
+if sys.argv[1:3] == ["install", "kilix-help-llm"]:
+    if os.environ.get("ASK_TEST_HELP_MISSING"):
+        print("kilix app kilix-help-llm: not installed", file=sys.stderr)
+        raise SystemExit(1)
+    print(os.environ["ASK_TEST_HELP"])
     raise SystemExit(0)
 if sys.argv[1:] != ["install", "kilix-needle"] or os.environ.get("ASK_TEST_MISSING"):
     print("kilix app kilix-needle: not installed", file=sys.stderr)
@@ -45,6 +48,15 @@ with open(os.environ["ASK_TEST_LOG"], "a") as stream:
                              "backend_env": os.environ.get("KILIX_ASK_COMMANDS_BACKEND")}) + "\\n")
 print("route: panes (stage 0)")
 raise SystemExit(int(os.environ.get("ASK_TEST_STATUS", "0")))
+'''
+
+HELP = '''\
+#!/usr/bin/env python3
+import json, os, sys
+with open(os.environ["ASK_TEST_LOG"], "a") as stream:
+    stream.write(json.dumps({"help": sys.argv[1:]}) + "\\n")
+print("Help search: list panes")
+raise SystemExit(int(os.environ.get("ASK_TEST_HELP_STATUS", "0")))
 '''
 
 
@@ -77,6 +89,9 @@ class AskLauncherTests(unittest.TestCase):
         needle = self.root / "needle"
         needle.write_text(NEEDLE)
         needle.chmod(0o755)
+        help_bin = self.root / "kilix-help-llm"
+        help_bin.write_text(HELP)
+        help_bin.chmod(0o755)
         self.launcher = home / "kilix"
         self.log = self.root / "calls.jsonl"
         storage = self.root / "storage"
@@ -86,6 +101,7 @@ class AskLauncherTests(unittest.TestCase):
             "KILIX_STORAGE_HOME": str(storage),
             "KILIX_VOICE_PREFIX": str(self.root / "voice-prefix"),
             "ASK_TEST_LOG": str(self.log), "ASK_TEST_NEEDLE": str(needle),
+            "ASK_TEST_HELP": str(help_bin),
         })
 
     def calls(self):
@@ -145,6 +161,13 @@ def json_request(url):
             ("what is two plus two thousand?", "2002"),
             ("what is twenty-one thousand plus three?", "21003"),
             ("what is two hundred and fifty plus two?", "252"),
+            ("what is two and two?", "4"),
+            ("what is two and two hundred plus one?", "203"),
+            ("what is two hundred and two hundred plus one?", "401"),
+            ("what is two hundred and fifty thousand plus one?", "250001"),
+            ("what is two thousand and two?", "2002"),
+            ("what is 10**12 + 1?", "1000000000001"),
+            ("what is 2**53+1?", "9007199254740993"),
         ):
             with self.subTest(request=request):
                 result = self.run_ask(request, ASK_TEST_MISSING="1")
@@ -155,6 +178,50 @@ def json_request(url):
         self.assertIn("not installed", opened.stderr)
         self.assertTrue(self.calls())
         self.assertTrue(all("needle" not in call for call in self.calls()))
+
+    def test_calculator_prints_exact_integers_and_conversion_units(self):
+        # `kilix calculator EXPRESSION` execs this file. The copied launcher is
+        # not a built tree, so the test calls the same program directly.
+        calc = [sys.executable, "-B", str(self.launcher.parent / "config" / "kilix_calc.py")]
+        for request, expected in (
+            ("10**12+1", "1000000000001"),
+            ("2**53+1", "9007199254740993"),
+            ("2**60", "1152921504606846976"),
+            ("2**1024", str(2 ** 1024)),
+            ("how many MB in 1.5 GB?", "1500 MB"),
+            ("32 f to c", "0 °C"),
+            ("5 km in m", "5000 m"),
+        ):
+            with self.subTest(request=request):
+                result = subprocess.run(
+                    [*calc, request],
+                    env=self.env, capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.strip(), expected)
+        over = subprocess.run(
+            [*calc, "10000**1024"],
+            env=self.env, capture_output=True, text=True, timeout=30)
+        self.assertEqual(over.returncode, 1, over.stdout)
+        self.assertIn("too long", over.stderr)
+
+    def test_howto_lookup_does_not_pause_and_clamps_its_status(self):
+        for code in ("1", "2", "69"):
+            with self.subTest(code=code):
+                result = self.run_ask(
+                    "how do I list panes?", ASK_TEST_MISSING="1", ASK_TEST_HELP_STATUS=code)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertNotIn("Press Enter", result.stdout + result.stderr)
+                self.assertNotIn("closing", (result.stdout + result.stderr).lower())
+        install = [call for call in self.calls() if "content_app" in call]
+        self.assertTrue(install)
+        self.assertTrue(all(call["content_app"][:2] == ["install", "kilix-help-llm"] for call in install))
+        self.assertTrue(all(call["auto_install"] == "0" for call in install))
+        self.assertTrue(all("run" not in call["content_app"] for call in install))
+        missing = self.run_ask(
+            "how do I list panes?", ASK_TEST_MISSING="1", ASK_TEST_HELP_MISSING="1")
+        self.assertEqual(missing.returncode, 1, missing.stdout)
+        self.assertIn("kilix-help-llm", missing.stderr)
+        self.assertNotIn("Press Enter", missing.stderr)
 
     def test_repl_stays_open_after_an_answer_and_a_refusal(self):
         result = subprocess.run(
@@ -198,6 +265,23 @@ def json_request(url):
         self.assertIn("15", output)
         self.assertEqual(output.count("Ask Kilix: "), 2)
         self.assertEqual(self.calls(), [])
+
+    def test_repl_reads_a_final_line_without_a_newline(self):
+        result = subprocess.run(
+            [str(self.launcher), "ask", "--repl"],
+            input="what is three times five?\nwhat is 2 plus 2",
+            env={**self.env, "ASK_TEST_MISSING": "1"},
+            capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), ["15", "4"])
+        self.assertNotIn("usage", result.stderr)
+        only = subprocess.run(
+            [str(self.launcher), "ask", "--repl"],
+            input="what is 2 plus 2",
+            env={**self.env, "ASK_TEST_MISSING": "1"},
+            capture_output=True, text=True, timeout=60)
+        self.assertEqual(only.returncode, 0, only.stderr)
+        self.assertEqual(only.stdout.strip(), "4")
 
     def test_a_request_without_repl_does_not_read_another_line(self):
         result = subprocess.run(
@@ -396,6 +480,10 @@ def json_request(url):
             "mode = os.environ.get('ASK_TEST_NMCLI_MODE', 'up')\n"
             "if mode == 'down':\n"
             "    print('wlan0:wifi:disconnected:')\n"
+            "elif mode == 'wifi-down':\n"
+            "    print('wlan0:wifi:disconnected:')\n"
+            "    print('eth0:ethernet:connected:Desk')\n"
+            "    print('docker0:bridge:connected:bridge')\n"
             "else:\n"
             "    print('lo:loopback:unmanaged:')\n"
             "    print('wlan0:wifi:connected:Cafe\\\\:Guest')\n"
@@ -414,6 +502,14 @@ def json_request(url):
         self.assertEqual(named.stdout.strip(), "Cafe:Guest\nbridge")
         online = self.run_ask("am I online?", **network)
         self.assertEqual(online.stdout.strip(), "online")
+        wifi_up = self.run_ask("is the wifi up?", **network)
+        self.assertEqual(wifi_up.stdout.strip(), "online")
+        wifi_down = self.run_ask("is the wifi up?", **network, ASK_TEST_NMCLI_MODE="wifi-down")
+        self.assertEqual(wifi_down.stdout.strip(), "offline")
+        hyphen = self.run_ask("is the wi-fi connected?", **network, ASK_TEST_NMCLI_MODE="wifi-down")
+        self.assertEqual(hyphen.stdout.strip(), "offline")
+        other_up = self.run_ask("am I online?", **network, ASK_TEST_NMCLI_MODE="wifi-down")
+        self.assertEqual(other_up.stdout.strip(), "online")
         self.assertNotIn("connect", log.read_text(encoding="utf-8"))
         down = self.run_ask("am I connected?", **network, ASK_TEST_NMCLI_MODE="down")
         self.assertEqual(down.stdout.strip(), "offline")
@@ -435,6 +531,15 @@ def json_request(url):
         (sysfs / "wlan0" / "operstate").write_text("down\n", encoding="utf-8")
         quiet_link = self.run_ask("show the network", **fallback)
         self.assertEqual(quiet_link.stdout.strip(), "not connected")
+        (sysfs / "wlan0" / "wireless").mkdir()
+        (sysfs / "eth0" / "operstate").write_text("up\n", encoding="utf-8")
+        wifi_quiet = self.run_ask("is the wifi up?", **fallback)
+        self.assertEqual(wifi_quiet.stdout.strip(), "offline")
+        link_up = self.run_ask("am I online?", **fallback)
+        self.assertEqual(link_up.stdout.strip(), "online")
+        (sysfs / "wlan0" / "operstate").write_text("up\n", encoding="utf-8")
+        wifi_link = self.run_ask("is the wi-fi up?", **fallback)
+        self.assertEqual(wifi_link.stdout.strip(), "online")
 
         absent = self.run_ask(
             "what's playing?",
@@ -998,6 +1103,42 @@ def json_request(url):
         self.assertEqual(status, 1, output)
         self.assertIn("nothing was transcribed", output)
         self.assertIn("voice doctor", output)
+        self.assertEqual(self.calls(), [])
+
+    def test_repl_voice_leaves_quietly_after_an_answer(self):
+        count = self.root / "dictate-count"
+        self.dictation(
+            f'n=$(cat "{count}" 2>/dev/null || echo 0)\n'
+            'n=$((n + 1))\n'
+            f'printf "%s\\n" "$n" > "{count}"\n'
+            'if [ "$n" = 1 ]; then printf "%s\\n" "what is three times five?"; exit 0; fi\n'
+            'exit 1\n'
+        )
+        status, output = self.run_tty(
+            ["--repl", "--voice"],
+            [(b"Request (edit, then Enter): ", b"\n")],
+            ASK_TEST_MISSING="1")
+        self.assertEqual(status, 0, output)
+        self.assertIn("15", output)
+        self.assertNotIn("voice doctor", output)
+        self.assertNotIn("nothing was transcribed", output)
+
+    def test_repl_voice_with_nothing_on_the_first_turn_names_the_setup(self):
+        self.dictation("exit 1\n")
+        status, output = self.run_tty(["--repl", "--voice", "--hold"], b"\n")
+        self.assertEqual(status, 1, output)
+        self.assertIn("nothing was transcribed", output)
+        self.assertIn("voice doctor", output)
+        self.assertEqual(self.calls(), [])
+
+    def test_repl_voice_confirm_eof_leaves(self):
+        self.dictation('printf "%s\\n" "what is three times five?"\n')
+        status, output = self.run_tty(
+            ["--repl", "--voice"],
+            [(b"Request (edit, then Enter): ", b"\x15\x04")],
+            ASK_TEST_MISSING="1")
+        self.assertEqual(status, 0, output)
+        self.assertNotIn("15", output)
         self.assertEqual(self.calls(), [])
 
     def test_set_an_alarm_launches_kilix_alarm(self):

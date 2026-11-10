@@ -41,7 +41,11 @@ _NETWORK = re.compile(
 )
 _ONLINE = re.compile(
     r"am i (?:online|connected)"
-    r"|is the (?:network|wifi|wi-fi) (?:up|connected|online)",
+    r"|is the network (?:up|connected|online)",
+    re.IGNORECASE,
+)
+_WIFI = re.compile(
+    r"is the (?:wifi|wi-fi) (?:up|connected|online)",
     re.IGNORECASE,
 )
 _PLAYING = re.compile(
@@ -156,6 +160,8 @@ def classify(text: str) -> tuple[str, str] | None:
         return "session-launch", launch.group("provider").casefold()
     if _NETWORK.fullmatch(text):
         return "network", ""
+    if _WIFI.fullmatch(text):
+        return "wifi", ""
     if _ONLINE.fullmatch(text):
         return "online", ""
     if _PLAYING.fullmatch(text):
@@ -242,7 +248,7 @@ def _nmcli_bin() -> Path | None:
     return Path(found) if found else None
 
 
-def _nmcli_names(binary: Path) -> list[str] | None:
+def _nmcli_names(binary: Path, *, wifi: bool = False) -> list[str] | None:
     try:
         result = subprocess.run(
             [str(binary), "-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device"],
@@ -262,6 +268,8 @@ def _nmcli_names(binary: Path) -> list[str] | None:
         fields = _split_terse(line)
         if len(fields) < 4 or fields[1] == "loopback":
             continue
+        if wifi and fields[1] != "wifi":
+            continue
         if not fields[2].startswith("connected"):
             continue
         label = fields[3].strip() or fields[0].strip()
@@ -270,7 +278,11 @@ def _nmcli_names(binary: Path) -> list[str] | None:
     return names
 
 
-def _sysfs_names() -> list[str]:
+def _wireless(device: Path) -> bool:
+    return (device / "wireless").exists() or (device / "phy80211").exists()
+
+
+def _sysfs_names(*, wifi: bool = False) -> list[str]:
     root = Path(os.environ.get("KILIX_NET_SYS", "/sys/class/net"))
     try:
         children = sorted(root.iterdir(), key=lambda item: item.name)
@@ -279,6 +291,8 @@ def _sysfs_names() -> list[str]:
     names = []
     for child in children:
         if child.name == "lo":
+            continue
+        if wifi and not _wireless(child):
             continue
         try:
             state = (child / "operstate").read_text(encoding="utf-8").strip()
@@ -289,13 +303,13 @@ def _sysfs_names() -> list[str]:
     return names
 
 
-def _network_names() -> list[str]:
+def _network_names(*, wifi: bool = False) -> list[str]:
     binary = _nmcli_bin()
     if binary is not None:
-        names = _nmcli_names(binary)
+        names = _nmcli_names(binary, wifi=wifi)
         if names is not None:
             return names
-    return _sysfs_names()
+    return _sysfs_names(wifi=wifi)
 
 
 def _amp_socket() -> str:
@@ -699,11 +713,11 @@ def answer(text: str) -> tuple[int, str]:
     if kind == "session-launch":
         return 0, _session_launch(arg)
     names = None
-    if kind in {"network", "online"}:
-        names = _network_names()
+    if kind in {"network", "online", "wifi"}:
+        names = _network_names(wifi=kind == "wifi")
     if kind == "network":
         return 0, "\n".join(names) if names else "not connected"
-    if kind == "online":
+    if kind in {"online", "wifi"}:
         return 0, "online" if names else "offline"
     if kind == "playing":
         return 0, _playing()
