@@ -1203,6 +1203,28 @@ def json_request(url):
             with self.subTest(code):
                 self.assertEqual(self.run_ask("close tab 2", ASK_TEST_STATUS=code).returncode, expected)
 
+    def test_no_job_says_where_to_look_next_and_is_still_a_miss(self):
+        miss = self.run_ask("who won the world cup in 1998", ASK_TEST_STATUS="3")
+        self.assertEqual(miss.returncode, 1, miss.stderr)
+        self.assertIn('kilix help-search "who won the world cup in 1998"', miss.stderr)
+        self.assertIn('kilix ask "what can you do?"', miss.stderr)
+        self.assertEqual(miss.stdout, "route: panes (stage 0)\n")  # Needle's own output, unchanged
+        # Passages are not shown: the guides are not searched here.
+        self.assertEqual([call for call in self.calls() if "help" in call
+                          or "kilix-help-llm" in call.get("content_app", [])], [])
+        self.assertEqual([call["needle"] for call in self.calls() if "needle" in call],
+                         [["ask", "--interactive", "--", "who won the world cup in 1998"]])
+        for text, shown in (('say "hi" to me', "kilix help-search 'say \"hi\" to me'"),
+                            ("cost of $5 and it's \"cheap\"", 'kilix help-search "your question"')):
+            with self.subTest(text):
+                self.assertIn(shown, self.run_ask("--", text, ASK_TEST_STATUS="3").stderr)
+        # Any other failure keeps Needle's own message and adds nothing.
+        for code in ("1", "9"):
+            with self.subTest(code):
+                failed = self.run_ask("close tab 2", ASK_TEST_STATUS=code)
+                self.assertEqual(failed.returncode, 1)
+                self.assertNotIn("help-search", failed.stderr)
+
     def dictation(self, script):
         """The copied launcher with its `kilix dictate` call replaced by `script`.
 

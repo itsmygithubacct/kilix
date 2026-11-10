@@ -3810,6 +3810,21 @@ print(apps_root())
       fi
       KILIX_APP_ID=kilix-needle KILIX_APP_SURFACE=current \
         "$_ask_needle" ask "$_ask_mode" "${_ask_options[@]}" -- "$_ask_text" || _ask_status=$?
+      # 3: no job does this and nothing was planned. Say where to look next.
+      # Guide passages are not shown here: no gate yet keeps off-topic ones out.
+      if [ "$_ask_status" = 3 ]; then
+        case "$_ask_text" in
+          *[\"\\\$\`]*)
+            case "$_ask_text" in
+              *\'*) _ask_search="kilix help-search \"your question\"" ;;
+              *) _ask_search="kilix help-search '$_ask_text'" ;;
+            esac ;;
+          *) _ask_search="kilix help-search \"$_ask_text\"" ;;
+        esac
+        echo "kilix ask: nothing here answers or does this." \
+          "To search the Kilix guides: $_ask_search" >&2
+        echo "kilix ask: kilix ask \"what can you do?\" lists what Ask answers." >&2
+      fi
       case "$_ask_status" in 0|1|2) ;; *) _ask_status=1 ;; esac
       return 0
     }
