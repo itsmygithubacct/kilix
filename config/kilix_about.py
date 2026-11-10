@@ -33,7 +33,8 @@ Ask answers these directly, with no model and nothing to confirm:
   network          what's my ip? / what wifi am I on? / am I on a vpn?
   hardware         what's the temperature? / what's the battery?
                    what's the volume? / what's the brightness?
-  weather          what's the weather in Paris?
+  weather          what's the weather? / will it rain tomorrow in Paris?
+                   weather this weekend / when is sunset?
   text and codes   base64 encode hello / how many words in "..."?
                    what does chmod 755 mean? / what is exit code 137?
   chance           flip a coin / roll 2d6 / pick a number between 1 and 10

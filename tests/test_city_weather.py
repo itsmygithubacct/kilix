@@ -40,7 +40,7 @@ class CityWeatherTests(unittest.TestCase):
         cases = {
             "What's the weather in Tokyo?": ('Tokyo', ''),
             'weather in Paris, France': ('Paris, France', ''),
-            'Please show me the weather in New York today.': ('New York', ''),
+            'Please show me the weather in New York today.': ('New York', '', 'today'),
             'Could you tell me the current weather for São Paulo, Brazil?': ('São Paulo, Brazil', ''),
             'How is the weather like in London right now?': ('London', ''),
             'How hot is it in Cairo in Fahrenheit now?': ('Cairo', 'fahrenheit'),
@@ -56,15 +56,23 @@ class CityWeatherTests(unittest.TestCase):
     def test_other_commands_stay_with_needle_and_never_start_a_worker(self):
         with patch.object(city, 'run_query') as run:
             for text in ('open the weather app', 'install weather', 'hide the weather',
-                         'what is the weather', 'close tab 2', '--yes close tab 2',
-                         'set weather refresh to 30', 'show weather', 'open weather'):
+                         'close tab 2', '--yes close tab 2',
+                         'set weather refresh to 30', 'show weather', 'open weather',
+                         'refresh the weather', 'turn off the weather widget', 'show the forecast',
+                         'set the weather zip to 98101', 'close the weather card',
+                         "what's the temperature", 'how hot is it', 'temperature',
+                         "what's the temperature in fahrenheit", 'what is the cpu temperature',
+                         'rain sounds', 'play rain sounds', 'make it rain', 'is it running',
+                         'check the forecast in the weather app, then put the calendar up in the top bar',
+                         'pull up the weather', 'bring up the weather', 'what is the weather on my screen',
+                         'what the temperature is'):
                 with self.subTest(text=text):
                     self.assertEqual(city.main(['--ask', text]), city.NOT_WEATHER)
             run.assert_not_called()
 
     def test_invalid_questions_do_not_start_networking_or_claim_a_forecast(self):
         with patch.object(city, 'run_query') as run, contextlib.redirect_stderr(io.StringIO()):
-            for text in ('weather in Paris tomorrow', 'weather in Paris and London',
+            for text in ('weather in Paris yesterday', 'weather in Paris and London',
                          'weather in Paris; touch /tmp/city-weather-test',
                          'weather in $(id)', 'weather in Paris, Texas, US',
                          'weather in \x1b[31mParis'):
@@ -74,6 +82,131 @@ class CityWeatherTests(unittest.TestCase):
         for value in ('', 'x', 'a' * 121, '..', ',Paris', 'Paris,', '12345'):
             with self.assertRaises(ValueError):
                 city.city_name(value)
+
+    def test_days_and_topics_are_read_before_the_city(self):
+        cases = {
+            "what's the weather": ('', '', '', ''),
+            'weather': ('', '', '', ''),
+            'what is the weather outside': ('', '', '', ''),
+            "what's the temperature outside": ('', '', '', ''),
+            'is it cold outside': ('', '', '', ''),
+            'weather in tokyo this weekend': ('tokyo', '', 'weekend', ''),
+            'weather tmrw': ('', '', 'tomorrow', ''),
+            'will it rain tomorrow in Paris': ('Paris', '', 'tomorrow', 'rain'),
+            'is it going to rain': ('', '', '', 'rain'),
+            'is it raining in London': ('London', '', '', 'raining'),
+            'is it raining today': ('', '', 'today', 'rain'),
+            "what's the forecast for London": ('London', '', 'week', ''),
+            'what will the weather be like on saturday in Rome': ('Rome', '', 'saturday', ''),
+            'weather next friday in Oslo': ('Oslo', '', 'next friday', ''),
+            'weather next week': ('', '', 'week', ''),
+            'how cold will it be tonight': ('', '', 'today', ''),
+            'when is sunset': ('', '', '', 'sunset'),
+            'what time is sunrise in Denver tomorrow': ('Denver', '', 'tomorrow', 'sunrise'),
+            'when does the sun go down': ('', '', '', 'sunset'),
+            'do i need an umbrella in Seattle': ('Seattle', '', '', 'umbrella'),
+            "what's the humidity in Miami": ('Miami', '', '', 'humidity'),
+            "what's the wind speed in Chicago in celsius": ('Chicago', 'celsius', '', 'wind'),
+            'will it snow this week in Denver': ('Denver', '', 'week', 'snow'),
+            'how hot is it in Cairo tomorrow': ('Cairo', '', 'tomorrow', ''),
+            'Oslo weather this weekend': ('Oslo', '', 'weekend', ''),
+            'The Hague weather': ('The Hague', '', '', ''),
+            'what the weather is like outside': ('', '', '', ''),
+            'if it will rain tomorrow': ('', '', 'tomorrow', 'rain'),
+            'if it is raining': ('', '', '', 'raining'),
+            'what the forecast is for Paris': ('Paris', '', 'week', ''),
+            'whether i need an umbrella in Oslo': ('Oslo', '', '', 'umbrella'),
+            'when the sunset is': ('', '', '', 'sunset'),
+        }
+        for question, expected in cases.items():
+            with self.subTest(question=question):
+                self.assertEqual(city.ask_query(question), city.Query(*expected))
+
+    def test_saved_zip_is_read_and_never_written(self):
+        before = self.settings.read_bytes()
+        zip_place = dict(name='Holtsville', admin1='New York', country='United States', country_code='US',
+                         postcodes=['00501'], latitude=40.8, longitude=-73.0, timezone='America/New_York')
+        current = {'current': {'temperature_2m': 10, 'weather_code': 2, 'time': time.time()}}
+        with patch.object(self.provider, 'json_request', side_effect=[{'results': [zip_place]}, current]) as request:
+            answer = city.fetch_city(city.Query(''))
+        self.assertIn('Holtsville, New York, United States: 10°C · Partly cloudy', answer)
+        geo = parse_qs(urlsplit(request.call_args_list[0].args[0]).query)
+        self.assertEqual((geo['name'], geo['countryCode']), (['00501'], ['US']))
+        self.assertEqual(self.settings.read_bytes(), before)
+
+    def test_no_saved_zip_says_how_to_name_a_place_without_networking(self):
+        self.settings.write_text('KILIX_TEMPERATURE_UNIT=celsius\n')
+        with patch.object(self.provider, 'json_request') as request:
+            with self.assertRaisesRegex(ValueError, 'Name a city'):
+                city.fetch_city(city.Query('', when='tomorrow'))
+        request.assert_not_called()
+
+    def forecast(self, **overrides):
+        start = 1794297600  # Tue 10 Nov 2026 00:00 in Los Angeles
+        daily = {
+            'time': [start + day * 86400 for day in range(8)],
+            'weather_code': [61, 0, 3, 3, 71, 0, 0, 0],
+            'temperature_2m_max': [12, 14, 10, 9, 1, 15, 16, 17],
+            'temperature_2m_min': [6, 7, 4, 3, -2, 8, 9, 10],
+            'precipitation_probability_max': [90, 5, 40, 10, 70, 0, 0, None],
+            'precipitation_sum': [8, 0, 0.5, 0, 0, 0, 0, 0],
+            'snowfall_sum': [0, 0, 0, 0, 3.5, 0, 0, 0],
+            'sunrise': [start + day * 86400 + 7 * 3600 for day in range(8)],
+            'sunset': [start + day * 86400 + 16 * 3600 + 40 * 60 for day in range(8)],
+            'wind_speed_10m_max': [20, 10, 12, 8, 30, 5, 5, 5],
+            'wind_gusts_10m_max': [40, 20, 22, 15, 55, 9, 9, 9],
+            'relative_humidity_2m_mean': [90, 60, 70, 75, 85, 50, 50, 50],
+        }
+        daily.update(overrides)
+        return {'timezone': 'America/Los_Angeles', 'daily': daily}
+
+    def ask(self, query):
+        seattle = {**place('Seattle'), 'country': 'United States', 'country_code': 'US', 'admin1': 'Washington',
+                   'timezone': 'America/Los_Angeles'}
+        with patch.object(self.provider, 'json_request', side_effect=[{'results': [seattle]}, self.forecast()]) \
+                as request:
+            answer = city.fetch_city(query)
+        return answer, parse_qs(urlsplit(request.call_args.args[0]).query)
+
+    def test_day_forecasts_rain_snow_and_sun_times(self):
+        answer, params = self.ask(city.Query('Seattle', when='tomorrow'))
+        self.assertIn('Tomorrow, Wed 11 Nov: Clear, high 14°C, low 7°C, 5% chance of rain, wind up to 10 km/h', answer)
+        self.assertNotIn('Today,', answer)
+        self.assertEqual(params['timezone'], ['auto'])
+        self.assertEqual(params['forecast_days'], ['8'])
+        self.assertIn('weather-model estimates', answer)
+        self.assertIn('Open-Meteo (CC BY 4.0)', answer)
+        answer, _ = self.ask(city.Query('Seattle', what='rain'))
+        self.assertIn('Today, Tue 10 Nov: Yes, rain is likely (90% chance, about 8 mm).', answer)
+        answer, _ = self.ask(city.Query('Seattle', when='thursday', what='umbrella'))
+        self.assertIn('Thu 12 Nov: Maybe take one (40% chance).', answer)
+        answer, _ = self.ask(city.Query('Seattle', when='friday', what='rain'))
+        self.assertIn('Fri 13 Nov: Rain is unlikely (10% chance).', answer)
+        answer, _ = self.ask(city.Query('Seattle', when='saturday', what='snow'))
+        self.assertIn('Sat 14 Nov: Yes, snow is forecast, about 3.5 cm.', answer)
+        answer, _ = self.ask(city.Query('Seattle', when='weekend'))
+        self.assertEqual([line[:10] for line in answer.splitlines()[1:3]], ['Sat 14 Nov', 'Sun 15 Nov'])
+        answer, _ = self.ask(city.Query('Seattle', what='sunset'))
+        self.assertIn('Sunset today, Tue 10 Nov: 16:40 PST', answer)
+        answer, _ = self.ask(city.Query('Seattle', when='next tuesday', what='sunrise'))
+        self.assertIn('Sunrise on Tue 17 Nov: 07:00 PST', answer)
+        answer, _ = self.ask(city.Query('Seattle', when='week'))
+        self.assertEqual(sum(line.endswith(('km/h',)) for line in answer.splitlines()), 7)
+        self.assertNotIn('Tue 17 Nov', answer)
+
+    def test_fahrenheit_reports_wind_in_mph(self):
+        answer, params = self.ask(city.Query('Seattle', 'fahrenheit', when='tomorrow'))
+        self.assertIn('high 57°F, low 45°F', answer)
+        self.assertIn('wind up to 10 mph', answer)
+        self.assertEqual(params['wind_speed_unit'], ['mph'])
+
+    def test_short_or_bad_forecasts_are_errors_not_answers(self):
+        seattle = {**place('Seattle'), 'timezone': 'America/Los_Angeles'}
+        for daily in (self.forecast(temperature_2m_max=[12]), self.forecast(weather_code=[1.5] * 8),
+                      self.forecast(temperature_2m_min=[None] * 8), {'daily': 'bad'}):
+            with patch.object(self.provider, 'json_request', side_effect=[{'results': [seattle]}, daily]):
+                with self.assertRaises(ValueError):
+                    city.fetch_city(city.Query('Seattle', when='tomorrow'))
 
     def test_largest_major_city_exact_name_and_qualifier(self):
         paris = place()

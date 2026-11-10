@@ -8,10 +8,21 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import re
 import sys
 from pathlib import Path
 
 NOT_SENSOR = 3
+
+# Plain phrasings of a fan reading that the telemetry grammar does not list.
+_FAN_QUESTION = re.compile(
+    r"(?:how fast (?:is|are) (?:the |my )?(?:cpu |case )?fans?(?: spinning| running| going)?"
+    r"|(?:what|how) (?:speed|rpm) (?:is|are) (?:the |my )?fans?(?: running| spinning| at)?"
+    r"|(?:is|are) (?:the |my )?fans? (?:on|running|spinning)"
+    r"|(?:how (?:are|is) )?(?:the |my )?fans?(?: speeds?)?"
+    r")[?!.]*",
+    re.IGNORECASE,
+)
 
 
 def reader():
@@ -61,9 +72,12 @@ def main(argv: list[str] | None = None) -> int:
     if module is None:
         return NOT_SENSOR
     sysfs = Path(os.environ.get("KILIX_SENSORS_SYSFS", "/sys"))
+    request = " ".join(argv[1:])
+    if _FAN_QUESTION.fullmatch(request.strip()):
+        request = "fan speed"
     try:
         status, text = module.answer(
-            " ".join(argv[1:]), sysfs=sysfs, unit=saved_unit(),
+            request, sysfs=sysfs, unit=saved_unit(),
         )
     except OSError as error:
         print(f"kilix ask: {error}", file=sys.stderr)

@@ -132,10 +132,25 @@ def json_request(url):
         log.write(json.dumps({'weather': url}) + '\\n')
     if os.environ.get('ASK_TEST_WEATHER_ERROR'):
         raise URLError('offline fixture')
+    if 'geocoding-api' in url and 'countryCode=US' in url:
+        return {'results': [{'name': 'Seattle', 'admin1': 'Washington', 'country': 'United States',
+                             'country_code': 'US', 'postcodes': ['98101'],
+                             'latitude': 47.6, 'longitude': -122.3, 'timezone': 'America/Los_Angeles'}]}
     if 'geocoding-api' in url:
         return {'results': [{'name': 'Tokyo', 'country': 'Japan', 'country_code': 'JP',
                              'feature_code': 'PPLC', 'population': 10000000,
                              'latitude': 35.68, 'longitude': 139.69, 'timezone': 'Asia/Tokyo'}]}
+    if 'daily=' in url:
+        start = int(time.time()) // 86400 * 86400 - 9 * 3600
+        days = range(8)
+        return {'timezone': 'Asia/Tokyo', 'daily': {
+            'time': [start + d * 86400 for d in days], 'weather_code': [61] * 8,
+            'temperature_2m_max': [15] * 8, 'temperature_2m_min': [5] * 8,
+            'precipitation_probability_max': [80] * 8, 'precipitation_sum': [6] * 8,
+            'snowfall_sum': [0] * 8, 'sunrise': [start + d * 86400 + 6 * 3600 for d in days],
+            'sunset': [start + d * 86400 + 16 * 3600 for d in days],
+            'wind_speed_10m_max': [10] * 8, 'wind_gusts_10m_max': [20] * 8,
+            'relative_humidity_2m_mean': [70] * 8}}
     return {'current': {'temperature_2m': 20, 'weather_code': 0, 'time': time.time()}}
 ''')
 
@@ -154,6 +169,32 @@ def json_request(url):
                     self.assertNotIn('Tokyo, Japan:', result.stdout)
         self.assertEqual(len(self.calls()), 3)
         self.assertTrue(all('weather' in call for call in self.calls()), self.calls())
+
+    def test_forecasts_and_saved_place_weather_work_without_needle(self):
+        self.weather_provider()
+        settings = self.root / "weather-settings.conf"
+        settings.write_text("KILIX_WEATHER_ZIP=98101\nKILIX_TEMPERATURE_UNIT=celsius\n")
+        before = settings.read_bytes()
+        for request, expected in (
+            ("will it rain tomorrow in Tokyo?", "Yes, rain is likely (80% chance, about 6 mm)."),
+            ("weather in tokyo this weekend", "Forecasts are weather-model estimates."),
+            ("when is sunset in Tokyo", "Sunset today"),
+            ("could you tell me what the weather is like outside", "Seattle, Washington, United States: 20°C"),
+            ("do I need an umbrella today, please", "Yes, take an umbrella"),
+        ):
+            with self.subTest(request=request):
+                result = self.run_ask(request, ASK_TEST_MISSING="1",
+                                      GPU_TERMINAL_SETTINGS_FILE=str(settings))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(expected, result.stdout)
+        self.assertTrue(all("weather" in call for call in self.calls()), self.calls())
+        self.assertEqual(settings.read_bytes(), before)
+        settings.write_text("KILIX_TEMPERATURE_UNIT=celsius\n")
+        result = self.run_ask("weather tomorrow", ASK_TEST_MISSING="1",
+                              GPU_TERMINAL_SETTINGS_FILE=str(settings))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Name a city", result.stderr)
+        self.assertFalse(any("needle" in call for call in self.calls()), self.calls())
 
     def test_arithmetic_is_answered_without_needle(self):
         for request, expected in (
@@ -343,8 +384,11 @@ def json_request(url):
         self.assertEqual(temperature.stdout.strip(), "CPU / zone 0: 72.0°C")
         nvme = self.run_ask("nvme temperature", **sensor)
         self.assertEqual(nvme.stdout.strip(), "NVMe / Composite: 51.0°C")
-        fan = self.run_ask("what's the fan speed?", **sensor)
-        self.assertEqual(fan.stdout.strip(), "NVMe / Controller: 3210 RPM")
+        for request in ("what's the fan speed?", "how fast is the fan?", "is the fan running",
+                        "how fast are my fans spinning", "fans"):
+            with self.subTest(request=request):
+                fan = self.run_ask(request, **sensor)
+                self.assertEqual(fan.stdout.strip(), "NVMe / Controller: 3210 RPM")
         fahrenheit = self.run_ask("what is the temperature in fahrenheit?", **sensor)
         self.assertEqual(fahrenheit.stdout.strip(), "CPU / zone 0: 161.6°F")
         mine = self.run_ask("what's my temperature?", **sensor)
