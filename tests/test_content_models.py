@@ -86,7 +86,10 @@ _V3, _ORIGIN = asset_v3_available()
 # RC5 Playalong adds faster-whisper-large-v3 (its own record, MIT), offered for
 # lyrics that are not in English and never a default (content c8f0b0f).
 # kilix-llm's qwen-0.8b-no-loop-02 adds one more.
-PACKAGED_ASSETS = 44
+# RC8 adds en-core-web-sm-3.8.0, Paradee's offline front end (content 543e467),
+# and PDF Conversion's page OCR models pp-ocrv6-small-det and
+# pp-ocrv6-small-rec (owner, 2026-11-10; content 32722d0).
+PACKAGED_ASSETS = 47
 
 # Producer notices the pinned upstream archive carries and the installer
 # verifies and reuses from it, so the licence text store does not hold them.
