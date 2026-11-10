@@ -25,12 +25,14 @@ Ask answers these directly, with no model and nothing to confirm:
                    is 97 prime? / 255 in hex / average of 4, 8 and 15
   units            5 miles in km / how many cups in a gallon? / 72 f in c
                    5 feet 10 inches in cm / 3 hours 20 minutes in seconds
+  currency         100 usd in eur / how many yen in a dollar? (ECB daily rates)
   this computer    what cpu do I have? / how much memory is free?
                    what's using the most memory? / which disks are mounted?
                    is ssh running? / what's listening on port 8080?
   files            what's in this folder? / how big is ~/Downloads?
                    what's the newest file in downloads?
   network          what's my ip? / what wifi am I on? / am I on a vpn?
+                   what's my public ip? (asks ipify.org)
   hardware         what's the temperature? / what's the battery?
                    what's the volume? / what's the brightness?
   weather          what's the weather? / will it rain tomorrow in Paris?

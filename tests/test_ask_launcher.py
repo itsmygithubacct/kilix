@@ -60,6 +60,12 @@ raise SystemExit(int(os.environ.get("ASK_TEST_HELP_STATUS", "0")))
 '''
 
 
+_DEAD_PROXY = "http://127.0.0.1:9"
+NO_NETWORK = {"https_proxy": _DEAD_PROXY, "HTTPS_PROXY": _DEAD_PROXY, "http_proxy": _DEAD_PROXY,
+              "HTTP_PROXY": _DEAD_PROXY, "no_proxy": "localhost,127.0.0.1,::1",
+              "NO_PROXY": "localhost,127.0.0.1,::1"}
+
+
 class AskLauncherTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -80,7 +86,7 @@ class AskLauncherTests(unittest.TestCase):
         shutil.copy2(ROOT / "config" / "kilix_local.py", home / "config" / "kilix_local.py")
         shutil.copy2(ROOT / "config" / "kilix_alarm.py", home / "config" / "kilix_alarm.py")
         for name in ("kilix_asktext.py", "kilix_when.py", "kilix_machine.py",
-                     "kilix_tools.py", "kilix_about.py", "kilix_self.py"):
+                     "kilix_tools.py", "kilix_about.py", "kilix_self.py", "kilix_lookup.py"):
             shutil.copy2(ROOT / "config" / name, home / "config" / name)
         sensor = (ROOT / "third_party" / "kilix-telemetry" / "src"
                   / "kilix_telemetry" / "sensors.py")
@@ -105,6 +111,9 @@ class AskLauncherTests(unittest.TestCase):
             "KILIX_VOICE_PREFIX": str(self.root / "voice-prefix"),
             "ASK_TEST_LOG": str(self.log), "ASK_TEST_NEEDLE": str(needle),
             "ASK_TEST_HELP": str(help_bin),
+            # Nothing here may reach the internet: a request that escapes a
+            # fake meets a dead proxy. Local services stay reachable.
+            **NO_NETWORK,
         })
 
     def calls(self):
@@ -153,6 +162,64 @@ def json_request(url):
             'relative_humidity_2m_mean': [70] * 8}}
     return {'current': {'temperature_2m': 20, 'weather_code': 0, 'time': time.time()}}
 ''')
+
+    def lookup_provider(self, *, fail=False):
+        """The real launcher, module and child, with only the HTTP request replaced."""
+        target = self.launcher.parent / "config" / "kilix_lookup.py"
+        main = 'if __name__ == "__main__":\n'
+        source = target.read_text()
+        self.assertEqual(source.count(main), 1)
+        # Defined before the main block runs; a request that escapes this
+        # fake meets the dead proxy in NO_NETWORK instead of the network.
+        target.write_text(source.replace(main, f'''
+def _get(url, limit, accept):
+    import datetime, json, os
+    with open(os.environ["ASK_TEST_LOG"], "a") as log:
+        log.write(json.dumps({{"lookup": url}}) + "\\n")
+    if {fail!r}:
+        raise URLError("offline fixture")
+    if url == ECB_URL:
+        day = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
+        rates = "".join(f"<Cube currency='{{c}}' rate='{{r}}'/>" for c, r in (
+            ("USD", "1.1214"), ("JPY", "177.38"), ("GBP", "0.83545"), ("CHF", "0.9312"), ("CAD", "1.5501"),
+            ("AUD", "1.7049"), ("SEK", "11.0435"), ("NOK", "11.6810"), ("DKK", "7.4605"), ("PLN", "4.2445")))
+        return f"<r><Cube><Cube time='{{day}}'>{{rates}}</Cube></Cube></r>".encode()
+    return b"8.8.4.4\\n"
+
+''' + main))
+
+    def test_currency_and_public_address_are_looked_up_without_needle(self):
+        self.lookup_provider()
+        money = self.run_ask("could you tell me what 100 usd in eur is?")
+        self.assertEqual(money.returncode, 0, money.stderr)
+        self.assertEqual(money.stdout.splitlines()[0], "100 USD = 89.17 EUR")
+        self.assertIn("Source: ECB statistics.", money.stdout)
+        again = self.run_ask("usd to jpy")
+        self.assertEqual(again.returncode, 0, again.stderr)
+        self.assertTrue(again.stdout.startswith("1 USD = 158.177 JPY"), again.stdout)
+        address = self.run_ask("what is my public ip?")
+        self.assertEqual(address.returncode, 0, address.stderr)
+        self.assertEqual(address.stdout.splitlines()[0], "Public IPv4 address: 8.8.4.4")
+        calls = self.calls()
+        # The rates were fetched once and then read from the cache.
+        self.assertEqual([c.get("lookup") for c in calls if "lookup" in c],
+                         ["https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml", "https://api.ipify.org"])
+        self.assertFalse(any("needle" in call for call in calls), calls)
+        # This computer's own address stays local and contacts nothing.
+        local = self.run_ask("what's my ip address?", KILIX_IP_BIN="/bin/false")
+        self.assertNotIn("ipify", local.stdout + local.stderr)
+        self.assertEqual(len([c for c in self.calls() if "lookup" in c]), 2)
+
+    def test_a_failed_lookup_is_an_error_and_never_reaches_needle(self):
+        self.lookup_provider(fail=True)
+        for question, service in (("100 usd in eur", "The ECB is unreachable"),
+                                  ("what is my public ip", "ipify is unreachable")):
+            with self.subTest(question=question):
+                failed = self.run_ask(question)
+                self.assertEqual(failed.returncode, 1)
+                self.assertEqual(failed.stdout, "")
+                self.assertIn(service, failed.stderr)
+        self.assertFalse(any("needle" in call for call in self.calls()), self.calls())
 
     def test_city_weather_works_without_needle_and_does_not_fall_through_on_failure(self):
         self.weather_provider()
@@ -943,9 +1010,11 @@ def json_request(url):
             ip_log.read_text(encoding="utf-8").strip(),
             "-4 route get 192.0.2.1",
         )
+        self.lookup_provider()
         public = self.run_ask("what's my public ip?", **env)
-        self.assertEqual(public.returncode, 1, public.stdout)
-        self.assertIn("not installed", public.stderr)
+        self.assertEqual(public.returncode, 0, public.stderr)
+        self.assertIn("Public IPv4 address: 8.8.4.4", public.stdout)
+        # The public address is looked up; this computer's routes are not read for it.
         self.assertEqual(ip_log.read_text(encoding="utf-8").count("route get"), 1)
         numbered = self.run_ask("what version is kilix?", **env)
         self.assertEqual(numbered.returncode, 0, numbered.stderr)
