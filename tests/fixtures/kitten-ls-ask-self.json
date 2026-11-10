@@ -1,0 +1,664 @@
+[
+ {
+  "id": 1,
+  "is_focused": true,
+  "is_active": true,
+  "tabs": [
+   {
+    "id": 1,
+    "is_active": false,
+    "is_focused": false,
+    "layout": "splits",
+    "title": "work 1",
+    "windows": [
+     {
+      "id": 1,
+      "title": "pane 1",
+      "is_focused": false,
+      "is_self": false,
+      "cwd": "/srv/work",
+      "pid": 901,
+      "cmdline": [
+       "bash"
+      ],
+      "env": {},
+      "foreground_processes": [
+       {
+        "pid": 1010,
+        "cwd": "/srv/work",
+        "cmdline": [
+         "bash",
+         "--secret-argument-never-shown"
+        ]
+       },
+       {
+        "pid": 1011,
+        "cwd": "/srv/work",
+        "cmdline": [
+         "python3",
+         "--secret-argument-never-shown"
+        ]
+       },
+       {
+        "pid": 1012,
+        "cwd": "/srv/work",
+        "cmdline": [
+         "python3",
+         "--secret-argument-never-shown"
+        ]
+       },
+       {
+        "pid": 1013,
+        "cwd": "/srv/work",
+        "cmdline": [
+         "python3",
+         "--secret-argument-never-shown"
+        ]
+       }
+      ],
+      "columns": 80,
+      "lines": 24
+     },
+     {
+      "id": 9,
+      "title": "pane 2",
+      "is_focused": false,
+      "is_self": false,
+      "cwd": "/srv/work",
+      "pid": 902,
+      "cmdline": [
+       "bash"
+      ],
+      "env": {},
+      "foreground_processes": [],
+      "columns": 80,
+      "lines": 24
+     },
+     {
+      "id": 19,
+      "title": "pane 3",
+      "is_focused": false,
+      "is_self": false,
+      "cwd": "/srv/work",
+      "pid": 903,
+      "cmdline": [
+       "bash"
+      ],
+      "env": {},
+      "foreground_processes": [
+       {
+        "pid": 1030,
+        "cwd": "/srv/work",
+        "cmdline": [
+         "grok",
+         "--secret-argument-never-shown"
+        ]
+       }
+      ],
+      "columns": 80,
+      "lines": 24
+     },
+     {
+      "id": 20,
+      "title": "pane 4",
+      "is_focused": false,
+      "is_self": false,
+      "cwd": "/srv/work",
+      "pid": 904,
+      "cmdline": [
+       "bash"
+      ],
+      "env": {},
+      "foreground_processes": [],
+      "columns": 80,
+      "lines": 24
+     },
+     {
+      "id": 47,
+      "title": "pane 5",
+      "is_focused": true,
+      "is_self": true,
+      "cwd": "/srv/work",
+      "pid": 905,
+      "cmdline": [
+       "bash"
+      ],
+      "env": {},
+      "foreground_processes": [
+       {
+        "pid": 1050,
+        "cwd": "/srv/work",
+        "cmdline": [
+         "codex",
+         "--secret-argument-never-shown"
+        ]
+       },
+       {
+        "pid": 1051,
+        "cwd": "/srv/work",
+        "cmdline": [
+         "python3",
+         "--secret-argument-never-shown"
+        ]
+       }
+      ],
+      "columns": 80,
+      "lines": 24
+     },
+     {
+      "id": 51,
+      "title": "pane 6",
+      "is_focused": false,
+      "is_self": false,
+      "cwd": "/srv/work",
+      "pid": 906,
+      "cmdline": [
+       "bash"
+      ],
+      "env": {},
+      "foreground_processes": [
+       {
+        "pid": 1060,
+        "cwd": "/srv/work",
+        "cmdline": [
+         "ssh",
+         "--secret-argument-never-shown"
+        ]
+       }
+      ],
+      "columns": 80,
+      "lines": 24
+     }
+    ]
+   },
+   {
+    "id": 6,
+    "is_active": false,
+    "is_focused": false,
+    "layout": "splits",
+    "title": "work 2",
+    "windows": [
+     {
+      "id": 12,
+      "title": "pane 7",
+      "is_focused": false,
+      "is_self": false,
+      "cwd": "/srv/work",
+      "pid": 907,
+      "cmdline": [
+       "bash"
+      ],
+      "env": {},
+      "foreground_processes": [
+       {
+        "pid": 1070,
+        "cwd": "/srv/work",
+        "cmdline": [
+         "kitten",
+         "--secret-argument-never-shown"
+        ]
+       },
+       {
+        "pid": 1071,
+        "cwd": "/srv/work",
+        "cmdline": [
+         "grok",
+         "--secret-argument-never-shown"
+        ]
+       }
+      ],
+      "columns": 80,
+      "lines": 24
+     },
+     {
+      "id": 13,
+      "title": "pane 8",
+      "is_focused": true,
+      "is_self": false,
+      "cwd": "/srv/work",
+      "pid": 908,
+      "cmdline": [
+       "bash"
+      ],
+      "env": {},
+      "foreground_processes": [
+       {
+        "pid": 1080,
+        "cwd": "/srv/work",
+        "cmdline": [
+         "kitten",
+         "--secret-argument-never-shown"
+        ]
+       },
+       {
+        "pid": 1081,
+        "cwd": "/srv/work",
+        "cmdline": [
+         "grok",
+         "--secret-argument-never-shown"
+        ]
+       }
+      ],
+      "columns": 80,
+      "lines": 24
+     }
+    ]
+   },
+   {
+    "id": 8,
+    "is_active": true,
+    "is_focused": true,
+    "layout": "splits",
+    "title": "work 3",
+    "windows": [
+     {
+      "id": 14,
+      "title": "pane 9",
+      "is_focused": false,
+      "is_self": false,
+      "cwd": "/srv/work",
+      "pid": 909,
+      "cmdline": [
+       "bash"
+      ],
+      "env": {},
+      "foreground_processes": [
+       {
+        "pid": 1090,
+        "cwd": "/srv/work",
+        "cmdline": [
+         "kitten",
+         "--secret-argument-never-shown"
+        ]
+       },
+       {
+        "pid": 1091,
+        "cwd": "/srv/work",
+        "cmdline": [
+         "grok",
+         "--secret-argument-never-shown"
+        ]
+       }
+      ],
+      "columns": 80,
+      "lines": 24
+     },
+     {
+      "id": 15,
+      "title": "pane 10",
+      "is_focused": true,
+      "is_self": false,
+      "cwd": "/srv/work",
+      "pid": 910,
+      "cmdline": [
+       "bash"
+      ],
+      "env": {},
+      "foreground_processes": [
+       {
+        "pid": 1100,
+        "cwd": "/srv/work",
+        "cmdline": [
+         "kitten",
+         "--secret-argument-never-shown"
+        ]
+       },
+       {
+        "pid": 1101,
+        "cwd": "/srv/work",
+        "cmdline": [
+         "grok",
+         "--secret-argument-never-shown"
+        ]
+       }
+      ],
+      "columns": 80,
+      "lines": 24
+     }
+    ]
+   },
+   {
+    "id": 10,
+    "is_active": false,
+    "is_focused": false,
+    "layout": "splits",
+    "title": "work 4",
+    "windows": [
+     {
+      "id": 16,
+      "title": "pane 11",
+      "is_focused": true,
+      "is_self": false,
+      "cwd": "/srv/work",
+      "pid": 911,
+      "cmdline": [
+       "bash"
+      ],
+      "env": {},
+      "foreground_processes": [
+       {
+        "pid": 1110,
+        "cwd": "/srv/work",
+        "cmdline": [
+         "kitten",
+         "--secret-argument-never-shown"
+        ]
+       },
+       {
+        "pid": 1111,
+        "cwd": "/srv/work",
+        "cmdline": [
+         "grok",
+         "--secret-argument-never-shown"
+        ]
+       }
+      ],
+      "columns": 80,
+      "lines": 24
+     }
+    ]
+   },
+   {
+    "id": 12,
+    "is_active": false,
+    "is_focused": false,
+    "layout": "stack",
+    "title": "work 5",
+    "windows": [
+     {
+      "id": 44,
+      "title": "pane 12",
+      "is_focused": true,
+      "is_self": false,
+      "cwd": "/srv/work",
+      "pid": 912,
+      "cmdline": [
+       "bash"
+      ],
+      "env": {},
+      "foreground_processes": [
+       {
+        "pid": 1120,
+        "cwd": "/srv/work",
+        "cmdline": [
+         "codex",
+         "--secret-argument-never-shown"
+        ]
+       },
+       {
+        "pid": 1121,
+        "cwd": "/srv/work",
+        "cmdline": [
+         "python3",
+         "--secret-argument-never-shown"
+        ]
+       }
+      ],
+      "columns": 80,
+      "lines": 24
+     },
+     {
+      "id": 54,
+      "title": "pane 13",
+      "is_focused": false,
+      "is_self": false,
+      "cwd": "/srv/work",
+      "pid": 913,
+      "cmdline": [
+       "bash"
+      ],
+      "env": {},
+      "foreground_processes": [
+       {
+        "pid": 1130,
+        "cwd": "/srv/work",
+        "cmdline": [
+         "codex",
+         "--secret-argument-never-shown"
+        ]
+       },
+       {
+        "pid": 1131,
+        "cwd": "/srv/work",
+        "cmdline": [
+         "python3",
+         "--secret-argument-never-shown"
+        ]
+       },
+       {
+        "pid": 1132,
+        "cwd": "/srv/work",
+        "cmdline": [
+         "xclip",
+         "--secret-argument-never-shown"
+        ]
+       }
+      ],
+      "columns": 80,
+      "lines": 24
+     }
+    ]
+   },
+   {
+    "id": 15,
+    "is_active": false,
+    "is_focused": false,
+    "layout": "splits",
+    "title": "work 6",
+    "windows": [
+     {
+      "id": 25,
+      "title": "pane 14",
+      "is_focused": true,
+      "is_self": false,
+      "cwd": "/srv/work",
+      "pid": 914,
+      "cmdline": [
+       "bash"
+      ],
+      "env": {},
+      "foreground_processes": [
+       {
+        "pid": 1140,
+        "cwd": "/srv/work",
+        "cmdline": [
+         "bash",
+         "--secret-argument-never-shown"
+        ]
+       },
+       {
+        "pid": 1141,
+        "cwd": "/srv/work",
+        "cmdline": [
+         "python3",
+         "--secret-argument-never-shown"
+        ]
+       },
+       {
+        "pid": 1142,
+        "cwd": "/srv/work",
+        "cmdline": [
+         "openbox",
+         "--secret-argument-never-shown"
+        ]
+       },
+       {
+        "pid": 1143,
+        "cwd": "/srv/work",
+        "cmdline": [
+         "python3",
+         "--secret-argument-never-shown"
+        ]
+       }
+      ],
+      "columns": 80,
+      "lines": 24
+     }
+    ]
+   },
+   {
+    "id": 16,
+    "is_active": false,
+    "is_focused": false,
+    "layout": "splits",
+    "title": "work 7",
+    "windows": [
+     {
+      "id": 29,
+      "title": "pane 15",
+      "is_focused": false,
+      "is_self": false,
+      "cwd": "/srv/work",
+      "pid": 915,
+      "cmdline": [
+       "bash"
+      ],
+      "env": {},
+      "foreground_processes": [
+       {
+        "pid": 1150,
+        "cwd": "/srv/work",
+        "cmdline": [
+         "grok",
+         "--secret-argument-never-shown"
+        ]
+       }
+      ],
+      "columns": 80,
+      "lines": 24
+     },
+     {
+      "id": 50,
+      "title": "pane 16",
+      "is_focused": true,
+      "is_self": false,
+      "cwd": "/srv/work",
+      "pid": 916,
+      "cmdline": [
+       "bash"
+      ],
+      "env": {},
+      "foreground_processes": [
+       {
+        "pid": 1160,
+        "cwd": "/srv/work",
+        "cmdline": [
+         "bash",
+         "--secret-argument-never-shown"
+        ]
+       }
+      ],
+      "columns": 80,
+      "lines": 24
+     }
+    ]
+   },
+   {
+    "id": 20,
+    "is_active": false,
+    "is_focused": false,
+    "layout": "splits",
+    "title": "work 8",
+    "windows": [
+     {
+      "id": 52,
+      "title": "pane 17",
+      "is_focused": true,
+      "is_self": false,
+      "cwd": "/srv/work",
+      "pid": 917,
+      "cmdline": [
+       "bash"
+      ],
+      "env": {},
+      "foreground_processes": [
+       {
+        "pid": 1170,
+        "cwd": "/srv/work",
+        "cmdline": [
+         "python3",
+         "--secret-argument-never-shown"
+        ]
+       },
+       {
+        "pid": 1171,
+        "cwd": "/srv/work",
+        "cmdline": [
+         "bash",
+         "--secret-argument-never-shown"
+        ]
+       },
+       {
+        "pid": 1172,
+        "cwd": "/srv/work",
+        "cmdline": [
+         "sleep",
+         "--secret-argument-never-shown"
+        ]
+       }
+      ],
+      "columns": 80,
+      "lines": 24
+     }
+    ]
+   },
+   {
+    "id": 21,
+    "is_active": false,
+    "is_focused": false,
+    "layout": "splits",
+    "title": "work 9",
+    "windows": [
+     {
+      "id": 53,
+      "title": "pane 18",
+      "is_focused": true,
+      "is_self": false,
+      "cwd": "/srv/work",
+      "pid": 918,
+      "cmdline": [
+       "bash"
+      ],
+      "env": {},
+      "foreground_processes": [
+       {
+        "pid": 1180,
+        "cwd": "/srv/work",
+        "cmdline": [
+         "bash",
+         "--secret-argument-never-shown"
+        ]
+       },
+       {
+        "pid": 1181,
+        "cwd": "/srv/work",
+        "cmdline": [
+         "python3",
+         "--secret-argument-never-shown"
+        ]
+       },
+       {
+        "pid": 1182,
+        "cwd": "/srv/work",
+        "cmdline": [
+         "openbox",
+         "--secret-argument-never-shown"
+        ]
+       },
+       {
+        "pid": 1183,
+        "cwd": "/srv/work",
+        "cmdline": [
+         "python3",
+         "--secret-argument-never-shown"
+        ]
+       }
+      ],
+      "columns": 80,
+      "lines": 24
+     }
+    ]
+   }
+  ]
+ }
+]

@@ -16,10 +16,11 @@ sys.path.insert(0, str(ROOT / "config"))
 import kilix_about  # noqa: E402
 import kilix_asktext  # noqa: E402
 import kilix_machine  # noqa: E402
+import kilix_self  # noqa: E402
 import kilix_tools  # noqa: E402
 import kilix_when  # noqa: E402
 
-MODULES = (kilix_when, kilix_machine, kilix_tools, kilix_about)
+MODULES = (kilix_when, kilix_self, kilix_machine, kilix_tools, kilix_about)
 # Tuesday 2026-11-10 09:30 in a fixed zone eight hours behind UTC.
 NOW = datetime.datetime(2026, 11, 10, 9, 30, 0,
                         tzinfo=datetime.timezone(datetime.timedelta(hours=-8), "PST"))
@@ -34,6 +35,8 @@ NOT_OURS = (
     "Pick up the focus bug session with omp in kilix 95, split right",
     "Pick back up codex session aa41907e in the catalog, split right, and ask it to finish.",
     "list files in ~/projects/../secrets", "what's in /etc/fstab", "how big is /etc",
+    "how big is ~/../root", "what's in ~/./../etc", "close the tab", "open a new tab",
+    "set the shortcut for a new tab to ctrl+t", "start an agent", "install playalong",
     "delete the newest file in downloads", "kill the process using the most memory",
     "restart ssh", "stop docker", "is nginx running? and show its errors from today",
     "is a-program-that-is-not-installed running", "what's the weather in Paris",
@@ -198,6 +201,24 @@ class Answers(unittest.TestCase):
             self.assertRegex(line, r"^.{1,40} \(pid \d+\): [\d.]+% of one core$")
         with self.assertRaises(kilix_machine.MachineError):
             kilix_machine.answer("is port 70000 open")
+
+    def test_typed_folders_under_home(self):
+        home = Path.home()
+        with mock.patch.object(kilix_machine, "_run", return_value="2048\t/x\n"), \
+                mock.patch.object(Path, "exists", return_value=True):
+            self.assertEqual(kilix_machine.answer("how big is ~/Downloads"), (0, f"2.0 KiB in {home / 'Downloads'}"))
+            self.assertEqual(kilix_machine.answer("how big is ~/a b/c.d/"), (0, f"2.0 KiB in {home / 'a b/c.d'}"))
+            self.assertEqual(kilix_machine.answer("how big is ~"), (0, f"2.0 KiB in {home}"))
+        for request in ("how big is ~/../root", "how big is ~/a/../../etc", "what's in ~/./../etc"):
+            self.assertEqual(kilix_machine.answer(request), (3, ""), request)
+
+    def test_a_slow_folder_size_says_so_and_names_the_command(self):
+        too_slow = kilix_machine.MachineError("du took too long")
+        with mock.patch.object(kilix_machine, "_run", side_effect=too_slow):
+            status, shown = kilix_machine.answer("how big is my home folder")
+        self.assertEqual(status, 0)
+        self.assertIn("too big to size within 10 seconds", shown)
+        self.assertIn(f"du -sh {Path.home()}", shown)
 
     def test_about_ask(self):
         for question in ("what can you do?", "help", "what should i ask you", "?"):

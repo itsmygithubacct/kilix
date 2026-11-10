@@ -80,7 +80,7 @@ class AskLauncherTests(unittest.TestCase):
         shutil.copy2(ROOT / "config" / "kilix_local.py", home / "config" / "kilix_local.py")
         shutil.copy2(ROOT / "config" / "kilix_alarm.py", home / "config" / "kilix_alarm.py")
         for name in ("kilix_asktext.py", "kilix_when.py", "kilix_machine.py",
-                     "kilix_tools.py", "kilix_about.py"):
+                     "kilix_tools.py", "kilix_about.py", "kilix_self.py"):
             shutil.copy2(ROOT / "config" / name, home / "config" / name)
         sensor = (ROOT / "third_party" / "kilix-telemetry" / "src"
                   / "kilix_telemetry" / "sensors.py")
@@ -195,6 +195,14 @@ def json_request(url):
         self.assertEqual(result.returncode, 1)
         self.assertIn("Name a city", result.stderr)
         self.assertFalse(any("needle" in call for call in self.calls()), self.calls())
+
+    def test_kilix_shortcut_questions_are_answered_without_needle(self):
+        result = self.run_ask("could you tell me the shortcut for a new tab?", ASK_TEST_MISSING="1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("New tab: ctrl+shift+t", result.stdout)
+        self.assertFalse(any("needle" in call for call in self.calls()), self.calls())
+        result = self.run_ask("set the shortcut for a new tab to ctrl+t", ASK_TEST_MISSING="1")
+        self.assertNotIn("New tab:", result.stdout)
 
     def test_arithmetic_is_answered_without_needle(self):
         for request, expected in (

@@ -3659,6 +3659,9 @@ case "${1:-}" in
           echo "  kilix ask \"5 miles in km\""
           echo "  kilix ask \"what does chmod 755 mean?\""
           echo "  kilix ask \"roll 2d6\""
+          echo "Kilix itself: tabs, panes, agents, apps, games, models and shortcuts:"
+          echo "  kilix ask \"what agents are running?\""
+          echo "  kilix ask \"what's the shortcut for a new tab?\""
           echo "  kilix ask \"what can you do?\"   lists every kind of question"
           echo "  --yes    act without the yes/no prompt; not with --voice"
           echo "  --voice  dictate the request; the transcript can be edited first"
@@ -3771,7 +3774,7 @@ case "${1:-}" in
       esac
       # Dates and other clocks, this computer, worked answers (roots, units,
       # text, dice), and Ask itself. All are answers with nothing to confirm.
-      for _ask_more in kilix_when kilix_machine kilix_tools kilix_about; do
+      for _ask_more in kilix_when kilix_self kilix_machine kilix_tools kilix_about; do
         [ -f "$KILIX_HOME/config/$_ask_more.py" ] || continue
         _ask_more_status=0
         python3 -B "$KILIX_HOME/config/$_ask_more.py" --ask "$_ask_plain" || _ask_more_status=$?

@@ -39,7 +39,9 @@ Ask answers these directly, with no model and nothing to confirm:
                    what does chmod 755 mean? / what is exit code 137?
   chance           flip a coin / roll 2d6 / pick a number between 1 and 10
                    generate a password / give me a uuid
-  Kilix            what panes are open? / list sessions / how do I split a pane?
+  Kilix            what tabs are open? / what agents are running?
+                   what apps are installed? / what games do you have?
+                   what's the shortcut for a new tab? / how do I split a pane?
 
 These change something, and say so: set the volume to 30, set the
 brightness to 40, set an alarm in 10 minutes.

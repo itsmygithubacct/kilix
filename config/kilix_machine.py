@@ -4,8 +4,9 @@ These are closed reads of /proc, /sys, and a few listing commands. A request
 that is not entirely one of them returns 3 so Ask can keep its normal route.
 Nothing here starts, stops, installs, mounts, connects, or deletes anything.
 Process answers name the program only, never its arguments. Folder answers
-cover this folder, home, and the named user folders such as Downloads; a
-typed path is left to the Needle files job and its own rules. A program
+cover this folder, home, the named user folders such as Downloads, and
+typed paths under home (~/...) without ".."; any other typed path is left to
+the Needle files job and its own rules. A program
 this computer does not have is left to Needle as well.
 """
 
@@ -25,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from kilix_asktext import clean  # noqa: E402
 
 NOT_MACHINE = 3
+DU_SECONDS = 10.0
 _WHAT = r"(?:what(?:'s| is| are)|which is|show(?: me)?|tell me|give me|check|list)"
 _PC = r"(?:computer|machine|system|pc|laptop|box)"
 _NAME = r"[a-z0-9][a-z0-9_.@+-]{0,39}"
@@ -540,14 +542,22 @@ _XDG = {
 }
 _FOLDER = (rf"(?P<here>this (?:folder|directory|dir)|the current (?:folder|directory|dir)|here)"
            rf"|(?:my |the )?(?P<xdg>{'|'.join(_XDG)})(?: folder| directory| dir)?"
-           rf"|(?:my |the )?(?P<home>home)(?: folder| directory| dir)?|(?P<tilde>~)")
+           rf"|(?:my |the )?(?P<home>home)(?: folder| directory| dir)?"
+           # A typed path only under home, with no "..": anything else is the files job's.
+           rf"|(?P<tilde>~(?P<under>(?:/(?!\.\.?(?:/|\s|$))[\w.+-]+(?: [\w.+-]+)*?)*)/?)")
 
 
 def _folder(match: re.Match) -> Path:
     if match["here"]:
         return Path.cwd()
-    if match["home"] or match["tilde"]:
+    if match["home"]:
         return Path.home()
+    if match["tilde"]:
+        under = (match["under"] or "").strip("/")
+        if not under:
+            return Path.home()
+        # The rule is on what was typed: a link the user made in home is theirs.
+        return Path.home() / under
     if match["xdg"]:
         key = _XDG[match["xdg"].lower()]
         found = _try(["xdg-user-dir", key], 3).strip()
@@ -594,7 +604,14 @@ def _listing(path: Path) -> str:
 def _du(path: Path) -> str:
     if not path.exists():
         raise MachineError(f"{path} does not exist")
-    out = _run(["du", "-sx", "--block-size=1", "--", str(path)], 30)
+    try:
+        out = _run(["du", "-sx", "--block-size=1", "--", str(path)], DU_SECONDS)
+    except MachineError as error:
+        if "took too long" not in str(error):
+            raise
+        usage = shutil.disk_usage(path)
+        return (f"{path} is too big to size within {DU_SECONDS:.0f} seconds. The disk it is on has "
+                f"{_size(usage.used)} used of {_size(usage.total)}.\nFor the exact size run: du -sh {path}")
     try:
         return f"{_size(int(out.split()[0]))} in {path}"
     except (IndexError, ValueError) as error:
