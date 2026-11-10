@@ -49,6 +49,10 @@ brightness to 40, set an alarm in 10 minutes.
 Anything else goes to Needle, which shows a plan and acts only on a typed
 yes: close the other panes, open the file manager, start a codex agent.
 
+When no job does it either, a local model answers general questions, such
+as who wrote Don Quixote? The answer is labelled and can be wrong; the model
+never acts. kilix ask --model-answers status shows whether it is set up.
+
 kilix ask --repl stays open for more questions. kilix ask --voice listens."""
 
 ABOUT_KILIX = """\

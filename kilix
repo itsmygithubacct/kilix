@@ -3588,8 +3588,9 @@ case "${1:-}" in
     _ask_hold=0
     _ask_yes=0
     _ask_repl=0
+    _ask_model_answers=1
     _ask_options=()
-    _ask_usage="usage: $_self ask [--model lfm2|lfm3|needle3|grammar] [--commands-candidate FILE] [--yes] [--voice] [--repl] [--hold] [--] [REQUEST...]"
+    _ask_usage="usage: $_self ask [--model lfm2|lfm3|needle3|grammar] [--commands-candidate FILE] [--yes] [--voice] [--repl] [--hold] [--no-model-answers] [--] [REQUEST...]"
     # Every exit, a usage error included, waits for Enter under --hold, so the
     # tab it runs in stays readable. Statuses are 0, 1 and 2 only.
     for _ask_arg in "$@"; do
@@ -3627,6 +3628,17 @@ case "${1:-}" in
           _ask_options+=("$1"); shift ;;
         --yes) _ask_yes=1; shift ;;
         --repl) _ask_repl=1; shift ;;
+        --no-model-answers) _ask_model_answers=0; shift ;;
+        --model-answers|--model-answers=*)
+          if [ "$1" = --model-answers ]; then _ask_setting="${2:-}"; else _ask_setting="${1#*=}"; fi
+          case "$_ask_setting" in
+            on|off|setup|status)
+              _ask_out=0
+              python3 -B "$KILIX_HOME/config/kilix_model.py" --setting "$_ask_setting" || _ask_out=$?
+              case "$_ask_out" in 0|1) ;; *) _ask_out=1 ;; esac
+              _ask_close "$_ask_out" ;;
+            *) echo "kilix ask: --model-answers must be on, off, setup or status" >&2; _ask_close 2 ;;
+          esac ;;
         --hold) _ask_hold=1; shift ;;
         -h|--help|help)
           echo "$_ask_usage"
@@ -3667,6 +3679,11 @@ case "${1:-}" in
           echo "  --voice  dictate the request; the transcript can be edited first"
           echo "  --repl   stay and ask again until exit, quit, or the end of input"
           echo "  --hold   wait for Enter before returning, so a tab stays readable"
+          echo "  --no-model-answers  do not ask the local model this time"
+          echo "  --model-answers on|off|setup|status  questions nothing else answers go to a"
+          echo "           measured local model (qwen3.5:4b) when the model sizer says it fits;"
+          echo "           its answers are labelled and it never acts. setup registers the model"
+          echo "           installed by: kilix models install qwen3.5-4b"
           echo "  --model  lfm2, lfm3, needle3, or grammar for this request; overrides KILIX_ASK_COMMANDS_BACKEND"
           echo "           and the saved Ask selection (lfm2 when none is saved)"
           echo "  --commands-candidate FILE  use a local Needle 3 candidate with --model needle3"
@@ -3810,8 +3827,18 @@ print(apps_root())
       fi
       KILIX_APP_ID=kilix-needle KILIX_APP_SURFACE=current \
         "$_ask_needle" ask "$_ask_mode" "${_ask_options[@]}" -- "$_ask_text" || _ask_status=$?
-      # 3: no job does this and nothing was planned. Say where to look next.
-      # Guide passages are not shown here: no gate yet keeps off-topic ones out.
+      # 3: no job does this and nothing was planned. A measured local model may
+      # answer it, labelled as a model answer; it never acts. Otherwise say where
+      # to look next. Guide passages are not shown here: no gate yet keeps
+      # off-topic ones out.
+      if [ "$_ask_status" = 3 ] && [ "$_ask_model_answers" = 1 ]; then
+        _ask_model_status=0
+        python3 -B "$KILIX_HOME/config/kilix_model.py" --ask "$_ask_text" || _ask_model_status=$?
+        # 0 answered, 1 failed and said why; anything else leaves the miss.
+        case "$_ask_model_status" in
+          0|1) _ask_status="$_ask_model_status" ;;
+        esac
+      fi
       if [ "$_ask_status" = 3 ]; then
         case "$_ask_text" in
           *[\"\\\$\`]*)

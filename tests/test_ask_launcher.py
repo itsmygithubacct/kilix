@@ -16,6 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from _env_support import sandbox_env  # noqa: E402
+from test_ask_model import SIZER, FakeOllama, modelfile  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -80,7 +81,8 @@ class AskLauncherTests(unittest.TestCase):
         shutil.copy2(ROOT / "config" / "kilix_local.py", home / "config" / "kilix_local.py")
         shutil.copy2(ROOT / "config" / "kilix_alarm.py", home / "config" / "kilix_alarm.py")
         for name in ("kilix_asktext.py", "kilix_when.py", "kilix_machine.py",
-                     "kilix_tools.py", "kilix_about.py", "kilix_self.py"):
+                     "kilix_tools.py", "kilix_about.py", "kilix_self.py",
+                     "kilix_model.py", "system_llm.py"):
             shutil.copy2(ROOT / "config" / name, home / "config" / name)
         sensor = (ROOT / "third_party" / "kilix-telemetry" / "src"
                   / "kilix_telemetry" / "sensors.py")
@@ -98,6 +100,12 @@ class AskLauncherTests(unittest.TestCase):
         self.launcher = home / "kilix"
         self.log = self.root / "calls.jsonl"
         storage = self.root / "storage"
+        # Model answers: no live Ollama or installed sizer is reachable from here.
+        # Tests that want them start a fake service and point the sizer at a fake.
+        sizer = self.root / "sizer"
+        sizer.write_text(SIZER)
+        sizer.chmod(0o755)
+        self.sizer = str(sizer)
         self.env = sandbox_env(**{
             # No voice daemon or installed tool can be found from here.
             "PATH": "/usr/bin:/bin", "HOME": str(self.root / "home"),
@@ -105,6 +113,8 @@ class AskLauncherTests(unittest.TestCase):
             "KILIX_VOICE_PREFIX": str(self.root / "voice-prefix"),
             "ASK_TEST_LOG": str(self.log), "ASK_TEST_NEEDLE": str(needle),
             "ASK_TEST_HELP": str(help_bin),
+            "KILIX_ASK_OLLAMA_URL": "http://127.0.0.1:9",
+            "PLEBIAN_MODEL_SIZER": str(self.root / "no-sizer"),
         })
 
     def calls(self):
@@ -1224,6 +1234,68 @@ def json_request(url):
                 failed = self.run_ask("close tab 2", ASK_TEST_STATUS=code)
                 self.assertEqual(failed.returncode, 1)
                 self.assertNotIn("help-search", failed.stderr)
+
+    def model_service(self):
+        """A fake local Ollama holding the set-up model, and a sizer that says it fits."""
+        ollama = FakeOllama()
+        self.addCleanup(ollama.close)
+        ollama.models["kilix/qwen3.5:4b"] = modelfile()
+        return ollama, {"KILIX_ASK_OLLAMA_URL": ollama.url, "PLEBIAN_MODEL_SIZER": self.sizer}
+
+    def test_a_question_no_job_does_gets_a_labelled_model_answer(self):
+        ollama, env = self.model_service()
+        answered = self.run_ask("who wrote Don Quixote?", ASK_TEST_STATUS="3", **env)
+        self.assertEqual(answered.returncode, 0, answered.stderr)
+        self.assertEqual(answered.stdout, "route: panes (stage 0)\n"
+                         "Miguel de Cervantes wrote Don Quixote.\n"
+                         "Model answer (qwen3.5:4b, on this computer). It can be wrong.\n")
+        self.assertNotIn("help-search", answered.stderr)
+        [chat] = ollama.posted("/api/chat")
+        self.assertEqual(chat["messages"][-1]["content"], "who wrote Don Quixote?")
+        # A bare "I don't know" is still a miss, with the usual pointers.
+        ollama.reply = "I don't know."
+        miss = self.run_ask("who wrote Don Quixote?", ASK_TEST_STATUS="3", **env)
+        self.assertEqual(miss.returncode, 1)
+        self.assertIn("the local model does not know", miss.stderr)
+        self.assertIn('kilix help-search "who wrote Don Quixote?"', miss.stderr)
+        # A failing service is an error, and the pointers are not added to it.
+        ollama.chat_status = 500
+        failed = self.run_ask("who wrote Don Quixote?", ASK_TEST_STATUS="3", **env)
+        self.assertEqual(failed.returncode, 1)
+        self.assertIn("the local model failed (HTTP 500)", failed.stderr)
+        self.assertNotIn("help-search", failed.stderr)
+
+    def test_the_model_is_asked_only_after_needle_finds_no_job(self):
+        ollama, env = self.model_service()
+        for arguments, status in ((["what time is it?"], "0"), (["close tab 2"], "0"),
+                                  (["close tab 2"], "1"), (["--yes", "close tab 2"], "2")):
+            with self.subTest(arguments=arguments, status=status):
+                self.run_ask(*arguments, ASK_TEST_STATUS=status, **env)
+        self.assertEqual(ollama.posted("/api/chat"), [])
+
+    def test_model_answers_can_be_skipped_once_or_turned_off(self):
+        ollama, env = self.model_service()
+        once = self.run_ask("--no-model-answers", "who wrote Don Quixote?", ASK_TEST_STATUS="3", **env)
+        self.assertEqual(once.returncode, 1)
+        self.assertIn("help-search", once.stderr)
+        self.assertEqual(ollama.requests, [])
+        off = self.run_ask("--model-answers", "off", **env)
+        self.assertEqual((off.returncode, off.stdout), (0, "Model answers are off.\n"))
+        self.assertEqual(self.run_ask("who wrote Don Quixote?", ASK_TEST_STATUS="3", **env).returncode, 1)
+        self.assertEqual(ollama.requests, [])
+        self.assertIn("Model answers: off", self.run_ask("--model-answers=status", **env).stdout)
+        self.assertEqual(self.run_ask("--model-answers", "on", **env).returncode, 0)
+        self.assertEqual(self.run_ask("who wrote Don Quixote?", ASK_TEST_STATUS="3", **env).returncode, 0)
+        bad = self.run_ask("--model-answers", "maybe", **env)
+        self.assertEqual(bad.returncode, 2)
+        self.assertIn("must be on, off, setup or status", bad.stderr)
+
+    def test_without_a_fitting_model_the_miss_is_unchanged(self):
+        # The default test environment has no sizer: nothing about models is said.
+        miss = self.run_ask("who wrote Don Quixote?", ASK_TEST_STATUS="3")
+        self.assertEqual(miss.returncode, 1)
+        self.assertNotIn("model", miss.stderr)
+        self.assertIn("help-search", miss.stderr)
 
     def dictation(self, script):
         """The copied launcher with its `kilix dictate` call replaced by `script`.
