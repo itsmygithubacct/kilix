@@ -32,11 +32,6 @@ _PREFIX = re.compile(
     r"^(?:please\s+)?(?:what(?:\s+is|'s)|whats|how\s+much\s+is|calculate|compute)\s+",
     re.IGNORECASE,
 )
-_TENS_ONES = re.compile(
-    r"\b(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)"
-    r"[-\s]+(one|two|three|four|five|six|seven|eight|nine)\b",
-    re.IGNORECASE,
-)
 _WORDS = {
     "zero": "0", "one": "1", "two": "2", "three": "3", "four": "4",
     "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9",
@@ -46,7 +41,24 @@ _WORDS = {
     "forty": "40", "fifty": "50", "sixty": "60", "seventy": "70",
     "eighty": "80", "ninety": "90",
 }
+_SMALL = {word: int(value) for word, value in _WORDS.items()}
+_SCALE = {
+    "hundred": 100,
+    "thousand": 1_000,
+    "million": 1_000_000,
+    "billion": 1_000_000_000,
+}
+_NUM_WORD = "|".join(sorted(
+    [*_SMALL, *_SCALE, "a", "an", "and"], key=len, reverse=True,
+))
+# A hyphen joins a written number ("two-thousand", "twenty-one"). A spaced
+# hyphen stays subtraction.
+_SPOKEN = re.compile(
+    rf"\b(?:{_NUM_WORD})(?:(?:[ \t]+|-)(?:{_NUM_WORD}))*\b",
+    re.IGNORECASE,
+)
 _WORD = re.compile(r"\b(" + "|".join(_WORDS) + r")\b", re.IGNORECASE)
+_AND = re.compile(r"(?<=\d)\s+and\s+(?=\d)", re.IGNORECASE)
 _PERCENT_OF = re.compile(
     r"(\d+(?:\.\d+)?)\s*(?:%|percent)\s+of\s+(\d+(?:\.\d+)?)",
     re.IGNORECASE,
@@ -70,17 +82,61 @@ class CalculatorError(Exception):
     """A rejected or unevaluable expression."""
 
 
+def _spoken_number(span: str) -> str | None:
+    """Read one written number, including a scale such as thousand.
+
+    "and" belongs to the number only when a scale is in the same phrase
+    ("two hundred and fifty"). Without a scale it stays a word, so
+    "two and two" can still become addition.
+    """
+    parts = [part for part in re.split(r"[\s-]+", span.strip().lower()) if part]
+    if not parts:
+        return None
+    scaled = any(part in _SCALE for part in parts)
+    if "and" in parts and not scaled:
+        return None
+    current = 0
+    total = 0
+    used = False
+    for index, part in enumerate(parts):
+        if part == "and":
+            continue
+        if part in {"a", "an"}:
+            nxt = parts[index + 1] if index + 1 < len(parts) else ""
+            if nxt not in _SCALE:
+                return None
+            current += 1
+            used = True
+            continue
+        if part in _SMALL:
+            current += _SMALL[part]
+            used = True
+            continue
+        if part not in _SCALE:
+            return None
+        scale = _SCALE[part]
+        if scale == 100:
+            current = (current or 1) * 100
+        else:
+            if current == 0 and total != 0:
+                return None
+            total += (current or 1) * scale
+            current = 0
+        used = True
+    if not used:
+        return None
+    return str(total + current)
+
+
 def lower(expression: str) -> str:
     """Turn a question or a written sum into an arithmetic expression."""
     text = expression.strip().replace("’", "'").replace("×", "x")
     text = re.sub(r"[?!.]+$", "", text).strip()
     text = _PREFIX.sub("", text).strip()
-
-    def tens_ones(match: re.Match[str]) -> str:
-        return str(int(_WORDS[match.group(1).lower()]) + int(_WORDS[match.group(2).lower()]))
-
-    text = _TENS_ONES.sub(tens_ones, text)
+    text = _SPOKEN.sub(
+        lambda match: _spoken_number(match.group(0)) or match.group(0), text)
     text = _WORD.sub(lambda match: _WORDS[match.group(1).lower()], text)
+    text = _AND.sub(" + ", text)
     text = _PERCENT_OF.sub(r"((\1)/100)*(\2)", text)
     for pattern, symbol in _PHRASES:
         text = pattern.sub(symbol, text)

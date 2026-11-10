@@ -141,6 +141,10 @@ def json_request(url):
             ("what is three times five?", "15"),
             ("what is 5% of 512.54", "25.627"),
             ("7x7+95/2", "96.5"),
+            ("what is two plus two-thousand?", "2002"),
+            ("what is two plus two thousand?", "2002"),
+            ("what is twenty-one thousand plus three?", "21003"),
+            ("what is two hundred and fifty plus two?", "252"),
         ):
             with self.subTest(request=request):
                 result = self.run_ask(request, ASK_TEST_MISSING="1")
