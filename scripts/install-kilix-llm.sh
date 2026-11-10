@@ -15,9 +15,10 @@ KILIX_LLM_SOURCES="${KILIX_LLM_SOURCES:-$KILIX_STORAGE_HOME/sources}"
 
 # Immutable source revision, inherited by the parent release manifest: the
 # kilix-llm commit with qwen-0.8b-no-loop-02, its `chat` command and the
-# first-use build that keeps only the runtime's bin/.
+# first-use build that keeps only the runtime's bin/. pull of that id is
+# refused; the build does not fetch llama.cpp's web UI.
 KILIX_LLM_REPO="${KILIX_LLM_REPO:-https://github.com/itsmygithubacct/kilix-llm.git}"
-KILIX_LLM_REF="${KILIX_LLM_REF:-ba4eaca3bea06a6014ca9d65b01d4350132491d0}"
+KILIX_LLM_REF="${KILIX_LLM_REF:-93f2202be062cb443daf9a3d47243098d9567bf6}"
 
 die() { printf 'kilix llm: %s\n' "$*" >&2; exit 1; }
 log() { printf 'kilix llm: %s\n' "$*" >&2; }
