@@ -50,6 +50,10 @@ CLAIMED = {
     "100 TRY in EUR": ("currency", "TRY", "EUR", Decimal(100)),
     "100 rub in usd": ("currency", "RUB", "USD", Decimal(100)),
     "100 kronor to eur": ("currency", "SEK", "EUR", Decimal(100)),
+    "what's 100 usd in eur": ("currency", "USD", "EUR", Decimal(100)),
+    "whats 100 usd in eur": ("currency", "USD", "EUR", Decimal(100)),
+    "100 yen in aussie dollars": ("currency", "JPY", "AUD", Decimal(100)),
+    "whats the exchange rate of usd to eur": ("rate", "USD", "EUR", None),
     "usd to eur": ("rate", "USD", "EUR", None),
     "USD/JPY": ("rate", "USD", "JPY", None),
     "exchange rate usd eur": ("rate", "USD", "EUR", None),
@@ -59,6 +63,7 @@ CLAIMED = {
 ADDRESSES = {
     "what is my public ip": 4, "what's my external ip address?": 4, "show my public ip": 4,
     "what ip do websites see": 4, "what is my public ipv6 address": 6, "my wan ip": 4,
+    "whats my public ip": 4,
 }
 NOT_OURS = (
     "what is my ip", "what's my ip address", "show my ip", "what is my local ip", "5 miles in km",

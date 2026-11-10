@@ -54,7 +54,7 @@ NAMES = {
             "sterling", "quid", "£"),
     "CHF": ("franc", "francs", "swiss franc", "swiss francs"),
     "CAD": ("canadian dollar", "canadian dollars"),
-    "AUD": ("australian dollar", "australian dollars"),
+    "AUD": ("australian dollar", "australian dollars", "aussie dollar", "aussie dollars"),
     "NZD": ("new zealand dollar", "new zealand dollars"),
     "HKD": ("hong kong dollar", "hong kong dollars"),
     "SGD": ("singapore dollar", "singapore dollars"),
@@ -114,27 +114,29 @@ _TO = rf"(?P<quote>{_TOKEN})"
 _INTO = r"(?:in|to|into|as|in terms of|converted to|worth in|equals how many|is how many)"
 _CURRENCY_FORMS = (
     rf"(?:(?:please )?(?:convert|change|exchange|turn) )?{_AMOUNT}{_FROM} {_INTO} {_TO}",
-    rf"(?:how much|what) (?:is|are|would be|'s|will) {_AMOUNT}{_FROM}(?: be)?(?: worth)? (?:in|to|into|worth in) {_TO}",
+    rf"(?:how much|what)(?: is| are| would be|'s|s| will) {_AMOUNT}{_FROM}(?: be)?(?: worth)? "
+    rf"(?:in|to|into|worth in) {_TO}",
     rf"how many {_TO} (?:is|are|in|for|to|per|make|do i get for|would i get for|equals?) "
     rf"(?:(?:the|a|an|one) (?P<base2>{_TOKEN})|{_AMOUNT}{_FROM})",
 )
 _RATE_FORMS = (
-    rf"(?:what(?:'s| is) )?(?:the )?(?:current |today's |latest )?(?:exchange |conversion |currency )?rate "
+    rf"(?:what(?:'s|s| is) )?(?:the )?(?:current |today's |latest )?(?:exchange |conversion |currency )?rate "
     rf"(?:of |from |for |between )?(?:the )?(?P<base>{_TOKEN}) (?:to|and|vs|versus|into|in|against|/) "
     rf"(?:the )?(?P<quote>{_TOKEN})",
     rf"(?:(?:the|an?) )?(?:exchange |conversion )?rate (?P<base>{_TOKEN}) (?P<quote>{_TOKEN})",
     rf"(?:exchange rate )?(?P<base>{_TOKEN}) ?(?:to|vs|versus|/|against) ?(?P<quote>{_TOKEN})"
     rf"(?: (?:exchange |conversion )?rate)?(?: today| now)?",
-    rf"(?:how much is|what is|what's) (?:the|a|an|one) (?P<base>{_TOKEN}) (?:worth )?(?:in|to|against) (?P<quote>{_TOKEN})",
+    rf"(?:how much is|what is|what's|whats) (?:the|a|an|one) (?P<base>{_TOKEN}) (?:worth )?(?:in|to|against) "
+    rf"(?P<quote>{_TOKEN})",
 )
 _ADDRESS_FORMS = (
-    r"(?:(?:what(?:'s| is)|show(?: me)?|tell me|get|check|find|give me|look up)\s+)?"
+    r"(?:(?:what(?:'s|s| is)|show(?: me)?|tell me|get|check|find|give me|look up)\s+)?"
     r"(?:my |our |the |this (?:computer|machine|laptop)'s )?"
     r"(?:public|external|internet|wan|outside|outward[- ]facing|outward|global|real) "
     r"ip(?:v(?P<version>[46]))?(?: address)?(?: is)?",
     r"what ip(?:v(?P<version>[46]))?(?: address)? (?:does|do|will) (?:the internet|websites|other sites|"
     r"the outside world|sites|servers) see(?: me as| for me)?",
-    r"what(?:'s| is) my ip(?:v(?P<version>[46]))?(?: address)? (?:on|to) the internet",
+    r"what(?:'s|s| is) my ip(?:v(?P<version>[46]))?(?: address)? (?:on|to) the internet",
 )
 
 
