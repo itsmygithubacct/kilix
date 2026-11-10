@@ -17,6 +17,8 @@ import time
 from Xlib import X, XK
 from Xlib.ext import xtest
 
+from kilix_sdk import keys as _keys
+
 # X11 maps any Unicode code point above Latin-1 to keysym 0x01000000 | cp.
 UNICODE_KEYSYM = 0x01000000
 # Spare keycodes kept bound to keysyms the private keymap lacks (a default
@@ -329,17 +331,26 @@ class Injector:
             # would strand a modifier when its single release arrives.
             if key in self._key_presses:
                 return False
-            symbol = key
-            only_shift = not mods & ~MOD_SHIFT
-            if only_shift and mods & MOD_SHIFT and shifted:
-                symbol = shifted
+            symbol = self._chord_symbol(key, mods, shifted)
             keysym = self.keysym_for(symbol)
             if not keysym:
                 return False
-            keycode, level = self._keycode_for(keysym)
+            if self._is_keypad_key(symbol):
+                # The functional code names one keysym. Digits live on the
+                # shifted level of the navigation key, and this server's
+                # NumLock stays off, so a digit holds Shift. A Shift the
+                # operator is already holding on a navigation key would
+                # select the digit instead; that press uses a spare row
+                # bound to the navigation keysym at both levels.
+                keycode, mods = self._keypad_press(keysym, mods)
+                level = 0
+            else:
+                keycode, level = self._keycode_for(keysym)
             if not keycode:
                 return False
-            if only_shift and self._is_glyph(symbol) and (shifted or not mods):
+            only_shift = not mods & ~MOD_SHIFT
+            if (not self._is_keypad_key(symbol) and only_shift
+                    and self._is_glyph(symbol) and (shifted or not mods)):
                 # Produce exactly this glyph: Shift only where the private
                 # keymap needs it, whatever the pane's layout needed.
                 mods = MOD_SHIFT if level == 1 else 0
@@ -371,11 +382,53 @@ class Injector:
         self.xd.flush()
         return True
 
+    @staticmethod
+    def _is_keypad_key(key):
+        return isinstance(key, str) and len(key) == 1 and ord(key) in _keys.KEYPAD
+
+    @staticmethod
+    def _chord_symbol(key, mods, shifted):
+        """Glyph to inject. A keypad code keeps its own identity.
+
+        The protocol's shifted alternate is the character Shift would type
+        on a printable key. Folding a keypad code through that alternate
+        turns KP_5 into a top-row digit and drops the numpad keysym.
+        """
+        if (shifted and not Injector._is_keypad_key(key)
+                and not mods & ~MOD_SHIFT and mods & MOD_SHIFT):
+            return shifted
+        return key
+
+    def _keypad_press(self, keysym, mods):
+        """(keycode, mods) that deliver *keysym* on the private keymap.
+
+        Returns the caller's mods unchanged when the row is a spare binding:
+        both of its levels are *keysym*, so Shift does not rewrite it.
+        """
+        lookup = getattr(self.xd, "keycode_to_keysym", None)
+        code = self.xd.keysym_to_keycode(keysym) if lookup else 0
+        if code and lookup:
+            user_shift = bool(mods & MOD_SHIFT)
+            try:
+                base = lookup(code, 0)
+                shifted = lookup(code, 1)
+            except Exception:
+                base = shifted = 0
+            if not user_shift and base == keysym:
+                return code, mods & ~MOD_SHIFT
+            if shifted == keysym and (user_shift or base != keysym):
+                return code, mods | MOD_SHIFT
+        return self._bind_scratch(keysym), mods
+
     def keysym_for(self, key):
         if len(key) == 1:
             o = ord(key)
             if o in MOD_KEYSYMS:
                 return XK.string_to_keysym(MOD_KEYSYMS[o])
+            name = _keys.x_keysym_name(o)
+            if name:
+                sym = XK.string_to_keysym(name)
+                return sym or 0
             if 57344 <= o <= 63743:      # other functional keys: unmapped
                 return 0
             if o < 0x20 or 0x7f <= o <= 0x9f:
@@ -393,7 +446,14 @@ class Injector:
         keysym = self.keysym_for(key)
         if not keysym:
             return False
-        keycode, _level = self._keycode_for(keysym)
+        if self._is_keypad_key(key):
+            # key() has no modifier pairing. A digit whose native row needs
+            # Shift is bound plainly so the keysym does not depend on it.
+            keycode, held = self._keypad_press(keysym, 0)
+            if held & MOD_SHIFT:
+                keycode = self._bind_scratch(keysym)
+        else:
+            keycode, _level = self._keycode_for(keysym)
         if not keycode:
             return False
         if etype == 1:
@@ -681,7 +741,7 @@ class Injector:
                 continue
             mods &= ~MOD_LOCKS
             shifted = rest[0] if rest else None
-            symbol = shifted if not mods & ~MOD_SHIFT and mods & MOD_SHIFT and shifted else prior
+            symbol = self._chord_symbol(prior, mods, shifted)
             keysym = self.keysym_for(symbol)
             if not keysym:
                 continue

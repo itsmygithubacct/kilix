@@ -67,8 +67,9 @@ class KilixSdkBoundaryTests(unittest.TestCase):
         # 1.15 adds the pane/tab/workspace model and operations (panes).
         # 1.17 adds the shared Windows desktop automation client.
         # 1.19 adds consent-bearing setup and owned nested Wayland sessions.
-        self.assertEqual(kilix_sdk.SDK_API_VERSION, (1, 19))
-        self.assertEqual(kilix_sdk.SDK_VERSION, "1.19.0")
+        # 1.20 adds the shared numeric-keypad map (kilix_sdk.keys).
+        self.assertEqual(kilix_sdk.SDK_API_VERSION, (1, 20))
+        self.assertEqual(kilix_sdk.SDK_VERSION, "1.20.0")
         kilix_sdk.require_compatible("1.0")
         kilix_sdk.require_compatible("1.5")
         kilix_sdk.require_compatible("1.6")
@@ -85,8 +86,9 @@ class KilixSdkBoundaryTests(unittest.TestCase):
         kilix_sdk.require_compatible("1.17")
         kilix_sdk.require_compatible("1.18")
         kilix_sdk.require_compatible("1.19")
+        kilix_sdk.require_compatible("1.20")
         with self.assertRaises(kilix_sdk.IncompatibleSDKError):
-            kilix_sdk.require_compatible("1.20")
+            kilix_sdk.require_compatible("1.21")
         with self.assertRaises(kilix_sdk.IncompatibleSDKError):
             kilix_sdk.require_compatible("2.0")
         for malformed in (

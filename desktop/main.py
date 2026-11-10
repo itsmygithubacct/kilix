@@ -55,20 +55,10 @@ kilix_term.SPECIAL_CSI.update({
     "P": ("F1", "F1", 112), "Q": ("F2", "F2", 113),
     "S": ("F4", "F4", 115)})
 
-# kitty reports the numeric keypad only as functional (PUA) codes under flags
-# 13 (no KP folding, no embedded text) — map them to (key, text) here so the
-# keypad types and navigates like the main block.
-_KEYPAD = {
-    57409: (".", "."), 57410: ("/", "/"), 57411: ("*", "*"),
-    57412: ("-", "-"), 57413: ("+", "+"), 57414: ("Enter", "\r"),
-    57415: ("=", "="), 57417: ("ArrowLeft", ""), 57418: ("ArrowRight", ""),
-    57419: ("ArrowUp", ""), 57420: ("ArrowDown", ""), 57421: ("PageUp", ""),
-    57422: ("PageDown", ""), 57423: ("Home", ""), 57424: ("End", ""),
-    57425: ("Insert", ""), 57426: ("Delete", "")}
-for _i in range(10):
-    _KEYPAD[57399 + _i] = (str(_i), str(_i))
-# PrintScreen also arrives only as a functional code — name it (text-less, so
-# it can never type into a field) for dispatch_key's screenshot binding.
+# kitty reports the numeric keypad only as functional codes. The shared
+# map is what Chromium and this desktop both use. PrintScreen stays local:
+# it is text-less so it can never type into a field.
+_KEYPAD = {n: (spec.key, spec.text) for n, spec in kilix_term.KEYPAD.items()}
 _KEYPAD[57361] = ("PrintScreen", "")
 
 

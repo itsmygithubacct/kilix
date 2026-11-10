@@ -159,6 +159,37 @@ class LayoutIndependentKeys(unittest.TestCase):
         self.assertEqual(self.held(), [])
         self.assertEqual(self.xd.screen().root.query_pointer().mask & X.ShiftMask, 0)
 
+    def test_numeric_keypad_reaches_the_private_display(self):
+        # kitty's all-keys mode reports the keypad as functional codes. Those
+        # were unmapped, so Chromium under kilix run never saw them. Digits
+        # are the shifted level of the navigation key while NumLock is off.
+        cases = (
+            (57399, XK.XK_KP_0), (57404, XK.XK_KP_5), (57408, XK.XK_KP_9),
+            (57409, XK.XK_KP_Decimal), (57410, XK.XK_KP_Divide),
+            (57413, XK.XK_KP_Add), (57414, XK.XK_KP_Enter),
+            (57417, XK.XK_KP_Left), (57419, XK.XK_KP_Up),
+            (57424, XK.XK_KP_End), (57426, XK.XK_KP_Delete))
+        for code, _sym in cases:
+            self.inject(f"{code};129:1")
+            self.inject(f"{code};129:3")
+        typed = self.typed()
+        # The resolved keysym is the one the application reads at the
+        # modifier level the event actually carried. A missing Shift on a
+        # digit would show up here as the navigation keysym.
+        self.assertEqual(
+            [sym for sym, _state in typed],
+            [sym for _code, sym in cases])
+        self.assertEqual(self.held(), [])
+        # Shift held on a navigation key must stay that key, not the digit.
+        self.inject("57417:52;2:1")
+        self.inject("57417;1:3")
+        self.assertEqual(self.typed(), [(XK.XK_KP_Left, X.ShiftMask)])
+        self.assertEqual(self.held(), [])
+        # PrintScreen is a functional code and is still not a keypad key.
+        self.inject("57361;1:1")
+        self.inject("57361;1:3")
+        self.assertEqual(self.typed(), [])
+
     def test_lock_keys_do_not_defeat_an_unshifted_glyph_or_a_chord(self):
         # '<' is typed as the glyph the pane produced, not as a lock-shifted key.
         self.inject("60;129:1")
