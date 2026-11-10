@@ -1,8 +1,9 @@
 """Paradee system voice for a fresh install.
 
 The supervisor stays on the system interpreter. Synthesis runs in the
-short-path environment at /usr/lib/kilix/pd. Weights are the image files.
-This module does not download them and does not import huggingface_hub.
+short-path environment at /usr/lib/kilix/pd. Weights and the Apache-2.0
+text are the image files. This module does not download them and does
+not import huggingface_hub.
 """
 import argparse
 import hashlib
@@ -21,6 +22,9 @@ ONNX_BYTES = 8462119
 ONNX_SHA256 = 'a6989796692ac173597e15d405c971989202d5c73cfad65f22e90bd7b6c97da1'
 CONFIG_BYTES = 1827
 CONFIG_SHA256 = '002535cf8dd08a434cdddb13372da8a7b4844152bdf9b5b4e7342e12ec30bcfb'
+LICENCE_NAME = 'notices/LICENSE-apache-2.0.txt'
+LICENCE_BYTES = 11358
+LICENCE_SHA256 = 'cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30'
 READY = 'System voice ready: paradee af_heart'
 GOODBYE = 'System voice goodbye complete'
 
@@ -79,7 +83,8 @@ def _read_exact(path, size, digest, label):
 def model_files():
     root = model_dir()
     return (_read_exact(root / ONNX_NAME, ONNX_BYTES, ONNX_SHA256, 'weights'),
-            _read_exact(root / 'config.json', CONFIG_BYTES, CONFIG_SHA256, 'config'))
+            _read_exact(root / 'config.json', CONFIG_BYTES, CONFIG_SHA256, 'config'),
+            _read_exact(root / LICENCE_NAME, LICENCE_BYTES, LICENCE_SHA256, 'licence'))
 
 
 def install_check():
@@ -93,7 +98,7 @@ def install_check():
 
 
 def synthesize(text, voice, wav_path):
-    model, config = model_files()
+    model, config, _licence = model_files()
     python = runtime_python()
     synth = Path(__file__).resolve().with_name('paradee_synth.py')
     if synth.is_symlink() or not synth.is_file():

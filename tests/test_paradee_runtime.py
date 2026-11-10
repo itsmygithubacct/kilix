@@ -32,11 +32,13 @@ class ParadeeRuntimeTests(unittest.TestCase):
                                        KILIX_PARADEE_PYTHON=str(self.root / 'python'))
         self.environment.start()
         self.addCleanup(self.environment.stop)
-        self.sizes = (runtime.ONNX_BYTES, runtime.ONNX_SHA256, runtime.CONFIG_BYTES, runtime.CONFIG_SHA256)
+        self.sizes = (runtime.ONNX_BYTES, runtime.ONNX_SHA256, runtime.CONFIG_BYTES,
+                      runtime.CONFIG_SHA256, runtime.LICENCE_BYTES, runtime.LICENCE_SHA256)
         self.addCleanup(self._restore_sizes)
 
     def _restore_sizes(self):
-        runtime.ONNX_BYTES, runtime.ONNX_SHA256, runtime.CONFIG_BYTES, runtime.CONFIG_SHA256 = self.sizes
+        (runtime.ONNX_BYTES, runtime.ONNX_SHA256, runtime.CONFIG_BYTES,
+         runtime.CONFIG_SHA256, runtime.LICENCE_BYTES, runtime.LICENCE_SHA256) = self.sizes
 
     def _write_selection(self, engine, voice):
         path = self.root / 'state' / 'system-voice-default.json'
@@ -50,13 +52,16 @@ class ParadeeRuntimeTests(unittest.TestCase):
     def _pin(self, payload):
         return len(payload), hashlib.sha256(payload).hexdigest()
 
-    def _install_files(self, onnx=b'onnx', config=b'{"voices":["af_heart"]}'):
+    def _install_files(self, onnx=b'onnx', config=b'{"voices":["af_heart"]}', licence=b'apache'):
         model = self.root / 'model'
         (model / 'onnx').mkdir(parents=True)
+        (model / 'notices').mkdir()
         (model / 'onnx' / 'paradee_int8.onnx').write_bytes(onnx)
         (model / 'config.json').write_bytes(config)
+        (model / 'notices' / 'LICENSE-apache-2.0.txt').write_bytes(licence)
         runtime.ONNX_BYTES, runtime.ONNX_SHA256 = self._pin(onnx)
         runtime.CONFIG_BYTES, runtime.CONFIG_SHA256 = self._pin(config)
+        runtime.LICENCE_BYTES, runtime.LICENCE_SHA256 = self._pin(licence)
         python = self.root / 'python'
         python.write_text('#!/bin/sh\nexit 0\n')
         python.chmod(0o755)
@@ -79,6 +84,18 @@ class ParadeeRuntimeTests(unittest.TestCase):
         link = self.root / 'elsewhere.json'
         link.write_bytes(b'{"voices":["af_heart"]}')
         target.symlink_to(link)
+        with self.assertRaises(SystemExit):
+            runtime.install_check()
+
+    def test_install_and_synthesis_refuse_a_missing_licence(self):
+        self._install_files()
+        licence = self.root / 'model' / 'notices' / 'LICENSE-apache-2.0.txt'
+        licence.unlink()
+        with self.assertRaises(SystemExit):
+            runtime.install_check()
+        with self.assertRaises(SystemExit):
+            runtime.synthesize('hello', 'af_heart', self.root / 'out.wav')
+        licence.write_bytes(b'other')
         with self.assertRaises(SystemExit):
             runtime.install_check()
 
