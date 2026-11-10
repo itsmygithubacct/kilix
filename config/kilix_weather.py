@@ -32,18 +32,22 @@ class Query:
 
 
 WEEKDAYS = ('monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday')
-WHENS = ('today', 'tomorrow', 'weekend', 'week', 'yesterday', *WEEKDAYS, *(f'next {d}' for d in WEEKDAYS))
+WHENS = ('today', 'tomorrow', 'weekend', 'week', 'yesterday', *WEEKDAYS, *(f'next {d}' for d in WEEKDAYS),
+         *(f'days {n}' for n in range(2, 7)))
 WHATS = ('rain', 'raining', 'snow', 'snowing', 'umbrella', 'sunrise', 'sunset', 'humidity', 'wind')
 RAIN_CODES = frozenset((*range(51, 68), 80, 81, 82, 95, 96, 99))
 SNOW_CODES = frozenset((71, 73, 75, 77, 85, 86))
 FORECAST_DAYS = 8
 _DAY = '|'.join(WEEKDAYS)
+_COUNTS = {'2': 2, 'two': 2, 'couple of': 2, 'couple': 2, '3': 3, 'three': 3, '4': 4, 'four': 4,
+           '5': 5, 'five': 5, '6': 6, 'six': 6}
 # Day words are taken off the request before the city is read, so
 # "weather in Tokyo this weekend" asks about Tokyo, not "Tokyo this weekend".
 _WHEN_WORDS = (
-    (r'(?:for |on |over )?(?:the |this |next |coming )?week ?end', 'weekend'),
-    (r'(?:for |over )?(?:the )?(?:next|coming) (?:7|seven|few) days|(?:for |over )?(?:the |this |next |coming )?week',
-     'week'),
+    (r'(?:for |on |over )?(?:the )?(?:this |next |coming )?week ?end', 'weekend'),
+    (r'(?:for |over |in |within )?(?:the )?(?:next|coming) (?:7|seven|few) days'
+     r'|(?:for |over |in )?(?:the )?(?:this |next |coming )?week', 'week'),
+    (r'(?:for |over |in |within )?(?:the )?(?:next|coming) (' + '|'.join(_COUNTS) + r') days', 'days'),
     (r'(?:for |on )?(?:tomorrow|tomorow|tmrw|tmr)(?: (?:morning|afternoon|evening|night))?', 'tomorrow'),
     (r'(?:for |on )?(?:yesterday|last night)', 'yesterday'),
     (r'tonight|this (?:morning|afternoon|evening)|(?:for |on )?today|later(?: today)?', 'today'),
@@ -114,7 +118,7 @@ _NOT_PLACE = re.compile(
 
 def plausible_city(city: str) -> bool:
     """A place name, not the rest of a compound command."""
-    if _NOT_PLACE.search(city):
+    if _NOT_PLACE.search(city) or re.fullmatch(r'(?i)(?:the|a|an|my|this|that|it|me)', city.strip()):
         return False
     name, _, qualifier = city.partition(',')
     return len(name.split()) <= 5 and len(qualifier.split()) <= 4
@@ -132,6 +136,8 @@ def _when(text: str) -> tuple[str, str]:
             return rest, match[1].lower()
         if kind == 'next':
             return rest, 'next ' + match[1].lower()
+        if kind == 'days':
+            return rest, f'days {_COUNTS[match[1].lower()]}'
         return rest, kind
     return text, ''
 
@@ -186,6 +192,8 @@ def ask_query(text: str) -> Query | None:
         return None
     if when == 'yesterday':
         raise ValueError('Ask has current conditions and forecasts, not past weather.')
+    if re.search(r'(?i)^(?:the )?(?:next|coming) \S+ days$', city):
+        raise ValueError('Ask has forecasts for up to 7 days, for example: weather for the next 3 days.')
     if re.search(r'\b(?:tomorrow|yesterday|tonight|forecast|next|week|last)\b', city, re.I):
         raise ValueError('Name the day once, for example: weather in Tokyo tomorrow.')
     if re.search(r'\s+and\s+', city, re.I):
@@ -349,6 +357,8 @@ def pick_days(query: Query, rows: list[dict]) -> list[dict]:
         return rows[1:2]
     if when == 'week':
         return rows[:7]
+    if when.startswith('days '):
+        return rows[:int(when.removeprefix('days '))]  # starting today, as "next 7 days" does
     if when == 'weekend':
         days = [r for r in rows[:7] if r['date'].weekday() >= 5]
         if days and days[0]['date'].weekday() == 6 and len(days) > 1 and days[1]['date'].weekday() == 5:

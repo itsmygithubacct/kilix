@@ -79,6 +79,67 @@ class SelfAnswerTests(unittest.TestCase):
             self.assertIn("kilix app install playalong", text)
             self.assertIn("kilix games play dosbox", ask.answer("is dosbox installed")[1])
 
+    def catalog(self, root, present=()):
+        """Three catalog entries under root: kilix-pdf ready, any in present
+        holding files that are not this Kilix's version, the rest absent."""
+        class Spec:
+            def __init__(self, content_id, label, kind="app"):
+                self.content_id, self.label, self.kind = content_id, label, kind
+
+        class Content:
+            class Installer:
+                def __init__(self, _root):
+                    pass
+
+                def ready(self, spec):
+                    return f"{root}/kilix-pdf" if spec.content_id == "kilix-pdf" else None
+
+                def destination(self, spec):
+                    return f"{root}/{spec.content_id}"
+
+        for name in present:
+            Path(root, name).mkdir()
+            Path(root, name, "Makefile").write_text("old")
+        Path(root, "kilix-amp").mkdir()  # an empty folder is not an install
+        catalog = [Spec("kilix-pdf", "PDF Viewer"), Spec("playalong", "Playalong"),
+                   Spec("kilix-amp", "Kilix Amp"), Spec("kilix-find", "Find")]
+        return patch.multiple(ask, _catalog=lambda: (Content, catalog), _apps_root=lambda: root)
+
+    def test_an_app_at_another_version_is_present_not_missing(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as root, self.catalog(root, present=("playalong",)):
+            listing = ask.answer("what apps are installed")[1]
+            self.assertTrue(listing.startswith("1 app installed from the Kilix catalog:"), listing)
+            self.assertIn("not at this Kilix's version", listing)
+            self.assertIn("Playalong (playalong)", listing)
+            self.assertNotIn("Kilix Amp", listing)
+            self.assertIn("Update one with: kilix app install ID", listing)
+            text = ask.answer("is playalong installed")[1]
+            self.assertIn("is present, but not at this Kilix's version", text)
+            self.assertIn("kilix app install playalong", text)
+            self.assertTrue(ask.answer("is kilix amp installed")[1].startswith("No, Kilix Amp"))
+
+    def test_the_package_question_hands_catalog_apps_to_the_catalog(self):
+        import tempfile
+        import kilix_local
+        dpkg = {"bash": "bash 5.2", "find": "find is not installed", "playalong": "playalong 1.0"}
+        with tempfile.TemporaryDirectory() as root, self.catalog(root), \
+                patch.object(kilix_local, "_package", side_effect=lambda name: dpkg.get(
+                    name, f"{name} is not installed")) as package:
+            # A catalog id is the app, without asking dpkg.
+            self.assertEqual(kilix_local.answer("is kilix-pdf installed")[1],
+                             "Yes, PDF Viewer (kilix-pdf) is installed.")
+            self.assertEqual(kilix_local.answer("is playalong installed")[1].split(",")[0], "No")
+            self.assertNotIn("playalong", [call.args[0] for call in package.call_args_list])
+            # Other names are packages first.
+            self.assertEqual(kilix_local.answer("is bash installed")[1], "bash 5.2")
+            self.assertEqual(kilix_local.answer("is vim installed")[1], "vim is not installed")
+            # No package by that name: the catalog app with that label answers.
+            self.assertEqual(kilix_local.answer("is find installed")[1].split(",")[0], "No")
+        with patch.object(ask, "_catalog", side_effect=OSError("no catalog")), \
+                patch.object(kilix_local, "_package", return_value="playalong is not installed"):
+            self.assertEqual(kilix_local.answer("is playalong installed")[1], "playalong is not installed")
+
     def test_tabs_counts_and_focus_from_a_recorded_session(self):
         status, text = self.ask("what tabs are open?")
         self.assertEqual(status, 0)

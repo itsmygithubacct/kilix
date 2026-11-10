@@ -117,10 +117,23 @@ class CityWeatherTests(unittest.TestCase):
             'what the forecast is for Paris': ('Paris', '', 'week', ''),
             'whether i need an umbrella in Oslo': ('Oslo', '', '', 'umbrella'),
             'when the sunset is': ('', '', '', 'sunset'),
+            'tell me the weather for the next three days': ('', '', 'days 3', ''),
+            'will it rain in Paris in the next two days': ('Paris', '', 'days 2', 'rain'),
+            'forecast for the next couple of days': ('', '', 'days 2', ''),
+            'weather over the coming 6 days in Lima': ('Lima', '', 'days 6', ''),
+            'weather in the next 7 days': ('', '', 'week', ''),
+            # "the" belongs to the day phrase, not to a city called "the".
+            'what is the weather for the next week': ('', '', 'week', ''),
+            'what is the forecast for the next weekend': ('', '', 'weekend', ''),
         }
         for question, expected in cases.items():
             with self.subTest(question=question):
                 self.assertEqual(city.ask_query(question), city.Query(*expected))
+        for question in ('weather in the', 'weather for my', 'what is the weather in that'):
+            with self.subTest(question=question):
+                self.assertIsNone(city.ask_query(question))
+        with self.assertRaisesRegex(ValueError, 'up to 7 days'):
+            city.ask_query('weather for the next ten days')
 
     def test_saved_zip_is_read_and_never_written(self):
         before = self.settings.read_bytes()
@@ -193,6 +206,10 @@ class CityWeatherTests(unittest.TestCase):
         answer, _ = self.ask(city.Query('Seattle', when='week'))
         self.assertEqual(sum(line.endswith(('km/h',)) for line in answer.splitlines()), 7)
         self.assertNotIn('Tue 17 Nov', answer)
+        answer, _ = self.ask(city.Query('Seattle', when='days 3'))
+        days = [line for line in answer.splitlines() if line.endswith('km/h')]
+        self.assertEqual([line.partition(':')[0] for line in days],
+                         ['Today, Tue 10 Nov', 'Tomorrow, Wed 11 Nov', 'Thu 12 Nov'])
 
     def test_fahrenheit_reports_wind_in_mph(self):
         answer, params = self.ask(city.Query('Seattle', 'fahrenheit', when='tomorrow'))

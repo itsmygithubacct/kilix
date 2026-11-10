@@ -685,6 +685,14 @@ def _session_launch(provider: str) -> str:
     return f"run {run_id}\npane {pane_text}\nlog {log}"
 
 
+def _catalog_app(name: str, *, exact: bool) -> str | None:
+    try:
+        import kilix_self
+    except ImportError:
+        return None
+    return kilix_self.app_answer(name, exact=exact)
+
+
 def answer(text: str) -> tuple[int, str]:
     action = classify(text)
     if action is None:
@@ -699,7 +707,15 @@ def answer(text: str) -> tuple[int, str]:
     if kind == "uptime":
         return 0, _uptime()
     if kind == "package":
-        return 0, _package(arg)
+        # A catalog app's own id is the app. Any other name is a package
+        # first; the catalog answers only when no package has that name.
+        found = _catalog_app(arg, exact=True)
+        if found:
+            return 0, found
+        text = _package(arg)
+        if text == f"{arg} is not installed":
+            text = _catalog_app(arg, exact=False) or text
+        return 0, text
     if kind == "address":
         return 0, _address()
     if kind == "version":

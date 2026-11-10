@@ -64,19 +64,31 @@ def _apps_root() -> str:
     return apps_root()
 
 
-def _installed_apps() -> list[tuple[str, str]]:
+def _app_state(installer, spec) -> str:
+    """"ready" at this Kilix's catalog version, "other" when its folder holds
+    something else (an older version or an unfinished install), or ""."""
+    try:
+        if installer.ready(spec):
+            return "ready"
+    except Exception:  # an unreadable entry is not reported as installed
+        pass
+    try:
+        destination = Path(installer.destination(spec))
+        return "other" if destination.is_dir() and any(destination.iterdir()) else ""
+    except Exception:
+        return ""
+
+
+def _installed_apps() -> list[tuple[str, str, str]]:
     content, catalog = _catalog()
     installer = content.Installer(_apps_root())
     found = []
     for spec in catalog:
         if spec.kind != "app":
             continue
-        try:
-            ready = installer.ready(spec)
-        except Exception:  # an unreadable entry is not reported as installed
-            ready = None
-        if ready:
-            found.append((spec.content_id, spec.label or spec.content_id))
+        state = _app_state(installer, spec)
+        if state:
+            found.append((spec.content_id, spec.label or spec.content_id, state))
     return found
 
 
@@ -289,39 +301,57 @@ def _agents_text(state: list, count_only: bool = False) -> str:
 # --- apps, games, models ---------------------------------------------------
 
 def _apps_text() -> str:
-    apps = _installed_apps()
-    if not apps:
-        return "No catalog apps are installed. Install one with: kilix app install ID"
-    lines = [f"{_plural(len(apps), 'app')} installed from the Kilix catalog:"]
-    lines += _wrap([f"{label} ({cid})" if label != cid else cid for cid, label in apps])
-    lines.append("Open one with: kilix app run ID")
+    found = _installed_apps()
+    name = lambda cid, label: f"{label} ({cid})" if label != cid else cid  # noqa: E731
+    apps = [name(cid, label) for cid, label, state in found if state == "ready"]
+    other = [name(cid, label) for cid, label, state in found if state == "other"]
+    lines = [f"{_plural(len(apps), 'app')} installed from the Kilix catalog:" if apps else
+             "No catalog apps are installed at this Kilix's version."]
+    lines += _wrap(apps)
+    if other:
+        lines.append(f"Present, but not at this Kilix's version (older, or not finished installing): "
+                     f"{len(other)}")
+        lines += _wrap(other)
+        lines.append("Update one with: kilix app install ID")
+    lines.append("Open one with: kilix app run ID" if apps else "Install one with: kilix app install ID")
     return "\n".join(lines)
 
 
-def _app_installed(name: str) -> tuple[int, str]:
+def _app_installed(name: str, *, exact: bool = False) -> tuple[int, str]:
+    """exact: match the catalog id only, not a label or the id without "kilix-"."""
     content, catalog = _catalog()
     wanted = re.sub(r"\s+", "-", name.strip().casefold())
     spec = None
     for candidate in catalog:
         if candidate.kind not in ("app", "game"):
             continue
-        names = {candidate.content_id.casefold(), (candidate.label or "").casefold(),
-                 re.sub(r"\s+", "-", (candidate.label or "").casefold())}
-        if wanted in names or f"kilix-{wanted}" in names:
+        names = {candidate.content_id.casefold()} if exact else {
+            candidate.content_id.casefold(), (candidate.label or "").casefold(),
+            re.sub(r"\s+", "-", (candidate.label or "").casefold())}
+        if wanted in names or not exact and f"kilix-{wanted}" in names:
             spec = candidate
             break
     if spec is None:
         return NOT_SELF, ""
-    ready = None
-    try:
-        ready = content.Installer(_apps_root()).ready(spec)
-    except Exception:
-        ready = None
+    state = _app_state(content.Installer(_apps_root()), spec)
     label = spec.label or spec.content_id
-    if ready:
+    if state == "ready":
         return 0, f"Yes, {label} ({spec.content_id}) is installed."
     verb = "kilix games play" if spec.kind == "game" else "kilix app install"
+    if state == "other":
+        return 0, (f"{label} ({spec.content_id}) is present, but not at this Kilix's version "
+                   f"(older, or not finished installing). Update it with: {verb} {spec.content_id}")
     return 0, f"No, {label} ({spec.content_id}) is not installed. Install it with: {verb} {spec.content_id}"
+
+
+def app_answer(name: str, *, exact: bool = False) -> str | None:
+    """The catalog's answer to "is NAME installed", or None when no catalog app
+    or game is called that. For the package question in kilix_local."""
+    try:
+        status, text = _app_installed(name, exact=exact)
+    except Exception:  # no readable catalog: the package answer stands
+        return None
+    return text if status == 0 else None
 
 
 def _games_text() -> str:
