@@ -79,6 +79,9 @@ class AskLauncherTests(unittest.TestCase):
         shutil.copy2(ROOT / "config" / "kilix_volume.py", home / "config" / "kilix_volume.py")
         shutil.copy2(ROOT / "config" / "kilix_local.py", home / "config" / "kilix_local.py")
         shutil.copy2(ROOT / "config" / "kilix_alarm.py", home / "config" / "kilix_alarm.py")
+        for name in ("kilix_asktext.py", "kilix_when.py", "kilix_machine.py",
+                     "kilix_tools.py", "kilix_about.py"):
+            shutil.copy2(ROOT / "config" / name, home / "config" / name)
         sensor = (ROOT / "third_party" / "kilix-telemetry" / "src"
                   / "kilix_telemetry" / "sensors.py")
         sensor_home = (home / "third_party" / "kilix-telemetry" / "src"
@@ -715,6 +718,68 @@ def json_request(url):
         for question in ("what is the meaning of life in the pane title",
                          "open the meaning of life"):
             self.assertIsNone(kilix_facts.classify(question), question)
+
+    def test_worked_answers_do_not_use_needle(self):
+        expected = {
+            "what day of the week is july 4 2027?": "Sunday, 2027-07-04",
+            "is 2028 a leap year": "2028 is a leap year",
+            "how many days in february 2028?": "29 days in February 2028",
+            "square root of 144": "12",
+            "what is 2 to the power of 10?": "1024",
+            "what's 0x1f in decimal": "31",
+            "255 in hex": "0xff",
+            "how many feet in a mile?": "5280 ft",
+            "what is 5 feet 10 inches in cm": "177.8 cm",
+            "3 hours 20 minutes in seconds": "12000 s",
+            "is 91 prime": "no, 91 is not prime (7 × 13)",
+            "what is 20% tip on 45 dollars": "9.00 tip at 20%, 54.00 total",
+            "base64 encode hello": "aGVsbG8=",
+            "how many words in 'the quick brown fox'": "4",
+            "reverse the word kilix": "xilik",
+            "what is exit code 127": "exit 127: command not found",
+            "what does HTTP 404 mean": "HTTP 404 Not Found: Nothing matches the given URI",
+            "what's my hostname": socket.gethostname(),
+        }
+        for question, answer in expected.items():
+            asked = self.run_ask(question, ASK_TEST_MISSING="1")
+            self.assertEqual(asked.returncode, 0, (question, asked.stderr))
+            self.assertEqual(asked.stdout.strip(), answer, question)
+        coin = self.run_ask("flip a coin", ASK_TEST_MISSING="1")
+        self.assertIn(coin.stdout.strip(), ("heads", "tails"))
+        helped = self.run_ask("what can you do?", ASK_TEST_MISSING="1")
+        self.assertEqual(helped.returncode, 0, helped.stderr)
+        self.assertIn("how many days until Christmas", helped.stdout)
+        wrong = self.run_ask("5 kg in miles", ASK_TEST_MISSING="1")
+        self.assertEqual(wrong.returncode, 1)
+        self.assertIn("not the same kind of unit", wrong.stderr)
+        self.assertEqual(self.calls(), [])
+
+    def test_courtesy_is_removed_for_direct_answers_and_kept_for_needle(self):
+        polite = self.run_ask("Hey Kilix, could you tell me what 2 plus 2 is, please?",
+                              ASK_TEST_MISSING="1")
+        self.assertEqual((polite.returncode, polite.stdout.strip()), (0, "4"), polite.stderr)
+        leap = self.run_ask("do you know if 2028 is a leap year?", ASK_TEST_MISSING="1")
+        self.assertEqual((leap.returncode, leap.stdout.strip()), (0, "2028 is a leap year"))
+        named = self.run_ask("what is kilix", ASK_TEST_MISSING="1")
+        self.assertEqual(named.returncode, 0, named.stderr)
+        self.assertIn("terminal", named.stdout)
+        self.log.unlink(missing_ok=True)
+        typed = "Could you close the other panes, please?"
+        acted = self.run_ask("--yes", typed)
+        self.assertEqual(acted.returncode, 0, acted.stderr)
+        needle = [call["needle"] for call in self.calls() if "needle" in call]
+        self.assertEqual(needle, [["ask", "--yes", "--", typed]])
+
+    def test_new_answers_leave_commands_to_needle(self):
+        for request in ("close pane 3", "open the calculator", "split right and run htop",
+                        "pick up the focus bug session with omp, split right",
+                        "rename all jpgs to lowercase", "list files in ~/projects/../secrets",
+                        "what's in /etc/fstab", "is dictation-daemon-that-is-not-here running",
+                        "start codex in /tmp", "set the wallpaper to red"):
+            self.log.unlink(missing_ok=True)
+            asked = self.run_ask("--yes", request)
+            needle = [call["needle"] for call in self.calls() if "needle" in call]
+            self.assertEqual(needle, [["ask", "--yes", "--", request]], (request, asked.stdout))
 
     def test_machine_facts_do_not_use_needle(self):
         supply = self.root / "power"

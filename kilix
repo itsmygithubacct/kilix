@@ -3650,6 +3650,14 @@ case "${1:-}" in
           echo "  kilix ask \"list sessions\""
           echo "  kilix ask \"how do I list panes?\""
           echo "  kilix ask \"set an alarm\""
+          echo "Dates, this computer, units, text and chance are answered directly too:"
+          echo "  kilix ask \"how many days until Christmas?\""
+          echo "  kilix ask \"what time is it in Tokyo?\""
+          echo "  kilix ask \"what's using the most memory?\""
+          echo "  kilix ask \"5 miles in km\""
+          echo "  kilix ask \"what does chmod 755 mean?\""
+          echo "  kilix ask \"roll 2d6\""
+          echo "  kilix ask \"what can you do?\"   lists every kind of question"
           echo "  --yes    act without the yes/no prompt; not with --voice"
           echo "  --voice  dictate the request; the transcript can be edited first"
           echo "  --repl   stay and ask again until exit, quit, or the end of input"
@@ -3677,8 +3685,13 @@ case "${1:-}" in
     # A handler exit of 3 means the request is not that handler's.
     _ask_dispatch() {
       _ask_status=0
+      # The direct answers read the request without its courtesy ("hey kilix,
+      # could you ... please"). Needle and Help search get it as it was typed.
+      _ask_plain="$(python3 -B "$KILIX_HOME/config/kilix_asktext.py" "$_ask_text" 2>/dev/null)" \
+        || _ask_plain=""
+      [ -n "${_ask_plain//[[:space:]]/}" ] || _ask_plain="$_ask_text"
       _ask_weather_status=0
-      python3 -B "$KILIX_HOME/config/kilix_weather.py" --ask "$_ask_text" || _ask_weather_status=$?
+      python3 -B "$KILIX_HOME/config/kilix_weather.py" --ask "$_ask_plain" || _ask_weather_status=$?
       case "$_ask_weather_status" in
         0|1|2) _ask_status="$_ask_weather_status"; return 0 ;;
         3) ;; # Not a city weather question; preserve the normal Needle route.
@@ -3687,7 +3700,7 @@ case "${1:-}" in
       # A whole-request sum is exact arithmetic. Opening the calculator is not,
       # and still goes to Needle with everything else.
       _ask_calc_status=0
-      python3 -B "$KILIX_HOME/config/kilix_calc.py" --ask "$_ask_text" || _ask_calc_status=$?
+      python3 -B "$KILIX_HOME/config/kilix_calc.py" --ask "$_ask_plain" || _ask_calc_status=$?
       case "$_ask_calc_status" in
         0|1|2) _ask_status="$_ask_calc_status"; return 0 ;;
         3) ;;
@@ -3696,7 +3709,7 @@ case "${1:-}" in
       # Time, resources, and the pane list are reads. A how-to question is
       # documentation search and does not run a command.
       _ask_fact_status=0
-      python3 -B "$KILIX_HOME/config/kilix_facts.py" --ask "$_ask_text" || _ask_fact_status=$?
+      python3 -B "$KILIX_HOME/config/kilix_facts.py" --ask "$_ask_plain" || _ask_fact_status=$?
       case "$_ask_fact_status" in
         0|1|2) _ask_status="$_ask_fact_status"; return 0 ;;
         3) ;;
@@ -3721,7 +3734,7 @@ case "${1:-}" in
       # A temperature or fan sentence is one sysfs reading. The reader lives in
       # kilix-telemetry and does not start the sampler.
       _ask_sensor_status=0
-      python3 -B "$KILIX_HOME/config/kilix_sensors.py" --ask "$_ask_text" || _ask_sensor_status=$?
+      python3 -B "$KILIX_HOME/config/kilix_sensors.py" --ask "$_ask_plain" || _ask_sensor_status=$?
       case "$_ask_sensor_status" in
         0|1|2) _ask_status="$_ask_sensor_status"; return 0 ;;
         3) ;;
@@ -3730,7 +3743,7 @@ case "${1:-}" in
       # Checking or setting the volume uses kilix-volume and does not open the mixer.
       # Which speakers are on is the same read: the default sink, not a change.
       _ask_volume_status=0
-      python3 -B "$KILIX_HOME/config/kilix_volume.py" --ask "$_ask_text" || _ask_volume_status=$?
+      python3 -B "$KILIX_HOME/config/kilix_volume.py" --ask "$_ask_plain" || _ask_volume_status=$?
       case "$_ask_volume_status" in
         0|1|2) _ask_status="$_ask_volume_status"; return 0 ;;
         3) ;;
@@ -3740,7 +3753,7 @@ case "${1:-}" in
       # microphone is listening. None of these opens a panel, joins a network,
       # starts the player, or starts dictation.
       _ask_local_status=0
-      python3 -B "$KILIX_HOME/config/kilix_local.py" --ask "$_ask_text" || _ask_local_status=$?
+      python3 -B "$KILIX_HOME/config/kilix_local.py" --ask "$_ask_plain" || _ask_local_status=$?
       case "$_ask_local_status" in
         0|1|2) _ask_status="$_ask_local_status"; return 0 ;;
         3) ;;
@@ -3748,12 +3761,24 @@ case "${1:-}" in
       esac
       # Setting an alarm opens kilix-alarm. The window is the alarm.
       _ask_alarm_status=0
-      python3 -B "$KILIX_HOME/config/kilix_alarm.py" --ask "$_ask_text" || _ask_alarm_status=$?
+      python3 -B "$KILIX_HOME/config/kilix_alarm.py" --ask "$_ask_plain" || _ask_alarm_status=$?
       case "$_ask_alarm_status" in
         0|1|2) _ask_status="$_ask_alarm_status"; return 0 ;;
         3) ;;
         *) _ask_status=1; return 0 ;;
       esac
+      # Dates and other clocks, this computer, worked answers (roots, units,
+      # text, dice), and Ask itself. All are answers with nothing to confirm.
+      for _ask_more in kilix_when kilix_machine kilix_tools kilix_about; do
+        [ -f "$KILIX_HOME/config/$_ask_more.py" ] || continue
+        _ask_more_status=0
+        python3 -B "$KILIX_HOME/config/$_ask_more.py" --ask "$_ask_plain" || _ask_more_status=$?
+        case "$_ask_more_status" in
+          0|1|2) _ask_status="$_ask_more_status"; return 0 ;;
+          3) ;;
+          *) _ask_status=1; return 0 ;;
+        esac
+      done
       # The installed app, not `app run`: that pauses on any nonzero status, and a
       # declined plan is not an error to dismiss. Missing, it is reported, not built.
       _ask_needle="$(KILIX_APP_AUTO_INSTALL=0 \
