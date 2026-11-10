@@ -152,6 +152,58 @@ def json_request(url):
         self.assertTrue(self.calls())
         self.assertTrue(all("needle" not in call for call in self.calls()))
 
+    def test_repl_stays_open_after_an_answer_and_a_refusal(self):
+        result = subprocess.run(
+            [str(self.launcher), "ask", "--repl"],
+            input="what is three times five?\nopen the calculator\nwhat is 7x7+95/2\n",
+            env={**self.env, "ASK_TEST_MISSING": "1"},
+            capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), ["15", "96.5"])
+        self.assertIn("not installed", result.stderr)
+        self.assertEqual([call.get("needle") for call in self.calls()], [None])
+
+    def test_repl_quit_ends_even_when_the_last_answer_failed(self):
+        result = subprocess.run(
+            [str(self.launcher), "ask", "--repl", "--yes"],
+            input="close tab 2\nquit\nwhat is three times five?\n",
+            env={**self.env, "ASK_TEST_STATUS": "1"},
+            capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("15", result.stdout)
+        needle = [call["needle"] for call in self.calls() if "needle" in call]
+        self.assertEqual(needle, [["ask", "--yes", "--", "close tab 2"]])
+
+    def test_repl_exit_is_not_a_request(self):
+        result = subprocess.run(
+            [str(self.launcher), "ask", "--repl", "what is three times five?"],
+            input="  Exit  \nwhat is 7x7+95/2\n",
+            env={**self.env, "ASK_TEST_MISSING": "1"},
+            capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "15")
+        self.assertEqual(self.calls(), [])
+
+    def test_repl_on_a_terminal_prompts_again(self):
+        status, output = self.run_tty(
+            ["--repl"],
+            [(b"Ask Kilix: ", b"what is three times five?\n"),
+             (b"Ask Kilix: ", b"exit\n")],
+            ASK_TEST_MISSING="1")
+        self.assertEqual(status, 0, output)
+        self.assertIn("15", output)
+        self.assertEqual(output.count("Ask Kilix: "), 2)
+        self.assertEqual(self.calls(), [])
+
+    def test_a_request_without_repl_does_not_read_another_line(self):
+        result = subprocess.run(
+            [str(self.launcher), "ask", "what is three times five?"],
+            input="what is 7x7+95/2\n",
+            env={**self.env, "ASK_TEST_MISSING": "1"},
+            capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "15")
+
     def test_direct_reads_do_not_use_needle(self):
         clock = self.run_ask("what time is it?", ASK_TEST_MISSING="1")
         self.assertEqual(clock.returncode, 0, clock.stderr)
@@ -825,6 +877,8 @@ def json_request(url):
         result = self.run_ask("--help")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("--yes", result.stdout)
+        self.assertIn("--repl", result.stdout)
+        self.assertIn("stay and ask again", result.stdout)
         self.assertIn("acts only on a typed yes", result.stdout)
         self.assertIn("unsure route still does not run", result.stdout)
         self.assertEqual(self.calls(), [])
@@ -836,7 +890,8 @@ def json_request(url):
         self.assertEqual([call.get("needle") for call in self.calls()], [None])
 
     def test_usage_errors_exit_2_and_run_nothing(self):
-        for arguments in ((), ("   ",), ("--verbose", "x"), ("--voice", "split right"), ("--voice",)):
+        for arguments in ((), ("   ",), ("--verbose", "x"), ("--voice", "split right"),
+                          ("--voice",), ("--repl",), ("--repl", "--yes")):
             with self.subTest(arguments):
                 self.assertEqual(self.run_ask(*arguments).returncode, 2)
         self.assertEqual(self.calls(), [])

@@ -3580,14 +3580,16 @@ case "${1:-}" in
     # route and the plan and acts only on a typed yes; an unsure route never
     # offers one. --yes skips that prompt and still does not run a refusal or an
     # unsure route. Voice adds a transcript to correct before routing; it never
-    # removes a confirmation, so it cannot be combined with --yes. Nothing here
-    # installs Needle or a speech runtime.
+    # removes a confirmation, so it cannot be combined with --yes. --repl stays
+    # after each answer, including a refusal, until exit, quit, or EOF. Nothing
+    # here installs Needle or a speech runtime.
     shift
     _ask_voice=0
     _ask_hold=0
     _ask_yes=0
+    _ask_repl=0
     _ask_options=()
-    _ask_usage="usage: $_self ask [--model lfm2|lfm3|needle3|grammar] [--commands-candidate FILE] [--yes] [--voice] [--hold] [--] [REQUEST...]"
+    _ask_usage="usage: $_self ask [--model lfm2|lfm3|needle3|grammar] [--commands-candidate FILE] [--yes] [--voice] [--repl] [--hold] [--] [REQUEST...]"
     # Every exit, a usage error included, waits for Enter under --hold, so the
     # tab it runs in stays readable. Statuses are 0, 1 and 2 only.
     for _ask_arg in "$@"; do
@@ -3624,6 +3626,7 @@ case "${1:-}" in
           [ -n "${1#*=}" ] || { echo "$_ask_usage" >&2; _ask_close 2; }
           _ask_options+=("$1"); shift ;;
         --yes) _ask_yes=1; shift ;;
+        --repl) _ask_repl=1; shift ;;
         --hold) _ask_hold=1; shift ;;
         -h|--help|help)
           echo "$_ask_usage"
@@ -3649,6 +3652,7 @@ case "${1:-}" in
           echo "  kilix ask \"set an alarm\""
           echo "  --yes    act without the yes/no prompt; not with --voice"
           echo "  --voice  dictate the request; the transcript can be edited first"
+          echo "  --repl   stay and ask again until exit, quit, or the end of input"
           echo "  --hold   wait for Enter before returning, so a tab stays readable"
           echo "  --model  lfm2, lfm3, needle3, or grammar for this request; overrides KILIX_ASK_COMMANDS_BACKEND"
           echo "           and the saved Ask selection (lfm2 when none is saved)"
@@ -3656,7 +3660,7 @@ case "${1:-}" in
           echo "Install the alternate: kilix-needle install --commands needle3"
           echo "Save the selection: kilix-needle workflows select --model lfm2|lfm3|needle3|grammar"
           echo
-          echo "With no request, it asks for one. Exit status: 0 answered/acted, 1 not answered/acted"
+          echo "With no request, it asks for one. --repl keeps asking. Exit status: 0 answered/acted, 1 not answered/acted"
           echo "(declined, refused or unsure), 2 usage."
           _ask_close 0 ;;
         --) shift; break ;;
@@ -3669,12 +3673,108 @@ case "${1:-}" in
       echo "kilix ask: --yes cannot be combined with --voice" >&2
       _ask_close 2
     fi
-    if [ "$_ask_voice" = 1 ]; then
-      [ -z "$_ask_text" ] || { echo "kilix ask: --voice takes no request text" >&2; _ask_close 2; }
-      [ -t 0 ] || { echo "kilix ask: --voice needs a terminal to confirm in" >&2; _ask_close 2; }
+    # One request. A direct answer or a Needle result sets _ask_status.
+    # A handler exit of 3 means the request is not that handler's.
+    _ask_dispatch() {
+      _ask_status=0
+      _ask_weather_status=0
+      python3 -B "$KILIX_HOME/config/kilix_weather.py" --ask "$_ask_text" || _ask_weather_status=$?
+      case "$_ask_weather_status" in
+        0|1|2) _ask_status="$_ask_weather_status"; return 0 ;;
+        3) ;; # Not a city weather question; preserve the normal Needle route.
+        *) _ask_status=1; return 0 ;;
+      esac
+      # A whole-request sum is exact arithmetic. Opening the calculator is not,
+      # and still goes to Needle with everything else.
+      _ask_calc_status=0
+      python3 -B "$KILIX_HOME/config/kilix_calc.py" --ask "$_ask_text" || _ask_calc_status=$?
+      case "$_ask_calc_status" in
+        0|1|2) _ask_status="$_ask_calc_status"; return 0 ;;
+        3) ;;
+        *) _ask_status=1; return 0 ;;
+      esac
+      # Time, resources, and the pane list are reads. A how-to question is
+      # documentation search and does not run a command.
+      _ask_fact_status=0
+      python3 -B "$KILIX_HOME/config/kilix_facts.py" --ask "$_ask_text" || _ask_fact_status=$?
+      case "$_ask_fact_status" in
+        0|1|2) _ask_status="$_ask_fact_status"; return 0 ;;
+        3) ;;
+        4)
+          python3 "$KILIX_HOME/config/content_app.py" run kilix-help-llm -- lookup "$_ask_text" \
+            || { _ask_status=$?; return 0; }
+          _ask_status=0
+          return 0 ;;
+        *) _ask_status=1; return 0 ;;
+      esac
+      # A temperature or fan sentence is one sysfs reading. The reader lives in
+      # kilix-telemetry and does not start the sampler.
+      _ask_sensor_status=0
+      python3 -B "$KILIX_HOME/config/kilix_sensors.py" --ask "$_ask_text" || _ask_sensor_status=$?
+      case "$_ask_sensor_status" in
+        0|1|2) _ask_status="$_ask_sensor_status"; return 0 ;;
+        3) ;;
+        *) _ask_status=1; return 0 ;;
+      esac
+      # Checking or setting the volume uses kilix-volume and does not open the mixer.
+      # Which speakers are on is the same read: the default sink, not a change.
+      _ask_volume_status=0
+      python3 -B "$KILIX_HOME/config/kilix_volume.py" --ask "$_ask_text" || _ask_volume_status=$?
+      case "$_ask_volume_status" in
+        0|1|2) _ask_status="$_ask_volume_status"; return 0 ;;
+        3) ;;
+        *) _ask_status=1; return 0 ;;
+      esac
+      # Brightness, the network name, the current track, and whether the
+      # microphone is listening. None of these opens a panel, joins a network,
+      # starts the player, or starts dictation.
+      _ask_local_status=0
+      python3 -B "$KILIX_HOME/config/kilix_local.py" --ask "$_ask_text" || _ask_local_status=$?
+      case "$_ask_local_status" in
+        0|1|2) _ask_status="$_ask_local_status"; return 0 ;;
+        3) ;;
+        *) _ask_status=1; return 0 ;;
+      esac
+      # Setting an alarm opens kilix-alarm. The window is the alarm.
+      _ask_alarm_status=0
+      python3 -B "$KILIX_HOME/config/kilix_alarm.py" --ask "$_ask_text" || _ask_alarm_status=$?
+      case "$_ask_alarm_status" in
+        0|1|2) _ask_status="$_ask_alarm_status"; return 0 ;;
+        3) ;;
+        *) _ask_status=1; return 0 ;;
+      esac
+      # The installed app, not `app run`: that pauses on any nonzero status, and a
+      # declined plan is not an error to dismiss. Missing, it is reported, not built.
+      _ask_needle="$(KILIX_APP_AUTO_INSTALL=0 \
+        python3 "$KILIX_HOME/config/content_app.py" install kilix-needle)" || {
+        echo "kilix ask: Needle is not installed; '$_self app install kilix-needle' installs it" >&2
+        _ask_status=1
+        return 0
+      }
+      KILIX_CONTENT_ROOT="$(python3 -B -c '
+import sys
+sys.path.insert(0, sys.argv[1])
+from kilix_sdk._content_runtime import apps_root
+print(apps_root())
+' "$KILIX_HOME/config")" || {
+        echo "kilix ask: cannot find the Kilix content root" >&2
+        _ask_status=1
+        return 0
+      }
+      export KILIX_CONTENT_ROOT
+      _ask_status=0
+      _ask_mode=--interactive
+      if [ "$_ask_yes" = 1 ]; then
+        _ask_mode=--yes
+      fi
+      KILIX_APP_ID=kilix-needle KILIX_APP_SURFACE=current \
+        "$_ask_needle" ask "$_ask_mode" "${_ask_options[@]}" -- "$_ask_text" || _ask_status=$?
+      case "$_ask_status" in 0|1|2) ;; *) _ask_status=1 ;; esac
+      return 0
+    }
+    # Ctrl-C cancels the utterance, so it is discarded rather than decoded.
+    _ask_listen() {
       echo "Listening: say one request. Silence ends it."
-      # Ctrl-C cancels the request, so it discards the utterance rather than
-      # finishing it: no transcript to wait for, and no decode to hold the lease.
       if ! _ask_text="$("$_self" dictate --discard-on-interrupt)" \
         || [ -z "${_ask_text//[[:space:]]/}" ]; then
         echo "kilix ask: nothing was transcribed." >&2
@@ -3683,100 +3783,71 @@ case "${1:-}" in
         _ask_close 1
       fi
       read -r -e -i "$_ask_text" -p "Request (edit, then Enter): " _ask_text || _ask_close 1
+      return 0
+    }
+    # exit and quit end --repl. Any other whole line is a request.
+    _ask_repl_command() {
+      _ask_word="$_ask_text"
+      _ask_word="${_ask_word#"${_ask_word%%[![:space:]]*}"}"
+      _ask_word="${_ask_word%"${_ask_word##*[![:space:]]}"}"
+      case "$_ask_word" in
+        [Ee][Xx][Ii][Tt]|[Qq][Uu][Ii][Tt]) return 0 ;;
+      esac
+      return 1
+    }
+    # A terminal end is the person leaving. A pipe with no completed request
+    # is usage; a pipe that did answer keeps the last request's status.
+    _ask_repl_eof() {
+      if [ -t 0 ]; then
+        echo >&2
+        _ask_close 0
+      fi
+      if [ "$_ask_ran" = 0 ]; then
+        echo "$_ask_usage" >&2
+        _ask_close 2
+      fi
+      _ask_close "$_ask_status"
+    }
+    if [ "$_ask_repl" = 1 ]; then
+      _ask_ran=0
+      _ask_status=0
+      if [ "$_ask_voice" = 1 ]; then
+        [ -z "$_ask_text" ] || { echo "kilix ask: --voice takes no request text" >&2; _ask_close 2; }
+        [ -t 0 ] || { echo "kilix ask: --voice needs a terminal to confirm in" >&2; _ask_close 2; }
+        while :; do
+          _ask_listen
+          [ -n "${_ask_text//[[:space:]]/}" ] || continue
+          _ask_repl_command && _ask_close 0
+          _ask_dispatch
+          _ask_ran=1
+        done
+      fi
+      if [ -n "${_ask_text//[[:space:]]/}" ]; then
+        _ask_repl_command && _ask_close 0
+        _ask_dispatch
+        _ask_ran=1
+      fi
+      while :; do
+        if [ -t 0 ]; then
+          read -r -e -p "Ask Kilix: " _ask_text || _ask_repl_eof
+        else
+          IFS= read -r _ask_text || _ask_repl_eof
+        fi
+        [ -n "${_ask_text//[[:space:]]/}" ] || continue
+        _ask_repl_command && _ask_close 0
+        _ask_dispatch
+        _ask_ran=1
+      done
+    fi
+    if [ "$_ask_voice" = 1 ]; then
+      [ -z "$_ask_text" ] || { echo "kilix ask: --voice takes no request text" >&2; _ask_close 2; }
+      [ -t 0 ] || { echo "kilix ask: --voice needs a terminal to confirm in" >&2; _ask_close 2; }
+      _ask_listen
     elif [ -z "${_ask_text//[[:space:]]/}" ] && [ -t 0 ]; then
       read -r -e -p "Ask Kilix: " _ask_text || _ask_close 1
     fi
     [ -n "${_ask_text//[[:space:]]/}" ] || { echo "$_ask_usage" >&2; _ask_close 2; }
-    _ask_weather_status=0
-    python3 -B "$KILIX_HOME/config/kilix_weather.py" --ask "$_ask_text" || _ask_weather_status=$?
-    case "$_ask_weather_status" in
-      0|1|2) _ask_close "$_ask_weather_status" ;;
-      3) ;; # Not a city weather question; preserve the normal Needle route.
-      *) _ask_close 1 ;;
-    esac
-    # A whole-request sum is exact arithmetic. Opening the calculator is not,
-    # and still goes to Needle with everything else.
-    _ask_calc_status=0
-    python3 -B "$KILIX_HOME/config/kilix_calc.py" --ask "$_ask_text" || _ask_calc_status=$?
-    case "$_ask_calc_status" in
-      0|1|2) _ask_close "$_ask_calc_status" ;;
-      3) ;;
-      *) _ask_close 1 ;;
-    esac
-    # Time, resources, and the pane list are reads. A how-to question is
-    # documentation search and does not run a command.
-    _ask_fact_status=0
-    python3 -B "$KILIX_HOME/config/kilix_facts.py" --ask "$_ask_text" || _ask_fact_status=$?
-    case "$_ask_fact_status" in
-      0|1|2) _ask_close "$_ask_fact_status" ;;
-      3) ;;
-      4)
-        python3 "$KILIX_HOME/config/content_app.py" run kilix-help-llm -- lookup "$_ask_text" \
-          || _ask_close $?
-        _ask_close 0 ;;
-      *) _ask_close 1 ;;
-    esac
-    # A temperature or fan sentence is one sysfs reading. The reader lives in
-    # kilix-telemetry and does not start the sampler.
-    _ask_sensor_status=0
-    python3 -B "$KILIX_HOME/config/kilix_sensors.py" --ask "$_ask_text" || _ask_sensor_status=$?
-    case "$_ask_sensor_status" in
-      0|1|2) _ask_close "$_ask_sensor_status" ;;
-      3) ;;
-      *) _ask_close 1 ;;
-    esac
-    # Checking or setting the volume uses kilix-volume and does not open the mixer.
-    # Which speakers are on is the same read: the default sink, not a change.
-    _ask_volume_status=0
-    python3 -B "$KILIX_HOME/config/kilix_volume.py" --ask "$_ask_text" || _ask_volume_status=$?
-    case "$_ask_volume_status" in
-      0|1|2) _ask_close "$_ask_volume_status" ;;
-      3) ;;
-      *) _ask_close 1 ;;
-    esac
-    # Brightness, the network name, the current track, and whether the
-    # microphone is listening. None of these opens a panel, joins a network,
-    # starts the player, or starts dictation.
-    _ask_local_status=0
-    python3 -B "$KILIX_HOME/config/kilix_local.py" --ask "$_ask_text" || _ask_local_status=$?
-    case "$_ask_local_status" in
-      0|1|2) _ask_close "$_ask_local_status" ;;
-      3) ;;
-      *) _ask_close 1 ;;
-    esac
-    # Setting an alarm opens kilix-alarm. The window is the alarm.
-    _ask_alarm_status=0
-    python3 -B "$KILIX_HOME/config/kilix_alarm.py" --ask "$_ask_text" || _ask_alarm_status=$?
-    case "$_ask_alarm_status" in
-      0|1|2) _ask_close "$_ask_alarm_status" ;;
-      3) ;;
-      *) _ask_close 1 ;;
-    esac
-    # The installed app, not `app run`: that pauses on any nonzero status, and a
-    # declined plan is not an error to dismiss. Missing, it is reported, not built.
-    _ask_needle="$(KILIX_APP_AUTO_INSTALL=0 \
-      python3 "$KILIX_HOME/config/content_app.py" install kilix-needle)" || {
-      echo "kilix ask: Needle is not installed; '$_self app install kilix-needle' installs it" >&2
-      _ask_close 1
-    }
-    KILIX_CONTENT_ROOT="$(python3 -B -c '
-import sys
-sys.path.insert(0, sys.argv[1])
-from kilix_sdk._content_runtime import apps_root
-print(apps_root())
-' "$KILIX_HOME/config")" || {
-      echo "kilix ask: cannot find the Kilix content root" >&2
-      _ask_close 1
-    }
-    export KILIX_CONTENT_ROOT
-    _ask_status=0
-    _ask_mode=--interactive
-    if [ "$_ask_yes" = 1 ]; then
-      _ask_mode=--yes
-    fi
-    KILIX_APP_ID=kilix-needle KILIX_APP_SURFACE=current \
-      "$_ask_needle" ask "$_ask_mode" "${_ask_options[@]}" -- "$_ask_text" || _ask_status=$?
-    case "$_ask_status" in 0|1|2) ;; *) _ask_status=1 ;; esac
+    _ask_dispatch
     _ask_close "$_ask_status" ;;
   pdf-view|pdf-viewer)
     # Viewer and converter are separate catalog applications. The viewer
