@@ -504,7 +504,9 @@ print(json.dumps(reply))
 '''
         result, code = self.launch('PASSWORD='+repr(str(password))+'\n'+actor,None,read_only=True,
                                   via_launcher=True,owned_panes=(7,),
-                                  launch_env={'KILIX_KITTEN':str(client),'KILIX_RC_PASSWORD_FILE':str(password)})
+                                  # This fixture is not running beneath a broker session.
+                                  launch_env={'KILIX_KITTEN':str(client),'KILIX_RC_PASSWORD_FILE':str(password),
+                                              'KITTY_PTY_BROKER_SESSION':''})
         self.assertEqual(code,0,result)
 
     def test_pane_timeout_serialization_reaches_native_status(self):
