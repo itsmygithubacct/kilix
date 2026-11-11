@@ -92,14 +92,39 @@ class CloseUITests(unittest.TestCase):
         self.assertEqual(calls, [window, window, window])
         self.assertEqual(boss.confirm_desktop_close.call_count, 3)
 
-    def test_nonbroker_refuses_without_helper_or_legacy_close(self):
-        window=self.window(['codex']);window.child.is_pty_brokered=False
-        errors=[];boss=SimpleNamespace(show_error=lambda *args:errors.append(args))
-        fast=ModuleType('kitty.fast_data_types');fast.add_timer=lambda *args:self.fail('must not schedule')
-        tabs=ModuleType('kitty.tabs');tabs.SpecialWindow=object
-        with patch.dict(sys.modules,{'kitty.fast_data_types':fast,'kitty.tabs':tabs}), patch.object(ui.subprocess,'run',side_effect=AssertionError('must not launch')):
-            self.assertTrue(ui.show(boss,window))
-        self.assertEqual(len(errors),1)
+    def test_plain_close_needs_no_broker_helper_or_log(self):
+        for brokered in (True, False):
+            window = self.window(['codex'])
+            window.child.is_pty_brokered = brokered
+            calls = []
+            boss = SimpleNamespace(window_id_map={1: window},
+                choose=lambda *a, **k: calls.append(a),
+                close_window_explicitly_with_error=Mock())
+            fast = ModuleType('kitty.fast_data_types')
+            fast.add_timer = lambda *a: self.fail('plain close scheduled handoff')
+            tabs = ModuleType('kitty.tabs'); tabs.SpecialWindow = object
+            with patch.dict(sys.modules, {'kitty.fast_data_types': fast, 'kitty.tabs': tabs}), \
+                    patch.object(ui.subprocess, 'run', side_effect=AssertionError('no helper')):
+                self.assertTrue(ui.show(boss, window))
+                self.assertIn('x:Close pane', calls[0])
+                calls[0][1]('x')
+            boss.close_window_explicitly_with_error.assert_called_once_with(window)
+
+    def test_nonbroker_transfer_refuses_but_plain_close_remains_available(self):
+        window = self.window(['codex']); window.child.is_pty_brokered = False
+        calls = []; errors = []
+        boss = SimpleNamespace(window_id_map={1: window},
+            choose=lambda *a, **k: calls.append(a), show_error=lambda *a: errors.append(a),
+            close_window_explicitly_with_error=Mock())
+        fast = ModuleType('kitty.fast_data_types'); fast.add_timer = Mock()
+        tabs = ModuleType('kitty.tabs'); tabs.SpecialWindow = object
+        with patch.dict(sys.modules, {'kitty.fast_data_types': fast, 'kitty.tabs': tabs}):
+            ui.show(boss, window)
+            calls[0][1]('l')
+            self.assertEqual(len(errors), 1)
+            calls[0][1]('x')
+        boss.close_window_explicitly_with_error.assert_called_once_with(window)
+        fast.add_timer.assert_not_called()
 
     def test_cancel_and_stale_callback_do_not_prepare_or_close(self):
         window = self.window(['codex']); calls=[]
@@ -116,6 +141,7 @@ class CloseUITests(unittest.TestCase):
             args[1]('c')
             boss.window_id_map[1]=self.window(['codex'])
             args[1]('b')
+            args[1]('x')
         self.assertFalse(ui._busy)
 
     def test_preparation_receipt_arm_close_commit_order_and_duplicate_click(self):
