@@ -46,6 +46,24 @@ def checkpoint():
         raise InterruptedError('provider preparation interrupted')
 
 
+def _ensure_default_qwen() -> bool:
+    """Show the default Qwen model's licence on first use. A no leaves it uninstalled."""
+    value = os.environ.get('KILIX_MODEL_AUTO_INSTALL')
+    if value is not None and value.strip().casefold() in {'0', 'no', 'false', 'off'}:
+        return False
+    try:
+        interactive = sys.stdin.isatty() and sys.stdout.isatty()
+    except (AttributeError, OSError, ValueError):
+        interactive = False
+    if not interactive:
+        return False
+    kilix = Path(__file__).resolve().parents[2] / 'kilix'
+    if not kilix.is_file():
+        return False
+    completed = subprocess.run([str(kilix), 'models', 'ensure', MODEL], check=False)
+    return completed.returncode == 0
+
+
 def clean_environment():
     environment = {k:v for k,v in os.environ.items()
         if not k.startswith(('UV_','PIP_','PYTHON','GIT_'))
@@ -296,6 +314,11 @@ def prepare(args):
         effective = json.loads(owned_run(provider,[python,'-I','-B','-c',preflight],
                                         environment,timeout=600,capture=True))
         models = [name for name in MODELS if name in effective['ready']]
+        if not models or effective['receipt_root'] is None:
+            if _ensure_default_qwen():
+                effective = json.loads(owned_run(provider, [python, '-I', '-B', '-c', preflight],
+                                                environment, timeout=600, capture=True))
+                models = [name for name in MODELS if name in effective['ready']]
         if not models or effective['receipt_root'] is None:
             raise ValueError('no installed Qwen model has a licence receipt; '
                              'run kilix models install <model> in a terminal first')

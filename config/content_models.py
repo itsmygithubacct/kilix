@@ -29,6 +29,7 @@ import argparse
 from contextlib import ExitStack
 import importlib
 import inspect
+import io
 import json
 import math
 import os
@@ -50,6 +51,61 @@ _SAFE_CONTROLS = "\n\t"
 
 class SetupError(RuntimeError):
     """An explicit setup request could not safely proceed."""
+
+
+def _model_auto_install_enabled() -> bool:
+    value = os.environ.get("KILIX_MODEL_AUTO_INSTALL")
+    if value is None:
+        return True
+    return value.strip().casefold() not in {"0", "no", "false", "off"}
+
+
+def _terminal(source, output) -> bool:
+    try:
+        return bool(source.isatty() and output.isatty() and hasattr(output, "buffer"))
+    except (AttributeError, OSError, ValueError):
+        return False
+
+
+class _InstallRequest:
+    """The fields ``_install`` reads. First use has no ``--from`` directory."""
+
+    def __init__(self, root: str, timeout: float = 900.0):
+        self.root = root
+        self.timeout = timeout
+        self.supplied = None
+
+
+def ensure_installed(asset_id: str, *, root: str | None = None,
+                     source=None, output=None, errors=None,
+                     timeout: float = 900.0) -> None:
+    """Install one catalog model on first use, or raise SetupError.
+
+    A covering receipt returns immediately. Otherwise a terminal runs the same
+    install as ``kilix models install``: the licence screen, the y/N question,
+    and the typed accept. Nothing here answers either question. No terminal,
+    or ``KILIX_MODEL_AUTO_INSTALL=0``, raises the verify refusal. Declining
+    the licence raises SetupError and writes no receipt.
+    """
+    source = sys.stdin if source is None else source
+    output = sys.stdout if output is None else output
+    errors = sys.stderr if errors is None else errors
+    api = _api()
+    lic = _license()
+    spec = _verified_catalog(api).require_asset(asset_id)
+    root = apps_root() if root is None else root
+    try:
+        _verify(api, lic, spec, root, io.StringIO())
+        return
+    except SetupError:
+        pass
+    if not _model_auto_install_enabled() or not _terminal(source, output):
+        raise SetupError("no stored receipt covers this exact model and manifest; "
+                         f"run kilix models install {spec.asset_id} in a terminal")
+    status = _install(api, lic, spec, _InstallRequest(root, timeout), source, output, errors)
+    if status != 0:
+        raise SetupError(f"{spec.asset_id} was not installed; the licence was not accepted")
+    _verify(api, lic, spec, root, io.StringIO())
 
 
 def _api():
@@ -435,6 +491,12 @@ def _parser() -> argparse.ArgumentParser:
     install.add_argument("--timeout", type=_timeout, default=900.0,
                          help="per ordinary acquisition/build command ceiling, 1..3600 seconds (default 900)")
     install.add_argument("--from", dest="supplied", metavar="DIR", help=_FROM_HELP)
+    ensure = commands.add_parser(
+        "ensure",
+        help="on first use, install one model when a terminal can answer its licence")
+    ensure.add_argument("asset")
+    ensure.add_argument("--timeout", type=_timeout, default=900.0,
+                        help="per ordinary acquisition/build command ceiling, 1..3600 seconds (default 900)")
     return parser
 
 
@@ -458,6 +520,9 @@ def main(argv=None) -> int:
             _json(_plan(lic, spec, args.root), sys.stdout)
             return 0
         if args.command == "verify":
+            return _verify(api, lic, spec, args.root, sys.stdout)
+        if args.command == "ensure":
+            ensure_installed(args.asset, root=args.root, timeout=args.timeout)
             return _verify(api, lic, spec, args.root, sys.stdout)
         return _install(api, lic, spec, args, sys.stdin, sys.stdout, sys.stderr)
     except KeyboardInterrupt:

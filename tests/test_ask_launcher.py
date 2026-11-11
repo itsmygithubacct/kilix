@@ -1,4 +1,4 @@
-"""`kilix ask`: city weather or one request to installed Needle, never an install."""
+"""`kilix ask`: city weather or one request to Needle. First use may install it."""
 import json
 import os
 import pathlib
@@ -38,6 +38,19 @@ if sys.argv[1:] != ["install", "kilix-needle"] or os.environ.get("ASK_TEST_MISSI
     print("kilix app kilix-needle: not installed", file=sys.stderr)
     raise SystemExit(1)
 print(os.environ["ASK_TEST_NEEDLE"])
+'''
+
+# First use on a terminal runs `content_models.py ensure <asset>`. This fixture
+# records that call. A declined licence exits 1 and Ask must not run Needle.
+CONTENT_MODELS = '''\
+import json, os, sys
+log = os.environ.get("ASK_TEST_LOG")
+if log and sys.argv[1:2] == ["ensure"]:
+    with open(log, "a") as stream:
+        stream.write(json.dumps({"models_ensure": sys.argv[1:]}) + "\\n")
+if os.environ.get("ASK_TEST_MODEL_DECLINED"):
+    raise SystemExit(1)
+raise SystemExit(0)
 '''
 
 NEEDLE = '''\
@@ -91,6 +104,7 @@ class AskLauncherTests(unittest.TestCase):
         sensor_home.parent.mkdir(parents=True)
         shutil.copy2(sensor, sensor_home)
         (home / "config" / "content_app.py").write_text(CONTENT_APP)
+        (home / "config" / "content_models.py").write_text(CONTENT_MODELS)
         needle = self.root / "needle"
         needle.write_text(NEEDLE)
         needle.chmod(0o755)
@@ -277,7 +291,7 @@ def json_request(url):
         install = [call for call in self.calls() if "content_app" in call]
         self.assertTrue(install)
         self.assertTrue(all(call["content_app"][:2] == ["install", "kilix-help-llm"] for call in install))
-        self.assertTrue(all(call["auto_install"] == "0" for call in install))
+        self.assertTrue(all(call["auto_install"] is None for call in install))
         self.assertTrue(all("run" not in call["content_app"] for call in install))
         missing = self.run_ask(
             "how do I list panes?", ASK_TEST_MISSING="1", ASK_TEST_HELP_MISSING="1")
@@ -1061,11 +1075,48 @@ def json_request(url):
                 process.kill()
         return status, output.decode(errors="replace")
 
+    def test_a_piped_ask_does_not_install_the_command_model(self):
+        result = self.run_ask("close tab 2")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([call for call in self.calls() if "models_ensure" in call], [])
+
+    def test_a_terminal_ask_ensures_the_selected_command_model(self):
+        for model, asset in (("lfm2", "lfm2-kilix-commands"),
+                             ("lfm3", "lfm3-kilix-commands"),
+                             ("needle3", "needle3-kilix-commands")):
+            with self.subTest(model):
+                self.log.write_text("")
+                status, output = self.run_tty(
+                    ["--model", model, "--hold", "--", "close tab 2"], b"\n")
+                self.assertEqual(status, 0, output)
+                ensured = [call for call in self.calls() if "models_ensure" in call]
+                self.assertEqual(ensured, [{"models_ensure": ["ensure", asset]}])
+                self.assertIn("--commands-backend", self.calls()[-1]["needle"])
+                self.assertIn(model, self.calls()[-1]["needle"])
+
+    def test_grammar_on_a_terminal_installs_no_command_model(self):
+        status, output = self.run_tty(
+            ["--model", "grammar", "--hold", "--", "close tab 2"], b"\n")
+        self.assertEqual(status, 0, output)
+        self.assertEqual([call for call in self.calls() if "models_ensure" in call], [])
+        self.assertIn("grammar", self.calls()[-1]["needle"])
+
+    def test_a_declined_command_model_does_not_run_needle(self):
+        status, output = self.run_tty(
+            ["--model", "needle3", "--hold", "--", "close tab 2"], b"\n",
+            ASK_TEST_MODEL_DECLINED="1")
+        self.assertEqual(status, 1, output)
+        self.assertIn("needle3-kilix-commands was not installed", output)
+        self.assertEqual(
+            [call for call in self.calls() if "models_ensure" in call],
+            [{"models_ensure": ["ensure", "needle3-kilix-commands"]}])
+        self.assertFalse(any("needle" in call for call in self.calls()))
+
     def test_a_request_runs_the_installed_app_interactively_and_never_installs(self):
         result = self.run_ask("close", "tab 2")
         self.assertEqual(result.returncode, 0, result.stderr)
         install, needle = self.calls()
-        self.assertEqual(install, {"content_app": ["install", "kilix-needle"], "auto_install": "0"})
+        self.assertEqual(install, {"content_app": ["install", "kilix-needle"], "auto_install": None})
         self.assertEqual(needle["needle"], ["ask", "--interactive", "--", "close tab 2"])
         self.assertEqual(needle["app"], "kilix-needle")
         self.assertTrue(needle["root"].endswith("desktop-apps"), needle["root"])

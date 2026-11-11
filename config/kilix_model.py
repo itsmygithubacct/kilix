@@ -7,8 +7,9 @@ Nothing here downloads, runs a command the reply names, or answers without
 saying the answer came from a model.
 
 Setup registers the Kilix content asset with Ollama. The asset is installed,
-with its licence agreement, by `kilix models install`; setup only checks that
-install with `kilix models verify` and uploads the verified blobs.
+with its licence agreement, by `kilix models install`. On a terminal, first
+use runs that install and waits for the same yes. It does not agree for you.
+Without a terminal, setup only checks with `kilix models verify`.
 """
 
 from __future__ import annotations
@@ -243,8 +244,22 @@ def label(model: Admitted) -> str:
     return f"Model answer ({model.display}, on this computer). It can be wrong."
 
 
+def _first_use() -> bool:
+    value = os.environ.get("KILIX_MODEL_AUTO_INSTALL")
+    if value is not None and value.strip().casefold() in {"0", "no", "false", "off"}:
+        return False
+    try:
+        return sys.stdin.isatty() and sys.stdout.isatty()
+    except (AttributeError, OSError, ValueError):
+        return False
+
+
 def ask(question: str, url: str) -> int:
     model, reason = choose(url)
+    if model is None and _first_use() and "kilix ask --model-answers setup" in reason:
+        if setup(url) != 0:
+            return 1
+        model, reason = choose(url)
     if model is None:
         if reason:
             print(f"kilix ask: {reason}", file=sys.stderr)
@@ -265,16 +280,33 @@ def ask(question: str, url: str) -> int:
 
 # Setup: register an installed, licence-agreed content asset with Ollama.
 
+def _report_ok(result: subprocess.CompletedProcess, model: Admitted) -> bool:
+    try:
+        report = json.loads(result.stdout)
+    except ValueError:
+        return False
+    return (result.returncode == 0 and isinstance(report, dict)
+            and report.get("verified") == model.asset and report.get("version") == model.version
+            and isinstance(report.get("root"), str))
+
+
 def _verify(model: Admitted) -> Path:
+    command = [str(HERE.parent / "kilix"), "models", "verify", model.asset]
     result = subprocess.run(
-        [str(HERE.parent / "kilix"), "models", "verify", model.asset],
-        capture_output=True, text=True, timeout=600, stdin=subprocess.DEVNULL, check=False)
+        command, capture_output=True, text=True, timeout=600,
+        stdin=subprocess.DEVNULL, check=False)
+    if not _report_ok(result, model) and _first_use():
+        installed = subprocess.run(
+            [str(HERE.parent / "kilix"), "models", "install", model.asset], check=False)
+        if installed.returncode == 0:
+            result = subprocess.run(
+                command, capture_output=True, text=True, timeout=600,
+                stdin=subprocess.DEVNULL, check=False)
     try:
         report = json.loads(result.stdout)
     except ValueError:
         report = None
-    if (result.returncode != 0 or not isinstance(report, dict)
-            or report.get("verified") != model.asset or report.get("version") != model.version):
+    if not _report_ok(result, model):
         raise ModelError(f"{model.asset} is not installed here. Install it first, which shows its licence"
                          f" and asks you to agree: kilix models install {model.asset}")
     from kilix_sdk import content

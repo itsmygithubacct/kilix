@@ -480,17 +480,44 @@ def extract_vocal(source: Path, destination: Path) -> Path:
     return vocal
 
 
+def _first_use() -> bool:
+    value = os.environ.get("KILIX_MODEL_AUTO_INSTALL")
+    if value is not None and value.strip().casefold() in {"0", "no", "false", "off"}:
+        return False
+    try:
+        return sys.stdin.isatty() and sys.stdout.isatty()
+    except (AttributeError, OSError, ValueError):
+        return False
+
+
+def _missing_engines(specs: list[dict], live: dict) -> list[str]:
+    missing = []
+    for spec in specs:
+        if spec["kind"] == "provider":
+            continue
+        if (live.get(spec["id"]) or {}).get("installed") is False:
+            missing.append(spec["id"])
+    return missing
+
+
 def assert_installed(specs: list[dict]) -> None:
+    providers = [spec for spec in specs if spec["kind"] == "provider"]
+    if providers and _first_use():
+        for spec in providers:
+            subprocess.call([kilix_bin(), *install_via(spec)[1:]])
     needed = [spec for spec in specs if spec["kind"] != "provider"]
     if not needed:
         return
     live = live_catalog()
     if not live:
         return
-    missing = [
-        spec["id"] for spec in needed
-        if (live.get(spec["id"]) or {}).get("installed") is False
-    ]
+    missing = _missing_engines(needed, live)
+    if missing and _first_use():
+        by_id = {spec["id"]: spec for spec in needed}
+        for item in missing:
+            subprocess.call([kilix_bin(), *install_via(by_id[item])[1:]])
+        live = live_catalog()
+        missing = _missing_engines(needed, live) if live else missing
     if not missing:
         return
     lines = "\n".join(f"kilix transcribe install {item}" for item in missing)

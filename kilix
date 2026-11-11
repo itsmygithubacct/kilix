@@ -1643,6 +1643,69 @@ _KILIX_VOICE_STT_PUNCTUATION=1
 _KILIX_VOICE_DEVICE_IN=default
 _KILIX_VOICE_DEVICE_OUT=default
 _KILIX_VOICE_HISTORY=0
+# First use may install a model only when this terminal can answer its licence.
+# KILIX_MODEL_AUTO_INSTALL=0 keeps the refusal. Status and doctor never call this.
+_kilix_first_use() {
+  case "${KILIX_MODEL_AUTO_INSTALL:-1}" in
+    0|no|false|off|NO|False|FALSE|OFF) return 1 ;;
+  esac
+  [ -t 0 ] && [ -t 1 ]
+}
+_kilix_piper_ready() {
+  if [ -n "${KILIX_PIPER_TTS:-}" ] && command -v "$KILIX_PIPER_TTS" >/dev/null 2>&1; then
+    return 0
+  fi
+  [ -x "$_KILIX_VOICE_DATA/piper/current/bin/kilix-piper-tts" ] && return 0
+  command -v kilix-piper-tts >/dev/null 2>&1
+}
+_kilix_dictation_model_present() {
+  [ -d "$_KILIX_VOICE_DATA/models/$_KILIX_VOICE_STT_MODEL" ] && return 0
+  case "$_KILIX_VOICE_STT_MODEL" in
+    whisper-small-en) [ -d "$KILIX_DATA_HOME/desktop-apps/assets/faster-whisper-small-en" ] ;;
+    whisper-medium-en) [ -d "$KILIX_DATA_HOME/desktop-apps/assets/faster-whisper-medium-en" ] ;;
+    whistle) [ -d "$KILIX_DATA_HOME/desktop-apps/assets/whistle" ] ;;
+    *) return 1 ;;
+  esac
+}
+_kilix_ensure_dictation_model() {
+  _kilix_read_voice_config
+  _kilix_dictation_model_present && return 0
+  _kilix_first_use || return 0
+  "$_self" stt --install "$_KILIX_VOICE_STT_MODEL" --default "$_KILIX_VOICE_STT_MODEL"
+}
+_kilix_ensure_speech_voice() {
+  _kilix_read_voice_config
+  [ "$_KILIX_VOICE_TTS_ENGINE" = piper ] || return 0
+  _kilix_piper_ready && return 0
+  _kilix_first_use || return 0
+  "$_self" tts --enable-kristin
+}
+_kilix_ask_backend() {
+  local previous="" option backend="${KILIX_ASK_COMMANDS_BACKEND:-}"
+  for option in "$@"; do
+    if [ "$previous" = "--commands-backend" ]; then
+      backend="$option"
+    fi
+    previous="$option"
+  done
+  if [ -n "$backend" ]; then
+    printf '%s\n' "$backend"
+    return 0
+  fi
+  python3 -B -c '
+import json, os
+from pathlib import Path
+root = Path(os.environ.get("GPU_TERMINAL_HOME") or Path.home() / ".local" / "gpu_terminal")
+path = root / "kilix-apps" / "kilix-needle" / "ask.json"
+try:
+    record = json.loads(path.read_text(encoding="utf-8"))
+except (OSError, ValueError):
+    print("lfm2")
+    raise SystemExit(0)
+backend = record.get("backend") if isinstance(record, dict) and record.get("schema") == "kilix.ask.selection/v1" else ""
+print(backend if backend in ("lfm2", "lfm3", "needle3", "grammar") else "lfm2")
+'
+}
 _kilix_read_voice_config() {
   local line
   while IFS= read -r line; do
@@ -3558,6 +3621,9 @@ case "${1:-}" in
     if [ -z "$_tool_needle" ] || [ ! -x "$_tool_needle" ]; then
       _tool_needle="$KILIX_DATA_HOME/desktop-apps/kilix-needle/kilix-needle"
     fi
+    [ -x "$_tool_needle" ] || if _kilix_first_use; then
+      _tool_needle="$(python3 -B "$KILIX_HOME/config/content_app.py" install kilix-needle 2>/dev/null || true)"
+    fi
     [ -x "$_tool_needle" ] || {
       echo "kilix $_tool_verb: Needle is not installed; '$_self app install kilix-needle' installs it" >&2
       exit 1
@@ -3581,8 +3647,10 @@ case "${1:-}" in
     # offers one. --yes skips that prompt and still does not run a refusal or an
     # unsure route. Voice adds a transcript to correct before routing; it never
     # removes a confirmation, so it cannot be combined with --yes. --repl stays
-    # after each answer, including a refusal, until exit, quit, or EOF. Nothing
-    # here installs Needle or a speech runtime.
+    # after each answer, including a refusal, until exit, quit, or EOF. First
+    # use installs Needle and the selected command model when this terminal can
+    # answer. The licence is shown and is not accepted here. A question about
+    # whether something is installed does not install it.
     shift
     _ask_voice=0
     _ask_hold=0
@@ -3687,6 +3755,7 @@ case "${1:-}" in
           echo "  --model  lfm2, lfm3, needle3, or grammar for this request; overrides KILIX_ASK_COMMANDS_BACKEND"
           echo "           and the saved Ask selection (lfm2 when none is saved)"
           echo "  --commands-candidate FILE  use a local Needle 3 candidate with --model needle3"
+          echo "First ask installs the selected command model after its licence."
           echo "Install the alternate: kilix-needle install --commands needle3"
           echo "Save the selection: kilix-needle workflows select --model lfm2|lfm3|needle3|grammar"
           echo
@@ -3738,8 +3807,7 @@ case "${1:-}" in
         4)
           # The installed binary, not `app run`. Help is a terminal app, and
           # `run` waits for Enter after any nonzero status, including inside --repl.
-          _ask_help="$(KILIX_APP_AUTO_INSTALL=0 \
-            python3 "$KILIX_HOME/config/content_app.py" install kilix-help-llm)" || {
+          _ask_help="$(python3 -B "$KILIX_HOME/config/content_app.py" install kilix-help-llm)" || {
             echo "kilix ask: help is not installed; '$_self app install kilix-help-llm' installs it" >&2
             _ask_status=1
             return 0
@@ -3802,9 +3870,8 @@ case "${1:-}" in
         esac
       done
       # The installed app, not `app run`: that pauses on any nonzero status, and a
-      # declined plan is not an error to dismiss. Missing, it is reported, not built.
-      _ask_needle="$(KILIX_APP_AUTO_INSTALL=0 \
-        python3 "$KILIX_HOME/config/content_app.py" install kilix-needle)" || {
+      # declined plan is not an error to dismiss. Missing, first use builds it.
+      _ask_needle="$(python3 -B "$KILIX_HOME/config/content_app.py" install kilix-needle)" || {
         echo "kilix ask: Needle is not installed; '$_self app install kilix-needle' installs it" >&2
         _ask_status=1
         return 0
@@ -3820,6 +3887,22 @@ print(apps_root())
         return 0
       }
       export KILIX_CONTENT_ROOT
+      if _kilix_first_use; then
+        _ask_backend="$(_kilix_ask_backend "${_ask_options[@]}")"
+        case "$_ask_backend" in
+          grammar) _ask_asset="" ;;
+          lfm3) _ask_asset="lfm3-kilix-commands" ;;
+          needle3) _ask_asset="needle3-kilix-commands" ;;
+          *) _ask_asset="lfm2-kilix-commands" ;;
+        esac
+        if [ -n "$_ask_asset" ]; then
+          python3 -B "$KILIX_HOME/config/content_models.py" ensure "$_ask_asset" || {
+            echo "kilix ask: $_ask_asset was not installed" >&2
+            _ask_status=1
+            return 0
+          }
+        fi
+      fi
       _ask_status=0
       _ask_mode=--interactive
       if [ "$_ask_yes" = 1 ]; then
@@ -4069,6 +4152,7 @@ print(apps_root())
       echo "kilix speak: nothing to read aloud" >&2
       exit 1
     }
+    _kilix_ensure_speech_voice || exit $?
     _kilix_ensure_private_directory "$_KILIX_VOICE_SESSION" voice || exit 1
     _KILIX_VOICE_SPAWN=1
     printf '%s' "$_speak_text" | _kilix_voice_request speak || exit $?
@@ -4127,6 +4211,7 @@ print(apps_root())
           exit 2 ;;
       esac
     fi
+    _kilix_ensure_dictation_model || exit $?
     _kilix_ensure_private_directory "$_KILIX_VOICE_SESSION" voice || exit 1
     _KILIX_VOICE_SPAWN=1
     if [ -n "$_dictate_pane" ]; then
