@@ -31,7 +31,8 @@ class EffortActionsTests(unittest.TestCase):
                 self.assertEqual(result["status"], "created")
                 launch = [args for args, _ in self.client.calls if args[0] == "launch" and "--help" not in args][-1]
                 self.assertEqual(launch[launch.index("--") + 1:],
-                    ["/bin/codex", "--model", model, "-c", f'model_reasoning_effort="{effort}"'])
+                    [sys.executable, str(Path(actions.__file__).with_name("coding_launch.py")),
+                     "codex", "0", "--", "/bin/codex", "--no-daemon", "--model", model, "-c", f'model_reasoning_effort="{effort}"'])
                 self.assertEqual(result["evidence"]["requested"],
                     {"agent": "codex", "model": model, "reasoning_effort": effort})
                 self.assertFalse(result["agent_startup_verified"])
@@ -109,7 +110,7 @@ class EffortArgvTests(unittest.TestCase):
             with self.subTest(effort=effort):
                 actual, _ = self.argv("codex", "--resume", "abc-123", "--model", "gpt-6-astra",
                                       "--reasoning-effort", effort, "--prompt", "continue implementation")
-                self.assertEqual(actual, ["/bin/codex", "resume", "--model", "gpt-6-astra", "-c",
+                self.assertEqual(actual, ["/bin/codex", "--no-daemon", "resume", "--model", "gpt-6-astra", "-c",
                                          f'model_reasoning_effort="{effort}"', "abc-123", "continue implementation"])
 
     def test_effort_does_not_enable_yolo_or_other_clients(self):
