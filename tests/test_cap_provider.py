@@ -1,3 +1,4 @@
+import re
 import os
 import pathlib
 import subprocess
@@ -207,10 +208,11 @@ class KilixCapProviderTests(unittest.TestCase):
         })
         result = run([LAUNCHER, "cap", "environment"], env=env, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(
-            result.stdout.strip(),
-            f"{self.source_home / 'kilix-desktops' / 'kilix-95'}|{ROOT}",
-        )
+        # The provider is bracketed by its terminal ownership markers.
+        marked = re.fullmatch(r'\x1b]1337;SetUserVar=kilix_desktop_provider=[A-Za-z0-9+/=]+\x07(.*?)'
+                              r'\x1b]1337;SetUserVar=kilix_desktop_provider\x07', result.stdout, re.S)
+        self.assertIsNotNone(marked, result.stdout)
+        self.assertEqual(marked.group(1).strip(), f"{self.source_home / 'kilix-desktops' / 'kilix-95'}|{ROOT}")
 
 
 if __name__ == "__main__":

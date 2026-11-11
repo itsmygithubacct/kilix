@@ -38,8 +38,12 @@ def peer_module(kind):
         if kind == 'qwen' else
         ('kilix_transcribe', 'KILIX_TRANSCRIBE_PROVIDER_TEST_SOURCE', transcribe_provider.PROVIDER_REF))
     source = selected_source(name, variable, revision)
-    sys.path.insert(0, str(source / 'src'))
-    return importlib.import_module(name + '.service'), importlib.import_module(name + '.protocol')
+    source_path = str(source / 'src')
+    sys.path.insert(0, source_path)
+    try:
+        return importlib.import_module(name + '.service'), importlib.import_module(name + '.protocol')
+    finally:
+        sys.path.remove(source_path)
 
 
 def fake_peer(kind, listener_fd, phase):

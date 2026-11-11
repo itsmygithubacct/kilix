@@ -13,6 +13,7 @@ import io
 import json
 import os
 import socket
+import subprocess
 import sys
 import tempfile
 import threading
@@ -35,11 +36,8 @@ except ImportError:
 
 
 def load(name):
-    spec = importlib.util.spec_from_file_location(name, ROOT / "config" / f"{name}.py")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
+    # Keep exception and policy identities shared under unittest discovery.
+    return importlib.import_module(name)
 
 
 core = load("fingerlock_core")
@@ -49,6 +47,30 @@ fl = load("fingerlock")
 
 FAST = {"opslimit": 1, "memlimit": 8192}   # Argon2id minimums: tests, never production
 
+
+
+def functional_agent(**kwargs):
+    # Hardening permanently changes the runner's dumpability/core limit. Test
+    # those kernel effects in a child; functional agent tests keep shared state.
+    with unittest.mock.patch.object(agentmod, "_harden_process", return_value=agentmod.HardenReport()):
+        return agentmod.Agent(**kwargs)
+
+
+class ProcessHardeningTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux hardening")
+    def test_hardening_changes_only_the_owned_child(self):
+        import ctypes
+        import resource
+        libc = ctypes.CDLL(None)
+        before = (libc.prctl(3, 0, 0, 0, 0), resource.getrlimit(resource.RLIMIT_CORE))
+        code = ("import ctypes,json,resource,sys; sys.path.insert(0,sys.argv[1]); "
+                "import fingerlock_agent as agent; report=agent._harden_process(); "
+                "print(json.dumps([report.dumpable_cleared,report.core_limited,"
+                "ctypes.CDLL(None).prctl(3,0,0,0,0),list(resource.getrlimit(resource.RLIMIT_CORE))]))")
+        result = subprocess.run([sys.executable, '-c', code, str(ROOT / 'config')],
+                                capture_output=True, text=True, check=True)
+        self.assertEqual(json.loads(result.stdout), [True, True, 0, [0, 0]])
+        self.assertEqual((libc.prctl(3, 0, 0, 0, 0), resource.getrlimit(resource.RLIMIT_CORE)), before)
 
 @unittest.skipUnless(HAVE_NACL, "python3-nacl is not installed")
 class LockerTests(unittest.TestCase):
@@ -284,7 +306,7 @@ class AgentTests(unittest.TestCase):
         self.uid = os.getuid()
         self.sessions = {4242: agentmod.CallerSession("2", self.uid, True, "active", "seat0", False, False),
                          4343: agentmod.CallerSession("9", self.uid, False, "online", "", False, False)}
-        self.agent = agentmod.Agent(
+        self.agent = functional_agent(
             custody=self.custody, client_factory=lambda: self.client,
             session_lookup=lambda pid: self.sessions[pid], approve=lambda *args: None)
         home = Path(self.tmp.name) / "locker"
@@ -822,7 +844,7 @@ class SessionGateTests(unittest.TestCase):
         valid = agentmod.CallerSession("c7", 1000, True, "active", "seat0", False, False)
         custody = agentmod.Custody(start_timer=False)
         self.addCleanup(custody.close)
-        agent = agentmod.Agent(custody=custody, session_lookup=lambda pid: valid)
+        agent = functional_agent(custody=custody, session_lookup=lambda pid: valid)
         self.assertEqual(agent._seat(42, 1000), "c7")
         for change in ({"locked": True}, {"remote": True}, {"seat": ""}, {"active": False},
                        {"state": "closing"}, {"uid": 1001}):

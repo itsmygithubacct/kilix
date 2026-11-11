@@ -41,7 +41,7 @@ class KilixLauncherTests(unittest.TestCase):
                 capture_output=True,
                 text=True,
             ).stdout.strip(),
-            "11f51d941c043f4f3eaaa9048e46bed6bfc061b8",
+            "ea35206cc0a2cfde422d1112a99d6245f55d57c6",
         )
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -208,7 +208,7 @@ class KilixLauncherTests(unittest.TestCase):
         """
         launcher = (ROOT / "kilix").read_text()
         for tool in ("kilix-temps", "kilix-memory", "kilix-launcher",
-                     "kilix-volume", "kilix-rollout-resume", "kilix-panes"):
+                     "kilix-volume", "kilix-rollout-resume"):
             self.assertIn(
                 f'"${{KILIX_TUI_UTILS_PREFIX:-$HOME/.local}}/bin/{tool}"',
                 launcher, tool)
@@ -225,12 +225,11 @@ class KilixLauncherTests(unittest.TestCase):
             '/bin/kilix-switch"', launcher)
         self.assertIn('"$_KILIX_BONSAI_PREFIX/bin/kilix-bonsai"', launcher)
 
-    def test_panes_is_a_first_class_cli_with_a_checkout_fallback(self):
+    def test_panes_uses_the_guarded_host_launcher(self):
         launcher = (ROOT / "kilix").read_text()
         self.assertIn("panes|pane-center)", launcher)
-        self.assertIn(
-            '"$KILIX_TUI_UTILS_DIR/tools/switcher/main.py"', launcher)
-        self.assertIn('exec python3 "$_panes_src" "$@"', launcher)
+        self.assertIn('exec python3 -B "$KILIX_HOME/config/pane_center_launch.py" "$@"', launcher)
+        self.assertNotIn('exec python3 "$_panes_src"', launcher)
 
     def test_desktop_provider_knobs_are_wired(self):
         text = (ROOT / "kilix").read_text()
@@ -949,7 +948,7 @@ class AgentHelpTests(unittest.TestCase):
                               "kilix pane send TARGET 'TEXT' [--submit]",
                               "kilix pane close [TARGET]", "kilix pane close build",
                               "unique title", "no subcommand --help",
-                              "prints what it did",
+                              "verbs report results",
                               "complete syntax", "kilix new-tab --title Codex",
                               "kilix agent-control", "kilix session --help",
                               "kilix --help-engine"):

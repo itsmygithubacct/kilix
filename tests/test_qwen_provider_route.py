@@ -145,11 +145,14 @@ class QwenProviderRouteTests(unittest.TestCase):
         lib = generation/'lib'
         shutil.copytree(Path(selected)/'src/kilix_qwen_tts',lib/'kilix_qwen_tts',
                         ignore=shutil.ignore_patterns('__pycache__','*.pyc'))
-        sys.path.insert(0,str(lib))
+        # Digest helpers come from the verified persistent source, not a
+        # temporary generation that disappears while the package stays imported.
+        source_path = str(Path(selected) / 'src')
+        sys.path.insert(0,source_path)
         try:
             from kilix_qwen_tts.runtime import digest_file,tree_digest
         finally:
-            sys.path.remove(str(lib))
+            sys.path.remove(source_path)
         base = generation/'python-root'
         (base/'bin').mkdir(mode=0o700,parents=True)
         original = base/'bin/python'

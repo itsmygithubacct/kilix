@@ -1,14 +1,18 @@
 """Ask's model answers: setup, identity, the sizer, and the labelled reply."""
+
 import contextlib
 import io
 import json
 import os
 import sys
+from pathlib import Path
 import tempfile
 import threading
 import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _env_support import sandbox_env
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -124,7 +128,7 @@ class ModelTestCase(unittest.TestCase):
         sizer = self.root / "sizer"
         sizer.write_text(SIZER)
         sizer.chmod(0o755)
-        env = {key: value for key, value in os.environ.items() if not key.startswith(("KILIX_", "KITTY_"))}
+        env = sandbox_env()
         env.update(KILIX_CONFIG_HOME=str(self.root / "config"), PLEBIAN_MODEL_SIZER=str(sizer),
                    http_proxy="http://127.0.0.1:9", HTTP_PROXY="http://127.0.0.1:9")
         patcher = mock.patch.dict(os.environ, env, clear=True)

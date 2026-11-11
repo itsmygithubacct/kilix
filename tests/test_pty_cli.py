@@ -471,6 +471,23 @@ class ObserveOnceTests(PtyCliCase):
 
 
 class PaneTests(PtyCliCase):
+    def env(self, **extra):
+        # The canned pane listing is queried by an unbrokered caller. A fake
+        # caller-session claim cannot substitute for actual broker ancestry.
+        env = super().env()
+        env.pop("KITTY_PTY_BROKER_SESSION", None)
+        env.pop("KITTY_PTY_BROKER_RUNTIME", None)
+        env.update(extra)
+        return env
+
+    def test_unowned_caller_broker_claim_is_refused(self):
+        kitten = self.kitten()
+        result = self.pty("pane", str(self.pane_ids[0]), KILIX_KITTEN=str(kitten),
+                          KITTY_PTY_BROKER_SESSION="aaaaaaaaaaaaaaaa")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("cannot verify caller broker ownership", result.stderr)
+        self.assertEqual(self.calls(), [])
+
     def kitten(self, session=SESSION):
         document = json.loads(FIXTURE.read_text())
         windows = [w for o in document for t in o["tabs"] for w in t["windows"]]
@@ -726,8 +743,9 @@ class JournalViewTests(PtyCliCase):
         self.assertEqual(self.pty("reap").returncode, 0)
         shown = self.pty("journals", "show", "big0000000000000", "--text", "--lines", "2")
         self.assertEqual(shown.stdout.splitlines(), ["row 58", "row 59"])
-        document = json.loads(self.pty("journals", "show", "big0000000000000", "--json",
-                                       "--bytes", "12").stdout)
+        result = self.pty("journals", "show", "big0000000000000", "--json", "--bytes", "12")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        document = json.loads(result.stdout)
         self.assertEqual((document["schema"], document["id"], document["started_millis"]),
                          ("kilix.pty/v1", "big0000000000000", 1700000001000))
         self.assertEqual(document["total_bytes"], len(body))

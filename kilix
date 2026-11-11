@@ -270,8 +270,7 @@ usage: kilix [COMMAND] [ARGS...]    (default: new window)
   kilix tab list|close|rename|focus|left|right
   kilix tmux --socket PATH [--json] VERB ...  no args: manager
   kilix desktop-action --help              X11 windows, pointer, keyboard
-TARGET: unique title or pane:ID. Above is the complete syntax; no subcommand --help
-needed first. Ambiguous targets fail; each verb prints what it did.
+TARGET: unique title or pane:ID. This is complete syntax; no subcommand --help needed. Ambiguous targets fail; verbs report results.
   kilix agent-control context|list|dump|send|key   --help
   kilix session --help                     sessions, trust, logs
   kilix ralph --help                       mailboxes
