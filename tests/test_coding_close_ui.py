@@ -106,7 +106,11 @@ class CloseUITests(unittest.TestCase):
             with patch.dict(sys.modules, {'kitty.fast_data_types': fast, 'kitty.tabs': tabs}), \
                     patch.object(ui.subprocess, 'run', side_effect=AssertionError('no helper')):
                 self.assertTrue(ui.show(boss, window))
-                self.assertIn('x:Close pane', calls[0])
+                self.assertIn('x:Close pane (exit)', calls[0])
+                # The real ask kitten rejects shortcuts absent from their labels.
+                for choice in calls[0][2:]:
+                    letter, label = choice.split(':', 1)
+                    self.assertIn(letter.lower(), label.lower())
                 calls[0][1]('x')
             boss.close_window_explicitly_with_error.assert_called_once_with(window)
 
