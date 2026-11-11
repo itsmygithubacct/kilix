@@ -369,6 +369,12 @@ class YoloxLicence(unittest.TestCase):
         installer = YOLOX.read_text(encoding="utf-8")
         self.assertNotIn("kilix-yolox-fetch", installer)
         self.assertIn('models install "$KILIX_YOLOX_MODEL"', installer)
+        self.assertIn('models ensure "$KILIX_YOLOX_MODEL"', installer)
+        self.assertIn("[ -t 0 ] && [ -t 1 ]", installer)
+        yamnet = YAMNET.read_text(encoding="utf-8")
+        self.assertIn("models ensure yamnet", yamnet)
+        self.assertIn("[ -t 0 ] && [ -t 1 ]", yamnet)
+        self.assertIn("sound runtime is missing or outdated; run kilix install yamnet", yamnet)
 
 
 class LookOffersTheDetector(unittest.TestCase):

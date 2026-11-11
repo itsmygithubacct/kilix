@@ -184,7 +184,11 @@ def install_check():
     model_files()
     python = runtime_python()
     if python.is_symlink() or not python.is_file() or not os.access(python, os.X_OK):
-        raise SystemExit('Paradee runtime is not installed: ' + str(python))
+        raise SystemExit(
+            'Paradee runtime is not installed: ' + str(python)
+            + '. The short-path interpreter and en_core_web_sm are installed by the '
+            'image upgrade (provision/install-image-models.py --install-paradee-runtime), '
+            'which needs root. This call does not install them.')
     print('Paradee installed: ' + PARADEE_ID)
     return 0
 

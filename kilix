@@ -1673,9 +1673,24 @@ _kilix_ensure_dictation_model() {
   _kilix_first_use || return 0
   "$_self" stt --install "$_KILIX_VOICE_STT_MODEL" --default "$_KILIX_VOICE_STT_MODEL"
 }
+_kilix_female02_present() {
+  # Cheap presence check. models verify re-hashes, which is the wrong cost
+  # for every speak. The catalog marker is the content-store onnx.
+  local marker="$KILIX_DATA_HOME/desktop-apps/assets/kilix-female-02/kilix-female-02.onnx"
+  [ -f "$marker" ] && [ ! -L "$marker" ] || return 1
+  [ "$(stat -c %s -- "$marker" 2>/dev/null || echo 0)" = 63522221 ]
+}
 _kilix_ensure_speech_voice() {
   _kilix_read_voice_config
   [ "$_KILIX_VOICE_TTS_ENGINE" = piper ] || return 0
+  if [ "$_KILIX_VOICE_TTS_VOICE" = kilix-female-02 ]; then
+    if _kilix_piper_ready && _kilix_female02_present; then
+      return 0
+    fi
+    _kilix_first_use || return 0
+    "$_self" tts --install=kilix-female-02
+    return
+  fi
   _kilix_piper_ready && return 0
   _kilix_first_use || return 0
   "$_self" tts --enable-kristin
@@ -4295,6 +4310,14 @@ raise SystemExit(main(sys.argv[2:]))
         *) break ;;
       esac
     done
+    # Defined inside this arm so a test that extracts it can call the check.
+    # Pipes are not a terminal, so the check refuses and installs nothing.
+    _kilix_tts_first_use() {
+      case "${KILIX_MODEL_AUTO_INSTALL:-1}" in
+        0|no|false|off|NO|False|FALSE|OFF) return 1 ;;
+      esac
+      [ -t 0 ] && [ -t 1 ]
+    }
     # Paradee uses the image files when that directory is present. A missing
     # image copy is installed by paradee_runtime on a terminal, after its
     # licence. A greeting must not fetch Piper. The runtime file is absent
@@ -4434,6 +4457,27 @@ raise SystemExit(main(sys.argv[2:]))
       if [ "$_tts_previous" = --device ]; then _tts_device="$_tts_argument"; fi
       _tts_previous="$_tts_argument"
     done
+    # A separate pass: the device loop above must keep its own previous-argument
+    # state. Only an exact catalog id is ensured. "all" and "invalid" are not.
+    _tts_qwen_weight=""
+    _tts_previous=""
+    for _tts_argument in "$@"; do
+      case "$_tts_argument" in
+        --download-qwen=*) _tts_qwen_weight="${_tts_argument#--download-qwen=}" ;;
+      esac
+      if [ "$_tts_previous" = --download-qwen ]; then
+        _tts_qwen_weight="$_tts_argument"
+      fi
+      _tts_previous="$_tts_argument"
+    done
+    case "$_tts_qwen_weight" in
+      qwen3-tts-0.6b-customvoice|qwen3-tts-0.6b-base|qwen3-tts-1.7b-voicedesign)
+        if _kilix_tts_first_use; then
+          "$_self" models ensure "$_tts_qwen_weight" || exit $?
+          export KILIX_QWEN_MODEL="$_tts_qwen_weight"
+        fi
+        ;;
+    esac
     if [ "$_tts_direct_qwen" = 1 ] && [ "$_tts_interactive" = 1 ]; then
       "$_tts_installed" "$@" --check-session || exit $?
       if [ "$_tts_device" = cuda:0 ]; then
@@ -4531,6 +4575,10 @@ sys.exit(0 if ready else 1)
           fi
           _tts_python="$("$_qwen_installer")" || exit 1
         fi
+        if [ "$_qwen_gpu_tier" = qwen-base-gpu ] && _kilix_tts_first_use; then
+          "$_self" models ensure qwen3-tts-0.6b-base || exit $?
+          export KILIX_QWEN_MODEL=qwen3-tts-0.6b-base
+        fi
         break
       fi
       _tts_previous="$_tts_argument"
@@ -4569,6 +4617,17 @@ sys.exit(0 if ready else 1)
           exit 1
         fi
         _tts_python="$("$_pocket_installer")" || exit 1
+        # The CPU installer builds the interpreter only. Weights stay behind
+        # the catalogue licence. The GGUF id is used only when the call names it.
+        _pocket_asset=pocket-tts-english-python-alba
+        for _pocket_argument in "$@"; do
+          case "$_pocket_argument" in
+            *q8*|*Q8*|*gguf*|*GGUF*) _pocket_asset=pocket-tts-english-q8_0 ;;
+          esac
+        done
+        if _kilix_tts_first_use; then
+          "$_self" models ensure "$_pocket_asset" || exit $?
+        fi
         break
       fi
       _tts_previous="$_tts_argument"
@@ -4749,6 +4808,7 @@ sys.exit(0 if ready else 1)
           echo
           echo "  $_self yamnet            install if needed, print the command"
           echo "  $_self yamnet check      what is present, without changing it"
+          echo "  $_self yamnet run        classify; a terminal installs the model on first use"
           echo "  $_self yamnet install    build the runtime using the verified catalog model"
           echo "  $_self yamnet update     rebuild its pinned runtime"
           echo "  $_self yamnet remove     delete the runtime directory"
@@ -4811,7 +4871,7 @@ sys.exit(0 if ready else 1)
           echo
           echo "  $_self yolox             install if needed, print the command"
           echo "  $_self yolox check       what is present, without changing it"
-          echo "  $_self yolox run         verify and run the installed detector; never install"
+          echo "  $_self yolox run         run the detector; a terminal installs it on first use"
           echo "  $_self yolox install     build the virtualenv, fetch and cut weights"
           echo "  $_self yolox update      bring its packages forward"
           echo "  $_self yolox remove      delete the runtime directory"

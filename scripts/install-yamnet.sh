@@ -258,7 +258,13 @@ case "$action" in
   --run)
     # The guarded wrapper performs the actual integrity and Content checks
     # once before loading the model; avoid repeating them on the audio path.
-    runtime_capable || die "sound runtime is missing or outdated; run kilix install yamnet"
+    # A missing runtime is installed only when this terminal can answer the
+    # licence. models ensure asks; it does not answer. A decline stops here.
+    if ! runtime_capable; then
+      { [ -t 0 ] && [ -t 1 ]; } || die "sound runtime is missing or outdated; run kilix install yamnet"
+      "$KILIX_HOME/kilix" models ensure yamnet || die "the model was not installed"
+      install_runtime
+    fi
     exec "$wrapper" "$@" ;;
   --check)
     report
