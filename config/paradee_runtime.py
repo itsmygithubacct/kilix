@@ -1,12 +1,16 @@
 """Paradee system voice for a fresh install.
 
 The supervisor stays on the system interpreter. Synthesis runs in the
-short-path environment at /usr/lib/kilix/pd. Weights and the Apache-2.0
-text are the image files. This module does not download them and does
-not import huggingface_hub.
+short-path environment at /usr/lib/kilix/pd. A present model directory is
+checked in place. When that directory is absent, a terminal first use runs
+``kilix models ensure paradee-8m-v1.2``, which shows the licence screen.
+The caller answers it. This module does not import huggingface_hub.
+``KILIX_MODEL_AUTO_INSTALL=0`` and a non-terminal leave the directory
+uninstalled. The short-path interpreter stays the image copy.
 """
 import argparse
 import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -62,8 +66,85 @@ def json_load(path):
     return data
 
 
-def model_dir():
+def _first_use():
+    value = os.environ.get('KILIX_MODEL_AUTO_INSTALL')
+    if value is not None and value.strip().casefold() in {'0', 'no', 'false', 'off'}:
+        return False
+    try:
+        return sys.stdin.isatty() and sys.stdout.isatty()
+    except (AttributeError, OSError, ValueError):
+        return False
+
+
+def _launcher():
+    path = Path(__file__).resolve().parents[1] / 'kilix'
+    if path.is_symlink() or not path.is_file():
+        return None
+    return path
+
+
+def _configured_dir():
     return Path(os.environ.get('KILIX_PARADEE_MODEL', '/usr/lib/kilix/paradee'))
+
+
+def _verified_store():
+    """A receipt-backed catalog copy. Verify does not install."""
+    launcher = _launcher()
+    if launcher is None:
+        return None
+    try:
+        result = subprocess.run(
+            [str(launcher), 'models', 'verify', PARADEE_ID],
+            capture_output=True, text=True, stdin=subprocess.DEVNULL, check=False)
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    try:
+        report = json.loads(result.stdout)
+    except ValueError:
+        return None
+    if not isinstance(report, dict):
+        return None
+    root = report.get('root')
+    if report.get('verified') != PARADEE_ID or not isinstance(root, str) or not root.startswith('/'):
+        return None
+    candidate = Path(root) / 'assets' / PARADEE_ID
+    if candidate.is_symlink() or not _ready(candidate):
+        return None
+    return candidate
+
+
+def _ensure_store():
+    """Show the licence screen. Nothing here answers it."""
+    launcher = _launcher()
+    if launcher is None:
+        return False
+    try:
+        completed = subprocess.run(
+            [str(launcher), 'models', 'ensure', PARADEE_ID], check=False)
+    except OSError:
+        return False
+    if completed.returncode != 0:
+        raise SystemExit(PARADEE_ID + ' was not installed; the licence was not accepted')
+    return True
+
+
+def model_dir():
+    """Image directory when it exists. Otherwise the catalog copy, installed on a terminal."""
+    configured = _configured_dir()
+    if configured.is_symlink():
+        raise SystemExit('Paradee model path is a symlink')
+    if configured.is_dir():
+        return configured
+    stored = _verified_store()
+    if stored is not None:
+        return stored
+    if _first_use() and _ensure_store():
+        stored = _verified_store()
+        if stored is not None:
+            return stored
+    return configured
 
 
 def runtime_python():
@@ -80,15 +161,26 @@ def _read_exact(path, size, digest, label):
     return target
 
 
-def model_files():
-    root = model_dir()
+def _checked(root):
     return (_read_exact(root / ONNX_NAME, ONNX_BYTES, ONNX_SHA256, 'weights'),
             _read_exact(root / 'config.json', CONFIG_BYTES, CONFIG_SHA256, 'config'),
             _read_exact(root / LICENCE_NAME, LICENCE_BYTES, LICENCE_SHA256, 'licence'))
 
 
+def _ready(root):
+    try:
+        _checked(root)
+    except SystemExit:
+        return False
+    return True
+
+
+def model_files():
+    return _checked(model_dir())
+
+
 def install_check():
-    """Confirm the image files and the short-path interpreter. Download nothing."""
+    """Confirm the files and the short-path interpreter."""
     model_files()
     python = runtime_python()
     if python.is_symlink() or not python.is_file() or not os.access(python, os.X_OK):

@@ -43,7 +43,7 @@ SPEECH_RUNTIMES = ('kilix-female-02', 'piper-en-us-kristin-medium',
                    'qwen3-tts-1.7b-voicedesign')
 # Paradee 1.2, about 7.88 million parameters: one int8 ONNX shared by four
 # voices. The image carries this file. The wizard verifies it through
-# `tts --install` and does not download it.
+# `tts --install` with first-use install turned off.
 PARADEE_ID = 'paradee-8m-v1.2'
 PARADEE_VOICES = ('af_heart', 'am_puck', 'bf_isabella', 'bm_fable')
 PARADEE_URL = ('https://huggingface.co/sahilmahendrakar/Paradee-8M-v1.2/resolve/'
@@ -584,7 +584,16 @@ def ensure_default_system_voice():
         return False
     if not paradee_catalogued():
         return False
-    run_command('tts', '--install=' + PARADEE_ID)
+    # Listing and this default check stay a verify. Speaking installs.
+    held = os.environ.get('KILIX_MODEL_AUTO_INSTALL')
+    os.environ['KILIX_MODEL_AUTO_INSTALL'] = '0'
+    try:
+        run_command('tts', '--install=' + PARADEE_ID)
+    finally:
+        if held is None:
+            os.environ.pop('KILIX_MODEL_AUTO_INSTALL', None)
+        else:
+            os.environ['KILIX_MODEL_AUTO_INSTALL'] = held
     try:
         run_command('tts', '--install=kilix-female-02')
     except ValueError:

@@ -249,6 +249,24 @@ class WizardTests(unittest.TestCase):
         self.assertEqual(wizard.default_voice_record()['engine'], 'piper')
         self.assertEqual(wizard.default_voice_record()['voice'], 'kilix-female-02')
 
+    def test_the_speech_default_verifies_paradee_without_first_use(self):
+        assets = [asset(wizard.PARADEE_ID, 'paradee')]
+        previous = os.environ.get('KILIX_MODEL_AUTO_INSTALL')
+        seen = []
+
+        def run(*args):
+            seen.append((args, os.environ.get('KILIX_MODEL_AUTO_INSTALL')))
+            if args == ('tts', '--install=kilix-female-02'):
+                raise ValueError('piper is offline')
+
+        with patch.object(wizard, 'catalog', return_value=assets), \
+                patch.object(wizard, 'run_command', side_effect=run):
+            self.assertTrue(wizard.ensure_default_system_voice())
+        self.assertEqual(seen[0], (('tts', '--install=' + wizard.PARADEE_ID), '0'))
+        self.assertEqual(seen[1][1], previous)
+        self.assertEqual(os.environ.get('KILIX_MODEL_AUTO_INSTALL'), previous)
+        self.assertEqual(wizard.default_voice_record()['engine'], 'paradee')
+
     def test_female02_install_failure_still_selects_paradee(self):
         assets = [asset(wizard.PARADEE_ID, 'paradee'),
                   asset('kilix-female-02', 'kilix-piper-tts')]

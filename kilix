@@ -4287,7 +4287,7 @@ raise SystemExit(main(sys.argv[2:]))
           echo "opens the read-aloud settings TUI"
           echo "--enable-kristin: opt in to Piper Kristin as the shared voice"
           echo "--install=kilix-female-02: install Kilix Female-02 epoch 80 from the kilix-voice release"
-          echo "--install=paradee-8m-v1.2: verify the image Paradee files; this does not download them"
+          echo "--install=paradee-8m-v1.2: check Paradee. A terminal installs it after its licence when the image copy is absent"
           echo "provider prepare|serve|status: manage the receipt-backed Qwen provider (CPU or CUDA)"
           echo "For documents, use Kilix 95: Start > Programs > Document Reader"
           exit 0 ;;
@@ -4295,8 +4295,10 @@ raise SystemExit(main(sys.argv[2:]))
         *) break ;;
       esac
     done
-    # Paradee speaks from the image. A greeting must not fetch Piper. The
-    # runtime file is absent in tests that still exercise the Piper path.
+    # Paradee uses the image files when that directory is present. A missing
+    # image copy is installed by paradee_runtime on a terminal, after its
+    # licence. A greeting must not fetch Piper. The runtime file is absent
+    # in tests that still exercise the Piper path.
     _paradee_runtime="$KILIX_HOME/config/paradee_runtime.py"
     _paradee_session=0
     _paradee_install=0
