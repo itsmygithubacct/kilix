@@ -3468,7 +3468,9 @@ source, without compiling or downloading weights. The first LLM Chat or Avatar
 start builds the CPU runtime once (a few minutes on a small CPU; about 25 MB
 kept) and does not fetch llama.cpp's web UI. `kilix-llm build --backend cpu`
 does the same ahead of time. Kilix95 then offers LLM Chat and Kilix Avatar
-entries for this model.
+entries for this model, both with thinking off: the 0.8B does worse with
+thinking on, and `kilix-llm --think` prints a warning saying so before it
+starts.
 
 If a model acquisition fails, the wizard continues with other accepted models
 and completes categories whose selected models are ready. It reports each
