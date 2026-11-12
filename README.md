@@ -1447,6 +1447,18 @@ To get the buttons, install the build deps and build the fork:
 
 (`scripts/install-build-deps.sh --verify` re-checks without installing.)
 
+### Coding-agent controls
+
+`kilix install --update codex grok` updates selected installed clients and
+reports each result. Codex installed through npm updates in its existing prefix
+with readable package permissions; native clients use their own updater. Grok
+updates through `grok update`. A failed client does not stop the remaining
+selection; Ctrl-C does. Bootstrap installation of Grok is separate.
+
+`kilix settings --set coding_yolo=on` (or `off`) changes the shared setting.
+`kilix settings --print` includes `KILIX_CODING_YOLO`. Launchers request this
+mode with `--coding-yolo`; the setting is read when each new agent starts.
+
 ### Optional coding-agent skills
 
 Kilix ships five separate skills as one versioned bundle: `kilix`,

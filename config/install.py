@@ -46,6 +46,7 @@ from kilix_sdk import content, paths  # noqa: E402
 import content_app  # noqa: E402
 import techno_soundbanks  # noqa: E402
 import agent_skills  # noqa: E402
+import agent_updates  # noqa: E402
 # The same PATH/prefix resolver serves installation and pane launching.
 from agent_programs import (  # noqa: E402
     resolve_agent_command as _resolve_agent_command,
@@ -175,6 +176,12 @@ _FALLBACK_AGENTS = (
 )
 
 AGENTS = _providers_from_rollout() or _FALLBACK_AGENTS
+# Grok's installed client provides its own updater. Bootstrap installation is
+# deliberately separate until its installer is pinned in the provider catalog.
+if not any(agent['id'] == 'grok' for agent in AGENTS):
+    AGENTS += ({'id': 'grok', 'label': 'Grok', 'kind': 'agent', 'command': 'grok',
+                'install': 'Update an existing installation with kilix install --update grok',
+                'update': ('grok', 'update'), 'source': 'grok update --help'},)
 
 # Hardware drivers that are a deliberate opt-in rather than part of the image.
 # The install itself belongs to Plebian-OS — its helper preflights the machine,
@@ -674,10 +681,7 @@ def update(identifier: str) -> int:
     if not command:
         print(f"{agent['label']} is not installed", file=sys.stderr)
         return 1
-    argv = list(agent["update"])
-    argv[0] = command
-    print(f"updating {agent['label']}: {' '.join(argv)}")
-    return subprocess.run(argv, check=False).returncode
+    return agent_updates.update(agent, command)
 
 
 def _update_driver(driver: dict) -> int:
@@ -737,6 +741,35 @@ def main(argv: list[str]) -> int:
         else:
             _print_table(entries)
         return 0
+    if do_update:
+        # Validate the entire selection before updating any client.
+        known = {r['id'] for r in entries}
+        if any(item not in known for item in args) or (len(args) > 1 and
+                any(_agent(item) is None for item in args)):
+            print('kilix install: select known coding agents for a batch update', file=sys.stderr)
+            return 2
+        results = []
+        for identifier in dict.fromkeys(args):
+            try:
+                status = update(identifier)
+            except KeyboardInterrupt:
+                print('\nAgent updates interrupted; remaining clients were not updated.')
+                return 130
+            except (OSError, ValueError) as error:
+                print(f'{identifier}: {error}', file=sys.stderr)
+                status = 1
+            results.append((identifier, status))
+        for identifier, status in results:
+            print(f'{identifier}: '+('updated' if status == 0 else f'failed (exit {status})'))
+        if len(results) == 1:
+            status = results[0][1]
+            if status == 0 and with_skills:
+                return agent_skills.main(['install', '--agent', args[0]])
+            return status
+        return 0 if all(status == 0 for _, status in results) else 1
+    if len(args) != 1:
+        print('kilix install: install one item at a time', file=sys.stderr)
+        return 2
     identifier = args[0]
     known = {r["id"] for r in entries}
     if identifier not in known:

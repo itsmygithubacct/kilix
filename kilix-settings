@@ -116,6 +116,8 @@ def _control_names() -> dict[str, str]:
             names[alias] = key
     for key in shared.VOICE_KEYS:
         names[key.lower()] = key
+    names['coding_yolo'] = shared.CODING_YOLO_KEY
+    names[shared.CODING_YOLO_KEY.lower()] = shared.CODING_YOLO_KEY
     return names
 
 
@@ -440,6 +442,11 @@ def _parse_assignment(value: str) -> tuple[str, object]:
         return key, size
     # Voice errors quote the name the caller typed: one key answers to several
     # aliases, and being told about "wpm" is more use than about the key.
+    if key == shared.CODING_YOLO_KEY:
+        value = raw.strip().lower()
+        if value not in shared.CODING_YOLO_CHOICES:
+            raise argparse.ArgumentTypeError('coding_yolo must be on or off')
+        return key, value
     if key in shared.VOICE_CHOICE_SPECS:
         _default, valid = shared.VOICE_CHOICE_SPECS[key]
         preset = raw.strip().lower()
@@ -492,6 +499,7 @@ def _notify_running_kilix() -> None:
 
 
 def _print_settings(values: dict[str, str]) -> None:
+    print(f"{shared.CODING_YOLO_KEY}={values.get(shared.CODING_YOLO_KEY, shared.CODING_YOLO_DEFAULT)}")
     for key, default in shared.WEATHER_DEFAULTS.items():
         print(f"{key}={values.get(key, default)}")
     print(f"settings_file={shared.settings_path()}")
