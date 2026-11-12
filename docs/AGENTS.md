@@ -22,6 +22,30 @@ discovery, request consent again, or expand a simple authorized action into a
 long workflow. Resolve missing identity before a mutation; keep inspection and
 mutation as separate operations.
 
+## Send a message to another agent pane
+
+Type the message into the target pane, read it back, then submit with one key:
+
+```sh
+printf '%s' "$MESSAGE" | kilix @ send-text --match id:PANE --stdin
+kilix @ get-text --match id:PANE --extent screen     # whole message in the composer?
+printf '\r' | kilix @ send-text --match id:PANE --stdin   # idle agent: Enter
+printf '\t' | kilix @ send-text --match id:PANE --stdin   # working Codex: Tab queues it
+```
+
+Keep the message to one line of at most 900 UTF-8 bytes; put anything longer in
+a file and send its path. Start it with `[kilix-message:ID]` so a later search of
+the target's history can prove delivery. Take `PANE` from `kilix pane list` in
+this session, and list again after a restart, because pane IDs are renumbered.
+Send the text and the key as separate calls. A zero exit is not delivery: confirm
+the end of the message is on screen before the key, and that the composer is
+empty, or shows "Queued follow-up inputs", after it. Never press Enter or Esc
+into a working agent to clear its screen; Esc interrupts its turn.
+
+`kilix agent-control deliver` (below) performs the same steps with identity
+checks. When it reports `blocked`, for example "composer is not visible" while
+the target is scrolled or compacting, use the commands above; do not wait on it.
+
 ## Locate the source before acting
 
 In a workspace with several repositories, start with its project index and the
