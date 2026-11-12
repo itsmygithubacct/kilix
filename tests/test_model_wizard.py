@@ -175,6 +175,27 @@ class WizardTests(unittest.TestCase):
             wizard.finish()
         again.assert_not_called()
 
+    def test_spacy_front_end_comes_with_the_image_and_is_never_a_page(self):
+        assets = [asset('kilix-female-02', 'kilix-piper-tts'),
+                  asset(wizard.PARADEE_ID, 'paradee'),
+                  asset(wizard.PARADEE_FRONTEND_ID, 'spacy')]
+        self.assertEqual(wizard.group(assets[2]), 'speech')
+        with patch.object(wizard, 'catalog', return_value=assets):
+            listed = wizard.pages(True, measure=False)
+            self.assertEqual([page['id'] for page in listed], ['speech'])
+            self.assertEqual([row['id'] for row in listed[0]['models']], ['kilix-female-02'])
+            with self.assertRaises(ValueError):
+                wizard.apply('spacy', [wizard.PARADEE_FRONTEND_ID], 'yes')
+        # RC8 offered a "spacy" page, so a machine can hold a planned answer for it.
+        wizard.record('spacy', 'yes', [wizard.PARADEE_FRONTEND_ID], 'planned')
+        with patch.object(wizard, 'catalog', return_value=assets), \
+                patch('wizard_licenses.consent_and_install',
+                      return_value=(set(), set())) as batch, \
+                patch.object(wizard, 'run_command'):
+            wizard.finish()
+        batch.assert_not_called()
+        self.assertEqual(wizard.answers()['spacy']['phase'], 'complete')
+
     def test_saved_voice_selection_is_left_unchanged(self):
         assets = [asset('kilix-female-02', 'kilix-piper-tts'),
                   asset(wizard.PARADEE_ID, 'paradee')]

@@ -50,6 +50,12 @@ PARADEE_URL = ('https://huggingface.co/sahilmahendrakar/Paradee-8M-v1.2/resolve/
                'ed2934d4df8a4fd891e29584c5e1104649409765/onnx/paradee_int8.onnx')
 PARADEE_SHA256 = 'a6989796692ac173597e15d405c971989202d5c73cfad65f22e90bd7b6c97da1'
 PARADEE_BYTES = 8462119
+# spaCy en_core_web_sm 3.8.0 is Paradee's English front end: misaki tags the
+# text with it before phonemes. Plebian-OS ships it in the image with Paradee
+# and installs both (provision/install-image-models.py). Like Paradee, it is
+# never a page row or a licence-batch download.
+PARADEE_FRONTEND_ID = 'en-core-web-sm-3.8.0'
+IMAGE_MODELS = (PARADEE_ID, PARADEE_FRONTEND_ID)
 # Fresh installs select Paradee af_heart. An existing system-voice-default.json
 # keeps whatever it already names, including kilix-female-02.
 DEFAULT_SYSTEM_VOICE = PARADEE_ID
@@ -255,7 +261,7 @@ def group(asset):
     # page, even when the name says whisper: large-v3 is not a dictation model.
     if provider == 'kilix-playalong': return 'kilix-playalong'
     if any(word in name for word in ('whisper', 'whistle', 'vosk', 'vibevoice-asr')): return 'dictation'
-    if name == 'kilix-female-02' or name == PARADEE_ID or name.startswith('paradee-') \
+    if name == 'kilix-female-02' or name in IMAGE_MODELS or name.startswith('paradee-') \
             or any(word in name for word in ('tts', 'piper-')): return 'speech'
     if provider in ('kilix-bonsai', 'kilix-ollama', 'kilix-llm'): return 'chat'
     return provider or 'other'
@@ -395,9 +401,10 @@ def pages(include_answered=False, *, assets=None, measure=True, ensure_sizer=Fal
         rows = grouped.get(key, [])
         answer = decisions.get(key, {}).get('answer')
         if key == 'speech':
-            # Paradee is installed from the image, not offered as a download.
-            # Female-02 and every other catalogued voice stay optional.
-            rows = [row for row in rows if row['id'] != PARADEE_ID]
+            # Paradee and its spaCy front end are installed from the image,
+            # not offered as downloads. Female-02 and every other catalogued
+            # voice stay optional.
+            rows = [row for row in rows if row['id'] not in IMAGE_MODELS]
         if not rows or (not include_answered and answer in ('yes', 'no')):
             continue
         reports, recommended, note = sizing(rows, key, ensure_sizer=ensure_sizer) if measure else ({}, None, 'Sizing not requested.')
@@ -651,18 +658,18 @@ def finish(*, input_fn=input):
         if not plans:
             print('No model installations are pending.')
             return
-        # Paradee is installed from the image by ensure_default_system_voice.
-        # It is never a licence-batch download, even when the page named it.
-        excluded = ('grammar', PARADEE_ID)
+        # Paradee and its spaCy front end are installed from the image. They
+        # are never a licence-batch download, even when a saved page named one.
+        excluded = ('grammar',) + IMAGE_MODELS
         selected = list(dict.fromkeys(model for plan in plans.values() for model in plan['models']
                                       if model not in excluded))
         # Revalidate against the currently selected catalog, never a stale UI request.
         offered = {page['id']: {model['id'] for model in page['models']}
                    for page in pages(True, measure=False)}
         for segment, plan in plans.items():
-            # Paradee is no longer a page row. A saved choice that names it
-            # still installs from the image and does not fail this check.
-            chosen = [model for model in plan['models'] if model != PARADEE_ID]
+            # Paradee and spaCy are not page rows. A saved choice that names
+            # one, such as an RC8 "spacy" page, does not fail this check.
+            chosen = [model for model in plan['models'] if model not in IMAGE_MODELS]
             if set(chosen) - offered.get(segment, set()):
                 raise ValueError('The offered models changed. Revisit this page with --all.')
         from wizard_licenses import InstallFailures, consent_and_install
