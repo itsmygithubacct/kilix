@@ -233,3 +233,22 @@ if [[ $- == *i* ]]; then
         PROMPT_COMMAND=(_kilix_prompt_restore_terminal "${PROMPT_COMMAND[@]}")
     fi
 fi
+
+# 8. Shift+arrow keys. Kilix sends them in the xterm form (Shift+Up is
+#    ESC [ 1 ; 2 A), and Debian's /etc/inputrc binds no Shift+arrow. Readline
+#    then gives up on the sequence with a beep and inserts its final byte, so
+#    Shift+Up typed "A". Bind each one to what the plain arrow does by
+#    default. A Shift+arrow already bound in ~/.inputrc or ~/.bashrc (to a
+#    function, a macro or a shell command) wins. Readline lists ESC as "\e"
+#    or, when it converts meta characters (the C locale), as "\M-".
+if [[ $- == *i* ]]; then
+    _kilix_bound="$({ builtin bind -p; builtin bind -s; builtin bind -X; } 2>/dev/null)"
+    for _kilix_arrow in A:previous-history B:next-history C:forward-char D:backward-char; do
+        _kilix_end="[1;2${_kilix_arrow%%:*}\""
+        case $'\n'"$_kilix_bound" in
+            *$'\n''"\e'"$_kilix_end"*|*$'\n''"\M-'"$_kilix_end"*) ;;
+            *) builtin bind "\"\\e$_kilix_end: ${_kilix_arrow#*:}" 2>/dev/null ;;
+        esac
+    done
+    unset _kilix_bound _kilix_arrow _kilix_end
+fi
