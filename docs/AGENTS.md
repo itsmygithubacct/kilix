@@ -43,8 +43,13 @@ empty, or shows "Queued follow-up inputs", after it. Never press Enter or Esc
 into a working agent to clear its screen; Esc interrupts its turn.
 
 `kilix agent-control deliver` (below) performs the same steps with identity
-checks. When it reports `blocked`, for example "composer is not visible" while
-the target is scrolled or compacting, use the commands above; do not wait on it.
+checks. `blocked` is also how it refuses on identity and safety grounds, so read
+the error before acting on it. Only for "Codex composer is not visible", as when
+the target is scrolled or compacting, re-read the pane and then use the commands
+above. For any other `blocked` error (pane or broker identity changed, caller
+identity unknown, the target is your own pane, another delivery owns the target,
+a preserved composer draft, or a `/`, `!` or `#` command prefix), stop, send
+nothing, and take a fresh `kilix pane list`.
 
 ## Locate the source before acting
 
