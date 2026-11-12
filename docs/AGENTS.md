@@ -230,6 +230,10 @@ fact from the actual result; quoting a log search term is not evidence that it
 was found. A name can contain spaces: quote the whole path, and list the parent
 when a path is reported missing.
 
+Image viewers in agent clients read PNG and JPEG, not PPM. Convert a `.ppm`
+snapshot or screen dump before viewing it:
+`python3 -c 'import sys; from PIL import Image; Image.open(sys.argv[1]).save(sys.argv[2])' in.ppm out.png`
+
 | Command | Purpose |
 | --- | --- |
 | `rg --files DIR` | List searchable files under a directory. |
