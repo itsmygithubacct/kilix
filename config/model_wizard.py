@@ -56,6 +56,12 @@ PARADEE_BYTES = 8462119
 # never a page row or a licence-batch download.
 PARADEE_FRONTEND_ID = 'en-core-web-sm-3.8.0'
 IMAGE_MODELS = (PARADEE_ID, PARADEE_FRONTEND_ID)
+# PDF Conversion's page OCR, PP-OCRv6 small detector and recogniser (about
+# 10 and 21 MB). Plebian-OS ships both in the image as well; the documents
+# page offers only the optional Docling and chart models.
+PDF_OCR_MODELS = ('pp-ocrv6-small-det', 'pp-ocrv6-small-rec')
+# Everything the image installs: never a page row or a licence-batch download.
+SHIPPED_MODELS = IMAGE_MODELS + PDF_OCR_MODELS
 # Fresh installs select Paradee af_heart. An existing system-voice-default.json
 # keeps whatever it already names, including kilix-female-02.
 DEFAULT_SYSTEM_VOICE = PARADEE_ID
@@ -400,11 +406,11 @@ def pages(include_answered=False, *, assets=None, measure=True, ensure_sizer=Fal
     for key, title, preferred in definitions:
         rows = grouped.get(key, [])
         answer = decisions.get(key, {}).get('answer')
-        if key == 'speech':
-            # Paradee and its spaCy front end are installed from the image,
-            # not offered as downloads. Female-02 and every other catalogued
-            # voice stay optional.
-            rows = [row for row in rows if row['id'] not in IMAGE_MODELS]
+        # Paradee, its spaCy front end and the PP-OCRv6 page OCR are
+        # installed from the image, not offered as downloads. Female-02,
+        # every other catalogued voice and the other document models stay
+        # optional.
+        rows = [row for row in rows if row['id'] not in SHIPPED_MODELS]
         if not rows or (not include_answered and answer in ('yes', 'no')):
             continue
         reports, recommended, note = sizing(rows, key, ensure_sizer=ensure_sizer) if measure else ({}, None, 'Sizing not requested.')
@@ -658,18 +664,18 @@ def finish(*, input_fn=input):
         if not plans:
             print('No model installations are pending.')
             return
-        # Paradee and its spaCy front end are installed from the image. They
-        # are never a licence-batch download, even when a saved page named one.
-        excluded = ('grammar',) + IMAGE_MODELS
+        # Models the image installs are never a licence-batch download, even
+        # when a saved page named one.
+        excluded = ('grammar',) + SHIPPED_MODELS
         selected = list(dict.fromkeys(model for plan in plans.values() for model in plan['models']
                                       if model not in excluded))
         # Revalidate against the currently selected catalog, never a stale UI request.
         offered = {page['id']: {model['id'] for model in page['models']}
                    for page in pages(True, measure=False)}
         for segment, plan in plans.items():
-            # Paradee and spaCy are not page rows. A saved choice that names
-            # one, such as an RC8 "spacy" page, does not fail this check.
-            chosen = [model for model in plan['models'] if model not in IMAGE_MODELS]
+            # Image models are not page rows. A saved choice that names one,
+            # such as an RC8 "spacy" or documents page, does not fail this check.
+            chosen = [model for model in plan['models'] if model not in SHIPPED_MODELS]
             if set(chosen) - offered.get(segment, set()):
                 raise ValueError('The offered models changed. Revisit this page with --all.')
         from wizard_licenses import InstallFailures, consent_and_install

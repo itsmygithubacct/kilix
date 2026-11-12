@@ -196,6 +196,29 @@ class WizardTests(unittest.TestCase):
         batch.assert_not_called()
         self.assertEqual(wizard.answers()['spacy']['phase'], 'complete')
 
+    def test_page_ocr_comes_with_the_image_and_is_never_a_page_row(self):
+        import call_models
+        self.assertEqual(wizard.PDF_OCR_MODELS, call_models.PDF_TEXT)
+        assets = [asset('granite-docling-258m', 'kilix-pdf-conversion')] + [
+            asset(name, 'kilix-pdf-conversion') for name in wizard.PDF_OCR_MODELS]
+        self.assertEqual({wizard.group(row) for row in assets}, {'documents'})
+        with patch.object(wizard, 'catalog', return_value=assets):
+            listed = wizard.pages(True, measure=False)
+            self.assertEqual([page['id'] for page in listed], ['documents'])
+            self.assertEqual([row['id'] for row in listed[0]['models']], ['granite-docling-258m'])
+            with self.assertRaises(ValueError):
+                wizard.apply('documents', ['pp-ocrv6-small-det'], 'yes')
+        # A documents answer saved before RC9 can name the OCR models.
+        wizard.record('documents', 'yes', list(wizard.PDF_OCR_MODELS), 'planned')
+        only_ocr = [row for row in assets if row['id'] in wizard.PDF_OCR_MODELS]
+        with patch.object(wizard, 'catalog', return_value=only_ocr), \
+                patch('wizard_licenses.consent_and_install',
+                      return_value=(set(), set())) as batch, \
+                patch.object(wizard, 'run_command'):
+            wizard.finish()
+        batch.assert_not_called()
+        self.assertEqual(wizard.answers()['documents']['phase'], 'complete')
+
     def test_saved_voice_selection_is_left_unchanged(self):
         assets = [asset('kilix-female-02', 'kilix-piper-tts'),
                   asset(wizard.PARADEE_ID, 'paradee')]
