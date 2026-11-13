@@ -216,6 +216,9 @@ case "${1:-}" in
   agent-control)
     shift
     exec python3 "$KILIX_HOME/config/agent_control.py" "$@" ;;
+  agent-message)
+    shift
+    exec python3 -B "$KILIX_HOME/config/agent_message.py" "$@" ;;
   session)
     shift
     exec python3 -B "$KILIX_HOME/kilix-session" "$@" ;;
@@ -272,6 +275,7 @@ usage: kilix [COMMAND] [ARGS...]    (default: new window)
   kilix desktop-action --help              X11 windows, pointer, keyboard
 TARGET: unique title or pane:ID. This is complete syntax; no subcommand --help needed. Ambiguous targets fail; verbs report results.
   kilix agent-control context|list|dump|send|key   --help
+  kilix agent-message resolve|send --pane ID   native session messages
   kilix session --help                     sessions, trust, logs
   kilix ralph --help                       mailboxes
   kilix action --request-json -             JSON from stdin
