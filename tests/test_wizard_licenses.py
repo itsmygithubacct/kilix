@@ -40,10 +40,13 @@ class BatchTests(unittest.TestCase):
                 patch.object(system_llm, 'acquire', side_effect=acquire), \
                 patch.object(model_wizard, 'state_root', return_value=Path(self.directory.name)), \
                 contextlib.redirect_stdout(output):
-            result = (model_wizard.finish(input_fn=answer) if finish else
-                      batch.consent_and_install(names, input_fn=answer))
-            output.flush()
-            self.output = output.buffer.getvalue()
+            try:
+                result = (model_wizard.finish(input_fn=answer) if finish else
+                          batch.consent_and_install(names, input_fn=answer))
+            finally:
+                # Failing batches raise; their output is still evidence.
+                output.flush()
+                self.output = output.buffer.getvalue()
         return result
 
     def test_standard_licenses_install_without_prompt_and_keep_documents(self):
@@ -142,6 +145,18 @@ class BatchTests(unittest.TestCase):
         self.assertIs(caught.exception.__cause__, cause)
         self.assertEqual([call.args[0].asset_id for call in self.installer.ensure_upstream_asset.call_args_list],
                          ['yolox_s', 'yamnet'])
+
+    def test_failed_model_reason_is_printed_before_later_models(self):
+        # The owner's setup terminal stopped at a later question with only
+        # "Could not install qwen3:8b" on screen; the reason must come first.
+        cause = ValueError('The local Ollama backend at 127.0.0.1:11434 is unavailable.')
+        with self.assertRaises(batch.InstallFailures):
+            self.run_batch(['qwen3:8b', 'yamnet'], ['yes'],
+                           {'qwen3:8b': [('apache-2.0', b'Original terms')]}, acquire=cause)
+        text = self.output.decode()
+        reason = 'Could not install qwen3:8b: The local Ollama backend at 127.0.0.1:11434 is unavailable.'
+        self.assertIn(reason, text)
+        self.assertLess(text.index(reason), text.index('Installing yamnet'))
 
     def test_partial_finish_retry_skips_completed_pages_and_reuses_exact_licences(self):
         name = 'qwen3:8b'

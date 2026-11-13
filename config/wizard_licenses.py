@@ -197,7 +197,10 @@ def consent_and_install(selected, *, input_fn=input):
                     system_llm.acquire(model, consented=True)
             except Exception as error:
                 failures[model] = error
-                print(f'Could not install {model}; continuing with the other accepted models.', flush=True)
+                # Say why now: the setup terminal may stop at a later question.
+                from model_wizard import error_detail
+                print(f'Could not install {model}: {error_detail(error)}', flush=True)
+                print('Continuing with the other accepted models.', flush=True)
             else:
                 installed.add(model)
         if failures:
