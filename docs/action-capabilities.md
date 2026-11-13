@@ -13,6 +13,14 @@ commands whose wrapper dispatch and implementation files are both present.
 These are filesystem observations; they do not establish a live terminal,
 valid remote-control authentication, provider readiness, or installed models.
 
+A record's `status` describes the launcher file, and `dispatch_status` the scan
+of its dispatch table. `VERSION`, the Git revision and the action metadata are
+read beside the launcher, each with its own status. A launcher that is missing,
+not a regular file, too large or not valid UTF-8 therefore leaves them intact.
+Commands are listed only after a complete scan: when `dispatch_status` is not
+`observed`, an empty `commands_present` means unknown, not absent. The compact
+`kilix agent-control context` reports these statuses and the known commands too.
+
 `action_backend` reports the static action schema and operation metadata from
 that record's `config/agent_actions.py`. A backend file can be present even when
 the wrapper has no `action` command. Use the command list together with the
@@ -35,9 +43,12 @@ without changing the installation. Branch/tag pins remain unresolved.
 
 The query inspects fixed files and selected command paths without recursive
 search, CLI probes, setup, installation, or model execution. File reads require
-regular files and are capped at 256 KiB (16 KiB for OS provenance). Git is the
-only subprocess; each revision query has a one-second deadline and a 2 KiB
-output limit. The JSON response is capped at 32 KiB, with bounded strings and
+regular files and are capped at 256 KiB (16 KiB for OS provenance). The launcher
+is instead streamed in 64 KiB blocks and never held whole. Its scan stops at
+4 MiB, after one second, or at invalid UTF-8, and a dispatch label counts only
+within the first 4,096 characters of its line. Git is the only subprocess; each
+revision query has a one-second deadline and a 2 KiB output limit. The JSON
+response is capped at 32 KiB, with bounded strings and
 metadata depth. Excessive operation metadata is omitted with
 `status: "response_limit"` and `truncated: true`. Missing, malformed, and
 unresolvable evidence remains explicit rather than becoming an availability

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import codecs
 import json
 import os
 from pathlib import Path
@@ -16,10 +17,21 @@ import time
 
 SCHEMA = "kilix.capabilities/v1"
 MAX_FILE_BYTES = 262144
+# The launcher is streamed one block at a time, never held whole. Its dispatch
+# scan has its own bounds, and its outcome cannot erase VERSION, revision or
+# action facts, which are read beside it rather than from it.
+MAX_LAUNCHER_BYTES = 4194304
+MAX_LAUNCHER_LINE = 4096
+LAUNCHER_BLOCK = 65536
+LAUNCHER_TIMEOUT = 1.0
 MAX_RESPONSE_BYTES = 32768
 MAX_STRING = 1024
 GIT_TIMEOUT = 1.0
 REVISION = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?\Z")
+# A case label at the start of a line. `[^\S\n]` keeps a match on one line: a
+# leading `\s*` crosses newlines, which makes blank-line input quadratic.
+DISPATCH = re.compile(r"^([^\S\n]*)([^()\s]+)\)", re.M)
+OPEN_FLAGS = os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOCTTY", 0)
 PROVENANCE_KEYS = {"PLEBIAN_OS_VERSION", "PLEBIAN_OS_COMMIT", "KILIX_DIR",
                    "KILIX_REF", "KILIX_VERSION", "KILIX_SOURCE_COMMIT"}
 COMMAND_FILES = {"agent-control": "config/agent_control.py",
@@ -29,12 +41,13 @@ COMMAND_FILES = {"agent-control": "config/agent_control.py",
                  "models": "config/content_models.py",
                  "skills": "config/agent_skills.py",
                  "tmux": "config/tmux_control.py"}
+COMMAND_NAMES = frozenset(COMMAND_FILES)
 
 
 def _read(path, limit=MAX_FILE_BYTES):
     """Nonblocking open avoids FIFO/device hangs; reads only regular files."""
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+        fd = os.open(path, OPEN_FLAGS)
         with os.fdopen(fd, "rb") as stream:
             if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
                 return None, "not_regular"
@@ -149,20 +162,95 @@ def _literal_metadata(path):
     return result
 
 
+def _labels(text, found, start=0, end=None):
+    """Add tracked names from case labels that fit within a line's bounded head."""
+    for space, label in DISPATCH.findall(text, start, len(text) if end is None else end):
+        if len(space) + len(label) < MAX_LAUNCHER_LINE:
+            found.update(COMMAND_NAMES.intersection(label.split("|")))
+
+
+def _dispatch(fd, size):
+    """Collect tracked case labels from complete lines, one bounded block at a time.
+
+    Only a complete scan counts: excess size, the deadline or invalid UTF-8
+    yields no partial command list. A line longer than MAX_LAUNCHER_LINE keeps
+    only its head, so one huge line costs no more memory than a short one.
+    """
+    if size > MAX_LAUNCHER_BYTES:
+        return "too_large", frozenset()
+    decoder = codecs.getincrementaldecoder("utf-8")()
+    deadline = time.monotonic() + LAUNCHER_TIMEOUT
+    found, total, head, overlong = set(), 0, "", False
+    try:
+        while True:
+            if time.monotonic() > deadline:
+                return "timeout", frozenset()
+            block = os.read(fd, min(LAUNCHER_BLOCK, MAX_LAUNCHER_BYTES + 1 - total))
+            if not block:
+                break
+            total += len(block)
+            if total > MAX_LAUNCHER_BYTES:
+                return "too_large", frozenset()
+            text = decoder.decode(block)
+            first = text.find("\n")
+            if first >= 0:
+                if not overlong:  # finish the line carried from earlier blocks
+                    _labels(head + text[:min(first, MAX_LAUNCHER_LINE - len(head))], found)
+                last = text.rfind("\n")
+                _labels(text, found, first + 1, last + 1)
+                head, overlong = text[last + 1:], False
+            elif not overlong:
+                head += text
+            if len(head) > MAX_LAUNCHER_LINE:
+                _labels(head[:MAX_LAUNCHER_LINE], found)
+                head, overlong = "", True
+        decoder.decode(b"", final=True)
+    except (OSError, UnicodeDecodeError):
+        return "unreadable", frozenset()
+    if not overlong:
+        _labels(head, found)
+    return "observed", frozenset(found)
+
+
+def _launcher(path, scan):
+    """Classify the launcher file itself, then stream its dispatch table if asked."""
+    record = {"status": "missing", "bytes": None, "dispatch_status": "not_inspected",
+              "labels": frozenset()}
+    try:
+        fd = os.open(path, OPEN_FLAGS)
+    except FileNotFoundError:
+        return record
+    except (OSError, ValueError):
+        return dict(record, status="unreadable")
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            return dict(record, status="not_regular")
+        record.update(status="observed", bytes=info.st_size)
+        if scan:
+            record["dispatch_status"], record["labels"] = _dispatch(fd, info.st_size)
+        return record
+    except OSError:
+        return dict(record, status="unreadable")
+    finally:
+        os.close(fd)
+
+
 def _component(root, command=None, expected=None, kind="kilix"):
     result = {"root": str(root) if root else None,
               "command": str(command) if command else None,
-              "status": "missing", "version": None, "revision": None,
-              "expected_revision": expected, "revision_matches_expected": None,
-              "commands_present": []}
+              "status": "missing", "launcher_bytes": None,
+              "dispatch_status": "not_inspected", "commands_present": [],
+              "version": None, "version_status": "not_inspected",
+              "revision": None, "revision_status": "not_inspected",
+              "expected_revision": expected, "revision_matches_expected": None}
     if root is None:
         return result
-    entry = root / ("kilix" if kind == "kilix" else "kilix-needle")
-    text, status = _read(entry)
-    if text is None:
-        result["status"] = status
-        return result
-    result["status"] = "observed"
+    # `status` describes the launcher file; `dispatch_status` its scan.
+    launcher = _launcher(root / ("kilix" if kind == "kilix" else "kilix-needle"), kind == "kilix")
+    result.update(status=launcher["status"], launcher_bytes=launcher["bytes"],
+                  dispatch_status=launcher["dispatch_status"])
+    # VERSION, the Git revision and action metadata never depend on launcher text.
     version, version_status = _read(root / "VERSION", 256)
     if version is not None and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.+_-]{0,127}\s*", version):
         result["version"] = version.strip()
@@ -172,11 +260,10 @@ def _component(root, command=None, expected=None, kind="kilix"):
     if expected and result["revision"]:
         result["revision_matches_expected"] = result["revision"] == expected
     if kind == "kilix":
-        for name, relative in COMMAND_FILES.items():
-            # Require both an observed wrapper dispatch and its implementation.
-            dispatches = re.findall(r"^\s*([^()\s]+)\)", text, re.M)
-            if any(name in dispatch.split("|") for dispatch in dispatches) and (root / relative).is_file():
-                result["commands_present"].append(name)
+        # Require both an observed wrapper dispatch and its implementation.
+        # Labels exist only after a complete scan, so a refusal lists nothing.
+        result["commands_present"] = [name for name, relative in COMMAND_FILES.items()
+                                      if name in launcher["labels"] and (root / relative).is_file()]
         result["action_backend"] = _literal_metadata(root / "config/agent_actions.py")
     else:
         result["cli_module_present"] = (root / "needle_cli.py").is_file()
@@ -249,6 +336,8 @@ def discover(source_root=None, *, environ=None, provenance_path=None):
                                    if override else {"status": "invalid" if backend_override else "unset"}),
         "os_provenance": provenance,
         "limits": {"response_bytes": MAX_RESPONSE_BYTES, "file_bytes": MAX_FILE_BYTES,
+                   "launcher_bytes": MAX_LAUNCHER_BYTES, "launcher_line_chars": MAX_LAUNCHER_LINE,
+                   "launcher_scan_seconds": LAUNCHER_TIMEOUT,
                    "git_timeout_seconds": GIT_TIMEOUT, "component_probes": False},
     }
     result = _bounded(result)

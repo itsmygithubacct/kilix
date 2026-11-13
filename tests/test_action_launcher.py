@@ -36,6 +36,18 @@ class ActionLauncherTests(unittest.TestCase):
         self.assertIsInstance(json.loads(result.stdout), dict)
         self.assertLess(len(result.stdout.encode()), 16384)
 
+    def test_capabilities_recognise_the_launcher_answering_them(self):
+        # This launcher outgrew the 256 KiB per-file bound in RC9; its own
+        # query must still see it, and its version and actions beside it.
+        result = self.invoke(["action", "capabilities"])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        invoked = json.loads(result.stdout)["kilix"]["invoked_source"]
+        self.assertEqual((invoked["status"], invoked["dispatch_status"]), ("observed", "observed"))
+        self.assertEqual(invoked["launcher_bytes"], (ROOT / "kilix").stat().st_size)
+        self.assertIn("action", invoked["commands_present"])
+        self.assertEqual(invoked["version"], (ROOT / "VERSION").read_text(encoding="utf-8").strip())
+        self.assertEqual(invoked["action_backend"]["status"], "observed")
+
     def test_action_help_requires_no_live_terminal(self):
         result = self.invoke(["action", "--help"])
         self.assertEqual(result.returncode, 0, result.stderr)

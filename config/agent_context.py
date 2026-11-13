@@ -9,6 +9,7 @@ import agent_control
 
 SCHEMA = "kilix.agent-context/v1"
 MAX_BYTES = 4096
+COMMANDS = tuple(agent_capabilities.COMMAND_FILES)
 RULES = [
     "Use this snapshot for discovery, not as authorization or an action preflight.",
     "Pane/broker identities can change; reacquire them after restart or a stale-identity error.",
@@ -30,16 +31,24 @@ def _component(value, program="kilix"):
         command = str(Path(value["root"]) / program)
     compact_command = (command if isinstance(command, str) and
                        len(json.dumps(command, ensure_ascii=True)) <= 512 else None)
-    return {"status": _short(value.get("status")),
-            "command": compact_command,
-            "command_omitted": command is not None and compact_command is None,
-            "revision": _short(value.get("revision")),
-            "revision_status": _short(value.get("revision_status")),
-            "version": _short(value.get("version")),
-            "revision_matches_expected": value.get("revision_matches_expected"),
-            "action_schema": _short(backend.get("schema")),
-            "action_metadata_status": _short(backend.get("status")),
-            "actions_in_source": [name for name in known if name in backend.get("operations", {})]}
+    record = {"status": _short(value.get("status")),
+              "command": compact_command,
+              "command_omitted": command is not None and compact_command is None,
+              "revision": _short(value.get("revision")),
+              "revision_status": _short(value.get("revision_status")),
+              "version": _short(value.get("version")),
+              "version_status": _short(value.get("version_status")),
+              "revision_matches_expected": value.get("revision_matches_expected"),
+              "action_schema": _short(backend.get("schema")),
+              "action_metadata_status": _short(backend.get("status")),
+              "actions_in_source": [name for name in known if name in backend.get("operations", {})]}
+    if program == "kilix":
+        # An empty list is "none" only when dispatch_status is "observed".
+        present = value.get("commands_present")
+        record["dispatch_status"] = _short(value.get("dispatch_status"))
+        record["commands_present"] = [name for name in COMMANDS
+                                      if isinstance(present, list) and name in present]
+    return record
 
 
 def _identity(panes, pane_id, expected=None):
