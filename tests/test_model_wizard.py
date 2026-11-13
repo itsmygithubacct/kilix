@@ -102,6 +102,21 @@ class WizardTests(unittest.TestCase):
         activate.assert_not_called()
         self.assertEqual(list(Path(self.directory.name).iterdir()), [])
 
+    def test_unavailable_backend_names_a_command_that_declines_the_page(self):
+        # The desktop window cannot reopen an answered page; this command can.
+        opener = Mock()
+        opener.open.side_effect = ConnectionRefusedError(111, 'Connection refused')
+        with patch.object(system_llm.urllib.request, 'build_opener', return_value=opener), \
+                patch.object(system_llm.shutil, 'which', return_value=None):
+            with self.assertRaises(ValueError) as caught:
+                system_llm.installed()
+        self.assertIn('run: kilix wizard answer system-local-llm no', str(caught.exception))
+        self.assets.extend(system_llm.catalog())
+        wizard.apply('system-local-llm', ['qwen3:8b'], 'yes')
+        self.assertEqual(wizard.main(['answer', 'system-local-llm', 'no']), 0)
+        self.assertEqual(wizard.answers()['system-local-llm'],
+                         {'answer': 'no', 'models': [], 'phase': 'complete'})
+
     def test_activation_failure_does_not_block_a_later_category(self):
         wizard.apply('vision', ['yolox_s'], 'yes')
         wizard.apply('audio', ['encodec-24khz-stateful'], 'yes')
@@ -293,6 +308,25 @@ class WizardTests(unittest.TestCase):
         self.assertEqual(wizard.default_voice_record()['engine'], 'piper')
         self.assertEqual(wizard.default_voice_record()['voice'], 'kilix-female-02')
 
+    def test_a_pending_speech_choice_from_before_paradee_keeps_paradee(self):
+        # An upgraded machine switched to Female-02 from a 0.2.2-era pending page.
+        assets = [asset('kilix-female-02', 'kilix-piper-tts'), asset(wizard.PARADEE_ID, 'paradee')]
+        self.assets.extend(assets)
+        wizard.atomic_json(wizard.state_root() / 'model-wizard.json', {'schema': wizard.SCHEMA, 'answers': {
+            'speech': {'answer': 'yes', 'models': ['kilix-female-02'], 'phase': 'planned'},
+            'vision': {'answer': 'yes', 'models': ['yolox_s'], 'phase': 'planned'}}})
+        wizard.atomic_json(wizard.state_root() / 'system-voice-default.json', {
+            'schema': 'kilix.system-voice-default/v1', 'engine': 'paradee', 'voice': 'af_heart'})
+        self.assertEqual(set(wizard.pending()), {'vision'})
+        with patch('wizard_licenses.consent_and_install', return_value=({'yolox_s'}, set())) as batch, \
+                patch.object(wizard, 'run_command') as run:
+            wizard.finish()
+        self.assertEqual(batch.call_args.args[0], ['yolox_s'])
+        run.assert_not_called()
+        self.assertEqual(wizard.default_voice_record()['engine'], 'paradee')
+        self.assertNotIn('speech', wizard.answers())
+        self.assertIn('speech', [page['id'] for page in wizard.pages(measure=False)])
+
     def test_the_speech_default_verifies_paradee_without_first_use(self):
         assets = [asset(wizard.PARADEE_ID, 'paradee')]
         previous = os.environ.get('KILIX_MODEL_AUTO_INSTALL')
@@ -371,6 +405,61 @@ class WizardTests(unittest.TestCase):
             wizard.apply('audio', [], 'no')
         run.assert_not_called()
         self.assertNotIn('audio', [p['id'] for p in wizard.pages(measure=False)])
+
+    def run_dictation_finish(self, reply):
+        self.assets.append(asset('faster-whisper-small-en'))
+        wizard.apply('dictation', ['faster-whisper-small-en'], 'yes')
+        wizard.apply('vision', ['yolox_s'], 'yes')
+        events = []
+        def answer(question):
+            events.append(('question', question))
+            return reply
+        def downloads(selected, *, input_fn, before_install):
+            before_install(set(selected))
+            events.append(('downloads',))
+            return set(selected), set()
+        with patch('wizard_licenses.consent_and_install', side_effect=downloads), \
+                patch.object(wizard, 'run_command', side_effect=lambda *args: events.append(('run',) + args)), \
+                patch.object(wizard, 'ensure_default_system_voice', return_value=False), \
+                patch.object(wizard.sys, 'stdout', io.StringIO()):
+            wizard.finish(input_fn=answer)
+        return events
+
+    def test_microphone_question_comes_before_any_download(self):
+        # Asked after the downloads, it left the setup terminal waiting unattended.
+        events = self.run_dictation_finish('y')
+        questions = [event for event in events if event[0] == 'question']
+        self.assertEqual(len(questions), 1)
+        self.assertIn('Allow microphone use for dictation?', questions[0][1])
+        self.assertLess(events.index(questions[0]), events.index(('downloads',)))
+        self.assertLess(events.index(('run', 'stt', '--install', 'whisper-small-en')),
+                        events.index(('run', 'stt', '--grant-consent')))
+        self.assertEqual(wizard.pending(), {})
+        self.assertEqual(wizard.answers()['dictation']['answer'], 'yes')
+
+    def test_early_microphone_no_still_installs_but_does_not_enable_dictation(self):
+        events = self.run_dictation_finish('n')
+        self.assertEqual(sum(event[0] == 'question' for event in events), 1)
+        self.assertIn(('run', 'stt', '--install', 'whisper-small-en'), events)
+        self.assertNotIn(('run', 'stt', '--grant-consent'), events)
+        self.assertEqual(wizard.answers()['dictation']['answer'], 'no')
+        self.assertEqual(wizard.answers()['vision']['phase'], 'complete')
+
+    def test_no_microphone_question_when_the_dictation_licence_is_refused(self):
+        self.assets.append(asset('faster-whisper-small-en'))
+        wizard.apply('dictation', ['faster-whisper-small-en'], 'yes')
+        def refused(selected, *, input_fn, before_install):
+            before_install(set())
+            return set(), set(selected)
+        asked = []
+        with patch('wizard_licenses.consent_and_install', side_effect=refused), \
+                patch.object(wizard, 'run_command') as run, \
+                patch.object(wizard, 'ensure_default_system_voice', return_value=False), \
+                patch.object(wizard.sys, 'stdout', io.StringIO()):
+            wizard.finish(input_fn=lambda question: asked.append(question) or 'y')
+        self.assertEqual(asked, [])
+        run.assert_not_called()
+        self.assertEqual(wizard.answers()['dictation']['refused'], ['faster-whisper-small-en'])
 
     def test_failure_keeps_saved_choices_pending_for_final_retry(self):
         wizard.apply('image', [self.assets[-1]['id']], 'yes')

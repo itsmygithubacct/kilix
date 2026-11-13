@@ -85,6 +85,10 @@ PLAYALONG_DEFAULT_ROW = 'basic-pitch-icassp-2022-onnx'
 LEGACY = {'speech': 'system-voice.state', 'dictation': 'dictation-offer.state',
           'workflows': 'workflows-offer.state'}
 WORKFLOWS_SCHEMA = 'kilix.workflows/v1'
+# Speech choices saved since Paradee became the default carry this scope. A
+# pending one without it was saved when the page preselected Female-02 (0.2.2)
+# and must not replace Paradee on an upgraded machine; release decision.
+SPEECH_SCOPE = 'paradee-default'
 ASK_MODELS = {'lfm3-kilix-commands': 'lfm3', 'lfm2-kilix-commands': 'lfm2', 'needle3-kilix-commands': 'needle3',
               'grammar': 'grammar'}
 
@@ -208,6 +212,9 @@ def answers():
                 or not isinstance(value.get('models'), list)
                 or any(not isinstance(model, str) for model in value['models'])):
             raise ValueError('Invalid saved wizard answer.')
+    speech = result.get('speech', {})
+    if speech.get('phase') == 'planned' and speech.get('scope') != SPEECH_SCOPE:
+        del result['speech']
     previous = result.get('workflows', {})
     if previous and previous.get('scope') != 'ask' and not any(
             model in ASK_MODELS for model in previous.get('models', [])):
@@ -249,6 +256,8 @@ def record(segment, answer, models, phase="complete", *, refused=()):
         saved[segment]['refused'] = list(refused)
     if segment == 'workflows':
         saved[segment]['scope'] = 'ask'
+    if segment == 'speech':
+        saved[segment]['scope'] = SPEECH_SCOPE
     atomic_json(state_root() / 'model-wizard.json', {'schema': SCHEMA, 'answers': saved})
 
 
@@ -619,8 +628,16 @@ def ensure_default_system_voice():
     return True
 
 
-def activate_page(segment, models, *, input_fn):
+def dictation_consent(models, input_fn):
+    """Ask once, before any download, so a long install runs unattended."""
     from wizard_licenses import ask
+    if not any(model in STT_IDS for model in models):
+        return None
+    print('Dictation records only while you dictate and processes speech locally.')
+    return ask('Allow microphone use for dictation?', input_fn)
+
+
+def activate_page(segment, models, *, input_fn, microphone=None):
     if segment == 'speech':
         # Paradee is the fresh-install default. Choosing Female-02 here
         # replaces that selection. Kristin stays an optional install.
@@ -639,8 +656,9 @@ def activate_page(segment, models, *, input_fn):
         active = next((model for model in models if model in STT_IDS), None)
         if active:
             run_command('stt', '--install', STT_IDS[active])
-            print('Dictation records only while you dictate and processes speech locally.')
-            if ask('Allow microphone use for dictation?', input_fn) != 'yes':
+            if microphone is None:
+                microphone = dictation_consent(models, input_fn)
+            if microphone != 'yes':
                 legacy_state(segment, {'answer': 'no'})
                 return False
             run_command('stt', '--default', STT_IDS[active])
@@ -678,10 +696,18 @@ def finish(*, input_fn=input):
             chosen = [model for model in plan['models'] if model not in SHIPPED_MODELS]
             if set(chosen) - offered.get(segment, set()):
                 raise ValueError('The offered models changed. Revisit this page with --all.')
+        # Asked after the downloads, this question left an unattended setup
+        # waiting for many minutes with later pages not yet activated. Ask it
+        # after the licence answers, only for a dictation model they allow.
+        microphone = []
+        def ask_before_downloads(allowed):
+            dictation = plans.get('dictation', {}).get('models', [])
+            microphone.append(dictation_consent([m for m in dictation if m in allowed], input_fn))
         from wizard_licenses import InstallFailures, consent_and_install
         failures, completed = {}, []
         try:
-            allowed, declined = consent_and_install(selected, input_fn=input_fn) if selected else (set(), set())
+            allowed, declined = consent_and_install(
+                selected, input_fn=input_fn, before_install=ask_before_downloads) if selected else (set(), set())
         except InstallFailures as error:
             allowed, declined = error.installed, error.declined
             failures.update(error.failures)
@@ -705,7 +731,8 @@ def finish(*, input_fn=input):
                         for model in missing:
                             failures.setdefault(model, ValueError('Installation was not confirmed'))
                         continue
-                    if activate_page(segment, models, input_fn=input_fn):
+                    if activate_page(segment, models, input_fn=input_fn,
+                                     microphone=microphone[0] if microphone else None):
                         record(segment, 'yes', models, refused=refused)
                     else:
                         record(segment, 'no', [], refused=refused)

@@ -26,7 +26,8 @@ class BatchTests(unittest.TestCase):
         self.installer = Mock()
         self.questions = []
 
-    def run_batch(self, names, decisions, llm_entries=None, *, finish=False, acquire=None):
+    def run_batch(self, names, decisions, llm_entries=None, *, finish=False, acquire=None,
+                  llm_error=None):
         decisions = iter(decisions)
         def answer(question):
             self.questions.append(question)
@@ -36,14 +37,18 @@ class BatchTests(unittest.TestCase):
                 patch.object(self.lic.ReceiptStore, 'shared', return_value=self.store), \
                 patch.object(self.lic, 'observe_capture', return_value=self.lic.observe_capture(interactive=True)), \
                 patch.object(self.api, 'Installer', return_value=self.installer), \
-                patch.object(system_llm, 'license_texts', return_value=llm_entries or {}), \
+                patch.object(system_llm, 'license_texts', return_value=llm_entries or {},
+                             side_effect=llm_error), \
                 patch.object(system_llm, 'acquire', side_effect=acquire), \
                 patch.object(model_wizard, 'state_root', return_value=Path(self.directory.name)), \
                 contextlib.redirect_stdout(output):
-            result = (model_wizard.finish(input_fn=answer) if finish else
-                      batch.consent_and_install(names, input_fn=answer))
-            output.flush()
-            self.output = output.buffer.getvalue()
+            try:
+                result = (model_wizard.finish(input_fn=answer) if finish else
+                          batch.consent_and_install(names, input_fn=answer))
+            finally:
+                # Failing batches raise; their output is still evidence.
+                output.flush()
+                self.output = output.buffer.getvalue()
         return result
 
     def test_standard_licenses_install_without_prompt_and_keep_documents(self):
@@ -142,6 +147,67 @@ class BatchTests(unittest.TestCase):
         self.assertIs(caught.exception.__cause__, cause)
         self.assertEqual([call.args[0].asset_id for call in self.installer.ensure_upstream_asset.call_args_list],
                          ['yolox_s', 'yamnet'])
+
+    def test_unreachable_llm_registry_fails_that_model_and_installs_the_rest(self):
+        # Offline, the Ollama manifest fetch raised before any question and
+        # cancelled every other selected model.
+        cause = OSError('Temporary failure in name resolution')
+        acquire = Mock()
+        with self.assertRaises(batch.InstallFailures) as caught:
+            self.run_batch(['yolox_s', 'qwen3:8b', 'yamnet'], [], llm_error=cause, acquire=acquire)
+        self.assertEqual(caught.exception.installed, {'yolox_s', 'yamnet'})
+        self.assertEqual(caught.exception.declined, set())
+        self.assertEqual(caught.exception.failures, {'qwen3:8b': cause})
+        acquire.assert_not_called()
+        self.assertIn('Could not read the licence for qwen3:8b: Temporary failure in name resolution',
+                      self.output.decode())
+
+    def test_remaining_questions_come_after_licences_and_before_downloads(self):
+        # The dictation microphone question: never for a refused model, and
+        # never after the downloads, where an unattended setup waited for it.
+        events = []
+        self.installer.ensure_upstream_asset.side_effect = (
+            lambda spec, **_kwargs: events.append(('download', spec.asset_id)))
+        def before_install(allowed):
+            events.append(('questions', frozenset(allowed), len(self.questions)))
+        decisions = iter(['no'])
+        def answer(question):
+            self.questions.append(question)
+            return next(decisions)
+        output = io.TextIOWrapper(io.BytesIO(), encoding='utf-8', write_through=True)
+        with patch.object(cm, '_api', return_value=self.api), \
+                patch.object(self.lic.ReceiptStore, 'shared', return_value=self.store), \
+                patch.object(self.lic, 'observe_capture', return_value=self.lic.observe_capture(interactive=True)), \
+                patch.object(self.api, 'Installer', return_value=self.installer), \
+                patch.object(model_wizard, 'state_root', return_value=Path(self.directory.name)), \
+                contextlib.redirect_stdout(output):
+            result = batch.consent_and_install(['faster-whisper-small-en', 'yolox_s', 'encodec-24khz-stateful'],
+                                               input_fn=answer, before_install=before_install)
+        allowed = {'faster-whisper-small-en', 'yolox_s'}
+        self.assertEqual(result, (allowed, {'encodec-24khz-stateful'}))
+        self.assertEqual(len(self.questions), 1)
+        self.assertEqual(events[0], ('questions', frozenset(allowed), 1))
+        self.assertEqual(sorted(event[1] for event in events[1:]), sorted(allowed))
+
+    def test_each_installed_model_reports_its_outcome(self):
+        # Sixteen bare "Installing X…" lines could not show which had finished.
+        self.run_batch(['yolox_s', 'yamnet'], [])
+        text = self.output.decode()
+        for name in ('yolox_s', 'yamnet'):
+            self.assertIn(f'Installed {name}.', text)
+        self.assertLess(text.index('Installed yolox_s.'), text.index('Installing yamnet'))
+
+    def test_failed_model_reason_is_printed_before_later_models(self):
+        # The owner's setup terminal stopped at a later question with only
+        # "Could not install qwen3:8b" on screen; the reason must come first.
+        cause = ValueError('The local Ollama backend at 127.0.0.1:11434 is unavailable.')
+        with self.assertRaises(batch.InstallFailures):
+            self.run_batch(['qwen3:8b', 'yamnet'], ['yes'],
+                           {'qwen3:8b': [('apache-2.0', b'Original terms')]}, acquire=cause)
+        text = self.output.decode()
+        reason = 'Could not install qwen3:8b: The local Ollama backend at 127.0.0.1:11434 is unavailable.'
+        self.assertIn(reason, text)
+        self.assertLess(text.index(reason), text.index('Installing yamnet'))
 
     def test_partial_finish_retry_skips_completed_pages_and_reuses_exact_licences(self):
         name = 'qwen3:8b'
