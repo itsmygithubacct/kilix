@@ -89,6 +89,25 @@ class ExistingDesktopProviderTests(unittest.TestCase):
         self.assertEqual(call[call.index("--") + 1:],
                          [str(ROOT / "kilix"), "desktop", "--app", "settings"])
 
+    def test_zell_reuses_only_its_exact_runtime_and_forwards_it_to_new_tabs(self):
+        runtime = self.base / "zell"
+        runtime.mkdir()
+        binary = runtime / "zell-neuronte"
+        binary.write_text("#!/bin/sh\nexit 0\n")
+        binary.chmod(0o700)
+        self.env["KILIX_DESKTOP_NAME"] = "Kilix 95"
+        self.env["ZELL_NEURONTE_HOME"] = str(runtime)
+        self.env["ZELL_NEURONTE_WEIGHTS"] = str(runtime / "chosen.nrt")
+        focus, launches = self.launch("zell", [(41, self.base / "other/zell-neuronte")])
+        self.assertFalse(focus)
+        self.assertEqual(len(launches), 1)
+        self.assertIn("KILIX_DESKTOP_NAME=zell", launches[0])
+        self.assertIn("ZELL_NEURONTE_HOME=" + str(runtime), launches[0])
+        self.assertIn("ZELL_NEURONTE_WEIGHTS=" + str(runtime / "chosen.nrt"), launches[0])
+        focus, launches = self.launch("zell", [(41, self.targets["builtin"]), (42, binary)])
+        self.assertFalse(launches)
+        self.assertIn("id:42", focus[0])
+
     def test_other_python_provider_does_not_consume_explicit_selection(self):
         for selected, other in (("builtin", "external"), ("external", "builtin")):
             with self.subTest(selected=selected):

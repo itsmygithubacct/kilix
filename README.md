@@ -2496,6 +2496,9 @@ kilix desktop xp             # equivalent provider-specific form
 kilix cap                    # open the optional Kilix Cap mansion
 kilix tui                    # open the optional text-native desktop
 kilix land                   # open the optional walkable desktop
+kilix icewm                  # open IceWM in a pane
+kilix zell                   # open zell, the RPG Desktop
+kilix default-desktop choose  # choose and save the next login desktop
 KILIX_DESKTOP_PROVIDER=cap kilix desktop
 KILIX_DESKTOP_PROVIDER=tui kilix desktop
 KILIX_DESKTOP_PROVIDER=land kilix desktop
@@ -2506,20 +2509,20 @@ repository is the authoritative desktop. `auto` prefers an installed external
 checkout; the bundled `desktop/` tree is an explicitly reported compatibility
 fallback. Both must pass the same provider API, Kilix SDK, and security-feature
 contract before execution. `cap` selects the native Kilix Cap executable,
-`tui` selects Kilix TUI, and `land` selects Kilix Land. Managed first installs
+`tui` selects Kilix TUI, `land` selects Kilix Land, and `zell` selects the
+installed zell RPG Desktop. `zell-neuronte` and `kilix-zell` are accepted aliases. Managed first installs
 use immutable Kilix-owned pins, and the launchers validate executable paths
 rather than a Python provider manifest. The generic `command` provider remains
 available for other full desktops. `kilix status` shows the effective provider
 and path.
 
-These commands open a desktop in a Kilix tab. Making XP the Pleb login desktop
-also requires the session switch and provider in Pleb’s persistent
-`~/.local/gpu_terminal/pleb/config/session.env`:
-
-```sh
-PLEB_DESKTOP=1
-KILIX_DESKTOP_PROVIDER=xp
-```
+These commands open a desktop in a Kilix tab. Plebian-OS asks for a default
+on the first interactive desktop login: Kilix 95, IceWM, Kilix TUI, and zell
+are the primary choices; **More desktops** exposes the others. The selection
+is saved for subsequent Pleb logins. `kilix default-desktop choose` opens the
+same chooser later, and `kilix default-desktop set NAME` saves a choice directly
+(for example, `set xp`). Plain shell sessions with `PLEB_DESKTOP=0` remain shell
+sessions until that session setting is enabled.
 
 `KILIX_DESKTOP_FLAVOR=xp` alone only selects Kilix 95’s first-run appearance;
 it does not turn a plain Pleb shell session into a desktop session.

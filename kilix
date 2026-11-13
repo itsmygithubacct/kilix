@@ -3062,6 +3062,11 @@ case "${1:-}" in
     export KILIX_DESKTOP_PROVIDER=land
     export KILIX_DESKTOP_NAME="${KILIX_DESKTOP_NAME:-Kilix Land}"
     set -- desktop "$@" ;;
+  zell|zell-neuronte|kilix-zell)
+    shift
+    export KILIX_DESKTOP_PROVIDER=zell
+    export KILIX_DESKTOP_NAME=zell
+    set -- desktop "$@" ;;
   icewm|kilix-icewm)
     shift
     export KILIX_DESKTOP_PROVIDER=icewm
@@ -3218,51 +3223,10 @@ case "${1:-}" in
         exit 2 ;;
     esac ;;
   default-desktop)
-    # The one place the chosen desktop is written, so every desktop and the
-    # first-boot provisioner set it the same way. Selection used to be a
-    # launch-time environment variable: `kilix cap` ran Cap once and the next
-    # login went back to whatever the image shipped, with no command that meant
-    # "and keep doing that".
     shift
-    _dd_file="$KILIX_USER_CONFIG_DIRECTORY/kilix.env"
-    case "${1:-show}" in
-      show)
-        _dd_current="$(sed -n 's/^KILIX_DESKTOP_PROVIDER=//p' "$_dd_file" \
-          2>/dev/null | tail -1)"
-        echo "${_dd_current:-auto}"
-        exit 0 ;;
-      list)
-        printf '%s\n' auto builtin external xp cap tui land none
-        exit 0 ;;
-      -h|--help|help)
-        echo "usage: $_self default-desktop [show|list|set NAME]"
-        echo "the desktop every later session starts with"
-        exit 0 ;;
-      set)
-        shift
-        _dd_name="${1:-}"
-        case "$_dd_name" in
-          auto|builtin|external|xp|cap|tui|land|none) ;;
-          *)
-            echo "kilix default-desktop: unknown desktop '${_dd_name:-}'" >&2
-            echo "choose one of: auto builtin external xp cap tui land none" >&2
-            exit 2 ;;
-        esac
-        mkdir -p "$KILIX_USER_CONFIG_DIRECTORY" || exit 1
-        [ -f "$_dd_file" ] || : > "$_dd_file"
-        # Rewrite in place: a second assignment further down the file would
-        # win silently and leave the first one there to be read as truth.
-        _dd_tmp="$_dd_file.tmp.$$"
-        grep -v '^KILIX_DESKTOP_PROVIDER=' "$_dd_file" > "$_dd_tmp" 2>/dev/null \
-          || : > "$_dd_tmp"
-        printf 'KILIX_DESKTOP_PROVIDER=%s\n' "$_dd_name" >> "$_dd_tmp"
-        mv -- "$_dd_tmp" "$_dd_file" || exit 1
-        echo "default desktop: $_dd_name"
-        exit 0 ;;
-      *)
-        echo "usage: $_self default-desktop [show|list|set NAME]" >&2
-        exit 2 ;;
-    esac ;;
+    [ $# -gt 0 ] || set -- show
+    exec python3 -B "$KILIX_HOME/config/desktop_choice.py" \
+      --config "$KILIX_USER_CONFIG_DIRECTORY" "$@" ;;
   volume|mixer)
     # The chrome's volume widget resolves this, and so does anyone typing it.
     # Kilix ships a mixer in the shared shell wired to the sink Kilix itself
@@ -5259,6 +5223,16 @@ sys.exit(0 if ready else 1)
         _status_provider="icewm (X window manager in a pane)"
         _status_provider_dir="$KILIX_ICEWM_DIR"
         ;;
+      zell|zell-neuronte|kilix-zell)
+        _status_provider="zell (RPG Desktop)"
+        _status_provider_dir=""
+        for _zell_dir in "${ZELL_NEURONTE_HOME:-}" \
+            "$GPU_TERMINAL_HOME/kilix/data/desktop-apps/kilix-zell" \
+            "$GPU_TERMINAL_SOURCE_HOME/kilix-apps/kilix-zell" /usr/local/share/kilix-zell; do
+          [ -n "$_zell_dir" ] && [ -x "$_zell_dir/zell-neuronte" ] || continue
+          _status_provider_dir="$_zell_dir"
+          break
+        done ;;
       command|custom|none|off|disabled)
         _status_provider_dir=""
         ;;
@@ -6519,6 +6493,28 @@ _kilix_icewm_ensure() {
   _KILIX_DESKTOP_MODE=executable
 }
 
+_kilix_zell_ensure() {
+  # Match the packaged zell command's runtime search and weights default. Use
+  # the resolved executable for both launch and exact foreground-pane reuse.
+  local app
+  for app in "${ZELL_NEURONTE_HOME:-}" \
+      "$GPU_TERMINAL_HOME/kilix/data/desktop-apps/kilix-zell" \
+      "$GPU_TERMINAL_SOURCE_HOME/kilix-apps/kilix-zell" /usr/local/share/kilix-zell; do
+    [ -n "$app" ] && [ -x "$app/zell-neuronte" ] || continue
+    [ -f "$app/zell-neuronte" ] && [ ! -L "$app/zell-neuronte" ] \
+      || _kilix_desktop_die "zell resolved to an unsafe executable: $app/zell-neuronte"
+    export ZELL_NEURONTE_HOME="$app"
+    if [ -z "${ZELL_NEURONTE_WEIGHTS:-}" ] && [ -f "$app/weights/neuronte-split-v4.nrt" ]; then
+      export ZELL_NEURONTE_WEIGHTS="$app/weights/neuronte-split-v4.nrt"
+    fi
+    _KILIX_DESKTOP_MAIN="$app/zell-neuronte"
+    _KILIX_DESKTOP_MODE=executable
+    export KILIX_DESKTOP_NAME=zell
+    return 0
+  done
+  _kilix_desktop_die "zell (RPG Desktop) is not installed; install the zell runtime or set ZELL_NEURONTE_HOME"
+}
+
 _kilix_desktop_select() {
   _KILIX_DESKTOP_MAIN=
   _KILIX_DESKTOP_MODE=
@@ -6550,6 +6546,8 @@ _kilix_desktop_select() {
       _kilix_land_ensure ;;
     icewm|kilix-icewm)
       _kilix_icewm_ensure ;;
+    zell|zell-neuronte|kilix-zell)
+      _kilix_zell_ensure ;;
     auto)
       _auto_external="$KILIX95_DIR"
       if [ -f "$_auto_external/main.py" ]; then
@@ -6563,7 +6561,7 @@ _kilix_desktop_select() {
         _kilix95_ensure_external
       fi ;;
     *)
-      _kilix_desktop_die "unknown KILIX_DESKTOP_PROVIDER=$_k95_provider (use auto, builtin, external, xp, cap, tui, land, icewm, command, or none)" ;;
+      _kilix_desktop_die "unknown KILIX_DESKTOP_PROVIDER=$_k95_provider (use auto, builtin, external, xp, cap, tui, land, icewm, zell, command, or none)" ;;
   esac
 }
 
@@ -6665,13 +6663,34 @@ fi
 # providers. All use the same host-in-own-tab + wrapped-cleanup story as run.
 if [ "${1:-}" = "desktop" ]; then
   shift
+  _desktop_session_start=0
+  if [ "${1:-}" = --session-start ]; then
+    shift
+    _desktop_session_start=1
+    _desktop_choice="$(python3 -B "$KILIX_HOME/config/desktop_choice.py" \
+      --config "$KILIX_USER_CONFIG_DIRECTORY" choose --session-start)" || exit $?
+    if [ -n "$_desktop_choice" ]; then
+      export KILIX_DESKTOP_PROVIDER="$_desktop_choice"
+      export KILIX_DESKTOP_FLAVOR=95
+      case "$_desktop_choice" in
+        external|auto) export KILIX_DESKTOP_NAME="Kilix 95" ;;
+        xp) export KILIX_DESKTOP_NAME="Kilix XP" KILIX_DESKTOP_FLAVOR=xp ;;
+        icewm) export KILIX_DESKTOP_NAME=IceWM ;;
+        tui) export KILIX_DESKTOP_NAME="Kilix TUI" ;;
+        cap) export KILIX_DESKTOP_NAME="Kilix Cap" ;;
+        land) export KILIX_DESKTOP_NAME="Kilix Land" ;;
+        zell) export KILIX_DESKTOP_NAME=zell ;;
+        *) export KILIX_DESKTOP_NAME=desktop ;;
+      esac
+    fi
+  fi
   # The provider can be named right on the command line — `kilix desktop 95`,
   # `kilix desktop kilix-cap`, `kilix desktop kilix-tui`, or
   # `kilix desktop kilix-land` — overriding the environment and settings
   # selection for this launch only. Anything not in this table passes through
   # to the provider as an ordinary argument.
   case "${1:-}" in
-    95|kilix-95)
+    95|kilix95|kilix-95)
       # Asking for 95 by name asks for its 95 look; bare `external` below
       # keeps whatever flavor is configured.
       export KILIX_DESKTOP_PROVIDER=external
@@ -6701,11 +6720,18 @@ if [ "${1:-}" = "desktop" ]; then
       export KILIX_DESKTOP_PROVIDER=icewm
       export KILIX_DESKTOP_NAME="${KILIX_DESKTOP_NAME:-Kilix IceWM}"
       shift ;;
+    zell|zell-neuronte|kilix-zell)
+      export KILIX_DESKTOP_PROVIDER=zell
+      export KILIX_DESKTOP_NAME=zell
+      shift ;;
     builtin|none)
       export KILIX_DESKTOP_PROVIDER="$1"
       shift ;;
   esac
   _kilix_desktop_select
+  if [ "$_desktop_session_start" = 1 ] && [ "$_KILIX_DESKTOP_MODE" = none ]; then
+    exec "${SHELL:-/bin/bash}" -l
+  fi
   if [ "$_KILIX_DESKTOP_MODE" = python ] \
        && [ "$_KILIX_DESKTOP_MAIN" != "$KILIX_HOME/desktop/main.py" ]; then
     if [ -z "${KILIX_STATE_LIBRARY:-}" ]; then
@@ -6773,6 +6799,8 @@ print(ids[0] if ids else "")' 2>/dev/null)"
       --env "KILIX_DESKTOP_COMMAND=${KILIX_DESKTOP_COMMAND:-}" \
       --env "KILIX_DESKTOP_NAME=${KILIX_DESKTOP_NAME:-}" \
       --env "KILIX_DESKTOP_FLAVOR=${KILIX_DESKTOP_FLAVOR:-}" \
+      --env "ZELL_NEURONTE_HOME=${ZELL_NEURONTE_HOME:-}" \
+      --env "ZELL_NEURONTE_WEIGHTS=${ZELL_NEURONTE_WEIGHTS:-}" \
       --env "KILIX95_AUTO_INSTALL=${KILIX95_AUTO_INSTALL:-}" \
       --env "KILIX95_DIR=$KILIX95_DIR" \
       --env "KILIX95_REPO=${KILIX95_REPO:-}" \

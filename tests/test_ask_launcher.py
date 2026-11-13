@@ -141,6 +141,15 @@ class AskLauncherTests(unittest.TestCase):
                               stdin=subprocess.DEVNULL, capture_output=True, text=True,
                               timeout=60)
 
+    def test_quoted_and_unquoted_question_reach_needle_as_one_string(self):
+        for arguments in (("close tab 2",), ("close", "tab", "2")):
+            with self.subTest(arguments=arguments):
+                self.log.unlink(missing_ok=True)
+                result = self.run_ask(*arguments)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                calls = [row["needle"] for row in self.calls() if "needle" in row]
+                self.assertEqual(calls, [["ask", "--interactive", "--", "close tab 2"]])
+
     def weather_provider(self):
         """Real launcher/worker/parser, with only provider HTTP replaced."""
         for name in ('__init__.py', 'kilix_chrome/__init__.py',
