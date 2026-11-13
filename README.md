@@ -3553,3 +3553,20 @@ Read-only operations and owned-job primitives remain available. See
 replay, revocation and the required isolation from model shell/broker access.
 
 `kilix yamnet run` verifies and executes the existing sound provider without setup or selection writes. Selected YOLOX wrappers also verify their bound source/cut and Content agreement on direct invocation. Copying a YOLOX runtime to a new path requires `kilix install yolox` there to regenerate its binding; a sound runtime can relocate on its recorded Python/platform ABI.
+
+Paradee's offline `config/paradee_synth.py` keeps every supported phoneme in long
+utterances by splitting them into bounded model inputs. `ParadeeSession` reuses
+the loaded model and G2P for repeated synthesis. Its `--jsonl` mode accepts one
+`{"text":"...","wav":"destination.wav"}` request per line and returns measured
+audio duration, synthesis time, chunk count, and success/error status. The
+existing single-utterance interface remains supported. Callers select trusted
+local model files and the installed Paradee Python environment; no download or
+system voice selection is performed by this helper.
+
+`config/kilix_sdk/speech_buffer.py` provides `AdaptiveBuffer` for applications
+that prepare audio while earlier audio plays. Supply work estimates, observed
+preparation durations, and load scores; it returns an average duration, a margin
+for variation, and the delay before the next request should start. Keep its
+bounded state in the application's private data directory to learn across runs.
+It owns no player or background process and cannot guarantee deadlines during
+an unbounded producer stall.
