@@ -26,7 +26,8 @@ class BatchTests(unittest.TestCase):
         self.installer = Mock()
         self.questions = []
 
-    def run_batch(self, names, decisions, llm_entries=None, *, finish=False, acquire=None):
+    def run_batch(self, names, decisions, llm_entries=None, *, finish=False, acquire=None,
+                  llm_error=None):
         decisions = iter(decisions)
         def answer(question):
             self.questions.append(question)
@@ -36,7 +37,8 @@ class BatchTests(unittest.TestCase):
                 patch.object(self.lic.ReceiptStore, 'shared', return_value=self.store), \
                 patch.object(self.lic, 'observe_capture', return_value=self.lic.observe_capture(interactive=True)), \
                 patch.object(self.api, 'Installer', return_value=self.installer), \
-                patch.object(system_llm, 'license_texts', return_value=llm_entries or {}), \
+                patch.object(system_llm, 'license_texts', return_value=llm_entries or {},
+                             side_effect=llm_error), \
                 patch.object(system_llm, 'acquire', side_effect=acquire), \
                 patch.object(model_wizard, 'state_root', return_value=Path(self.directory.name)), \
                 contextlib.redirect_stdout(output):
@@ -145,6 +147,20 @@ class BatchTests(unittest.TestCase):
         self.assertIs(caught.exception.__cause__, cause)
         self.assertEqual([call.args[0].asset_id for call in self.installer.ensure_upstream_asset.call_args_list],
                          ['yolox_s', 'yamnet'])
+
+    def test_unreachable_llm_registry_fails_that_model_and_installs_the_rest(self):
+        # Offline, the Ollama manifest fetch raised before any question and
+        # cancelled every other selected model.
+        cause = OSError('Temporary failure in name resolution')
+        acquire = Mock()
+        with self.assertRaises(batch.InstallFailures) as caught:
+            self.run_batch(['yolox_s', 'qwen3:8b', 'yamnet'], [], llm_error=cause, acquire=acquire)
+        self.assertEqual(caught.exception.installed, {'yolox_s', 'yamnet'})
+        self.assertEqual(caught.exception.declined, set())
+        self.assertEqual(caught.exception.failures, {'qwen3:8b': cause})
+        acquire.assert_not_called()
+        self.assertIn('Could not read the licence for qwen3:8b: Temporary failure in name resolution',
+                      self.output.decode())
 
     def test_each_installed_model_reports_its_outcome(self):
         # Sixteen bare "Installing X…" lines could not show which had finished.

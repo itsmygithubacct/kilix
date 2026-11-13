@@ -105,7 +105,17 @@ def consent_and_install(selected, *, input_fn=input):
         from model_wizard import atomic_json, read_json, state_root
         llm_licenses_path = state_root() / 'model-wizard-llm-licenses.json'
         saved = read_json(llm_licenses_path)
-        for model, entries in system_llm.license_texts(llm_ids).items():
+        failures = {}
+        for model in llm_ids:
+            try:
+                entries = system_llm.license_texts([model]).get(model, [])
+            except Exception as error:
+                # An unreachable registry fails this model, not the whole batch.
+                from model_wizard import error_detail
+                failures[model] = error
+                print(f'Could not read the licence for {model}: {error_detail(error)}', flush=True)
+                print('Continuing with the other selected models.', flush=True)
+                continue
             if llm_license_covered(model, entries, saved, system_llm.MODELS[model][3]):
                 continue
             for label, payload in entries:
@@ -147,8 +157,10 @@ def consent_and_install(selected, *, input_fn=input):
             if answer == 'yes':
                 accepted.add(key)
                 captures[key] = lic.observe_capture()
-        allowed = {model for model in selected if requirements[model] <= accepted}
-        declined = set(selected) - allowed
+        allowed = {model for model in selected
+                   if requirements[model] <= accepted and model not in failures}
+        # A model whose terms could not be read was not declined; it stays pending.
+        declined = set(selected) - allowed - set(failures)
         # No receipt is minted until every group has been answered; interrupted
         # batches remain pending and can be reviewed again without downloads.
         from kilix_content.receipt import catalog_sha256, release_digest
@@ -184,7 +196,7 @@ def consent_and_install(selected, *, input_fn=input):
         from wizard_converters import prepare_converters
         prepare_converters(api, installer, [specs[model] for model in selected
                                            if model in allowed and model in specs], input_fn=input_fn)
-        installed, failures = set(), {}
+        installed = set()
         for model in selected:
             if model not in allowed: continue
             print('\nInstalling ' + model + '…', flush=True)
