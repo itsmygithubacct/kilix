@@ -1,6 +1,5 @@
 """kilix video --neuronte: finding the player, passing arguments, and failing plainly."""
 import importlib.util
-import os
 import stat
 import subprocess
 import sys
@@ -9,6 +8,9 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _env_support import sandbox_env  # noqa: E402
+
 spec = importlib.util.spec_from_file_location('neuronte_video', ROOT / 'config/neuronte_video.py')
 neuronte_video = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(neuronte_video)
@@ -65,7 +67,8 @@ class NeuronteVideoTests(unittest.TestCase):
     def test_launcher_routes_the_flag(self):
         with tempfile.TemporaryDirectory() as base:
             home = self.checkout(base)
-            env = dict(os.environ, KILIX_HOME=str(ROOT), NEURONTE_HOME=str(home))
+            env = sandbox_env(KILIX_HOME=str(ROOT), NEURONTE_HOME=str(home))
+            env.pop('NEURONTE_LIB', None)  # the stand-in checkout's library, not the caller's
             result = subprocess.run(['bash', str(ROOT / 'kilix'), 'video', '--neuronte', 'clip.mkv', '--no-audio'],
                                     env=env, capture_output=True, text=True, timeout=60)
             self.assertEqual(result.returncode, 0, result.stderr)
