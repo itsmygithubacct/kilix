@@ -212,7 +212,7 @@ class KilixLandProviderTests(unittest.TestCase):
         self.assertIn("land|kilix-land|kilix-land-desktop)", launcher)
         self.assertIn("_kilix_land_ensure", launcher)
         self.assertIn(
-            "use auto, builtin, external, xp, cap, tui, land, icewm, command, or none",
+            "use auto, builtin, external, xp, cap, tui, land, icewm, zell, command, or none",
             launcher,
         )
 

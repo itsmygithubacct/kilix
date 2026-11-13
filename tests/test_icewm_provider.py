@@ -51,7 +51,7 @@ class KilixIceWMProviderTests(unittest.TestCase):
 
     def test_launcher_names_the_icewm_provider(self):
         self.assertIn(
-            "use auto, builtin, external, xp, cap, tui, land, icewm, command, or none",
+            "use auto, builtin, external, xp, cap, tui, land, icewm, zell, command, or none",
             self.text,
         )
 
