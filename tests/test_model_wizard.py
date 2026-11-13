@@ -308,6 +308,25 @@ class WizardTests(unittest.TestCase):
         self.assertEqual(wizard.default_voice_record()['engine'], 'piper')
         self.assertEqual(wizard.default_voice_record()['voice'], 'kilix-female-02')
 
+    def test_a_pending_speech_choice_from_before_paradee_keeps_paradee(self):
+        # An upgraded machine switched to Female-02 from a 0.2.2-era pending page.
+        assets = [asset('kilix-female-02', 'kilix-piper-tts'), asset(wizard.PARADEE_ID, 'paradee')]
+        self.assets.extend(assets)
+        wizard.atomic_json(wizard.state_root() / 'model-wizard.json', {'schema': wizard.SCHEMA, 'answers': {
+            'speech': {'answer': 'yes', 'models': ['kilix-female-02'], 'phase': 'planned'},
+            'vision': {'answer': 'yes', 'models': ['yolox_s'], 'phase': 'planned'}}})
+        wizard.atomic_json(wizard.state_root() / 'system-voice-default.json', {
+            'schema': 'kilix.system-voice-default/v1', 'engine': 'paradee', 'voice': 'af_heart'})
+        self.assertEqual(set(wizard.pending()), {'vision'})
+        with patch('wizard_licenses.consent_and_install', return_value=({'yolox_s'}, set())) as batch, \
+                patch.object(wizard, 'run_command') as run:
+            wizard.finish()
+        self.assertEqual(batch.call_args.args[0], ['yolox_s'])
+        run.assert_not_called()
+        self.assertEqual(wizard.default_voice_record()['engine'], 'paradee')
+        self.assertNotIn('speech', wizard.answers())
+        self.assertIn('speech', [page['id'] for page in wizard.pages(measure=False)])
+
     def test_the_speech_default_verifies_paradee_without_first_use(self):
         assets = [asset(wizard.PARADEE_ID, 'paradee')]
         previous = os.environ.get('KILIX_MODEL_AUTO_INSTALL')
