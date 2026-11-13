@@ -97,7 +97,9 @@ def saved(config):
     choice = values.get('KILIX_DESKTOP_PROVIDER', 'auto')
     if choice == 'external' and values.get('KILIX_DESKTOP_FLAVOR') == 'xp':
         return 'xp'
-    return provider(choice)
+    # Existing hand-written command/custom providers remain readable. Only
+    # a new selection must come from the offered menu.
+    return ALIASES.get(choice, choice)
 
 
 def state(config):
@@ -156,11 +158,14 @@ def prompt(current, source, output):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', type=Path, required=True)
-    parser.add_argument('command', choices=('show', 'list', 'set', 'request', 'choose'))
+    parser.add_argument('command', choices=('show', 'list', 'set', 'request', 'choose', 'help'))
     parser.add_argument('name', nargs='?')
     parser.add_argument('--session-start', action='store_true')
     args = parser.parse_args(argv)
     try:
+        if args.command == 'help':
+            parser.print_help()
+            return 0
         if args.command == 'list':
             print('\n'.join(row[0] for row in PRIMARY + SECONDARY))
             return 0

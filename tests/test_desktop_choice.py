@@ -76,6 +76,18 @@ class DesktopChoiceTests(unittest.TestCase):
         self.assertEqual(self.run_choice('choose', '--session-start').stdout, '')
         self.assertIsNone(choice.state(self.config))
 
+    def test_existing_custom_provider_stays_readable_and_help_keeps_working(self):
+        self.config.mkdir(parents=True)
+        original = 'KILIX_DESKTOP_PROVIDER=command\nKILIX_DESKTOP_COMMAND=custom-desktop\n'
+        (self.config / 'kilix.env').write_text(original)
+        self.assertEqual(self.run_choice('show').stdout, 'command\n')
+        self.assertEqual(self.run_choice('request').returncode, 0)
+        self.assertEqual(self.run_choice('choose', '--session-start').stdout, '')
+        self.assertEqual((self.config / 'kilix.env').read_text(), original)
+        help_result = self.run_choice('help')
+        self.assertEqual(help_result.returncode, 0, help_result.stderr)
+        self.assertIn('choose', help_result.stdout)
+
     def test_symlinked_settings_are_refused_without_changing_target(self):
         self.config.mkdir(parents=True)
         target = self.root / 'target'
