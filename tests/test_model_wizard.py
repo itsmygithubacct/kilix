@@ -102,6 +102,21 @@ class WizardTests(unittest.TestCase):
         activate.assert_not_called()
         self.assertEqual(list(Path(self.directory.name).iterdir()), [])
 
+    def test_unavailable_backend_names_a_command_that_declines_the_page(self):
+        # The desktop window cannot reopen an answered page; this command can.
+        opener = Mock()
+        opener.open.side_effect = ConnectionRefusedError(111, 'Connection refused')
+        with patch.object(system_llm.urllib.request, 'build_opener', return_value=opener), \
+                patch.object(system_llm.shutil, 'which', return_value=None):
+            with self.assertRaises(ValueError) as caught:
+                system_llm.installed()
+        self.assertIn('run: kilix wizard answer system-local-llm no', str(caught.exception))
+        self.assets.extend(system_llm.catalog())
+        wizard.apply('system-local-llm', ['qwen3:8b'], 'yes')
+        self.assertEqual(wizard.main(['answer', 'system-local-llm', 'no']), 0)
+        self.assertEqual(wizard.answers()['system-local-llm'],
+                         {'answer': 'no', 'models': [], 'phase': 'complete'})
+
     def test_activation_failure_does_not_block_a_later_category(self):
         wizard.apply('vision', ['yolox_s'], 'yes')
         wizard.apply('audio', ['encodec-24khz-stateful'], 'yes')
