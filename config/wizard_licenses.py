@@ -203,6 +203,7 @@ def consent_and_install(selected, *, input_fn=input):
                 print('Continuing with the other accepted models.', flush=True)
             else:
                 installed.add(model)
+                print(f'Installed {model}.', flush=True)
         if failures:
             raise InstallFailures(installed, declined, failures) from next(iter(failures.values()))
     return installed, declined

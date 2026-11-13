@@ -146,6 +146,14 @@ class BatchTests(unittest.TestCase):
         self.assertEqual([call.args[0].asset_id for call in self.installer.ensure_upstream_asset.call_args_list],
                          ['yolox_s', 'yamnet'])
 
+    def test_each_installed_model_reports_its_outcome(self):
+        # Sixteen bare "Installing X…" lines could not show which had finished.
+        self.run_batch(['yolox_s', 'yamnet'], [])
+        text = self.output.decode()
+        for name in ('yolox_s', 'yamnet'):
+            self.assertIn(f'Installed {name}.', text)
+        self.assertLess(text.index('Installed yolox_s.'), text.index('Installing yamnet'))
+
     def test_failed_model_reason_is_printed_before_later_models(self):
         # The owner's setup terminal stopped at a later question with only
         # "Could not install qwen3:8b" on screen; the reason must come first.
