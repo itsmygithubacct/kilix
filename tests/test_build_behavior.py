@@ -677,6 +677,51 @@ class BuildPreparationTests(unittest.TestCase):
         env.pop("KILIX_BUILD_PREPARE_ONLY")
         return env
 
+    def _build_toolchain(self, overrides):
+        (self.src / "setup.py").write_text(
+            "from pathlib import Path\n"
+            "import os\n"
+            "Path('../go-toolchain').write_text(os.environ['GOTOOLCHAIN'])\n"
+            + self._WORKING_SETUP)
+        env = self._system_env()
+        env.pop("GOTOOLCHAIN", None)
+        env.update(overrides)
+        result = self.run_build(env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return (self.base / "storage" / "build" / "current" /
+                "go-toolchain").read_text()
+
+    def test_distribution_local_toolchain_reaches_the_engine_build(self):
+        # The distribution verifies its exact Debian compiler before invoking
+        # Kilix. Replacing this with go.mod's older patch would let Go fetch
+        # another compiler despite the installer's local-only selection.
+        self.assertEqual(self._build_toolchain({
+            "GOTOOLCHAIN": "local",
+            "GOROOT": "/usr/lib/go-1.27",
+            "GOENV": "off",
+        }), "local")
+
+    def test_default_toolchain_still_comes_from_the_pinned_engine(self):
+        self.assertEqual(self._build_toolchain({}), "go1.26.4")
+
+    def test_ambient_auto_does_not_replace_the_pinned_toolchain(self):
+        self.assertEqual(self._build_toolchain({"GOTOOLCHAIN": "auto"}),
+                         "go1.26.4")
+
+    def test_explicit_toolchain_takes_precedence_over_inherited_local(self):
+        self.assertEqual(self._build_toolchain({
+            "GOTOOLCHAIN": "local", "KILIX_GO_TOOLCHAIN": "go1.27.3",
+        }), "go1.27.3")
+
+    def test_invalid_toolchain_override_refuses_before_building(self):
+        env = self._system_env()
+        env["GOTOOLCHAIN"] = "local"
+        env["KILIX_GO_TOOLCHAIN"] = "go1.27.3+auto"
+        result = self.run_build(env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("invalid exact KILIX_GO_TOOLCHAIN", result.stderr)
+        self.assertFalse((self.base / "storage" / "build" / "current").exists())
+
     def test_promotion_installs_the_engines_compiled_terminfo(self):
         # TERM=xterm-kitty is what every pane advertises; the entry only ever
         # existed inside the build tree, so strict ncurses programs reported

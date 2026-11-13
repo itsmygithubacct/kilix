@@ -1354,9 +1354,11 @@ explicitly confirmed termination action.
   all of that** on Fedora/RHEL (dnf), Debian/Ubuntu (apt), Arch (pacman), and
   openSUSE (zypper). Where the distro's Go is older than the fork needs (e.g. Fedora
   ships 1.25), it configures the exact `toolchain` version from `go.mod` so Go
-  can fetch that checksum-verified toolchain on demand. `build.sh` forces that
-  exact version even if the host has a newer Go — no open-ended latest lookup
-  and no manual Go install. Current kitty source also uses Python 3.12 syntax:
+  can fetch that checksum-verified toolchain on demand. `build.sh` selects that
+  exact version by default. It preserves `GOTOOLCHAIN=local` when a distribution
+  installer has verified its packaged compiler and disabled toolchain downloads.
+  `KILIX_GO_TOOLCHAIN` explicitly overrides either selection. Current kitty
+  source also uses Python 3.12 syntax:
   of `python3.14`, `python3.13`, `python3.12` and `python3`, `build.sh` takes
   the first that is 3.12 or newer and has its `Python.h`, and only when none
   has the headers the first that is new enough, with a warning. `--verify`
