@@ -218,6 +218,10 @@ class NativeRoundTripTests(unittest.TestCase):
         route = am.classify(codex_pane(), screen(f"  gpt-test-model · {shown} · Lane work"), threads)
         self.assertEqual((route["route"], route["thread"]), ("codex-native", self.thread))
         state = self.root / "queue"
+        previous = os.environ.get("KITTY_PTY_BROKER_SESSION")
+        self.addCleanup(lambda: os.environ.update(KITTY_PTY_BROKER_SESSION=previous)
+                        if previous is not None else os.environ.pop("KITTY_PTY_BROKER_SESSION", None))
+        os.environ["KITTY_PTY_BROKER_SESSION"] = "first-pane"
         result = am.deliver(self.thread, "synthetic peer message", "kam-1", 30,
                             self.socket, state)
         self.assertTrue(result["delivered"], result)
@@ -240,8 +244,13 @@ class NativeRoundTripTests(unittest.TestCase):
             time.sleep(0.1)
         else:
             self.fail("message never reached the thread")
+        # A retry from another pane or shell carries another sender; it resumes.
+        os.environ.pop("KITTY_PTY_BROKER_SESSION", None)
         again = am.deliver(self.thread, "synthetic peer message", "kam-1", 5, self.socket, state)
         self.assertEqual(again["message_id"], "kam-1")
+        self.assertTrue(again["delivered"], again)
+        with self.assertRaisesRegex(am.MessageError, "already used"):
+            am.deliver(self.thread, "a different message", "kam-1", 5, self.socket, state)
         turns = self.client.call("thread/turns/list", {"threadId": self.thread, "limit": 10,
                                  "itemsView": "full", "sortDirection": "desc"})["data"]
         ids = [item.get("clientId") for turn in turns for item in turn.get("items", [])]

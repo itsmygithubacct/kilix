@@ -241,6 +241,26 @@ def ralph_cli(state_dir, *args):
     return json.loads(done.stdout)
 
 
+def resume(ralph, state_dir, message_id, target, text):
+    """True when this ID is already in ralph's store for the same thread and text.
+
+    A retry then only waits for it. Re-enqueueing would be refused when the
+    retry runs in another pane or shell, because ralph binds the sender too.
+    """
+    store = ralph.store.Store(state_dir)
+    try:
+        try:
+            old = store.message(message_id)
+        except ralph.store.Error:
+            return False
+    finally:
+        store.close()
+    if old["target"] != target or old["text"] != text:
+        raise MessageError("--message-id is already used for a different message or thread; "
+                           "use a new ID only for a new message")
+    return True
+
+
 def deliver(thread, text, message_id, wait, socket=None, state_dir=None):
     ralph = load_ralph()
     socket = str(socket or ralph.codex.default_socket())
@@ -273,7 +293,9 @@ def deliver(thread, text, message_id, wait, socket=None, state_dir=None):
                 if worker.poll() is not None or time.monotonic() > deadline:
                     raise MessageError("the transient ralph worker did not start")
                 time.sleep(0.1)
-        ralph_cli(state_dir, "enqueue", "--target", target, "--text", text, "--message-id", message_id)
+        if not resume(ralph, state_dir, message_id, target, text):
+            ralph_cli(state_dir, "enqueue", "--target", target, "--text", text,
+                      "--message-id", message_id)
         deadline = time.monotonic() + wait
         while True:
             message = ralph_cli(state_dir, "message", "status", message_id)
