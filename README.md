@@ -3522,6 +3522,12 @@ Use `kilix image -- photo.png` to display images and `kilix video FILE_OR_URL`
 to play local video or direct streams in the current terminal. See
 [terminal media](docs/terminal-media.md) for controls and renderer options.
 
+`kilix video --neuronte FILE_OR_URL` plays the same file drawn by Neuronte's
+nets: eight colours a cell, with sound, seek and pause on one clock. It needs a
+Neuronte checkout with its library built, at `NEURONTE_HOME` or beside the
+other sources (`$GPU_TERMINAL_SOURCE_HOME/neuronte`), and says so when it
+is missing. Its options are the player's own; `--help` lists them.
+
 ### Durable agent mailboxes
 
 `kilix ralph` exposes the pinned [Ralph module](third_party/kilix-ralph/README.md)

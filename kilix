@@ -40,6 +40,7 @@
 #   ./kilix image FILE        # display images in this terminal (icat options supported)
 #   ./kilix youtube [URL]     # download transcript, music or video
 #   ./kilix video FILE_OR_URL # play a video or direct stream in this terminal
+#   ./kilix video --neuronte FILE_OR_URL # the same, drawn by Neuronte's nets
 #   ./kilix amp [args]         # install/run the pinned Media Player
 #   ./kilix amp --headless     # run its control-socket backend, no windows
 #   ./kilix pdf-view PDF       # install/run the terminal-native PDF viewer
@@ -205,6 +206,10 @@ case "${1:-}" in
     if [ "${1:-}" = --install-player ]; then
       shift
       exec bash "$KILIX_HOME/scripts/build-terminal-mpv.sh" "$@"
+    fi
+    if [ "${1:-}" = --neuronte ]; then
+      shift
+      exec python3 -B "$KILIX_HOME/config/neuronte_video.py" "$@"
     fi
     exec python3 -B "$KILIX_HOME/config/terminal_video.py" "$@" ;;
   desktop-action)
