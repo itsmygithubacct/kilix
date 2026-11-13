@@ -99,6 +99,8 @@ class ClassifyTests(unittest.TestCase):
                                              "session_id": "s-1"})
             pane["foreground_processes"][0]["pid"] = 4343
             self.assertEqual(am.classify(pane, "", None, sessions=tmp)["route"], "screen")
+            # The address is the name; ListAgents' [ref] is its own id, never the pid.
+            self.assertIn("not the pid", route["reason"])
 
     def test_a_shell_has_no_native_channel(self):
         pane = {"id": 3, "foreground_processes": [{"pid": 7, "cmdline": ["bash"]}]}

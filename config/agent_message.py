@@ -191,8 +191,8 @@ def classify(pane, screen, threads, sessions=None):
             return {"schema": SCHEMA, "pane_id": pane_id, "agent": "claude",
                     "route": "claude-sendmessage", "peer": peer,
                     "reason": "Claude Code sessions take messages from another Claude Code "
-                              "session's SendMessage tool; ListAgents shows this name with "
-                              "its pid as [ref]"}
+                              "session's SendMessage tool; send to this name as ListAgents "
+                              "prints it (a [ref] there is ListAgents' own id, not the pid)"}
         return screen_fallback(pane_id, "Claude Code session record not found", agent="claude")
     return screen_fallback(pane_id, "no native message channel for this program")
 
