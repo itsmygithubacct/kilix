@@ -44,8 +44,11 @@ def llm_license_covered(model, entries, saved, manifest_digest):
         for group in groups) for label, payload in entries)
 
 
-def consent_and_install(selected, *, input_fn=input):
+def consent_and_install(selected, *, input_fn=input, before_install=None):
     """Return installed and declined IDs; retain successes when acquisitions fail.
+
+    ``before_install(allowed)`` asks any remaining questions after the licence
+    answers and before the first download, so the downloads run unattended.
 
     Every prompt names all affected assets. The authority still binds each
     affirmative capture to its own record and exact model manifest. A declined
@@ -191,6 +194,8 @@ def consent_and_install(selected, *, input_fn=input):
                                 'capture_mode': captures[key].capture_mode}
                                for key in requirements[model]]}
             atomic_json(llm_licenses_path, saved)
+        if before_install is not None:
+            before_install(set(allowed))
         from kilix_sdk._content_runtime import apps_root
         installer = api.Installer(apps_root())
         from wizard_converters import prepare_converters

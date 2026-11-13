@@ -162,6 +162,33 @@ class BatchTests(unittest.TestCase):
         self.assertIn('Could not read the licence for qwen3:8b: Temporary failure in name resolution',
                       self.output.decode())
 
+    def test_remaining_questions_come_after_licences_and_before_downloads(self):
+        # The dictation microphone question: never for a refused model, and
+        # never after the downloads, where an unattended setup waited for it.
+        events = []
+        self.installer.ensure_upstream_asset.side_effect = (
+            lambda spec, **_kwargs: events.append(('download', spec.asset_id)))
+        def before_install(allowed):
+            events.append(('questions', frozenset(allowed), len(self.questions)))
+        decisions = iter(['no'])
+        def answer(question):
+            self.questions.append(question)
+            return next(decisions)
+        output = io.TextIOWrapper(io.BytesIO(), encoding='utf-8', write_through=True)
+        with patch.object(cm, '_api', return_value=self.api), \
+                patch.object(self.lic.ReceiptStore, 'shared', return_value=self.store), \
+                patch.object(self.lic, 'observe_capture', return_value=self.lic.observe_capture(interactive=True)), \
+                patch.object(self.api, 'Installer', return_value=self.installer), \
+                patch.object(model_wizard, 'state_root', return_value=Path(self.directory.name)), \
+                contextlib.redirect_stdout(output):
+            result = batch.consent_and_install(['faster-whisper-small-en', 'yolox_s', 'encodec-24khz-stateful'],
+                                               input_fn=answer, before_install=before_install)
+        allowed = {'faster-whisper-small-en', 'yolox_s'}
+        self.assertEqual(result, (allowed, {'encodec-24khz-stateful'}))
+        self.assertEqual(len(self.questions), 1)
+        self.assertEqual(events[0], ('questions', frozenset(allowed), 1))
+        self.assertEqual(sorted(event[1] for event in events[1:]), sorted(allowed))
+
     def test_each_installed_model_reports_its_outcome(self):
         # Sixteen bare "Installing X…" lines could not show which had finished.
         self.run_batch(['yolox_s', 'yamnet'], [])

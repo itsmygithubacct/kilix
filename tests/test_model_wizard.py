@@ -372,6 +372,61 @@ class WizardTests(unittest.TestCase):
         run.assert_not_called()
         self.assertNotIn('audio', [p['id'] for p in wizard.pages(measure=False)])
 
+    def run_dictation_finish(self, reply):
+        self.assets.append(asset('faster-whisper-small-en'))
+        wizard.apply('dictation', ['faster-whisper-small-en'], 'yes')
+        wizard.apply('vision', ['yolox_s'], 'yes')
+        events = []
+        def answer(question):
+            events.append(('question', question))
+            return reply
+        def downloads(selected, *, input_fn, before_install):
+            before_install(set(selected))
+            events.append(('downloads',))
+            return set(selected), set()
+        with patch('wizard_licenses.consent_and_install', side_effect=downloads), \
+                patch.object(wizard, 'run_command', side_effect=lambda *args: events.append(('run',) + args)), \
+                patch.object(wizard, 'ensure_default_system_voice', return_value=False), \
+                patch.object(wizard.sys, 'stdout', io.StringIO()):
+            wizard.finish(input_fn=answer)
+        return events
+
+    def test_microphone_question_comes_before_any_download(self):
+        # Asked after the downloads, it left the setup terminal waiting unattended.
+        events = self.run_dictation_finish('y')
+        questions = [event for event in events if event[0] == 'question']
+        self.assertEqual(len(questions), 1)
+        self.assertIn('Allow microphone use for dictation?', questions[0][1])
+        self.assertLess(events.index(questions[0]), events.index(('downloads',)))
+        self.assertLess(events.index(('run', 'stt', '--install', 'whisper-small-en')),
+                        events.index(('run', 'stt', '--grant-consent')))
+        self.assertEqual(wizard.pending(), {})
+        self.assertEqual(wizard.answers()['dictation']['answer'], 'yes')
+
+    def test_early_microphone_no_still_installs_but_does_not_enable_dictation(self):
+        events = self.run_dictation_finish('n')
+        self.assertEqual(sum(event[0] == 'question' for event in events), 1)
+        self.assertIn(('run', 'stt', '--install', 'whisper-small-en'), events)
+        self.assertNotIn(('run', 'stt', '--grant-consent'), events)
+        self.assertEqual(wizard.answers()['dictation']['answer'], 'no')
+        self.assertEqual(wizard.answers()['vision']['phase'], 'complete')
+
+    def test_no_microphone_question_when_the_dictation_licence_is_refused(self):
+        self.assets.append(asset('faster-whisper-small-en'))
+        wizard.apply('dictation', ['faster-whisper-small-en'], 'yes')
+        def refused(selected, *, input_fn, before_install):
+            before_install(set())
+            return set(), set(selected)
+        asked = []
+        with patch('wizard_licenses.consent_and_install', side_effect=refused), \
+                patch.object(wizard, 'run_command') as run, \
+                patch.object(wizard, 'ensure_default_system_voice', return_value=False), \
+                patch.object(wizard.sys, 'stdout', io.StringIO()):
+            wizard.finish(input_fn=lambda question: asked.append(question) or 'y')
+        self.assertEqual(asked, [])
+        run.assert_not_called()
+        self.assertEqual(wizard.answers()['dictation']['refused'], ['faster-whisper-small-en'])
+
     def test_failure_keeps_saved_choices_pending_for_final_retry(self):
         wizard.apply('image', [self.assets[-1]['id']], 'yes')
         with patch('wizard_licenses.consent_and_install', side_effect=ValueError('download failed')):
