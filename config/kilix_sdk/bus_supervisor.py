@@ -1059,7 +1059,10 @@ class WaitOwnerBootstrap:
                 n.wait_identity = identity
                 self.committed = True
                 return identity
-            if record and record.get("ActiveState") in ("inactive", "failed"):
+            # StartTransientUnit queues activation. An inactive scope may
+            # still have its start job pending; only verified active state
+            # commits ownership, and the original deadline still bounds it.
+            if record and record.get("ActiveState") == "failed":
                 raise RuntimeError("wait-owner scope failed before birth")
             if n.ops.now() >= deadline:
                 raise TimeoutError("wait-owner ownership transaction expired")

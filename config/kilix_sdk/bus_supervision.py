@@ -1086,7 +1086,10 @@ class SupervisedPlatform:
                 if record and record.get("ActiveState") == "active":
                     self.identity = self._service(record)
                     break
-                if record and record.get("ActiveState") in ("inactive", "failed"):
+                # StartUnit queues activation; inactive can precede its job.
+                # Keep waiting within the original deadline, then require the
+                # exact active service before acquiring any launch handles.
+                if record and record.get("ActiveState") == "failed":
                     raise PlatformUnsupported("supervisor startup failed", self)
                 self.ops.sleep(.01)
             self.pidfd = self.handles.allocate(os.pidfd_open, self.identity[1])
