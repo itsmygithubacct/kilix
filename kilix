@@ -1702,6 +1702,9 @@ _kilix_ensure_speech_voice() {
   _kilix_first_use || return 0
   "$_self" tts --enable-kristin
 }
+# The Ask backend an option or the environment names, or nothing. Without
+# either, Needle resolves it: the saved selection, LFM2 when it is installed,
+# otherwise the grammar (`kilix-needle workflows choice`).
 _kilix_ask_backend() {
   local previous="" option backend="${KILIX_ASK_COMMANDS_BACKEND:-}"
   for option in "$@"; do
@@ -1710,23 +1713,7 @@ _kilix_ask_backend() {
     fi
     previous="$option"
   done
-  if [ -n "$backend" ]; then
-    printf '%s\n' "$backend"
-    return 0
-  fi
-  python3 -B -c '
-import json, os
-from pathlib import Path
-root = Path(os.environ.get("GPU_TERMINAL_HOME") or Path.home() / ".local" / "gpu_terminal")
-path = root / "kilix-apps" / "kilix-needle" / "ask.json"
-try:
-    record = json.loads(path.read_text(encoding="utf-8"))
-except (OSError, ValueError):
-    print("lfm2")
-    raise SystemExit(0)
-backend = record.get("backend") if isinstance(record, dict) and record.get("schema") == "kilix.ask.selection/v1" else ""
-print(backend if backend in ("lfm2", "lfm3", "needle3", "grammar") else "lfm2")
-'
+  printf '%s\n' "$backend"
 }
 _kilix_read_voice_config() {
   local line
@@ -3634,9 +3621,12 @@ case "${1:-}" in
     # unsure route. Voice adds a transcript to correct before routing; it never
     # removes a confirmation, so it cannot be combined with --yes. --repl stays
     # after each answer, including a refusal, until exit, quit, or EOF. First
-    # use installs Needle and the selected command model when this terminal can
-    # answer. The licence is shown and is not accepted here. A question about
-    # whether something is installed does not install it.
+    # use installs Needle when this terminal can answer. No command model is
+    # installed unasked: with none chosen and LFM2 absent the grammar reads the
+    # request and the terminal is asked once whether to install LFM2. A chosen
+    # model that is missing is installed after its licence is shown; the
+    # licence is not accepted here. A question about whether something is
+    # installed does not install it.
     shift
     _ask_voice=0
     _ask_hold=0
@@ -3739,9 +3729,11 @@ case "${1:-}" in
           echo "           its answers are labelled and it never acts. setup registers the model"
           echo "           installed by: kilix models install qwen3.5-4b"
           echo "  --model  lfm2, lfm3, needle3, or grammar for this request; overrides KILIX_ASK_COMMANDS_BACKEND"
-          echo "           and the saved Ask selection (lfm2 when none is saved)"
+          echo "           and the saved Ask selection. With none: lfm2 when it is installed,"
+          echo "           otherwise grammar. At a terminal, Ask then offers the LFM2 download once."
           echo "  --commands-candidate FILE  use a local Needle 3 candidate with --model needle3"
-          echo "First ask installs the selected command model after its licence."
+          echo "Ask reads requests with its grammar until a command model is installed. A chosen"
+          echo "model that is missing is installed at a terminal after its licence is shown."
           echo "Install the alternate: kilix-needle install --commands needle3"
           echo "Save the selection: kilix-needle workflows select --model lfm2|lfm3|needle3|grammar"
           echo
@@ -3875,11 +3867,29 @@ print(apps_root())
       export KILIX_CONTENT_ROOT
       if _kilix_first_use; then
         _ask_backend="$(_kilix_ask_backend "${_ask_options[@]}")"
+        if [ -z "$_ask_backend" ]; then
+          _ask_choice="$("$_ask_needle" workflows choice 2>/dev/null </dev/null)" || _ask_choice=""
+          _ask_backend="${_ask_choice%% *}"
+          # Nothing chosen and no LFM2 on this machine: the grammar reads the
+          # request. Offer the model once per run. Yes installs it through its
+          # own licence screen, no is saved as the grammar selection, and a
+          # failed or unanswered offer leaves this request on the grammar.
+          if [ "$_ask_choice" = "grammar not-installed" ]; then
+            _ask_backend=grammar
+            if [ "${_ask_offered:-0}" = 0 ]; then
+              _ask_offered=1
+              python3 -B "$KILIX_HOME/config/kilix_ask_offer.py" "$_ask_needle" || true
+            fi
+          fi
+        fi
+        # A model the user chose, or the installed default, is checked here and
+        # installed when missing. Refusing it fails the request: the chosen
+        # model is not silently replaced.
         case "$_ask_backend" in
-          grammar) _ask_asset="" ;;
+          lfm2) _ask_asset="lfm2-kilix-commands" ;;
           lfm3) _ask_asset="lfm3-kilix-commands" ;;
           needle3) _ask_asset="needle3-kilix-commands" ;;
-          *) _ask_asset="lfm2-kilix-commands" ;;
+          *) _ask_asset="" ;;
         esac
         if [ -n "$_ask_asset" ]; then
           python3 -B "$KILIX_HOME/config/content_models.py" ensure "$_ask_asset" || {

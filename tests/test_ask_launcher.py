@@ -44,18 +44,44 @@ print(os.environ["ASK_TEST_NEEDLE"])
 # records that call. A declined licence exits 1 and Ask must not run Needle.
 CONTENT_MODELS = '''\
 import json, os, sys
+if __name__ != "__main__":
+    raise ImportError("the fixture is a command, not the module")
 log = os.environ.get("ASK_TEST_LOG")
 if log and sys.argv[1:2] == ["ensure"]:
     with open(log, "a") as stream:
         stream.write(json.dumps({"models_ensure": sys.argv[1:]}) + "\\n")
 if os.environ.get("ASK_TEST_MODEL_DECLINED"):
     raise SystemExit(1)
+if sys.argv[1:] == ["ensure", "lfm2-kilix-commands"]:
+    open(os.environ["ASK_TEST_STATE"] + ".installed", "w").close()
 raise SystemExit(0)
 '''
 
+# `workflows choice` and `workflows select` keep Needle's Ask selection in a
+# file: a saved backend, else LFM2 once the fixture above "installed" it, else
+# the grammar standing in for the absent model.
 NEEDLE = '''\
 #!/usr/bin/env python3
 import json, os, sys
+if sys.argv[1:2] == ["workflows"]:
+    state = os.environ["ASK_TEST_STATE"]
+    with open(os.environ["ASK_TEST_LOG"], "a") as stream:
+        stream.write(json.dumps({"workflows": sys.argv[2:], "tty": sys.stdin.isatty()}) + "\\n")
+    if sys.argv[2:3] == ["select"]:
+        if os.environ.get("ASK_TEST_SELECT_FAILS"):
+            raise SystemExit(1)
+        with open(state, "w") as stream:
+            stream.write(sys.argv[sys.argv.index("--model") + 1])
+        raise SystemExit(0)
+    if os.environ.get("ASK_TEST_CHOICE_FAILS"):
+        raise SystemExit(1)
+    if os.path.exists(state):
+        print(open(state).read(), "saved")
+    elif os.path.exists(state + ".installed"):
+        print("lfm2 installed")
+    else:
+        print("grammar not-installed")
+    raise SystemExit(0)
 with open(os.environ["ASK_TEST_LOG"], "a") as stream:
     stream.write(json.dumps({"needle": sys.argv[1:], "root": os.environ.get("KILIX_CONTENT_ROOT"),
                              "app": os.environ.get("KILIX_APP_ID"),
@@ -103,6 +129,7 @@ class AskLauncherTests(unittest.TestCase):
                        / "kilix_telemetry" / "sensors.py")
         sensor_home.parent.mkdir(parents=True)
         shutil.copy2(sensor, sensor_home)
+        shutil.copy2(ROOT / "config" / "kilix_ask_offer.py", home / "config" / "kilix_ask_offer.py")
         (home / "config" / "content_app.py").write_text(CONTENT_APP)
         (home / "config" / "content_models.py").write_text(CONTENT_MODELS)
         needle = self.root / "needle"
@@ -113,6 +140,9 @@ class AskLauncherTests(unittest.TestCase):
         help_bin.chmod(0o755)
         self.launcher = home / "kilix"
         self.log = self.root / "calls.jsonl"
+        # Earlier tests assume a machine that has the default model; the offer
+        # tests remove it with without_the_model().
+        (self.root / "ask-selection.installed").touch()
         storage = self.root / "storage"
         # Model answers: no live Ollama or installed sizer is reachable from here.
         # Tests that want them start a fake service and point the sizer at a fake.
@@ -126,10 +156,15 @@ class AskLauncherTests(unittest.TestCase):
             "KILIX_STORAGE_HOME": str(storage),
             "KILIX_VOICE_PREFIX": str(self.root / "voice-prefix"),
             "ASK_TEST_LOG": str(self.log), "ASK_TEST_NEEDLE": str(needle),
+            "ASK_TEST_STATE": str(self.root / "ask-selection"),
             "ASK_TEST_HELP": str(help_bin),
             "KILIX_ASK_OLLAMA_URL": "http://127.0.0.1:9",
             "PLEBIAN_MODEL_SIZER": str(self.root / "no-sizer"),
         })
+
+    def without_the_model(self):
+        """The machine the LFM2 offer is for: nothing chosen, model absent."""
+        Path(self.env["ASK_TEST_STATE"] + ".installed").unlink()
 
     def calls(self):
         if not self.log.exists():
@@ -1121,6 +1156,127 @@ def json_request(url):
             [{"models_ensure": ["ensure", "needle3-kilix-commands"]}])
         self.assertFalse(any("needle" in call for call in self.calls()))
 
+    # --- LFM2 is offered once, at a terminal, and never installed unasked ---
+
+    OFFER = b"Install the LFM2 command model now? [y/N] "
+
+    def offer_calls(self):
+        return [call for call in self.calls() if "workflows" in call or "models_ensure" in call]
+
+    def test_a_piped_ask_asks_needle_nothing_and_offers_nothing(self):
+        self.without_the_model()
+        result = self.run_ask("close tab 2")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.offer_calls(), [])
+        self.assertNotIn("LFM2", result.stdout + result.stderr)
+
+    def test_no_keeps_the_grammar_is_saved_and_is_not_asked_again(self):
+        self.without_the_model()
+        status, output = self.run_tty(["--hold", "--", "close tab 2"],
+                                      [(self.OFFER, b"n\n"), (b"Press Enter", b"\n")])
+        self.assertEqual(status, 0, output)
+        self.assertIn("built-in grammar", output)
+        self.assertIn("will not ask again", output)
+        self.assertIn("kilix-needle workflows setup --model lfm2", output)
+        self.assertEqual(self.offer_calls(), [
+            {"workflows": ["choice"], "tty": False},
+            {"workflows": ["select", "--model", "grammar"], "tty": False}])
+        # The request still ran, with no backend forced on Needle.
+        self.assertEqual(self.calls()[-1]["needle"], ["ask", "--interactive", "--", "close tab 2"])
+        self.log.write_text("")
+        status, output = self.run_tty(["--hold", "--", "close tab 2"], b"\n")
+        self.assertEqual(status, 0, output)
+        self.assertNotIn("LFM2", output)
+        self.assertEqual(self.offer_calls(), [{"workflows": ["choice"], "tty": False}])
+
+    def test_a_bare_enter_is_no(self):
+        self.without_the_model()
+        status, output = self.run_tty(["--hold", "--", "close tab 2"],
+                                      [(self.OFFER, b"\n"), (b"Press Enter", b"\n")])
+        self.assertEqual(status, 0, output)
+        self.assertEqual(Path(self.env["ASK_TEST_STATE"]).read_text(), "grammar")
+
+    def test_yes_installs_through_the_models_command_then_saves_lfm2(self):
+        self.without_the_model()
+        status, output = self.run_tty(["--hold", "--", "close tab 2"],
+                                      [(self.OFFER, b"y\n"), (b"Press Enter", b"\n")])
+        self.assertEqual(status, 0, output)
+        self.assertEqual(self.offer_calls(), [
+            {"workflows": ["choice"], "tty": False},
+            {"models_ensure": ["ensure", "lfm2-kilix-commands"]},
+            {"workflows": ["select", "--model", "lfm2"], "tty": False}])
+        self.assertIn("needle", self.calls()[-1])
+        self.log.write_text("")
+        status, output = self.run_tty(["--hold", "--", "close tab 2"], b"\n")
+        self.assertEqual(status, 0, output)
+        self.assertNotIn("Install the LFM2", output)
+        self.assertEqual(self.offer_calls(), [
+            {"workflows": ["choice"], "tty": False},
+            {"models_ensure": ["ensure", "lfm2-kilix-commands"]}])
+
+    def test_a_refused_or_failed_install_stays_on_grammar_unsaved_and_runs_the_request(self):
+        self.without_the_model()
+        status, output = self.run_tty(["--hold", "--", "close tab 2"],
+                                      [(self.OFFER, b"y\n"), (b"Press Enter", b"\n")],
+                                      ASK_TEST_MODEL_DECLINED="1")
+        self.assertEqual(status, 0, output)
+        self.assertIn("was not installed. Ask is using its grammar", output)
+        self.assertFalse(Path(self.env["ASK_TEST_STATE"]).exists())
+        self.assertIn("needle", self.calls()[-1])
+        self.assertEqual([call for call in self.offer_calls() if "select" in call.get("workflows", [])], [])
+
+    def test_end_of_input_at_the_question_saves_nothing(self):
+        self.without_the_model()
+        status, output = self.run_tty(["--hold", "--", "close tab 2"],
+                                      [(self.OFFER, b"\x04"), (b"Press Enter", b"\n")])
+        self.assertEqual(status, 0, output)
+        self.assertFalse(Path(self.env["ASK_TEST_STATE"]).exists())
+        self.assertIn("needle", self.calls()[-1])
+
+    def test_an_installed_or_chosen_model_is_never_offered(self):
+        state = Path(self.env["ASK_TEST_STATE"])
+        status, output = self.run_tty(["--hold", "--", "close tab 2"], b"\n")
+        self.assertEqual(status, 0, output)
+        self.assertNotIn("Install the LFM2", output)
+        self.assertEqual(self.offer_calls(), [
+            {"workflows": ["choice"], "tty": False},
+            {"models_ensure": ["ensure", "lfm2-kilix-commands"]}])
+        for arguments, env in ((["--model", "grammar"], {}), ([], {"KILIX_ASK_COMMANDS_BACKEND": "grammar"})):
+            with self.subTest(arguments=arguments, env=env):
+                Path(str(state) + ".installed").unlink(missing_ok=True)
+                self.log.write_text("")
+                status, output = self.run_tty([*arguments, "--hold", "--", "close tab 2"], b"\n", **env)
+                self.assertEqual(status, 0, output)
+                self.assertNotIn("LFM2", output)
+                self.assertEqual(self.offer_calls(), [])
+
+    def test_auto_install_off_or_an_unreadable_selection_offers_nothing(self):
+        self.without_the_model()
+        for env in ({"KILIX_MODEL_AUTO_INSTALL": "0"}, {"ASK_TEST_CHOICE_FAILS": "1"}):
+            with self.subTest(env=env):
+                self.log.write_text("")
+                status, output = self.run_tty(["--hold", "--", "close tab 2"], b"\n", **env)
+                self.assertEqual(status, 0, output)
+                self.assertNotIn("LFM2", output)
+                self.assertEqual([call for call in self.offer_calls() if "models_ensure" in call], [])
+
+    def test_a_direct_answer_never_reaches_the_offer(self):
+        self.without_the_model()
+        status, output = self.run_tty(["what is 2 + 2"], b"\n")
+        self.assertEqual(status, 0, output)
+        self.assertEqual(self.offer_calls(), [])
+        self.assertNotIn("LFM2", output)
+
+    def test_the_repl_offers_once_per_run(self):
+        self.without_the_model()
+        status, output = self.run_tty(
+            ["--repl"], [(b"Ask Kilix: ", b"close tab 2\n"), (self.OFFER, b"y\n"),
+                         (b"Ask Kilix: ", b"close tab 3\n"), (b"Ask Kilix: ", b"exit\n")],
+            ASK_TEST_MODEL_DECLINED="1")
+        self.assertEqual(status, 0, output)
+        self.assertEqual(output.count("Install the LFM2 command model now?"), 1)
+        self.assertEqual(len([call for call in self.calls() if "needle" in call]), 2)
+
     def test_a_request_runs_the_installed_app_interactively_and_never_installs(self):
         result = self.run_ask("close", "tab 2")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -1226,7 +1382,8 @@ def json_request(url):
         self.assertNotIn("(default: lfm2)", result.stdout)
         self.assertNotIn("lfm2 (default)", result.stdout)
         self.assertIn("overrides KILIX_ASK_COMMANDS_BACKEND", result.stdout)
-        self.assertIn("saved Ask selection (lfm2 when none is saved)", result.stdout)
+        self.assertIn("saved Ask selection. With none: lfm2 when it is installed,", result.stdout)
+        self.assertIn("otherwise grammar. At a terminal, Ask then offers the LFM2 download once.", result.stdout)
         self.assertIn("kilix-needle workflows select --model lfm2|lfm3|needle3|grammar", result.stdout)
         self.assertEqual(self.calls(), [])
 

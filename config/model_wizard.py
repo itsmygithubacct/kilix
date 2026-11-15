@@ -474,6 +474,15 @@ def pages(include_answered=False, *, assets=None, measure=True, ensure_sizer=Fal
                 f'{label}. Optional voices are not pre-checked. '
                 + paradee_note
                 + note)
+        if key == 'workflows':
+            # 0.2.3: no Ask model is installed unasked. This page and the first
+            # `kilix ask` at a terminal are the two places that offer LFM2.
+            # It leads the page: the desktop shows three lines before scrolling.
+            recommendation = (
+                'Kilix Ask works without a model: its grammar reads requests. A command model '
+                'is an optional download that proposes a reading when the grammar has none; it '
+                'runs on this computer. Declining, or choosing grammar, keeps the grammar, and '
+                'Kilix Ask does not ask about a model again. ' + recommendation)
         if key == PLAYALONG_PAGE:
             recommendation += (
                 ' Plebian-OS installs Playalong\'s default models (Demucs htdemucs_6s, Basic Pitch '

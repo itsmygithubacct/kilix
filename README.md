@@ -151,8 +151,13 @@ For the human and agent workflows that connect terminal work, automation,
 verification and recovery, see [Kilix Workflows](docs/workflows/README.md).
 
 `kilix ask` is the person-facing request command. It shows the route and the
-plan and acts only on a typed yes. The interpreter is the saved Ask selection,
-or LFM2 when none is saved. `--model grammar` uses the exact grammar and skips
+plan and acts only on a typed yes. The interpreter is the saved Ask selection.
+With none saved it is LFM2 on a machine that has it installed, and Ask's
+grammar on one that does not. Kilix installs no command model unasked: the
+first `kilix ask` at a terminal that needs one offers the LFM2 download once,
+and Model Setup's Kilix Ask page offers it too. Declining either keeps the
+grammar and is remembered. Piped or scripted Ask never asks and never
+downloads. `--model grammar` uses the exact grammar and skips
 model loading. `--model lfm3` and `--model needle3` select those interpreters
 for one request; install Needle 3 with
 `kilix-needle install --commands needle3`, then run
