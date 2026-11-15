@@ -9,6 +9,7 @@ from pathlib import Path
 import stat
 import sys
 import tempfile
+import types
 
 
 PRIMARY = (
@@ -155,6 +156,35 @@ def prompt(current, source, output):
             print('Enter one of the numbers shown.', file=output)
 
 
+def choose(args):
+    """The desktop to launch, or None to keep the configured launch."""
+    record = state(args.config)
+    if args.session_start and (record is None or record['complete']):
+        # Old installations keep their configured launch until a
+        # choice has actually been made through this interface.
+        return saved(args.config) if record is not None else None
+    if not sys.stdin.isatty():
+        if args.session_start:
+            return None  # Keep the request for an interactive login.
+        raise ValueError('choose a desktop from an interactive terminal')
+    choice = prompt(saved(args.config), sys.stdin, sys.stderr)
+    return set_choice(args.config, choice) if choice is not None else None
+
+
+def offer_ssh_server(config):
+    """Run the SSH server question beside this file, never writing bytecode
+    and never failing the session start."""
+    path = Path(__file__).resolve().with_name('ssh_offer.py')
+    try:
+        module = types.ModuleType('kilix_ssh_offer')
+        module.__file__ = str(path)
+        exec(compile(path.read_text(), str(path), 'exec'), module.__dict__)
+    except (OSError, SyntaxError) as error:
+        print('kilix: skipped the SSH server question: ' + str(error), file=sys.stderr)
+        return None
+    return module.offer_once(config)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', type=Path, required=True)
@@ -162,6 +192,7 @@ def main(argv=None):
     parser.add_argument('name', nargs='?')
     parser.add_argument('--session-start', action='store_true')
     args = parser.parse_args(argv)
+    chosen = None
     try:
         if args.command == 'help':
             parser.print_help()
@@ -181,20 +212,14 @@ def main(argv=None):
                 if state(args.config) is None:
                     mark(args.config, False)
             else:
-                record = state(args.config)
-                if args.session_start and (record is None or record['complete']):
-                    # Old installations keep their configured launch until a
-                    # choice has actually been made through this interface.
-                    if record is not None:
-                        print(saved(args.config))
-                    return 0
-                if not sys.stdin.isatty():
-                    if args.session_start:
-                        return 0  # Keep the request for an interactive login.
-                    raise ValueError('choose a desktop from an interactive terminal')
-                choice = prompt(saved(args.config), sys.stdin, sys.stderr)
-                if choice is not None:
-                    print(set_choice(args.config, choice))
+                chosen = choose(args)
+        if args.command == 'choose' and args.session_start:
+            # Plebian-OS's one-time SSH server question follows the desktop
+            # choice in the same first-login terminal. It never fails the
+            # session start.
+            offer_ssh_server(args.config)
+        if chosen is not None:
+            print(chosen)
         return 0
     except (OSError, ValueError) as error:
         print('kilix default-desktop: ' + str(error), file=sys.stderr)
