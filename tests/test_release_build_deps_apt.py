@@ -88,8 +88,11 @@ class ReleaseBuildDepsAptTests(unittest.TestCase):
             "release package closure is incomplete; missing", result.stderr)
         self.assertIn("libxxhash-dev", result.stderr)
         self.assertIn("the system apt configuration was not used", result.stderr)
-        self.assertIn("plebian-os-update --recover-interrupted", result.stderr)
-        self.assertIn("pleb update", result.stderr)
+        self.assertIn(
+            "run 'plebian-os-update --revalidate-current' to reinstall this release's packages; if it is still missing, report it",
+            result.stderr)
+        self.assertNotIn("pleb update", result.stderr)
+        self.assertNotIn("--recover-interrupted", result.stderr)
         self.assertFalse(self.record.exists(), result.stderr)
         self.assertNotIn(THIRD, result.stdout + result.stderr)
 
