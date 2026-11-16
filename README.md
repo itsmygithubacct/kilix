@@ -26,8 +26,9 @@ Since 0.2.2, Kilix:
   it from the system apt. It succeeds without changes when every build
   package is already installed; a package held with `apt-mark hold`, or
   installed for a second architecture, counts as installed. The message says
-  to run `pleb update`, or `plebian-os-update --recover-interrupted` after an
-  interrupted update, or to report the package. Elsewhere it uses the system package manager as before.
+  what to do ("run 'plebian-os-update --revalidate-current' to reinstall this release's
+  packages; if it is still missing, report it").
+  Elsewhere it uses the system package manager as before.
 - **Speech.**
   - Speaks a whole Paradee utterance: synthesis runs across bounded sentence
     and word windows instead of stopping silently at 510 phonemes.
