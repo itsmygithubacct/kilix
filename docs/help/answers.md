@@ -1,13 +1,13 @@
 # Help answers and documentation search
 
-Kilix 0.2.3 RC1 includes local Help answers for everyday questions about using
+Kilix 0.2.3 includes local Help answers for everyday questions about using
 Kilix and Plebian-OS. An answer provides a command when the task calls for one,
 a short explanation and links to the relevant documentation. You choose
 whether to run the suggested command.
 
 ## Set up Help once
 
-Run this in a terminal with the RC1 Kilix commands available:
+Run this in a terminal with the Kilix 0.2.3 commands available:
 
 ```sh
 kilix help-setup
@@ -15,7 +15,7 @@ kilix help-setup
 
 Setup requires `uv` and an internet connection for files not already installed.
 It checks available memory and storage, installs the CPU runtime and downloads
-about 4.6 GB of model and tokenizer files, plus the runtime packages. The RC1
+about 4.6 GB of model and tokenizer files, plus the runtime packages. The 0.2.3
 default is **kilix-qwen-sft1-2b**, our trained Qwen3.5-2B Help model. It runs on
 the CPU; a GPU is not required. Keep the terminal open until setup completes.
 
@@ -83,7 +83,7 @@ It checks files, rather than running an inference benchmark.
 | The resource check declines setup or an answer | Close unneeded applications or free storage as indicated, then retry. Documentation search remains available. |
 | Another Help setup or answer is already running | Wait for it to finish, then retry. |
 | A question is too long or cannot be answered from the documentation | Ask one shorter question or use `kilix help-search`. |
-| `help-answer` is unavailable in your installed Kilix | Check `kilix --kilix-version` and `kilix status`; these instructions require the RC1 Help integration. |
+| `help-answer` is unavailable in your installed Kilix | Check `kilix --kilix-version` and `kilix status`; these instructions require Kilix 0.2.3 or later. |
 
 For command options without model setup:
 
@@ -109,14 +109,13 @@ kilix-llm ask-help "How do I list panes?"
 Historical research runs require their explicit run IDs; ordinary Help use
 does not need a training corpus or run selection.
 
-## RC1 scope
+## 0.2.3 scope
 
-The default model is integrated into the RC1 source candidate. It can still
-give an incomplete or incorrect answer; source integration does not establish
-independent answer-quality or final OS image qualification. The
+The default model is the 0.2.3 Help default. It can still give an incomplete
+or incorrect answer; its answer quality is not independently qualified. The
 [model card](https://github.com/itsmygithubacct/kilix-help-llm/releases/download/kilix-qwen-sft1-2b/MODEL_CARD.md)
 records the development results and limitations. See the
-[RC1 release notes](https://github.com/itsmygithubacct/plebian-os/blob/df8bbcf6bc5fb03944f67469080cf98f27811b22/releases/0.2.3-notes.md)
+[0.2.3 release notes](https://github.com/itsmygithubacct/plebian-os/blob/v0.2.3/releases/0.2.3-notes.md)
 for release status.
 
 Continue with [Operating Kilix](operations/README.md),

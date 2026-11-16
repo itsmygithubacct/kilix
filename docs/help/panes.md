@@ -1,4 +1,4 @@
-# Kilix 0.2.2 pages and panes
+# Kilix pages and panes
 
 A page is a Kitty tab containing one or more terminal panes. Run `kilix ls`
 to list pages and `kilix ls --panes` to list individual pane IDs. Run these

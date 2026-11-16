@@ -1,4 +1,4 @@
-# Kilix 0.2.2 storage and session logs
+# Kilix storage and session logs
 
 Kilix-owned writable files live under `~/.local/gpu_terminal/kilix` by default.
 Set `KILIX_STORAGE_HOME` to relocate the complete Kilix tree. Tracked defaults

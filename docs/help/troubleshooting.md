@@ -1,4 +1,4 @@
-# Kilix 0.2.2 troubleshooting
+# Kilix troubleshooting
 
 If clickable pane buttons are missing, run `kilix --which` to identify the
 engine. A path ending in `kitty.app/bin/kitty` indicates the prebuilt fallback.
