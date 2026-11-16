@@ -52,7 +52,9 @@ class AskTests(unittest.TestCase):
     def test_question_says_what_yes_means_and_how_to_change_it(self):
         _, shown = self.answer('\n')
         self.assertIn('[y/N]', shown)
-        self.assertIn('knows your account password can log in as you', shown)
+        self.assertIn('every account on this computer that has a\npassword can log in', shown)
+        self.assertIn('log in as that account', shown)
+        self.assertNotIn('your account password', shown)
         self.assertIn('sudo plebian-os-ssh-server enable', shown)
         self.assertIn('sudo plebian-os-ssh-server disable', shown)
 
@@ -86,8 +88,9 @@ class RecordTests(unittest.TestCase):
                 self.record.write_text(text)
                 self.assertFalse(offer.offered_to(USER, self.record), repr(text))
             self.record.write_text(f'ssh-server-offer/v1 {USER}\n')
-            self.record.chmod(0o666)
-            self.assertFalse(offer.offered_to(USER, self.record))
+            for mode in (0o666, 0o664, 0o646):  # group- or world-writable
+                self.record.chmod(mode)
+                self.assertFalse(offer.offered_to(USER, self.record), oct(mode))
             self.record.chmod(0o644)
             link = self.root / 'link'
             link.symlink_to(self.record)
@@ -111,12 +114,20 @@ class OfferOnceTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.config = Path(temporary.name) / 'config'
         self.calls = []
+        self.shown_state = []
         patches = [mock.patch.object(offer, 'offered_to', lambda user: user == USER),
-                   mock.patch.object(offer, 'run_helper', self.helper)]
+                   mock.patch.object(offer, 'run_helper', self.helper),
+                   mock.patch.object(offer, 'show_state', self.state),
+                   mock.patch.object(offer, 'SSHD', str(Path(temporary.name) / 'no-sshd'))]
         for patcher in patches:
             patcher.start()
             self.addCleanup(patcher.stop)
         self.helper_status = 0
+
+    def state(self, output):
+        self.shown_state.append(True)
+        print('SSH server: ON (read back)', file=output)
+        return True
 
     def helper(self, output):
         # The answer is saved before anything privileged runs.
@@ -147,13 +158,38 @@ class OfferOnceTests(unittest.TestCase):
         self.assertIsNone(self.once('y\n\n')[0])
         self.assertEqual(self.calls, [True])
 
-    def test_a_failed_helper_says_how_to_try_later_and_does_not_ask_again(self):
+    def test_a_failed_helper_shows_the_real_state_and_does_not_ask_again(self):
         self.helper_status = 1
         reply, shown = self.once('yes\n\n')
         self.assertEqual(reply, 'yes')
-        self.assertIn('SSH was not turned on', shown)
+        self.assertEqual(self.shown_state, [True])
+        self.assertIn('The SSH helper did not finish (exit status 1)', shown)
+        self.assertIn('SSH server: ON (read back)', shown)
+        self.assertNotIn('not turned on', shown)
         self.assertIn('sudo plebian-os-ssh-server enable', shown)
+        self.assertIn('sudo plebian-os-ssh-server disable', shown)
         self.assertIsNone(self.once('yes\n\n')[0])
+
+    def test_a_successful_helper_speaks_for_itself(self):
+        reply, shown = self.once('y\n\n')
+        self.assertEqual(self.shown_state, [])
+        self.assertNotIn('did not finish', shown)
+
+    def test_an_ssh_server_installed_since_first_boot_means_no_question(self):
+        sshd = Path(offer.SSHD)
+        sshd.write_text('')
+        reply, shown = self.once('y\n')
+        self.assertIsNone(reply)
+        self.assertEqual(shown, '')
+        self.assertFalse(offer.answered(self.config))
+        self.assertEqual(self.calls, [])
+
+    def test_ctrl_c_while_saving_never_stops_the_desktop(self):
+        with mock.patch.object(offer, 'save_answer', side_effect=KeyboardInterrupt):
+            reply, shown = self.once('y\n')
+        self.assertIsNone(reply)
+        self.assertIn('skipped the SSH server question', shown)
+        self.assertEqual(self.calls, [])
 
     def test_ctrl_c_counts_as_no(self):
         reply, shown = self.once('', source=Interrupting())
@@ -181,6 +217,25 @@ class OfferOnceTests(unittest.TestCase):
         self.assertEqual(self.calls, [])
 
 
+class RunHelperTests(unittest.TestCase):
+    def test_the_helper_runs_through_sudo_with_the_one_word_enable(self):
+        self.assertEqual(offer.SUDO, '/usr/bin/sudo')
+        self.assertEqual(offer.HELPER, '/usr/local/sbin/plebian-os-ssh-server')
+        seen = []
+
+        class Child:
+            def wait(self):
+                return 0
+
+        def popen(argv, **kwargs):
+            seen.append(argv)
+            return Child()
+        with mock.patch.object(offer.os, 'access', lambda path, mode: True), \
+                mock.patch.object(offer.subprocess, 'Popen', popen):
+            self.assertEqual(offer.run_helper(io.StringIO()), 0)
+        self.assertEqual(seen, [['/usr/bin/sudo', '/usr/local/sbin/plebian-os-ssh-server', 'enable']])
+
+
 class FirstLoginTerminalTests(unittest.TestCase):
     """desktop_choice.py choose --session-start, as the launcher runs it."""
 
@@ -194,15 +249,19 @@ class FirstLoginTerminalTests(unittest.TestCase):
         self.record = self.root / 'ssh-server-offer'
         self.helper_log = self.root / 'helper.log'
         helper = self.root / 'plebian-os-ssh-server'
+        self.helper_rc = self.root / 'helper.rc'
         helper.write_text('#!/bin/sh\n'
                           f'echo "$*" >> {self.helper_log}\n'
-                          'echo "SSH server: ON (stub)"\n')
+                          'if [ "$1" = status ]; then echo "SSH server: ON -- stub read back"; exit 0; fi\n'
+                          'echo "SSH server: ON (stub)"\n'
+                          f'exit "$(cat {self.helper_rc} 2>/dev/null || echo 0)"\n')
         helper.chmod(0o755)
         source = (ROOT / 'config/ssh_offer.py').read_text()
         replacements = {
             "OFFER = Path('/var/lib/plebian-os/ssh-server-offer')": f"OFFER = Path({str(self.record)!r})",
             "HELPER = '/usr/local/sbin/plebian-os-ssh-server'": f"HELPER = {str(helper)!r}",
             "SUDO = '/usr/bin/sudo'": "SUDO = '/usr/bin/env'",
+            "SSHD = '/usr/sbin/sshd'": f"SSHD = {str(self.root / 'no-sshd')!r}",
             "info.st_uid != 0": "info.st_uid != os.geteuid()",
         }
         for old, new in replacements.items():
@@ -238,6 +297,15 @@ class FirstLoginTerminalTests(unittest.TestCase):
                         prompt_text, reply = pending.pop(0)
                         shown = shown.replace(prompt_text, b'<' + prompt_text + b'>', 1)
                         os.write(master, reply)
+            try:
+                child.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                # A question nobody answers must fail this test now, not hang
+                # it until the suite's timeout.
+                child.kill()
+                child.wait(timeout=3)
+                self.fail('first-login step still waiting after 15 s:\n'
+                          + shown.decode(errors='replace'))
             stdout = child.stdout.read()
         finally:
             os.close(master)
@@ -275,6 +343,17 @@ class FirstLoginTerminalTests(unittest.TestCase):
         stdout, shown = self.session_start([])
         self.assertNotIn('Remote login', shown)
         self.assertEqual(self.helper_log.read_text(), 'enable\n')
+
+    def test_a_failed_helper_shows_the_state_read_back_not_a_guess(self):
+        self.offer_to_me()
+        self.helper_rc.write_text('1\n')
+        stdout, shown = self.session_start([(b'[y/N]', b'y\n'),
+                                            (b'Press Enter to continue', b'\n')])
+        self.assertEqual(stdout, '')
+        self.assertEqual(self.helper_log.read_text(), 'enable\nstatus\n')
+        self.assertIn('did not finish (exit status 1)', shown)
+        self.assertIn('SSH server: ON -- stub read back', shown)
+        self.assertNotIn('not turned on', shown)
 
     def test_deferring_the_desktop_still_asks_the_ssh_question_once(self):
         self.offer_to_me()

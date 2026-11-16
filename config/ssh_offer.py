@@ -9,8 +9,10 @@ No: Enter, end of input, Ctrl-C or anything unanswered counts as No. The answer
 is saved before anything happens, so the question is never asked again.
 
 Yes runs the Plebian-OS helper through sudo in the same terminal, which asks
-for the account password the way any other sudo command does. Later changes
-use the same helper:
+for the account password the way any other sudo command does. The helper's
+exit status is not taken as the answer to "is SSH on?": when it does not
+succeed, the state is read back with `plebian-os-ssh-server status` and shown
+as it is. Later changes use the same helper:
 
     sudo plebian-os-ssh-server enable | disable
     plebian-os-ssh-server status
@@ -28,6 +30,7 @@ import tempfile
 OFFER = Path('/var/lib/plebian-os/ssh-server-offer')
 HELPER = '/usr/local/sbin/plebian-os-ssh-server'
 SUDO = '/usr/bin/sudo'
+SSHD = '/usr/sbin/sshd'
 ANSWER_NAME = 'ssh-server-offer.json'
 SCHEMA = 'kilix.ssh-server-offer/v1'
 PREFIX = 'ssh-server-offer/v1 '
@@ -36,8 +39,9 @@ QUESTION = """
 Remote login (SSH)
 
 This computer has no SSH server, so nobody can log in to it over the network.
-You can turn one on now. If you do, anyone who can reach this computer on the
-network and knows your account password can log in as you.
+You can turn one on now. If you do, every account on this computer that has a
+password can log in over the network: anyone who can reach this computer and
+knows or guesses one of those passwords can log in as that account.
 
 You can change this later with:  sudo plebian-os-ssh-server enable
                                  sudo plebian-os-ssh-server disable
@@ -130,6 +134,18 @@ def run_helper(output):
         signal.signal(signal.SIGINT, previous)
 
 
+def show_state(output):
+    """Print the state the helper reads back (no privilege needed)."""
+    try:
+        subprocess.run([HELPER, 'status'], stdin=subprocess.DEVNULL, stdout=output,
+                       stderr=output, timeout=60, check=False)
+        return True
+    except (OSError, subprocess.SubprocessError) as error:
+        print(f'Could not read the SSH server state ({error}). Check it with:\n'
+              '  plebian-os-ssh-server status', file=output)
+        return False
+
+
 def offer_once(config, source=None, output=None, interactive=None):
     """The whole first-login step. Never raises: the desktop must still start."""
     source = sys.stdin if source is None else source
@@ -141,6 +157,8 @@ def offer_once(config, source=None, output=None, interactive=None):
             return None  # Keep the question for an interactive login.
         if answered(config) or not offered_to(account()):
             return None
+        if os.path.exists(SSHD):
+            return None  # An SSH server was installed since first boot.
         try:
             reply = ask(source, output)
         except KeyboardInterrupt:
@@ -153,15 +171,21 @@ def offer_once(config, source=None, output=None, interactive=None):
         print('\nsudo asks for your account password to turn SSH on.', file=output)
         status = run_helper(output)
         if status != 0:
-            print('\nSSH was not turned on. You can try again later with:\n'
-                  '  sudo plebian-os-ssh-server enable', file=output)
+            # Never infer the state from the exit status: an install can fail
+            # after Debian's postinst already started sshd.
+            print(f'\nThe SSH helper did not finish (exit status {status}). '
+                  "This is the SSH server's state now:", file=output, flush=True)
+            show_state(output)
+            print('\nYou can try again later with:  sudo plebian-os-ssh-server enable\n'
+                  'or turn it off with:           sudo plebian-os-ssh-server disable',
+                  file=output)
         try:
             print('\nPress Enter to continue to your desktop. ', end='', file=output, flush=True)
             source.readline()
         except KeyboardInterrupt:
             pass
         return reply
-    except Exception as error:  # noqa: BLE001 - first login must go on
+    except (Exception, KeyboardInterrupt) as error:  # noqa: BLE001 - first login must go on
         try:
             print(f'kilix: skipped the SSH server question: {error}', file=output)
         except Exception:  # noqa: BLE001
