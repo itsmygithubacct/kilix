@@ -53,6 +53,10 @@ class SetupError(RuntimeError):
     """An explicit setup request could not safely proceed."""
 
 
+class Unanswered(SetupError):
+    """Input ended at a question. That is not an answer, so nothing is remembered."""
+
+
 class Declined(SetupError):
     """The user answered no at the install question or at the licence."""
 
@@ -85,6 +89,14 @@ class _InstallRequest:
         self.supplied = None
 
 
+def _install_error():
+    """The Content installer's error type; SetupError when it cannot be named."""
+    try:
+        return importlib.import_module("kilix_content.install").InstallError
+    except (ImportError, AttributeError):
+        return SetupError
+
+
 def ensure_installed(asset_id: str, *, root: str | None = None,
                      source=None, output=None, errors=None,
                      timeout: float = 900.0) -> None:
@@ -106,7 +118,10 @@ def ensure_installed(asset_id: str, *, root: str | None = None,
     try:
         _verify(api, lic, spec, root, io.StringIO())
         return
-    except SetupError:
+    except (SetupError, OSError, _install_error()):
+        # Not installed. That includes a receipt whose files never arrived: a
+        # download that failed or was interrupted after the terms were shown
+        # leaves one, and the install below then fetches or reuses the files.
         pass
     if not _model_auto_install_enabled() or not _terminal(source, output):
         raise SetupError("no stored receipt covers this exact model and manifest; "
@@ -347,6 +362,8 @@ def _read_line(prompt: str, limit: int, source, output) -> str:
     output.write(prompt)
     output.flush()
     answer = source.readline(limit)
+    if not answer:
+        raise Unanswered("input ended before the question was answered; nothing was installed")
     if answer and not answer.endswith("\n"):
         raise SetupError("confirmation was incomplete or too long")
     return answer.strip()

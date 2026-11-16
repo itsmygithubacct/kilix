@@ -28,8 +28,8 @@ LATER = ('To install it later: kilix-needle workflows setup --model lfm2, '
 DECLINED = 3    # content_models.DECLINED_STATUS: the user said no at the install screen
 # The Content installer builds a new delivery from an installed earlier one.
 REUSE = ('An earlier delivery of the model is on this computer. Its files are verified and '
-         'reused, so a download is not expected. The new copy uses {size} of disk and the '
-         'earlier copy is kept.')
+         'reused, so a download is not expected; if they do not verify, the model is '
+         'downloaded. The new copy uses {size} of disk and the earlier copy is kept.')
 
 
 def size_text(number):
@@ -132,7 +132,8 @@ def offer(needle, *, source=None, output=None, install=None):
         return 'declined'
     if status != 0:
         output.write('The LFM2 command model was not installed. Ask is using its grammar '
-                     'and will offer the model again.\n')
+                     'and will offer the model again. To try now: '
+                     'kilix models install lfm2-kilix-commands\n')
         output.flush()
         return 'failed'
     # Nothing is saved: Ask uses the installed model while no other choice is

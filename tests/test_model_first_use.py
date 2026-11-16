@@ -64,6 +64,57 @@ class EnsureInstalledTests(unittest.TestCase):
             self.run_ensure("lfm2-kilix-commands", verify, install, tty=True)
         self.assertEqual(seen, ["verify", "install"])
 
+    def test_a_no_is_declined_and_end_of_input_is_not(self):
+        # ensure exits 3 for Declined, which the Ask offer remembers. Input
+        # that ends at the question is no answer and must not be remembered.
+        def verify(*args):
+            raise ui.SetupError("missing")
+
+        with self.assertRaises(ui.Declined):
+            self.run_ensure("lfm2-kilix-commands", verify, lambda *args: 1, tty=True)
+
+        def ended(*args):
+            import io
+            return ui._read_line("Install? [y/N] ", 64, io.StringIO(""), io.StringIO())
+
+        with self.assertRaises(ui.Unanswered) as raised:
+            self.run_ensure("lfm2-kilix-commands", verify, ended, tty=True)
+        self.assertNotIsInstance(raised.exception, ui.Declined)
+        import io
+        self.assertEqual(ui._read_line("? ", 64, io.StringIO("\n"), io.StringIO()), "")
+        self.assertFalse(ui._answer("? ", "y", io.StringIO("n\n"), io.StringIO()))
+
+    def test_a_receipt_whose_files_never_arrived_goes_on_to_the_install(self):
+        # A download that fails after the terms were shown leaves a receipt
+        # and no files. Verifying then raises the installer's error, not
+        # SetupError; that is "not installed", not a reason to stop.
+        class InstallError(RuntimeError):
+            pass
+
+        seen = []
+
+        def verify(*args):
+            seen.append("verify")
+            if seen.count("verify") == 1:
+                raise InstallError("could not open supplied file model.gguf")
+            return 0
+
+        with patch.object(ui, "_install_error", return_value=InstallError):
+            self.run_ensure("lfm2-kilix-commands", verify,
+                            lambda *args: seen.append("install") or 0, tty=True)
+        self.assertEqual(seen, ["verify", "install", "verify"])
+        for error in (OSError("unreadable"),):
+            seen.clear()
+
+            def broken(*args, error=error):
+                seen.append("verify")
+                if seen.count("verify") == 1:
+                    raise error
+                return 0
+            self.run_ensure("lfm2-kilix-commands", broken,
+                            lambda *args: seen.append("install") or 0, tty=True)
+            self.assertEqual(seen, ["verify", "install", "verify"])
+
     def test_auto_install_off_refuses_on_a_terminal(self):
         def verify(*args):
             raise ui.SetupError("missing")

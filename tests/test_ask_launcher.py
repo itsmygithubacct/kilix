@@ -1263,6 +1263,21 @@ def json_request(url):
         self.assertFalse(Path(self.env["ASK_TEST_STATE"]).exists())
         self.assertIn("needle", self.calls()[-1])
 
+    def test_yes_flag_with_a_chosen_model_runs_no_install_question(self):
+        # A saved or named model that is missing is installed at a terminal
+        # through its own question. --yes takes no question: Needle gets the
+        # request and refuses it with the command that installs the model.
+        for arguments in (["--model", "lfm2"], []):
+            with self.subTest(arguments=arguments):
+                self.log.write_text("")
+                Path(self.env["ASK_TEST_STATE"]).write_text("lfm2")
+                status, output = self.run_tty(
+                    arguments + ["--yes", "--hold", "--", "close tab 2"], b"\n")
+                self.assertEqual(status, 0, output)
+                self.assertEqual([call for call in self.calls() if "models_ensure" in call], [])
+                self.assertEqual(self.calls()[-1]["needle"][:2], ["ask", "--yes"])
+        Path(self.env["ASK_TEST_STATE"]).unlink()
+
     def test_an_installed_or_chosen_model_is_never_offered(self):
         state = Path(self.env["ASK_TEST_STATE"])
         status, output = self.run_tty(["--hold", "--", "close tab 2"], b"\n")

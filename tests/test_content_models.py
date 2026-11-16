@@ -349,8 +349,13 @@ class ModelSetupTests(unittest.TestCase):
             with self.subTest(answer=answer):
                 try:
                     self.assertEqual(self.execute(answer=answer, api=api, facade=facade), 1)
+                except ui.Unanswered:
+                    # End of input is no answer: an error, not a remembered no.
+                    self.assertEqual(answer, "")
                 except ui.SetupError:
                     self.assertTrue(answer and not answer[:32].endswith("\n"))
+                else:
+                    self.assertNotEqual(answer, "")
                 api.first_use.install_with_agreement.assert_not_called()
                 store.write.assert_not_called()
                 api.Installer.assert_not_called()

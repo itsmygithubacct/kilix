@@ -43,7 +43,8 @@ class OfferTests(unittest.TestCase):
     def test_an_earlier_delivery_is_offered_without_a_download(self):
         self.facts["reuse"] = "/apps/assets/lfm2-kilix-commands--old"
         _result, text = self.ask("n\n")
-        self.assertIn("verified and reused, so a download is not expected", text)
+        self.assertIn("verified and reused, so a download is not expected; if they do not "
+                      "verify, the model is downloaded.", text)
         self.assertIn("The new copy uses 1.43 GB of disk and the earlier copy is kept.", text)
         self.assertNotIn("GB download", text)
 
