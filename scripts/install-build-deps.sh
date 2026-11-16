@@ -456,6 +456,16 @@ debian_audio_revived() {
     "enabled-before-this-run-and-live-again(player-state-before=$player_before);$note"
 }
 
+# Release mode on an installed Plebian OS. The release closure was already
+# installed through the private Debian configuration, so a package still
+# missing here means that closure is incomplete. Development, and this
+# installer on a machine that is not Plebian OS, keep the system apt command.
+release_closure_refuses_system_apt() {
+  [ "${PLEBIAN_OS_RELEASE_MODE:-0}" = 1 ] || return 1
+  local marker="${PLEBIAN_OS_MACHINE_MARKER:-/etc/plebian-os/build-info.env}"
+  [ -f "$marker" ] && [ ! -L "$marker" ]
+}
+
 debian_install() {
   local jack_dev; jack_dev="$(debian_jack_dev_package)"
   local pkgs="build-essential cmake pkg-config git curl zstd golang-go python3 python3-dev python3-pil python3-venv \
@@ -465,11 +475,28 @@ debian_install() {
     libsimde-dev libwayland-dev wayland-protocols \
     libsdl2-dev libsdl2-image-dev libsndfile1-dev zlib1g-dev libfluidsynth-dev $jack_dev fluid-soundfont-gm \
     libssh2-1-dev libbrotli-dev"
-  local -a packages
-  local pending="$KILIX_SYSTEM_STATE/audio-holdoff.pending" snapshot resumed=0 rc=0
+  local -a packages missing=()
+  local pending="$KILIX_SYSTEM_STATE/audio-holdoff.pending" snapshot resumed=0 rc=0 pkg status
+  read -r -a packages <<<"$pkgs"
+  if release_closure_refuses_system_apt; then
+    if command -v dpkg-query >/dev/null 2>&1; then
+      for pkg in "${packages[@]}"; do
+        status="$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null || true)"
+        [ "$status" = "install ok installed" ] || missing+=("$pkg")
+      done
+    else
+      missing=("${packages[@]}")
+    fi
+    if [ "${#missing[@]}" -gt 0 ]; then
+      log "release package closure is incomplete; missing ${missing[*]}"
+      log "the system apt configuration was not used"
+      return 1
+    fi
+    log "release package closure already includes these build packages; the system apt configuration was not used"
+    return 0
+  fi
   echo "==> Debian/Ubuntu detected — installing system-wide via apt-get"
   sudo apt-get update
-  read -r -a packages <<<"$pkgs"
   sudo install -d -m 0755 "$KILIX_SYSTEM_STATE"
   if sudo test -f "$pending"; then
     # An earlier run stopped between its install and its check: killed, or
