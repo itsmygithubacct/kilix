@@ -24,9 +24,10 @@ Since 0.2.2, Kilix:
   `scripts/install-build-deps.sh` refuses a missing build package by name
   ("release package closure is incomplete; missing …") instead of installing
   it from the system apt. It succeeds without changes when every build
-  package is already installed. Run `plebian-os-update --revalidate-current`
-  to install the release packages again, and report the package if it is
-  still refused. Elsewhere it uses the system package manager as before.
+  package is already installed; a package held with `apt-mark hold`, or
+  installed for a second architecture, counts as installed. The message says
+  to run `pleb update`, or `plebian-os-update --recover-interrupted` after an
+  interrupted update, or to report the package. Elsewhere it uses the system package manager as before.
 - **Speech.**
   - Speaks a whole Paradee utterance: synthesis runs across bounded sentence
     and word windows instead of stopping silently at 510 phonemes.
