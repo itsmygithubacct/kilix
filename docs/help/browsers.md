@@ -1,4 +1,4 @@
-# Kilix 0.2.2 contained browsers
+# Kilix contained browsers
 
 Run `kilix run chromium` to launch a contained browser in a new tab.
 Contained Chromium and Firefox launches normally get a private disposable

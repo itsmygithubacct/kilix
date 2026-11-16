@@ -1,4 +1,4 @@
-# Kilix 0.2.2 read aloud and dictation
+# Kilix read aloud and dictation
 
 Run `kilix voice doctor` to inspect dependencies and the selected output and
 input audio devices. A null output sink is inaudible; a monitor source is not

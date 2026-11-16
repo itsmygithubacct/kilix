@@ -1,6 +1,60 @@
 # kilix — kitty that looks & behaves like Tilix, with clickable pane buttons
 
-## 0.2.3 RC1 power settings
+## Release 0.2.3
+
+Kilix 0.2.3 is part of the coordinated
+[Plebian-OS 0.2.3 release](https://github.com/itsmygithubacct/plebian-os/blob/v0.2.3/releases/0.2.3-notes.md),
+which records the exact stack closure, its qualification, known issues and the
+0.2.4 deferrals. Supported upgrade paths are defined by the
+[OS upgrade policy](https://github.com/itsmygithubacct/plebian-os/blob/v0.2.3/UPGRADING.md).
+Since 0.2.2, Kilix:
+
+- **Desktop and first login.**
+  - Asks for the default desktop at the first interactive desktop login,
+    with Kilix 95, IceWM, Kilix TUI and **zell — RPG Desktop** as the primary
+    choices. `kilix default-desktop choose` reopens the chooser, and
+    `kilix desktop zell` launches Zell.
+  - After the desktop choice on a fresh Plebian-OS installation, asks once
+    whether to turn on an SSH server. The default is No. Yes runs
+    `sudo plebian-os-ssh-server enable`.
+- **Speech.**
+  - Speaks a whole Paradee utterance: synthesis runs across bounded sentence
+    and word windows instead of stopping silently at 510 phonemes.
+    `ParadeeSession`, a JSONL worker mode and the shared
+    `kilix_sdk.speech_buffer.AdaptiveBuffer` timing estimator support long
+    spoken streams.
+  - Adds `kilix transcribe` and `kilix split` (Demucs stems).
+  - Offers Whisper medium.en as a first-use dictation model, and Whisper
+    large-v3 on the Playalong page for lyrics that are not in English.
+- **Kilix Ask.**
+  - Uses its command grammar until the LFM2 command model is installed. The
+    first interactive `kilix ask` and the model wizard offer the download,
+    and a decline is remembered; `--yes` skips the offer.
+    <!-- LFM2: confirm at final list -->
+  - Answers closed sums, machine readings, dates, conversions and dice
+    directly, and accepts `kilix ask --yes REQUEST` for a confirmed request.
+  - Can answer an unmatched question with a local Ollama model after
+    `kilix ask --model-answers setup`.
+- **Help.** Defaults to `kilix-qwen-sft1-2b` for `kilix help-answer`;
+  `kilix help-search` needs no weights.
+- **Models.** Installs a model the first time a command needs it, after its
+  licence screen; a decline installs nothing. The model wizard says why an
+  install failed, asks every question before any download, and offers the
+  optional `qwen-0.8b-no-loop-02` chat model.
+- **Logs and agents.**
+  - Searches agent logs through a persistent full-history index with BM25
+    ranking.
+  - Adds `kilix agent-message` for Codex sessions on the shared app-server.
+- **Media and input.**
+  - Adds `kilix video --neuronte FILE` to play video drawn by the installed
+    Neuronte runtime.
+  - Uses kilix-mpv `0.40.0+kilix.9`.
+  - Includes the reviewed X11 pointer and scroll routing fixes, and makes
+    Shift+arrow keys move in Kilix shells.
+- **Notifications.** Collects notifications in one window that grows and
+  retracts downward. Clicking a notification's cat focuses its pane.
+
+## 0.2.3 power settings
 
 `kilix power-controls` opens Kilix Power Controls, the Kilix GUI for power
 preferences, with plugged-in and battery policies, display power, dimming,
@@ -12,11 +66,10 @@ current display. The pinned application uses the existing desktop power service.
   `--set on --idle-seconds 600`, or `--set session` to follow session defaults.
   Saved changes apply at the next login; manual locking remains available.
 
-## 0.2.2.1 maintenance candidate
+## 0.2.2.1 maintenance work
 
 Coordinates the Model Setup password-disclosure fix and four-part maintenance-release support.
-
-This source is a release candidate; installation-media and upgrade acceptance are pending.
+These changes are part of 0.2.3; 0.2.2.1 itself was not published.
 
 `kilix` is a self-contained wrapper around a **fork of kitty** that gives
 each pane's title bar clickable **keyboard, `+ - ← ↑ ↓ → ▢ ✕` buttons** —
@@ -61,15 +114,15 @@ The selected toolkit includes `kilix rollout log --pane N [--json]` for locating
 the log written by a pane's current agent. See `kilix rollout log --help` for
 selection and exit statuses.
 
-## Release 0.2.2 — in development
+## Release 0.2.2
 
 Pane logs open faster. The Log button starts the viewer without preparing a
 second runtime, and transcript replay reuses unchanged rows and batches plain
 text writes while preserving the recording's rendered output.
 
-The reviewed source integration is selected for the coordinated Plebian-OS
-0.2.2 candidate. Image, upgrade, rollback and final installed acceptance remain
-pending; supported upgrade paths are defined by the
+These changes were developed for the coordinated Plebian-OS 0.2.2 release.
+Its notes record what shipped and was qualified there, and the rest is part of
+0.2.3. Supported upgrade paths are defined by the
 [OS upgrade policy](https://github.com/itsmygithubacct/plebian-os/blob/main/UPGRADING.md).
 
 `kilix fingerlock` finds a USB fingerprint reader, installs Debian `fprintd`
@@ -1812,8 +1865,9 @@ own hardware database once it is installed.
 The lazy install is one fixed command, `apt-get install -y
 --no-install-recommends fprintd`, run as root through `sudo` in your terminal
 (or in `xterm` when the caller has no terminal) after you say yes, or at once
-with `--yes`. Plebian OS points apt at a dated snapshot, so this installs the
-release's versions. No repository is added and no recommends are pulled.
+with `--yes`. Plebian OS uses the signed live Debian trixie archives, so this
+installs Debian's current `fprintd`. No repository is added and no recommends
+are pulled.
 `libpam-fprintd` is not installed, and login is left unchanged.
 
 When only one finger is enrolled, default verification selects it explicitly.
@@ -3368,8 +3422,8 @@ kilix help-answer "How do I use the TUI?"
 See [Help answers and documentation search](docs/help/answers.md) for setup,
 installation checks, examples and troubleshooting.
 
-The model is an RC1 default selected from exposed development results, with
-known errors. It is not independently qualified. Setup is separate from the
+The model is the 0.2.3 default, selected from exposed development results,
+with known errors. It is not independently qualified. Setup is separate from the
 OS image's existing bundled models.
 
 Run `kilix help-search "how do I split a pane"` to search the bundled Kilix,
