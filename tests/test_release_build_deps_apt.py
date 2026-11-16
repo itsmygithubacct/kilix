@@ -135,6 +135,46 @@ class ReleaseBuildDepsAptTests(unittest.TestCase):
             result.stderr)
         self.assertNotIn("libssl-dev", result.stderr)
 
+    def test_libssl_dev_installed_for_amd64_and_i386_counts(self):
+        """libssl-dev:amd64 and libssl-dev:i386 are one installed package.
+
+        dpkg-query emits one status line per architecture when the format
+        contains a newline. Both lines are installed. A format without that
+        newline would glue them together, and the package would look missing.
+        """
+        self._stub("dpkg-query", textwrap.dedent(r"""\
+            #!/bin/sh
+            newline=0
+            pkg=
+            for arg in "$@"; do
+              pkg=$arg
+              case "$arg" in
+                *'\n'*) newline=1 ;;
+              esac
+            done
+            case "$pkg" in
+              libssl-dev)
+                if [ "$newline" = 1 ]; then
+                  printf 'installed\ninstalled\n'
+                else
+                  printf 'installedinstalled'
+                fi
+                ;;
+              libssl-dev:amd64|libssl-dev:i386)
+                printf 'installed\n'
+                ;;
+              *)
+                printf 'installed\n'
+                ;;
+            esac
+            """))
+        result = self.run_debian(PLEBIAN_OS_RELEASE_MODE="1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(
+            "release package closure already includes these build packages",
+            result.stderr)
+        self.assertNotIn("libssl-dev", result.stderr)
+
     def test_development_mode_still_uses_system_apt(self):
         result = self.run_debian(PLEBIAN_OS_RELEASE_MODE="0")
         self.assertEqual(result.returncode, 0, result.stderr)
