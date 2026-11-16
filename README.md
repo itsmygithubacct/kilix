@@ -42,7 +42,6 @@ Since 0.2.2, Kilix:
   - Uses its command grammar until the LFM2 command model is installed. The
     first interactive `kilix ask` and the model wizard offer the download,
     and a decline is remembered; `--yes` skips the offer.
-    <!-- LFM2: confirm at final list -->
   - Answers closed sums, machine readings, dates, conversions and dice
     directly, and accepts `kilix ask --yes REQUEST` for a confirmed request.
   - Can answer an unmatched question with a local Ollama model after
