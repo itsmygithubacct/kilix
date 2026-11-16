@@ -481,8 +481,11 @@ debian_install() {
   if release_closure_refuses_system_apt; then
     if command -v dpkg-query >/dev/null 2>&1; then
       for pkg in "${packages[@]}"; do
-        status="$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null || true)"
-        [ "$status" = "install ok installed" ] || missing+=("$pkg")
+        # One status line per architecture. db:Status-Status is "installed"
+        # for a normal install and for an apt-mark hold. Any installed
+        # instance counts; a missing dpkg-query still counts everything missing.
+        status="$(dpkg-query -W -f='${db:Status-Status}\n' "$pkg" 2>/dev/null || true)"
+        printf '%s\n' "$status" | grep -qx 'installed' || missing+=("$pkg")
       done
     else
       missing=("${packages[@]}")
@@ -490,6 +493,7 @@ debian_install() {
     if [ "${#missing[@]}" -gt 0 ]; then
       log "release package closure is incomplete; missing ${missing[*]}"
       log "the system apt configuration was not used"
+      log "run 'pleb update', or 'plebian-os-update --recover-interrupted', or report it"
       return 1
     fi
     log "release package closure already includes these build packages; the system apt configuration was not used"

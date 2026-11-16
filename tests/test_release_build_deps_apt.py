@@ -88,6 +88,8 @@ class ReleaseBuildDepsAptTests(unittest.TestCase):
             "release package closure is incomplete; missing", result.stderr)
         self.assertIn("libxxhash-dev", result.stderr)
         self.assertIn("the system apt configuration was not used", result.stderr)
+        self.assertIn("plebian-os-update --recover-interrupted", result.stderr)
+        self.assertIn("pleb update", result.stderr)
         self.assertFalse(self.record.exists(), result.stderr)
         self.assertNotIn(THIRD, result.stdout + result.stderr)
 
@@ -107,6 +109,28 @@ class ReleaseBuildDepsAptTests(unittest.TestCase):
         self.assertIn("the system apt configuration was not used", result.stderr)
         self.assertFalse(self.record.exists(), result.stdout + result.stderr)
         self.assertNotIn(THIRD, result.stdout + result.stderr)
+
+    def test_a_held_package_and_any_installed_architecture_count(self):
+        self._stub("dpkg-query", textwrap.dedent("""\
+            #!/bin/sh
+            pkg=
+            for arg in "$@"; do pkg=$arg; done
+            case "$*" in
+              *db:Status-Status*)
+                case "$pkg" in
+                  libssl-dev) printf 'not-installed\\ninstalled\\n' ;;
+                  *) printf 'installed\\n' ;;
+                esac
+                ;;
+              *) printf 'hold ok installedhold ok installed' ;;
+            esac
+            """))
+        result = self.run_debian(PLEBIAN_OS_RELEASE_MODE="1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(
+            "release package closure already includes these build packages",
+            result.stderr)
+        self.assertNotIn("libssl-dev", result.stderr)
 
     def test_development_mode_still_uses_system_apt(self):
         result = self.run_debian(PLEBIAN_OS_RELEASE_MODE="0")
