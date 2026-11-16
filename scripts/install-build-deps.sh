@@ -493,7 +493,7 @@ debian_install() {
     if [ "${#missing[@]}" -gt 0 ]; then
       log "release package closure is incomplete; missing ${missing[*]}"
       log "the system apt configuration was not used"
-      log "run 'pleb update', or 'plebian-os-update --recover-interrupted', or report it"
+      log "run 'plebian-os-update --revalidate-current' to reinstall this release's packages; if it is still missing, report it"
       return 1
     fi
     log "release package closure already includes these build packages; the system apt configuration was not used"
