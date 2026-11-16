@@ -6,7 +6,10 @@ launcher runs this once, at a terminal, when nothing has been chosen and the
 model is absent. Yes runs the ordinary first-use install, which shows the
 model's terms and asks its own question; this file answers neither and writes
 no receipt. No saves the grammar as the Ask selection, so the question is not
-repeated. No answer (end of input) saves nothing and the question returns.
+repeated. Yes saves no selection: the installed model is the default. A no
+at the model's own install question is saved exactly as a no here is. No
+answer (end of input) and a failed install save nothing, and the question
+returns on a later run.
 
 A "no" on the model wizard's Kilix Ask page is the same answer: it is saved
 here as the grammar selection and nothing is asked. An answer given here is
@@ -22,6 +25,11 @@ ASSET = 'lfm2-kilix-commands'
 HERE = Path(__file__).resolve().parent
 LATER = ('To install it later: kilix-needle workflows setup --model lfm2, '
          'or kilix wizard --all.')
+DECLINED = 3    # content_models.DECLINED_STATUS: the user said no at the install screen
+# The Content installer builds a new delivery from an installed earlier one.
+REUSE = ('An earlier delivery of the model is on this computer. Its files are verified and '
+         'reused, so a download is not expected. The new copy uses {size} of disk and the '
+         'earlier copy is kept.')
 
 
 def size_text(number):
@@ -81,8 +89,7 @@ def question(known):
              'The optional LFM2 command model proposes a reading when the grammar has none.',
              'It runs on this computer; no request leaves it.']
     if known and known.get('reuse'):
-        lines.append('An earlier delivery of the model is on this computer, so nothing is '
-                     f'downloaded. It uses {size_text(known["installed_bytes"])} of disk.')
+        lines.append(REUSE.format(size=size_text(known["installed_bytes"])))
     elif known:
         lines.append(f'It is a {size_text(known["download_bytes"])} download and uses '
                      f'{size_text(known["installed_bytes"])} of disk.')
@@ -114,13 +121,23 @@ def offer(needle, *, source=None, output=None, install=None):
     if install is None:
         install = lambda: subprocess.run(   # noqa: E731
             [sys.executable, '-B', str(HERE / 'content_models.py'), 'ensure', ASSET]).returncode
-    if install() != 0:
+    status = install()
+    if status == DECLINED:
+        # A no at the model's own install question is a no to the offer.
+        saved = save(needle, 'grammar')
+        wizard_record('no')
+        output.write('Ask stays on its grammar' + (' and will not ask again. ' if saved else '. ')
+                     + LATER + '\n')
+        output.flush()
+        return 'declined'
+    if status != 0:
         output.write('The LFM2 command model was not installed. Ask is using its grammar '
                      'and will offer the model again.\n')
         output.flush()
         return 'failed'
-    if not save(needle, 'lfm2'):
-        output.write('The model is installed; Ask uses it while no other choice is saved.\n')
+    # Nothing is saved: Ask uses the installed model while no other choice is
+    # saved, and a later delivery then returns to this question rather than to
+    # a saved model that is missing.
     wizard_record('yes')
     output.flush()
     return 'installed'

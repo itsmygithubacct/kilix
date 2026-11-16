@@ -27,9 +27,10 @@ Ask reads requests with its grammar until a command model is installed, and
 Kilix installs none unasked. Model Setup's Local Workflows page offers LFM2 by
 default, Needle3 as an alternate, and grammar without a model download. The
 first `kilix ask` at a terminal that reaches the command route, with nothing
-chosen and LFM2 absent, asks once whether to install LFM2. Yes shows the
+chosen and LFM2 absent, asks whether to install LFM2. Yes shows the
 model's terms and installs it; no saves the grammar as the selection and is
-not asked again. A no on the Local Workflows page counts as the same answer.
+not asked again. An unanswered, refused or failed offer is made again on a
+later run, and `--yes` skips the question. A no on the Local Workflows page counts as the same answer.
 Piped or scripted Ask never asks. `kilix-needle workflows choice` prints the
 backend in use and where it came from. Older Needle2 jobs have their
 own Legacy Needle workflows page. Accepting one model does not verify another.

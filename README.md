@@ -154,10 +154,12 @@ verification and recovery, see [Kilix Workflows](docs/workflows/README.md).
 plan and acts only on a typed yes. The interpreter is the saved Ask selection.
 With none saved it is LFM2 on a machine that has it installed, and Ask's
 grammar on one that does not. Kilix installs no command model unasked: the
-first `kilix ask` at a terminal that needs one offers the LFM2 download once,
+first `kilix ask` at a terminal that needs one asks whether to install LFM2,
 and Model Setup's Kilix Ask page offers it too. Declining either keeps the
-grammar and is remembered. Piped or scripted Ask never asks and never
-downloads. `--model grammar` uses the exact grammar and skips
+grammar and is remembered; an unanswered or failed offer is made again on a
+later run. Piped Ask and `kilix ask --yes` never ask and never download. A
+new delivery of a model is built from an installed earlier delivery when its
+files verify, without a download; the earlier copy is kept. `--model grammar` uses the exact grammar and skips
 model loading. `--model lfm3` and `--model needle3` select those interpreters
 for one request; install Needle 3 with
 `kilix-needle install --commands needle3`, then run

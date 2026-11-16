@@ -43,7 +43,8 @@ class OfferTests(unittest.TestCase):
     def test_an_earlier_delivery_is_offered_without_a_download(self):
         self.facts["reuse"] = "/apps/assets/lfm2-kilix-commands--old"
         _result, text = self.ask("n\n")
-        self.assertIn("nothing is downloaded", text)
+        self.assertIn("verified and reused, so a download is not expected", text)
+        self.assertIn("The new copy uses 1.43 GB of disk and the earlier copy is kept.", text)
         self.assertNotIn("GB download", text)
 
     def test_unreadable_catalog_facts_still_ask_without_numbers(self):
@@ -67,15 +68,30 @@ class OfferTests(unittest.TestCase):
         _result, text = self.ask("n\n")
         self.assertNotIn("will not ask again", text)
 
-    def test_yes_installs_then_saves_lfm2_and_answers_the_wizard_page(self):
+    def test_yes_installs_saves_no_selection_and_answers_the_wizard_page(self):
+        # The installed model is the default, so a later delivery returns to
+        # this question instead of to a saved model that is missing.
         result, _text = self.ask("y\n")
         self.assertEqual((result, self.installs, self.saved, self.recorded),
-                         ("installed", [1], ["lfm2"], ["yes"]))
+                         ("installed", [1], [], ["yes"]))
 
-    def test_a_declined_licence_or_failed_install_saves_nothing(self):
+    def test_a_failed_install_saves_nothing_and_is_offered_again(self):
         result, text = self.ask("yes\n", status=1)
         self.assertEqual((result, self.saved, self.recorded), ("failed", [], []))
         self.assertIn("will offer the model again", text)
+
+    def test_a_no_at_the_install_screen_is_remembered_like_a_no_here(self):
+        # The owner's rule is "no: stay on grammar, remember, don't ask every
+        # time". The second screen's no is still a no.
+        result, text = self.ask("yes\n", status=offer.DECLINED)
+        self.assertEqual((result, self.saved, self.recorded), ("declined", ["grammar"], ["no"]))
+        self.assertIn("will not ask again", text)
+        self.assertNotIn("offer the model again", text)
+
+    def test_the_declined_status_is_the_one_content_models_exits_with(self):
+        import content_models
+        self.assertEqual(offer.DECLINED, content_models.DECLINED_STATUS)
+        self.assertTrue(issubclass(content_models.Declined, content_models.SetupError))
 
     def test_end_of_input_saves_nothing(self):
         result, _text = self.ask("")

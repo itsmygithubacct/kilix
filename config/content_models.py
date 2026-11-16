@@ -34,7 +34,6 @@ import json
 import math
 import os
 from pathlib import Path
-import stat
 import sys
 import tempfile
 import unicodedata
@@ -52,6 +51,15 @@ _SAFE_CONTROLS = "\n\t"
 
 class SetupError(RuntimeError):
     """An explicit setup request could not safely proceed."""
+
+
+class Declined(SetupError):
+    """The user answered no at the install question or at the licence."""
+
+
+# `ensure` exits with this when the user said no, so a caller can tell a
+# remembered answer from a failure such as no network (exit 1).
+DECLINED_STATUS = 3
 
 
 def _model_auto_install_enabled() -> bool:
@@ -75,57 +83,6 @@ class _InstallRequest:
         self.root = root
         self.timeout = timeout
         self.supplied = None
-        # True when ``supplied`` is an earlier delivery found on this disk
-        # rather than a directory the user named with --from.
-        self.reused = False
-
-
-def earlier_install(spec, root: str) -> str | None:
-    """An earlier delivery of a versioned model already under ``root``, or None.
-
-    A new delivery of the same model usually changes few files, and none of
-    the large ones. The installer's supplied-directory path can then build
-    the new install from the old one without a download, verifying every file
-    against the new manifest. This only finds a candidate: a directory named
-    for the same asset and another manifest that holds each non-notice file at
-    the new manifest's size. Nothing is hashed, opened or changed here.
-    """
-    prefix = spec.asset_id + "--"
-    if not spec.install_name.startswith(prefix):
-        return None
-    parent = os.path.join(root, "assets")
-    wanted = [item for item in spec.files if not item.path.startswith("notices/")]
-    found = []
-    try:
-        names = os.listdir(parent)
-    except OSError:
-        return None
-    for name in names:
-        digest = name[len(prefix):]
-        if (not name.startswith(prefix) or name == spec.install_name or len(digest) != 64
-                or any(char not in "0123456789abcdef" for char in digest)):
-            continue
-        path = os.path.join(parent, name)
-        try:
-            if os.path.islink(path) or not os.path.isdir(path):
-                continue
-            for item in wanted:
-                info = os.lstat(os.path.join(path, item.path))
-                if not stat.S_ISREG(info.st_mode) or info.st_size != item.bytes:
-                    break
-            else:
-                found.append((os.lstat(path).st_mtime_ns, path))
-        except OSError:
-            continue
-    return max(found)[1] if found and wanted else None
-
-
-def first_use_facts(asset_id: str, *, root: str | None = None) -> dict:
-    """What a caller's own first-use question may say. Read-only."""
-    spec = _verified_catalog(_api()).require_asset(asset_id)
-    return {"label": spec.label, "version": spec.version,
-            "download_bytes": spec.download_bytes, "installed_bytes": spec.installed_bytes,
-            "reuse": earlier_install(spec, apps_root() if root is None else root)}
 
 
 def ensure_installed(asset_id: str, *, root: str | None = None,
@@ -154,22 +111,36 @@ def ensure_installed(asset_id: str, *, root: str | None = None,
     if not _model_auto_install_enabled() or not _terminal(source, output):
         raise SetupError("no stored receipt covers this exact model and manifest; "
                          f"run kilix models install {spec.asset_id} in a terminal")
-    request = _InstallRequest(root, timeout)
-    request.supplied = earlier_install(spec, root)
-    request.reused = request.supplied is not None
-    try:
-        status = _install(api, lic, spec, request, source, output, errors)
-    except (SetupError, OSError, ValueError, RuntimeError) as error:
-        if not request.reused:
-            raise
-        # The earlier delivery could not supply this one. Say so, then show
-        # the ordinary install, which states that it may download.
-        output.write("The earlier delivery on this computer could not be used "
-                     f"({type(error).__name__}: {str(error)[:512]}).\n")
-        status = _install(api, lic, spec, _InstallRequest(root, timeout), source, output, errors)
+    status = _install(api, lic, spec, _InstallRequest(root, timeout), source, output, errors)
     if status != 0:
-        raise SetupError(f"{spec.asset_id} was not installed; the licence was not accepted")
+        # Declined at the install question or at a licence that takes an
+        # agreement. Which one is on the screen; this does not guess.
+        raise Declined(f"{spec.asset_id} was not installed")
     _verify(api, lic, spec, root, io.StringIO())
+
+
+def _earlier_delivery(api, spec, root: str) -> str | None:
+    """An installed earlier delivery the Content installer would reuse, if any.
+
+    The installer builds a new delivery of a versioned model from the previous
+    one on disk, verifying every file, and downloads only when it cannot. This
+    asks it which directory that would be, for wording only. A component
+    without the feature, or any failure, means "expect a download".
+    """
+    try:
+        find = getattr(api.Installer(root), "earlier_delivery", None)
+        return find(spec) if callable(find) else None
+    except (OSError, ValueError, RuntimeError):
+        return None
+
+
+def first_use_facts(asset_id: str, *, root: str | None = None) -> dict:
+    """What a caller's own first-use question may say. Read-only."""
+    api = _api()
+    spec = _verified_catalog(api).require_asset(asset_id)
+    return {"label": spec.label, "version": spec.version,
+            "download_bytes": spec.download_bytes, "installed_bytes": spec.installed_bytes,
+            "reuse": _earlier_delivery(api, spec, apps_root() if root is None else root)}
 
 
 def _api():
@@ -459,14 +430,17 @@ def _install(api, lic, spec, args, source, output, errors) -> int:
         if supplied is None:
             output.write("Setup may download the pinned model files and run the declared "
                          "local conversion.\n")
+            if getattr(spec, "storage", "") == "versioned":
+                # Said without looking: nothing is opened or created before the answer.
+                output.write("If an earlier delivery of this model is installed, its files "
+                             "are verified against the pinned manifest and reused instead "
+                             "of downloaded. The earlier copy is kept.\n")
         else:
             # A notice licence (a "record" decision) takes no agreement, so its
             # receipt records the notice, never an acceptance.
             recorded = ("that you accepted the licence" if record.expected_decision == "accept"
                         else "that the licence terms were shown; it claims no agreement")
-            where = ("an earlier delivery of this model already on this computer"
-                     if getattr(args, "reused", False) else "the directory given to --from")
-            output.write(f"Setup reads the model files from {where} "
+            output.write("Setup reads the model files from the directory given to --from "
                          "and downloads nothing; every file is verified against the pinned "
                          "manifest before anything is installed.\n"
                          f"The receipt records {recorded}, exactly as for "
@@ -594,6 +568,11 @@ def main(argv=None) -> int:
     except KeyboardInterrupt:
         print("kilix models: interrupted; no completed installation is claimed", file=sys.stderr)
         return 130
+    except Declined as error:
+        _json({"error": f"SetupError: {str(error)[:4096]}",
+               "note": "No acceptance receipt is written without an affirmative answer."},
+              sys.stderr)
+        return DECLINED_STATUS
     except Exception as error:
         # Catalog, install and download failures are typed ValueError/RuntimeError
         # subclasses; the licence authority's are not, so its base is asked for

@@ -3730,7 +3730,8 @@ case "${1:-}" in
           echo "           installed by: kilix models install qwen3.5-4b"
           echo "  --model  lfm2, lfm3, needle3, or grammar for this request; overrides KILIX_ASK_COMMANDS_BACKEND"
           echo "           and the saved Ask selection. With none: lfm2 when it is installed,"
-          echo "           otherwise grammar. At a terminal, Ask then offers the LFM2 download once."
+          echo "           otherwise grammar. At a terminal without --yes, Ask then asks whether to"
+          echo "           install LFM2; a no is remembered."
           echo "  --commands-candidate FILE  use a local Needle 3 candidate with --model needle3"
           echo "Ask reads requests with its grammar until a command model is installed. A chosen"
           echo "model that is missing is installed at a terminal after its licence is shown."
@@ -3873,10 +3874,12 @@ print(apps_root())
           # Nothing chosen and no LFM2 on this machine: the grammar reads the
           # request. Offer the model once per run. Yes installs it through its
           # own licence screen, no is saved as the grammar selection, and a
-          # failed or unanswered offer leaves this request on the grammar.
+          # failed or unanswered offer leaves this request on the grammar and
+          # is made again on a later run.
           if [ "$_ask_choice" = "grammar not-installed" ]; then
             _ask_backend=grammar
-            if [ "${_ask_offered:-0}" = 0 ]; then
+            # --yes is the scripted form: it takes no question, so it gets none.
+            if [ "${_ask_offered:-0}" = 0 ] && [ "$_ask_yes" != 1 ]; then
               _ask_offered=1
               python3 -B "$KILIX_HOME/config/kilix_ask_offer.py" "$_ask_needle" || true
             fi

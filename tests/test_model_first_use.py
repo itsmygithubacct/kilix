@@ -13,8 +13,7 @@ import content_models as ui  # noqa: E402
 
 class EnsureInstalledTests(unittest.TestCase):
     def setUp(self):
-        self.spec = SimpleNamespace(asset_id="lfm2-kilix-commands",
-                                    install_name="lfm2-kilix-commands", files=[])
+        self.spec = SimpleNamespace(asset_id="lfm2-kilix-commands")
         self.catalog = SimpleNamespace(require_asset=lambda asset: self.spec)
 
     def run_ensure(self, asset, verify, install, *, tty=False, auto="1"):
@@ -75,114 +74,42 @@ class EnsureInstalledTests(unittest.TestCase):
                             tty=True, auto="0")
 
 
-class EarlierDeliveryTests(unittest.TestCase):
-    """A new delivery is built from the previous one on disk, with no download."""
+class EarlierDeliveryWordingTests(unittest.TestCase):
+    """The Content installer reuses an earlier delivery; this file only says so."""
 
-    NEW, OLD = "b" * 64, "a" * 64
+    def facts(self, installer):
+        spec = SimpleNamespace(asset_id="lfm2-kilix-commands", label="LFM2", version="v10",
+                               download_bytes=10, installed_bytes=20)
+        api = SimpleNamespace(Installer=installer)
+        with patch.object(ui, "_api", return_value=api), \
+                patch.object(ui, "_verified_catalog",
+                             return_value=SimpleNamespace(require_asset=lambda asset: spec)):
+            return ui.first_use_facts("lfm2-kilix-commands", root="/tmp/kilix-apps")
 
-    def setUp(self):
-        import tempfile
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.root = Path(tmp.name)
-        member = lambda path, size: SimpleNamespace(path=path, bytes=size)  # noqa: E731
-        self.spec = SimpleNamespace(
-            asset_id="lfm2-kilix-commands", install_name="lfm2-kilix-commands--" + self.NEW,
-            files=[member("model.gguf", 5), member("runtime/lib.so.0", 3),
-                   member("notices/NOTICE.txt", 9)])
-
-    def install(self, digest, *, model=b"model", notice=b"old"):
-        path = self.root / "assets" / ("lfm2-kilix-commands--" + digest)
-        (path / "runtime").mkdir(parents=True)
-        (path / "notices").mkdir()
-        (path / "model.gguf").write_bytes(model)
-        (path / "runtime/lib.so.0").write_bytes(b"lib")
-        (path / "runtime/lib.so").write_bytes(b"lib")     # a duplicate the new delivery dropped
-        (path / "notices/NOTICE.txt").write_bytes(notice)  # notices come from the authority
-        return str(path)
-
-    def test_a_previous_delivery_with_every_file_at_the_new_size_is_found(self):
-        self.assertIsNone(ui.earlier_install(self.spec, str(self.root)))
-        old = self.install(self.OLD)
-        self.assertEqual(ui.earlier_install(self.spec, str(self.root)), old)
-
-    def test_the_current_install_other_assets_links_and_wrong_sizes_are_not_candidates(self):
-        self.install(self.NEW)
-        self.install("c" * 64, model=b"short")[:0]
-        (self.root / "assets" / ("lfm2-kilix-commands--" + "c" * 64) / "model.gguf").write_bytes(b"x")
-        other = self.root / "assets" / ("lfm3-kilix-commands--" + self.OLD)
-        other.mkdir()
-        (self.root / "assets" / "lfm2-kilix-commands--not-a-digest").mkdir()
-        real = Path(self.install("d" * 64))
-        moved = real.with_name("moved")
-        real.rename(moved)
-        real.symlink_to(moved)
-        self.assertIsNone(ui.earlier_install(self.spec, str(self.root)))
-        linked = Path(self.install("e" * 64)) / "model.gguf"
-        linked.unlink()
-        linked.symlink_to(moved / "model.gguf")
-        self.assertIsNone(ui.earlier_install(self.spec, str(self.root)))
-
-    def test_an_unversioned_asset_has_no_earlier_delivery(self):
-        self.install(self.OLD)
-        self.spec.install_name = "lfm2-kilix-commands"
-        self.assertIsNone(ui.earlier_install(self.spec, str(self.root)))
-
-    def ensure(self, install):
-        def verify(*args):
-            if not verify.done:
-                raise ui.SetupError("missing")
-        verify.done = False
-        output = __import__("io").StringIO()
-        with ExitStack() as stack:
-            stack.enter_context(patch.object(ui, "_api", return_value=object()))
-            stack.enter_context(patch.object(ui, "_license", return_value=object()))
-            stack.enter_context(patch.object(
-                ui, "_verified_catalog",
-                return_value=SimpleNamespace(require_asset=lambda asset: self.spec)))
-            stack.enter_context(patch.object(ui, "_verify", side_effect=verify))
-            stack.enter_context(patch.object(ui, "_terminal", return_value=True))
-            stack.enter_context(patch.dict(os.environ, {"KILIX_MODEL_AUTO_INSTALL": "1"}))
-
-            def run(api, lic, spec, request, *streams):
-                status = install(request)
-                verify.done = status == 0
-                return status
-            stack.enter_context(patch.object(ui, "_install", side_effect=run))
-            ui.ensure_installed("lfm2-kilix-commands", root=str(self.root), output=output)
-        return output.getvalue()
-
-    def test_first_use_supplies_the_new_delivery_from_the_old_one(self):
-        old = self.install(self.OLD)
-        seen = []
-        self.ensure(lambda request: seen.append((request.supplied, request.reused)) or 0)
-        self.assertEqual(seen, [(old, True)])
-
-    def test_without_an_earlier_delivery_first_use_downloads_as_before(self):
-        seen = []
-        self.ensure(lambda request: seen.append((request.supplied, request.reused)) or 0)
-        self.assertEqual(seen, [(None, False)])
-
-    def test_an_unusable_earlier_delivery_is_reported_and_the_ordinary_install_is_shown(self):
-        old = self.install(self.OLD)
+    def test_facts_name_the_directory_the_installer_would_reuse(self):
         seen = []
 
-        def install(request):
-            seen.append(request.supplied)
-            if request.supplied:
-                raise ValueError("supplied file does not match the manifest: model.gguf")
-            return 0
-        output = self.ensure(install)
-        self.assertEqual(seen, [old, None])
-        self.assertIn("earlier delivery on this computer could not be used", output)
-        self.assertIn("does not match the manifest", output)
+        class Installer:
+            def __init__(self, root):
+                seen.append(root)
 
-    def test_declining_the_reuse_is_a_decline_and_does_not_fall_back_to_a_download(self):
-        self.install(self.OLD)
-        seen = []
-        with self.assertRaisesRegex(ui.SetupError, "was not installed"):
-            self.ensure(lambda request: seen.append(request.supplied) or 1)
-        self.assertEqual(len(seen), 1)
+            def earlier_delivery(self, spec):
+                return "/tmp/kilix-apps/assets/lfm2-kilix-commands--old"
+        facts = self.facts(Installer)
+        self.assertEqual(seen, ["/tmp/kilix-apps"])
+        self.assertEqual(facts["reuse"], "/tmp/kilix-apps/assets/lfm2-kilix-commands--old")
+        self.assertEqual((facts["download_bytes"], facts["installed_bytes"]), (10, 20))
+
+    def test_a_component_without_reuse_or_a_failing_one_means_expect_a_download(self):
+        class Old:
+            def __init__(self, root):
+                pass
+
+        class Broken(Old):
+            def earlier_delivery(self, spec):
+                raise OSError("unreadable")
+        self.assertIsNone(self.facts(Old)["reuse"])
+        self.assertIsNone(self.facts(Broken)["reuse"])
 
 
 if __name__ == "__main__":

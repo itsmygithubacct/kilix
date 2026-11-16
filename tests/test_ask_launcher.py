@@ -51,7 +51,8 @@ if log and sys.argv[1:2] == ["ensure"]:
     with open(log, "a") as stream:
         stream.write(json.dumps({"models_ensure": sys.argv[1:]}) + "\\n")
 if os.environ.get("ASK_TEST_MODEL_DECLINED"):
-    raise SystemExit(1)
+    # 1 is a failed install, 3 a no at the install screen.
+    raise SystemExit(int(os.environ["ASK_TEST_MODEL_DECLINED"]))
 if sys.argv[1:] == ["ensure", "lfm2-kilix-commands"]:
     open(os.environ["ASK_TEST_STATE"] + ".installed", "w").close()
 raise SystemExit(0)
@@ -1189,6 +1190,21 @@ def json_request(url):
         self.assertNotIn("LFM2", output)
         self.assertEqual(self.offer_calls(), [{"workflows": ["choice"], "tty": False}])
 
+    def test_yes_flag_and_the_piped_form_take_no_question(self):
+        # --yes is how a script runs Ask in a terminal. It must not block on a
+        # question, and a stray newline must not save a selection for the user.
+        self.without_the_model()
+        status, output = self.run_tty(["--yes", "--hold", "--", "close tab 2"], b"\n")
+        self.assertEqual(status, 0, output)
+        self.assertNotIn("LFM2", output)
+        self.assertEqual(self.offer_calls(), [{"workflows": ["choice"], "tty": False}])
+        self.assertFalse(Path(self.env["ASK_TEST_STATE"]).exists())
+        self.assertEqual(self.calls()[-1]["needle"], ["ask", "--yes", "--", "close tab 2"])
+        # Without --yes the same terminal is asked.
+        status, output = self.run_tty(["--hold", "--", "close tab 2"],
+                                      [(self.OFFER, b"n\n"), (b"Press Enter", b"\n")])
+        self.assertEqual(status, 0, output)
+
     def test_a_bare_enter_is_no(self):
         self.without_the_model()
         status, output = self.run_tty(["--hold", "--", "close tab 2"],
@@ -1196,15 +1212,15 @@ def json_request(url):
         self.assertEqual(status, 0, output)
         self.assertEqual(Path(self.env["ASK_TEST_STATE"]).read_text(), "grammar")
 
-    def test_yes_installs_through_the_models_command_then_saves_lfm2(self):
+    def test_yes_installs_through_the_models_command_and_saves_no_selection(self):
         self.without_the_model()
         status, output = self.run_tty(["--hold", "--", "close tab 2"],
                                       [(self.OFFER, b"y\n"), (b"Press Enter", b"\n")])
         self.assertEqual(status, 0, output)
         self.assertEqual(self.offer_calls(), [
             {"workflows": ["choice"], "tty": False},
-            {"models_ensure": ["ensure", "lfm2-kilix-commands"]},
-            {"workflows": ["select", "--model", "lfm2"], "tty": False}])
+            {"models_ensure": ["ensure", "lfm2-kilix-commands"]}])
+        self.assertFalse(Path(self.env["ASK_TEST_STATE"]).exists())
         self.assertIn("needle", self.calls()[-1])
         self.log.write_text("")
         status, output = self.run_tty(["--hold", "--", "close tab 2"], b"\n")
@@ -1214,7 +1230,21 @@ def json_request(url):
             {"workflows": ["choice"], "tty": False},
             {"models_ensure": ["ensure", "lfm2-kilix-commands"]}])
 
-    def test_a_refused_or_failed_install_stays_on_grammar_unsaved_and_runs_the_request(self):
+    def test_a_no_at_the_install_screen_is_remembered_and_runs_the_request(self):
+        self.without_the_model()
+        status, output = self.run_tty(["--hold", "--", "close tab 2"],
+                                      [(self.OFFER, b"y\n"), (b"Press Enter", b"\n")],
+                                      ASK_TEST_MODEL_DECLINED="3")
+        self.assertEqual(status, 0, output)
+        self.assertIn("Ask stays on its grammar and will not ask again.", output)
+        self.assertEqual(Path(self.env["ASK_TEST_STATE"]).read_text().strip(), "grammar")
+        self.assertIn("needle", self.calls()[-1])
+        self.log.write_text("")
+        status, output = self.run_tty(["--hold", "--", "close tab 2"], b"\n")
+        self.assertEqual(status, 0, output)
+        self.assertNotIn("Install the LFM2", output)
+
+    def test_a_failed_install_stays_on_grammar_unsaved_and_runs_the_request(self):
         self.without_the_model()
         status, output = self.run_tty(["--hold", "--", "close tab 2"],
                                       [(self.OFFER, b"y\n"), (b"Press Enter", b"\n")],
@@ -1383,7 +1413,8 @@ def json_request(url):
         self.assertNotIn("lfm2 (default)", result.stdout)
         self.assertIn("overrides KILIX_ASK_COMMANDS_BACKEND", result.stdout)
         self.assertIn("saved Ask selection. With none: lfm2 when it is installed,", result.stdout)
-        self.assertIn("otherwise grammar. At a terminal, Ask then offers the LFM2 download once.", result.stdout)
+        self.assertIn("otherwise grammar. At a terminal without --yes, Ask then asks whether to", result.stdout)
+        self.assertIn("install LFM2; a no is remembered.", result.stdout)
         self.assertIn("kilix-needle workflows select --model lfm2|lfm3|needle3|grammar", result.stdout)
         self.assertEqual(self.calls(), [])
 
