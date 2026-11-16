@@ -16,12 +16,12 @@ class EnsureInstalledTests(unittest.TestCase):
         self.spec = SimpleNamespace(asset_id="lfm2-kilix-commands")
         self.catalog = SimpleNamespace(require_asset=lambda asset: self.spec)
 
-    def run_ensure(self, asset, verify, install, *, tty=False, auto="1"):
+    def run_ensure(self, asset, verify, install, *, tty=False, auto="1", root="/tmp/kilix-apps"):
         with ExitStack() as stack:
             stack.enter_context(patch.object(ui, "_api", return_value=object()))
             stack.enter_context(patch.object(ui, "_license", return_value=object()))
             stack.enter_context(patch.object(ui, "_verified_catalog", return_value=self.catalog))
-            stack.enter_context(patch.object(ui, "apps_root", return_value="/tmp/kilix-apps"))
+            stack.enter_context(patch.object(ui, "apps_root", return_value=root))
             stack.enter_context(patch.object(ui, "_verify", side_effect=verify))
             held = stack.enter_context(patch.object(ui, "_install", side_effect=install))
             stack.enter_context(patch.object(sys.stdin, "isatty", return_value=tty))
@@ -114,6 +114,40 @@ class EnsureInstalledTests(unittest.TestCase):
             self.run_ensure("lfm2-kilix-commands", broken,
                             lambda *args: seen.append("install") or 0, tty=True)
             self.assertEqual(seen, ["verify", "install", "verify"])
+
+    def test_a_damaged_install_is_named_and_never_reaches_the_install_question(self):
+        # The installer refuses to replace a directory that fails verification,
+        # so a yes there could not succeed and a no would be remembered.
+        import tempfile
+        with tempfile.TemporaryDirectory() as root:
+            self.spec.install_name = "lfm2-kilix-commands--" + "a" * 64
+            present = Path(root, "assets", self.spec.install_name)
+            for error in (ui.SetupError("installed model file differs from its manifest: x"),
+                          OSError("could not open supplied file")):
+                def verify(*args, error=error):
+                    raise error
+                install = lambda *args: (_ for _ in ()).throw(AssertionError("asked"))
+                for tty in (True, False):
+                    present.mkdir(parents=True, exist_ok=True)
+                    with patch.object(ui, "apps_root", return_value=root), \
+                            self.assertRaises(ui.Damaged) as raised:
+                        self.run_ensure("lfm2-kilix-commands", verify, install, tty=tty,
+                                        root=root)
+                    self.assertIn(str(present), str(raised.exception))
+                    self.assertIn(str(error), str(raised.exception))
+                    self.assertNotIsInstance(raised.exception, ui.Declined)
+                # The same failures with nothing at the path go on to the install.
+                present.rmdir()
+                seen = []
+
+                def missing(*args, error=error):
+                    seen.append("verify")
+                    if seen.count("verify") == 1:
+                        raise error
+                    return 0
+                self.run_ensure("lfm2-kilix-commands", missing,
+                                lambda *args: seen.append("install") or 0, tty=True, root=root)
+                self.assertEqual(seen, ["verify", "install", "verify"])
 
     def test_auto_install_off_refuses_on_a_terminal(self):
         def verify(*args):

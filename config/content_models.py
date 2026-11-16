@@ -57,6 +57,10 @@ class Unanswered(SetupError):
     """Input ended at a question. That is not an answer, so nothing is remembered."""
 
 
+class Damaged(SetupError):
+    """Something is installed at the asset's path and does not verify."""
+
+
 class Declined(SetupError):
     """The user answered no at the install question or at the licence."""
 
@@ -89,6 +93,15 @@ class _InstallRequest:
         self.supplied = None
 
 
+def _installed_directory(spec, root: str) -> str | None:
+    """The asset's install directory when anything exists at that path."""
+    name = getattr(spec, "install_name", None)
+    if not name:
+        return None
+    path = os.path.join(root, "assets", name)
+    return path if os.path.lexists(path) else None
+
+
 def _install_error():
     """The Content installer's error type; SetupError when it cannot be named."""
     try:
@@ -118,11 +131,19 @@ def ensure_installed(asset_id: str, *, root: str | None = None,
     try:
         _verify(api, lic, spec, root, io.StringIO())
         return
-    except (SetupError, OSError, _install_error()):
+    except (SetupError, OSError, _install_error()) as error:
         # Not installed. That includes a receipt whose files never arrived: a
         # download that failed or was interrupted after the terms were shown
         # leaves one, and the install below then fetches or reuses the files.
-        pass
+        # A directory that is there and does not verify is a different thing.
+        # The installer never replaces one, so the install question could only
+        # end in a refusal; say what is wrong and how to clear it instead.
+        present = _installed_directory(spec, root)
+        if present is not None:
+            raise Damaged(
+                f"the installed {spec.asset_id} does not verify ({str(error)[:1024]}). "
+                f"Nothing replaces an install that fails verification: remove {present} "
+                f"and run kilix models install {spec.asset_id}") from error
     if not _model_auto_install_enabled() or not _terminal(source, output):
         raise SetupError("no stored receipt covers this exact model and manifest; "
                          f"run kilix models install {spec.asset_id} in a terminal")
