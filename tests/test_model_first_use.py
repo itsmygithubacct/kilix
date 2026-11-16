@@ -149,6 +149,27 @@ class EnsureInstalledTests(unittest.TestCase):
                                 lambda *args: seen.append("install") or 0, tty=True, root=root)
                 self.assertEqual(seen, ["verify", "install", "verify"])
 
+    def test_intact_files_without_a_receipt_go_to_the_install_not_to_damaged(self):
+        # No receipt says nothing about the files. Telling the user to remove
+        # a verified install would be wrong; the install shows the terms and
+        # the installer checks what is on disk.
+        import tempfile
+        with tempfile.TemporaryDirectory() as root:
+            self.spec.install_name = "lfm2-kilix-commands--" + "a" * 64
+            Path(root, "assets", self.spec.install_name).mkdir(parents=True)
+            seen = []
+
+            def verify(*args):
+                seen.append("verify")
+                if seen.count("verify") == 1:
+                    raise ui.NoReceipt("no stored receipt covers this exact model and manifest")
+                return 0
+            self.run_ensure("lfm2-kilix-commands", verify,
+                            lambda *args: seen.append("install") or 0, tty=True, root=root)
+            self.assertEqual(seen, ["verify", "install", "verify"])
+            self.assertTrue(issubclass(ui.NoReceipt, ui.SetupError))
+            self.assertFalse(issubclass(ui.NoReceipt, ui.Damaged))
+
     def test_auto_install_off_refuses_on_a_terminal(self):
         def verify(*args):
             raise ui.SetupError("missing")

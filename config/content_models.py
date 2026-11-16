@@ -57,6 +57,10 @@ class Unanswered(SetupError):
     """Input ended at a question. That is not an answer, so nothing is remembered."""
 
 
+class NoReceipt(SetupError):
+    """No stored receipt covers this exact model and manifest."""
+
+
 class Damaged(SetupError):
     """Something is installed at the asset's path and does not verify."""
 
@@ -131,11 +135,16 @@ def ensure_installed(asset_id: str, *, root: str | None = None,
     try:
         _verify(api, lic, spec, root, io.StringIO())
         return
+    except NoReceipt:
+        # The terms have not been shown for this delivery. Files may already be
+        # there, intact: the install below shows the terms and the installer
+        # verifies what is on disk before it records anything.
+        pass
     except (SetupError, OSError, _install_error()) as error:
         # Not installed. That includes a receipt whose files never arrived: a
         # download that failed or was interrupted after the terms were shown
         # leaves one, and the install below then fetches or reuses the files.
-        # A directory that is there and does not verify is a different thing.
+        # A covered directory that is there and does not verify is a different thing.
         # The installer never replaces one, so the install question could only
         # end in a refusal; say what is wrong and how to clear it instead.
         present = _installed_directory(spec, root)
@@ -539,8 +548,8 @@ def _verify(api, lic, spec, root: str, output) -> int:
 
     if api.first_use.needs_agreement(
             spec, records=lic.load_determined_records(), store=ReadOnlyStore()):
-        raise SetupError("no stored receipt covers this exact model and manifest; "
-                         f"run kilix models install {spec.asset_id} in a terminal")
+        raise NoReceipt("no stored receipt covers this exact model and manifest; "
+                        f"run kilix models install {spec.asset_id} in a terminal")
     supplied = importlib.import_module("kilix_content.install").SuppliedFile
     for item in spec.files:
         relative = f"assets/{spec.install_name}/{item.path}"
