@@ -21,7 +21,10 @@ New in 0.2.3:
   choose` asks again.
 - On a fresh installation, the first login then asks once whether to turn on
   an SSH server. The default is No. Change it later with
-  `sudo plebian-os-ssh-server enable` or `disable`.
+  `sudo plebian-os-ssh-server enable` or `disable`, and check it with
+  `plebian-os-ssh-server status`. Enable refuses while any account still has
+  the 0.2.0 starter password and names those accounts: change your own with
+  `passwd` and another with `sudo passwd NAME`, then run it again.
 - Kilix Ask answers with its grammar until you install the LFM2 command model.
   The first interactive `kilix ask` and `kilix wizard` offer the download.
 - Paradee reads a long text in full.

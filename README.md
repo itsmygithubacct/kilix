@@ -16,7 +16,17 @@ Since 0.2.2, Kilix:
     `kilix desktop zell` launches Zell.
   - After the desktop choice on a fresh Plebian-OS installation, asks once
     whether to turn on an SSH server. The default is No. Yes runs
-    `sudo plebian-os-ssh-server enable`.
+    `sudo plebian-os-ssh-server enable`, which refuses while any account still
+    has the 0.2.0 starter password and names those accounts. If the helper
+    does not finish, Kilix prints the SSH server's real state from
+    `plebian-os-ssh-server status` and the enable and disable commands.
+- **Build dependencies.** In release mode on an installed Plebian-OS,
+  `scripts/install-build-deps.sh` refuses a missing build package by name
+  ("release package closure is incomplete; missing …") instead of installing
+  it from the system apt. It succeeds without changes when every build
+  package is already installed. Run `plebian-os-update --revalidate-current`
+  to install the release packages again, and report the package if it is
+  still refused. Elsewhere it uses the system package manager as before.
 - **Speech.**
   - Speaks a whole Paradee utterance: synthesis runs across bounded sentence
     and word windows instead of stopping silently at 510 phonemes.
@@ -1412,7 +1422,8 @@ explicitly confirmed termination action.
   `KILIX_BUILD_MODE=bundle` with an immutable `KILIX_KITTY_DEPS_URL` and matching
   SHA-256; mutable kitty CI bundle URLs are rejected. **`scripts/install-build-deps.sh` installs
   all of that** on Fedora/RHEL (dnf), Debian/Ubuntu (apt), Arch (pacman), and
-  openSUSE (zypper). Where the distro's Go is older than the fork needs (e.g. Fedora
+  openSUSE (zypper); on an installed Plebian-OS in release mode it does not call
+  apt and refuses a missing package by name (see **Release 0.2.3**). Where the distro's Go is older than the fork needs (e.g. Fedora
   ships 1.25), it configures the exact `toolchain` version from `go.mod` so Go
   can fetch that checksum-verified toolchain on demand. `build.sh` selects that
   exact version by default. It preserves `GOTOOLCHAIN=local` when a distribution
