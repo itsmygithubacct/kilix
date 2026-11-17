@@ -652,7 +652,7 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertIn("`+` | increase font size for this Kilix window", readme)
         self.assertIn("`-` | decrease font size for this Kilix window", readme)
 
-    def test_page_strip_wraps_after_ten_tabs(self):
+    def test_page_strip_wraps_after_eight_tabs(self):
         tabbar = (ROOT / "src" / "kitty" / "tab_bar.py").read_text()
         tabs = (ROOT / "src" / "kitty" / "tabs.py").read_text()
         boss = (ROOT / "src" / "kitty" / "boss.py").read_text()
@@ -661,9 +661,9 @@ class KilixLauncherTests(unittest.TestCase):
         optdef = (ROOT / "src" / "kitty" / "options" / "definition.py").read_text()
         toc = (ROOT / "src" / "kitty" / "options" / "to-c-generated.h").read_text()
 
-        # Ten tabs per row in both the drawn rows and the reserved bar height;
+        # Eight tabs per row in both the drawn rows and the reserved bar height;
         # the new-tab button (tab_id -1) is not a tab and never starts a row.
-        self.assertRegex(tabbar, r"MAX_TABS_PER_ROW\s*=\s*10\b")
+        self.assertRegex(tabbar, r"MAX_TABS_PER_ROW\s*=\s*8\b")
         self.assertIn("is_tab = tab.tab_id >= 0", tabbar)
         self.assertIn("is_tab and visible_items_in_row >= MAX_TABS_PER_ROW", tabbar)
         self.assertIn("visible_items_in_row += int(is_tab)", tabbar)
@@ -673,7 +673,7 @@ class KilixLauncherTests(unittest.TestCase):
         self.assertNotIn("TAB_CLOSE_ACTION", tabbar)
         self.assertNotIn("kilix_close_active_app_tab", tabbar)
         self.assertNotIn("GLFW_MOUSE_BUTTON_MIDDLE", tabs)
-        self.assertIn("#define KILIX_TAB_BAR_TABS_PER_ROW 10", state)
+        self.assertIn("#define KILIX_TAB_BAR_TABS_PER_ROW 8", state)
         # The bar height follows the rows tab_bar.py reports drawing (a tab
         # dragged out, a drop placeholder or tab_bar_filter change them), with
         # a tab-count estimate only before the first report.
@@ -702,9 +702,11 @@ class KilixLauncherTests(unittest.TestCase):
 
         self.assertIn("enable_audio_bell              no", conf)
         self.assertIn("window_alert_on_bell           no", conf)
-        self.assertIn('bell_on_tab                    "● "', conf)
+        # A bell shape, not a dot: the dot on a tab now means "idle".
+        self.assertIn('bell_on_tab                    "🕭 "', conf)
         self.assertIn("{fmt.fg.red}{bell_symbol}", conf)
         self.assertIn("{fmt.fg.yellow}{activity_symbol}", conf)
+        self.assertIn('tab_title_template             "{index}: {status}{fmt.fg._e0b0ff}{bell_symbol}{fmt.fg.tab}{title}"', conf)
         self.assertIn('K("enable_audio_bell", "Audio bell", "bool", "no")', settings)
         self.assertIn('K("window_alert_on_bell", "Urgency on bell", "bool", "no")', settings)
 

@@ -75,6 +75,10 @@ def _control_names() -> dict[str, str]:
     for key in shared.WEATHER_DEFAULTS:
         names[key.lower()] = key
         names[key.removeprefix("KILIX_").lower()] = key
+    # The tab status mark: tab_status=off, tab_status_high_cores=4, ...
+    for key in shared.TAB_STATUS_DEFAULTS:
+        names[key.lower()] = key
+        names[key.removeprefix("KILIX_").lower()] = key
     for alias in ("transcript", "session_log", "session_logs", "logging"):
         names[alias] = "KILIX_TRANSCRIPT"
     for alias in ("transcript_graphics", "log_graphics"):
@@ -381,6 +385,11 @@ def _parse_assignment(value: str) -> tuple[str, object]:
             return key, shared.normalize_weather(key, raw)
         except ValueError as error:
             raise argparse.ArgumentTypeError(str(error)) from error
+    if key in shared.TAB_STATUS_DEFAULTS:
+        try:
+            return key, shared.normalize_tab_status(key, raw)
+        except ValueError as error:
+            raise argparse.ArgumentTypeError(str(error)) from error
     if key == shared.TEMPERATURE_UNIT_KEY:
         unit = raw.strip().lower()
         if unit not in shared.TEMPERATURE_UNIT_CHOICES:
@@ -502,6 +511,14 @@ def _print_settings(values: dict[str, str]) -> None:
     print(f"{shared.CODING_YOLO_KEY}={values.get(shared.CODING_YOLO_KEY, shared.CODING_YOLO_DEFAULT)}")
     for key, default in shared.WEATHER_DEFAULTS.items():
         print(f"{key}={values.get(key, default)}")
+    # As the engine will read them: a value it would not accept prints as the
+    # default it becomes.
+    for key, default in shared.TAB_STATUS_DEFAULTS.items():
+        try:
+            value = shared.normalize_tab_status(key, values.get(key, default))
+        except ValueError:
+            value = default
+        print(f"{key}={value}")
     print(f"settings_file={shared.settings_path()}")
     for spec in shared.TOGGLE_SPECS:
         state = "on" if shared.truthy(values[spec.key]) else "off"

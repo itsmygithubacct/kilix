@@ -353,4 +353,37 @@ with conf("font_size 12\n"):
     dialog = H.find_window(small, "SettingsWin")
     assert dialog.y + dialog.h <= 480 - settings.T.TASKBAR_H
 
+# The page status mark's settings are shown with their defaults, are saved to
+# the shared file as typed, and a value the shared module refuses is not saved.
+with conf("font_size 12\n"):
+    from unittest.mock import patch
+    d = H.make_desk()
+    import apps
+    apps.open(d, "settings", None)
+    win = H.find_window(d, "SettingsWin")
+    shared = settings.shared_settings
+    for key, default in shared.TAB_STATUS_DEFAULTS.items():
+        kind, widget = win.fields[key]
+        if kind == "bool":
+            assert widget.checked is True, key
+        else:
+            assert widget.text == default, (key, widget.text)
+    assert [key for key, _, _ in settings.TAB_STATUS_FIELDS] == list(shared.TAB_STATUS_DEFAULTS)
+    assert win.fields["KILIX_TAB_STATUS_HIGH_COLOR"][0] == "color"
+    win.fields["KILIX_TAB_STATUS_HIGH_CORES"][1].set("4")
+    win.fields["KILIX_TAB_STATUS_MODERATE_COLOR"][1].set("#FFCC00")
+    win.fields["KILIX_TAB_STATUS"][1].checked = False
+    win._apply()
+    values = shared.load(win.shared_path)
+    assert values["KILIX_TAB_STATUS_HIGH_CORES"] == "4"
+    assert values["KILIX_TAB_STATUS_MODERATE_COLOR"] == "#ffcc00"
+    assert values["KILIX_TAB_STATUS"] == "0"
+    assert values["KILIX_TAB_STATUS_MODERATE_CORES"] == "1.0"
+    before = read(win.shared_path)
+    win.fields["KILIX_TAB_STATUS_STEP_SECONDS"][1].set("fast")
+    with patch.object(settings.wm, "msgbox") as error:
+        win._apply()
+    assert error.called and "KILIX_TAB_STATUS_STEP_SECONDS" in str(error.call_args)
+    assert read(win.shared_path) == before
+
 print("ok")
