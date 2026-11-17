@@ -1,0 +1,46 @@
+#!/usr/bin/make -f
+# kilix-native: the helpers Kilix otherwise compiles per user at first use.
+# Their sources are pinned submodules; debian/make-source.sh puts them in the
+# source tree, so this build needs no network and no git.
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+include /usr/share/dpkg/buildflags.mk
+export CPPFLAGS LDFLAGS
+
+B := $(CURDIR)/debian/build
+N := debian/kilix-native/usr/lib/kilix/native
+BROKER := third_party/kitty-pty-broker
+STATE := third_party/kilix-state
+# The broker's own Makefile adds -Werror; a distribution build must not stop
+# on a warning a newer compiler invents, so its flags are given whole here.
+BROKER_FLAGS := BUILD_DIR=$(B)/broker CFLAGS="$(CFLAGS) -std=c11 -Wall -Wextra -Wpedantic -fPIC"
+STATE_FLAGS := BUILD_DIR=$(B)/state CFLAGS="$(CFLAGS)"
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+
+override_dh_auto_build:
+	$(MAKE) -C $(BROKER) $(BROKER_FLAGS) all
+	$(MAKE) -C $(STATE) $(STATE_FLAGS) all
+	mkdir -p $(B)/screensavers
+	set -e; for source in config/screensavers/*.c; do \
+	  $(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o "$(B)/screensavers/$$(basename "$$source" .c)" "$$source"; \
+	done
+
+override_dh_auto_test:
+ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
+	$(MAKE) -C $(BROKER) $(BROKER_FLAGS) test
+	$(MAKE) -C $(STATE) $(STATE_FLAGS) test
+endif
+
+override_dh_auto_install:
+	install -d $(N)/screensavers
+	install -m 0755 $(B)/broker/kitty-pty-broker $(N)/kitty-pty-broker
+	install -m 0644 $(B)/broker/libkitty-pty-broker.so $(N)/libkitty-pty-broker.so
+	install -m 0644 $(B)/state/libkilix-state.so $(N)/libkilix-state.so
+	install -m 0755 $(B)/screensavers/* $(N)/screensavers/
+
+override_dh_auto_clean:
+	rm -rf $(B)

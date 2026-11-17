@@ -1,0 +1,5 @@
+kilix (0.2.3+packaging1) UNRELEASED; urgency=medium
+
+  * First Debian packaging: the compiled helpers as kilix-native.
+
+ -- itsmygithubacct <itsmygithubacct@users.noreply.github.com>  Tue, 17 Nov 2026 00:00:00 +0000

@@ -1,0 +1,24 @@
+Source: kilix
+Section: x11
+Priority: optional
+Maintainer: itsmygithubacct <itsmygithubacct@users.noreply.github.com>
+Build-Depends: debhelper-compat (= 13), python3 <!nocheck>
+Standards-Version: 4.7.2
+Homepage: https://github.com/itsmygithubacct/kilix
+Rules-Requires-Root: no
+
+Package: kilix-native
+Architecture: amd64 arm64
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: compiled helpers for the Kilix terminal desktop
+ Kilix builds a few small C programs for each user the first time they are
+ needed. This package carries them already built, so a machine that installs
+ Kilix from packages needs no compiler:
+ .
+  * kitty-pty-broker, which owns the pseudo-terminals of Kilix panes so that
+    they outlive the terminal window;
+  * libkilix-state, the durable store for desktop settings;
+  * the terminal screensavers.
+ .
+ Everything is installed under /usr/lib/kilix/native. Nothing is added to
+ PATH or to the system library path.
