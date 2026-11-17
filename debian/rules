@@ -15,7 +15,7 @@ STATE := third_party/kilix-state
 # on a warning a newer compiler invents, so its flags are given whole here.
 BROKER_FLAGS := BUILD_DIR=$(B)/broker CFLAGS="$(CFLAGS) -std=c11 -Wall -Wextra -Wpedantic -fPIC"
 STATE_FLAGS := BUILD_DIR=$(B)/state CFLAGS="$(CFLAGS)"
-# kilix-multiplexer is built only where its codec library exists (see control).
+# kilix-multiplexer is built wherever control lists it for this architecture.
 MUX := third_party/kilix-multiplexer
 M := debian/kilix-multiplexer/usr/lib/kilix/native
 MUX_FLAGS := BUILD_DIR=$(B)/mux ENCODEC=1 CFLAGS="$(CFLAGS) -std=c11 -Wall -Wextra -Wpedantic -fPIC"

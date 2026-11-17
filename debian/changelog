@@ -1,3 +1,9 @@
+kilix (0.2.3+packaging3) UNRELEASED; urgency=medium
+
+  * Build kilix-multiplexer for arm64 as well.
+
+ -- itsmygithubacct <itsmygithubacct@users.noreply.github.com>  Tue, 17 Nov 2026 18:00:00 +0000
+
 kilix (0.2.3+packaging2) UNRELEASED; urgency=medium
 
   * Add kilix-multiplexer: kmx-serve and kmx-attach, amd64 only.
