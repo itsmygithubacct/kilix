@@ -308,4 +308,75 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(list(self.store.root.glob('*.json')), [])
 
 
+    def receipts(self):
+        import json
+        return [json.loads(path.read_text()) for path in sorted(self.store.root.glob('*.json'))]
+
+    def test_notice_licence_asks_an_install_question_that_claims_no_agreement(self):
+        # lfm2-kilix-commands is a notice ("record") decision, as in the launcher:
+        # the terms are shown, only the install is confirmed, no acceptance is asked.
+        name = 'lfm2-kilix-commands'
+        record = cm._record(self.lic.load_determined_records(),
+                            cm._verified_catalog(self.api).require_asset(name).licenses[0].record_digest)
+        self.assertEqual(record.expected_decision, 'record')
+        self.assertEqual(self.run_batch([name], ['yes']), ({name}, set()))
+        self.assertEqual(self.questions, ['Install ' + name + '? [y/N] '])
+        self.assertNotIn('Do you accept', ''.join(self.questions))
+        shown = self.output.decode()
+        self.assertIn('Licence: lfm-open-license-1.0', shown)
+        self.assertIn('Applies to: ' + name, shown)
+        self.assertIn('it claims no agreement', shown)
+        self.assertNotIn('Do you accept', shown)
+        self.installer.ensure_upstream_asset.assert_called_once()
+        receipts = self.receipts()
+        self.assertEqual(len(receipts), 1)
+        self.assertEqual(receipts[0]['decision'], 'record')
+
+    def test_declining_a_notice_licence_installs_nothing_and_records_nothing(self):
+        name = 'lfm2-kilix-commands'
+        for answer in ('no', ''):
+            self.questions.clear()
+            self.assertEqual(self.run_batch([name], [answer]), (set(), {name}))
+            self.assertEqual(self.questions, ['Install ' + name + '? [y/N] '])
+        self.installer.ensure_upstream_asset.assert_not_called()
+        self.assertEqual(list(self.store.root.glob('*.json')), [])
+
+    def test_accept_type_record_keeps_the_acceptance_question(self):
+        name = 'lfm3-kilix-commands'
+        record = cm._record(self.lic.load_determined_records(),
+                            cm._verified_catalog(self.api).require_asset(name).licenses[0].record_digest)
+        self.assertEqual(record.expected_decision, 'accept')
+        self.assertEqual(self.run_batch([name], ['no']), (set(), {name}))
+        self.assertEqual(self.questions, [
+            'Do you accept lfm-open-license-1.0 and the conditions shown for ' + name + '? [y/N] '])
+        self.installer.ensure_upstream_asset.assert_not_called()
+        self.assertEqual(list(self.store.root.glob('*.json')), [])
+        self.questions.clear()
+        self.assertEqual(self.run_batch([name], ['yes']), ({name}, set()))
+        self.assertEqual(len(self.questions), 1)
+        self.assertEqual([item['decision'] for item in self.receipts()], ['accept'])
+
+    def test_a_group_with_a_notice_and_an_accept_record_still_asks_for_acceptance(self):
+        # Both models carry lfm-open-license-1.0, so they share one group; the
+        # accept-type record must not be weakened by the notice-type one.
+        names = ['lfm2-kilix-commands', 'lfm3-kilix-commands']
+        self.assertEqual(self.run_batch(names, ['no']), (set(), set(names)))
+        self.assertEqual(self.questions, [
+            'Do you accept lfm-open-license-1.0 and the conditions shown for ' + ', '.join(names) + '? [y/N] '])
+        self.assertNotIn('claims no agreement', self.output.decode())
+        self.assertEqual(list(self.store.root.glob('*.json')), [])
+        self.questions.clear()
+        self.assertEqual(self.run_batch(names, ['yes']), (set(names), set()))
+        self.assertEqual(len(self.questions), 1)
+        self.assertEqual(sorted(item['decision'] for item in self.receipts()), ['accept', 'record'])
+
+    def test_a_notice_group_never_hides_the_acceptance_question_of_another_licence(self):
+        names = ['lfm2-kilix-commands', 'encodec-24khz-stateful']
+        self.assertEqual(self.run_batch(names, ['yes', 'no']),
+                         ({'lfm2-kilix-commands'}, {'encodec-24khz-stateful'}))
+        self.assertEqual(len(self.questions), 2)
+        self.assertEqual(self.questions[0], 'Install lfm2-kilix-commands? [y/N] ')
+        self.assertTrue(self.questions[1].startswith('Do you accept cc-by-nc-4.0 '))
+
+
 if __name__ == '__main__': unittest.main()

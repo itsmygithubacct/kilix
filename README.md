@@ -3592,7 +3592,13 @@ Repeat `--model` to select alternatives together. The recommended selection is
 first when checked in the interactive wizard; Avatar uses the first selected
 System-local LLM as its default. Closing setup retains saved choices and leaves
 unfinished installation available for retry. No model or licence is accepted
-by merely opening or listing the wizard.
+by merely opening or listing the wizard. The terminal licence batch shows each
+licence and asks for acceptance only where the licence authority requires an
+agreement. A notice licence, such as the one for the `lfm2-kilix-commands`
+Ask model, is shown the same way but asks only "Install ...? [y/N]"; yes
+records a notice receipt that claims no agreement, as `kilix models install`
+does, and anything else installs nothing. If one group holds both kinds, the
+acceptance question is asked.
 
 ### Terminal images and video
 

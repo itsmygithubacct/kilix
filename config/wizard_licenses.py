@@ -28,6 +28,18 @@ def ask(question, input_fn):
         print('Please answer yes or no.')
 
 
+def notice_only(group, specs):
+    """True when every record in the group is a notice, never an accept-type record.
+
+    Groups are keyed by licence id, so one group can hold records of different
+    decisions (the same licence is a notice for one model and an acceptance for
+    another). Any accept-type record, and any group with no determined record
+    (a registry model's terms), keeps the acceptance question.
+    """
+    return (bool(group['records']) and set(group['models']) <= specs.keys()
+            and all(record.expected_decision != 'accept' for record in group['records'].values()))
+
+
 def llm_license_covered(model, entries, saved, manifest_digest):
     """Reuse an actual prior answer only for the same manifest and licence bytes."""
     record = saved.get(model)
@@ -155,8 +167,16 @@ def consent_and_install(selected, *, input_fn=input, before_install=None):
                     if component.exception_text_sha256:
                         cm._emit(api.first_use.crlf_to_lf(_section(f'component:{component.id}', component.exception_text_sha256, texts, changed)),
                                  'licence exception', sys.stdout)
-            answer = ask('Do you accept ' + group['label'] + ' and the conditions shown for '
-                         + ', '.join(group['models']) + '?', input_fn)
+            if notice_only(group, specs):
+                # A notice licence (a "record" decision) takes no agreement: the
+                # terms are shown and the receipt says so, exactly as the
+                # launcher's install does. Only the install is confirmed.
+                print('These terms are a notice. Installing records that they were shown; '
+                      'it claims no agreement.')
+                answer = ask('Install ' + ', '.join(group['models']) + '?', input_fn)
+            else:
+                answer = ask('Do you accept ' + group['label'] + ' and the conditions shown for '
+                             + ', '.join(group['models']) + '?', input_fn)
             if answer == 'yes':
                 accepted.add(key)
                 captures[key] = lic.observe_capture()
