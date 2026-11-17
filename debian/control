@@ -16,6 +16,22 @@ Standards-Version: 4.7.2
 Homepage: https://github.com/itsmygithubacct/kilix
 Rules-Requires-Root: no
 
+Package: kilix
+Architecture: all
+Depends: kilix-engine, kilix-native, python3, git, procps, util-linux,
+ ${misc:Depends}
+Recommends: kilix-multiplexer
+Description: terminal desktop built on the Kilix engine
+ Kilix turns a GPU terminal into a small desktop: tabs and panes that outlive
+ the window, a settings panel, a file and application launcher, session
+ persistence and helpers for coding agents.
+ .
+ This package carries the launcher, its configuration, the built-in desktop
+ and the Python modules Kilix pins. It installs under /usr/share/kilix and
+ adds the command kilix. The terminal engine and the compiled helpers come
+ from kilix-engine and kilix-native. Per-user state stays under
+ ~/.local/gpu_terminal.
+
 Package: kilix-native
 Architecture: amd64 arm64
 Depends: ${shlibs:Depends}, ${misc:Depends}

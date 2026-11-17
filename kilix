@@ -5218,6 +5218,12 @@ sys.exit(0 if ready else 1)
     _status_dirty=clean
     git -C "$KILIX_HOME" diff --quiet --ignore-submodules=none HEAD -- 2>/dev/null \
       || _status_dirty=modified
+    if [ -f "$KILIX_HOME/PACKAGED" ] && [ ! -e "$KILIX_HOME/.git" ]; then
+      # A packaged tree is not a checkout; report the package instead.
+      _status_head=package
+      _status_dirty="$(dpkg-query -W -f='${Version}' kilix 2>/dev/null || true)"
+      [ -n "$_status_dirty" ] || _status_dirty="version unknown"
+    fi
     if [ -x "$FORK" ]; then _status_engine="$FORK"
     elif [ -x "$PACKAGED" ]; then _status_engine="$PACKAGED"
     elif [ -x "$PREBUILT" ]; then _status_engine="$PREBUILT"
@@ -5374,6 +5380,13 @@ sys.exit(0 if ready else 1)
         echo "usage: $_self update [--stack]" >&2
         exit 2 ;;
     esac
+    # Installed from Debian packages (the package ships the PACKAGED marker):
+    # there is no checkout to pull, apt owns the files. Hand over to the fixed
+    # apt upgrade in scripts/packaged-update.sh, with no arguments.
+    if [ -f "$KILIX_HOME/PACKAGED" ] && [ ! -L "$KILIX_HOME/PACKAGED" ] \
+         && [ ! -e "$KILIX_HOME/.git" ]; then
+      exec "$KILIX_HOME/scripts/packaged-update.sh"
+    fi
     _kilix_acquire_transaction_lock() {
       local lock_root lock_path fd fd_path path_identity fd_identity lock_was_present=0
       if ! command -v flock >/dev/null 2>&1; then

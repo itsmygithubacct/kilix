@@ -1,3 +1,9 @@
+kilix (0.2.3+packaging4) UNRELEASED; urgency=medium
+
+  * Add the kilix package: launcher, configuration, desktop, Python modules.
+
+ -- itsmygithubacct <itsmygithubacct@users.noreply.github.com>  Wed, 18 Nov 2026 00:00:00 +0000
+
 kilix (0.2.3+packaging3) UNRELEASED; urgency=medium
 
   * Build kilix-multiplexer for arm64 as well.
