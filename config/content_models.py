@@ -609,8 +609,11 @@ def main(argv=None) -> int:
         if args.command == "verify":
             return _verify(api, lic, spec, args.root, sys.stdout)
         if args.command == "ensure":
+            # ensure_installed has verified the receipt and every declared file
+            # (it raises otherwise), so success prints nothing: this runs before
+            # every Ask, and the verification record is for `models verify`.
             ensure_installed(args.asset, root=args.root, timeout=args.timeout)
-            return _verify(api, lic, spec, args.root, sys.stdout)
+            return 0
         return _install(api, lic, spec, args, sys.stdin, sys.stdout, sys.stderr)
     except KeyboardInterrupt:
         print("kilix models: interrupted; no completed installation is claimed", file=sys.stderr)

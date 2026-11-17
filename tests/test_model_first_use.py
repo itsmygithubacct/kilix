@@ -218,5 +218,59 @@ class EarlierDeliveryWordingTests(unittest.TestCase):
         self.assertIsNone(self.facts(Broken)["reuse"])
 
 
+class EnsureCommandOutputTests(unittest.TestCase):
+    """`models ensure` runs before every Ask: quiet when verified, loud when not."""
+
+    def run_main(self, argv, *, ensure=None):
+        import io
+        out, err = io.StringIO(), io.StringIO()
+        record = {"verified": "lfm2-kilix-commands", "declared_files_verified": 34,
+                  "note": "Existing licence receipt and declared bytes verified; no setup or inference performed."}
+
+        def verify(api, lic, spec, root, output):
+            ui._json(record, output)
+            return 0
+
+        spec = SimpleNamespace(asset_id="lfm2-kilix-commands")
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(ui, "_api", return_value=object()))
+            stack.enter_context(patch.object(ui, "_license", return_value=object()))
+            stack.enter_context(patch.object(ui, "_verified_catalog",
+                                             return_value=SimpleNamespace(require_asset=lambda asset: spec)))
+            stack.enter_context(patch.object(ui, "_verify", side_effect=verify))
+            stack.enter_context(patch.object(ui, "ensure_installed", side_effect=ensure))
+            stack.enter_context(patch.object(sys, "stdout", out))
+            stack.enter_context(patch.object(sys, "stderr", err))
+            status = ui.main(["--root", "/tmp/kilix-apps"] + argv)
+        return status, out.getvalue(), err.getvalue()
+
+    def test_a_verified_model_prints_nothing_on_ensure(self):
+        status, out, err = self.run_main(["ensure", "lfm2-kilix-commands"])
+        self.assertEqual((status, out, err), (0, "", ""))
+
+    def test_verify_still_prints_the_record(self):
+        import json
+        status, out, _ = self.run_main(["verify", "lfm2-kilix-commands"])
+        self.assertEqual(status, 0)
+        self.assertEqual(json.loads(out)["declared_files_verified"], 34)
+
+    def test_a_failed_ensure_is_still_loud_and_nonzero(self):
+        import json
+
+        def damaged(*args, **kwargs):
+            raise ui.SetupError("installed model file differs from its manifest: model.gguf")
+
+        status, out, err = self.run_main(["ensure", "lfm2-kilix-commands"], ensure=damaged)
+        self.assertEqual((status, out), (1, ""))
+        self.assertIn("differs from its manifest", json.loads(err)["error"])
+
+        def declined(*args, **kwargs):
+            raise ui.Declined("lfm2-kilix-commands was not installed")
+
+        status, out, err = self.run_main(["ensure", "lfm2-kilix-commands"], ensure=declined)
+        self.assertEqual((status, out), (ui.DECLINED_STATUS, ""))
+        self.assertIn("was not installed", err)
+
+
 if __name__ == "__main__":
     unittest.main()
