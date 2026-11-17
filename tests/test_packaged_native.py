@@ -46,17 +46,17 @@ class Fixture(unittest.TestCase):
         # A Kilix tree with the scripts and no helper source: what a package ships.
         self.tree = self.root / "tree/kilix"
         (self.tree / "scripts").mkdir(parents=True)
-        for name in ("build-pty-broker.sh", "build-state-library.sh"):
+        for name in ("build-pty-broker.sh", "build-state-library.sh", "build-multiplexer.sh"):
             shutil.copy2(ROOT / "scripts" / name, self.tree / "scripts" / name)
 
     def env(self, **extra):
         return sandbox_env(HOME=str(self.home), KILIX_STORAGE_HOME=str(self.storage),
                            KILIX_PACKAGED_NATIVE_HOME=str(self.native), **extra)
 
-    def run_script(self, name, *args, tree=None):
+    def run_script(self, name, *args, tree=None, **extra):
         return subprocess.run(
             ["bash", str((tree or self.tree) / "scripts" / name), *args],
-            env=self.env(), capture_output=True, text=True, timeout=300,
+            env=self.env(**extra), capture_output=True, text=True, timeout=300,
             stdin=subprocess.DEVNULL)
 
     def packaged_broker(self):
@@ -109,6 +109,49 @@ class PackagedBrokerTests(Fixture):
         built = self.storage / "build/libraries/kitty-pty-broker/kitty-pty-broker"
         self.assertEqual(result.stdout, f"{built}\n")
         self.assertTrue(built.is_file())
+
+
+class PackagedMultiplexerTests(Fixture):
+    def packaged_pair(self):
+        return [executable(self.native / name) for name in ("kmx-serve", "kmx-attach")]
+
+    def test_a_tree_without_source_is_served_by_the_package(self):
+        serve, attach = self.packaged_pair()
+        for kind, path in (("serve", serve), ("attach", attach)):
+            result = self.run_script("build-multiplexer.sh", "--print-path", kind)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, f"{path}\n")
+        self.assertFalse(self.storage.exists(), "nothing was built or created")
+
+    def test_an_unknown_kind_is_still_a_usage_error(self):
+        self.packaged_pair()
+        result = self.run_script("build-multiplexer.sh", "--print-path", "other")
+        self.assertEqual((result.returncode, result.stdout), (2, ""))
+
+    def test_half_a_package_is_not_used(self):
+        executable(self.native / "kmx-serve")
+        result = self.run_script("build-multiplexer.sh", "--print-path", "serve")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("multiplexer source not found", result.stderr)
+
+    def test_a_linked_packaged_program_is_not_used(self):
+        executable(self.native / "kmx-serve")
+        (self.native / "kmx-attach").symlink_to(executable(self.root / "elsewhere/attach"))
+        result = self.run_script("build-multiplexer.sh", "--print-path", "attach")
+        self.assertEqual((result.returncode, result.stdout), (1, ""))
+
+    def test_a_tree_with_source_does_not_use_the_package(self):
+        self.packaged_pair()
+        # Named explicitly: the pinned-submodule route asks git for the commit,
+        # and this stand-in tree is not a repository.
+        source = self.root / "source/kilix-multiplexer"
+        (source / "include").mkdir(parents=True)
+        (source / "include/kilix_mux.h").write_text("")
+        (source / "Makefile").write_text("all:\n")
+        result = self.run_script("build-multiplexer.sh", "--print-path", "serve",
+                                 KILIX_MULTIPLEXER_HOME=str(source))
+        self.assertNotIn(str(self.native), result.stdout)
+        self.assertNotEqual(result.returncode, 0, "the stand-in source cannot build")
 
 
 class PackagedStateLibraryTests(Fixture):

@@ -15,6 +15,11 @@ STATE := third_party/kilix-state
 # on a warning a newer compiler invents, so its flags are given whole here.
 BROKER_FLAGS := BUILD_DIR=$(B)/broker CFLAGS="$(CFLAGS) -std=c11 -Wall -Wextra -Wpedantic -fPIC"
 STATE_FLAGS := BUILD_DIR=$(B)/state CFLAGS="$(CFLAGS)"
+# kilix-multiplexer is built only where its codec library exists (see control).
+MUX := third_party/kilix-multiplexer
+M := debian/kilix-multiplexer/usr/lib/kilix/native
+MUX_FLAGS := BUILD_DIR=$(B)/mux ENCODEC=1 CFLAGS="$(CFLAGS) -std=c11 -Wall -Wextra -Wpedantic -fPIC"
+WITH_MUX := $(filter kilix-multiplexer,$(shell dh_listpackages))
 
 %:
 	dh $@
@@ -28,11 +33,17 @@ override_dh_auto_build:
 	set -e; for source in config/screensavers/*.c; do \
 	  $(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o "$(B)/screensavers/$$(basename "$$source" .c)" "$$source"; \
 	done
+ifneq (,$(WITH_MUX))
+	$(MAKE) -C $(MUX) $(MUX_FLAGS) $(B)/mux/kmx-serve $(B)/mux/kmx-attach
+endif
 
 override_dh_auto_test:
 ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
 	$(MAKE) -C $(BROKER) $(BROKER_FLAGS) test
 	$(MAKE) -C $(STATE) $(STATE_FLAGS) test
+ifneq (,$(WITH_MUX))
+	$(MAKE) -C $(MUX) $(MUX_FLAGS) test
+endif
 endif
 
 override_dh_auto_install:
@@ -41,6 +52,14 @@ override_dh_auto_install:
 	install -m 0644 $(B)/broker/libkitty-pty-broker.so $(N)/libkitty-pty-broker.so
 	install -m 0644 $(B)/state/libkilix-state.so $(N)/libkilix-state.so
 	install -m 0755 $(B)/screensavers/* $(N)/screensavers/
+ifneq (,$(WITH_MUX))
+	install -d $(M)
+	install -m 0755 $(B)/mux/kmx-serve $(B)/mux/kmx-attach $(M)/
+endif
+
+# libkilix-encodec carries no shlibs file; the dependency is written in control.
+override_dh_shlibdeps:
+	dh_shlibdeps -- --ignore-missing-info
 
 override_dh_auto_clean:
 	rm -rf $(B)

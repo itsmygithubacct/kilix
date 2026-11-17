@@ -2,7 +2,16 @@ Source: kilix
 Section: x11
 Priority: optional
 Maintainer: itsmygithubacct <itsmygithubacct@users.noreply.github.com>
-Build-Depends: debhelper-compat (= 13), procps <!nocheck>, python3 <!nocheck>
+Build-Depends: debhelper-compat (= 13),
+ libkilix-encodec [amd64],
+ libonnxruntime-dev [amd64],
+ libsamplerate0-dev [amd64],
+ libssl-dev [amd64],
+ libzstd-dev [amd64],
+ pkgconf [amd64],
+ procps <!nocheck>,
+ python3 <!nocheck>,
+ zlib1g-dev [amd64]
 Standards-Version: 4.7.2
 Homepage: https://github.com/itsmygithubacct/kilix
 Rules-Requires-Root: no
@@ -22,3 +31,17 @@ Description: compiled helpers for the Kilix terminal desktop
  .
  Everything is installed under /usr/lib/kilix/native. Nothing is added to
  PATH or to the system library path.
+
+Package: kilix-multiplexer
+Architecture: amd64
+Depends: libkilix-encodec (>= 0.1.5+git320ce65ba2e4.d9a1335db520),
+ ${shlibs:Depends}, ${misc:Depends}
+Description: remote terminal programs for the Kilix terminal desktop
+ The two programs behind "kilix remote": kmx-serve shares a Kilix pane over
+ an encrypted connection and kmx-attach connects to one, with predictive
+ echo and optional EnCodec audio. Kilix otherwise compiles them per user.
+ .
+ Both are installed under /usr/lib/kilix/native. Nothing is added to PATH.
+ .
+ Built for amd64 only: the audio codec library it links, libkilix-encodec,
+ and the ONNX Runtime build that library needs exist for amd64 only.

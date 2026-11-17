@@ -16,6 +16,17 @@ Copyright: 2026 itsmygithubacct
 License: Expat
 Comment: Source https://github.com/itsmygithubacct/kilix-state
 
+Files: third_party/kilix-multiplexer/*
+Copyright: 2026 itsmygithubacct
+License: Expat
+Comment: Source https://github.com/itsmygithubacct/kilix-multiplexer
+
+Files: third_party/kilix-multiplexer/third_party/libvterm/*
+Copyright: 2008 Paul Evans
+License: Expat
+Comment: Source https://github.com/neovim/libvterm at the commit recorded in
+ UPSTREAM, with the patch series in patches/.
+
 License: GPL-3
  This program is free software: you can redistribute it and/or modify it
  under the terms of the GNU General Public License as published by the Free
