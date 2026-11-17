@@ -2,7 +2,7 @@ Source: kilix
 Section: x11
 Priority: optional
 Maintainer: itsmygithubacct <itsmygithubacct@users.noreply.github.com>
-Build-Depends: debhelper-compat (= 13), python3 <!nocheck>
+Build-Depends: debhelper-compat (= 13), procps <!nocheck>, python3 <!nocheck>
 Standards-Version: 4.7.2
 Homepage: https://github.com/itsmygithubacct/kilix
 Rules-Requires-Root: no
