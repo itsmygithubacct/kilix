@@ -147,6 +147,9 @@ KILIX_TELEMETRY_RUNTIME="${KILIX_TELEMETRY_RUNTIME:-$KILIX_SESSION_HOME/telemetr
 KILIX_DATA_HOME="${KILIX_DATA_HOME:-$KILIX_STORAGE_HOME/data}"
 KILIX_BUILD_DIRECTORY="${KILIX_BUILD_DIRECTORY:-$KILIX_STORAGE_HOME/build}"
 KILIX_PREBUILT_HOME="${KILIX_PREBUILT_HOME:-$KILIX_STORAGE_HOME/prebuilt/kitty.app}"
+# Where the kilix-engine Debian package installs the engine. A fork built in
+# the storage root still wins, so a developer build is never shadowed.
+KILIX_PACKAGED_ENGINE_HOME="${KILIX_PACKAGED_ENGINE_HOME:-/usr/lib/kilix/engine}"
 KILIX95_STORAGE_HOME="${KILIX95_STORAGE_HOME:-$GPU_TERMINAL_HOME/kilix-95}"
 KILIX95_CONFIG_HOME="${KILIX95_CONFIG_HOME:-$KILIX95_STORAGE_HOME/config}"
 KILIX95_STATE_HOME="${KILIX95_STATE_HOME:-$KILIX95_STORAGE_HOME/state}"
@@ -157,7 +160,7 @@ export KILIX_HOME GPU_TERMINAL_SOURCE_HOME GPU_TERMINAL_HOME GPU_TERMINAL_SETTIN
 export KILIX_STORAGE_HOME KILIX_CONFIG_HOME
 export KILIX_STATE_DIRECTORY KILIX_CACHE_HOME KILIX_SESSION_HOME
 export KILIX_TELEMETRY_RUNTIME KILIX_DATA_HOME
-export KILIX_BUILD_DIRECTORY KILIX_PREBUILT_HOME
+export KILIX_BUILD_DIRECTORY KILIX_PREBUILT_HOME KILIX_PACKAGED_ENGINE_HOME
 export KILIX95_STORAGE_HOME KILIX95_CONFIG_HOME KILIX95_STATE_HOME
 export KILIX95_CACHE_HOME KILIX95_SESSION_HOME KILIX95_DATA_HOME
 
@@ -300,6 +303,9 @@ EOF
     _engine="$KILIX_BUILD_DIRECTORY/current/src/kitty/launcher/kitty"
     if [ -x "$_engine" ]; then
       exec "$_engine" --help
+    fi
+    if [ -x "$KILIX_PACKAGED_ENGINE_HOME/bin/kitty" ]; then
+      exec "$KILIX_PACKAGED_ENGINE_HOME/bin/kitty" --help
     fi
     echo "kilix: the terminal engine is not built yet ($_engine); run: kilix --build" >&2
     exit 1 ;;
@@ -598,6 +604,7 @@ _kilix_pty_kitten() {
   if [ ! -x "$kitten" ]; then
     kitten=""
     if [ -x "$FORK" ]; then kitten="$(dirname "$FORK")/kitten"
+    elif [ -x "$PACKAGED" ]; then kitten="$(dirname "$PACKAGED")/kitten"
     elif [ -x "$PREBUILT" ]; then kitten="$(dirname "$PREBUILT")/kitten"
     fi
   fi
@@ -1334,6 +1341,7 @@ _kilix_ensure_private_directory "$KILIX_TELEMETRY_RUNTIME" telemetry || exit 1
 _kilix_validate_private_storage_layout || exit 1
 
 FORK="$KILIX_BUILD_DIRECTORY/current/src/kitty/launcher/kitty"
+PACKAGED="$KILIX_PACKAGED_ENGINE_HOME/bin/kitty"
 PREBUILT="$KILIX_PREBUILT_HOME/bin/kitty"
 
 # A fresh install owns this complete tree. Legacy XDG/source-tree locations are
@@ -2864,6 +2872,7 @@ _kilix_voice_pane_text() {
   kitten="${KILIX_KITTEN:-}"
   if [ -z "$kitten" ]; then
     if [ -x "$FORK" ]; then kitten="$(dirname "$FORK")/kitten"
+    elif [ -x "$PACKAGED" ]; then kitten="$(dirname "$PACKAGED")/kitten"
     elif [ -x "$PREBUILT" ]; then kitten="$(dirname "$PREBUILT")/kitten"
     fi
   fi
@@ -3170,6 +3179,8 @@ case "${1:-}" in
           # Straight to remote control, as `kilix new-tab` does once the engine
           # exists; going through the whole launcher could start a build first.
           _games_kitten="$KILIX_BUILD_DIRECTORY/current/src/kitty/launcher/kitten"
+          [ -x "$_games_kitten" ] || [ ! -x "$KILIX_PACKAGED_ENGINE_HOME/bin/kitten" ] \
+            || _games_kitten="$KILIX_PACKAGED_ENGINE_HOME/bin/kitten"
           [ -x "$_games_kitten" ] || {
             echo "kilix games: cannot open a new tab: the terminal engine is not built ($_games_kitten); run: kilix --build" >&2
             exit 1
@@ -5204,6 +5215,7 @@ sys.exit(0 if ready else 1)
     git -C "$KILIX_HOME" diff --quiet --ignore-submodules=none HEAD -- 2>/dev/null \
       || _status_dirty=modified
     if [ -x "$FORK" ]; then _status_engine="$FORK"
+    elif [ -x "$PACKAGED" ]; then _status_engine="$PACKAGED"
     elif [ -x "$PREBUILT" ]; then _status_engine="$PREBUILT"
     else _status_engine=missing
     fi
@@ -5896,7 +5908,7 @@ sys.exit(0 if ready else 1)
     echo "kilix update: done — restart 'kilix desktop' to load the changes."
     exit 0 ;;
   --which)
-    for b in "$FORK" "$PREBUILT"; do
+    for b in "$FORK" "$PACKAGED" "$PREBUILT"; do
       [ -x "$b" ] && { echo "$b"; exec "$b" --version; }
     done
     echo "no kitty built yet — run: $KILIX_HOME/kilix --build" >&2; exit 1 ;;
@@ -6049,6 +6061,8 @@ esac
 
 if [ -x "$FORK" ]; then
   BIN="$FORK"                                     # prefer the clickable-chrome fork
+elif [ -x "$PACKAGED" ]; then
+  BIN="$PACKAGED"                                 # the engine from the kilix-engine package
 elif [ -x "$PREBUILT" ]; then
   BIN="$PREBUILT"                                 # fall back to the prebuilt binary
 elif [ "${1:-}" = "screen-size" ] || [ "${1:-}" = "font-size" ]; then
@@ -6810,6 +6824,7 @@ print(ids[0] if ids else "")' 2>/dev/null)"
       --env "KILIX_DATA_HOME=$KILIX_DATA_HOME" \
       --env "KILIX_BUILD_DIRECTORY=$KILIX_BUILD_DIRECTORY" \
       --env "KILIX_PREBUILT_HOME=$KILIX_PREBUILT_HOME" \
+      --env "KILIX_PACKAGED_ENGINE_HOME=$KILIX_PACKAGED_ENGINE_HOME" \
       --env "KILIX_STATE_LIBRARY=${KILIX_STATE_LIBRARY:-}" \
       --env "KILIX_DESKTOP_PROVIDER=${KILIX_DESKTOP_PROVIDER:-}" \
       --env "KILIX_DESKTOP_COMMAND=${KILIX_DESKTOP_COMMAND:-}" \

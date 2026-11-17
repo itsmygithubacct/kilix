@@ -32,5 +32,8 @@ def sandbox_env(**overrides):
         key: value for key, value in os.environ.items()
         if not key.startswith(STACK_PREFIXES)
     }
+    # The packaged engine lives at a fixed system path; an installation on the
+    # machine running the suite must not become the engine a sandbox selects.
+    env["KILIX_PACKAGED_ENGINE_HOME"] = "/nonexistent/kilix-packaged-engine"
     env.update(overrides)
     return env
