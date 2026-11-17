@@ -150,6 +150,9 @@ KILIX_PREBUILT_HOME="${KILIX_PREBUILT_HOME:-$KILIX_STORAGE_HOME/prebuilt/kitty.a
 # Where the kilix-engine Debian package installs the engine. A fork built in
 # the storage root still wins, so a developer build is never shadowed.
 KILIX_PACKAGED_ENGINE_HOME="${KILIX_PACKAGED_ENGINE_HOME:-/usr/lib/kilix/engine}"
+# Where the kilix-native Debian package installs the pty broker, the state
+# library and the screensavers. Used only by a tree without their source.
+KILIX_PACKAGED_NATIVE_HOME="${KILIX_PACKAGED_NATIVE_HOME:-/usr/lib/kilix/native}"
 KILIX95_STORAGE_HOME="${KILIX95_STORAGE_HOME:-$GPU_TERMINAL_HOME/kilix-95}"
 KILIX95_CONFIG_HOME="${KILIX95_CONFIG_HOME:-$KILIX95_STORAGE_HOME/config}"
 KILIX95_STATE_HOME="${KILIX95_STATE_HOME:-$KILIX95_STORAGE_HOME/state}"
@@ -161,6 +164,7 @@ export KILIX_STORAGE_HOME KILIX_CONFIG_HOME
 export KILIX_STATE_DIRECTORY KILIX_CACHE_HOME KILIX_SESSION_HOME
 export KILIX_TELEMETRY_RUNTIME KILIX_DATA_HOME
 export KILIX_BUILD_DIRECTORY KILIX_PREBUILT_HOME KILIX_PACKAGED_ENGINE_HOME
+export KILIX_PACKAGED_NATIVE_HOME
 export KILIX95_STORAGE_HOME KILIX95_CONFIG_HOME KILIX95_STATE_HOME
 export KILIX95_CACHE_HOME KILIX95_SESSION_HOME KILIX95_DATA_HOME
 
@@ -6765,9 +6769,10 @@ if [ "${1:-}" = "desktop" ]; then
   if [ "$_KILIX_DESKTOP_MODE" = python ] \
        && [ "$_KILIX_DESKTOP_MAIN" != "$KILIX_HOME/desktop/main.py" ]; then
     if [ -z "${KILIX_STATE_LIBRARY:-}" ]; then
-      "$KILIX_HOME/scripts/build-state-library.sh" \
+      KILIX_STATE_LIBRARY="$("$KILIX_HOME/scripts/build-state-library.sh" --print-path)" \
         || _kilix_desktop_die "could not prepare the pinned state library"
-      KILIX_STATE_LIBRARY="$KILIX_BUILD_DIRECTORY/libraries/kilix-state/libkilix-state.so"
+      [ -f "$KILIX_STATE_LIBRARY" ] \
+        || _kilix_desktop_die "could not prepare the pinned state library"
     fi
     export KILIX_STATE_LIBRARY
   fi
@@ -6980,9 +6985,16 @@ if [ "${1:-}" = "screensaver" ]; then
   _sssrc="$KILIX_HOME/config/screensavers/$_ss.c"
   _sscache="$KILIX_CACHE_HOME/screensavers"
   _ssbin="$_sscache/$_ss"
+  # A packaged Kilix carries no screensaver source; kilix-native has them built.
+  _sspackaged="$KILIX_PACKAGED_NATIVE_HOME/screensavers"
+  case "$_ss" in */*|.*|"") _sspackaged="" ;; esac
+  if [ ! -f "$_sssrc" ] && [ -n "$_sspackaged" ] \
+       && [ -f "$_sspackaged/$_ss" ] && [ -x "$_sspackaged/$_ss" ]; then
+    exec "$_sspackaged/$_ss" "$@"
+  fi
   if [ ! -f "$_sssrc" ]; then
     echo "kilix: no screensaver '$_ss'. Available:" >&2
-    for _f in "$KILIX_HOME"/config/screensavers/*.c; do
+    for _f in "$KILIX_HOME"/config/screensavers/*.c "$KILIX_PACKAGED_NATIVE_HOME"/screensavers/*; do
       [ -e "$_f" ] && echo "  $(basename "$_f" .c)" >&2
     done
     exit 1
