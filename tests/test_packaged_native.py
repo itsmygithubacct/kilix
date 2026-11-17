@@ -161,9 +161,7 @@ class PackagedStateLibraryTests(Fixture):
         state = importlib.import_module("kilix_sdk.state")
         values = {"KILIX_STORAGE_HOME": str(self.storage),
                   "KILIX_PACKAGED_NATIVE_HOME": str(self.native), **env}
-        clean = {k: v for k, v in os.environ.items()
-                 if k not in ("KILIX_STATE_LIBRARY", "KILIX_BUILD_DIRECTORY")}
-        with mock.patch.dict(os.environ, {**clean, **values}, clear=True):
+        with mock.patch.dict(os.environ, sandbox_env(**values), clear=True):
             return state.native_library_path()
 
     def test_the_sdk_uses_the_package_when_nothing_is_built(self):
