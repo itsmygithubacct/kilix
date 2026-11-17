@@ -29,7 +29,7 @@ def ask(question, input_fn):
 
 
 def notice_only(group, specs):
-    """True when every record in the group is a notice, never an accept-type record.
+    """True when every record in the group is a notice (decision ``record``).
 
     Groups are keyed by licence id, so one group can hold records of different
     decisions (the same licence is a notice for one model and an acceptance for
@@ -37,7 +37,7 @@ def notice_only(group, specs):
     (a registry model's terms), keeps the acceptance question.
     """
     return (bool(group['records']) and set(group['models']) <= specs.keys()
-            and all(record.expected_decision != 'accept' for record in group['records'].values()))
+            and all(record.expected_decision == 'record' for record in group['records'].values()))
 
 
 def llm_license_covered(model, entries, saved, manifest_digest):

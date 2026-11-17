@@ -378,5 +378,16 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(self.questions[0], 'Install lfm2-kilix-commands? [y/N] ')
         self.assertTrue(self.questions[1].startswith('Do you accept cc-by-nc-4.0 '))
 
+    def test_a_registry_model_sharing_the_notice_licence_keeps_the_acceptance_question(self):
+        # A registry model has no determined record. If its terms carry the same
+        # label as a notice licence the two share a group, and the group must ask.
+        llm = next(iter(system_llm.MODELS))
+        names = ['lfm2-kilix-commands', llm]
+        self.run_batch(names, ['no'], llm_entries={llm: [('lfm-open-license-1.0', b'registry terms')]})
+        self.assertEqual(len(self.questions), 1)
+        self.assertTrue(self.questions[0].startswith('Do you accept lfm-open-license-1.0 '))
+        self.assertNotIn('claims no agreement', self.output.decode())
+        self.assertEqual(list(self.store.root.glob('*.json')), [])
+
 
 if __name__ == '__main__': unittest.main()
