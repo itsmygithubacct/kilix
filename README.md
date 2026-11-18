@@ -1933,11 +1933,24 @@ plaintext for the approved container and never exports the master key.
 Each fingerprint operation first displays a fresh polkit approval containing
 the requesting process, requested name, byte count and container SHA-256.
 Polkit can require the account password; approval is not cached. After approval,
-touch the sensor. Cancellation, expiry, forget, caller exit, a session change
-or a locked seat refuses the operation. Plaintext already delivered remains
-with its recipient. Custody TTL includes time spent suspended, using the Linux
-boot-time clock; expiry is enforced on the first check after resume. This does
-not promise erasure of memory while the system is asleep.
+touch the sensor; a touch before approval is not read. One approval allows up
+to three scans within one 45-second deadline: a rejected touch re-arms the
+reader, as fprintd's own PAM module does, and three rejections end the
+operation with no match. Cancelling the dialog, expiry, forget, caller exit, a
+session change or a locked seat refuses the operation. Plaintext already
+delivered remains with its recipient.
+
+Custody belongs to the logind session that deposited the key and is used only
+from it. Locking that session, switching away from it, logging out, or logind
+being unable to report it forgets the key within about a second; unlocking
+again does not restore it. Suspend and hibernate also forget it: the agent
+notices the boot-time clock advancing past the monotonic clock and drops the
+key on its first check after resume, before any later request can use it.
+This does not promise erasure of memory while the system is asleep. Custody is
+never written to disk, so a restart or reboot holds nothing. An approval or
+scan in progress for a forgotten key stops. `status` reports why the last key
+was dropped. Lock detection relies on the screen locker setting logind's
+`LockedHint`; a locker that does not set it is not seen as a lock.
 
 Agent installation is explicit:
 

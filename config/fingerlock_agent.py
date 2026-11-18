@@ -71,7 +71,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from fingerlock_core import (  # noqa: E402
     ANY_FINGER, AccessDenied, DependencyUnavailable, DeviceNotFound, FingerlockError,
-    FprintdClient, NoMatch, OperationFailed, OperationTimeout, ServiceFailure,
+    MAX_VERIFY_ATTEMPTS, FprintdClient, NoMatch, OperationFailed, OperationTimeout, ServiceFailure,
 )
 from fingerlock_locker import Locker, LockerError, SEED_BYTES, unlock_bytes, wipe_buffer  # noqa: E402
 from fingerlock_policy import APPROVAL_TIMEOUT, authorize_operation  # noqa: E402
@@ -86,6 +86,15 @@ DEFAULT_TTL_SECONDS = 12 * 3600
 MAX_TTL_SECONDS = 7 * 24 * 3600
 MIN_TTL_SECONDS = 60.0
 VERIFY_TIMEOUT_SECONDS = 45.0
+# Scans one approved operation may arm: a no-match re-arms the reader within
+# the same claim and deadline, as pam_fprintd does, instead of ending the
+# operation on the first rejected touch.
+VERIFY_ATTEMPTS = MAX_VERIFY_ATTEMPTS
+# Session transitions. The monitor polls the depositing session's logind state
+# while a key is held. Suspend is detected from CLOCK_BOOTTIME advancing past
+# CLOCK_MONOTONIC, which only happens while the system sleeps.
+SESSION_CHECK_SECONDS = 1.0
+SUSPEND_SLACK_SECONDS = 1.0
 MAX_LINE = 64 * 1024
 MAX_BODY = 64 * 1024 * 1024 + 2 * 1024 * 1024
 MAX_CONCURRENT = 8
@@ -102,6 +111,10 @@ class AgentUnavailable(DependencyUnavailable):
 
 class Busy(ServiceFailure):
     code, exit_status = "EBUSY", 6
+
+
+class SessionGone(AccessDenied):
+    """logind no longer knows the session."""
 
 
 @dataclass
@@ -166,6 +179,8 @@ class Entry:
     expires: float
     username: str
     generation: int
+    session_id: str = ""
+    sleep_mark: float = 0.0
 
 
 def _custody_time() -> float:
@@ -173,13 +188,25 @@ def _custody_time() -> float:
     return time.clock_gettime(time.CLOCK_BOOTTIME)
 
 
+def _sleep_offset() -> float:
+    """Total time this boot has spent suspended or hibernated so far."""
+    return time.clock_gettime(time.CLOCK_BOOTTIME) - time.clock_gettime(time.CLOCK_MONOTONIC)
+
+
 class Custody:
-    """In-memory per-uid keys. Expiry runs on a timer and again on use."""
+    """In-memory per-uid keys. Expiry and the suspend check run on a timer and
+    again on every use, so a request racing the timer after resume is refused.
+    Nothing is persisted: a restart or reboot starts empty."""
 
     def __init__(self, now: Callable[[], float] = _custody_time, *, min_ttl: float = MIN_TTL_SECONDS,
-                 start_timer: bool = False, sweep_interval: float = 1.0) -> None:
+                 start_timer: bool = False, sweep_interval: float = 1.0,
+                 sleep_offset: Callable[[], float] = _sleep_offset,
+                 suspend_slack: float = SUSPEND_SLACK_SECONDS) -> None:
         self._entries: dict[int, Entry] = {}
         self._generation: dict[int, int] = {}
+        self._reasons: dict[int, str] = {}
+        self._sleep_offset = sleep_offset
+        self._suspend_slack = suspend_slack
         self._lock = threading.Lock()
         self._now = now
         self._min_ttl = min_ttl
@@ -209,25 +236,51 @@ class Custody:
 
     def _expire_locked(self) -> None:
         now = self._now()
+        slept = self._sleep_offset()
         for uid, entry in list(self._entries.items()):
-            if entry.expires <= now:
-                self._wipe_locked(uid)
+            if slept - entry.sleep_mark > self._suspend_slack:
+                self._wipe_locked(uid, "suspend")
+            elif entry.expires <= now:
+                self._wipe_locked(uid, "expiry")
 
-    def _wipe_locked(self, uid: int) -> None:
+    def _wipe_locked(self, uid: int, reason: str = "forget") -> None:
         entry = self._entries.pop(uid, None)
         if entry is not None:
             entry.secret.wipe()
+            self._reasons[uid] = reason
+
+    def last_reason(self, uid: int) -> str | None:
+        """Why the last key held for uid was dropped, for status only."""
+        with self._lock:
+            return self._reasons.get(uid)
+
+    def held(self) -> list[tuple[int, str, int]]:
+        """(uid, depositing session, generation) for each live entry; no key material."""
+        with self._lock:
+            self._expire_locked()
+            return [(uid, entry.session_id, entry.generation) for uid, entry in self._entries.items()]
+
+    def forget_generation(self, uid: int, generation: int, reason: str) -> bool:
+        """Drop uid's key only if it is still the generation that was checked."""
+        with self._lock:
+            entry = self._entries.get(uid)
+            if entry is None or entry.generation != generation:
+                return False
+            self._wipe_locked(uid, reason)
+            return True
 
     def deposit(self, uid: int, username: str, key: bytes, locker_id: str, public_key: bytes,
-                ttl: float) -> Entry:
+                ttl: float, *, session_id: str = "") -> Entry:
         ttl = max(self._min_ttl, min(float(ttl), MAX_TTL_SECONDS))
         with self._lock:
-            self._wipe_locked(uid)
+            self._wipe_locked(uid, "replaced")
+            self._reasons.pop(uid, None)
             generation = self._generation.get(uid, 0) + 1
             self._generation[uid] = generation
             now = self._now()
             entry = Entry(secret=SecretBuffer(key), public_key=bytes(public_key), locker_id=locker_id,
-                          deposited=now, expires=now + ttl, username=username, generation=generation)
+                          deposited=now, expires=now + ttl, username=username, generation=generation,
+                          session_id=session_id, sleep_mark=self._sleep_offset())
             self._entries[uid] = entry
             return entry
 
@@ -244,7 +297,7 @@ class Custody:
             if entry is None or entry.generation != generation or entry.locker_id != locker_id:
                 return None
             if entry.expires <= self._now():
-                self._wipe_locked(uid)
+                self._wipe_locked(uid, "expiry")
                 return None
             return entry.secret.copy()
 
@@ -278,22 +331,50 @@ class CallerSession:
     remote: bool
 
 
+def _unusable(session: CallerSession) -> bool:
+    return (not session.active or session.state != "active" or not session.seat
+            or session.locked or session.remote)
+
+
 def caller_session(pid: int, *, dbus_module: Any = None) -> CallerSession:
     """Read one live logind snapshot. Its private session files omit LockedHint."""
     if type(pid) is not int or pid <= 0:
         raise AccessDenied("invalid caller pid")
+    return _logind_session(lambda manager, dbus: manager.GetSessionByPID(dbus.UInt32(pid), timeout=5),
+                           dbus_module)
+
+
+def session_by_id(session_id: str, *, dbus_module: Any = None) -> CallerSession:
+    """The same live snapshot for a session named at deposit. SessionGone when logind
+    no longer has it; any other failure is AccessDenied, as for caller_session."""
+    if not isinstance(session_id, str) or not session_id:
+        raise AccessDenied("invalid session id")
+    return _logind_session(lambda manager, _dbus: manager.GetSession(session_id, timeout=5), dbus_module)
+
+
+def _logind_session(locate: Callable[[Any, Any], Any], dbus_module: Any) -> CallerSession:
     if dbus_module is None:
         try:
             import dbus as dbus_module
+            import dbus.mainloop  # noqa: F401  provides NULL_MAIN_LOOP below
         except ImportError as exc:
             raise DependencyUnavailable("logind requires python3-dbus") from exc
     bus = None
     try:
-        bus = dbus_module.SystemBus(private=True)
+        # A blocking private connection with no main loop: it never attaches to the
+        # GLib context a concurrent reader scan may be running.
+        null_loop = getattr(getattr(dbus_module, "mainloop", None), "NULL_MAIN_LOOP", None)
+        bus = dbus_module.SystemBus(private=True, mainloop=null_loop)
         manager = dbus_module.Interface(
             bus.get_object("org.freedesktop.login1", "/org/freedesktop/login1", introspect=False),
             "org.freedesktop.login1.Manager")
-        path = manager.GetSessionByPID(dbus_module.UInt32(pid), timeout=5)
+        try:
+            path = locate(manager, dbus_module)
+        except Exception as exc:
+            name_getter = getattr(exc, "get_dbus_name", None)
+            if callable(name_getter) and name_getter() == "org.freedesktop.login1.NoSuchSession":
+                raise SessionGone("logind no longer has the session") from exc
+            raise
         properties = dbus_module.Interface(
             bus.get_object("org.freedesktop.login1", path, introspect=False),
             "org.freedesktop.DBus.Properties")
@@ -310,6 +391,8 @@ def caller_session(pid: int, *, dbus_module: Any = None) -> CallerSession:
             raise ValueError("invalid logind session")
         return CallerSession(str(session_id), int(uid), bool(facts["Active"]), str(state),
                              str(seat), bool(facts["LockedHint"]), bool(facts["Remote"]))
+    except SessionGone:
+        raise
     except Exception as exc:
         raise AccessDenied("logind could not establish the caller's session and lock state") from exc
     finally:
@@ -416,7 +499,10 @@ class Agent:
                  client_factory: Callable[[], FprintdClient] = FprintdClient,
                  verify_timeout: float = VERIFY_TIMEOUT_SECONDS,
                  session_lookup: Callable[[int], CallerSession] = caller_session,
+                 session_state: Callable[[str], CallerSession] = session_by_id,
                  approve: Callable[..., None] = authorize_operation,
+                 verify_attempts: int = VERIFY_ATTEMPTS,
+                 session_interval: float = SESSION_CHECK_SECONDS,
                  allowed_uid: int | None = None,
                  max_concurrent: int = MAX_CONCURRENT,
                  max_per_uid: int = MAX_PER_UID,
@@ -428,7 +514,12 @@ class Agent:
         self.client_factory = client_factory
         self.verify_timeout = verify_timeout
         self.session_lookup = session_lookup
+        self.session_state = session_state
         self.approve = approve
+        self.verify_attempts = verify_attempts
+        self.session_interval = session_interval
+        self._stopping = threading.Event()
+        self.log: Callable[[str], None] = lambda line: sys.stderr.write(f"kilix-fingerlock-agent: {line}\n")
         self.allowed_uid = allowed_uid
         self.max_concurrent = max_concurrent
         self.max_per_uid = max_per_uid
@@ -450,12 +541,54 @@ class Agent:
 
     def _seat(self, pid: int, uid: int) -> str:
         session = self.session_lookup(pid)
-        if (not session.active or session.state != "active" or not session.seat
-                or session.locked or session.remote):
+        if _unusable(session):
             raise AccessDenied("caller is not in an active seat session that is unlocked and local")
         if session.uid != uid:
             raise AccessDenied("session is not owned by the caller")
         return session.session_id
+
+    # Session transitions: custody belongs to the session that deposited it.
+    # Lock, switching away, logout and logind losing the session forget it;
+    # so does suspend or hibernate (Custody), and a restart or reboot holds
+    # nothing. An approval or scan in progress for that key then stops.
+    def transition_reason(self, uid: int, session_id: str) -> str | None:
+        try:
+            session = self.session_state(session_id)
+        except SessionGone:
+            return "session-ended"
+        except Exception:
+            return "session-unknown"
+        if session.uid != uid or session.session_id != session_id:
+            return "session-unknown"
+        if session.locked:
+            return "session-locked"
+        if _unusable(session):
+            return "session-inactive"
+        return None
+
+    def check_transitions(self) -> list[tuple[int, str]]:
+        dropped = []
+        for uid, session_id, generation in self.custody.held():
+            reason = self.transition_reason(uid, session_id)
+            if reason is not None and self.custody.forget_generation(uid, generation, reason):
+                dropped.append((uid, reason))
+                self.log(f"custody for uid {uid} forgotten ({reason})")
+        return dropped
+
+    def start_monitor(self) -> threading.Thread:
+        def loop() -> None:
+            while not self._stopping.wait(self.session_interval):
+                try:
+                    self.check_transitions()
+                except Exception as exc:  # keep watching; a failed check is retried next tick
+                    self.log(f"session check failed ({exc.__class__.__name__})")
+        thread = threading.Thread(target=loop, name="fingerlock-sessions", daemon=True)
+        thread.start()
+        return thread
+
+    def close(self) -> None:
+        self._stopping.set()
+        self.custody.close()
 
     def _hardening(self, entry: Entry | None) -> dict[str, Any]:
         extra = [entry.secret.error] if entry is not None and entry.secret.error else []
@@ -476,11 +609,11 @@ class Agent:
                 return {"ok": True, "forgotten": self.custody.forget(uid)}, b""
             if op == "release":
                 raise ServiceFailure("the custodian does not export the locker key")
-            self._seat(pid, uid)
+            session_id = self._seat(pid, uid)
             if op == "deposit":
-                return self._deposit(uid, request), b""
+                return self._deposit(uid, request, session_id), b""
             if op == "confirm":
-                return self._confirm(uid, request), b""
+                return self._confirm(uid, request, session_id), b""
             if op == "operate":
                 return self._operate(uid, pid, request, body)
             raise ServiceFailure(f"unknown op {op!r}")
@@ -490,12 +623,16 @@ class Agent:
     def _status(self, uid: int) -> dict[str, Any]:
         entry = self.custody.peek(uid)
         if entry is None:
-            return {"ok": True, "held": False, "hardening": self._hardening(None)}
+            reply: dict[str, Any] = {"ok": True, "held": False, "hardening": self._hardening(None)}
+            reason = self.custody.last_reason(uid)
+            if reason is not None:
+                reply["last_forget"] = reason
+            return reply
         remaining = max(0, int(entry.expires - self.custody._now()))
         return {"ok": True, "held": True, "locker_id": entry.locker_id, "expires_in": remaining,
                 "generation": entry.generation, "hardening": self._hardening(entry)}
 
-    def _deposit(self, uid: int, request: dict[str, Any]) -> dict[str, Any]:
+    def _deposit(self, uid: int, request: dict[str, Any], session_id: str) -> dict[str, Any]:
         try:
             key = bytes.fromhex(str(request["key"]))
             locker_id = str(request["locker_id"])
@@ -516,11 +653,11 @@ class Agent:
             raise AccessDenied(f"unknown uid {uid}") from exc
         except Exception as exc:
             raise ServiceFailure(f"bad deposit: {exc}") from exc
-        entry = self.custody.deposit(uid, username, key, locker_id, public, ttl)
+        entry = self.custody.deposit(uid, username, key, locker_id, public, ttl, session_id=session_id)
         return {"ok": True, "held": True, "locker_id": locker_id, "generation": entry.generation,
                 "expires_in": int(entry.expires - self.custody._now())}
 
-    def _confirm(self, uid: int, request: dict[str, Any]) -> dict[str, Any]:
+    def _confirm(self, uid: int, request: dict[str, Any], session_id: str) -> dict[str, Any]:
         try:
             claimed = bytes.fromhex(str(request["public_key"]))
             locker_id = str(request["locker_id"])
@@ -529,6 +666,8 @@ class Agent:
         entry = self.custody.peek(uid)
         if entry is None:
             raise AccessDenied("no key deposited for this user")
+        if entry.session_id != session_id:
+            raise AccessDenied("custody belongs to the session that deposited the key")
         if entry.locker_id != locker_id or entry.public_key != claimed:
             raise AccessDenied("locker metadata does not match custody; nothing was sealed")
         remaining = max(0, int(entry.expires - self.custody._now()))
@@ -575,25 +714,36 @@ class Agent:
         generation = entry.generation
         username = entry.username
         session_id = self._seat(pid, uid)
+        if entry.session_id != session_id:
+            raise AccessDenied("custody belongs to the session that deposited the key")
         if not self._peer_alive():
             raise AccessDenied("caller disconnected")
+
+        def wanted() -> bool:
+            # The approval dialog and the scan stop once the caller leaves or
+            # custody for this generation is forgotten, expires or is replaced.
+            return self._peer_alive() and self.custody.live(uid, generation, locker_id)
+
         if not self._verify_lock.acquire(timeout=self.verify_timeout):
             raise ServiceFailure("the reader is busy with another verification")
         try:
             if not self._peer_alive():
                 raise AccessDenied("caller disconnected")
             self._revalidate(uid, pid, session_id, generation, locker_id)
-            self.approve(uid, pid, binding, self._peer_alive)
+            self.approve(uid, pid, binding, wanted)
             self._revalidate(uid, pid, session_id, generation, locker_id)
             if not self._peer_alive():
                 raise AccessDenied("caller disconnected after operation approval")
             client = self.client_factory()
             device = client.default_device()
-            session = client.verify(device.path, finger, username=username, timeout=self.verify_timeout)
+            session = client.verify(device.path, finger, username=username, timeout=self.verify_timeout,
+                                    attempts=self.verify_attempts, cancelled=lambda: not wanted())
         finally:
             self._verify_lock.release()
         if not self._peer_alive():
             raise AccessDenied("caller disconnected")
+        if getattr(session, "cancelled", False):
+            raise AccessDenied("custody was revoked during verification")
         if session.timed_out:
             raise OperationTimeout(f"no finger within {self.verify_timeout:g}s")
         if session.result != "verify-match":
@@ -626,6 +776,7 @@ class Agent:
             "ok": True, "action": "unseal", "locker_id": locker_id, "binding": binding,
             "plain_bytes": len(delivered), "plain_sha256": hashlib.sha256(delivered).hexdigest(),
             "finger": session.selected_finger, "device": device.name, "generation": generation,
+            "scans": session.attempts,
         }, delivered
 
     def _revalidate(self, uid: int, pid: int, session_id: str, generation: int, locker_id: str) -> None:
@@ -750,10 +901,11 @@ def serve(uid: int) -> int:
         return 1
     listener = _listener_from_systemd(uid)
     agent = Agent(allowed_uid=uid)
+    agent.start_monitor()
     try:
         agent.serve(listener)
     finally:
-        agent.custody.close()
+        agent.close()
         listener.close()
     return 0
 

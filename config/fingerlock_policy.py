@@ -11,6 +11,8 @@ from fingerlock_core import AccessDenied, DependencyUnavailable, OperationTimeou
 
 ACTION = "org.kilix.fingerlock.unseal"
 APPROVAL_TIMEOUT = 120.0
+# pkcheck(1) exit statuses.
+PKCHECK_AUTHORIZED, PKCHECK_CHALLENGE, PKCHECK_DISMISSED = 0, 2, 3
 POLICY_FILE = ACTION + ".policy"
 POLICY_XML = f'''<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
@@ -42,7 +44,8 @@ def _run_check(argv: list[str], alive: Callable[[], bool], timeout: float) -> in
     try:
         while True:
             if not alive():
-                raise AccessDenied("caller disconnected during operation approval")
+                # The caller left, or the key this approval was for is no longer held.
+                raise AccessDenied("operation approval withdrawn: the caller left or custody was forgotten")
             remaining = end - time.monotonic()
             if remaining <= 0:
                 raise OperationTimeout("operation approval timed out")
@@ -85,8 +88,10 @@ def authorize_operation(uid: int, pid: int, binding: dict[str, Any], alive: Call
             "--detail", "fingerlock.digest", binding["sha256"]]
     # 2 means a challenge needs interaction. An already-authorized action (0),
     # including a cached or permissive policy, cannot establish fresh consent.
-    if run_check(argv, alive, 5.0) != 2:
+    if run_check(argv, alive, 5.0) != PKCHECK_CHALLENGE:
         raise AccessDenied("a fresh polkit approval is required for each locker operation")
     result = run_check([*argv, "--allow-user-interaction"], alive, APPROVAL_TIMEOUT)
-    if result != 0 or not alive():
-        raise AccessDenied("locker operation approval was refused or cancelled")
+    if result == PKCHECK_DISMISSED:
+        raise AccessDenied("locker operation approval was cancelled")
+    if result != PKCHECK_AUTHORIZED or not alive():
+        raise AccessDenied("locker operation approval was refused")

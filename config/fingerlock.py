@@ -942,6 +942,13 @@ def _wipe_secret(buf: bytearray | None) -> None:
     lockermod.wipe_buffer(buf)
 
 
+def _touch_prompt(verb: str, binding: dict[str, Any]) -> str:
+    # The reader is armed only after approval; a touch before then is not read.
+    return (f"approve the request to {verb} {binding['name']} ({binding['sha256'][:12]}), "
+            f"then touch the sensor; if a scan is rejected, lift and touch again "
+            f"(up to {agentmod.VERIFY_ATTEMPTS} scans)\n")
+
+
 def _agent_holds(agent: agentmod.AgentClient, info: lockermod.LockerInfo) -> bool:
     if not agent.available():
         return False
@@ -1081,7 +1088,7 @@ def cmd_unlock(args: argparse.Namespace) -> int:
         for container, header, blob in loaded:
             if use_custody:
                 binding = lockermod.binding_for("unlock", container.name, blob)
-                sys.stderr.write(f"touch the sensor to unlock {binding['name']} ({binding['sha256'][:12]})\n")
+                sys.stderr.write(_touch_prompt("unlock", binding))
                 plain = agent.unseal(info.locker_id, blob, binding, getattr(args, "finger", ANY_FINGER))
                 if len(plain) != header["size"]:
                     raise LockerError("custodian returned plaintext of the wrong length; destination not written")
@@ -1170,7 +1177,7 @@ def cmd_password(args: argparse.Namespace) -> int:
         try:
             if use_custody:
                 binding = lockermod.binding_for("password-get", args.name, blob)
-                sys.stderr.write(f"touch the sensor to read {args.name} ({binding['sha256'][:12]})\n")
+                sys.stderr.write(_touch_prompt("read", binding))
                 secret = agent.unseal(info.locker_id, blob, binding, getattr(args, "finger", ANY_FINGER))
             else:
                 private = bytearray(locker.derive_private_key(_read_passphrase(args, "locker passphrase: "), info))

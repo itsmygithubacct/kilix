@@ -815,7 +815,7 @@ class SessionGateTests(unittest.TestCase):
         self.assertEqual(session.session_id, "c7")
         self.assertEqual(session.uid, 1000)
         manager.GetSessionByPID.assert_called_once_with(42, timeout=5)
-        dbus.SystemBus.assert_called_once_with(private=True)
+        dbus.SystemBus.assert_called_once_with(private=True, mainloop=None)   # this fake has no dbus.mainloop
         bus.close.assert_called_once_with()
 
     def test_missing_or_malformed_logind_properties_fail_closed(self):

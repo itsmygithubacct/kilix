@@ -120,6 +120,9 @@ STATUS_TEXT = {
 # calls always. They are issued asynchronously with this timeout while the
 # GLib loop runs, which keeps Ctrl-C working. VerifyStart never prompts.
 AUTH_TIMEOUT_SECONDS = 600.0
+# The most scans one verification may arm, matching pam_fprintd's default
+# max-tries. A caller asks for fewer; the reader verb diagnoses single scans.
+MAX_VERIFY_ATTEMPTS = 3
 
 
 def describe(result: str) -> str:
@@ -242,6 +245,8 @@ class Session:
     result: str | None = None
     done: bool = False
     timed_out: bool = False
+    cancelled: bool = False
+    attempts: int = 0
     selected_finger: str | None = None
     started: float = field(default_factory=time.monotonic)
 
@@ -252,6 +257,10 @@ class Session:
     @property
     def stages_passed(self) -> int:
         return sum(1 for event in self.events if event.result == "enroll-stage-passed")
+
+    def rearm(self) -> None:
+        """Start the next scan of a bounded verification; earlier events stay."""
+        self.done, self.result = False, None
 
     def handle(self, result: str, done: bool) -> bool:
         result, done = str(result), bool(done)
@@ -265,6 +274,7 @@ class Session:
         return {"kind": self.kind, "finger": self.finger, "device": self.device,
                 "result": self.result, "result_text": describe(self.result) if self.result else None,
                 "succeeded": self.succeeded, "done": self.done, "timed_out": self.timed_out,
+                "cancelled": self.cancelled, "attempts": self.attempts,
                 "stages_passed": self.stages_passed, "selected_finger": self.selected_finger,
                 "events": [event.as_dict() for event in self.events]}
 
@@ -381,19 +391,24 @@ class FprintdClient:
 
     def _run_action(self, kind: str, device_path: str, finger: str, *, username: str,
                     timeout: float, on_start: StartCallback | None,
-                    on_status: StatusCallback | None) -> Session:
+                    on_status: StatusCallback | None, attempts: int = 1,
+                    cancelled: Callable[[], bool] | None = None) -> Session:
+        if type(attempts) is not int or not 1 <= attempts <= MAX_VERIFY_ATTEMPTS:
+            raise UsageError(f"verification attempts must be 1 to {MAX_VERIFY_ATTEMPTS}")
         device = self._iface(device_path, DEVICE_IFACE)
         session = Session(kind=kind, finger=finger, device=device_path)
         try:
             self._perform(device, session, username=username, timeout=timeout,
-                          on_start=on_start, on_status=on_status)
+                          on_start=on_start, on_status=on_status, attempts=attempts,
+                          cancelled=cancelled or (lambda: False))
         except FingerlockError as exc:
             exc.session = session
             raise
         return session
 
     def _perform(self, device: Any, session: Session, *, username: str, timeout: float,
-                 on_start: StartCallback | None, on_status: StatusCallback | None) -> None:
+                 on_start: StartCallback | None, on_status: StatusCallback | None,
+                 attempts: int, cancelled: Callable[[], bool]) -> None:
         enrolling = session.kind == "enroll"
         stop = device.EnrollStop if enrolling else device.VerifyStop
 
@@ -423,10 +438,27 @@ class FprintdClient:
                     if len(enrolled) == 1:
                         finger = enrolled[0]
                 self._call(device.VerifyStart, finger)
+            session.attempts = 1
             if on_start is not None:
                 on_start(session)
-            if not self.bus.run_until(lambda: session.done, timeout):
-                session.timed_out = True
+            # One claim and one deadline cover every scan. fprintd ends a
+            # verification at each no-match, as pam_fprintd expects; re-arm it
+            # up to the caller's bound. Retry statuses do not count as scans.
+            deadline = time.monotonic() + timeout
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not self.bus.run_until(lambda: session.done or cancelled(), remaining):
+                    session.timed_out = True
+                    break
+                if cancelled():
+                    session.cancelled = True
+                    break
+                if enrolling or session.result != VERIFY_NO_MATCH or session.attempts >= attempts:
+                    break
+                self._call(device.VerifyStop)
+                session.rearm()
+                self._call(device.VerifyStart, finger)
+                session.attempts += 1
         finally:
             for match in matches:
                 self._quiet(match.remove)
@@ -440,9 +472,13 @@ class FprintdClient:
 
     def verify(self, device_path: str, finger: str = ANY_FINGER, *, username: str = "",
                timeout: float = 60.0, on_start: StartCallback | None = None,
-               on_status: StatusCallback | None = None) -> Session:
+               on_status: StatusCallback | None = None, attempts: int = 1,
+               cancelled: Callable[[], bool] | None = None) -> Session:
+        """Verify one finger. attempts bounds the scans that may end in no-match;
+        cancelled is polled while waiting and stops the scan when it turns true."""
         return self._run_action("verify", device_path, finger, username=username,
-                                timeout=timeout, on_start=on_start, on_status=on_status)
+                                timeout=timeout, on_start=on_start, on_status=on_status,
+                                attempts=attempts, cancelled=cancelled)
 
     def delete(self, device_path: str, finger: str | None = None, *, username: str = "") -> None:
         device = self._iface(device_path, DEVICE_IFACE)
