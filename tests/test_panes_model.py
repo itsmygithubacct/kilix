@@ -360,9 +360,6 @@ class PaneIdMapperTests(unittest.TestCase):
         self.assertIsNone(found[4242])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class SendSubmitTests(unittest.TestCase):
     """Enter is its own write: in one write with the text, a coding agent's
@@ -475,3 +472,6 @@ class RunStdinTests(unittest.TestCase):
         self.assertEqual(done.stdout, "ok\ufffd")
         self.assertEqual(self.seen["argv"][-2:], ["send-text", "--stdin"])
 
+
+if __name__ == "__main__":
+    unittest.main()
