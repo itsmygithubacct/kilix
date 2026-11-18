@@ -426,6 +426,11 @@ class SendBytesTests(unittest.TestCase):
     def test_text_and_tabs_are_refused(self):
         with self.assertRaises(TypeError):
             panes.send_bytes("pane:7", "text")
+        # Not bytes, though bytes() would make some: a count (that many
+        # NULs) or a list of numbers.
+        for data in (3, [65, 66]):
+            with self.assertRaises(TypeError):
+                panes.send_bytes("pane:7", data)
         with self.assertRaises(panes.NoSuchTarget):
             panes.send_bytes("tab:3", b"x")
         self.assertEqual(self.calls, [])
