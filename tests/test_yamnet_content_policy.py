@@ -1,11 +1,15 @@
 """The sound installer uses the catalog asset and never invents agreement."""
+
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 import tempfile
 import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _env_support import sandbox_env
 
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = ROOT / "scripts/install-yamnet.sh"
@@ -57,8 +61,7 @@ w.chmod(0o755)
         self.provider_ref = subprocess.check_output(["git", "-C", str(self.provider), "rev-parse", "HEAD"], text=True).strip()
         self.runtime = self.root / "runtime"
         self.config = self.root / "config"
-        self.env = {key: value for key, value in os.environ.items()
-                    if not key.startswith(("KILIX", "GPU_TERMINAL", "KITTY", "PLEB"))}
+        self.env = sandbox_env()
         self.env.update(KILIX_HOME=str(self.host), GPU_TERMINAL_DATA_HOME=str(self.root / "data"),
                         KILIX_YAMNET_DIR=str(self.runtime), KILIX_USER_CONFIG_DIRECTORY=str(self.config),
                         KILIX_PYTHON=sys.executable, KILIX_SOUND_REF=self.provider_ref, TEST_POLICY_GATE=str(self.gate),

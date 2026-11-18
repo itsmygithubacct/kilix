@@ -85,7 +85,11 @@ _V3, _ORIGIN = asset_v3_available()
 # demucs-htdemucs-6s, the kilix split weights (its own record, Demucs MIT).
 # RC5 Playalong adds faster-whisper-large-v3 (its own record, MIT), offered for
 # lyrics that are not in English and never a default (content c8f0b0f).
-PACKAGED_ASSETS = 43
+# kilix-llm's qwen-0.8b-no-loop-02 adds one more.
+# RC8 adds en-core-web-sm-3.8.0, Paradee's offline front end (content 543e467),
+# and PDF Conversion's page OCR models pp-ocrv6-small-det and
+# pp-ocrv6-small-rec (owner, 2026-11-10; content 32722d0).
+PACKAGED_ASSETS = 47
 
 # Producer notices the pinned upstream archive carries and the installer
 # verifies and reuses from it, so the licence text store does not hold them.
@@ -345,8 +349,13 @@ class ModelSetupTests(unittest.TestCase):
             with self.subTest(answer=answer):
                 try:
                     self.assertEqual(self.execute(answer=answer, api=api, facade=facade), 1)
+                except ui.Unanswered:
+                    # End of input is no answer: an error, not a remembered no.
+                    self.assertEqual(answer, "")
                 except ui.SetupError:
                     self.assertTrue(answer and not answer[:32].endswith("\n"))
+                else:
+                    self.assertNotEqual(answer, "")
                 api.first_use.install_with_agreement.assert_not_called()
                 store.write.assert_not_called()
                 api.Installer.assert_not_called()
@@ -510,14 +519,16 @@ class ModelSetupTests(unittest.TestCase):
     def test_a_second_licence_row_repeats_the_first_rows_record(self):
         """The named gap, pinned so it cannot change unnoticed.
 
-        Two packaged assets name two licences. The second row carries its own
+        Three packaged assets name two licences. The second row carries its own
         licence text and the FIRST row's ``record_digest``, so it has no record
-        and no receipt of its own; `first_use` binds `licenses[0]` alone.
+        and no receipt of its own; `first_use` binds `licenses[0]` alone. For
+        qwen-0.8b-no-loop-02 that one record holds both components (Apache-2.0
+        and the CC BY 4.0 weight edit), so its receipt covers both rows.
         """
         catalog = ui._verified_catalog(self.api)
         multiple = [spec for spec in catalog.assets if len(spec.licenses) > 1]
         self.assertEqual(sorted(spec.asset_id for spec in multiple),
-                         ["bitnet-b1.58-2b4t", "vibevoice-asr-bitnet"])
+                         ["bitnet-b1.58-2b4t", "qwen-0.8b-no-loop-02", "vibevoice-asr-bitnet"])
         for spec in multiple:
             self.assertEqual({row.record_digest for row in spec.licenses},
                              {spec.licenses[0].record_digest}, spec.asset_id)

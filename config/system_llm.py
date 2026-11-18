@@ -112,7 +112,7 @@ def installed():
                   if shutil.which('ollama') else
                   'Install and start the local Avatar Ollama backend, then retry kilix wizard finish.')
         raise ValueError('The local Ollama backend at 127.0.0.1:11434 is unavailable. '
-                         + action + ' You can also revisit the System-local LLM page and decline it.') from error
+                         + action + ' To decline it instead, run: kilix wizard answer system-local-llm no') from error
     if len(data) > 1024 * 1024:
         raise ValueError('Local model inventory is too large.')
     try:

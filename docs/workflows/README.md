@@ -23,8 +23,18 @@ For ordinary inspection, `kilix ls --panes` lists pane IDs and `kilix watch --on
 
 ## Choose the Ask model
 
-Model Setup's Local Workflows page offers LFM2 by default, Needle3 as an
-alternate, and grammar without a model download. Older Needle2 jobs have their
+Ask reads requests with its grammar until a command model is installed, and
+Kilix installs none unasked. Model Setup's Local Workflows page offers LFM2 by
+default, Needle3 as an alternate, and grammar without a model download. The
+first `kilix ask` at a terminal that reaches the command route, with nothing
+chosen and LFM2 absent, asks whether to install LFM2. Yes shows the
+model's terms and installs it; no saves the grammar as the selection and is
+not asked again; a no at the model's own install question counts as that no.
+An unanswered or failed offer is made again on a later run. A no on the Local
+Workflows page counts as the same answer. Piped Ask and `kilix ask --yes`
+never ask and never install: with a chosen model that is missing they refuse
+the request and name the command that installs it. `kilix-needle workflows choice` prints the
+backend in use and where it came from. Older Needle2 jobs have their
 own Legacy Needle workflows page. Accepting one model does not verify another.
 
 `kilix-needle workflows status --json` checks the selected Ask backend without

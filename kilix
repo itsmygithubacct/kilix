@@ -40,6 +40,7 @@
 #   ./kilix image FILE        # display images in this terminal (icat options supported)
 #   ./kilix youtube [URL]     # download transcript, music or video
 #   ./kilix video FILE_OR_URL # play a video or direct stream in this terminal
+#   ./kilix video --neuronte FILE_OR_URL # the same, drawn by Neuronte's nets
 #   ./kilix amp [args]         # install/run the pinned Media Player
 #   ./kilix amp --headless     # run its control-socket backend, no windows
 #   ./kilix pdf-view PDF       # install/run the terminal-native PDF viewer
@@ -206,6 +207,10 @@ case "${1:-}" in
       shift
       exec bash "$KILIX_HOME/scripts/build-terminal-mpv.sh" "$@"
     fi
+    if [ "${1:-}" = --neuronte ]; then
+      shift
+      exec python3 -B "$KILIX_HOME/config/neuronte_video.py" "$@"
+    fi
     exec python3 -B "$KILIX_HOME/config/terminal_video.py" "$@" ;;
   desktop-action)
     shift
@@ -216,6 +221,9 @@ case "${1:-}" in
   agent-control)
     shift
     exec python3 "$KILIX_HOME/config/agent_control.py" "$@" ;;
+  agent-message)
+    shift
+    exec python3 -B "$KILIX_HOME/config/agent_message.py" "$@" ;;
   session)
     shift
     exec python3 -B "$KILIX_HOME/kilix-session" "$@" ;;
@@ -270,11 +278,10 @@ usage: kilix [COMMAND] [ARGS...]    (default: new window)
   kilix tab list|close|rename|focus|left|right
   kilix tmux --socket PATH [--json] VERB ...  no args: manager
   kilix desktop-action --help              X11 windows, pointer, keyboard
-TARGET: unique title or pane:ID. Above is the complete syntax; no subcommand --help
-needed first. Ambiguous targets fail; each verb prints what it did.
+TARGET: unique title or pane:ID. This is complete syntax; no subcommand --help needed. Ambiguous targets fail; verbs report results.
   kilix agent-control context|list|dump|send|key   --help
   kilix session --help                     sessions, trust, logs
-  kilix ralph --help                       mailboxes
+  kilix ralph|agent-message --help         mailboxes
   kilix action --request-json -             JSON from stdin
   kilix action capabilities                host features
   kilix windows --host HOST COMMAND         Windows via SSH
@@ -1643,6 +1650,71 @@ _KILIX_VOICE_STT_PUNCTUATION=1
 _KILIX_VOICE_DEVICE_IN=default
 _KILIX_VOICE_DEVICE_OUT=default
 _KILIX_VOICE_HISTORY=0
+# First use may install a model only when this terminal can answer its licence.
+# KILIX_MODEL_AUTO_INSTALL=0 keeps the refusal. Status and doctor never call this.
+_kilix_first_use() {
+  case "${KILIX_MODEL_AUTO_INSTALL:-1}" in
+    0|no|false|off|NO|False|FALSE|OFF) return 1 ;;
+  esac
+  [ -t 0 ] && [ -t 1 ]
+}
+_kilix_piper_ready() {
+  if [ -n "${KILIX_PIPER_TTS:-}" ] && command -v "$KILIX_PIPER_TTS" >/dev/null 2>&1; then
+    return 0
+  fi
+  [ -x "$_KILIX_VOICE_DATA/piper/current/bin/kilix-piper-tts" ] && return 0
+  command -v kilix-piper-tts >/dev/null 2>&1
+}
+_kilix_dictation_model_present() {
+  [ -d "$_KILIX_VOICE_DATA/models/$_KILIX_VOICE_STT_MODEL" ] && return 0
+  case "$_KILIX_VOICE_STT_MODEL" in
+    whisper-small-en) [ -d "$KILIX_DATA_HOME/desktop-apps/assets/faster-whisper-small-en" ] ;;
+    whisper-medium-en) [ -d "$KILIX_DATA_HOME/desktop-apps/assets/faster-whisper-medium-en" ] ;;
+    whistle) [ -d "$KILIX_DATA_HOME/desktop-apps/assets/whistle" ] ;;
+    *) return 1 ;;
+  esac
+}
+_kilix_ensure_dictation_model() {
+  _kilix_read_voice_config
+  _kilix_dictation_model_present && return 0
+  _kilix_first_use || return 0
+  "$_self" stt --install "$_KILIX_VOICE_STT_MODEL" --default "$_KILIX_VOICE_STT_MODEL"
+}
+_kilix_female02_present() {
+  # Cheap presence check. models verify re-hashes, which is the wrong cost
+  # for every speak. The catalog marker is the content-store onnx.
+  local marker="$KILIX_DATA_HOME/desktop-apps/assets/kilix-female-02/kilix-female-02.onnx"
+  [ -f "$marker" ] && [ ! -L "$marker" ] || return 1
+  [ "$(stat -c %s -- "$marker" 2>/dev/null || echo 0)" = 63522221 ]
+}
+_kilix_ensure_speech_voice() {
+  _kilix_read_voice_config
+  [ "$_KILIX_VOICE_TTS_ENGINE" = piper ] || return 0
+  if [ "$_KILIX_VOICE_TTS_VOICE" = kilix-female-02 ]; then
+    if _kilix_piper_ready && _kilix_female02_present; then
+      return 0
+    fi
+    _kilix_first_use || return 0
+    "$_self" tts --install=kilix-female-02
+    return
+  fi
+  _kilix_piper_ready && return 0
+  _kilix_first_use || return 0
+  "$_self" tts --enable-kristin
+}
+# The Ask backend an option or the environment names, or nothing. Without
+# either, Needle resolves it: the saved selection, LFM2 when it is installed,
+# otherwise the grammar (`kilix-needle workflows choice`).
+_kilix_ask_backend() {
+  local previous="" option backend="${KILIX_ASK_COMMANDS_BACKEND:-}"
+  for option in "$@"; do
+    if [ "$previous" = "--commands-backend" ]; then
+      backend="$option"
+    fi
+    previous="$option"
+  done
+  printf '%s\n' "$backend"
+}
 _kilix_read_voice_config() {
   local line
   while IFS= read -r line; do
@@ -2977,6 +3049,11 @@ case "${1:-}" in
     export KILIX_DESKTOP_PROVIDER=land
     export KILIX_DESKTOP_NAME="${KILIX_DESKTOP_NAME:-Kilix Land}"
     set -- desktop "$@" ;;
+  zell|zell-neuronte|kilix-zell)
+    shift
+    export KILIX_DESKTOP_PROVIDER=zell
+    export KILIX_DESKTOP_NAME=zell
+    set -- desktop "$@" ;;
   icewm|kilix-icewm)
     shift
     export KILIX_DESKTOP_PROVIDER=icewm
@@ -3133,51 +3210,10 @@ case "${1:-}" in
         exit 2 ;;
     esac ;;
   default-desktop)
-    # The one place the chosen desktop is written, so every desktop and the
-    # first-boot provisioner set it the same way. Selection used to be a
-    # launch-time environment variable: `kilix cap` ran Cap once and the next
-    # login went back to whatever the image shipped, with no command that meant
-    # "and keep doing that".
     shift
-    _dd_file="$KILIX_USER_CONFIG_DIRECTORY/kilix.env"
-    case "${1:-show}" in
-      show)
-        _dd_current="$(sed -n 's/^KILIX_DESKTOP_PROVIDER=//p' "$_dd_file" \
-          2>/dev/null | tail -1)"
-        echo "${_dd_current:-auto}"
-        exit 0 ;;
-      list)
-        printf '%s\n' auto builtin external xp cap tui land none
-        exit 0 ;;
-      -h|--help|help)
-        echo "usage: $_self default-desktop [show|list|set NAME]"
-        echo "the desktop every later session starts with"
-        exit 0 ;;
-      set)
-        shift
-        _dd_name="${1:-}"
-        case "$_dd_name" in
-          auto|builtin|external|xp|cap|tui|land|none) ;;
-          *)
-            echo "kilix default-desktop: unknown desktop '${_dd_name:-}'" >&2
-            echo "choose one of: auto builtin external xp cap tui land none" >&2
-            exit 2 ;;
-        esac
-        mkdir -p "$KILIX_USER_CONFIG_DIRECTORY" || exit 1
-        [ -f "$_dd_file" ] || : > "$_dd_file"
-        # Rewrite in place: a second assignment further down the file would
-        # win silently and leave the first one there to be read as truth.
-        _dd_tmp="$_dd_file.tmp.$$"
-        grep -v '^KILIX_DESKTOP_PROVIDER=' "$_dd_file" > "$_dd_tmp" 2>/dev/null \
-          || : > "$_dd_tmp"
-        printf 'KILIX_DESKTOP_PROVIDER=%s\n' "$_dd_name" >> "$_dd_tmp"
-        mv -- "$_dd_tmp" "$_dd_file" || exit 1
-        echo "default desktop: $_dd_name"
-        exit 0 ;;
-      *)
-        echo "usage: $_self default-desktop [show|list|set NAME]" >&2
-        exit 2 ;;
-    esac ;;
+    [ $# -gt 0 ] || set -- show
+    exec python3 -B "$KILIX_HOME/config/desktop_choice.py" \
+      --config "$KILIX_USER_CONFIG_DIRECTORY" "$@" ;;
   volume|mixer)
     # The chrome's volume widget resolves this, and so does anyone typing it.
     # Kilix ships a mixer in the shared shell wired to the sink Kilix itself
@@ -3558,6 +3594,9 @@ case "${1:-}" in
     if [ -z "$_tool_needle" ] || [ ! -x "$_tool_needle" ]; then
       _tool_needle="$KILIX_DATA_HOME/desktop-apps/kilix-needle/kilix-needle"
     fi
+    [ -x "$_tool_needle" ] || if _kilix_first_use; then
+      _tool_needle="$(python3 -B "$KILIX_HOME/config/content_app.py" install kilix-needle 2>/dev/null || true)"
+    fi
     [ -x "$_tool_needle" ] || {
       echo "kilix $_tool_verb: Needle is not installed; '$_self app install kilix-needle' installs it" >&2
       exit 1
@@ -3580,14 +3619,22 @@ case "${1:-}" in
     # route and the plan and acts only on a typed yes; an unsure route never
     # offers one. --yes skips that prompt and still does not run a refusal or an
     # unsure route. Voice adds a transcript to correct before routing; it never
-    # removes a confirmation, so it cannot be combined with --yes. Nothing here
-    # installs Needle or a speech runtime.
+    # removes a confirmation, so it cannot be combined with --yes. --repl stays
+    # after each answer, including a refusal, until exit, quit, or EOF. First
+    # use installs Needle when this terminal can answer. No command model is
+    # installed unasked: with none chosen and LFM2 absent the grammar reads the
+    # request and the terminal is asked once whether to install LFM2. A chosen
+    # model that is missing is installed after its licence is shown; the
+    # licence is not accepted here. A question about whether something is
+    # installed does not install it.
     shift
     _ask_voice=0
     _ask_hold=0
     _ask_yes=0
+    _ask_repl=0
+    _ask_model_answers=1
     _ask_options=()
-    _ask_usage="usage: $_self ask [--model lfm2|lfm3|needle3|grammar] [--commands-candidate FILE] [--yes] [--voice] [--hold] [--] [REQUEST...]"
+    _ask_usage="usage: $_self ask [--model lfm2|lfm3|needle3|grammar] [--commands-candidate FILE] [--yes] [--voice] [--repl] [--hold] [--no-model-answers] [--] [REQUEST...]"
     # Every exit, a usage error included, waits for Enter under --hold, so the
     # tab it runs in stays readable. Statuses are 0, 1 and 2 only.
     for _ask_arg in "$@"; do
@@ -3624,25 +3671,74 @@ case "${1:-}" in
           [ -n "${1#*=}" ] || { echo "$_ask_usage" >&2; _ask_close 2; }
           _ask_options+=("$1"); shift ;;
         --yes) _ask_yes=1; shift ;;
+        --repl) _ask_repl=1; shift ;;
+        --no-model-answers) _ask_model_answers=0; shift ;;
+        --model-answers|--model-answers=*)
+          if [ "$1" = --model-answers ]; then _ask_setting="${2:-}"; else _ask_setting="${1#*=}"; fi
+          case "$_ask_setting" in
+            on|off|setup|status)
+              _ask_out=0
+              python3 -B "$KILIX_HOME/config/kilix_model.py" --setting "$_ask_setting" || _ask_out=$?
+              case "$_ask_out" in 0|1) ;; *) _ask_out=1 ;; esac
+              _ask_close "$_ask_out" ;;
+            *) echo "kilix ask: --model-answers must be on, off, setup or status" >&2; _ask_close 2 ;;
+          esac ;;
         --hold) _ask_hold=1; shift ;;
         -h|--help|help)
           echo "$_ask_usage"
           echo "routes one plain request to the Needle job that runs it (panes, apps,"
           echo "agents, files or system), shows the plan, and acts only on a typed yes."
           echo "--yes acts without that prompt. A refusal or an unsure route still does not run."
-          echo "City weather questions fetch current conditions directly, without a model:"
+          echo "Weather questions fetch conditions and forecasts directly, without a model."
+          echo "With no city named, they use the ZIP saved for the Weather widget:"
           echo "  kilix ask \"What's the weather in Tokyo?\""
+          echo "  kilix ask \"will it rain tomorrow?\""
           echo "  kilix weather \"Paris, France\" --unit celsius"
+          echo "Arithmetic is answered directly, without a model:"
+          echo "  kilix ask \"what is three times five?\""
+          echo "  kilix calculator '7x7+95/2'"
+          echo "Time, disk, memory, CPU, temperature, volume, brightness, battery, network, playback, sessions, and how-to questions are answered directly:"
+          echo "  kilix ask \"what time is it?\""
+          echo "  kilix ask \"how much disk is free?\""
+          echo "  kilix ask \"what is the temperature?\""
+          echo "  kilix ask \"what is the volume?\""
+          echo "  kilix ask \"set the volume to 30\""
+          echo "  kilix ask \"set the brightness to 40\""
+          echo "  kilix ask \"what's the battery?\""
+          echo "  kilix ask \"list sessions\""
+          echo "  kilix ask \"how do I list panes?\""
+          echo "  kilix ask \"set an alarm\""
+          echo "Dates, this computer, units, text and chance are answered directly too:"
+          echo "  kilix ask \"how many days until Christmas?\""
+          echo "  kilix ask \"what time is it in Tokyo?\""
+          echo "  kilix ask \"what's using the most memory?\""
+          echo "  kilix ask \"5 miles in km\""
+          echo "  kilix ask \"what does chmod 755 mean?\""
+          echo "  kilix ask \"roll 2d6\""
+          echo "Kilix itself: tabs, panes, agents, apps, games, models and shortcuts:"
+          echo "  kilix ask \"what agents are running?\""
+          echo "  kilix ask \"what's the shortcut for a new tab?\""
+          echo "  kilix ask \"what can you do?\"   lists every kind of question"
           echo "  --yes    act without the yes/no prompt; not with --voice"
           echo "  --voice  dictate the request; the transcript can be edited first"
+          echo "  --repl   stay and ask again until exit, quit, or the end of input"
           echo "  --hold   wait for Enter before returning, so a tab stays readable"
+          echo "  --no-model-answers  do not ask the local model this time"
+          echo "  --model-answers on|off|setup|status  questions nothing else answers go to a"
+          echo "           measured local model (qwen3.5:4b) when the model sizer says it fits;"
+          echo "           its answers are labelled and it never acts. setup registers the model"
+          echo "           installed by: kilix models install qwen3.5-4b"
           echo "  --model  lfm2, lfm3, needle3, or grammar for this request; overrides KILIX_ASK_COMMANDS_BACKEND"
-          echo "           and the saved Ask selection (lfm2 when none is saved)"
+          echo "           and the saved Ask selection. With none: lfm2 when it is installed,"
+          echo "           otherwise grammar. At a terminal without --yes, Ask then asks whether to"
+          echo "           install LFM2; a no is remembered."
           echo "  --commands-candidate FILE  use a local Needle 3 candidate with --model needle3"
+          echo "Ask reads requests with its grammar until a command model is installed. A chosen"
+          echo "model that is missing is installed at a terminal after its licence is shown."
           echo "Install the alternate: kilix-needle install --commands needle3"
           echo "Save the selection: kilix-needle workflows select --model lfm2|lfm3|needle3|grammar"
           echo
-          echo "With no request, it asks for one. Exit status: 0 answered/acted, 1 not answered/acted"
+          echo "With no request, it asks for one. --repl keeps asking. Exit status: 0 answered/acted, 1 not answered/acted"
           echo "(declined, refused or unsure), 2 usage."
           _ask_close 0 ;;
         --) shift; break ;;
@@ -3655,56 +3751,282 @@ case "${1:-}" in
       echo "kilix ask: --yes cannot be combined with --voice" >&2
       _ask_close 2
     fi
-    if [ "$_ask_voice" = 1 ]; then
-      [ -z "$_ask_text" ] || { echo "kilix ask: --voice takes no request text" >&2; _ask_close 2; }
-      [ -t 0 ] || { echo "kilix ask: --voice needs a terminal to confirm in" >&2; _ask_close 2; }
-      echo "Listening: say one request. Silence ends it."
-      # Ctrl-C cancels the request, so it discards the utterance rather than
-      # finishing it: no transcript to wait for, and no decode to hold the lease.
-      if ! _ask_text="$("$_self" dictate --discard-on-interrupt)" \
-        || [ -z "${_ask_text//[[:space:]]/}" ]; then
-        echo "kilix ask: nothing was transcribed." >&2
-        echo "kilix ask: '$_self voice doctor' shows what dictation is missing;" \
-          "'$_self voice whisper' or '$_self stt --install MODEL' installs a runtime." >&2
-        _ask_close 1
-      fi
-      read -r -e -i "$_ask_text" -p "Request (edit, then Enter): " _ask_text || _ask_close 1
-    elif [ -z "${_ask_text//[[:space:]]/}" ] && [ -t 0 ]; then
-      read -r -e -p "Ask Kilix: " _ask_text || _ask_close 1
-    fi
-    [ -n "${_ask_text//[[:space:]]/}" ] || { echo "$_ask_usage" >&2; _ask_close 2; }
-    _ask_weather_status=0
-    python3 -B "$KILIX_HOME/config/kilix_weather.py" --ask "$_ask_text" || _ask_weather_status=$?
-    case "$_ask_weather_status" in
-      0|1|2) _ask_close "$_ask_weather_status" ;;
-      3) ;; # Not a city weather question; preserve the normal Needle route.
-      *) _ask_close 1 ;;
-    esac
-    # The installed app, not `app run`: that pauses on any nonzero status, and a
-    # declined plan is not an error to dismiss. Missing, it is reported, not built.
-    _ask_needle="$(KILIX_APP_AUTO_INSTALL=0 \
-      python3 "$KILIX_HOME/config/content_app.py" install kilix-needle)" || {
-      echo "kilix ask: Needle is not installed; '$_self app install kilix-needle' installs it" >&2
-      _ask_close 1
-    }
-    KILIX_CONTENT_ROOT="$(python3 -B -c '
+    # One request. A direct answer or a Needle result sets _ask_status.
+    # A handler exit of 3 means the request is not that handler's.
+    _ask_dispatch() {
+      _ask_status=0
+      # The direct answers read the request without its courtesy ("hey kilix,
+      # could you ... please"). Needle and Help search get it as it was typed.
+      _ask_plain="$(python3 -B "$KILIX_HOME/config/kilix_asktext.py" "$_ask_text" 2>/dev/null)" \
+        || _ask_plain=""
+      [ -n "${_ask_plain//[[:space:]]/}" ] || _ask_plain="$_ask_text"
+      _ask_weather_status=0
+      python3 -B "$KILIX_HOME/config/kilix_weather.py" --ask "$_ask_plain" || _ask_weather_status=$?
+      case "$_ask_weather_status" in
+        0|1|2) _ask_status="$_ask_weather_status"; return 0 ;;
+        3) ;; # Not a city weather question; preserve the normal Needle route.
+        *) _ask_status=1; return 0 ;;
+      esac
+      # A whole-request sum is exact arithmetic. Opening the calculator is not,
+      # and still goes to Needle with everything else.
+      _ask_calc_status=0
+      python3 -B "$KILIX_HOME/config/kilix_calc.py" --ask "$_ask_plain" || _ask_calc_status=$?
+      case "$_ask_calc_status" in
+        0|1|2) _ask_status="$_ask_calc_status"; return 0 ;;
+        3) ;;
+        *) _ask_status=1; return 0 ;;
+      esac
+      # Time, resources, and the pane list are reads. A how-to question is
+      # documentation search and does not run a command.
+      _ask_fact_status=0
+      python3 -B "$KILIX_HOME/config/kilix_facts.py" --ask "$_ask_plain" || _ask_fact_status=$?
+      case "$_ask_fact_status" in
+        0|1|2) _ask_status="$_ask_fact_status"; return 0 ;;
+        3) ;;
+        4)
+          # The installed binary, not `app run`. Help is a terminal app, and
+          # `run` waits for Enter after any nonzero status, including inside --repl.
+          _ask_help="$(python3 -B "$KILIX_HOME/config/content_app.py" install kilix-help-llm)" || {
+            echo "kilix ask: help is not installed; '$_self app install kilix-help-llm' installs it" >&2
+            _ask_status=1
+            return 0
+          }
+          _ask_status=0
+          "$_ask_help" lookup "$_ask_text" || _ask_status=$?
+          case "$_ask_status" in
+            0|1) ;;
+            *) _ask_status=1 ;;
+          esac
+          return 0 ;;
+        *) _ask_status=1; return 0 ;;
+      esac
+      # A temperature or fan sentence is one sysfs reading. The reader lives in
+      # kilix-telemetry and does not start the sampler.
+      _ask_sensor_status=0
+      python3 -B "$KILIX_HOME/config/kilix_sensors.py" --ask "$_ask_plain" || _ask_sensor_status=$?
+      case "$_ask_sensor_status" in
+        0|1|2) _ask_status="$_ask_sensor_status"; return 0 ;;
+        3) ;;
+        *) _ask_status=1; return 0 ;;
+      esac
+      # Checking or setting the volume uses kilix-volume and does not open the mixer.
+      # Which speakers are on is the same read: the default sink, not a change.
+      _ask_volume_status=0
+      python3 -B "$KILIX_HOME/config/kilix_volume.py" --ask "$_ask_plain" || _ask_volume_status=$?
+      case "$_ask_volume_status" in
+        0|1|2) _ask_status="$_ask_volume_status"; return 0 ;;
+        3) ;;
+        *) _ask_status=1; return 0 ;;
+      esac
+      # Brightness, the network name, the current track, and whether the
+      # microphone is listening. None of these opens a panel, joins a network,
+      # starts the player, or starts dictation.
+      _ask_local_status=0
+      python3 -B "$KILIX_HOME/config/kilix_local.py" --ask "$_ask_plain" || _ask_local_status=$?
+      case "$_ask_local_status" in
+        0|1|2) _ask_status="$_ask_local_status"; return 0 ;;
+        3) ;;
+        *) _ask_status=1; return 0 ;;
+      esac
+      # Setting an alarm opens kilix-alarm. The window is the alarm.
+      _ask_alarm_status=0
+      python3 -B "$KILIX_HOME/config/kilix_alarm.py" --ask "$_ask_plain" || _ask_alarm_status=$?
+      case "$_ask_alarm_status" in
+        0|1|2) _ask_status="$_ask_alarm_status"; return 0 ;;
+        3) ;;
+        *) _ask_status=1; return 0 ;;
+      esac
+      # Dates and other clocks, this computer, worked answers (roots, units,
+      # text, dice), and Ask itself. All are answers with nothing to confirm.
+      for _ask_more in kilix_when kilix_self kilix_machine kilix_tools kilix_about; do
+        [ -f "$KILIX_HOME/config/$_ask_more.py" ] || continue
+        _ask_more_status=0
+        python3 -B "$KILIX_HOME/config/$_ask_more.py" --ask "$_ask_plain" || _ask_more_status=$?
+        case "$_ask_more_status" in
+          0|1|2) _ask_status="$_ask_more_status"; return 0 ;;
+          3) ;;
+          *) _ask_status=1; return 0 ;;
+        esac
+      done
+      # The installed app, not `app run`: that pauses on any nonzero status, and a
+      # declined plan is not an error to dismiss. Missing, first use builds it.
+      _ask_needle="$(python3 -B "$KILIX_HOME/config/content_app.py" install kilix-needle)" || {
+        echo "kilix ask: Needle is not installed; '$_self app install kilix-needle' installs it" >&2
+        _ask_status=1
+        return 0
+      }
+      KILIX_CONTENT_ROOT="$(python3 -B -c '
 import sys
 sys.path.insert(0, sys.argv[1])
 from kilix_sdk._content_runtime import apps_root
 print(apps_root())
 ' "$KILIX_HOME/config")" || {
-      echo "kilix ask: cannot find the Kilix content root" >&2
-      _ask_close 1
+        echo "kilix ask: cannot find the Kilix content root" >&2
+        _ask_status=1
+        return 0
+      }
+      export KILIX_CONTENT_ROOT
+      if _kilix_first_use; then
+        _ask_backend="$(_kilix_ask_backend "${_ask_options[@]}")"
+        if [ -z "$_ask_backend" ]; then
+          _ask_choice="$("$_ask_needle" workflows choice 2>/dev/null </dev/null)" || _ask_choice=""
+          _ask_backend="${_ask_choice%% *}"
+          # Nothing chosen and no LFM2 on this machine: the grammar reads the
+          # request. Offer the model once per run. Yes installs it through its
+          # own licence screen, no is saved as the grammar selection, and a
+          # failed or unanswered offer leaves this request on the grammar and
+          # is made again on a later run.
+          if [ "$_ask_choice" = "grammar not-installed" ]; then
+            _ask_backend=grammar
+            # --yes is the scripted form: it takes no question, so it gets none.
+            if [ "${_ask_offered:-0}" = 0 ] && [ "$_ask_yes" != 1 ]; then
+              _ask_offered=1
+              python3 -B "$KILIX_HOME/config/kilix_ask_offer.py" "$_ask_needle" || true
+            fi
+          fi
+        fi
+        # A model the user chose, or the installed default, is checked here and
+        # installed when missing. Refusing it fails the request: the chosen
+        # model is not silently replaced.
+        case "$_ask_backend" in
+          lfm2) _ask_asset="lfm2-kilix-commands" ;;
+          lfm3) _ask_asset="lfm3-kilix-commands" ;;
+          needle3) _ask_asset="needle3-kilix-commands" ;;
+          *) _ask_asset="" ;;
+        esac
+        # --yes takes no question, so a missing chosen model is not installed
+        # here: Needle refuses the request and names the command, as it does
+        # for piped Ask.
+        if [ -n "$_ask_asset" ] && [ "$_ask_yes" != 1 ]; then
+          python3 -B "$KILIX_HOME/config/content_models.py" ensure "$_ask_asset" || {
+            echo "kilix ask: $_ask_asset was not installed" >&2
+            _ask_status=1
+            return 0
+          }
+        fi
+      fi
+      _ask_status=0
+      _ask_mode=--interactive
+      if [ "$_ask_yes" = 1 ]; then
+        _ask_mode=--yes
+      fi
+      KILIX_APP_ID=kilix-needle KILIX_APP_SURFACE=current \
+        "$_ask_needle" ask "$_ask_mode" "${_ask_options[@]}" -- "$_ask_text" || _ask_status=$?
+      # 3: no job does this and nothing was planned. A measured local model may
+      # answer it, labelled as a model answer; it never acts. Otherwise say where
+      # to look next. Guide passages are not shown here: no gate yet keeps
+      # off-topic ones out.
+      if [ "$_ask_status" = 3 ] && [ "$_ask_model_answers" = 1 ]; then
+        _ask_model_status=0
+        python3 -B "$KILIX_HOME/config/kilix_model.py" --ask "$_ask_text" || _ask_model_status=$?
+        # 0 answered, 1 failed and said why; anything else leaves the miss.
+        case "$_ask_model_status" in
+          0|1) _ask_status="$_ask_model_status" ;;
+        esac
+      fi
+      if [ "$_ask_status" = 3 ]; then
+        case "$_ask_text" in
+          *[\"\\\$\`]*)
+            case "$_ask_text" in
+              *\'*) _ask_search="kilix help-search \"your question\"" ;;
+              *) _ask_search="kilix help-search '$_ask_text'" ;;
+            esac ;;
+          *) _ask_search="kilix help-search \"$_ask_text\"" ;;
+        esac
+        echo "kilix ask: nothing here answers or does this." \
+          "To search the Kilix guides: $_ask_search" >&2
+        echo "kilix ask: kilix ask \"what can you do?\" lists what Ask answers." >&2
+      fi
+      case "$_ask_status" in 0|1|2) ;; *) _ask_status=1 ;; esac
+      return 0
     }
-    export KILIX_CONTENT_ROOT
-    _ask_status=0
-    _ask_mode=--interactive
-    if [ "$_ask_yes" = 1 ]; then
-      _ask_mode=--yes
+    # Ctrl-C cancels the utterance, so it is discarded rather than decoded.
+    _ask_listen() {
+      echo "Listening: say one request. Silence ends it."
+      if ! _ask_text="$("$_self" dictate --discard-on-interrupt)" \
+        || [ -z "${_ask_text//[[:space:]]/}" ]; then
+        # A later voice turn with nothing left to hear is the person leaving.
+        # The first turn still reports what dictation is missing.
+        if [ "$_ask_repl" = 1 ] && [ "${_ask_ran:-0}" = 1 ]; then
+          _ask_close 0
+        fi
+        echo "kilix ask: nothing was transcribed." >&2
+        echo "kilix ask: '$_self voice doctor' shows what dictation is missing;" \
+          "'$_self voice whisper' or '$_self stt --install MODEL' installs a runtime." >&2
+        _ask_close 1
+      fi
+      read -r -e -i "$_ask_text" -p "Request (edit, then Enter): " _ask_text || {
+        if [ "$_ask_repl" = 1 ]; then
+          _ask_repl_eof
+        fi
+        _ask_close 1
+      }
+      return 0
+    }
+    # exit and quit end --repl. Any other whole line is a request.
+    _ask_repl_command() {
+      _ask_word="$_ask_text"
+      _ask_word="${_ask_word#"${_ask_word%%[![:space:]]*}"}"
+      _ask_word="${_ask_word%"${_ask_word##*[![:space:]]}"}"
+      case "$_ask_word" in
+        [Ee][Xx][Ii][Tt]|[Qq][Uu][Ii][Tt]) return 0 ;;
+      esac
+      return 1
+    }
+    # A terminal end is the person leaving. A pipe with no completed request
+    # is usage; a pipe that did answer keeps the last request's status.
+    _ask_repl_eof() {
+      if [ -t 0 ]; then
+        echo >&2
+        _ask_close 0
+      fi
+      if [ "$_ask_ran" = 0 ]; then
+        echo "$_ask_usage" >&2
+        _ask_close 2
+      fi
+      _ask_close "$_ask_status"
+    }
+    if [ "$_ask_repl" = 1 ]; then
+      _ask_ran=0
+      _ask_status=0
+      if [ "$_ask_voice" = 1 ]; then
+        [ -z "$_ask_text" ] || { echo "kilix ask: --voice takes no request text" >&2; _ask_close 2; }
+        [ -t 0 ] || { echo "kilix ask: --voice needs a terminal to confirm in" >&2; _ask_close 2; }
+        while :; do
+          _ask_listen
+          [ -n "${_ask_text//[[:space:]]/}" ] || continue
+          _ask_repl_command && _ask_close 0
+          _ask_dispatch
+          _ask_ran=1
+        done
+      fi
+      if [ -n "${_ask_text//[[:space:]]/}" ]; then
+        _ask_repl_command && _ask_close 0
+        _ask_dispatch
+        _ask_ran=1
+      fi
+      while :; do
+        if [ -t 0 ]; then
+          read -r -e -p "Ask Kilix: " _ask_text || _ask_repl_eof
+        else
+          # read returns nonzero at EOF even when it stored a final partial line.
+          IFS= read -r _ask_text || [ -n "${_ask_text-}" ] || _ask_repl_eof
+        fi
+        [ -n "${_ask_text//[[:space:]]/}" ] || continue
+        _ask_repl_command && _ask_close 0
+        _ask_dispatch
+        _ask_ran=1
+      done
     fi
-    KILIX_APP_ID=kilix-needle KILIX_APP_SURFACE=current \
-      "$_ask_needle" ask "$_ask_mode" "${_ask_options[@]}" -- "$_ask_text" || _ask_status=$?
-    case "$_ask_status" in 0|1|2) ;; *) _ask_status=1 ;; esac
+    if [ "$_ask_voice" = 1 ]; then
+      [ -z "$_ask_text" ] || { echo "kilix ask: --voice takes no request text" >&2; _ask_close 2; }
+      [ -t 0 ] || { echo "kilix ask: --voice needs a terminal to confirm in" >&2; _ask_close 2; }
+      _ask_listen
+    elif [ -z "${_ask_text//[[:space:]]/}" ] && [ -t 0 ]; then
+      read -r -e -p "Ask Kilix: " _ask_text || _ask_close 1
+    fi
+    [ -n "${_ask_text//[[:space:]]/}" ] || { echo "$_ask_usage" >&2; _ask_close 2; }
+    _ask_dispatch
     _ask_close "$_ask_status" ;;
   pdf-view|pdf-viewer)
     # Viewer and converter are separate catalog applications. The viewer
@@ -3832,6 +4154,7 @@ print(apps_root())
       echo "kilix speak: nothing to read aloud" >&2
       exit 1
     }
+    _kilix_ensure_speech_voice || exit $?
     _kilix_ensure_private_directory "$_KILIX_VOICE_SESSION" voice || exit 1
     _KILIX_VOICE_SPAWN=1
     printf '%s' "$_speak_text" | _kilix_voice_request speak || exit $?
@@ -3890,6 +4213,7 @@ print(apps_root())
           exit 2 ;;
       esac
     fi
+    _kilix_ensure_dictation_model || exit $?
     _kilix_ensure_private_directory "$_KILIX_VOICE_SESSION" voice || exit 1
     _KILIX_VOICE_SPAWN=1
     if [ -n "$_dictate_pane" ]; then
@@ -3965,6 +4289,7 @@ raise SystemExit(main(sys.argv[2:]))
           echo "opens the read-aloud settings TUI"
           echo "--enable-kristin: opt in to Piper Kristin as the shared voice"
           echo "--install=kilix-female-02: install Kilix Female-02 epoch 80 from the kilix-voice release"
+          echo "--install=paradee-8m-v1.2: check Paradee. A terminal installs it after its licence when the image copy is absent"
           echo "provider prepare|serve|status: manage the receipt-backed Qwen provider (CPU or CUDA)"
           echo "For documents, use Kilix 95: Start > Programs > Document Reader"
           exit 0 ;;
@@ -3972,6 +4297,69 @@ raise SystemExit(main(sys.argv[2:]))
         *) break ;;
       esac
     done
+    # Defined inside this arm so a test that extracts it can call the check.
+    # Pipes are not a terminal, so the check refuses and installs nothing.
+    _kilix_tts_first_use() {
+      case "${KILIX_MODEL_AUTO_INSTALL:-1}" in
+        0|no|false|off|NO|False|FALSE|OFF) return 1 ;;
+      esac
+      [ -t 0 ] && [ -t 1 ]
+    }
+    # Paradee uses the image files when that directory is present. A missing
+    # image copy is installed by paradee_runtime on a terminal, after its
+    # licence. A greeting must not fetch Piper. The runtime file is absent
+    # in tests that still exercise the Piper path.
+    _paradee_runtime="$KILIX_HOME/config/paradee_runtime.py"
+    _paradee_session=0
+    _paradee_install=0
+    _tts_previous=""
+    for _tts_argument in "$@"; do
+      if [ "$_tts_argument" = --system-voice ]; then
+        _paradee_session=1
+      fi
+      if [ "$_tts_argument" = --install=paradee-8m-v1.2 ] \
+          || { [ "$_tts_previous" = --install ] && [ "$_tts_argument" = paradee-8m-v1.2 ]; }; then
+        _paradee_install=1
+      fi
+      _tts_previous="$_tts_argument"
+    done
+    if [ "$_paradee_session" = 1 ] || [ "$_paradee_install" = 1 ]; then
+      if [ -L "$_paradee_runtime" ]; then
+        echo "kilix tts: Paradee runtime path is a symlink" >&2
+        exit 1
+      fi
+    fi
+    if [ "$_paradee_install" = 1 ]; then
+      if [ ! -f "$_paradee_runtime" ]; then
+        echo "kilix tts: Paradee runtime is missing" >&2
+        exit 1
+      fi
+      /usr/bin/python3 -I -B "$_paradee_runtime" install || exit $?
+      _tts_rest=()
+      _tts_previous=""
+      for _tts_argument in "$@"; do
+        if [ "$_tts_argument" = --install=paradee-8m-v1.2 ]; then
+          _tts_previous=""
+          continue
+        fi
+        if [ "$_tts_previous" = --install ] && [ "$_tts_argument" = paradee-8m-v1.2 ]; then
+          unset '_tts_rest[-1]'
+          _tts_previous=""
+          continue
+        fi
+        _tts_rest+=("$_tts_argument")
+        _tts_previous="$_tts_argument"
+      done
+      if [ "${#_tts_rest[@]}" -eq 0 ]; then
+        exit 0
+      fi
+      set -- "${_tts_rest[@]}"
+    fi
+    if [ "$_paradee_session" = 1 ] && [ -f "$_paradee_runtime" ] && [ ! -L "$_paradee_runtime" ]; then
+      if /usr/bin/python3 -I -B "$_paradee_runtime" engine >/dev/null; then
+        exec /usr/bin/python3 -I -B "$_paradee_runtime" session "$@"
+      fi
+    fi
     # Read-aloud needs neither the recognition library nor an acoustic model, so
     # opening this TUI must not demand pins that only dictation uses.
     _tts_installed="$(
@@ -4056,6 +4444,27 @@ raise SystemExit(main(sys.argv[2:]))
       if [ "$_tts_previous" = --device ]; then _tts_device="$_tts_argument"; fi
       _tts_previous="$_tts_argument"
     done
+    # A separate pass: the device loop above must keep its own previous-argument
+    # state. Only an exact catalog id is ensured. "all" and "invalid" are not.
+    _tts_qwen_weight=""
+    _tts_previous=""
+    for _tts_argument in "$@"; do
+      case "$_tts_argument" in
+        --download-qwen=*) _tts_qwen_weight="${_tts_argument#--download-qwen=}" ;;
+      esac
+      if [ "$_tts_previous" = --download-qwen ]; then
+        _tts_qwen_weight="$_tts_argument"
+      fi
+      _tts_previous="$_tts_argument"
+    done
+    case "$_tts_qwen_weight" in
+      qwen3-tts-0.6b-customvoice|qwen3-tts-0.6b-base|qwen3-tts-1.7b-voicedesign)
+        if _kilix_tts_first_use; then
+          "$_self" models ensure "$_tts_qwen_weight" || exit $?
+          export KILIX_QWEN_MODEL="$_tts_qwen_weight"
+        fi
+        ;;
+    esac
     if [ "$_tts_direct_qwen" = 1 ] && [ "$_tts_interactive" = 1 ]; then
       "$_tts_installed" "$@" --check-session || exit $?
       if [ "$_tts_device" = cuda:0 ]; then
@@ -4153,6 +4562,10 @@ sys.exit(0 if ready else 1)
           fi
           _tts_python="$("$_qwen_installer")" || exit 1
         fi
+        if [ "$_qwen_gpu_tier" = qwen-base-gpu ] && _kilix_tts_first_use; then
+          "$_self" models ensure qwen3-tts-0.6b-base || exit $?
+          export KILIX_QWEN_MODEL=qwen3-tts-0.6b-base
+        fi
         break
       fi
       _tts_previous="$_tts_argument"
@@ -4191,6 +4604,17 @@ sys.exit(0 if ready else 1)
           exit 1
         fi
         _tts_python="$("$_pocket_installer")" || exit 1
+        # The CPU installer builds the interpreter only. Weights stay behind
+        # the catalogue licence. The GGUF id is used only when the call names it.
+        _pocket_asset=pocket-tts-english-python-alba
+        for _pocket_argument in "$@"; do
+          case "$_pocket_argument" in
+            *q8*|*Q8*|*gguf*|*GGUF*) _pocket_asset=pocket-tts-english-q8_0 ;;
+          esac
+        done
+        if _kilix_tts_first_use; then
+          "$_self" models ensure "$_pocket_asset" || exit $?
+        fi
         break
       fi
       _tts_previous="$_tts_argument"
@@ -4371,6 +4795,7 @@ sys.exit(0 if ready else 1)
           echo
           echo "  $_self yamnet            install if needed, print the command"
           echo "  $_self yamnet check      what is present, without changing it"
+          echo "  $_self yamnet run        classify; a terminal installs the model on first use"
           echo "  $_self yamnet install    build the runtime using the verified catalog model"
           echo "  $_self yamnet update     rebuild its pinned runtime"
           echo "  $_self yamnet remove     delete the runtime directory"
@@ -4433,7 +4858,7 @@ sys.exit(0 if ready else 1)
           echo
           echo "  $_self yolox             install if needed, print the command"
           echo "  $_self yolox check       what is present, without changing it"
-          echo "  $_self yolox run         verify and run the installed detector; never install"
+          echo "  $_self yolox run         run the detector; a terminal installs it on first use"
           echo "  $_self yolox install     build the virtualenv, fetch and cut weights"
           echo "  $_self yolox update      bring its packages forward"
           echo "  $_self yolox remove      delete the runtime directory"
@@ -4814,6 +5239,16 @@ sys.exit(0 if ready else 1)
         _status_provider="icewm (X window manager in a pane)"
         _status_provider_dir="$KILIX_ICEWM_DIR"
         ;;
+      zell|zell-neuronte|kilix-zell)
+        _status_provider="zell (RPG Desktop)"
+        _status_provider_dir=""
+        for _zell_dir in "${ZELL_NEURONTE_HOME:-}" \
+            "$GPU_TERMINAL_HOME/kilix/data/desktop-apps/kilix-zell" \
+            "$GPU_TERMINAL_SOURCE_HOME/kilix-apps/kilix-zell" /usr/local/share/kilix-zell; do
+          [ -n "$_zell_dir" ] && [ -x "$_zell_dir/zell-neuronte" ] || continue
+          _status_provider_dir="$_zell_dir"
+          break
+        done ;;
       command|custom|none|off|disabled)
         _status_provider_dir=""
         ;;
@@ -6074,6 +6509,28 @@ _kilix_icewm_ensure() {
   _KILIX_DESKTOP_MODE=executable
 }
 
+_kilix_zell_ensure() {
+  # Match the packaged zell command's runtime search and weights default. Use
+  # the resolved executable for both launch and exact foreground-pane reuse.
+  local app
+  for app in "${ZELL_NEURONTE_HOME:-}" \
+      "$GPU_TERMINAL_HOME/kilix/data/desktop-apps/kilix-zell" \
+      "$GPU_TERMINAL_SOURCE_HOME/kilix-apps/kilix-zell" /usr/local/share/kilix-zell; do
+    [ -n "$app" ] && [ -x "$app/zell-neuronte" ] || continue
+    [ -f "$app/zell-neuronte" ] && [ ! -L "$app/zell-neuronte" ] \
+      || _kilix_desktop_die "zell resolved to an unsafe executable: $app/zell-neuronte"
+    export ZELL_NEURONTE_HOME="$app"
+    if [ -z "${ZELL_NEURONTE_WEIGHTS:-}" ] && [ -f "$app/weights/neuronte-split-v4.nrt" ]; then
+      export ZELL_NEURONTE_WEIGHTS="$app/weights/neuronte-split-v4.nrt"
+    fi
+    _KILIX_DESKTOP_MAIN="$app/zell-neuronte"
+    _KILIX_DESKTOP_MODE=executable
+    export KILIX_DESKTOP_NAME=zell
+    return 0
+  done
+  _kilix_desktop_die "zell (RPG Desktop) is not installed; install the zell runtime or set ZELL_NEURONTE_HOME"
+}
+
 _kilix_desktop_select() {
   _KILIX_DESKTOP_MAIN=
   _KILIX_DESKTOP_MODE=
@@ -6105,6 +6562,8 @@ _kilix_desktop_select() {
       _kilix_land_ensure ;;
     icewm|kilix-icewm)
       _kilix_icewm_ensure ;;
+    zell|zell-neuronte|kilix-zell)
+      _kilix_zell_ensure ;;
     auto)
       _auto_external="$KILIX95_DIR"
       if [ -f "$_auto_external/main.py" ]; then
@@ -6118,7 +6577,7 @@ _kilix_desktop_select() {
         _kilix95_ensure_external
       fi ;;
     *)
-      _kilix_desktop_die "unknown KILIX_DESKTOP_PROVIDER=$_k95_provider (use auto, builtin, external, xp, cap, tui, land, icewm, command, or none)" ;;
+      _kilix_desktop_die "unknown KILIX_DESKTOP_PROVIDER=$_k95_provider (use auto, builtin, external, xp, cap, tui, land, icewm, zell, command, or none)" ;;
   esac
 }
 
@@ -6220,13 +6679,34 @@ fi
 # providers. All use the same host-in-own-tab + wrapped-cleanup story as run.
 if [ "${1:-}" = "desktop" ]; then
   shift
+  _desktop_session_start=0
+  if [ "${1:-}" = --session-start ]; then
+    shift
+    _desktop_session_start=1
+    _desktop_choice="$(python3 -B "$KILIX_HOME/config/desktop_choice.py" \
+      --config "$KILIX_USER_CONFIG_DIRECTORY" choose --session-start)" || exit $?
+    if [ -n "$_desktop_choice" ]; then
+      export KILIX_DESKTOP_PROVIDER="$_desktop_choice"
+      export KILIX_DESKTOP_FLAVOR=95
+      case "$_desktop_choice" in
+        external|auto) export KILIX_DESKTOP_NAME="Kilix 95" ;;
+        xp) export KILIX_DESKTOP_NAME="Kilix XP" KILIX_DESKTOP_FLAVOR=xp ;;
+        icewm) export KILIX_DESKTOP_NAME=IceWM ;;
+        tui) export KILIX_DESKTOP_NAME="Kilix TUI" ;;
+        cap) export KILIX_DESKTOP_NAME="Kilix Cap" ;;
+        land) export KILIX_DESKTOP_NAME="Kilix Land" ;;
+        zell) export KILIX_DESKTOP_NAME=zell ;;
+        *) export KILIX_DESKTOP_NAME=desktop ;;
+      esac
+    fi
+  fi
   # The provider can be named right on the command line — `kilix desktop 95`,
   # `kilix desktop kilix-cap`, `kilix desktop kilix-tui`, or
   # `kilix desktop kilix-land` — overriding the environment and settings
   # selection for this launch only. Anything not in this table passes through
   # to the provider as an ordinary argument.
   case "${1:-}" in
-    95|kilix-95)
+    95|kilix95|kilix-95)
       # Asking for 95 by name asks for its 95 look; bare `external` below
       # keeps whatever flavor is configured.
       export KILIX_DESKTOP_PROVIDER=external
@@ -6256,11 +6736,18 @@ if [ "${1:-}" = "desktop" ]; then
       export KILIX_DESKTOP_PROVIDER=icewm
       export KILIX_DESKTOP_NAME="${KILIX_DESKTOP_NAME:-Kilix IceWM}"
       shift ;;
+    zell|zell-neuronte|kilix-zell)
+      export KILIX_DESKTOP_PROVIDER=zell
+      export KILIX_DESKTOP_NAME=zell
+      shift ;;
     builtin|none)
       export KILIX_DESKTOP_PROVIDER="$1"
       shift ;;
   esac
   _kilix_desktop_select
+  if [ "$_desktop_session_start" = 1 ] && [ "$_KILIX_DESKTOP_MODE" = none ]; then
+    exec "${SHELL:-/bin/bash}" -l
+  fi
   if [ "$_KILIX_DESKTOP_MODE" = python ] \
        && [ "$_KILIX_DESKTOP_MAIN" != "$KILIX_HOME/desktop/main.py" ]; then
     if [ -z "${KILIX_STATE_LIBRARY:-}" ]; then
@@ -6328,6 +6815,8 @@ print(ids[0] if ids else "")' 2>/dev/null)"
       --env "KILIX_DESKTOP_COMMAND=${KILIX_DESKTOP_COMMAND:-}" \
       --env "KILIX_DESKTOP_NAME=${KILIX_DESKTOP_NAME:-}" \
       --env "KILIX_DESKTOP_FLAVOR=${KILIX_DESKTOP_FLAVOR:-}" \
+      --env "ZELL_NEURONTE_HOME=${ZELL_NEURONTE_HOME:-}" \
+      --env "ZELL_NEURONTE_WEIGHTS=${ZELL_NEURONTE_WEIGHTS:-}" \
       --env "KILIX95_AUTO_INSTALL=${KILIX95_AUTO_INSTALL:-}" \
       --env "KILIX95_DIR=$KILIX95_DIR" \
       --env "KILIX95_REPO=${KILIX95_REPO:-}" \
@@ -6557,9 +7046,14 @@ fi
 # A native calculator overlay for an ordinary terminal pane. It deliberately
 # rides the same ask kitten used by Kilix's Copy/Paste context window, so its
 # theme, mouse protocol, resizing and terminal restoration stay in one place.
-if [ "${1:-}" = calculator ] && [ -x "$KITTEN" ]; then
+if [ "${1:-}" = calculator ]; then
   shift
-  exec "$KITTEN" ask --type=calculator --title=Calculator "$@"
+  if [ $# -gt 0 ]; then
+    exec python3 -B "$KILIX_HOME/config/kilix_calc.py" "$@"
+  fi
+  if [ -x "$KITTEN" ]; then
+    exec "$KITTEN" ask --type=calculator --title=Calculator
+  fi
 fi
 
 # Kittens (kilix icat foo.png, kilix diff a b, …) run via the sibling kitten

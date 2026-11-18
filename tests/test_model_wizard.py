@@ -102,6 +102,21 @@ class WizardTests(unittest.TestCase):
         activate.assert_not_called()
         self.assertEqual(list(Path(self.directory.name).iterdir()), [])
 
+    def test_unavailable_backend_names_a_command_that_declines_the_page(self):
+        # The desktop window cannot reopen an answered page; this command can.
+        opener = Mock()
+        opener.open.side_effect = ConnectionRefusedError(111, 'Connection refused')
+        with patch.object(system_llm.urllib.request, 'build_opener', return_value=opener), \
+                patch.object(system_llm.shutil, 'which', return_value=None):
+            with self.assertRaises(ValueError) as caught:
+                system_llm.installed()
+        self.assertIn('run: kilix wizard answer system-local-llm no', str(caught.exception))
+        self.assets.extend(system_llm.catalog())
+        wizard.apply('system-local-llm', ['qwen3:8b'], 'yes')
+        self.assertEqual(wizard.main(['answer', 'system-local-llm', 'no']), 0)
+        self.assertEqual(wizard.answers()['system-local-llm'],
+                         {'answer': 'no', 'models': [], 'phase': 'complete'})
+
     def test_activation_failure_does_not_block_a_later_category(self):
         wizard.apply('vision', ['yolox_s'], 'yes')
         wizard.apply('audio', ['encodec-24khz-stateful'], 'yes')
@@ -134,10 +149,11 @@ class WizardTests(unittest.TestCase):
             with self.assertRaises(wizard.SetupIncomplete): wizard.finish()
         self.assertEqual(wizard.pending()['vision']['models'], ['yolox_nano'])
 
-    def test_speech_installs_female02_without_a_prompt_and_offers_other_voices(self):
+    def test_speech_installs_paradee_without_a_prompt_and_offers_other_voices(self):
         assets = [asset('piper-en-us-kristin-medium', 'kilix-piper-tts'),
                   asset('kilix-female-02', 'kilix-piper-tts'),
-                  asset('qwen3-tts-0.6b-customvoice', 'kilix-qwen-tts')]
+                  asset('qwen3-tts-0.6b-customvoice', 'kilix-qwen-tts'),
+                  asset(wizard.PARADEE_ID, 'paradee')]
         with patch.object(wizard, 'catalog', return_value=assets), \
                 patch.object(wizard, 'sizing', return_value=({}, 'piper-en-us-kristin-medium', 'sizer')), \
                 patch.object(wizard, 'run_command') as listed:
@@ -147,17 +163,13 @@ class WizardTests(unittest.TestCase):
         self.assertTrue(page['optional'])
         self.assertIsNone(page['default'])
         offered = [row['id'] for row in page['models']]
-        self.assertEqual(offered, ['piper-en-us-kristin-medium', 'qwen3-tts-0.6b-customvoice',
-                                   wizard.PARADEE_ID])
-        self.assertNotIn('kilix-female-02', offered)
-        paradee = page['models'][-1]
-        self.assertEqual(paradee['voices'], wizard.PARADEE_VOICES)
-        self.assertEqual(paradee['download_bytes'], wizard.PARADEE_BYTES)
-        self.assertEqual(paradee['sha256'], wizard.PARADEE_SHA256)
-        self.assertEqual(paradee['url'], wizard.PARADEE_URL)
-        self.assertEqual(paradee['availability'], 'catalogue-unpinned')
-        self.assertIn('Installed default: kilix-female-02', page['recommendation'])
+        self.assertEqual(offered, ['piper-en-us-kristin-medium', 'kilix-female-02',
+                                   'qwen3-tts-0.6b-customvoice'])
+        self.assertNotIn(wizard.PARADEE_ID, offered)
+        self.assertIn('Installed default: paradee af_heart', page['recommendation'])
         self.assertIn('not pre-checked', page['recommendation'])
+        self.assertIn(wizard.PARADEE_SHA256, page['recommendation'])
+        self.assertNotIn('catalogue-unpinned', page['recommendation'])
         self.assertEqual(wizard.group(assets[1]), 'speech')
         self.assertEqual(wizard.group({'id': wizard.PARADEE_ID}), 'speech')
         def refused(_prompt):
@@ -166,21 +178,83 @@ class WizardTests(unittest.TestCase):
                 patch.object(wizard, 'run_command') as run:
             self.assertEqual(wizard.interactive(input_fn=refused), 0)
         self.assertEqual([item.args for item in run.call_args_list], [
-            ('tts', '--install=kilix-female-02'),
-            ('tts', '--set', 'engine=piper', '--set', 'voice=kilix-female-02')])
+            ('tts', '--install=' + wizard.PARADEE_ID),
+            ('tts', '--install=kilix-female-02')])
+        joined = ' '.join(' '.join(item.args) for item in run.call_args_list)
+        self.assertNotIn('engine=paradee', joined)
         self.assertNotIn('speech', wizard.answers())
-        self.assertEqual(wizard.default_voice_record()['voice'], 'kilix-female-02')
-        self.assertEqual(wizard.default_voice_record()['engine'], 'piper')
+        self.assertEqual(wizard.default_voice_record()['voice'], 'af_heart')
+        self.assertEqual(wizard.default_voice_record()['engine'], 'paradee')
         with patch.object(wizard, 'catalog', return_value=assets), \
                 patch.object(wizard, 'run_command') as again:
             wizard.finish()
         again.assert_not_called()
 
-    def test_optional_speech_keeps_female02_and_does_not_prepare_kristin(self):
-        assets = [asset('piper-en-us-kristin-medium', 'kilix-piper-tts'),
-                  asset('kilix-female-02', 'kilix-piper-tts')]
+    def test_spacy_front_end_comes_with_the_image_and_is_never_a_page(self):
+        assets = [asset('kilix-female-02', 'kilix-piper-tts'),
+                  asset(wizard.PARADEE_ID, 'paradee'),
+                  asset(wizard.PARADEE_FRONTEND_ID, 'spacy')]
+        self.assertEqual(wizard.group(assets[2]), 'speech')
         with patch.object(wizard, 'catalog', return_value=assets):
-            wizard.apply('speech', ['piper-en-us-kristin-medium', wizard.PARADEE_ID], 'yes')
+            listed = wizard.pages(True, measure=False)
+            self.assertEqual([page['id'] for page in listed], ['speech'])
+            self.assertEqual([row['id'] for row in listed[0]['models']], ['kilix-female-02'])
+            with self.assertRaises(ValueError):
+                wizard.apply('spacy', [wizard.PARADEE_FRONTEND_ID], 'yes')
+        # RC8 offered a "spacy" page, so a machine can hold a planned answer for it.
+        wizard.record('spacy', 'yes', [wizard.PARADEE_FRONTEND_ID], 'planned')
+        with patch.object(wizard, 'catalog', return_value=assets), \
+                patch('wizard_licenses.consent_and_install',
+                      return_value=(set(), set())) as batch, \
+                patch.object(wizard, 'run_command'):
+            wizard.finish()
+        batch.assert_not_called()
+        self.assertEqual(wizard.answers()['spacy']['phase'], 'complete')
+
+    def test_page_ocr_comes_with_the_image_and_is_never_a_page_row(self):
+        import call_models
+        self.assertEqual(wizard.PDF_OCR_MODELS, call_models.PDF_TEXT)
+        assets = [asset('granite-docling-258m', 'kilix-pdf-conversion')] + [
+            asset(name, 'kilix-pdf-conversion') for name in wizard.PDF_OCR_MODELS]
+        self.assertEqual({wizard.group(row) for row in assets}, {'documents'})
+        with patch.object(wizard, 'catalog', return_value=assets):
+            listed = wizard.pages(True, measure=False)
+            self.assertEqual([page['id'] for page in listed], ['documents'])
+            self.assertEqual([row['id'] for row in listed[0]['models']], ['granite-docling-258m'])
+            with self.assertRaises(ValueError):
+                wizard.apply('documents', ['pp-ocrv6-small-det'], 'yes')
+        # A documents answer saved before RC9 can name the OCR models.
+        wizard.record('documents', 'yes', list(wizard.PDF_OCR_MODELS), 'planned')
+        only_ocr = [row for row in assets if row['id'] in wizard.PDF_OCR_MODELS]
+        with patch.object(wizard, 'catalog', return_value=only_ocr), \
+                patch('wizard_licenses.consent_and_install',
+                      return_value=(set(), set())) as batch, \
+                patch.object(wizard, 'run_command'):
+            wizard.finish()
+        batch.assert_not_called()
+        self.assertEqual(wizard.answers()['documents']['phase'], 'complete')
+
+    def test_saved_voice_selection_is_left_unchanged(self):
+        assets = [asset('kilix-female-02', 'kilix-piper-tts'),
+                  asset(wizard.PARADEE_ID, 'paradee')]
+        wizard.atomic_json(wizard.state_root() / 'system-voice-default.json', {
+            'schema': 'kilix.system-voice-default/v1',
+            'engine': 'piper',
+            'voice': 'kilix-female-02',
+        })
+        with patch.object(wizard, 'catalog', return_value=assets), \
+                patch.object(wizard, 'run_command') as run:
+            self.assertFalse(wizard.ensure_default_system_voice())
+        run.assert_not_called()
+        self.assertEqual(wizard.default_voice_record()['engine'], 'piper')
+        self.assertEqual(wizard.default_voice_record()['voice'], 'kilix-female-02')
+
+    def test_optional_speech_keeps_paradee_and_does_not_prepare_kristin(self):
+        assets = [asset('piper-en-us-kristin-medium', 'kilix-piper-tts'),
+                  asset('kilix-female-02', 'kilix-piper-tts'),
+                  asset(wizard.PARADEE_ID, 'paradee')]
+        with patch.object(wizard, 'catalog', return_value=assets):
+            wizard.apply('speech', ['piper-en-us-kristin-medium'], 'yes')
             with patch('wizard_licenses.consent_and_install',
                        return_value=({'piper-en-us-kristin-medium'}, set())) as batch, \
                     patch.object(wizard, 'run_command') as run:
@@ -188,50 +262,126 @@ class WizardTests(unittest.TestCase):
         self.assertEqual(batch.call_args.args[0], ['piper-en-us-kristin-medium'])
         self.assertNotIn(wizard.PARADEE_ID, batch.call_args.args[0])
         self.assertEqual([item.args for item in run.call_args_list], [
-            ('tts', '--install=kilix-female-02'),
-            ('tts', '--set', 'engine=piper', '--set', 'voice=kilix-female-02')])
+            ('tts', '--install=' + wizard.PARADEE_ID),
+            ('tts', '--install=kilix-female-02')])
         joined = ' '.join(' '.join(item.args) for item in run.call_args_list)
         self.assertNotIn('--prepare-system-voice', joined)
         self.assertNotIn('--enable-kristin', joined)
         self.assertNotIn('--install=piper-en-us-kristin-medium', joined)
+        self.assertNotIn('engine=paradee', joined)
         self.assertEqual(wizard.answers()['speech']['models'],
-                         ['piper-en-us-kristin-medium', wizard.PARADEE_ID])
-        self.assertEqual(wizard.default_voice_record()['voice'], 'kilix-female-02')
+                         ['piper-en-us-kristin-medium'])
+        self.assertEqual(wizard.default_voice_record()['voice'], 'af_heart')
+        self.assertEqual(wizard.default_voice_record()['engine'], 'paradee')
         with patch.object(wizard, 'catalog', return_value=assets), \
                 patch.object(wizard, 'run_command') as run:
             wizard.apply('speech', [], 'no')
         run.assert_not_called()
-        self.assertEqual(wizard.default_voice_record()['engine'], 'piper')
-        self.assertEqual(wizard.default_voice_record()['voice'], 'kilix-female-02')
+        self.assertEqual(wizard.default_voice_record()['engine'], 'paradee')
+        self.assertEqual(wizard.default_voice_record()['voice'], 'af_heart')
 
-    def test_catalogued_paradee_is_optional_and_installed_only_when_chosen(self):
-        paradee = asset(wizard.PARADEE_ID, 'paradee')
+    def test_choosing_female02_selects_piper_after_paradee_is_installed(self):
         assets = [asset('piper-en-us-kristin-medium', 'kilix-piper-tts'),
                   asset('kilix-female-02', 'kilix-piper-tts'),
-                  paradee]
+                  asset(wizard.PARADEE_ID, 'paradee')]
         with patch.object(wizard, 'catalog', return_value=assets), \
                 patch.object(wizard, 'sizing', return_value=({}, None, 'sizer')):
             page = wizard.pages(measure=True)[0]
         self.assertTrue(page['optional'])
         self.assertIsNone(page['default'])
         self.assertEqual([row['id'] for row in page['models']],
-                         ['piper-en-us-kristin-medium', wizard.PARADEE_ID])
-        self.assertNotIn('availability', page['models'][-1])
-        self.assertIn('downloaded only when chosen', page['recommendation'])
-        self.assertNotIn('no licence receipt', page['recommendation'])
-        self.assertIn('Installed default: kilix-female-02', page['recommendation'])
+                         ['piper-en-us-kristin-medium', 'kilix-female-02'])
+        self.assertIn('Installed default: paradee af_heart', page['recommendation'])
+        self.assertNotIn('downloaded only when chosen', page['recommendation'])
         with patch.object(wizard, 'catalog', return_value=assets):
-            wizard.apply('speech', ['piper-en-us-kristin-medium', wizard.PARADEE_ID], 'yes')
+            wizard.apply('speech', ['kilix-female-02'], 'yes')
             with patch('wizard_licenses.consent_and_install',
-                       return_value=({'piper-en-us-kristin-medium', wizard.PARADEE_ID}, set())) as batch, \
+                       return_value=({'kilix-female-02'}, set())) as batch, \
                     patch.object(wizard, 'run_command') as run:
                 wizard.finish()
-        self.assertEqual(batch.call_args.args[0],
-                         ['piper-en-us-kristin-medium', wizard.PARADEE_ID])
+        self.assertEqual(batch.call_args.args[0], ['kilix-female-02'])
         self.assertEqual([item.args for item in run.call_args_list], [
+            ('tts', '--install=' + wizard.PARADEE_ID),
+            ('tts', '--install=kilix-female-02'),
             ('tts', '--install=kilix-female-02'),
             ('tts', '--set', 'engine=piper', '--set', 'voice=kilix-female-02')])
+        self.assertEqual(wizard.default_voice_record()['engine'], 'piper')
         self.assertEqual(wizard.default_voice_record()['voice'], 'kilix-female-02')
+
+    def test_a_pending_speech_choice_from_before_paradee_keeps_paradee(self):
+        # An upgraded machine switched to Female-02 from a 0.2.2-era pending page.
+        assets = [asset('kilix-female-02', 'kilix-piper-tts'), asset(wizard.PARADEE_ID, 'paradee')]
+        self.assets.extend(assets)
+        wizard.atomic_json(wizard.state_root() / 'model-wizard.json', {'schema': wizard.SCHEMA, 'answers': {
+            'speech': {'answer': 'yes', 'models': ['kilix-female-02'], 'phase': 'planned'},
+            'vision': {'answer': 'yes', 'models': ['yolox_s'], 'phase': 'planned'}}})
+        wizard.atomic_json(wizard.state_root() / 'system-voice-default.json', {
+            'schema': 'kilix.system-voice-default/v1', 'engine': 'paradee', 'voice': 'af_heart'})
+        self.assertEqual(set(wizard.pending()), {'vision'})
+        with patch('wizard_licenses.consent_and_install', return_value=({'yolox_s'}, set())) as batch, \
+                patch.object(wizard, 'run_command') as run:
+            wizard.finish()
+        self.assertEqual(batch.call_args.args[0], ['yolox_s'])
+        run.assert_not_called()
+        self.assertEqual(wizard.default_voice_record()['engine'], 'paradee')
+        self.assertNotIn('speech', wizard.answers())
+        self.assertIn('speech', [page['id'] for page in wizard.pages(measure=False)])
+
+    def test_the_speech_default_verifies_paradee_without_first_use(self):
+        assets = [asset(wizard.PARADEE_ID, 'paradee')]
+        previous = os.environ.get('KILIX_MODEL_AUTO_INSTALL')
+        seen = []
+
+        def run(*args):
+            seen.append((args, os.environ.get('KILIX_MODEL_AUTO_INSTALL')))
+            if args == ('tts', '--install=kilix-female-02'):
+                raise ValueError('piper is offline')
+
+        with patch.object(wizard, 'catalog', return_value=assets), \
+                patch.object(wizard, 'run_command', side_effect=run):
+            self.assertTrue(wizard.ensure_default_system_voice())
+        self.assertEqual(seen[0], (('tts', '--install=' + wizard.PARADEE_ID), '0'))
+        self.assertEqual(seen[1][1], previous)
+        self.assertEqual(os.environ.get('KILIX_MODEL_AUTO_INSTALL'), previous)
+        self.assertEqual(wizard.default_voice_record()['engine'], 'paradee')
+
+    def test_female02_install_failure_still_selects_paradee(self):
+        assets = [asset(wizard.PARADEE_ID, 'paradee'),
+                  asset('kilix-female-02', 'kilix-piper-tts')]
+        def run(*args):
+            if args == ('tts', '--install=kilix-female-02'):
+                raise ValueError('piper is offline')
+        with patch.object(wizard, 'catalog', return_value=assets), \
+                patch.object(wizard, 'run_command', side_effect=run) as calls:
+            self.assertTrue(wizard.ensure_default_system_voice())
+        self.assertEqual([item.args for item in calls.call_args_list], [
+            ('tts', '--install=' + wizard.PARADEE_ID),
+            ('tts', '--install=kilix-female-02')])
+        self.assertEqual(wizard.default_voice_record()['engine'], 'paradee')
+        self.assertEqual(wizard.default_voice_record()['voice'], 'af_heart')
+
+    def test_kilix_llm_gguf_is_offered_and_installed_from_the_chat_page(self):
+        no_loop = asset('qwen-0.8b-no-loop-02', 'kilix-llm')
+        bonsai = asset('bonsai-8b', 'kilix-bonsai')
+        self.assertEqual(wizard.group(no_loop), 'chat')
+        # Only Ollama tiers are system-local LLMs; this is a Content asset.
+        self.assertNotIn(no_loop['id'], system_llm.MODELS)
+        with patch.object(wizard, 'catalog', return_value=[bonsai, no_loop]):
+            page = wizard.pages(measure=False)[0]
+            self.assertEqual(page['id'], 'chat')
+            self.assertIn('Kilix LLM', page['title'])
+            self.assertEqual([row['id'] for row in page['models']],
+                             ['bonsai-8b', 'qwen-0.8b-no-loop-02'])
+            self.assertEqual(page['default'], 'bonsai-8b')
+            wizard.apply('chat', ['qwen-0.8b-no-loop-02'], 'yes')
+            with patch('wizard_licenses.consent_and_install',
+                       return_value=({'qwen-0.8b-no-loop-02'}, set())) as batch, \
+                    patch.object(wizard, 'run_command') as run:
+                wizard.finish()
+        self.assertEqual(batch.call_args.args[0], ['qwen-0.8b-no-loop-02'])
+        run.assert_not_called()
+        self.assertEqual(wizard.answers()['chat'],
+                         {'answer': 'yes', 'models': ['qwen-0.8b-no-loop-02'], 'phase': 'complete'})
 
     def test_all_types_and_defaults_without_writes(self):
         pages = wizard.pages(measure=False)
@@ -255,6 +405,61 @@ class WizardTests(unittest.TestCase):
             wizard.apply('audio', [], 'no')
         run.assert_not_called()
         self.assertNotIn('audio', [p['id'] for p in wizard.pages(measure=False)])
+
+    def run_dictation_finish(self, reply):
+        self.assets.append(asset('faster-whisper-small-en'))
+        wizard.apply('dictation', ['faster-whisper-small-en'], 'yes')
+        wizard.apply('vision', ['yolox_s'], 'yes')
+        events = []
+        def answer(question):
+            events.append(('question', question))
+            return reply
+        def downloads(selected, *, input_fn, before_install):
+            before_install(set(selected))
+            events.append(('downloads',))
+            return set(selected), set()
+        with patch('wizard_licenses.consent_and_install', side_effect=downloads), \
+                patch.object(wizard, 'run_command', side_effect=lambda *args: events.append(('run',) + args)), \
+                patch.object(wizard, 'ensure_default_system_voice', return_value=False), \
+                patch.object(wizard.sys, 'stdout', io.StringIO()):
+            wizard.finish(input_fn=answer)
+        return events
+
+    def test_microphone_question_comes_before_any_download(self):
+        # Asked after the downloads, it left the setup terminal waiting unattended.
+        events = self.run_dictation_finish('y')
+        questions = [event for event in events if event[0] == 'question']
+        self.assertEqual(len(questions), 1)
+        self.assertIn('Allow microphone use for dictation?', questions[0][1])
+        self.assertLess(events.index(questions[0]), events.index(('downloads',)))
+        self.assertLess(events.index(('run', 'stt', '--install', 'whisper-small-en')),
+                        events.index(('run', 'stt', '--grant-consent')))
+        self.assertEqual(wizard.pending(), {})
+        self.assertEqual(wizard.answers()['dictation']['answer'], 'yes')
+
+    def test_early_microphone_no_still_installs_but_does_not_enable_dictation(self):
+        events = self.run_dictation_finish('n')
+        self.assertEqual(sum(event[0] == 'question' for event in events), 1)
+        self.assertIn(('run', 'stt', '--install', 'whisper-small-en'), events)
+        self.assertNotIn(('run', 'stt', '--grant-consent'), events)
+        self.assertEqual(wizard.answers()['dictation']['answer'], 'no')
+        self.assertEqual(wizard.answers()['vision']['phase'], 'complete')
+
+    def test_no_microphone_question_when_the_dictation_licence_is_refused(self):
+        self.assets.append(asset('faster-whisper-small-en'))
+        wizard.apply('dictation', ['faster-whisper-small-en'], 'yes')
+        def refused(selected, *, input_fn, before_install):
+            before_install(set())
+            return set(), set(selected)
+        asked = []
+        with patch('wizard_licenses.consent_and_install', side_effect=refused), \
+                patch.object(wizard, 'run_command') as run, \
+                patch.object(wizard, 'ensure_default_system_voice', return_value=False), \
+                patch.object(wizard.sys, 'stdout', io.StringIO()):
+            wizard.finish(input_fn=lambda question: asked.append(question) or 'y')
+        self.assertEqual(asked, [])
+        run.assert_not_called()
+        self.assertEqual(wizard.answers()['dictation']['refused'], ['faster-whisper-small-en'])
 
     def test_failure_keeps_saved_choices_pending_for_final_retry(self):
         wizard.apply('image', [self.assets[-1]['id']], 'yes')

@@ -29,6 +29,7 @@ import argparse
 from contextlib import ExitStack
 import importlib
 import inspect
+import io
 import json
 import math
 import os
@@ -50,6 +51,141 @@ _SAFE_CONTROLS = "\n\t"
 
 class SetupError(RuntimeError):
     """An explicit setup request could not safely proceed."""
+
+
+class Unanswered(SetupError):
+    """Input ended at a question. That is not an answer, so nothing is remembered."""
+
+
+class NoReceipt(SetupError):
+    """No stored receipt covers this exact model and manifest."""
+
+
+class Damaged(SetupError):
+    """Something is installed at the asset's path and does not verify."""
+
+
+class Declined(SetupError):
+    """The user answered no at the install question or at the licence."""
+
+
+# `ensure` exits with this when the user said no, so a caller can tell a
+# remembered answer from a failure such as no network (exit 1).
+DECLINED_STATUS = 3
+
+
+def _model_auto_install_enabled() -> bool:
+    value = os.environ.get("KILIX_MODEL_AUTO_INSTALL")
+    if value is None:
+        return True
+    return value.strip().casefold() not in {"0", "no", "false", "off"}
+
+
+def _terminal(source, output) -> bool:
+    try:
+        return bool(source.isatty() and output.isatty() and hasattr(output, "buffer"))
+    except (AttributeError, OSError, ValueError):
+        return False
+
+
+class _InstallRequest:
+    """The fields ``_install`` reads. First use has no ``--from`` directory."""
+
+    def __init__(self, root: str, timeout: float = 900.0):
+        self.root = root
+        self.timeout = timeout
+        self.supplied = None
+
+
+def _installed_directory(spec, root: str) -> str | None:
+    """The asset's install directory when anything exists at that path."""
+    name = getattr(spec, "install_name", None)
+    if not name:
+        return None
+    path = os.path.join(root, "assets", name)
+    return path if os.path.lexists(path) else None
+
+
+def _install_error():
+    """The Content installer's error type; SetupError when it cannot be named."""
+    try:
+        return importlib.import_module("kilix_content.install").InstallError
+    except (ImportError, AttributeError):
+        return SetupError
+
+
+def ensure_installed(asset_id: str, *, root: str | None = None,
+                     source=None, output=None, errors=None,
+                     timeout: float = 900.0) -> None:
+    """Install one catalog model on first use, or raise SetupError.
+
+    A covering receipt returns immediately. Otherwise a terminal runs the same
+    install as ``kilix models install``: the licence screen, the y/N question,
+    and the typed accept. Nothing here answers either question. No terminal,
+    or ``KILIX_MODEL_AUTO_INSTALL=0``, raises the verify refusal. Declining
+    the licence raises SetupError and writes no receipt.
+    """
+    source = sys.stdin if source is None else source
+    output = sys.stdout if output is None else output
+    errors = sys.stderr if errors is None else errors
+    api = _api()
+    lic = _license()
+    spec = _verified_catalog(api).require_asset(asset_id)
+    root = apps_root() if root is None else root
+    try:
+        _verify(api, lic, spec, root, io.StringIO())
+        return
+    except NoReceipt:
+        # The terms have not been shown for this delivery. Files may already be
+        # there, intact: the install below shows the terms and the installer
+        # verifies what is on disk before it records anything.
+        pass
+    except (SetupError, OSError, _install_error()) as error:
+        # Not installed. That includes a receipt whose files never arrived: a
+        # download that failed or was interrupted after the terms were shown
+        # leaves one, and the install below then fetches or reuses the files.
+        # A covered directory that is there and does not verify is a different thing.
+        # The installer never replaces one, so the install question could only
+        # end in a refusal; say what is wrong and how to clear it instead.
+        present = _installed_directory(spec, root)
+        if present is not None:
+            raise Damaged(
+                f"the installed {spec.asset_id} does not verify ({str(error)[:1024]}). "
+                f"Nothing replaces an install that fails verification: remove {present} "
+                f"and run kilix models install {spec.asset_id}") from error
+    if not _model_auto_install_enabled() or not _terminal(source, output):
+        raise SetupError("no stored receipt covers this exact model and manifest; "
+                         f"run kilix models install {spec.asset_id} in a terminal")
+    status = _install(api, lic, spec, _InstallRequest(root, timeout), source, output, errors)
+    if status != 0:
+        # Declined at the install question or at a licence that takes an
+        # agreement. Which one is on the screen; this does not guess.
+        raise Declined(f"{spec.asset_id} was not installed")
+    _verify(api, lic, spec, root, io.StringIO())
+
+
+def _earlier_delivery(api, spec, root: str) -> str | None:
+    """An installed earlier delivery the Content installer would reuse, if any.
+
+    The installer builds a new delivery of a versioned model from the previous
+    one on disk, verifying every file, and downloads only when it cannot. This
+    asks it which directory that would be, for wording only. A component
+    without the feature, or any failure, means "expect a download".
+    """
+    try:
+        find = getattr(api.Installer(root), "earlier_delivery", None)
+        return find(spec) if callable(find) else None
+    except (OSError, ValueError, RuntimeError):
+        return None
+
+
+def first_use_facts(asset_id: str, *, root: str | None = None) -> dict:
+    """What a caller's own first-use question may say. Read-only."""
+    api = _api()
+    spec = _verified_catalog(api).require_asset(asset_id)
+    return {"label": spec.label, "version": spec.version,
+            "download_bytes": spec.download_bytes, "installed_bytes": spec.installed_bytes,
+            "reuse": _earlier_delivery(api, spec, apps_root() if root is None else root)}
 
 
 def _api():
@@ -256,6 +392,8 @@ def _read_line(prompt: str, limit: int, source, output) -> str:
     output.write(prompt)
     output.flush()
     answer = source.readline(limit)
+    if not answer:
+        raise Unanswered("input ended before the question was answered; nothing was installed")
     if answer and not answer.endswith("\n"):
         raise SetupError("confirmation was incomplete or too long")
     return answer.strip()
@@ -339,6 +477,11 @@ def _install(api, lic, spec, args, source, output, errors) -> int:
         if supplied is None:
             output.write("Setup may download the pinned model files and run the declared "
                          "local conversion.\n")
+            if getattr(spec, "storage", "") == "versioned":
+                # Said without looking: nothing is opened or created before the answer.
+                output.write("If an earlier delivery of this model is installed, its files "
+                             "are verified against the pinned manifest and reused instead "
+                             "of downloaded. The earlier copy is kept.\n")
         else:
             # A notice licence (a "record" decision) takes no agreement, so its
             # receipt records the notice, never an acceptance.
@@ -405,8 +548,8 @@ def _verify(api, lic, spec, root: str, output) -> int:
 
     if api.first_use.needs_agreement(
             spec, records=lic.load_determined_records(), store=ReadOnlyStore()):
-        raise SetupError("no stored receipt covers this exact model and manifest; "
-                         f"run kilix models install {spec.asset_id} in a terminal")
+        raise NoReceipt("no stored receipt covers this exact model and manifest; "
+                        f"run kilix models install {spec.asset_id} in a terminal")
     supplied = importlib.import_module("kilix_content.install").SuppliedFile
     for item in spec.files:
         relative = f"assets/{spec.install_name}/{item.path}"
@@ -435,6 +578,12 @@ def _parser() -> argparse.ArgumentParser:
     install.add_argument("--timeout", type=_timeout, default=900.0,
                          help="per ordinary acquisition/build command ceiling, 1..3600 seconds (default 900)")
     install.add_argument("--from", dest="supplied", metavar="DIR", help=_FROM_HELP)
+    ensure = commands.add_parser(
+        "ensure",
+        help="on first use, install one model when a terminal can answer its licence")
+    ensure.add_argument("asset")
+    ensure.add_argument("--timeout", type=_timeout, default=900.0,
+                        help="per ordinary acquisition/build command ceiling, 1..3600 seconds (default 900)")
     return parser
 
 
@@ -459,10 +608,21 @@ def main(argv=None) -> int:
             return 0
         if args.command == "verify":
             return _verify(api, lic, spec, args.root, sys.stdout)
+        if args.command == "ensure":
+            # ensure_installed has verified the receipt and every declared file
+            # (it raises otherwise), so success prints nothing: this runs before
+            # every Ask, and the verification record is for `models verify`.
+            ensure_installed(args.asset, root=args.root, timeout=args.timeout)
+            return 0
         return _install(api, lic, spec, args, sys.stdin, sys.stdout, sys.stderr)
     except KeyboardInterrupt:
         print("kilix models: interrupted; no completed installation is claimed", file=sys.stderr)
         return 130
+    except Declined as error:
+        _json({"error": f"SetupError: {str(error)[:4096]}",
+               "note": "No acceptance receipt is written without an affirmative answer."},
+              sys.stderr)
+        return DECLINED_STATUS
     except Exception as error:
         # Catalog, install and download failures are typed ValueError/RuntimeError
         # subclasses; the licence authority's are not, so its base is asked for

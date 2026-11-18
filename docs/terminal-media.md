@@ -63,17 +63,18 @@ For a shell left in mouse-reporting mode by an older launcher, run:
 printf '\033[?1000l\033[?1002l\033[?1003l\033[?1006l\033[?1016l\033[?25h'
 ```
 
-## Plebian-OS 0.2.2 named player
+## Plebian-OS named player
 
-The next-release integration prefers the separately packaged `kilix-mpv` on
-PATH, then the earlier private patched player, then supported system mpv.
-The 0.2.2 stack package closure must install the verified `kilix-mpv` Debian
-package; `kilix video` discovers it without changing `/usr/bin/mpv`. The package
-is built from the maintained kilix-mpv fork and distributed with exact source
-and checksums. Inclusion is required for Plebian-OS 0.2.2 after the frozen RC6
-candidate. The `0.40.0+kilix.4` controls and transport fixes are the current
-candidate; publication, coordinated OS integration, and target-image playback
-acceptance remain pending.
+Kilix prefers the separately packaged `kilix-mpv` on PATH, then the earlier
+private patched player, then supported system mpv. The Plebian-OS stack package
+closure installs the verified `kilix-mpv` Debian package; `kilix video`
+discovers it without changing `/usr/bin/mpv`. The package is built from the
+maintained kilix-mpv fork and distributed with exact source and checksums.
+Plebian-OS 0.2.2 introduced it. Plebian-OS 0.2.3 selects `0.40.0+kilix.9` for
+Debian 13 amd64. That player converts decoded YUV to RGB while scaling to the
+terminal size, corrects chroma offsets on RGB and unsubsampled YUV axes, and
+gives queued frames a bounded acknowledgment wait during shutdown. The sections
+below describe the features each earlier player version added.
 
 The `0.40.0+kilix.2` player adds adaptive lossless inline compression, synchronized
 image presentation, SGR mouse input and redraws while paused after a resize.

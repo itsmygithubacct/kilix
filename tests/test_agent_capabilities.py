@@ -2,21 +2,36 @@
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import tempfile
 import time
+import tracemalloc
 import unittest
 from unittest import mock
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "config"))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "config"))
 import agent_capabilities as capabilities
+import agent_control as control
+
+OPERATIONS = ["agent.deliver", "agent.launch", "operation.status", "pane.open"]
+
+
+def whole_text_labels(raw):
+    """The former whole-file reading, kept as an oracle for the streaming scan."""
+    labels = set()
+    for dispatch in re.findall(r"^\s*([^()\s]+)\)", raw.decode("utf-8"), re.M):
+        labels.update(dispatch.split("|"))
+    return labels & capabilities.COMMAND_NAMES
 
 
 class DiscoveryTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
-        self.root = Path(self.temporary.name)
+        # Resolved: results carry resolved roots even when TMPDIR is a symlink.
+        self.root = Path(self.temporary.name).resolve()
         self.source = self.root / "source"
         self.source.mkdir()
         self.provenance = self.root / "versions.env"
@@ -43,9 +58,14 @@ class DiscoveryTests(unittest.TestCase):
     def test_missing_components_and_provenance_are_explicit(self):
         result = self.discover()
         self.assertEqual(result["kilix"]["invoked_source"]["status"], "missing")
+        self.assertEqual(result["kilix"]["invoked_source"]["version_status"], "missing")
         self.assertEqual(result["kilix"]["path_selected"]["status"], "missing")
+        for state in ("dispatch_status", "version_status", "revision_status"):
+            self.assertEqual(result["kilix"]["path_selected"][state], "not_inspected")
         self.assertEqual(result["needle"]["status"], "missing")
         self.assertEqual(result["os_provenance"]["status"], "missing")
+        self.assertEqual((result["limits"]["launcher_bytes"], result["limits"]["launcher_line_chars"]),
+                         (capabilities.MAX_LAUNCHER_BYTES, capabilities.MAX_LAUNCHER_LINE))
 
     def test_invoked_tree_and_path_install_are_separate(self):
         self.tree(self.source)
@@ -104,8 +124,155 @@ class DiscoveryTests(unittest.TestCase):
         os.mkfifo(self.source / "kilix")
         self.assertEqual(self.discover()["kilix"]["invoked_source"]["status"], "not_regular")
         (self.source / "kilix").unlink()
+        # Above the per-file bound the launcher is still streamed in full...
         (self.source / "kilix").write_bytes(b"x" * (capabilities.MAX_FILE_BYTES + 1))
-        self.assertEqual(self.discover()["kilix"]["invoked_source"]["status"], "too_large")
+        selected = self.discover()["kilix"]["invoked_source"]
+        self.assertEqual((selected["status"], selected["dispatch_status"]), ("observed", "observed"))
+        # ...and above its own bound the scan is refused without reading it.
+        os.truncate(self.source / "kilix", capabilities.MAX_LAUNCHER_BYTES + 1)
+        with mock.patch.object(capabilities.os, "read", side_effect=AssertionError("read")):
+            selected = self.discover()["kilix"]["invoked_source"]
+        self.assertEqual((selected["status"], selected["dispatch_status"]), ("observed", "too_large"))
+        self.assertEqual(selected["launcher_bytes"], capabilities.MAX_LAUNCHER_BYTES + 1)
+
+    def assert_independent_facts(self, selected):
+        """Facts read beside the launcher, never from it."""
+        self.assertEqual((selected["version"], selected["version_status"]), ("0.2.2", "observed"))
+        self.assertEqual((selected["revision"], selected["revision_status"]), ("a" * 40, "observed"))
+        backend = selected["action_backend"]
+        self.assertEqual((backend["status"], backend["schema"]), ("observed", "kilix.actions/v1"))
+        self.assertEqual(backend["path"], str(self.source / "config/agent_actions.py"))
+        self.assertEqual(list(backend["operations"]), ["pane.open"])
+
+    def test_repository_launcher_is_scanned_in_full(self):
+        # RC9's 313,682-byte launcher outgrew the 256 KiB per-file bound, which
+        # erased its version, revision and actions. Its pane/tab dispatch sits
+        # past that offset, so reading only the first 256 KiB would miss them.
+        launcher = ROOT / "kilix"
+        raw = launcher.read_bytes()
+        self.assertLessEqual(len(raw), capabilities.MAX_LAUNCHER_BYTES, "raise the bound deliberately")
+        with mock.patch.object(capabilities, "_git_revision", return_value=("c" * 40, "observed")) as git:
+            selected = capabilities._component(ROOT)
+        git.assert_called_once_with(ROOT)
+        self.assertEqual((selected["status"], selected["dispatch_status"]), ("observed", "observed"))
+        self.assertEqual(selected["launcher_bytes"], len(raw))
+        self.assertEqual(whole_text_labels(raw), capabilities.COMMAND_NAMES)
+        self.assertEqual(selected["commands_present"], list(capabilities.COMMAND_FILES))
+        self.assertEqual(selected["version"], (ROOT / "VERSION").read_text(encoding="utf-8").strip())
+        self.assertEqual((selected["revision"], selected["revision_status"]), ("c" * 40, "observed"))
+        backend = selected["action_backend"]
+        self.assertEqual((backend["status"], backend["path"]), ("observed", str(ROOT / "config/agent_actions.py")))
+        self.assertEqual(sorted(backend["operations"]), OPERATIONS)
+        # Static metadata must equal what the runtime accepts; nothing is imported.
+        self.assertEqual(backend["operations"]["agent.launch"]["reasoning_effort"]["values"],
+                         list(control.REASONING_EFFORTS))
+        # Block boundaries, including ones inside multibyte UTF-8, change nothing.
+        for block in (1, 7, 4093):
+            with self.subTest(block=block), mock.patch.object(capabilities, "LAUNCHER_BLOCK", block), \
+                    mock.patch.object(capabilities, "LAUNCHER_TIMEOUT", 60.0):
+                self.assertEqual(capabilities._launcher(launcher, True)["labels"], capabilities.COMMAND_NAMES)
+
+    def test_repository_dispatch_survives_beyond_the_file_bound(self):
+        # The real dispatch table, moved wholly past the per-file bound.
+        self.tree(self.source)
+        padding = b"".join(b"# padding line %06d\n" % i for i in range(capabilities.MAX_FILE_BYTES // 20 + 1))
+        raw = b"#!/usr/bin/env bash\n" + padding + (ROOT / "kilix").read_bytes()
+        (self.source / "kilix").write_bytes(raw)
+        self.assertEqual(capabilities._read(self.source / "kilix"), (None, "too_large"))
+        selected = self.discover()["kilix"]["invoked_source"]
+        self.assertEqual(selected["dispatch_status"], "observed")
+        # Only commands whose implementations exist in this tree are reported.
+        self.assertEqual(selected["commands_present"], ["pane", "tab", "action"])
+        self.assert_independent_facts(selected)
+
+    def test_launcher_refusals_keep_independent_metadata(self):
+        labels = b"#!/bin/sh\npane)\ntab)\naction)\n"
+        cases = {"missing": None,
+                 "fifo": lambda path: os.mkfifo(path),
+                 "directory": lambda path: path.mkdir(),
+                 "device": lambda path: path.symlink_to(os.devnull),
+                 "too_large": lambda path: (path.write_bytes(labels),
+                                            os.truncate(path, capabilities.MAX_LAUNCHER_BYTES + 1)),
+                 "invalid_utf8": lambda path: path.write_bytes(labels + b"\xff\n"),
+                 "truncated_utf8": lambda path: path.write_bytes(labels + b"\xe2\x82"),
+                 "timeout": lambda path: path.write_bytes(labels)}
+        expected = {"missing": ("missing", "not_inspected"), "fifo": ("not_regular", "not_inspected"),
+                    "directory": ("not_regular", "not_inspected"), "device": ("not_regular", "not_inspected"),
+                    "too_large": ("observed", "too_large"), "invalid_utf8": ("observed", "unreadable"),
+                    "truncated_utf8": ("observed", "unreadable"), "timeout": ("observed", "timeout")}
+        if os.geteuid() != 0:
+            cases["no_permission"] = lambda path: (path.write_bytes(labels), path.chmod(0))
+            expected["no_permission"] = ("unreadable", "not_inspected")
+        for name, make in cases.items():
+            with self.subTest(launcher=name):
+                self.source = self.root / ("case-" + name)
+                self.tree(self.source)
+                (self.source / "kilix").unlink()
+                if make:
+                    make(self.source / "kilix")
+                # The deadline passes only after some labels were already seen.
+                ticks = iter([0.0] * 4 + [capabilities.LAUNCHER_TIMEOUT + 1] * 64)
+                clock = (mock.Mock(monotonic=lambda: next(ticks)) if name == "timeout"
+                         else capabilities.time)
+                with mock.patch.object(capabilities, "time", clock), \
+                        mock.patch.object(capabilities, "LAUNCHER_BLOCK", 8):
+                    result = self.discover()
+                selected = result["kilix"]["invoked_source"]
+                self.assertEqual((selected["status"], selected["dispatch_status"]), expected[name])
+                # A refused or incomplete scan never reports a partial command list.
+                self.assertEqual(selected["commands_present"], [])
+                self.assert_independent_facts(selected)
+                self.assertLessEqual(len(json.dumps(result, ensure_ascii=True).encode()),
+                                     capabilities.MAX_RESPONSE_BYTES)
+
+    def test_scan_bound_holds_even_when_the_size_is_misreported(self):
+        # Some regular files (procfs, growing files) report a size below their content.
+        path = self.root / "growing"
+        path.write_bytes(b"pane)\n")
+        os.truncate(path, capabilities.MAX_LAUNCHER_BYTES + 1)
+        real_read, consumed = os.read, []
+
+        def counting_read(fd, size):
+            data = real_read(fd, size)
+            consumed.append(len(data))
+            return data
+
+        fd = os.open(path, os.O_RDONLY)
+        try:
+            with mock.patch.object(capabilities.os, "read", counting_read):
+                self.assertEqual(capabilities._dispatch(fd, 0), ("too_large", frozenset()))
+        finally:
+            os.close(fd)
+        self.assertEqual(sum(consumed), capabilities.MAX_LAUNCHER_BYTES + 1)
+
+    def test_huge_and_degenerate_lines_stream_in_bounded_memory_and_time(self):
+        self.tree(self.source)
+        launcher = self.source / "kilix"
+        # One line filling the whole bound: only its head is ever retained.
+        launcher.write_bytes(b"pane)")
+        os.truncate(launcher, capabilities.MAX_LAUNCHER_BYTES)
+        tracemalloc.start()
+        try:
+            record = capabilities._launcher(launcher, True)
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+        self.assertEqual((record["dispatch_status"], record["labels"]), ("observed", {"pane"}))
+        self.assertLess(peak, capabilities.MAX_LAUNCHER_BYTES // 4)
+        # A label counts only within the first MAX_LAUNCHER_LINE characters of
+        # its line, wherever block boundaries fall; an overlong line does not
+        # hide the next one.
+        launcher.write_text("#!/bin/sh\n" + " " * capabilities.MAX_LAUNCHER_LINE + "tab)\n" +
+                            "action)" + "x" * (3 * capabilities.MAX_LAUNCHER_LINE) + "\npane)\n")
+        for block in (5, 4096, capabilities.LAUNCHER_BLOCK):
+            with self.subTest(block=block), mock.patch.object(capabilities, "LAUNCHER_BLOCK", block):
+                self.assertEqual(capabilities._launcher(launcher, True)["labels"], {"action", "pane"})
+        # Blank-line floods are linear; with a newline-crossing `^\s*` this
+        # input runs for minutes.
+        launcher.write_bytes(b" \n" * (capabilities.MAX_FILE_BYTES * 4) + b"tab)\n")
+        with mock.patch.object(capabilities, "LAUNCHER_TIMEOUT", 30.0):
+            record = capabilities._launcher(launcher, True)
+        self.assertEqual((record["dispatch_status"], record["labels"]), ("observed", {"tab"}))
 
     def test_response_has_hard_byte_bound(self):
         self.tree(self.source)
@@ -140,6 +307,23 @@ class DiscoveryTests(unittest.TestCase):
         result = self.discover()["needle"]
         self.assertTrue(result["action_adapter_present"])
         self.assertTrue(result["action_mcp_tools_present"])
+
+    def test_needle_facts_do_not_depend_on_its_launcher_text(self):
+        needle = self.root / "needle"
+        needle.mkdir()
+        for name, text in {"needle_cli.py": "from action_cli import main as action_main\n",
+                           "mcp_server.py": "name = 'kilix_action_plan'\n",
+                           "action_cli.py": "# no model\n", "action_backend.py": "# transport\n"}.items():
+            (needle / name).write_text(text)
+        launcher = needle / "kilix-needle"
+        launcher.write_bytes(b"\xff" * (capabilities.MAX_FILE_BYTES + 1))  # neither small nor text
+        launcher.chmod(0o755)
+        (self.bin / "kilix-needle").symlink_to(launcher)
+        result = self.discover()["needle"]
+        self.assertEqual((result["status"], result["dispatch_status"]), ("observed", "not_inspected"))
+        self.assertTrue(result["action_adapter_present"])
+        self.assertTrue(result["action_mcp_tools_present"])
+        self.assertEqual(result["version_status"], "unresolved")
 
     def test_unicode_provenance_cannot_exceed_response_bound(self):
         self.tree(self.source)

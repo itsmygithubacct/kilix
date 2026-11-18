@@ -26,7 +26,8 @@ class BatchTests(unittest.TestCase):
         self.installer = Mock()
         self.questions = []
 
-    def run_batch(self, names, decisions, llm_entries=None, *, finish=False, acquire=None):
+    def run_batch(self, names, decisions, llm_entries=None, *, finish=False, acquire=None,
+                  llm_error=None):
         decisions = iter(decisions)
         def answer(question):
             self.questions.append(question)
@@ -36,14 +37,18 @@ class BatchTests(unittest.TestCase):
                 patch.object(self.lic.ReceiptStore, 'shared', return_value=self.store), \
                 patch.object(self.lic, 'observe_capture', return_value=self.lic.observe_capture(interactive=True)), \
                 patch.object(self.api, 'Installer', return_value=self.installer), \
-                patch.object(system_llm, 'license_texts', return_value=llm_entries or {}), \
+                patch.object(system_llm, 'license_texts', return_value=llm_entries or {},
+                             side_effect=llm_error), \
                 patch.object(system_llm, 'acquire', side_effect=acquire), \
                 patch.object(model_wizard, 'state_root', return_value=Path(self.directory.name)), \
                 contextlib.redirect_stdout(output):
-            result = (model_wizard.finish(input_fn=answer) if finish else
-                      batch.consent_and_install(names, input_fn=answer))
-            output.flush()
-            self.output = output.buffer.getvalue()
+            try:
+                result = (model_wizard.finish(input_fn=answer) if finish else
+                          batch.consent_and_install(names, input_fn=answer))
+            finally:
+                # Failing batches raise; their output is still evidence.
+                output.flush()
+                self.output = output.buffer.getvalue()
         return result
 
     def test_standard_licenses_install_without_prompt_and_keep_documents(self):
@@ -87,6 +92,42 @@ class BatchTests(unittest.TestCase):
         self.installer.ensure_upstream_asset.assert_called_once()
         self.assertEqual(self.installer.ensure_upstream_asset.call_args.args[0].asset_id, 'yolox_s')
 
+    def test_kilix_llm_gguf_is_acquired_through_content_not_ollama(self):
+        # Its licence records come from the catalog asset, as for kilix-female-02.
+        name = 'qwen-0.8b-no-loop-02'
+        spec = Mock(asset_id=name, licenses=(), manifest_digest='0' * 64,
+                    source_mode='upstream-files')
+        catalog = Mock()
+        catalog.require_asset.return_value = spec
+        with patch.object(cm, '_verified_catalog', return_value=catalog):
+            self.assertEqual(self.run_batch([name], [], acquire=AssertionError('Ollama path')),
+                             ({name}, set()))
+        catalog.require_asset.assert_called_once_with(name)
+        self.installer.ensure_upstream_asset.assert_called_once()
+        self.assertIs(self.installer.ensure_upstream_asset.call_args.args[0], spec)
+
+    def test_selected_catalog_installs_the_no_loop_gguf_under_standard_policy(self):
+        # The selected kilix-content's own record: Apache-2.0 and CC BY 4.0
+        # rows, both approved by the owner, with no typed answer, as for
+        # kilix-female-02.
+        name = 'qwen-0.8b-no-loop-02'
+        spec = cm._verified_catalog(self.api).require_asset(name)
+        self.assertEqual((spec.provider, spec.source_mode), ('kilix-llm', 'upstream-files'))
+        self.assertEqual(sorted(item.license_id for item in spec.licenses),
+                         ['apache-2.0', 'cc-by-4.0'])
+        self.assertEqual(self.run_batch([name], []), ({name}, set()))
+        self.assertEqual(self.questions, [])
+        self.installer.ensure_upstream_asset.assert_called_once()
+        self.assertEqual(self.installer.ensure_upstream_asset.call_args.args[0].asset_id, name)
+        import json
+        receipts = [json.loads(path.read_text()) for path in self.store.root.glob('*.json')]
+        self.assertTrue(receipts)
+        for receipt in receipts:
+            self.assertIn('standard-license-policy-v1', receipt['context']['statement_digests'])
+        index = json.loads((Path(self.directory.name) / 'license-documents' / (name + '.json')).read_text())
+        labels = {document['label'] for document in index['documents']}
+        self.assertTrue({'licence:apache-2.0', 'licence:cc-by-4.0'} <= labels, labels)
+
     def test_download_failure_names_model_and_preserves_the_original_cause(self):
         self.installer.ensure_upstream_asset.side_effect = FileNotFoundError('/missing/converter')
         with self.assertRaisesRegex(RuntimeError, 'Could not install yolox_s') as caught:
@@ -106,6 +147,67 @@ class BatchTests(unittest.TestCase):
         self.assertIs(caught.exception.__cause__, cause)
         self.assertEqual([call.args[0].asset_id for call in self.installer.ensure_upstream_asset.call_args_list],
                          ['yolox_s', 'yamnet'])
+
+    def test_unreachable_llm_registry_fails_that_model_and_installs_the_rest(self):
+        # Offline, the Ollama manifest fetch raised before any question and
+        # cancelled every other selected model.
+        cause = OSError('Temporary failure in name resolution')
+        acquire = Mock()
+        with self.assertRaises(batch.InstallFailures) as caught:
+            self.run_batch(['yolox_s', 'qwen3:8b', 'yamnet'], [], llm_error=cause, acquire=acquire)
+        self.assertEqual(caught.exception.installed, {'yolox_s', 'yamnet'})
+        self.assertEqual(caught.exception.declined, set())
+        self.assertEqual(caught.exception.failures, {'qwen3:8b': cause})
+        acquire.assert_not_called()
+        self.assertIn('Could not read the licence for qwen3:8b: Temporary failure in name resolution',
+                      self.output.decode())
+
+    def test_remaining_questions_come_after_licences_and_before_downloads(self):
+        # The dictation microphone question: never for a refused model, and
+        # never after the downloads, where an unattended setup waited for it.
+        events = []
+        self.installer.ensure_upstream_asset.side_effect = (
+            lambda spec, **_kwargs: events.append(('download', spec.asset_id)))
+        def before_install(allowed):
+            events.append(('questions', frozenset(allowed), len(self.questions)))
+        decisions = iter(['no'])
+        def answer(question):
+            self.questions.append(question)
+            return next(decisions)
+        output = io.TextIOWrapper(io.BytesIO(), encoding='utf-8', write_through=True)
+        with patch.object(cm, '_api', return_value=self.api), \
+                patch.object(self.lic.ReceiptStore, 'shared', return_value=self.store), \
+                patch.object(self.lic, 'observe_capture', return_value=self.lic.observe_capture(interactive=True)), \
+                patch.object(self.api, 'Installer', return_value=self.installer), \
+                patch.object(model_wizard, 'state_root', return_value=Path(self.directory.name)), \
+                contextlib.redirect_stdout(output):
+            result = batch.consent_and_install(['faster-whisper-small-en', 'yolox_s', 'encodec-24khz-stateful'],
+                                               input_fn=answer, before_install=before_install)
+        allowed = {'faster-whisper-small-en', 'yolox_s'}
+        self.assertEqual(result, (allowed, {'encodec-24khz-stateful'}))
+        self.assertEqual(len(self.questions), 1)
+        self.assertEqual(events[0], ('questions', frozenset(allowed), 1))
+        self.assertEqual(sorted(event[1] for event in events[1:]), sorted(allowed))
+
+    def test_each_installed_model_reports_its_outcome(self):
+        # Sixteen bare "Installing X…" lines could not show which had finished.
+        self.run_batch(['yolox_s', 'yamnet'], [])
+        text = self.output.decode()
+        for name in ('yolox_s', 'yamnet'):
+            self.assertIn(f'Installed {name}.', text)
+        self.assertLess(text.index('Installed yolox_s.'), text.index('Installing yamnet'))
+
+    def test_failed_model_reason_is_printed_before_later_models(self):
+        # The owner's setup terminal stopped at a later question with only
+        # "Could not install qwen3:8b" on screen; the reason must come first.
+        cause = ValueError('The local Ollama backend at 127.0.0.1:11434 is unavailable.')
+        with self.assertRaises(batch.InstallFailures):
+            self.run_batch(['qwen3:8b', 'yamnet'], ['yes'],
+                           {'qwen3:8b': [('apache-2.0', b'Original terms')]}, acquire=cause)
+        text = self.output.decode()
+        reason = 'Could not install qwen3:8b: The local Ollama backend at 127.0.0.1:11434 is unavailable.'
+        self.assertIn(reason, text)
+        self.assertLess(text.index(reason), text.index('Installing yamnet'))
 
     def test_partial_finish_retry_skips_completed_pages_and_reuses_exact_licences(self):
         name = 'qwen3:8b'
@@ -203,6 +305,88 @@ class BatchTests(unittest.TestCase):
         run.assert_not_called()
         self.installer.resolve_converter.assert_not_called()
         self.installer.ensure_upstream_asset.assert_not_called()
+        self.assertEqual(list(self.store.root.glob('*.json')), [])
+
+
+    def receipts(self):
+        import json
+        return [json.loads(path.read_text()) for path in sorted(self.store.root.glob('*.json'))]
+
+    def test_notice_licence_asks_an_install_question_that_claims_no_agreement(self):
+        # lfm2-kilix-commands is a notice ("record") decision, as in the launcher:
+        # the terms are shown, only the install is confirmed, no acceptance is asked.
+        name = 'lfm2-kilix-commands'
+        record = cm._record(self.lic.load_determined_records(),
+                            cm._verified_catalog(self.api).require_asset(name).licenses[0].record_digest)
+        self.assertEqual(record.expected_decision, 'record')
+        self.assertEqual(self.run_batch([name], ['yes']), ({name}, set()))
+        self.assertEqual(self.questions, ['Install ' + name + '? [y/N] '])
+        self.assertNotIn('Do you accept', ''.join(self.questions))
+        shown = self.output.decode()
+        self.assertIn('Licence: lfm-open-license-1.0', shown)
+        self.assertIn('Applies to: ' + name, shown)
+        self.assertIn('it claims no agreement', shown)
+        self.assertNotIn('Do you accept', shown)
+        self.installer.ensure_upstream_asset.assert_called_once()
+        receipts = self.receipts()
+        self.assertEqual(len(receipts), 1)
+        self.assertEqual(receipts[0]['decision'], 'record')
+
+    def test_declining_a_notice_licence_installs_nothing_and_records_nothing(self):
+        name = 'lfm2-kilix-commands'
+        for answer in ('no', ''):
+            self.questions.clear()
+            self.assertEqual(self.run_batch([name], [answer]), (set(), {name}))
+            self.assertEqual(self.questions, ['Install ' + name + '? [y/N] '])
+        self.installer.ensure_upstream_asset.assert_not_called()
+        self.assertEqual(list(self.store.root.glob('*.json')), [])
+
+    def test_accept_type_record_keeps_the_acceptance_question(self):
+        name = 'lfm3-kilix-commands'
+        record = cm._record(self.lic.load_determined_records(),
+                            cm._verified_catalog(self.api).require_asset(name).licenses[0].record_digest)
+        self.assertEqual(record.expected_decision, 'accept')
+        self.assertEqual(self.run_batch([name], ['no']), (set(), {name}))
+        self.assertEqual(self.questions, [
+            'Do you accept lfm-open-license-1.0 and the conditions shown for ' + name + '? [y/N] '])
+        self.installer.ensure_upstream_asset.assert_not_called()
+        self.assertEqual(list(self.store.root.glob('*.json')), [])
+        self.questions.clear()
+        self.assertEqual(self.run_batch([name], ['yes']), ({name}, set()))
+        self.assertEqual(len(self.questions), 1)
+        self.assertEqual([item['decision'] for item in self.receipts()], ['accept'])
+
+    def test_a_group_with_a_notice_and_an_accept_record_still_asks_for_acceptance(self):
+        # Both models carry lfm-open-license-1.0, so they share one group; the
+        # accept-type record must not be weakened by the notice-type one.
+        names = ['lfm2-kilix-commands', 'lfm3-kilix-commands']
+        self.assertEqual(self.run_batch(names, ['no']), (set(), set(names)))
+        self.assertEqual(self.questions, [
+            'Do you accept lfm-open-license-1.0 and the conditions shown for ' + ', '.join(names) + '? [y/N] '])
+        self.assertNotIn('claims no agreement', self.output.decode())
+        self.assertEqual(list(self.store.root.glob('*.json')), [])
+        self.questions.clear()
+        self.assertEqual(self.run_batch(names, ['yes']), (set(names), set()))
+        self.assertEqual(len(self.questions), 1)
+        self.assertEqual(sorted(item['decision'] for item in self.receipts()), ['accept', 'record'])
+
+    def test_a_notice_group_never_hides_the_acceptance_question_of_another_licence(self):
+        names = ['lfm2-kilix-commands', 'encodec-24khz-stateful']
+        self.assertEqual(self.run_batch(names, ['yes', 'no']),
+                         ({'lfm2-kilix-commands'}, {'encodec-24khz-stateful'}))
+        self.assertEqual(len(self.questions), 2)
+        self.assertEqual(self.questions[0], 'Install lfm2-kilix-commands? [y/N] ')
+        self.assertTrue(self.questions[1].startswith('Do you accept cc-by-nc-4.0 '))
+
+    def test_a_registry_model_sharing_the_notice_licence_keeps_the_acceptance_question(self):
+        # A registry model has no determined record. If its terms carry the same
+        # label as a notice licence the two share a group, and the group must ask.
+        llm = next(iter(system_llm.MODELS))
+        names = ['lfm2-kilix-commands', llm]
+        self.run_batch(names, ['no'], llm_entries={llm: [('lfm-open-license-1.0', b'registry terms')]})
+        self.assertEqual(len(self.questions), 1)
+        self.assertTrue(self.questions[0].startswith('Do you accept lfm-open-license-1.0 '))
+        self.assertNotIn('claims no agreement', self.output.decode())
         self.assertEqual(list(self.store.root.glob('*.json')), [])
 
 

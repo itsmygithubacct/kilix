@@ -1,4 +1,11 @@
-# Kilix 0.2.2: Closing targets deliberately
+# Closing panes
+
+For a coding session, the close dialog offers **Close pane**, **Close and give
+path to rollout log**, **Background to tmux**, and **Cancel**. Close pane
+terminates the session without preparing a recovery receipt or opening another
+terminal. It remains available when the rollout log cannot be found or the
+handoff helper is unavailable. The log and background choices still require
+a successful handoff. Cancel is the default.
 
 To terminate pane 74 through remote control, use `kitten @ --password-file "$KILIX_RC_PASSWORD_FILE" close-window --match id:74`. The fork's remote close-window path explicitly asks the broker to terminate a persistent pane; it is a destructive action.
 

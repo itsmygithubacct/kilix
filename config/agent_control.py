@@ -776,7 +776,16 @@ def main(argv=None):
         print(json.dumps(result, ensure_ascii=True))
         return 0
     except (ControlError, OSError, ValueError, TypeError, KeyError) as exc:
-        print(f"kilix agent-control: {exc}", file=sys.stderr)
+        if args.action == "deliver":
+            from agent_delivery import SCHEMA as delivery_schema
+            print(json.dumps({"schema": delivery_schema, "message_id": args.message_id,
+                "pane_id": args.pane, "status": "blocked", "delivery_verified": False,
+                "acknowledgment_verified": False, "completion_verified": False,
+                "verification": "codex-screen-v1", "duplicate": False,
+                "error": str(exc)[:240],
+                "retry": "reuse the same message ID; never blind-resend"}, ensure_ascii=True))
+        else:
+            print(f"kilix agent-control: {exc}", file=sys.stderr)
         return 1
 
 

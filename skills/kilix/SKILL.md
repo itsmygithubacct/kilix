@@ -7,7 +7,7 @@ metadata:
 
 # Kilix pane control
 
-For Kilix 0.2.2. These commands are the cheapest reliable route (2026-09-29 route
+For Kilix 0.2.3. These commands are the cheapest reliable route (2026-09-29 route
 benchmark); `kilix --help` lists them too. Run them directly, with no preflight:
 
 - Open a shell pane beside yours: `kilix pane right|left|up|down [--title T] -- bash`

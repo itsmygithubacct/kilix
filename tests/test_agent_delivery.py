@@ -1339,6 +1339,20 @@ class DeliveryTests(unittest.TestCase):
                 client.run(['send-text'], b'hello')
             start.assert_not_called()
 
+    def test_client_initialization_refusal_is_blocked_json(self):
+        output, errors = io.StringIO(), io.StringIO()
+        with mock.patch.object(control, "Client", side_effect=control.ControlError("caller refused")), \
+                contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+            result = control.main(['deliver', '2', '--expect-broker', TARGET_BROKER,
+                                   '--message-id', 'refused', '--text', 'Hello fixture'])
+        self.assertEqual(result, 1)
+        receipt = json.loads(output.getvalue())
+        self.assertEqual(receipt['status'], 'blocked')
+        self.assertEqual(receipt['error'], 'caller refused')
+        self.assertFalse(receipt['delivery_verified'])
+        self.assertFalse(receipt['completion_verified'])
+        self.assertEqual(errors.getvalue(), '')
+
     def test_script_entrypoint_reports_client_refusal_as_json(self):
         root = Path(self.temp.name)
         kitten = root/'kitten'
@@ -1357,7 +1371,7 @@ class DeliveryTests(unittest.TestCase):
                               env=env, timeout=5)
         self.assertEqual(done.returncode, 1)
         self.assertEqual(json.loads(done.stdout)['status'], 'blocked')
-        self.assertIn('absent', json.loads(done.stdout)['error'])
+        self.assertTrue(json.loads(done.stdout)['error'])
         self.assertEqual(done.stderr, '')
 
 

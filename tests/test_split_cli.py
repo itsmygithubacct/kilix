@@ -90,7 +90,7 @@ class SplitCliTests(unittest.TestCase):
             root = Path(directory)
             audio = root / "song.wav"
             audio.write_bytes(b"audio")
-            environment = {"KILIX_DATA_HOME": str(root / "data")}
+            environment = {"KILIX_DATA_HOME": str(root / "data"), "KILIX_MODEL_AUTO_INSTALL": "0"}
             with patch.dict(os.environ, environment, clear=False):
                 with self.assertRaises(SystemExit) as caught:
                     cli.main([str(audio), "--stem", "vocals", "--output", str(root / "vocals.wav")])
@@ -104,7 +104,7 @@ class SplitCliTests(unittest.TestCase):
             write_venv(data, demucs=False)
             audio = root / "song.wav"
             audio.write_bytes(b"audio")
-            with patch.dict(os.environ, {"KILIX_DATA_HOME": str(data)}, clear=False):
+            with patch.dict(os.environ, {"KILIX_DATA_HOME": str(data), "KILIX_MODEL_AUTO_INSTALL": "0"}, clear=False):
                 with self.assertRaises(SystemExit) as caught:
                     cli.main([str(audio), "--output", str(root / "vocals.wav")])
         self.assertEqual(str(caught.exception), cli.NOT_INSTALLED)
@@ -195,6 +195,35 @@ class SplitCliTests(unittest.TestCase):
                 cli.main(["song.wav", "--output", "out.wav", "--allow-model-downloads"])
         self.assertIn("unrecognized arguments: --allow-model-downloads", str(caught.exception))
 
+    def test_a_declined_weight_licence_does_not_run_demucs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data = root / "data"
+            write_venv(data, demucs=True)
+            apps = root / "apps"
+            calls, run = fake_kilix(("vocals",), apps, verify_status=1)
+            installed = []
+
+            def offered(args, **_kwargs):
+                installed.append(list(args))
+                return 1
+
+            audio = root / "song.wav"
+            audio.write_bytes(b"audio")
+            with patch.dict(os.environ, {"KILIX_DATA_HOME": str(data)}, clear=False), \
+                    patch.dict(os.environ, {"KILIX_MODEL_AUTO_INSTALL": "1"}), \
+                    patch.object(sys.stdin, "isatty", return_value=True), \
+                    patch.object(sys.stdout, "isatty", return_value=True), \
+                    patch.object(cli, "kilix_bin", return_value="kilix"), \
+                    patch.object(cli.subprocess, "run", side_effect=run), \
+                    patch.object(cli.subprocess, "call", side_effect=offered):
+                with self.assertRaises(SystemExit) as caught:
+                    cli.main([str(audio), "--output", str(root / "vocals.wav")])
+            self.assertEqual(str(caught.exception), cli.NO_WEIGHTS)
+            self.assertEqual(installed, [["kilix", "models", "install", cli.ASSET_ID]])
+            self.assertEqual(calls, [])
+            self.assertEqual(len(run.verifies), 1)
+
     def test_weights_without_a_covering_receipt_refuse_before_demucs(self):
         cases = (
             ("verify fails", dict(verify_status=1), True),
@@ -213,7 +242,7 @@ class SplitCliTests(unittest.TestCase):
                 calls, run = fake_kilix(("vocals",), apps, **options)
                 audio = root / "song.wav"
                 audio.write_bytes(b"audio")
-                with patch.dict(os.environ, {"KILIX_DATA_HOME": str(data)}, clear=False), \
+                with patch.dict(os.environ, {"KILIX_DATA_HOME": str(data), "KILIX_MODEL_AUTO_INSTALL": "0"}, clear=False), \
                      patch.object(cli, "kilix_bin", return_value="kilix"), \
                      patch.object(cli.subprocess, "run", side_effect=run):
                     with self.assertRaises(SystemExit) as caught:

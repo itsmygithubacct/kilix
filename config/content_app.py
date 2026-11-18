@@ -300,6 +300,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.action == "install":
             print(executable)
             return 0
+        # The window surface re-execs this file's run verb, so the inner run
+        # is the one place a model is ensured. install and ref never reach here.
+        import call_models
+        call_models.ensure_for_launch(spec.content_id, forwarded)
         if args.action == "window":
             if not os.environ.get("DISPLAY"):
                 raise RuntimeError("a DISPLAY is required for the window surface")

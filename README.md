@@ -5,9 +5,8 @@ clickable pane title-bar buttons and a status bar, plus the host commands,
 application catalog and desktop providers behind the Plebian-OS desktop.
 
 **Status:** ships in Plebian-OS, where it is the whole desktop session.
-Plebian-OS 0.2.2 shipped the Kilix `v0.2.2` tag; the 0.2.3 release candidate
-(plebian-os tag `v0.2.3-rc6`) pins Kilix `beb39587` in `releases/0.2.3.env`,
-which this branch contains. Kilix also runs standalone on a Linux X11 or Wayland
+Plebian-OS 0.2.3 ships the Kilix `v0.2.3` tag (commit `e51a3111`), pinned in
+plebian-os `releases/0.2.3.env`, which this branch contains. Kilix also runs standalone on a Linux X11 or Wayland
 desktop, and as a native Windows preview ([windows/README.md](windows/README.md)).
 
 ![Kilix with two pages and three split panes: pane title-bar buttons, the page strip with its + button, and the status bar](docs/images/kilix-pane-chrome.png)
@@ -265,7 +264,7 @@ boot and logs in to Kilix with Kilix 95 as the first page. `kilix update
 
 - [overview.md](docs/overview.md): the original introduction, video episodes and full feature list.
 - [install.md](docs/install.md): requirements, engines, first-run commands, taskbar icon, uninstalling.
-- [release-notes.md](docs/release-notes.md): per-release changes from 0.1.2 to the 0.2.3 candidates.
+- [release-notes.md](docs/release-notes.md): per-release changes from 0.1.2 to 0.2.3.
 - [pane-chrome.md](docs/pane-chrome.md): title-bar buttons, resource chips, status items, drag-to-split.
 - [pages-and-panes.md](docs/pages-and-panes.md): pages and live tab and pane control.
 - [keybindings.md](docs/keybindings.md): all keys, copy and paste notes, the Pane Center, the leader.

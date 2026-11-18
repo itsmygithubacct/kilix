@@ -1,20 +1,30 @@
 """Owned fake helper lifecycle controls; these do not invoke Content or models."""
+
 import ctypes
 import os
-from pathlib import Path
 import shutil
 import signal
 import subprocess
 import sys
+from pathlib import Path
 import tempfile
 import time
 import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _env_support import sandbox_env
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class CarrierLifecycle(unittest.TestCase):
     def setUp(self):
+        libc = ctypes.CDLL(None, use_errno=True)
+        previous_subreaper = ctypes.c_int()
+        self.assertEqual(libc.prctl(37, ctypes.byref(previous_subreaper), 0, 0, 0), 0)
+        # Restore process state after each test has reaped its owned children.
+        self.addCleanup(lambda: self.assertEqual(
+            libc.prctl(36, previous_subreaper.value, 0, 0, 0), 0))
         self.temp = tempfile.TemporaryDirectory(prefix="detector-lifecycle-")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
@@ -35,7 +45,7 @@ if action == 'prepare-git':
     out.mkdir(); (out/'gitconfig').write_text('')
     print(out/'gitconfig')
 """)
-        self.env = dict(os.environ, PID_FILE=str(self.root / "pid"))
+        self.env = sandbox_env(PID_FILE=str(self.root / "pid"))
         self.command = ["bash", "-c", 'set -e; . "$1"; detector_carrier_prepare "$2" '
                         'https://example.invalid/x.git 0000000000000000000000000000000000000000 '
                         '"$3" 0; printf "complete\\n"', "fixture",

@@ -144,6 +144,24 @@ def usable_captions(rows, duration):
     return caption_coverage(rows, duration)['usable']
 
 
+def _first_use_terminal() -> bool:
+    value = os.environ.get('KILIX_MODEL_AUTO_INSTALL')
+    if value is not None and value.strip().casefold() in {'0', 'no', 'false', 'off'}:
+        return False
+    try:
+        return sys.stdin.isatty() and sys.stdout.isatty()
+    except (AttributeError, OSError, ValueError):
+        return False
+
+
+def _whisper_provider_ready(provider: Path, generation: Path, identity: str, ref: str) -> bool:
+    return bool(re.fullmatch(r'[0-9a-f]{40}', identity) and provider.is_file()
+                and os.access(provider, os.X_OK)
+                and provider.resolve() == generation / 'bin/kilix-whisper-stt'
+                and (generation / 'REF').is_file()
+                and (generation / 'REF').read_text().strip() == ref + ' layout=copied-no-weights-1')
+
+
 def timestamp(seconds):
     seconds = int(seconds)
     return f'{seconds // 3600:02}:{seconds // 60 % 60:02}:{seconds % 60:02}'
@@ -165,9 +183,13 @@ def local_transcript(url, work, language, *, info):
     try:
         spec = content_models._verified_catalog(api).require_asset('faster-whisper-small-en')
         root = content_models.apps_root()
-        # A model directory is not consent. This read-only authority check must
-        # complete before downloading audio or executing any provider.
-        content_models._verify(api, lic, spec, root, io.StringIO())
+        # A model directory is not consent. First use on a terminal shows the
+        # licence and waits for an answer. Anything else is the read-only check.
+        ensure = getattr(content_models, 'ensure_installed', None)
+        if ensure is not None:
+            ensure('faster-whisper-small-en')
+        else:
+            content_models._verify(api, lic, spec, root, io.StringIO())
     except (lic.LicenseError, RuntimeError, OSError, ValueError) as error:
         raise RuntimeError('local fallback is not ready: ' + str(error) + setup) from error
     model = Path(api.Installer(root).asset_destination(spec))
@@ -176,11 +198,14 @@ def local_transcript(url, work, language, *, info):
     ref = run(['bash', str(installer), '--print-ref'], capture=True).strip()
     identity = ref.removeprefix('kilix-whisper-stt=')
     generation = provider.parents[2] / 'generations' / identity
-    if (not re.fullmatch(r'[0-9a-f]{40}', identity) or not provider.is_file()
-            or not os.access(provider, os.X_OK)
-            or provider.resolve() != generation / 'bin/kilix-whisper-stt'
-            or not (generation / 'REF').is_file()
-            or (generation / 'REF').read_text().strip() != ref + ' layout=copied-no-weights-1'):
+    # A wrong pin is not a missing install. Only an absent provider is built.
+    if not provider.is_file() and _first_use_terminal():
+        run(['kilix', 'stt', '--install', 'whisper-small-en'])
+        provider = Path(run(['bash', str(installer), '--print-path'], capture=True).strip())
+        ref = run(['bash', str(installer), '--print-ref'], capture=True).strip()
+        identity = ref.removeprefix('kilix-whisper-stt=')
+        generation = provider.parents[2] / 'generations' / identity
+    if not _whisper_provider_ready(provider, generation, identity, ref):
         raise RuntimeError('prepare the pinned local provider with '
                            '`kilix stt --install whisper-small-en`')
     # Select the known original English audio instead of an arbitrary auto-dub.

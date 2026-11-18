@@ -174,11 +174,13 @@ if [ ! -f "$KILIX_HOME/src/go.mod" ] || [ ! -f "$KILIX_HOME/src/setup.py" ]; the
   exit 1
 fi
 
-# Force the exact toolchain declared by the pinned fork. Go downloads named
-# toolchains through its checksum-verified module mechanism when necessary.
+# Use the pinned fork's exact toolchain by default. Distribution installers
+# verify their packaged compiler and set GOTOOLCHAIN=local to forbid downloads;
+# preserve that choice. An explicit Kilix toolchain override takes precedence.
 _go_toolchain="$(awk '/^toolchain go[0-9]/{print $2; exit}' "$KILIX_HOME/src/go.mod")"
+[ "${GOTOOLCHAIN:-}" != local ] || _go_toolchain=local
 _go_toolchain="${KILIX_GO_TOOLCHAIN:-${_go_toolchain:-go1.26.4}}"
-[[ "$_go_toolchain" =~ ^go[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] \
+[[ "$_go_toolchain" = local || "$_go_toolchain" =~ ^go[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] \
   || { echo "kilix: invalid exact KILIX_GO_TOOLCHAIN=$_go_toolchain" >&2; exit 2; }
 export GOTOOLCHAIN="$_go_toolchain"
 

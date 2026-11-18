@@ -107,11 +107,40 @@ def demucs_installed() -> bool:
     return False
 
 
+def _first_use() -> bool:
+    value = os.environ.get("KILIX_MODEL_AUTO_INSTALL")
+    if value is not None and value.strip().casefold() in {"0", "no", "false", "off"}:
+        return False
+    try:
+        return sys.stdin.isatty() and sys.stdout.isatty()
+    except (AttributeError, OSError, ValueError):
+        return False
+
+
+def install_demucs_code() -> None:
+    """Create the private Demucs venv. Weights stay on the licence install."""
+    uv = require_uv()
+    root = ensure_private(data_root() / "split")
+    venv = root / "venv"
+    if venv.exists() and not (venv / "pyvenv.cfg").is_file():
+        shutil.rmtree(venv)
+    run_checked([uv, "venv", "--python", sys.executable, str(venv)])
+    python = venv_python()
+    if python is None:
+        raise SystemExit("kilix split: uv did not create a virtualenv python")
+    run_checked([uv, "pip", "install", "--python", str(python), DEMUCS_URL, *DEMUCS_UNDECLARED])
+
+
 def require_demucs() -> Path:
     python = venv_python()
-    if python is None or not demucs_installed():
-        raise SystemExit(NOT_INSTALLED)
-    return python
+    if python is not None and demucs_installed():
+        return python
+    if _first_use():
+        install_demucs_code()
+        python = venv_python()
+        if python is not None and demucs_installed():
+            return python
+    raise SystemExit(NOT_INSTALLED)
 
 
 def parse_uv_version(text: str) -> tuple[int, int]:
@@ -169,18 +198,10 @@ def run_checked(args: list[str]) -> None:
 
 
 def command_install() -> int:
-    uv = require_uv()
-    root = ensure_private(data_root() / "split")
-    venv = root / "venv"
-    if venv.exists() and not (venv / "pyvenv.cfg").is_file():
-        shutil.rmtree(venv)
-    run_checked([uv, "venv", "--python", sys.executable, str(venv)])
-    python = venv_python()
-    if python is None:
-        raise SystemExit("kilix split: uv did not create a virtualenv python")
-    run_checked([uv, "pip", "install", "--python", str(python), DEMUCS_URL, *DEMUCS_UNDECLARED])
+    install_demucs_code()
     if not demucs_installed():
         raise SystemExit(NOT_INSTALLED)
+    venv = data_root() / "split" / "venv"
     print(f"kilix split: installed Demucs into {venv}", file=sys.stderr, flush=True)
     # The weights come through kilix-license: the user reads the record's terms
     # and answers in this terminal, and Content writes the receipt and fetches.
@@ -195,7 +216,7 @@ def command_install() -> int:
     return 0
 
 
-def licensed_weights() -> Path:
+def licensed_weights(*, offer: bool = True) -> Path:
     """The verified weights directory, or a refusal naming --install.
 
     ``kilix models verify`` checks the stored receipt against this exact asset
@@ -210,6 +231,13 @@ def licensed_weights() -> Path:
         raise SystemExit("kilix split: verifying the weights timed out") from None
     except OSError as error:
         raise SystemExit(f"kilix split: {error}") from error
+    if result.returncode != 0 and offer and _first_use():
+        try:
+            status = subprocess.call([kilix_bin(), "models", "install", ASSET_ID])
+        except OSError as error:
+            raise SystemExit(f"kilix split: {error}") from error
+        if status == 0:
+            return licensed_weights(offer=False)
     if result.returncode != 0:
         raise SystemExit(NO_WEIGHTS)
     try:

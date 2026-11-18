@@ -1,4 +1,4 @@
-# Kilix 0.2.2 Start menu and settings
+# Kilix Start menu and settings
 
 Run `kilix settings` to open the shared settings interface. The three-line
 Start button opens the Kilix menu; `Ctrl+Alt+M` toggles the same menu. Use arrow

@@ -7,7 +7,9 @@ import sys
 import unittest
 from unittest import mock
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "config"))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "config"))
+import agent_capabilities as capabilities
 import agent_context as context
 import agent_control as control
 
@@ -101,6 +103,51 @@ class ContextTests(unittest.TestCase):
         output = context.encode({"extra": "\U0001f600" * 4096})
         self.assertLessEqual(len(output.encode()), 4096)
         self.assertEqual(json.loads(output)["error"], "response_limit")
+
+    def test_refused_dispatch_scan_keeps_independent_facts_visible(self):
+        self.facts["kilix"]["invoked_source"].update(
+            dispatch_status="too_large", commands_present=[], version_status="observed")
+        self.facts["kilix"]["path_selected"].update(
+            dispatch_status="observed", commands_present=["pane", "unknown-command", "x" * 100])
+        installation = self.collect()["installation"]
+        invoked = installation["invoked"]
+        self.assertEqual((invoked["status"], invoked["dispatch_status"]), ("observed", "too_large"))
+        # An empty list after a refused scan means unknown, and says so.
+        self.assertEqual(invoked["commands_present"], [])
+        self.assertEqual((invoked["version"], invoked["version_status"]), ("0.2.2", "observed"))
+        self.assertEqual(invoked["revision"], "a" * 40)
+        self.assertEqual(invoked["actions_in_source"], ["pane.open"])
+        # Only known command names are echoed; dispatch is a Kilix launcher fact.
+        self.assertEqual(installation["path_selected"]["commands_present"], ["pane"])
+        self.assertNotIn("dispatch_status", installation["needle"])
+        self.facts["kilix"]["invoked_source"]["commands_present"] = "pane tab"
+        self.assertEqual(self.collect()["installation"]["invoked"]["commands_present"], [])
+
+    def test_repository_tree_context_is_accurate_and_compact(self):
+        # The real RC9 tree, inspected without pane IPC or a Git subprocess.
+        environment = {"PATH": "", "HOME": "/nonexistent"}
+
+        def discover(**_):
+            return capabilities.discover(ROOT, environ=environment,
+                                         provenance_path=ROOT / "nonexistent-provenance.env")
+
+        def refuse(_):
+            raise control.ControlError("no pane connection in this test")
+
+        with mock.patch.object(capabilities, "_git_revision", return_value=("d" * 40, "observed")):
+            result = context.collect(client_factory=refuse, discover=discover)
+        output = context.encode(result)
+        self.assertLessEqual(len(output.encode()), context.MAX_BYTES)
+        invoked = json.loads(output)["installation"]["invoked"]
+        self.assertEqual((invoked["status"], invoked["dispatch_status"]), ("observed", "observed"))
+        self.assertEqual(invoked["commands_present"], list(capabilities.COMMAND_FILES))
+        self.assertEqual(invoked["version"], (ROOT / "VERSION").read_text(encoding="utf-8").strip())
+        self.assertEqual((invoked["revision"], invoked["revision_status"]), ("d" * 40, "observed"))
+        self.assertEqual((invoked["action_schema"], invoked["action_metadata_status"]),
+                         ("kilix.actions/v1", "observed"))
+        self.assertEqual(invoked["actions_in_source"],
+                         ["pane.open", "agent.launch", "agent.deliver", "operation.status"])
+        self.assertEqual(result["connection_status"], "unavailable")
 
     def test_cli_reports_partial_with_nonzero_exit(self):
         with mock.patch.object(context, "collect", return_value={"status": "partial"}), \

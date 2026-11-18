@@ -22,6 +22,35 @@ discovery, request consent again, or expand a simple authorized action into a
 long workflow. Resolve missing identity before a mutation; keep inspection and
 mutation as separate operations.
 
+## Send a message to another agent pane
+
+Type the message into the target pane, read it back, then submit with one key:
+
+```sh
+printf '%s' "$MESSAGE" | kilix @ send-text --match id:PANE --stdin
+kilix @ get-text --match id:PANE --extent screen     # whole message in the composer?
+printf '\r' | kilix @ send-text --match id:PANE --stdin   # idle agent: Enter
+printf '\t' | kilix @ send-text --match id:PANE --stdin   # working Codex: Tab queues it
+```
+
+Keep the message to one line of at most 900 UTF-8 bytes; put anything longer in
+a file and send its path. Start it with `[kilix-message:ID]` so a later search of
+the target's history can prove delivery. Take `PANE` from `kilix pane list` in
+this session, and list again after a restart, because pane IDs are renumbered.
+Send the text and the key as separate calls. A zero exit is not delivery: confirm
+the end of the message is on screen before the key, and that the composer is
+empty, or shows "Queued follow-up inputs", after it. Never press Enter or Esc
+into a working agent to clear its screen; Esc interrupts its turn.
+
+`kilix agent-control deliver` (below) performs the same steps with identity
+checks. `blocked` is also how it refuses on identity and safety grounds, so read
+the error before acting on it. Only for "Codex composer is not visible", as when
+the target is scrolled or compacting, re-read the pane and then use the commands
+above. For any other `blocked` error (pane or broker identity changed, caller
+identity unknown, the target is your own pane, another delivery owns the target,
+a preserved composer draft, or a `/`, `!` or `#` command prefix), stop, send
+nothing, and take a fresh `kilix pane list`.
+
 ## Locate the source before acting
 
 In a workspace with several repositories, start with its project index and the
@@ -200,6 +229,10 @@ Run the query even when the likely answer seems obvious. Return the requested
 fact from the actual result; quoting a log search term is not evidence that it
 was found. A name can contain spaces: quote the whole path, and list the parent
 when a path is reported missing.
+
+Image viewers in agent clients read PNG and JPEG, not PPM. Convert a `.ppm`
+snapshot or screen dump before viewing it:
+`python3 -c 'import sys; from PIL import Image; Image.open(sys.argv[1]).save(sys.argv[2])' in.ppm out.png`
 
 | Command | Purpose |
 | --- | --- |

@@ -1,11 +1,15 @@
 """Execute the ASCII wire envelope, including raw POSIX path/argv bytes."""
+
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 import tempfile
 import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _env_support import sandbox_env
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'config'))
 from launch_transport import literal_launch
@@ -38,7 +42,7 @@ class LiteralLaunchTests(unittest.TestCase):
             self.assertTrue(all(value.isascii() for value in target))
             # The real client can JSON encode this without replacing a byte.
             transported = json.loads(json.dumps(target, ensure_ascii=True))
-            result = subprocess.run(transported, env={**os.environ, **environment},
+            result = subprocess.run(transported, env=sandbox_env(**environment),
                                     check=True, capture_output=True, text=True, timeout=5)
             self.assertEqual(json.loads(result.stdout),
                              [[os.fsencode(a).hex() for a in arguments],

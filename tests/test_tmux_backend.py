@@ -73,7 +73,10 @@ class PrivateServerTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix="kt-test-")
         self.directory = Path(self.tmp.name)
         self.socket = str(self.directory / "socket")
-        self.env = sandbox_env(HOME=self.tmp.name, PS1="fixture> ", TERM="xterm-256color")
+        # The shell exits after kill-server returns; it must not create a late
+        # history file while TemporaryDirectory is removing the fixture.
+        self.env = sandbox_env(HOME=self.tmp.name, PS1="fixture> ", TERM="xterm-256color",
+                               HISTFILE="/dev/null")
         self.env.pop("TMUX", None)
         self.tmux("-f", "/dev/null", "new-session", "-d", "-s", "fixture", "-x", "200", "-y", "30",
                   "/bin/bash --noprofile --norc")

@@ -32,6 +32,7 @@ import unicodedata
 from io import BytesIO
 
 import gfx  # kilix: direct (t=d) graphics transmission for streamed sessions
+from kilix_sdk import keys as _keys
 
 try:
     from PIL import Image
@@ -452,8 +453,9 @@ class Term:
             caps = mm & 64
             mm &= ~192          # caps_lock/num_lock LEDs must not blank the text
             ch = chr(shifted) if (mm & 1 and shifted) else chr(key)
-            # < 57344: not a kitty functional PUA key (keypad/nav codes must
-            # stay text-less or kilix browse types them into the page)
+            # < 57344: not a kitty functional PUA key. Keypad codes stay
+            # text-less here; kilix_sdk.keys.translate_key_event turns them
+            # into DOM numpad keys before they are forwarded.
             text = ch if not (mm & ~1) and 32 <= key < 57344 else ""
             if text and caps and text.isalpha():
                 text = text.swapcase()
@@ -917,6 +919,7 @@ class Browse:
         self.forward_key(ev)
 
     def forward_key(self, ev):
+        ev = _keys.translate_key_event(ev)
         p = {"modifiers": cdp_mods(ev["mods"]),
              "key": ev["key"], "code": ev["code"] or ev["key"],
              "windowsVirtualKeyCode": ev["vk"]}
@@ -929,6 +932,7 @@ class Browse:
                       session=self.sess)
 
     def url_edit_key(self, ev):
+        ev = _keys.translate_key_event(ev)
         key = ev["key"]
         if key == "Enter":
             url = self.url_edit.strip()

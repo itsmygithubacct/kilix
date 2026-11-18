@@ -1,3 +1,4 @@
+import re
 import os
 import pathlib
 import subprocess
@@ -189,7 +190,7 @@ class KilixTuiProviderTests(unittest.TestCase):
         self.assertIn("tui|kilix-tui)", launcher)
         self.assertIn("_kilix_tui_ensure", launcher)
         self.assertIn(
-            "use auto, builtin, external, xp, cap, tui, land, icewm, command, or none",
+            "use auto, builtin, external, xp, cap, tui, land, icewm, zell, command, or none",
             launcher)
 
     def test_kilix_tui_shortcut_uses_text_provider(self):
@@ -224,7 +225,10 @@ class KilixTuiProviderTests(unittest.TestCase):
         result = run([LAUNCHER, "kilix-tui", "environment"], env=env,
                      check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.strip(), f"{ROOT}|{ROOT}")
+        marked = re.fullmatch(r'\x1b]1337;SetUserVar=kilix_desktop_provider=[A-Za-z0-9+/=]+\x07(.*?)'
+                              r'\x1b]1337;SetUserVar=kilix_desktop_provider\x07', result.stdout, re.S)
+        self.assertIsNotNone(marked, result.stdout)
+        self.assertEqual(marked.group(1).strip(), f"{ROOT}|{ROOT}")
 
     def test_temps_and_memory_use_the_same_provider_checkout(self):
         storage = self.home / ".local" / "gpu_terminal" / "kilix"
@@ -262,9 +266,11 @@ class KilixTuiProviderTests(unittest.TestCase):
     def test_desktop_accepts_a_provider_argument(self):
         launcher = LAUNCHER.read_text()
         index = launcher.index('if [ "${1:-}" = "desktop" ]')
-        block = launcher[index:index + 1600]
-        for alias in ("95|kilix-95", "xp|kilix-xp", "cap|kilix-cap|mansion",
-                      "tui|kilix-tui", "land|kilix-land|kilix-land-desktop"):
+        start = launcher.index('  case "${1:-}" in', index)
+        block = launcher[start:launcher.index('\n  esac', start)]
+        for alias in ("95|kilix95|kilix-95", "xp|kilix-xp", "cap|kilix-cap|mansion",
+                      "tui|kilix-tui", "land|kilix-land|kilix-land-desktop",
+                      "icewm|kilix-icewm", "zell|zell-neuronte|kilix-zell"):
             self.assertIn(alias, block)
 
 

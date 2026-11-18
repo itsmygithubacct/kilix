@@ -1,4 +1,4 @@
-# Kilix 0.2.2 explicit model setup
+# Kilix explicit model setup
 
 Run `kilix models list` to inspect the pinned Content model catalog.
 Run `kilix models show whisper-tiny-ggml` to inspect one model's exact

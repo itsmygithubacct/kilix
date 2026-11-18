@@ -681,7 +681,27 @@ case "$action" in
         *) die "unsupported detector option: $1 (the model is selected by the installed runtime)" ;;
       esac
     done
-    runtime_ready || die "installed YOLOX model, agreement or runtime is not ready; run kilix install yolox"
+    # First use installs the selected model, then the generation, then runs.
+    # The generation child is not exec'd: this shell still has to start the
+    # detector. A second entry with the guard set dies instead of looping.
+    # Non-interactive callers keep the old refusal and install nothing.
+    if ! runtime_ready; then
+      if [ "${KILIX_YOLOX_RUN_PREPARED:-0}" = 1 ]; then
+        die "installed YOLOX model, agreement or runtime is not ready; run kilix install yolox"
+      fi
+      { [ -t 0 ] && [ -t 1 ]; } \
+        || die "installed YOLOX model, agreement or runtime is not ready; run kilix install yolox"
+      "$KILIX_HOME/kilix" models ensure "$KILIX_YOLOX_MODEL" \
+        || die "the model was not installed"
+      transaction="$KILIX_HOME/scripts/yolox-generation.py"
+      config="${KILIX_USER_CONFIG_DIRECTORY:-$GPU_TERMINAL_DATA_HOME/kilix/config}"
+      [ -f "$transaction" ] && [ ! -L "$transaction" ] \
+        || die "runtime generation installer is unavailable"
+      "$KILIX_PYTHON" -I -B "$transaction" "$(realpath -e -- "${BASH_SOURCE[0]}")" \
+        "$KILIX_HOME" "$runtime_base" "$requested_source" "$config/kilix.env" \
+        "$KILIX_YOLOX_MODEL" "$KILIX_YOLOX_SIZE"
+      KILIX_YOLOX_RUN_PREPARED=1 exec "${BASH_SOURCE[0]}" --run "${detector_args[@]}"
+    fi
     exec "$wrapper" "${detector_args[@]}" ;;
   --upgrade)
     upgrade_runtime

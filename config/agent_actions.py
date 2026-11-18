@@ -33,7 +33,10 @@ ACTION_OPERATIONS = {
                      "optional": ["direction", "bias", "model", "prompt", "resume",
                                   "coding_yolo", "trust_folder", "agent_arg", "reasoning_effort"], "mutation": True,
                      "unsupported": {"trust_folder": True},
-                     "reasoning_effort": {"agents": ["codex"], "values": list(control.REASONING_EFFORTS)}},
+                     # A literal, so static discovery can read it without importing this
+                     # module; a test holds it equal to control.REASONING_EFFORTS.
+                     "reasoning_effort": {"agents": ["codex"],
+                                          "values": ["low", "medium", "high", "xhigh", "max"]}},
     "agent.deliver": {"required": ["text"],
                       "optional": ["mode", "finish_staged_message_id",
                                    "previous_completed_suggestion_id", "envelope"], "mutation": True},

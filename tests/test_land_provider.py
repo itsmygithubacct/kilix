@@ -1,3 +1,4 @@
+import re
 import os
 import pathlib
 import subprocess
@@ -211,7 +212,7 @@ class KilixLandProviderTests(unittest.TestCase):
         self.assertIn("land|kilix-land|kilix-land-desktop)", launcher)
         self.assertIn("_kilix_land_ensure", launcher)
         self.assertIn(
-            "use auto, builtin, external, xp, cap, tui, land, icewm, command, or none",
+            "use auto, builtin, external, xp, cap, tui, land, icewm, zell, command, or none",
             launcher,
         )
 
@@ -243,10 +244,11 @@ class KilixLandProviderTests(unittest.TestCase):
         })
         result = run([LAUNCHER, "land", "environment"], env=env, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(
-            result.stdout.strip(),
-            f"{self.checkout}|{ROOT}",
-        )
+        # The provider is bracketed by its terminal ownership markers.
+        marked = re.fullmatch(r'\x1b]1337;SetUserVar=kilix_desktop_provider=[A-Za-z0-9+/=]+\x07(.*?)'
+                              r'\x1b]1337;SetUserVar=kilix_desktop_provider\x07', result.stdout, re.S)
+        self.assertIsNotNone(marked, result.stdout)
+        self.assertEqual(marked.group(1).strip(), f"{self.checkout}|{ROOT}")
 
 
 if __name__ == "__main__":
