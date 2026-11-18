@@ -1942,15 +1942,34 @@ delivered remains with its recipient.
 
 Custody belongs to the logind session that deposited the key and is used only
 from it. Locking that session, switching away from it, logging out, or logind
-being unable to report it forgets the key within about a second; unlocking
-again does not restore it. Suspend and hibernate also forget it: the agent
-notices the boot-time clock advancing past the monotonic clock and drops the
-key on its first check after resume, before any later request can use it.
-This does not promise erasure of memory while the system is asleep. Custody is
-never written to disk, so a restart or reboot holds nothing. An approval or
-scan in progress for a forgotten key stops. `status` reports why the last key
-was dropped. Lock detection relies on the screen locker setting logind's
-`LockedHint`; a locker that does not set it is not seen as a lock.
+being unable to report it forgets the key, normally within a second and within
+a few seconds if logind stops answering; unlocking again does not restore it.
+A lock is seen when logind is asked to lock the session (`loginctl
+lock-session` and its Lock signal, which forget at once) or when the screen
+locker sets logind's `LockedHint`. A locker started some other way that does
+not set the hint is not seen; Pleb's `pleb-lock` sets the hint itself when no
+supervised locker does.
+
+Suspend, hibernate and shutdown forget the key before they happen. The
+custodian holds a logind delay inhibitor; when logind announces the
+transition, the custodian wipes the key and only then releases the inhibitor,
+so the key is gone before memory is frozen or a hibernation image is written.
+The inhibitor is taken again on resume, and a cancelled or failed transition
+has forgotten the key all the same. As a backstop, any growth of the boot-time
+clock past the monotonic clock, which happens only while the system sleeps,
+also forgets it.
+
+Custody is accepted and used only while the custodian is watching: its session
+monitor runs and its sleep inhibitor is held. If logind cannot be watched, the
+monitor stops or a session check fails, the key is forgotten and deposits and
+operations are refused until watching resumes. `status` shows this under
+`watch` and reports why the last key was dropped. An approval or scan in
+progress for a forgotten key stops.
+
+The custodian never saves custody to a file, so a restart or reboot holds
+nothing. The custody buffer is locked in memory when the kernel allows it, but
+other copies made while parsing the deposit are not, and they can reach swap
+under memory pressure. Swap is not a secrecy boundary unless it is encrypted.
 
 Agent installation is explicit:
 

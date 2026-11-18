@@ -247,7 +247,7 @@ class AgentDefaultUnlockTests(ClockTestCase):
         self.reader_obj = None
         with unittest.mock.patch.object(agentmod, "_harden_process", return_value=agentmod.HardenReport()):
             self.agent = agentmod.Agent(
-                custody=self.custody, client_factory=self.client,
+                custody=self.custody, client_factory=self.client, custody_watch=False,
                 session_lookup=lambda pid: self.session, session_state=lambda sid: self.session,
                 approve=lambda uid, pid, binding, alive: self.approvals.append(binding))
         locker = lockermod.Locker(Path(self.tmp.name) / "locker", kdf_policy="test")
@@ -352,6 +352,7 @@ class ApprovalCancelTests(unittest.TestCase):
 
         with unittest.mock.patch.object(agentmod, "_harden_process", return_value=agentmod.HardenReport()):
             agent = agentmod.Agent(custody=custody, client_factory=lambda: reader_calls.append(1),
+                                   custody_watch=False,
                                    session_lookup=lambda pid: session, session_state=lambda sid: session,
                                    approve=cancel)
         with tempfile.TemporaryDirectory() as tmp:
