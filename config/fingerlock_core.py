@@ -146,6 +146,8 @@ class BusLike(Protocol):
 
     def run_until(self, predicate: Callable[[], bool], timeout: float) -> bool: ...
 
+    # Optional: dispatch messages already received without waiting (SystemBus.drain).
+
 
 class SystemBus:
     """dbus-python system bus with a GLib loop for signals and replies."""
@@ -163,6 +165,15 @@ class SystemBus:
 
     def interface(self, path: str, name: str) -> Any:
         return self._dbus.Interface(self._bus.get_object(BUS_NAME, path), name)
+
+    def drain(self, limit: int = 1000) -> None:
+        """Dispatch what has already arrived (for example statuses queued while a
+        blocking call waited for its reply) without waiting for anything new."""
+        context = self._glib.MainContext.default()
+        for _ in range(limit):
+            if not context.pending():
+                return
+            context.iteration(False)
 
     def run_until(self, predicate: Callable[[], bool], timeout: float) -> bool:
         if predicate():
@@ -265,6 +276,10 @@ class Session:
     def handle(self, result: str, done: bool) -> bool:
         result, done = str(result), bool(done)
         self.events.append(StatusEvent(result, done, round(time.monotonic() - self.started, 3)))
+        if self.done:
+            # A scan's verdict is final. A status that arrives after it (queued
+            # before VerifyStop) is recorded but cannot become the next scan's verdict.
+            return True
         terminal = ENROLL_TERMINAL if self.kind == "enroll" else VERIFY_TERMINAL
         if done or result in terminal:
             self.done, self.result = True, result
@@ -456,6 +471,11 @@ class FprintdClient:
                 if enrolling or session.result != VERIFY_NO_MATCH or session.attempts >= attempts:
                     break
                 self._call(device.VerifyStop)
+                # Statuses fprintd sent before acknowledging the stop belong to the
+                # finished scan; dispatch them while its verdict still stands.
+                drain = getattr(self.bus, "drain", None)
+                if callable(drain):
+                    drain()
                 session.rearm()
                 self._call(device.VerifyStart, finger)
                 session.attempts += 1

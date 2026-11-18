@@ -302,6 +302,219 @@ class AgentDefaultUnlockTests(ClockTestCase):
         self.assertFalse(self.reader_obj.claimed)
 
 
+class QueueingReader(FakeReader):
+    """Statuses still queued when VerifyStop is acknowledged stay queued, as
+    they would on the bus, until the client next dispatches messages."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.queued = []
+
+    def VerifyStop(self):
+        leftover = self.armed[1] if self.armed else []
+        super().VerifyStop()
+        self.queued.extend(leftover)
+
+    def deliver_queued(self):
+        while self.queued:
+            self.handlers["VerifyStatus"](self.queued.pop(0), True)
+
+
+class QueueingBus(FakeBus):
+    def drain(self):
+        self.reader.deliver_queued()
+
+    def run_until(self, predicate, timeout):
+        self.reader.deliver_queued()       # whatever was queued arrives first
+        return super().run_until(predicate, timeout)
+
+
+class StaleVerdictTests(ClockTestCase):
+    """Review finding 6 and the surviving re-arm mutant."""
+
+    def test_a_rearmed_scan_that_times_out_keeps_no_earlier_verdict(self):
+        reader = self.reader((1.0, ["verify-no-match"]))       # the second scan sees no finger
+        session = self.verify(reader, timeout=45, attempts=2)
+        self.assertTrue(session.timed_out)
+        self.assertIsNone(session.result)
+        self.assertEqual(len(reader.starts()), 2)
+
+    def test_a_rearmed_scan_that_is_cancelled_keeps_no_earlier_verdict(self):
+        reader = self.reader((1.0, ["verify-no-match"]), (30.0, ["verify-match"]))
+        state = {"waits": 0}
+
+        def during():
+            state["waits"] += 1
+        reader.during_wait = during
+        session = self.verify(reader, timeout=45, attempts=2, cancelled=lambda: state["waits"] >= 2)
+        self.assertTrue(session.cancelled)
+        self.assertIsNone(session.result)
+
+    def test_statuses_queued_before_the_stop_are_not_the_next_scans_verdict(self):
+        reader = QueueingReader(self.clock, [(1.0, ["verify-no-match", "verify-no-match"]),
+                                             (1.0, ["verify-match"])])
+        session = core.FprintdClient(QueueingBus(reader)).verify(PATH, core.ANY_FINGER, username="owner",
+                                                                  timeout=45, attempts=2)
+        self.assertTrue(session.succeeded, session.as_dict())
+        self.assertEqual(session.attempts, 2)
+
+    def test_a_verdict_is_final_within_a_scan(self):
+        session = core.Session(kind="verify", finger="any", device=PATH)
+        session.handle("verify-match", True)
+        session.handle("verify-no-match", True)
+        self.assertEqual(session.result, core.VERIFY_MATCH)
+        self.assertEqual(len(session.events), 2)
+
+
+class FlakyReader(FakeReader):
+    """Fails one call on the re-arm: fail = (method, nth call, error)."""
+
+    def __init__(self, *args, fail, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fail = fail
+
+    def _maybe_fail(self, name):
+        method, nth, error = self.fail
+        if name == method and sum(1 for call in self.calls if call[0] == name) == nth:
+            raise error
+
+    def VerifyStop(self):
+        super().VerifyStop()
+        self._maybe_fail("VerifyStop")
+
+    def VerifyStart(self, finger):
+        self.calls.append(("VerifyStart", finger))
+        self._maybe_fail("VerifyStart")
+        self.calls.pop()
+        super().VerifyStart(finger)
+
+
+class ScanTransitionTests(ClockTestCase):
+    """Custody changes during and after a scan, and reader errors on a re-arm,
+    through the agent with the real fprintd client over the fake reader.
+    Custody is filled directly and decryption is a recorder, so python3-nacl
+    is not needed."""
+
+    def setUp(self):
+        super().setUp()
+        self.uid = os.getuid()
+        self.session = agentmod.CallerSession("3", self.uid, True, "active", "seat0", False, False)
+        self.custody = agentmod.Custody(now=lambda: 1000.0, min_ttl=0, sleep_offset=lambda: 0.0)
+        self.addCleanup(self.custody.close)
+        self.reader_obj = None
+        with unittest.mock.patch.object(agentmod, "_harden_process", return_value=agentmod.HardenReport()):
+            self.agent = agentmod.Agent(
+                custody=self.custody, client_factory=self.client, custody_watch=False,
+                session_lookup=lambda pid: self.session, session_state=lambda sid: self.session,
+                approve=lambda *args: None)
+        self.agent.log = lambda line: None
+        self.custody.deposit(self.uid, "owner", bytes(range(32)), "disposable", bytes(32), 600, session_id="3")
+        self.blob = b"container bytes"
+        self.binding = {"kind": "unlock", "name": "a.flk", "size": len(self.blob),
+                        "sha256": hashlib.sha256(self.blob).hexdigest()}
+        self.decrypted = []
+        patcher = unittest.mock.patch.object(
+            agentmod, "unlock_bytes", side_effect=lambda body, key: (self.decrypted.append(body), (None, b"plain"))[1])
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def client(self):
+        bus = FakeBus(self.reader_obj)
+
+        class Client(core.FprintdClient):
+            def default_device(self_inner):
+                return core.DeviceInfo(PATH, "Synaptics Sensors", "press", 9, False, False)
+        return Client(bus)
+
+    def operate(self):
+        return self.agent.handle({"protocol": 1, "op": "operate", "locker_id": "disposable", "finger": "any",
+                                  "body_bytes": len(self.blob), "binding": self.binding},
+                                 self.uid, 4242, self.blob)
+
+    def lock(self):
+        from dataclasses import replace
+        self.session = replace(self.session, locked=True)
+
+    def assert_refused(self, reply, plain, code="EACCESS", text=None):
+        self.assertEqual(reply.get("code"), code, reply)
+        if text:
+            self.assertIn(text, reply["error"])
+        self.assertEqual(plain, b"")
+        self.assertEqual(self.decrypted, [])
+        self.assertFalse(self.reader_obj.claimed)
+
+    def test_an_unchanged_session_decrypts_once(self):
+        self.reader_obj = self.reader((1.0, ["verify-match"]))
+        reply, plain = self.operate()
+        self.assertTrue(reply["ok"], reply)
+        self.assertEqual(plain, b"plain")
+        self.assertEqual(self.decrypted, [self.blob])
+
+    def test_a_lock_after_the_match_prevents_decryption(self):
+        # The lock lands while the touch is read, before any monitor tick: only
+        # the check right after the match stands between it and decryption.
+        self.reader_obj = self.reader((1.0, ["verify-match"]))
+        self.reader_obj.during_wait = self.lock
+        reply, plain = self.operate()
+        self.assert_refused(reply, plain, text="unlocked")
+
+    def test_a_lock_seen_by_the_monitor_during_a_scan_cancels_it(self):
+        self.reader_obj = self.reader((30.0, ["verify-match"]))
+        self.reader_obj.during_wait = lambda: (self.lock(), self.agent.check_transitions())
+        reply, plain = self.operate()
+        self.assert_refused(reply, plain, text="revoked during verification")
+        self.assertEqual(self.clock[0], 100.0)     # stopped at once, not after the touch
+        self.assertEqual(self.custody.last_reason(self.uid), "session-locked")
+
+    def test_a_switch_seen_by_the_monitor_during_a_scan_cancels_it(self):
+        from dataclasses import replace
+
+        def switch():
+            self.session = replace(self.session, active=False, state="online")
+            self.agent.check_transitions()
+        self.reader_obj = self.reader((30.0, ["verify-match"]))
+        self.reader_obj.during_wait = switch
+        reply, plain = self.operate()
+        self.assert_refused(reply, plain, text="revoked during verification")
+        self.assertEqual(self.custody.last_reason(self.uid), "session-inactive")
+
+    def test_a_lock_signal_during_a_scan_cancels_it(self):
+        self.reader_obj = self.reader((30.0, ["verify-match"]))
+        self.reader_obj.during_wait = lambda: self.agent.on_session_lock(agentmod.session_object_path("3"))
+        reply, plain = self.operate()
+        self.assert_refused(reply, plain, text="revoked during verification")
+        self.assertEqual(self.custody.last_reason(self.uid), "session-locked")
+
+    def test_sleep_during_a_scan_cancels_it(self):
+        self.reader_obj = self.reader((30.0, ["verify-match"]))
+        self.reader_obj.during_wait = lambda: self.agent.sleep_guard.prepare("sleep", True)
+        reply, plain = self.operate()
+        self.assert_refused(reply, plain, text="revoked during verification")
+        self.assertEqual(self.custody.last_reason(self.uid), "suspend")
+
+    def test_reader_errors_on_a_rearm_release_the_reader_and_nothing_else(self):
+        cases = [
+            (("VerifyStop", 1, FprintdError("NoActionInProgress")), "ESERVICE"),
+            (("VerifyStart", 2, FprintdError("NoSuchDevice")), "ENODEVICE"),
+            (("VerifyStart", 2, FprintdError("Internal")), "ESERVICE"),
+        ]
+        for fail, code in cases:
+            with self.subTest(fail=fail[:2], error=fail[2].name):
+                self.reader_obj = FlakyReader(self.clock, [(1.0, ["verify-no-match"]), (1.0, ["verify-match"])],
+                                              fail=fail)
+                reply, plain = self.operate()
+                self.assert_refused(reply, plain, code=code)
+                self.assertEqual([call[0] for call in self.reader_obj.calls][-1], "Release")
+                self.assertTrue(self.custody.held())          # a reader fault is not a custody change
+
+    def test_a_reader_unplugged_between_scans_ends_the_operation(self):
+        self.reader_obj = self.reader((1.0, ["verify-no-match"]), (1.0, ["verify-disconnected"]),
+                                      (1.0, ["verify-match"]))
+        reply, plain = self.operate()
+        self.assert_refused(reply, plain, code="EOPERATION", text="verify-disconnected")
+        self.assertEqual(len(self.reader_obj.starts()), 2)
+
+
 class PromptTests(unittest.TestCase):
     def test_unlock_prompt_asks_for_approval_before_the_touch(self):
         fl = importlib.import_module("fingerlock")
