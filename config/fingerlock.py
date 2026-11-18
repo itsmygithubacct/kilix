@@ -1234,6 +1234,13 @@ def cmd_agent(args: argparse.Namespace) -> int:
     if not data["available"]:
         sys.stdout.write(f"agent: not installed ({PROG} install --agent)\n")
         return 1
+    watch = data.get("watch")
+    if isinstance(watch, dict) and watch.get("required") and (
+            watch.get("monitor") != "running" or watch.get("sleep_guard") != "ready"):
+        # The custodian cannot forget the key on lock or sleep, so it holds none.
+        sys.stdout.write(f"agent: not watching the session (monitor {watch.get('monitor')}, "
+                         f"sleep guard {watch.get('sleep_guard')}); custody is refused until it is\n")
+        return 1
     if data.get("held"):
         sys.stdout.write(
             f"agent: holding the locker key for {int(data.get('expires_in', 0)) // 60} more minutes; "

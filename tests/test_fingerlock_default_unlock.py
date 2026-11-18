@@ -515,6 +515,33 @@ class ScanTransitionTests(ClockTestCase):
         self.assertEqual(len(self.reader_obj.starts()), 2)
 
 
+class AgentStatusTests(unittest.TestCase):
+    def report(self, status):
+        import contextlib
+        import io
+        import types
+        fl = importlib.import_module("fingerlock")
+        stub = types.SimpleNamespace(path="/run/kilix-fingerlock/1000.sock", available=lambda: True,
+                                     status=lambda: status)
+        out = io.StringIO()
+        with unittest.mock.patch.object(fl, "_agent", return_value=stub), contextlib.redirect_stdout(out):
+            code = fl.cmd_agent(types.SimpleNamespace(json=False))
+        return code, out.getvalue()
+
+    def test_an_agent_that_cannot_watch_says_so(self):
+        code, text = self.report({"ok": True, "held": False, "watch": {
+            "monitor": "running", "sleep_guard": "unavailable (logind watch failed)", "required": True}})
+        self.assertEqual(code, 1)
+        self.assertIn("not watching the session", text)
+        self.assertIn("sleep guard unavailable", text)
+
+    def test_a_watching_agent_reports_custody(self):
+        code, text = self.report({"ok": True, "held": False, "watch": {
+            "monitor": "running", "sleep_guard": "ready", "required": True}})
+        self.assertEqual(code, 0)
+        self.assertIn("no key held", text)
+
+
 class PromptTests(unittest.TestCase):
     def test_unlock_prompt_asks_for_approval_before_the_touch(self):
         fl = importlib.import_module("fingerlock")
