@@ -31,6 +31,10 @@ from typing import Any, Iterable, Iterator, Mapping, Sequence
 #: the text (and closed any bracketed paste) before the key arrives.
 SUBMIT_DELAY = 0.15
 
+#: Most bytes one :func:`send_bytes` write carries.  A longer input goes as
+#: several writes, in order.
+SEND_BYTES_MAX = 32 * 1024
+
 
 KITTEN = os.environ.get("KILIX_KITTEN", "kitten")
 RC_PASSWORD_FILE = os.environ.get("KILIX_RC_PASSWORD_FILE", "")
@@ -443,13 +447,17 @@ def snapshot(*, timeout: float = 2.0) -> Workspace:
 
 def _run(args: Sequence[str], *, authenticated: bool = True,
          via_tty: bool = False,
-         timeout: float = 2.0) -> subprocess.CompletedProcess[str]:
+         timeout: float = 2.0,
+         stdin: bytes | None = None) -> subprocess.CompletedProcess[str]:
     """One ``kitten @`` invocation.  The only place in Kilix that runs one.
 
     ``via_tty`` drops ``KITTY_LISTEN_ON`` from the child environment, which
     makes the kitten talk to the terminal on its controlling tty instead of the
     socket.  ``resize-os-window --self`` needs that: over the socket "self" is
     the socket peer, not the OS window the operator is looking at.
+
+    ``stdin`` is bytes for the kitten's standard input, as they are; the
+    replies are still text.
     """
     from kilix_sdk.frontend_context import refresh
     from kilix_sdk.caller_context import CallerContextError
@@ -465,6 +473,20 @@ def _run(args: Sequence[str], *, authenticated: bool = True,
     if via_tty:
         env = os.environ.copy()
         env.pop("KITTY_LISTEN_ON", None)
+    if stdin is not None:
+        done = subprocess.run(
+            [*command, *args],
+            check=False,
+            env=env,
+            input=bytes(stdin),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+        )
+        return subprocess.CompletedProcess(
+            done.args, done.returncode,
+            done.stdout.decode("utf-8", "replace"),
+            done.stderr.decode("utf-8", "replace"))
     return subprocess.run(
         [*command, *args],
         check=False,
@@ -477,9 +499,14 @@ def _run(args: Sequence[str], *, authenticated: bool = True,
 
 
 def _check(args: Sequence[str], what: str, *, via_tty: bool = False,
-           authenticated: bool = True, timeout: float = 2.0) -> str:
-    proc = _run(args, authenticated=authenticated, via_tty=via_tty,
-                timeout=timeout)
+           authenticated: bool = True, timeout: float = 2.0,
+           stdin: bytes | None = None) -> str:
+    if stdin is None:
+        proc = _run(args, authenticated=authenticated, via_tty=via_tty,
+                    timeout=timeout)
+    else:
+        proc = _run(args, authenticated=authenticated, via_tty=via_tty,
+                    timeout=timeout, stdin=stdin)
     if proc.returncode != 0:
         detail = proc.stderr.strip() or f"kitten exited {proc.returncode}"
         raise PaneError(f"{what}: {detail}")
@@ -765,6 +792,26 @@ def send(target: int | str, text: str, *, submit: bool = False) -> None:
             time.sleep(SUBMIT_DELAY)
         _check(["send-text", "--match", f"id:{value}", "\r"],
                f"submit in pane {value}")
+
+
+def send_bytes(target: int | str, data: bytes) -> None:
+    """Write ``data`` to a pane's program exactly as given.
+
+    For keys, escape sequences and pastes another terminal has already
+    encoded: nothing is read as an escape (as :func:`send` reads its text),
+    no bracketed paste is added, and no Enter.  Input longer than
+    :data:`SEND_BYTES_MAX` goes as several writes, in order; one that fails
+    raises, and what came after it is not sent.
+    """
+    if not isinstance(data, (bytes, bytearray, memoryview)):
+        raise TypeError("send_bytes: data must be bytes")
+    data = bytes(data)
+    kind, value = _match(target)
+    if kind != "pane":
+        raise NoSuchTarget(f"send: {value} is a tab, not a pane")
+    for at in range(0, len(data), SEND_BYTES_MAX):
+        _check(["send-text", "--match", f"id:{value}", "--stdin"],
+               f"send to pane {value}", stdin=data[at:at + SEND_BYTES_MAX])
 
 
 # --- helpers absorbed from config/remote.py -------------------------------

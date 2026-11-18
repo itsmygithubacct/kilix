@@ -392,3 +392,81 @@ class SendSubmitTests(unittest.TestCase):
             ["send-text", "--match", "id:7", "draft"],
             ["send-text", "--match", "id:7", "\r"],
         ])
+
+
+class SendBytesTests(unittest.TestCase):
+    """Bytes go as they are, over stdin, in writes of at most
+    SEND_BYTES_MAX, never as an argument the engine reads escapes in."""
+
+    def setUp(self):
+        self.calls = []
+        self.saved = panes._check
+        panes._check = lambda argv, what, stdin=None: self.calls.append((argv, stdin))
+
+    def tearDown(self):
+        panes._check = self.saved
+
+    def test_bytes_go_whole_over_stdin(self):
+        panes.send_bytes("pane:7", b"\x1b[A\\n\x00\xff")
+        self.assertEqual(self.calls, [
+            (["send-text", "--match", "id:7", "--stdin"], b"\x1b[A\\n\x00\xff")])
+
+    def test_long_input_goes_in_order_in_pieces(self):
+        size = panes.SEND_BYTES_MAX
+        data = bytes(range(256)) * ((2 * size + 5) // 256 + 1)
+        data = data[:2 * size + 5]
+        panes.send_bytes("pane:7", bytearray(data))
+        self.assertEqual([len(stdin) for _argv, stdin in self.calls], [size, size, 5])
+        self.assertEqual(b"".join(stdin for _argv, stdin in self.calls), data)
+
+    def test_nothing_sends_nothing(self):
+        panes.send_bytes("pane:7", b"")
+        self.assertEqual(self.calls, [])
+
+    def test_text_and_tabs_are_refused(self):
+        with self.assertRaises(TypeError):
+            panes.send_bytes("pane:7", "text")
+        with self.assertRaises(panes.NoSuchTarget):
+            panes.send_bytes("tab:3", b"x")
+        self.assertEqual(self.calls, [])
+
+
+class RunStdinTests(unittest.TestCase):
+    """_run hands stdin bytes to the kitten unchanged and decodes replies."""
+
+    def setUp(self):
+        self.seen = {}
+        self.saved = panes.subprocess.run
+
+        def run(argv, **options):
+            self.seen.update(options, argv=argv)
+            return panes.subprocess.CompletedProcess(argv, 0, b"ok\xff", b"")
+        panes.subprocess.run = run
+
+    def tearDown(self):
+        panes.subprocess.run = self.saved
+
+    def test_stdin_bytes(self):
+        import types
+        context = types.ModuleType("kilix_sdk.frontend_context")
+        context.refresh = lambda: None
+        caller = types.ModuleType("kilix_sdk.caller_context")
+        caller.CallerContextError = RuntimeError
+        package = sys.modules.get("kilix_sdk") or types.ModuleType("kilix_sdk")
+        # Put back exactly, absent included: a leaked double breaks later
+        # modules that import the real SDK (see panes_stub).
+        saved = {key: sys.modules.get(key) for key in ("kilix_sdk", "kilix_sdk.frontend_context", "kilix_sdk.caller_context")}
+        sys.modules.update({"kilix_sdk": package, "kilix_sdk.frontend_context": context, "kilix_sdk.caller_context": caller})
+        try:
+            done = panes._run(["send-text", "--stdin"], authenticated=False, stdin=b"\x03\xc3")
+        finally:
+            for key, value in saved.items():
+                if value is None:
+                    sys.modules.pop(key, None)
+                else:
+                    sys.modules[key] = value
+        self.assertEqual(self.seen["input"], b"\x03\xc3")
+        self.assertNotIn("text", self.seen)
+        self.assertEqual(done.stdout, "ok\ufffd")
+        self.assertEqual(self.seen["argv"][-2:], ["send-text", "--stdin"])
+
