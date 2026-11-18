@@ -1932,7 +1932,10 @@ master key in memory and performs bounded decrypt operations. It returns
 plaintext for the approved container and never exports the master key.
 Each fingerprint operation first displays a fresh polkit approval containing
 the requesting process, requested name, byte count and container SHA-256.
-Polkit can require the account password; approval is not cached. After approval,
+The custodian asks polkit over D-Bus, so these details are not on any command
+line that other users can read. The command prints the full SHA-256 to compare
+with the dialog. Polkit can require the account password; approval is not
+cached. After approval,
 touch the sensor; a touch before approval is not read. One approval allows up
 to three scans within one 45-second deadline: a rejected touch re-arms the
 reader, as fprintd's own PAM module does, and three rejections end the

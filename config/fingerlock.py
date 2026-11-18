@@ -944,7 +944,10 @@ def _wipe_secret(buf: bytearray | None) -> None:
 
 def _touch_prompt(verb: str, binding: dict[str, Any]) -> str:
     # The reader is armed only after approval; a touch before then is not read.
-    return (f"approve the request to {verb} {binding['name']} ({binding['sha256'][:12]}), "
+    # The full digest: the dialog shows all 64 hex digits, and a request from
+    # another process differs from this one somewhere a prefix may not reach.
+    return (f"approve the request to {verb} {binding['name']} only if the dialog shows "
+            f"SHA-256 {binding['sha256']}, "
             f"then touch the sensor; if a scan is rejected, lift and touch again "
             f"(up to {agentmod.VERIFY_ATTEMPTS} scans)\n")
 

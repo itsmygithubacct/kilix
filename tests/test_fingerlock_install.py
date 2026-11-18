@@ -363,24 +363,25 @@ class ApprovalTests(unittest.TestCase):
 
     def test_fresh_approval_names_exact_operation_and_process(self):
         calls = []
-        def check(argv, alive, timeout):
-            calls.append(argv)
-            return 0 if "--allow-user-interaction" in argv else 2
+        def check(request, alive, timeout):
+            calls.append(request)
+            return 0 if request["interactive"] else 2
         policy.authorize_operation(os.getuid(), os.getpid(), self.binding, lambda: True, run_check=check)
         self.assertEqual(len(calls), 2)
         expected = (f'Fingerlock: approve unlock requested by process {os.getpid()}.\n'
                     'Requested name: "photo\\u202e.txt"\nContainer bytes: 5\n'
                     f'SHA-256: {"a" * 64}\n'
                     'The plaintext will be returned to that process after a fingerprint match.')
-        for argv in calls:
-            self.assertEqual(argv[argv.index("polkit.message") + 1], expected)
-        self.assertIn("--allow-user-interaction", calls[1])
-        self.assertIn("a" * 64, calls[0])
-        subject = calls[0][calls[0].index("--process") + 1].split(",")
-        self.assertEqual(subject[0], str(os.getpid()))
-        self.assertEqual(subject[2], str(os.getuid()))
-        self.assertGreater(int(subject[1]), 0)
-        self.assertIn("\\u202e", calls[0][calls[0].index("polkit.message") + 1])
+        for request in calls:
+            self.assertEqual(request["details"]["polkit.message"], expected)
+            self.assertEqual(request["action"], policy.ACTION)
+        self.assertEqual([request["interactive"] for request in calls], [False, True])
+        self.assertEqual(calls[0]["details"]["fingerlock.digest"], "a" * 64)
+        subject = calls[0]["subject"]
+        self.assertEqual(subject["pid"], os.getpid())
+        self.assertEqual(subject["uid"], os.getuid())
+        self.assertGreater(subject["start"], 0)
+        self.assertIn("\\u202e", calls[0]["details"]["polkit.message"])
 
     def test_cached_denied_missing_agent_cancel_and_error_never_approve(self):
         from fingerlock_core import AccessDenied
@@ -395,29 +396,8 @@ class ApprovalTests(unittest.TestCase):
                 policy.authorize_operation(os.getuid(), os.getpid(), self.binding, lambda: True,
                                            run_check=unittest.mock.Mock(side_effect=[2, response]))
 
-    def test_timeout_terminates_the_approval_process(self):
-        from fingerlock_core import OperationTimeout
-        real_popen = subprocess.Popen
-        children = []
-        def start(argv, **kwargs):
-            child = real_popen([sys.executable, "-c", "import time; time.sleep(30)"], **kwargs)
-            children.append(child)
-            return child
-        with patch.object(policy.subprocess, "Popen", side_effect=start), self.assertRaises(OperationTimeout):
-            policy._run_check(["unused"], lambda: True, 0.05)
-        self.assertIsNotNone(children[0].poll())
-
-    def test_disconnect_terminates_the_approval_process(self):
-        from fingerlock_core import AccessDenied
-        real_popen = subprocess.Popen
-        children = []
-        def start(argv, **kwargs):
-            child = real_popen([sys.executable, "-c", "import time; time.sleep(30)"], **kwargs)
-            children.append(child)
-            return child
-        with patch.object(policy.subprocess, "Popen", side_effect=start), self.assertRaises(AccessDenied):
-            policy._run_check(["unused"], lambda: False, 5)
-        self.assertIsNotNone(children[0].poll())
+    # Timeout and withdrawal cancel the real D-Bus check against a fake polkit
+    # on a private bus: test_fingerlock_bus.PolkitCheckTests.
 
     def test_kernel_peer_token_notices_original_process_exit(self):
         import fingerlock_agent as agent

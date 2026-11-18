@@ -519,7 +519,8 @@ class PromptTests(unittest.TestCase):
     def test_unlock_prompt_asks_for_approval_before_the_touch(self):
         fl = importlib.import_module("fingerlock")
         text = fl._touch_prompt("unlock", {"name": "a.flk", "sha256": "c" * 64})
-        self.assertTrue(text.startswith("approve the request to unlock a.flk (cccccccccccc), then touch"))
+        self.assertTrue(text.startswith("approve the request to unlock a.flk only if the dialog shows "
+                                        f"SHA-256 {'c' * 64}, then touch"))
         self.assertIn(f"up to {agentmod.VERIFY_ATTEMPTS} scans", text)
 
 
@@ -540,12 +541,12 @@ class ApprovalCancelTests(unittest.TestCase):
 
     def test_dialog_shows_the_operation_before_interaction(self):
         shown = []
-        def check(argv, alive, timeout):
-            shown.append(argv)
-            return policy.PKCHECK_DISMISSED if "--allow-user-interaction" in argv else policy.PKCHECK_CHALLENGE
+        def check(request, alive, timeout):
+            shown.append(request)
+            return policy.PKCHECK_DISMISSED if request["interactive"] else policy.PKCHECK_CHALLENGE
         with self.assertRaises(core.AccessDenied):
             policy.authorize_operation(os.getuid(), os.getpid(), self.binding, lambda: True, run_check=check)
-        message = shown[1][shown[1].index("polkit.message") + 1]
+        message = shown[1]["details"]["polkit.message"]
         for detail in ("approve password-get", f"process {os.getpid()}", 'Requested name: "bank \\"main\\""',
                        "Container bytes: 9", "SHA-256: " + "b" * 64):
             self.assertIn(detail, message)
