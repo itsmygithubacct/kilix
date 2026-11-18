@@ -153,6 +153,9 @@ KILIX_PACKAGED_ENGINE_HOME="${KILIX_PACKAGED_ENGINE_HOME:-/usr/lib/kilix/engine}
 # Where the kilix-native Debian package installs the pty broker, the state
 # library and the screensavers. Used only by a tree without their source.
 KILIX_PACKAGED_NATIVE_HOME="${KILIX_PACKAGED_NATIVE_HOME:-/usr/lib/kilix/native}"
+# Where the kilix-95 Debian package installs the default desktop provider. A
+# checkout at KILIX95_DIR still wins, so a developer provider is never shadowed.
+KILIX_PACKAGED_KILIX95_HOME="${KILIX_PACKAGED_KILIX95_HOME:-/usr/share/kilix-95}"
 KILIX95_STORAGE_HOME="${KILIX95_STORAGE_HOME:-$GPU_TERMINAL_HOME/kilix-95}"
 KILIX95_CONFIG_HOME="${KILIX95_CONFIG_HOME:-$KILIX95_STORAGE_HOME/config}"
 KILIX95_STATE_HOME="${KILIX95_STATE_HOME:-$KILIX95_STORAGE_HOME/state}"
@@ -164,7 +167,7 @@ export KILIX_STORAGE_HOME KILIX_CONFIG_HOME
 export KILIX_STATE_DIRECTORY KILIX_CACHE_HOME KILIX_SESSION_HOME
 export KILIX_TELEMETRY_RUNTIME KILIX_DATA_HOME
 export KILIX_BUILD_DIRECTORY KILIX_PREBUILT_HOME KILIX_PACKAGED_ENGINE_HOME
-export KILIX_PACKAGED_NATIVE_HOME
+export KILIX_PACKAGED_NATIVE_HOME KILIX_PACKAGED_KILIX95_HOME
 export KILIX95_STORAGE_HOME KILIX95_CONFIG_HOME KILIX95_STATE_HOME
 export KILIX95_CACHE_HOME KILIX95_SESSION_HOME KILIX95_DATA_HOME
 
@@ -1617,6 +1620,31 @@ _kilix_rehome_legacy_desktop_dir \
   KILIX_LAND_DESKTOP_DIR "$GPU_TERMINAL_SOURCE_HOME/kilix-land-desktop" \
   "$GPU_TERMINAL_SOURCE_HOME/kilix-desktops/kilix-land-desktop"
 unset -f _kilix_rehome_legacy_desktop_dir
+
+# A provider tree installed by the kilix-95 package: a regular PACKAGED marker,
+# no checkout, and the tree and its entry point owned by root and writable by
+# nobody else, so nothing the desktop user can change is trusted as packaged.
+_kilix95_is_packaged_tree() {
+  local dir="$1" path mode
+  [ -d "$dir" ] && [ ! -L "$dir" ] || return 1
+  [ -f "$dir/PACKAGED" ] && [ ! -L "$dir/PACKAGED" ] || return 1
+  [ ! -e "$dir/.git" ] && [ ! -L "$dir/.git" ] || return 1
+  [ -f "$dir/main.py" ] && [ ! -L "$dir/main.py" ] || return 1
+  for path in "$dir" "$dir/main.py"; do
+    [ "$(stat -c %u "$path" 2>/dev/null)" = 0 ] || return 1
+    mode="$(stat -c %a "$path" 2>/dev/null)" || return 1
+    # group and other write bits are the last two octal digits' 2 bit
+    case "$mode" in
+      *[2367][0-7]|*[0-7][2367]) return 1 ;;
+    esac
+  done
+  return 0
+}
+# No provider checkout at KILIX95_DIR: use the packaged one when it is there.
+if [ ! -f "$KILIX95_DIR/main.py" ] && [ ! -L "$KILIX95_DIR/main.py" ] \
+     && _kilix95_is_packaged_tree "$KILIX_PACKAGED_KILIX95_HOME"; then
+  KILIX95_DIR="$KILIX_PACKAGED_KILIX95_HOME"
+fi
 export KILIX95_DIR KILIX_CAP_DIR KILIX_TUI_UTILS_DIR
 export KILIX_LAND_DESKTOP_DIR
 
@@ -6420,6 +6448,13 @@ _kilix95_ensure_external() {
   _k95_dir="$KILIX95_DIR"
   _k95_repo="${KILIX95_REPO:-https://github.com/itsmygithubacct/kilix-95.git}"
 
+  if [ -f "$_k95_dir/main.py" ] && _kilix95_is_packaged_tree "$_k95_dir"; then
+    # Installed and pinned by apt: no origin or ref to check.
+    _kilix_desktop_validate "$_k95_dir"
+    _KILIX_DESKTOP_MAIN="$_k95_dir/main.py"
+    _KILIX_DESKTOP_MODE=python
+    return 0
+  fi
   if [ -f "$_k95_dir/main.py" ]; then
     if [ -d "$_k95_dir/.git" ]; then
       _k95_origin="$(git -C "$_k95_dir" config --get remote.origin.url 2>/dev/null || true)"

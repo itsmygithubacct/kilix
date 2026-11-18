@@ -1,3 +1,11 @@
+kilix (0.2.3+packaging6) UNRELEASED; urgency=medium
+
+  * Find the kilix-95 package's desktop in /usr/share/kilix-95 when no
+    provider checkout is present, and trust it without git checks only when
+    it carries the PACKAGED marker and root owns it, writable by nobody else.
+
+ -- itsmygithubacct <itsmygithubacct@users.noreply.github.com>  Wed, 18 Nov 2026 02:00:00 +0000
+
 kilix (0.2.3+packaging5) UNRELEASED; urgency=medium
 
   * Pin kitty-pty-broker 426c1b5: end a session's processes on kernels
