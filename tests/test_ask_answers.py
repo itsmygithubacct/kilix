@@ -4,6 +4,7 @@ Each module answers a closed family and returns 3 for anything else, so a
 request that changes something still reaches Needle.
 """
 import datetime
+import hashlib
 import os
 import socket
 import sys
@@ -127,6 +128,28 @@ class Answers(unittest.TestCase):
                 status, shown = kilix_when.answer(question)
                 self.assertEqual(status, 0, question)
                 self.assertIn(f" in {zone} (UTC", shown, question)
+
+    def test_relative_dates_keep_direction_and_find_real_leap_days(self):
+        with mock.patch.object(kilix_when, "_now", return_value=NOW):
+            self.assertEqual(kilix_when.answer("when is yesterday"), (0, "Monday, 2026-11-09, 1 day ago"))
+            self.assertIn("1 day ago", kilix_when.answer("how many days until yesterday")[1])
+            self.assertIn("2028-02-29", kilix_when.answer("how many days until February 29")[1])
+            self.assertIn("2024-02-29", kilix_when.answer("how many days since February 29")[1])
+            for invalid in ("February 30", "February 29 2026"):
+                with self.assertRaises(kilix_when.WhenError):
+                    kilix_when.answer(f"when is {invalid}")
+        with mock.patch.object(kilix_when, "_now", return_value=NOW.replace(year=2100)):
+            self.assertIn("2104-02-29", kilix_when.answer("when is February 29")[1])
+
+    def test_text_operands_keep_their_exact_characters(self):
+        text = "İt’s  a\tline\nand another!"
+        for left, right in (('"', '"'), ("'", "'"), ("`", "`"), ("“", "”"), ("‘", "’")):
+            literal = left + text + right
+            with self.subTest(literal=literal):
+                self.assertEqual(kilix_tools.answer(f"please SHA256 of {literal}, thanks"),
+                                 (0, hashlib.sha256(text.encode()).hexdigest()))
+                self.assertEqual(kilix_tools.answer(f"how many characters in {literal}"), (0, str(len(text))))
+                self.assertEqual(kilix_tools.answer(f"reverse {literal}"), (0, text[::-1]))
 
     def test_worked_sums_and_units(self):
         cases = {

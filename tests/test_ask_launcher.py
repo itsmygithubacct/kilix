@@ -1404,6 +1404,18 @@ def json_request(url):
         self.assertIn("app install kilix-needle", result.stderr)
         self.assertEqual([call.get("needle") for call in self.calls()], [None])
 
+    def test_path_needle_is_used_even_when_catalog_needle_is_unavailable(self):
+        bindir = self.root / "bin"
+        bindir.mkdir()
+        (bindir / "kilix-needle").symlink_to(self.env["ASK_TEST_NEEDLE"])
+        result = self.run_ask("--yes", "split right", PATH=f"{bindir}:{self.env['PATH']}", ASK_TEST_MISSING="1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([call.get("needle") for call in self.calls()], [["ask", "--yes", "--", "split right"]])
+
+    def test_quoted_text_reaches_exact_answers_intact(self):
+        result = self.run_ask('please count characters in "a  b"', ASK_TEST_MISSING="1")
+        self.assertEqual((result.returncode, result.stdout.strip()), (0, "4"), result.stderr)
+
     def test_usage_errors_exit_2_and_run_nothing(self):
         for arguments in ((), ("   ",), ("--verbose", "x"), ("--voice", "split right"),
                           ("--voice",), ("--repl",), ("--repl", "--yes")):

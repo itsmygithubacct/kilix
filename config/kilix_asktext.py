@@ -37,10 +37,25 @@ _TAIL = re.compile(
 )
 
 
-def clean(text: str) -> str:
-    """The request with quotes straightened, spaces collapsed, and courtesy removed."""
-    text = " ".join(text.replace("’", "'").replace("‘", "'")
-                    .replace("“", '"').replace("”", '"').split())
+_QUOTES = str.maketrans("‘’“”", "''\"\"")
+_LITERAL = re.compile(r"""(?<!\w)(
+    "(?:\\.|[^"\\])*" | '(?:\\.|[^'\\]|'(?=\w))*'(?!\w) | `[^`]*`
+    | “[^”]*” | ‘(?:[^’]|’(?=\w))*’(?!\w)
+)""", re.VERBOSE | re.DOTALL)
+
+
+def clean(text: str, *, preserve_literals: bool = False) -> str:
+    """Normalize the surrounding question, retaining quoted operands for exact text tools."""
+    if preserve_literals:
+        parts = _LITERAL.split(text)
+        for index, part in enumerate(parts):
+            if index % 2:
+                parts[index] = part[0].translate(_QUOTES) + part[1:-1] + part[-1].translate(_QUOTES)
+            else:
+                parts[index] = re.sub(r"\s+", " ", part.translate(_QUOTES))
+        text = "".join(parts).strip()
+    else:
+        text = " ".join(text.translate(_QUOTES).split())
     text = _TRAIL.sub("", text).strip()
     stripped = False
     for _ in range(6):

@@ -568,7 +568,13 @@ def _quoted(text: str) -> str:
     return text
 
 
-def _text_tools(text: str, low: str) -> str | None:
+_TEXT_SYNTAX = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ\n", "abcdefghijklmnopqrstuvwxyz ")
+
+
+def _text_tools(text: str) -> str | None:
+    # Match ASCII question words with offsets into the original operand. Unicode
+    # lowercasing can expand a character, and an operand can span several lines.
+    low = text.translate(_TEXT_SYNTAX)
     def original(match: re.Match, name: str) -> str:
         start, end = match.span(name)
         return _quoted(text[start:end])
@@ -924,14 +930,14 @@ def _reference(low: str) -> str | None:
 
 def answer(text: str) -> tuple[int, str]:
     """Return a status and the text to print. Status 3 is not one of these."""
-    text = clean(text)
+    text = clean(text, preserve_literals=True)
     if not text or len(text) > _MAX_TEXT:
         return NOT_TOOL, ""
     low = text.lower()
     for attempt in (
         lambda: _random(text, low),
         lambda: _reference(low),
-        lambda: _text_tools(text, low),
+        lambda: _text_tools(text),
         lambda: _maths(low),
         lambda: None if _CURRENCY.search(low) else _convert(low),
     ):
