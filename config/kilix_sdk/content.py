@@ -33,6 +33,7 @@ LifecycleSpec = _shared.LifecycleSpec
 InstallError = _shared.InstallError
 Installer = _shared.Installer
 default_catalog = _shared.default_catalog
+verified_packaged_catalog = _shared.verified_packaged_catalog
 download = _shared.download
 safe_extract_tar = _shared.safe_extract_tar
 safe_extract_zip = _shared.safe_extract_zip

@@ -400,11 +400,11 @@ def _catalog_installed(entry) -> bool:
         if os.path.isabs(command):
             return os.path.isfile(command) and os.access(command, os.X_OK)
         return bool(shutil.which(command))
-    if entry.kind == "app" and entry.source_type in {"git", "archive"}:
+    if entry.kind in {"app", "tool"} and entry.source_type in {"git", "archive"}:
         root = os.path.join(paths.data_dir(), "desktop-apps")
-        if not os.path.isdir(root):
-            return False
         try:
+            if not os.path.isdir(root):
+                return entry.kind == "tool" and bool(content.Installer.system_converter(entry))
             return bool(content.Installer(root).ready(entry))
         except Exception:                          # noqa: BLE001
             return False
@@ -635,13 +635,13 @@ def _install_agent(agent: dict, *, assume_yes: bool) -> int:
 
 def _install_catalog(identifier: str) -> int:
     try:
-        spec = content.default_catalog().require(identifier)
+        spec = content.verified_packaged_catalog().require(identifier)
     except Exception as error:                   # noqa: BLE001
         print(f"kilix install: {error}", file=sys.stderr)
         return 2
     print(f"installing {spec.label} ({spec.kind})")
     try:
-        if spec.kind == "app" and spec.source_type in {"git", "archive"}:
+        if spec.kind in {"app", "tool"} and spec.source_type in {"git", "archive"}:
             content_app.ensure_application(spec, install=True)
         elif spec.kind == "app" and spec.source_type == "system":
             if not _catalog_installed(spec):
