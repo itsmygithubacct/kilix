@@ -1,3 +1,10 @@
+kilix (0.2.3+packaging8) UNRELEASED; urgency=medium
+
+  * Use the Needle command on PATH for Ask. Preserve quoted text for
+    exact answers and resolve past dates and yearless leap days correctly.
+
+ -- itsmygithubacct <itsmygithubacct@users.noreply.github.com>  Fri, 20 Nov 2026 21:26:00 +0000
+
 kilix (0.2.3+packaging7) UNRELEASED; urgency=medium
 
   * List and install catalog tools through kilix-content. Select the

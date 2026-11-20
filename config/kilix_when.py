@@ -230,12 +230,15 @@ def _resolve(year: int | None, month: int, day: int, today: date, past: bool) ->
     try:
         if year is not None:
             return date(year, month, day)
-        candidate = date(today.year, month, day)
-        if past and candidate > today:
-            return date(today.year - 1, month, day)
-        if not past and candidate < today:
-            return date(today.year + 1, month, day)
-        return candidate
+        year = today.year
+        direction = -1 if past else 1
+        today_md = (today.month, today.day)
+        if (past and (month, day) > today_md) or (not past and (month, day) < today_md):
+            year += direction
+        if (month, day) == (2, 29):
+            while date.min.year <= year <= date.max.year and not calendar.isleap(year):
+                year += direction
+        return date(year, month, day)
     except ValueError as error:
         raise WhenError("that is not a date on the calendar") from error
 
@@ -369,6 +372,9 @@ def answer(text: str) -> tuple[int, str]:
         target = _named_date(named, today)
         if target is not None:
             days = (target - today).days
+            if days < 0:
+                span = f"{-days / 7:.1f} weeks" if until["unit"] == "weeks" else _span(days)
+                return 0, f"{_long(target)}, {span} ago"
             if until["when3"]:
                 suffix = "today" if days == 0 else f"in {_span(days)}"
                 return 0, f"{_long(target)}, {suffix}"
