@@ -309,37 +309,39 @@ def format_result(value: float) -> str:
     return f"{value:.10g}"
 
 
-_INFO = {
-    "b": 1, "byte": 1, "bytes": 1,
-    "kb": 1_000, "kilobyte": 1_000, "kilobytes": 1_000,
-    "mb": 1_000_000, "megabyte": 1_000_000, "megabytes": 1_000_000,
-    "gb": 1_000_000_000, "gigabyte": 1_000_000_000, "gigabytes": 1_000_000_000,
-    "tb": 1_000_000_000_000, "terabyte": 1_000_000_000_000, "terabytes": 1_000_000_000_000,
-    "kib": 1024, "mib": 1024 ** 2, "gib": 1024 ** 3, "tib": 1024 ** 4,
+_DATA_PREFIXES = {
+    "": ("", 1), "k": ("kilo", 1000), "m": ("mega", 1000**2), "g": ("giga", 1000**3),
+    "t": ("tera", 1000**4), "p": ("peta", 1000**5), "ki": ("kibi", 1024),
+    "mi": ("mebi", 1024**2), "gi": ("gibi", 1024**3), "ti": ("tebi", 1024**4), "pi": ("pebi", 1024**5),
 }
+_DATA_SYMBOL = re.compile(r"(?<![a-z])([kmgtp]i?)?([bB])(?![a-z])", re.ASCII | re.IGNORECASE)
+
+
+def expand_data_symbols(text: str) -> str:
+    """Preserve the bit/byte distinction before a conversion folds its words to lowercase."""
+    def expand(match):
+        prefix, _ = _DATA_PREFIXES[(match[1] or "").lower()]
+        return prefix + ("byte" if match[2] == "B" else "bit")
+    return _DATA_SYMBOL.sub(expand, text)
+
+
+DATA_UNITS = {}
+for _symbol, (_prefix, _size) in _DATA_PREFIXES.items():
+    _bit_label = "bits" if not _symbol else ("k" if _symbol == "k" else _symbol.capitalize()) + "b"
+    for _word, _scale, _label in (("byte", _size, _symbol.capitalize() + "B"), ("bit", _size / 8, _bit_label)):
+        DATA_UNITS[_prefix + _word] = DATA_UNITS[_prefix + _word + "s"] = (_scale, _label)
+
 _LENGTH = {
-    "mm": 0.001, "millimeter": 0.001, "millimeters": 0.001,
-    "cm": 0.01, "centimeter": 0.01, "centimeters": 0.01,
-    "m": 1, "meter": 1, "meters": 1, "metre": 1, "metres": 1,
-    "km": 1000, "kilometer": 1000, "kilometers": 1000, "kilometre": 1000, "kilometres": 1000,
-    "in": 0.0254, "inch": 0.0254, "inches": 0.0254,
-    "ft": 0.3048, "foot": 0.3048, "feet": 0.3048,
-    "yd": 0.9144, "yard": 0.9144, "yards": 0.9144,
+    alias: (scale, label)
+    for scale, label, aliases in (
+        (0.001, "mm", "mm millimeter millimeters"), (0.01, "cm", "cm centimeter centimeters"),
+        (1, "m", "m meter meters metre metres"), (1000, "km", "km kilometer kilometers kilometre kilometres"),
+        (0.0254, "in", "in inch inches"), (0.3048, "ft", "ft foot feet"), (0.9144, "yd", "yd yard yards"),
+    )
+    for alias in aliases.split()
 }
-_TEMP = {"c": "c", "celsius": "c", "f": "f", "fahrenheit": "f"}
-_UNIT_LABEL = {
-    "b": "B", "byte": "B", "bytes": "B",
-    "kb": "KB", "kilobyte": "KB", "kilobytes": "KB",
-    "mb": "MB", "megabyte": "MB", "megabytes": "MB",
-    "gb": "GB", "gigabyte": "GB", "gigabytes": "GB",
-    "tb": "TB", "terabyte": "TB", "terabytes": "TB",
-    "kib": "KiB", "mib": "MiB", "gib": "GiB", "tib": "TiB",
-    "mm": "mm", "cm": "cm", "m": "m", "km": "km",
-    "in": "in", "inch": "in", "inches": "in",
-    "ft": "ft", "foot": "ft", "feet": "ft",
-    "yd": "yd", "yard": "yd", "yards": "yd",
-    "c": "°C", "celsius": "°C", "f": "°F", "fahrenheit": "°F",
-}
+TEMPERATURE_UNITS = {"c": "°C", "celsius": "°C", "centigrade": "°C", "f": "°F",
+                     "fahrenheit": "°F", "k": "K", "kelvin": "K"}
 _CONVERSION = re.compile(
     r"^(?:how many (?P<to_a>[a-z]+) (?:are )?in )?"
     r"(?P<num>-?\d+(?:\.\d+)?)\s*(?P<src>[a-z]+)"
@@ -348,20 +350,29 @@ _CONVERSION = re.compile(
 )
 
 
-def _unit(name: str) -> tuple[str, float | str]:
+def _unit(name: str) -> tuple[str, float, str]:
     key = name.lower()
-    if key in _INFO:
-        return "info", _INFO[key]
+    if key in DATA_UNITS:
+        return "info", *DATA_UNITS[key]
     if key in _LENGTH:
-        return "length", _LENGTH[key]
-    if key in _TEMP:
-        return "temp", _TEMP[key]
+        return "length", *_LENGTH[key]
+    if key in TEMPERATURE_UNITS:
+        return "temp", 0.0, TEMPERATURE_UNITS[key]
     raise KeyError(key)
+
+
+def convert_temperature(value: float, source: str, target: str) -> float:
+    celsius = {"°C": value, "°F": (value - 32) * 5 / 9, "K": value - 273.15}[source]
+    if celsius < -273.15 - 1e-9:
+        raise CalculatorError("that is below absolute zero")
+    if source == target:
+        return value
+    return {"°C": celsius, "°F": celsius * 9 / 5 + 32, "K": celsius + 273.15}[target]
 
 
 def conversion(expression: str) -> tuple[float, str] | None:
     """Return a converted value and its unit label, or None."""
-    text = lower(expression).strip()
+    text = lower(expand_data_symbols(expression)).strip()
     match = _CONVERSION.fullmatch(text)
     if match is None:
         return None
@@ -369,19 +380,18 @@ def conversion(expression: str) -> tuple[float, str] | None:
     if target is None or (match["to_a"] and match["to_b"]):
         return None
     try:
-        src_kind, src = _unit(match["src"])
-        dst_kind, dst = _unit(target)
+        src_kind, src_scale, src_label = _unit(match["src"])
+        dst_kind, dst_scale, dst_label = _unit(target)
     except KeyError:
         return None
     if src_kind != dst_kind:
         raise CalculatorError("those units are not the same kind")
     number = float(match["num"])
     if src_kind == "temp":
-        celsius = (number - 32) * 5 / 9 if src == "f" else number
-        value = celsius * 9 / 5 + 32 if dst == "f" else celsius
+        value = convert_temperature(number, src_label, dst_label)
     else:
-        value = number * float(src) / float(dst)
-    return float(f"{value:.10g}"), _UNIT_LABEL[target.lower()]
+        value = number * src_scale / dst_scale
+    return float(f"{value:.10g}"), dst_label
 
 
 def ask_query(text: str) -> str | None:

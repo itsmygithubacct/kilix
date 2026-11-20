@@ -1,3 +1,12 @@
+kilix (0.2.3+packaging10) UNRELEASED; urgency=medium
+
+  * Use the active Needle for Ask status and suppress first-use answer model
+    setup under --yes.
+  * Resolve relative dates and past holidays correctly. Distinguish bit and
+    byte symbols and check absolute zero in both conversion paths.
+
+ -- itsmygithubacct <itsmygithubacct@users.noreply.github.com>  Fri, 20 Nov 2026 23:31:39 +0000
+
 kilix (0.2.3+packaging9) UNRELEASED; urgency=medium
 
   * Install /usr/bin/kilix-settings beside /usr/bin/kilix.

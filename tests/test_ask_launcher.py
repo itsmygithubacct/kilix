@@ -68,6 +68,9 @@ if sys.argv[1:2] == ["workflows"]:
     state = os.environ["ASK_TEST_STATE"]
     with open(os.environ["ASK_TEST_LOG"], "a") as stream:
         stream.write(json.dumps({"workflows": sys.argv[2:], "tty": sys.stdin.isatty()}) + "\\n")
+    if sys.argv[2:] == ["status", "--json"]:
+        print(json.dumps({"backend": "grammar", "ready": True}))
+        raise SystemExit(0)
     if sys.argv[2:3] == ["select"]:
         if os.environ.get("ASK_TEST_SELECT_FAILS"):
             raise SystemExit(1)
@@ -1411,6 +1414,17 @@ def json_request(url):
         result = self.run_ask("--yes", "split right", PATH=f"{bindir}:{self.env['PATH']}", ASK_TEST_MISSING="1")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual([call.get("needle") for call in self.calls()], [["ask", "--yes", "--", "split right"]])
+        status = self.run_ask("what model does ask use?", PATH=f"{bindir}:{self.env['PATH']}", ASK_TEST_MISSING="1")
+        self.assertEqual(status.returncode, 0, status.stderr)
+        self.assertIn("grammar", status.stdout)
+        self.assertEqual(self.calls()[-1]["workflows"], ["status", "--json"])
+        self.assertFalse(any("content_app" in call for call in self.calls()))
+
+    def test_model_status_finds_a_catalog_only_installation_without_building(self):
+        status = self.run_ask("what model does ask use?")
+        self.assertEqual(status.returncode, 0, status.stderr)
+        self.assertIn("grammar", status.stdout)
+        self.assertEqual(self.calls()[0], {"content_app": ["install", "kilix-needle"], "auto_install": "0"})
 
     def test_quoted_text_reaches_exact_answers_intact(self):
         result = self.run_ask('please count characters in "a  b"', ASK_TEST_MISSING="1")
@@ -1564,6 +1578,20 @@ def json_request(url):
         bad = self.run_ask("--model-answers", "maybe", **env)
         self.assertEqual(bad.returncode, 2)
         self.assertIn("must be on, off, setup or status", bad.stderr)
+
+    def test_yes_in_a_terminal_uses_only_an_already_set_up_answer_model(self):
+        ollama, env = self.model_service()
+        args = ["--yes", "--model", "grammar", "who wrote Don Quixote?"]
+        env.update(ASK_TEST_STATUS="3", KILIX_MODEL_AUTO_INSTALL="1")
+        status, output = self.run_tty(args, [], **env)
+        self.assertEqual(status, 0, output)
+        self.assertIn("Cervantes", output)
+        ollama.models.clear()
+        status, output = self.run_tty(args, [], **env)
+        self.assertEqual(status, 1, output)
+        self.assertIn("kilix ask --model-answers setup", output)
+        self.assertNotIn("Checking the installed", output)
+        self.assertEqual(len(ollama.posted("/api/chat")), 1)
 
     def test_without_a_fitting_model_the_miss_is_unchanged(self):
         # The default test environment has no sizer: nothing about models is said.

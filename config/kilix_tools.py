@@ -433,14 +433,7 @@ _UNITS = {
         (1e6, "km²", "square_kilometer|square_kilometers|square_kilometre|square_kilometres"),
         (2589988.110336, "sq mi", "square_mile|square_miles"),
     ),
-    "data": _table(
-        (0.125, "bits", "bit|bits"), (1, "B", "b|byte|bytes"),
-        (1e3, "KB", "kb|kilobyte|kilobytes"), (1e6, "MB", "mb|megabyte|megabytes"),
-        (1e9, "GB", "gb|gigabyte|gigabytes"), (1e12, "TB", "tb|terabyte|terabytes"),
-        (1e15, "PB", "pb|petabyte|petabytes"),
-        (1024, "KiB", "kib|kibibyte|kibibytes"), (1024 ** 2, "MiB", "mib|mebibyte|mebibytes"),
-        (1024 ** 3, "GiB", "gib|gibibyte|gibibytes"), (1024 ** 4, "TiB", "tib|tebibyte|tebibytes"),
-    ),
+    "data": kilix_calc.DATA_UNITS,
     "energy": _table(
         (1, "J", "j|joule|joules"), (1000, "kJ", "kj|kilojoule|kilojoules"),
         (4.184, "cal", "cal|calorie|calories"), (4184, "kcal", "kcal|kilocalorie|kilocalories"),
@@ -461,8 +454,6 @@ _UNITS = {
         (360, "turns", "turn|turns|revolution|revolutions"),
     ),
 }
-_TEMPERATURE = {"c": "°C", "celsius": "°C", "centigrade": "°C", "f": "°F", "fahrenheit": "°F",
-                "k": "K", "kelvin": "K"}
 _JOINED = (
     (r"\bmiles (?:per|an) hour\b", "mph"), (r"\b(?:kilometers|kilometres|km) (?:per|an) hour\b", "km/h"),
     (r"\b(?:meters|metres) per second\b", "m/s"), (r"\bfeet per second\b", "ft/s"),
@@ -490,24 +481,18 @@ def _unit(name: str) -> tuple[str, float, str] | None:
     for kind, table in _UNITS.items():
         if name in table:
             return kind, table[name][0], table[name][1]
-    if name in _TEMPERATURE:
-        return "temperature", 0.0, _TEMPERATURE[name]
+    if name in kilix_calc.TEMPERATURE_UNITS:
+        return "temperature", 0.0, kilix_calc.TEMPERATURE_UNITS[name]
     return None
 
 
-def _temperature(value: float, source: str, target: str) -> float:
-    kelvin = {"°C": value + 273.15, "°F": (value - 32) * 5 / 9 + 273.15, "K": value}[source]
-    if kelvin < -1e-9:
-        raise ToolError("that is below absolute zero")
-    return {"°C": kelvin - 273.15, "°F": (kelvin - 273.15) * 9 / 5 + 32, "K": kelvin}[target]
-
-
-def _convert(low: str) -> str | None:
-    text = low
+def _convert(text: str) -> str | None:
+    text = kilix_calc.expand_data_symbols(text).lower()
     for pattern, replacement in _JOINED:
         text = re.sub(pattern, replacement, text)
     text = re.sub(r"(?<=\d),(?=\d{3}\b)", "", text)
-    amount = rf"(?P<amount>(?:{_NUM}|an?|one|half an?|half a) ?{_UNIT_WORD}(?:(?: and|,)? {_NUM} ?{_UNIT_WORD}){{0,3}})"
+    quantity = rf"(?:{_NUM}|(?:an?|one|half an?)\b)"
+    amount = rf"(?P<amount>{quantity} ?{_UNIT_WORD}(?:(?: and|,)? {_NUM} ?{_UNIT_WORD}){{0,3}})"
     target = rf"(?P<to>{_UNIT_WORD})"
     match = (
         re.fullmatch(rf"(?:{_ASK} |convert |change )?{amount} (?:in|to|into|as|equals?|=) (?:how many )?{target}", text)
@@ -520,7 +505,7 @@ def _convert(low: str) -> str | None:
     goal = _unit(match["to"])
     if goal is None:
         return None
-    pieces = re.findall(rf"({_NUM}|an?|one|half an?|half a) ?({_UNIT_WORD})", match["amount"])
+    pieces = re.findall(rf"({quantity}) ?({_UNIT_WORD})", match["amount"])
     if not pieces or "".join(a + b for a, b in pieces).replace(" ", "") != re.sub(
             r"\band\b|,|\s", "", match["amount"]):
         return None
@@ -541,7 +526,11 @@ def _convert(low: str) -> str | None:
                 return None
             if goal[0] != "temperature":
                 raise ToolError("those units are not the same kind")
-            return f"{_fmt(round(_temperature(number, unit[2], goal[2]), 6))} {goal[2]}"
+            try:
+                value = kilix_calc.convert_temperature(number, unit[2], goal[2])
+            except kilix_calc.CalculatorError as error:
+                raise ToolError(str(error)) from error
+            return f"{_fmt(round(value, 6))} {goal[2]}"
         total += number * unit[1]
     if len(kinds) != 1:
         raise ToolError("those units are not the same kind")
@@ -939,7 +928,7 @@ def answer(text: str) -> tuple[int, str]:
         lambda: _reference(low),
         lambda: _text_tools(text),
         lambda: _maths(low),
-        lambda: None if _CURRENCY.search(low) else _convert(low),
+        lambda: None if _CURRENCY.search(low) else _convert(text),
     ):
         try:
             found = attempt()
