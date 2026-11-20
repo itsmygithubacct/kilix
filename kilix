@@ -3924,7 +3924,10 @@ print(apps_root())
       # off-topic ones out.
       if [ "$_ask_status" = 3 ] && [ "$_ask_model_answers" = 1 ]; then
         _ask_model_status=0
-        python3 -B "$KILIX_HOME/config/kilix_model.py" --ask "$_ask_text" || _ask_model_status=$?
+        local _ask_answer_install="${KILIX_MODEL_AUTO_INSTALL:-1}"
+        if [ "$_ask_yes" = 1 ]; then _ask_answer_install=0; fi
+        KILIX_MODEL_AUTO_INSTALL="$_ask_answer_install" \
+          python3 -B "$KILIX_HOME/config/kilix_model.py" --ask "$_ask_text" || _ask_model_status=$?
         # 0 answered, 1 failed and said why; anything else leaves the miss.
         case "$_ask_model_status" in
           0|1) _ask_status="$_ask_model_status" ;;

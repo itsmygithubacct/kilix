@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import urllib.request
@@ -146,14 +147,21 @@ def _catalog_models(ollama: list[str] | None) -> list[tuple[str, str]]:
 
 
 def _ask_status() -> dict:
-    result = subprocess.run(
-        [str(HERE.parent / "kilix"), "app", "run", "kilix-needle", "--", "workflows", "status", "--json"],
-        capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL, check=False,
-        env={**os.environ, "KILIX_APP_AUTO_INSTALL": "0"})
+    options = dict(capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL,
+                   env={**os.environ, "KILIX_APP_AUTO_INSTALL": "0"})
+    executable = shutil.which("kilix-needle")
+    if executable is None:
+        lookup = subprocess.run([sys.executable, "-B", str(HERE / "content_app.py"), "install", "kilix-needle"],
+                                **options)
+        if lookup.returncode or not lookup.stdout.strip():
+            raise SelfError("Needle is not installed, so Ask has no command model")
+        executable = lookup.stdout.strip()
     try:
+        result = subprocess.run([executable, "workflows", "status", "--json"], **options)
+        # Needle also returns a status document when the selected model is unavailable.
         data = json.loads(result.stdout)
-    except ValueError as error:
-        raise SelfError("Needle is not installed, so Ask has no command model") from error
+    except (OSError, ValueError) as error:
+        raise SelfError("could not read the installed Needle's workflow status") from error
     if not isinstance(data, dict):
         raise SelfError("Needle returned an unexpected status")
     return data

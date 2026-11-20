@@ -173,7 +173,7 @@ def _time_in(place: str) -> str | None:
     return text
 
 
-def _named_date(text: str, today: date, *, past: bool = False) -> date | None:
+def _named_date(text: str, today: date, *, past: bool = False, year_reference: date | None = None) -> date | None:
     """A date from words. A date with no year is the next one, or the last with past."""
     text = re.sub(r"^(?:on|the date) ", "", text.strip().lower())
     if text in ("today", "now"):
@@ -192,21 +192,22 @@ def _named_date(text: str, today: date, *, past: bool = False) -> date | None:
         if weekday.group(1) == "last" or (past and weekday.group(1) is None):
             return today - timedelta(days=(today.weekday() - target) % 7 or 7)
         return today + timedelta(days=(target - today.weekday()) % 7 or 7)
+    # Yearless calendar dates in an interval inherit its start. Relative words use today.
+    reference = year_reference or today
     year_match = re.fullmatch(r"(.+?),? (\d{4})", text)
     fixed_key, fixed_year = (year_match.group(1), int(year_match.group(2))) \
         if year_match and year_match.group(1) in _FIXED else (text, None)
     if fixed_key in _FIXED:
         month, day = _FIXED[fixed_key]
-        return _resolve(fixed_year, month, day, today, past)
+        return _resolve(fixed_year, month, day, reference, past)
     if text in ("thanksgiving", "thanksgiving day"):
-        for year in ((today.year - 1, today.year) if past else (today.year, today.year + 1)):
-            first = date(year, 11, 1)
-            candidate = first + timedelta(days=(3 - first.weekday()) % 7 + 21)
-            if (past and candidate <= today) or (not past and candidate >= today):
-                found = candidate
-                if not past:
-                    return found
-        return found if past else None
+        for year in (reference.year, reference.year + (-1 if past else 1)):
+            if date.min.year <= year <= date.max.year:
+                first = date(year, 11, 1)
+                candidate = first + timedelta(days=(3 - first.weekday()) % 7 + 21)
+                if (past and candidate <= reference) or (not past and candidate >= reference):
+                    return candidate
+        raise WhenError("that date is outside the calendar")
     match = _DATE_RE.fullmatch(text)
     if match is None:
         return None
@@ -219,9 +220,9 @@ def _named_date(text: str, today: date, *, past: bool = False) -> date | None:
             return date(year, month, day)
         if match["m1"]:
             year = int(match["y1"]) if match["y1"] else None
-            return _resolve(year, _MONTHS[match["m1"].lower()], int(match["d1"]), today, past)
+            return _resolve(year, _MONTHS[match["m1"].lower()], int(match["d1"]), reference, past)
         year = int(match["y2"]) if match["y2"] else None
-        return _resolve(year, _MONTHS[match["m2"].lower()], int(match["d2"]), today, past)
+        return _resolve(year, _MONTHS[match["m2"].lower()], int(match["d2"]), reference, past)
     except ValueError as error:
         raise WhenError("that is not a date on the calendar") from error
 
@@ -397,18 +398,18 @@ def answer(text: str) -> tuple[int, str]:
         r"how many days (?:are (?:there )?)?(?:between|from) (?P<a>.+?) (?:and|to|until) (?P<b>.+)", low)
     if between:
         first = _named_date(between["a"], today)
-        second = _named_date(between["b"], first or today) if first is not None else None
+        second = _named_date(between["b"], today, year_reference=first) if first is not None else None
         if first is not None and second is not None:
             return 0, f"{_span((second - first).days)} from {_long(first)} to {_long(second)}"
 
     weekday = re.fullmatch(
-        r"what day(?: of the week)? (?:is|was|will|does|did) (?:it )?(?:be )?(?:on )?(?P<when>.+?)"
+        r"what day(?: of the week)? (?P<verb>is|was|will|does|did) (?:it )?(?:be )?(?:on )?(?P<when>.+?)"
         r"(?: fall on| land on| be)?"
-        r"|what(?:'s| is| was) the day of the week (?:of|on|for) (?P<when2>.+)"
-        r"|what day(?: of the week)? (?:does|did|will) (?P<when3>.+?) (?:fall|land) on", low)
+        r"|what(?P<verb2>'s| is| was) the day of the week (?:of|on|for) (?P<when2>.+)", low)
     if weekday:
-        named = weekday["when"] or weekday["when2"] or weekday["when3"]
-        target = _named_date(named, today)
+        named = weekday["when"] or weekday["when2"]
+        verb = (weekday["verb"] or weekday["verb2"]).strip()
+        target = _named_date(named, today, past=verb in ("was", "did"))
         if target is not None:
             return 0, _long(target)
 
