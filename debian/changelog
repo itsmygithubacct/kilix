@@ -1,3 +1,9 @@
+kilix (0.2.3+packaging9) UNRELEASED; urgency=medium
+
+  * Install /usr/bin/kilix-settings beside /usr/bin/kilix.
+
+ -- itsmygithubacct <itsmygithubacct@users.noreply.github.com>  Fri, 20 Nov 2026 22:13:00 +0000
+
 kilix (0.2.3+packaging8) UNRELEASED; urgency=medium
 
   * Use the Needle command on PATH for Ask. Preserve quoted text for

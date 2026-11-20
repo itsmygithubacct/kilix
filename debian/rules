@@ -81,6 +81,7 @@ ifneq (,$(WITH_KILIX))
 	find $(K)/third_party -depth \( -name tests -o -name benchmarks -o -name .github \) -type d -exec rm -rf {} +
 	find $(K) -depth -name __pycache__ -type d -exec rm -rf {} +
 	ln -s ../share/kilix/kilix debian/kilix/usr/bin/kilix
+	ln -s ../share/kilix/kilix-settings debian/kilix/usr/bin/kilix-settings
 endif
 
 # libkilix-encodec carries no shlibs file; the dependency is written in control.
