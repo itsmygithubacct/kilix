@@ -19,6 +19,7 @@ import sys
 from pathlib import Path
 
 NOT_LOCAL = 3
+PACKAGED_TUI_UTILS = Path("/usr/share/kilix-tui-utils")
 _PREFIX = re.compile(r"^(?:please\s+)?", re.IGNORECASE)
 _TRAIL = re.compile(r"[?!.]+$")
 _BRIGHT_SET = re.compile(
@@ -327,9 +328,10 @@ def _music():
     override = os.environ.get("KILIX_TUI_UTILS_DIR")
     if override:
         candidates.append(Path(override))
-    candidates.append(
-        Path.home() / ".local/gpu_terminal/sources/kilix-desktops/kilix-tui-utils"
+    sources = os.environ.get("GPU_TERMINAL_SOURCE_HOME") or (
+        Path.home() / ".local/gpu_terminal/sources"
     )
+    candidates.extend((Path(sources) / "kilix-desktops/kilix-tui-utils", PACKAGED_TUI_UTILS))
     path = None
     for candidate in candidates:
         trial = candidate / "src" / "kilix_tui" / "music_protocol.py"
@@ -368,7 +370,7 @@ def _playing() -> str:
         return "nothing is playing"
     module = _music()
     if module is None:
-        raise LocalError("the player status is unreadable")
+        raise LocalError("player status needs kilix-tui-utils. Install it or set KILIX_TUI_UTILS_DIR")
     control = module.MusicControl(path)
     try:
         reply = control.command("state")
