@@ -201,11 +201,12 @@ class KilixTuiProviderTests(unittest.TestCase):
             path = engine_bin / name
             path.write_text("#!/bin/sh\nexit 0\n")
             path.chmod(0o755)
+        installed = self._install(KILIX_TUI_UTILS_REF=self.ref)
+        self.assertEqual(installed.returncode, 0, installed.stderr)
         env = dict(self.env)
         env.update({
-            # An installed kilix-tui on the workstation must not shadow the
-            # fixture: the ensure prefers PATH, so the test pins PATH.
-            "PATH": "/usr/local/bin:/usr/bin:/bin",
+            # The shortcut selects the first installed provider on PATH.
+            "PATH": f"{self.home}/.local/bin:/usr/local/bin:/usr/bin:/bin",
             "GPU_TERMINAL_HOME": str(self.home / ".local" / "gpu_terminal"),
             "GPU_TERMINAL_SETTINGS_FILE": str(
                 self.home / ".local" / "gpu_terminal" / "settings.conf"
