@@ -486,7 +486,8 @@ def json_request(url):
         self.assertTrue(all("needle" not in call for call in self.calls()))
 
     def test_volume_is_checked_and_set_without_needle(self):
-        missing = self.run_ask("what is the volume?", ASK_TEST_MISSING="1")
+        missing = self.run_ask("what is the volume?", ASK_TEST_MISSING="1",
+                               KILIX_VOLUME_BIN=str(self.root / "missing-volume"))
         self.assertEqual(missing.returncode, 1, missing.stdout)
         self.assertIn("volume control is not installed", missing.stderr)
         state = self.root / "volume-state"

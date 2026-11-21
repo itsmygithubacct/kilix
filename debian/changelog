@@ -1,7 +1,7 @@
 kilix (0.2.3+packaging11) UNRELEASED; urgency=medium
 
   * Find the installed music client when Ask reads the current track.
-    Depend on kilix-tui-utils to provide it on clean installs.
+    Require the kilix-tui-utils release with headless volume commands.
   * Use the selected kilix-content revision for speech provider preparation.
 
  -- itsmygithubacct <itsmygithubacct@users.noreply.github.com>  Sat, 21 Nov 2026 01:09:19 +0000

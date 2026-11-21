@@ -18,7 +18,8 @@ Rules-Requires-Root: no
 
 Package: kilix
 Architecture: all
-Depends: kilix-engine, kilix-native, kilix-tui-utils, python3, git, procps, util-linux,
+Depends: kilix-engine, kilix-native, kilix-tui-utils (>= 0.3.1+packaging2),
+ python3, git, procps, util-linux,
  ${misc:Depends}
 Recommends: kilix-multiplexer
 Description: terminal desktop built on the Kilix engine
