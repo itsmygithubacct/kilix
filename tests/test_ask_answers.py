@@ -8,6 +8,7 @@ import hashlib
 import os
 import socket
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -17,6 +18,7 @@ sys.path.insert(0, str(ROOT / "config"))
 import kilix_about  # noqa: E402
 import kilix_asktext  # noqa: E402
 import kilix_calc  # noqa: E402
+import kilix_local  # noqa: E402
 import kilix_machine  # noqa: E402
 import kilix_self  # noqa: E402
 import kilix_tools  # noqa: E402
@@ -51,6 +53,24 @@ NOT_OURS = (
 
 
 class Answers(unittest.TestCase):
+    def test_music_client_uses_explicit_source_then_user_source_then_package(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            packaged = root / "share/kilix-tui-utils"
+            sources = root / "sources"
+            checkout = sources / "kilix-desktops/kilix-tui-utils"
+            override = root / "explicit"
+            with (mock.patch.object(kilix_local, "PACKAGED_TUI_UTILS", packaged),
+                  mock.patch.dict(os.environ, {"GPU_TERMINAL_SOURCE_HOME": str(sources),
+                                               "KILIX_TUI_UTILS_DIR": str(override)}),
+                  mock.patch.dict(sys.modules)):
+                self.assertIsNone(kilix_local._music())
+                for location in (packaged, checkout, override):
+                    client = location / "src/kilix_tui/music_protocol.py"
+                    client.parent.mkdir(parents=True)
+                    client.touch()
+                    self.assertEqual(Path(kilix_local._music().__file__), client)
+
     def ask(self, module, text):
         return module.answer(text)
 

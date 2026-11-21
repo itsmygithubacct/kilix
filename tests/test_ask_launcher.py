@@ -676,7 +676,16 @@ def json_request(url):
         self.assertEqual(absent.returncode, 0, absent.stderr)
         self.assertEqual(absent.stdout.strip(), "nothing is playing")
         self.assertFalse((self.root / "missing-amp.sock").exists())
+        self.assertTrue(all("needle" not in call for call in self.calls()))
 
+    def test_playing_track_uses_the_amp_client_without_needle(self):
+        playing_env = {"ASK_TEST_MISSING": "1"}
+        source = os.environ.get("KILIX_TUI_UTILS_TEST_SOURCE")
+        if source:
+            self.assertTrue((Path(source) / "src/kilix_tui/music_protocol.py").is_file(), source)
+            playing_env["KILIX_TUI_UTILS_DIR"] = source
+        elif not Path("/usr/share/kilix-tui-utils/src/kilix_tui/music_protocol.py").is_file():
+            self.skipTest("install kilix-tui-utils or set KILIX_TUI_UTILS_TEST_SOURCE")
         amp_dir = self.root / "amp"
         amp_dir.mkdir(mode=0o700)
         amp_dir.chmod(0o700)
@@ -745,12 +754,7 @@ def json_request(url):
         self.addCleanup(thread.join, 3)
         self.addCleanup(server.close)
         self.addCleanup(stop.set)
-        playing_env = {
-            "ASK_TEST_MISSING": "1",
-            "KILIX_AMP_SOCKET": str(amp_path),
-            "KILIX_TUI_UTILS_DIR":
-                "/home/pleb/.local/gpu_terminal/sources/kilix-desktops/kilix-tui-utils",
-        }
+        playing_env["KILIX_AMP_SOCKET"] = str(amp_path)
         playing = self.run_ask("what's playing?", **playing_env)
         self.assertEqual(playing.returncode, 0, (playing.stderr, errors))
         self.assertEqual(playing.stdout.strip(), "Night Drive", errors)
@@ -763,7 +767,9 @@ def json_request(url):
         write_track(state="stopped", title="Night Drive")
         stopped = self.run_ask("what's playing?", **playing_env)
         self.assertEqual(stopped.stdout.strip(), "nothing is playing", errors)
+        self.assertEqual(self.calls(), [])
 
+    def test_microphone_status_does_not_use_needle(self):
         silent = self.run_ask("is the microphone on?", ASK_TEST_MISSING="1")
         self.assertEqual(silent.returncode, 0, silent.stderr)
         self.assertEqual(silent.stdout.strip(), "not listening")
@@ -776,6 +782,7 @@ def json_request(url):
             "status": {"listening": True, "speaking": True, "model": "whisper"},
         }), encoding="utf-8")
         voice_stop = threading.Event()
+        errors = []
         voice_server = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
         voice_server.bind(str(voice_path))
         voice_server.listen(4)
