@@ -35,6 +35,7 @@ import math
 import os
 from pathlib import Path
 import sys
+import subprocess
 import tempfile
 import unicodedata
 
@@ -506,6 +507,15 @@ def _install(api, lic, spec, args, source, output, errors) -> int:
         installer = api.Installer(args.root, command_timeout=args.timeout)
         if supplied is not None:
             installer = _SupplyOnlyInstaller(installer, supplied)
+        else:
+            from wizard_converters import ENCODEC_MODELS, prepare_encodec
+            if spec.asset_id in ENCODEC_MODELS:
+                def ask_converter(message):
+                    return _read_line(message + " [y/N] ", _MAX_ANSWER, source, output).lower() in ("y", "yes")
+                try:
+                    prepare_encodec(installer, [spec], ask_converter)
+                except subprocess.SubprocessError as error:
+                    raise SetupError("EnCodec converter installation failed. Retry Model Setup.") from error
         report = lambda message: _json({"progress": str(message)[:4096]}, errors)
         if covered and supplied is not None:
             paths = installer.ensure_supplied_asset(

@@ -474,6 +474,18 @@ def pages(include_answered=False, *, assets=None, measure=True, ensure_sizer=Fal
                 f'{label}. Optional voices are not pre-checked. '
                 + paradee_note
                 + note)
+        converter_models, converter_bytes = [], 0
+        if key == 'audio':
+            from wizard_converters import ENCODEC_HELPER, ENCODEC_MODELS, encodec_transfer
+            if ENCODEC_HELPER.is_file():
+                import content_models
+                api = content_models._api()
+                catalogue = content_models._verified_catalog(api)
+                specs = [catalogue.require_asset(row['id']) for row in rows if row['id'] in ENCODEC_MODELS]
+                converter_models, converter_bytes = encodec_transfer(apps_root(), specs)
+                if converter_models and converter_bytes:
+                    recommendation = (f'Both profiles share one {size_text(converter_bytes)} converter '
+                                      f'download in addition to the model. ' + recommendation)
         if key == 'workflows':
             # 0.2.3: no Ask model is installed unasked. This page and the first
             # `kilix ask` at a terminal are the two places that offer LFM2.
@@ -492,6 +504,7 @@ def pages(include_answered=False, *, assets=None, measure=True, ensure_sizer=Fal
                 'only if you choose it here; refusing its licence declines nothing else.')
         result.append(dict(id=key, title=title, models=rows, default=default, answer=answer,
                            optional=optional, disk_available_bytes=disk_free,
+                           converter_models=converter_models, converter_bytes=converter_bytes,
                            recommendation=recommendation))
     return result
 

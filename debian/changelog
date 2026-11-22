@@ -1,3 +1,10 @@
+kilix (0.2.3+packaging14) UNRELEASED; urgency=medium
+
+  * Offer the pinned EnCodec converter when a selected model needs conversion.
+    Share the prompt and installer between Model Setup and the models command.
+
+ -- itsmygithubacct <itsmygithubacct@users.noreply.github.com>  Sun, 22 Nov 2026 22:51:00 +0000
+
 kilix (0.2.3+packaging13) UNRELEASED; urgency=medium
 
   * Install the shared private GUI bus supervisor, its systemd template and

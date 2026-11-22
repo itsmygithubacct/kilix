@@ -72,4 +72,64 @@ class ConverterTests(unittest.TestCase):
         ensure.assert_not_called()
 
 
+class EncodecTests(unittest.TestCase):
+    def setUp(self):
+        from types import SimpleNamespace
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        self.helper = self.root / 'helper'
+        self.helper.touch()
+        self.binary = self.root / 'driver'
+        self.store = self.root / 'store'
+        self.installer = SimpleNamespace(root=self.store)
+        self.specs = [SimpleNamespace(asset_id=key, install_name=key, convert_argv=(self.binary,))
+                      for key in sorted(converters.ENCODEC_MODELS)]
+        for name, value in [('ENCODEC_HELPER', self.helper), ('ENCODEC_REQUESTED', self.root / 'requested')]:
+            patcher = patch.object(converters, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_size_and_defer_do_not_create_store_or_start_installer(self):
+        with patch('subprocess.run', return_value=subprocess.CompletedProcess([], 0, '239108136', '')) as run:
+            self.assertEqual(converters.encodec_transfer(self.store, self.specs),
+                             ([spec.asset_id for spec in self.specs], 239108136))
+            question = Mock(return_value=False)
+            with self.assertRaisesRegex(ValueError, 'deferred'):
+                converters.prepare_encodec(self.installer, self.specs, question)
+        self.assertIn('228.0 MiB', question.call_args.args[0])
+        self.assertFalse(self.store.exists())
+        self.assertTrue(all(call.args[0] == [str(self.helper), '--download-bytes'] for call in run.call_args_list))
+
+    def test_both_profiles_get_one_fixed_privileged_install(self):
+        def run(command, **options):
+            if command == [str(self.helper), '--download-bytes']:
+                return subprocess.CompletedProcess(command, 0, '239108136', '')
+            self.assertEqual(command, ['/usr/bin/sudo', '--', str(self.helper)])
+            self.assertTrue(options['check'])
+            self.binary.touch(mode=0o700)
+        ask = Mock(return_value=True)
+        with patch('subprocess.run', side_effect=run) as called, patch('os.geteuid', return_value=1000):
+            converters.prepare_encodec(self.installer, self.specs, ask)
+        ask.assert_called_once()
+        self.assertEqual(called.call_count, 2)
+
+    def test_prepared_models_need_no_converter_and_active_converter_needs_no_download(self):
+        for spec in self.specs:
+            (self.store / 'assets' / spec.install_name).mkdir(parents=True)
+        with patch('subprocess.run') as run:
+            converters.prepare_encodec(self.installer, self.specs, Mock(side_effect=AssertionError))
+            for spec in self.specs:
+                (self.store / 'assets' / spec.install_name).rmdir()
+            self.binary.touch(mode=0o700)
+            converters.ENCODEC_REQUESTED.touch()
+            converters.prepare_encodec(self.installer, self.specs, Mock(side_effect=AssertionError))
+        run.assert_not_called()
+
+    def test_unknown_size_fails_before_source_build_or_administrator_prompt(self):
+        with patch('subprocess.run', side_effect=subprocess.TimeoutExpired('helper', 5)):
+            with self.assertRaisesRegex(ValueError, 'on-demand'):
+                converters.prepare_encodec(self.installer, self.specs, Mock(side_effect=AssertionError))
+
+
 if __name__ == '__main__': unittest.main()
