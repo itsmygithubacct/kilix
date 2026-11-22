@@ -1,22 +1,27 @@
 """kilix desktop — Media Player: kilix-amp (Winamp 2.x clone) in an XPane.
 
-Unlike the games (which live in kilix tabs), the media player opens INSIDE
-the desktop: an SDL2 app on a private X server, streamed into a kilix 95
-window. First run clones and builds github.com/itsmygithubacct/kilix-amp
-via the InstallerWindow; the layout/config it saves is kept private under
-its install dir so it never fights the user's own kilix-amp setup.
+Packaged desktops launch the installed player. A configured source install
+uses the content catalog. Both run inside the same private XPane.
 """
 import os
 
 import wm
 import storage
-from kilix_sdk._content_runtime import launch_environment
+from kilix_sdk._content_runtime import launch_environment, packaged_amp
 from . import xpane
 
 
 def open_amp(desk, path=None):
     import games
-    exe = games.amp_ready()
+    config = games.load()
+    exe = None
+    if not config.get("kilix-amp", "dir", fallback=""):
+        try:
+            exe = packaged_amp(games.KILIX_HOME)
+        except FileNotFoundError as error:
+            wm.msgbox(desk, "Media Player", str(error), icon="amp")
+            return
+    exe = exe or games.amp_ready(config)
     if exe:
         _spawn(desk, exe, path)
         return
@@ -60,7 +65,7 @@ def _spawn(desk, exe, path=None):
 
     if not exe:
         return
-    d = os.path.dirname(exe)
+    d = os.path.dirname(os.path.realpath(exe))
     _seed_sample(d)
     cmd = [exe] + ([os.path.abspath(os.path.expanduser(path))] if path
                    else [])

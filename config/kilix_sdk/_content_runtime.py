@@ -32,3 +32,13 @@ def launch_environment(*, root: str | None = None, base=None) -> dict[str, str]:
         apps_root() if root is None else normalized_root(root)
     )
     return environment
+
+
+def packaged_amp(host_root: str) -> str | None:
+    """Return the distro player for a packaged host, or select catalog mode."""
+    if not os.path.isfile(os.path.join(host_root, "PACKAGED")):
+        return None
+    executable = "/usr/bin/kilix-amp"
+    if os.path.isfile(executable) and os.access(executable, os.X_OK):
+        return executable
+    raise FileNotFoundError("Install the Media Player with sudo apt install kilix-amp.")

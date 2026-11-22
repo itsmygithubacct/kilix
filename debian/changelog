@@ -1,3 +1,11 @@
+kilix (0.2.3+packaging12) UNRELEASED; urgency=medium
+
+  * Open the packaged Media Player inside the desktop and preserve explicitly
+    configured source installations.
+  * Use the installed player for kilix amp and its headless mode.
+
+ -- itsmygithubacct <itsmygithubacct@users.noreply.github.com>  Sun, 22 Nov 2026 11:24:32 +0000
+
 kilix (0.2.3+packaging11) UNRELEASED; urgency=medium
 
   * Find the installed music client when Ask reads the current track.

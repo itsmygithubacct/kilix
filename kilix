@@ -3502,9 +3502,7 @@ case "${1:-}" in
     [ "$_rollout_install_only" = 0 ] || exit 0
     exec "$_rollout_installed" "$@" ;;
   amp|media-player)
-    # The Media Player has always built on first use from the desktop; this is
-    # the same install with a name a caller can reach. Kilix Amp is catalog
-    # content, so the pin comes from the content catalog, not from here.
+    # Packaged hosts use the system player. Source builds use the catalog pin.
     shift
     _amp_install_only=0
     _amp_headless=0
