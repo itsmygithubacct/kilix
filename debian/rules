@@ -66,7 +66,6 @@ endif
 
 ifneq (,$(WITH_KILIX))
 	install -d $(K)/third_party debian/kilix/usr/bin
-	python3 -I debian/stage-private-bus.py
 	cp -a $(KILIX_TOP) $(K)/
 	rm -rf $(K)/config/screensavers $(K)/docs/*.gif $(K)/desktop/tests
 	echo deb > $(K)/PACKAGED
@@ -84,6 +83,11 @@ ifneq (,$(WITH_KILIX))
 	ln -s ../share/kilix/kilix debian/kilix/usr/bin/kilix
 	ln -s ../share/kilix/kilix-settings debian/kilix/usr/bin/kilix-settings
 endif
+
+# dh_fixperms makes files in libexec executable. The shared SDK installs
+# these Python modules as data for its fixed interpreter.
+execute_after_dh_fixperms-indep:
+	python3 -I debian/stage-private-bus.py
 
 # libkilix-encodec carries no shlibs file; the dependency is written in control.
 override_dh_shlibdeps:
