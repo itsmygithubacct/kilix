@@ -3945,7 +3945,7 @@ print(apps_root())
         # here: Needle refuses the request and names the command, as it does
         # for piped Ask.
         if [ -n "$_ask_asset" ] && [ "$_ask_yes" != 1 ]; then
-          python3 -B "$KILIX_HOME/config/content_models.py" ensure "$_ask_asset" || {
+          python3 -B "$KILIX_HOME/config/content_models.py" ensure "$_ask_asset" --quiet-verified || {
             echo "kilix ask: $_ask_asset was not installed" >&2
             _ask_status=1
             return 0

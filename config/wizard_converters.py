@@ -2,11 +2,24 @@
 
 import os
 from pathlib import Path
+import re
 import subprocess
 
 ENCODEC_HELPER = Path('/usr/sbin/plebian-os-install-encodec-converter')
 ENCODEC_REQUESTED = Path('/var/lib/plebian-os/encodec-converter-requested')
 ENCODEC_MODELS = {'encodec-24khz-stateful', 'encodec-48khz-frame'}
+
+
+def plebian_version():
+    for path, pattern in [(Path('/usr/share/plebian-os/VERSION'), r'^'),
+                          (Path('/etc/plebian-os/build-info.env'), r'^PLEBIAN_OS_VERSION=')]:
+        try:
+            match = re.search(pattern + r'(\d+)\.(\d+)\.(\d+)', path.read_text(), re.M)
+        except OSError:
+            continue
+        if match:
+            return tuple(map(int, match.groups()))
+    return None
 
 
 def encodec_download_bytes():
@@ -40,8 +53,11 @@ def prepare_encodec(installer, specs, ask):
     pending = [spec for spec in specs if needs_encodec_model(installer.root, spec)]
     if not pending:
         return
+    version = plebian_version()
+    if version is not None and version < (0, 2, 4):
+        return
     if not ENCODEC_HELPER.is_file():
-        if Path('/usr/share/plebian-os/VERSION').is_file() or Path('/etc/plebian-os/build-info.env').is_file():
+        if version is not None:
             raise ValueError('Install plebian-os-tools to enable EnCodec model setup.')
         return  # Standalone Kilix retains its catalog-selected tool.
     needed, size = encodec_transfer(installer.root, pending)

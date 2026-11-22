@@ -78,6 +78,9 @@ class EncodecTests(unittest.TestCase):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)
+        version = patch.object(converters, 'plebian_version', return_value=(0, 2, 4))
+        version.start()
+        self.addCleanup(version.stop)
         self.helper = self.root / 'helper'
         self.helper.touch()
         self.binary = self.root / 'driver'
@@ -123,6 +126,12 @@ class EncodecTests(unittest.TestCase):
                 (self.store / 'assets' / spec.install_name).rmdir()
             self.binary.touch(mode=0o700)
             converters.ENCODEC_REQUESTED.touch()
+            converters.prepare_encodec(self.installer, self.specs, Mock(side_effect=AssertionError))
+        run.assert_not_called()
+
+    def test_earlier_os_preserves_its_existing_converter_policy(self):
+        with patch.object(converters, 'plebian_version', return_value=(0, 2, 3)), \
+                patch('subprocess.run') as run:
             converters.prepare_encodec(self.installer, self.specs, Mock(side_effect=AssertionError))
         run.assert_not_called()
 

@@ -53,7 +53,7 @@ if log and sys.argv[1:2] == ["ensure"]:
 if os.environ.get("ASK_TEST_MODEL_DECLINED"):
     # 1 is a failed install, 3 a no at the install screen.
     raise SystemExit(int(os.environ["ASK_TEST_MODEL_DECLINED"]))
-if sys.argv[1:] == ["ensure", "lfm2-kilix-commands"]:
+if sys.argv[1:] == ["ensure", "lfm2-kilix-commands", "--quiet-verified"]:
     open(os.environ["ASK_TEST_STATE"] + ".installed", "w").close()
 raise SystemExit(0)
 '''
@@ -1146,7 +1146,7 @@ def json_request(url):
                     ["--model", model, "--hold", "--", "close tab 2"], b"\n")
                 self.assertEqual(status, 0, output)
                 ensured = [call for call in self.calls() if "models_ensure" in call]
-                self.assertEqual(ensured, [{"models_ensure": ["ensure", asset]}])
+                self.assertEqual(ensured, [{"models_ensure": ["ensure", asset, "--quiet-verified"]}])
                 self.assertIn("--commands-backend", self.calls()[-1]["needle"])
                 self.assertIn(model, self.calls()[-1]["needle"])
 
@@ -1165,7 +1165,7 @@ def json_request(url):
         self.assertIn("needle3-kilix-commands was not installed", output)
         self.assertEqual(
             [call for call in self.calls() if "models_ensure" in call],
-            [{"models_ensure": ["ensure", "needle3-kilix-commands"]}])
+            [{"models_ensure": ["ensure", "needle3-kilix-commands", "--quiet-verified"]}])
         self.assertFalse(any("needle" in call for call in self.calls()))
 
     # --- LFM2 is offered once, at a terminal, and never installed unasked ---
@@ -1230,7 +1230,7 @@ def json_request(url):
         self.assertEqual(status, 0, output)
         self.assertEqual(self.offer_calls(), [
             {"workflows": ["choice"], "tty": False},
-            {"models_ensure": ["ensure", "lfm2-kilix-commands"]}])
+            {"models_ensure": ["ensure", "lfm2-kilix-commands", "--quiet-verified"]}])
         self.assertFalse(Path(self.env["ASK_TEST_STATE"]).exists())
         self.assertIn("needle", self.calls()[-1])
         self.log.write_text("")
@@ -1239,7 +1239,7 @@ def json_request(url):
         self.assertNotIn("Install the LFM2", output)
         self.assertEqual(self.offer_calls(), [
             {"workflows": ["choice"], "tty": False},
-            {"models_ensure": ["ensure", "lfm2-kilix-commands"]}])
+            {"models_ensure": ["ensure", "lfm2-kilix-commands", "--quiet-verified"]}])
 
     def test_a_no_at_the_install_screen_is_remembered_and_runs_the_request(self):
         self.without_the_model()
@@ -1296,7 +1296,7 @@ def json_request(url):
         self.assertNotIn("Install the LFM2", output)
         self.assertEqual(self.offer_calls(), [
             {"workflows": ["choice"], "tty": False},
-            {"models_ensure": ["ensure", "lfm2-kilix-commands"]}])
+            {"models_ensure": ["ensure", "lfm2-kilix-commands", "--quiet-verified"]}])
         for arguments, env in ((["--model", "grammar"], {}), ([], {"KILIX_ASK_COMMANDS_BACKEND": "grammar"})):
             with self.subTest(arguments=arguments, env=env):
                 Path(str(state) + ".installed").unlink(missing_ok=True)

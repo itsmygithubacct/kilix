@@ -120,7 +120,7 @@ def offer(needle, *, source=None, output=None, install=None):
         return 'declined'
     if install is None:
         install = lambda: subprocess.run(   # noqa: E731
-            [sys.executable, '-B', str(HERE / 'content_models.py'), 'ensure', ASSET]).returncode
+            [sys.executable, '-B', str(HERE / 'content_models.py'), 'ensure', ASSET, '--quiet-verified']).returncode
     status = install()
     if status == DECLINED:
         # A no at the model's own install question is a no to the offer.
