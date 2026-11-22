@@ -66,6 +66,7 @@ endif
 
 ifneq (,$(WITH_KILIX))
 	install -d $(K)/third_party debian/kilix/usr/bin
+	python3 -I debian/stage-private-bus.py
 	cp -a $(KILIX_TOP) $(K)/
 	rm -rf $(K)/config/screensavers $(K)/docs/*.gif $(K)/desktop/tests
 	echo deb > $(K)/PACKAGED

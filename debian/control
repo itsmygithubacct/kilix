@@ -10,7 +10,7 @@ Build-Depends: debhelper-compat (= 13),
  libzstd-dev,
  pkgconf,
  procps <!nocheck>,
- python3 <!nocheck>,
+ python3,
  zlib1g-dev
 Standards-Version: 4.7.2
 Homepage: https://github.com/itsmygithubacct/kilix
@@ -19,7 +19,7 @@ Rules-Requires-Root: no
 Package: kilix
 Architecture: all
 Depends: kilix-engine, kilix-native, kilix-tui-utils (>= 0.3.1+packaging2),
- python3, git, procps, util-linux,
+ dbus-daemon, git, polkitd, procps, python3, python3-dbus, util-linux,
  ${misc:Depends}
 Recommends: kilix-multiplexer
 Description: terminal desktop built on the Kilix engine

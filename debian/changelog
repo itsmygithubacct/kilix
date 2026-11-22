@@ -1,3 +1,10 @@
+kilix (0.2.3+packaging13) UNRELEASED; urgency=medium
+
+  * Install the shared private GUI bus supervisor, its systemd template and
+    its per-user policy so packaged desktop apps can open in an XPane.
+
+ -- itsmygithubacct <itsmygithubacct@users.noreply.github.com>  Sun, 22 Nov 2026 13:03:15 +0000
+
 kilix (0.2.3+packaging12) UNRELEASED; urgency=medium
 
   * Open the packaged Media Player inside the desktop and preserve explicitly
