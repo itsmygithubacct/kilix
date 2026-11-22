@@ -1,3 +1,9 @@
+kilix (0.2.3+packaging14) UNRELEASED; urgency=medium
+
+  * Keep repeated model verification receipts out of interactive Ask output.
+
+ -- itsmygithubacct <itsmygithubacct@users.noreply.github.com>  Sun, 22 Nov 2026 16:09:39 +0000
+
 kilix (0.2.3+packaging13) UNRELEASED; urgency=medium
 
   * Install the shared private GUI bus supervisor, its systemd template and

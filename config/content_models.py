@@ -582,6 +582,8 @@ def _parser() -> argparse.ArgumentParser:
         "ensure",
         help="on first use, install one model when a terminal can answer its licence")
     ensure.add_argument("asset")
+    ensure.add_argument("--quiet-verified", action="store_true",
+                        help="omit the final verification receipt on success")
     ensure.add_argument("--timeout", type=_timeout, default=900.0,
                         help="per ordinary acquisition/build command ceiling, 1..3600 seconds (default 900)")
     return parser
@@ -610,6 +612,8 @@ def main(argv=None) -> int:
             return _verify(api, lic, spec, args.root, sys.stdout)
         if args.command == "ensure":
             ensure_installed(args.asset, root=args.root, timeout=args.timeout)
+            if args.quiet_verified:
+                return 0  # ensure_installed has already verified the receipt and files.
             return _verify(api, lic, spec, args.root, sys.stdout)
         return _install(api, lic, spec, args, sys.stdin, sys.stdout, sys.stderr)
     except KeyboardInterrupt:
