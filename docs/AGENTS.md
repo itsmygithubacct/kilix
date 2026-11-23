@@ -106,6 +106,12 @@ Replace uppercase placeholders with actual values. Quote paths and titles.
 | `kilix pane send pane:ID 'TEXT' --submit` | Place text, then send Enter separately. |
 | `kilix pane close pane:ID` | Close this exact pane and terminate its foreground program. |
 
+To run one shell command in an existing pane, use
+`printf '%s' "$CMD" | kilix @ shell-submit --match id:PANE`. It runs only when
+the pane's shell verifies a fresh, empty prompt. A refusal (`CODE: REASON`)
+leaves the pane untouched; do not fall back to `pane send ... --submit`. See
+[shell-input.md](shell-input.md).
+
 Splits anchor to the caller. Directions are `right`, `left`, `up`, and `down`;
 older engines can reject left/up. Identify an existing spatial neighbor from
 layout, not listing order; `pane right` creates a new pane.
