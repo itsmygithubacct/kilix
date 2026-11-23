@@ -26,9 +26,16 @@ refused.
 ## Protocol (version 1)
 
 1. Before each primary prompt `PROMPT_COMMAND` runs `_ksi_input_ready`, which
-   draws a fresh random token, checks `read -t 0` for unread type-ahead and
-   sends `DCS @kitty-input|ready;v=1;pid=PID;token=TOKEN;pending=0|1 ST`.
-   A redraw of the same prompt sends nothing.
+   draws a fresh random token, looks for unread type-ahead and sends
+   `DCS @kitty-input|ready;v=1;pid=PID;token=TOKEN;pending=0|1 ST`.
+   A redraw of the same prompt sends nothing. In canonical mode the terminal
+   hides a partial line from `read -t 0`, for example a draft or a Ctrl-S,
+   Ctrl-R or Ctrl-Q typed while a command ran. Readline would then read it
+   before the engine's key, so the shell turns canonical processing off,
+   checks, and restores the saved terminal state with `stty`. It saves that
+   state to `tty-PID` in the private directory. If `stty` fails, or the saved
+   state is not in Linux format, no prompt is reported. The look costs about
+   1–2 ms per prompt (three `stty` runs).
 2. The engine stores the prompt with a new random `prompt_id` and the input
    byte count at that moment. `kitten @ ls` reports
    `shell_input: {"verifiable": true, "prompt_id": ..., "protocol": 1}`, or
@@ -50,10 +57,15 @@ refused.
    itself so the request can never run late. A shell that claimed it first is
    reported as `unconfirmed`, never retried.
 
-A token is single use; the next prompt has a new token and `prompt_id`. Bytes
-queued before the shell marks a command start (OSC 133;C) were read as that
-command's line. Bytes queued after it and less than 250 ms before the next
-prompt make that prompt unverifiable, because they may still be in flight.
+A token is single use; the next prompt has a new token and `prompt_id`.
+
+Every byte queued before the engine reads the prompt report is either already
+on the terminal or still on its way. The shell's look catches the first kind.
+For the second kind the engine refuses the prompt while it still holds
+unwritten input, or when a byte was queued less than 250 ms before it read the
+report. The exceptions are bytes queued before the shell marked a command start
+(OSC 133;C), which readline read as that command's line, and the engine's own
+key. Bytes queued after the report fail the byte-count check at submission.
 
 Refusal codes: `unavailable`, `busy`, `stale`, `input`, `in_flight`,
 `invalid_command`, `timeout`, `unconfirmed`, `closed`, and, from the shell,
@@ -74,22 +86,32 @@ None of these integrations sends the ready message today, so their panes report
 
 ## Known limits
 
-- **History search.** Readline ends an incremental search before any bound key
-  runs. The engine's "no byte since the prompt" check refuses before the key is
-  sent in practice, but a search started in the few milliseconds between the
-  shell reporting its prompt and the engine reading that report is ended by the
-  key. A found match is refused as a draft and kept on the line. An empty
-  search is accepted.
-- **The quiet interval** of 250 ms assumes bytes reach the pane within that
-  time, which holds for local and brokered panes. A key typed right before a
-  prompt makes that prompt unverifiable. So do Enter on an empty line and
-  Ctrl-C, because bash marks no command start for either. The pane is
-  verifiable again at the prompt after the next command that actually runs.
+- **The quiet interval assumes delivery within 250 ms.** A key that left the
+  engine before the shell's look but reached the terminal after it is caught
+  only by that interval. If it arrived later than that, readline would read it
+  before the engine's key, and the key could end a search or be quoted into
+  the line. Measured from the engine queueing a byte to a raw reader in the
+  pane receiving it, with 500 samples each (work/qa/input-latency.py):
+
+  | Panes | Load | median | 99th percentile | max |
+  | --- | --- | --- | --- | --- |
+  | local | idle | 0.27 ms | 0.43 ms | 35 ms |
+  | local | output flood + every CPU busy | 1.8 ms | 19 ms | 51 ms |
+  | brokered | idle | 0.46 ms | 0.63 ms | 0.78 ms |
+  | brokered | output flood + every CPU busy | 3.3 ms | 31 ms | 40 ms |
+
+  A stopped or swapped-out broker relay is not covered.
+- **Some prompts are refused although nothing is pending.** A key typed less
+  than 250 ms before a prompt makes that prompt unverifiable. So do Enter on an
+  empty line, Ctrl-C and leaving a full-screen program, because the last key
+  comes just before the prompt and bash marks no command start for it. The pane
+  is verifiable again at the prompt after the next command that actually runs.
 - **Remote and nested shells** (ssh, `sudo -s`, a shell inside tmux or screen)
   are refused, since the reporting process does not own the pane's terminal.
 - **A misdelivered trigger** is one inert key: a program that ignores unknown
   `CSI u` keys sees nothing.
-- **Bash only**: 4.4 or later, readline editing on, `promptvars` on, loaded
-  through Kilix's shell integration. A user `bind` of `\e[63171u` or of the two
+- **Bash on Linux only**: Bash 4.4 or later, with readline editing and
+  `promptvars` on, loaded through Kilix's shell integration, and a working
+  `stty` on the default `PATH`. A user `bind` of `\e[63171u` or of the two
   helper keys `\e[63172u`/`\e[63173u` overrides the handler and the request
   times out.
