@@ -63,9 +63,9 @@ Every byte queued before the engine reads the prompt report is either already
 on the terminal or still on its way. The shell's look catches the first kind.
 For the second kind the engine refuses the prompt while it still holds
 unwritten input, or when a byte was queued less than 250 ms before it read the
-report. The exceptions are bytes queued before the shell marked a command start
-(OSC 133;C), which readline read as that command's line, and the engine's own
-key. Bytes queued after the report fail the byte-count check at submission.
+report. Enter, newline and Ctrl-C don't count, and neither do bytes queued
+before the shell marked a command start (OSC 133;C), which readline read as
+that command's line, or the engine's own key. Bytes queued after the report fail the byte-count check at submission.
 
 Refusal codes: `unavailable`, `busy`, `stale`, `input`, `in_flight`,
 `invalid_command`, `timeout`, `unconfirmed`, `closed`, and, from the shell,
@@ -102,10 +102,13 @@ None of these integrations sends the ready message today, so their panes report
 
   A stopped or swapped-out broker relay is not covered.
 - **Some prompts are refused although nothing is pending.** A key typed less
-  than 250 ms before a prompt makes that prompt unverifiable. So do Enter on an
-  empty line, Ctrl-C and leaving a full-screen program, because the last key
-  comes just before the prompt and bash marks no command start for it. The pane
-  is verifiable again at the prompt after the next command that actually runs.
+  than 250 ms before a prompt makes that prompt unverifiable, so leaving a
+  full-screen program (`:q` Enter) usually does too. The pane is verifiable
+  again at the prompt after the next command that actually runs. Enter,
+  newline and Ctrl-C do not count toward the interval. Arriving late at a
+  fresh prompt, they only end the line and start a new prompt with a new
+  token, so an empty Enter or a draft abandoned with Ctrl-C leaves a prompt
+  that can be used at once.
 - **Remote and nested shells** (ssh, `sudo -s`, a shell inside tmux or screen)
   are refused, since the reporting process does not own the pane's terminal.
 - **A misdelivered trigger** is one inert key: a program that ignores unknown
