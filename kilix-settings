@@ -70,6 +70,10 @@ def _control_names() -> dict[str, str]:
     for alias in ("pane_gpu", "pane_gpu_mode", "gpu_chip", "gpu_mode"):
         names[alias] = shared.PANE_GPU_MODE_KEY
     names[shared.PANE_GPU_MODE_KEY.lower()] = shared.PANE_GPU_MODE_KEY
+    for alias in ("screenshot_format", "image_format", shared.CAPTURE_IMAGE_FORMAT_KEY.lower()):
+        names[alias] = shared.CAPTURE_IMAGE_FORMAT_KEY
+    for alias in ("recording_format", "video_format", shared.CAPTURE_VIDEO_FORMAT_KEY.lower()):
+        names[alias] = shared.CAPTURE_VIDEO_FORMAT_KEY
     for alias in ("temperature_unit", "temperature_units", "temp_unit", shared.TEMPERATURE_UNIT_KEY.lower()):
         names[alias] = shared.TEMPERATURE_UNIT_KEY
     for key in shared.WEATHER_DEFAULTS:
