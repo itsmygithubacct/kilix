@@ -27,6 +27,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Iterator, Mapping, Sequence
 
+from . import hostproc
+
 #: Pause between a sent text and its separate Enter, so the target has taken
 #: the text (and closed any bracketed paste) before the key arrives.
 SUBMIT_DELAY = 0.15
@@ -347,22 +349,8 @@ class Workspace:
 # --- building the model ----------------------------------------------------
 
 def _parent_pid(pid: int) -> int:
-    """The parent of ``pid``, or ``0`` when it cannot be read.
-
-    Field 4 of ``/proc/<pid>/stat`` is the ppid, but field 2 is the comm and
-    may itself contain spaces and parentheses, so split on the LAST ``") "``
-    rather than on whitespace -- splitting on the first mis-parses a process
-    whose name contains one.
-    """
-    try:
-        with open(f"/proc/{pid}/stat", encoding="utf-8", errors="replace") as handle:
-            stat = handle.read()
-    except (OSError, ValueError):
-        return 0
-    try:
-        return int(stat.rsplit(") ", 1)[1].split()[1])
-    except (IndexError, ValueError):
-        return 0
+    """The parent of ``pid``, or ``0`` when it cannot be read."""
+    return hostproc.parent_pid(pid) or 0
 
 
 def _text(value: Any) -> str:
@@ -854,8 +842,8 @@ def engine_predates(location: str) -> bool:
     if not pid or not build_directory:
         return False        # cannot tell; do not block on a guess
     try:
-        running = os.path.realpath(f"/proc/{int(pid)}/exe")
-    except (ValueError, OSError):
+        running = hostproc.executable(int(pid)) or ""
+    except ValueError:
         return False
     current = os.path.realpath(os.path.join(
         build_directory, "current", "src", "kitty", "launcher", "kitty"))

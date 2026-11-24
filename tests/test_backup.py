@@ -16,7 +16,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "config"))
 
-from kilix_sdk import backup  # noqa: E402
+from kilix_sdk import backup, hostproc  # noqa: E402
 sys.path.insert(0, str(ROOT / "tests"))
 from _env_support import sandbox_env  # noqa: E402
 
@@ -211,7 +211,7 @@ class BackupTests(unittest.TestCase):
         proc = subprocess.Popen([sys.executable, str(k95 / "main.py")])
         self.addCleanup(proc.kill)
         for _ in range(50):
-            if Path(f"/proc/{proc.pid}/cmdline").read_bytes().count(b"main.py"):
+            if b"\0".join(hostproc.cmdline(proc.pid) or []).count(b"main.py"):
                 break
             time.sleep(0.05)
         self.assertTrue(backup.desktop_running())
@@ -231,7 +231,7 @@ class BackupTests(unittest.TestCase):
         proc = subprocess.Popen([sys.executable, str(canonical / "main.py")])
         self.addCleanup(proc.kill)
         for _ in range(50):
-            if Path(f"/proc/{proc.pid}/cmdline").read_bytes().count(b"main.py"):
+            if b"\0".join(hostproc.cmdline(proc.pid) or []).count(b"main.py"):
                 break
             time.sleep(0.05)
         self.assertTrue(backup.desktop_running())

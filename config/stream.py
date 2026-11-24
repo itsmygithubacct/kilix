@@ -27,6 +27,7 @@ import socket
 import stat
 import subprocess
 import time
+from kilix_sdk import hostproc
 
 
 def _runtime_root():
@@ -60,12 +61,12 @@ def _safe_runtime_dir(root, path):
 
 def _proc_stat(pid):
     try:
-        with open(f"/proc/{int(pid)}/stat") as f:
-            data = f.read()
-        tail = data.rsplit(") ", 1)[1].split()
-        return {"state": tail[0], "start": tail[19] if len(tail) > 19 else None}
-    except (OSError, ValueError, IndexError):
+        state = hostproc.process_state(int(pid))
+    except ValueError:
         return {}
+    if state is None:
+        return {}
+    return {"state": state, "start": hostproc.start_token(int(pid))}
 
 
 def _proc_start_time(pid):

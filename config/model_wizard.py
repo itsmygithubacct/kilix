@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from kilix_sdk import hostproc
 
 SCHEMA = 'kilix.model-wizard/v1'
 # Presentation policy only. Identities and sizes must exist in the selected catalog.
@@ -474,8 +475,8 @@ def main(argv=None):
     try:
         if args.command in ('answer', 'finish'):
             if args.result:
-                stat = Path(f'/proc/{os.getpid()}/stat').read_text().rpartition(')')[2].split()
-                atomic_json(args.result.with_name('worker.json'), {'pid': os.getpid(), 'start': stat[19]})
+                atomic_json(args.result.with_name('worker.json'),
+                            {'pid': os.getpid(), 'start': hostproc.start_token(os.getpid())})
             if args.command == 'finish' and not sys.stdin.isatty():
                 raise ValueError('Accept models from a terminal so licence and microphone prompts can be answered.')
             if args.command == 'finish':

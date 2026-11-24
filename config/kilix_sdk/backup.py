@@ -386,16 +386,13 @@ def desktop_running() -> bool:
     # missing pre-umbrella KILIX95_DIR to the default, so either may be running.
     mains = {os.path.realpath(os.path.join(home, "main.py"))
              for home in (persisted_value("KILIX95_DIR"), paths.kilix95_home()) if home}
+    from kilix_sdk import hostproc
     uid = os.getuid()
-    for entry in os.listdir("/proc"):
-        if not entry.isdigit():
+    for pid in hostproc.processes():
+        if hostproc.owner_uid(pid) != uid:
             continue
-        try:
-            if os.stat(f"/proc/{entry}").st_uid != uid:
-                continue
-            with open(f"/proc/{entry}/cmdline", "rb") as fh:
-                argv = fh.read().split(b"\0")
-        except OSError:
+        argv = hostproc.cmdline(pid)
+        if argv is None:
             continue
         for arg in argv[1:3]:
             if arg.endswith(b"main.py") and os.path.realpath(os.fsdecode(arg)) in mains:

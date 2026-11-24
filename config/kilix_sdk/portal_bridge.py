@@ -12,7 +12,6 @@ the app. Linux parent-death notification ties the relay to that app, even on SIG
 """
 from __future__ import annotations
 
-import ctypes
 from dataclasses import dataclass, field
 import os
 from pathlib import Path
@@ -469,9 +468,14 @@ class PortalRelay:
 def relay(ready_fd: int, parent: int):
     # Do this before importing GI or connecting either bus; a hard-killed app
     # must never leave a relay holding screen-sharing sessions alive.
-    libc = ctypes.CDLL(None, use_errno=True)
-    if libc.prctl(1, signal.SIGKILL, 0, 0, 0) != 0:
-        raise OSError(ctypes.get_errno(), "Cannot bind portal relay lifetime")
+    try:
+        from . import hostproc
+    except ImportError:  # run as a script beside its siblings
+        import hostproc
+    try:
+        hostproc.set_parent_death_signal(signal.SIGKILL)
+    except OSError as error:
+        raise OSError(error.errno, "Cannot bind portal relay lifetime") from error
     if os.getppid() != parent:
         return 1
     instance = PortalRelay(os.environ[HOST_BUS])

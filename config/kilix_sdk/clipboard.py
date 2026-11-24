@@ -786,7 +786,6 @@ class SelectionBridge:
 
 def relay_main():
     import argparse
-    import ctypes
     import select
     import signal
     parser = argparse.ArgumentParser()
@@ -797,8 +796,15 @@ def relay_main():
     parser.add_argument('--parent-pid', type=int, required=True)
     parser.add_argument('--ready-fd', type=int, required=True)
     args = parser.parse_args()
-    libc = ctypes.CDLL(None, use_errno=True)
-    if libc.prctl(1, signal.SIGKILL, 0, 0, 0) or os.getppid() != args.parent_pid:
+    try:
+        from . import hostproc
+    except ImportError:  # run as a script beside its siblings
+        import hostproc
+    try:
+        hostproc.set_parent_death_signal(signal.SIGKILL)
+    except OSError:
+        raise SystemExit('clipboard relay parent is no longer present')
+    if os.getppid() != args.parent_pid:
         raise SystemExit('clipboard relay parent is no longer present')
     hub = Hub()
     bridges = []

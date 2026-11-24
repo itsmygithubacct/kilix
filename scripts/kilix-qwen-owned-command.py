@@ -1,12 +1,14 @@
 #!/usr/bin/python3
 """Dedicated Linux owner for bootstrap commands before provider acquisition."""
-import ctypes
 import os
 from pathlib import Path
 import signal
 import subprocess
 import sys
 import time
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "config"))
+from kilix_sdk import hostproc  # noqa: E402
 
 stopping = False
 
@@ -17,9 +19,8 @@ def stop(_signal, _frame):
 
 
 def reap():
-    children = Path(f'/proc/self/task/{os.getpid()}/children')
     while True:
-        for value in children.read_text().split():
+        for value in hostproc.children(os.getpid()):
             try:
                 os.kill(int(value),signal.SIGKILL)
             except ProcessLookupError:
@@ -38,9 +39,13 @@ def main():
     parent = os.getppid()
     for sig in (signal.SIGTERM,signal.SIGINT):
         signal.signal(sig,stop)
-    libc = ctypes.CDLL(None,use_errno=True)
-    if (libc.prctl(36,1,0,0,0) != 0 or libc.prctl(1,signal.SIGTERM,0,0,0) != 0
-            or libc.prctl(38,1,0,0,0) != 0 or os.getppid() != parent or parent == 1):
+    try:
+        hostproc.set_child_subreaper()
+        hostproc.set_parent_death_signal(signal.SIGTERM)
+        hostproc.set_no_new_privs()
+    except OSError:
+        return 125
+    if os.getppid() != parent or parent == 1:
         return 125
     try:
         process = subprocess.Popen(sys.argv[1:],stdin=subprocess.DEVNULL,start_new_session=True)

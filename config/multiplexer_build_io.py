@@ -1,15 +1,15 @@
 """Bounded I/O for the dedicated multiplexer build command."""
 from __future__ import annotations
 
-import ctypes
 import hashlib
 import os
-from pathlib import Path
 import selectors
 import signal
 import stat
 import subprocess
 import time
+
+from kilix_sdk import hostproc
 
 
 def read_file(path, maximum=32 * 1024**2, check=lambda: None):
@@ -60,9 +60,8 @@ class BuildIO:
 
     @staticmethod
     def reap():
-        children = Path(f'/proc/self/task/{os.getpid()}/children')
         while True:
-            for value in children.read_text().split():
+            for value in hostproc.children(os.getpid()):
                 try:
                     os.kill(int(value), signal.SIGKILL)
                 except ProcessLookupError:
@@ -118,8 +117,10 @@ class BuildIO:
                 child.stdout.close()
 
     def supervise(self):
-        if ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0):
-            raise OSError('cannot supervise multiplexer build')
+        try:
+            hostproc.set_child_subreaper()
+        except OSError as error:
+            raise OSError('cannot supervise multiplexer build') from error
         for number in (signal.SIGINT, signal.SIGTERM):
             signal.signal(number, self.stop)
 

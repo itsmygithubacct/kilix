@@ -18,36 +18,52 @@ import select
 import socket
 import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'config'))
+from kilix_sdk import hostproc  # noqa: E402
+
 
 class ParentLifetime:
-    """Observe one kernel process handle; PID reuse cannot prolong its lifetime."""
+    """Observe one kernel process handle; PID reuse cannot prolong its lifetime.
+
+    Linux holds a pidfd. FreeBSD has no handle for a process it did not fork,
+    so it registers a kqueue NOTE_EXIT watch, which is bound to the process
+    found at registration; the kqueue descriptor becomes readable at exit.
+    """
     def __init__(self, pid, expected_start_tick=None):
         self.fd = None
         self.dead = False
+        self._queue = None
         if not pid:
             return
         try:
-            self.fd = os.pidfd_open(pid)
+            if hasattr(os, 'pidfd_open'):
+                self.fd = os.pidfd_open(pid)
+            else:
+                self._queue = select.kqueue()
+                self._queue.control([select.kevent(
+                    pid, filter=select.KQ_FILTER_PROC,
+                    flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
+                    fflags=select.KQ_NOTE_EXIT)], 0, 0)
+                self.fd = self._queue.fileno()
         except ProcessLookupError:
+            self.close()
             self.dead = True
             return
         if expected_start_tick is not None:
-            try:
-                fields = Path(f'/proc/{pid}/stat').read_text().rsplit(') ', 1)[1].split()
-                if fields[19] != str(expected_start_tick):
-                    self.dead = True
-            except (OSError, IndexError):
+            if hostproc.start_ticks(pid) != expected_start_tick:
                 self.dead = True
-            if self.dead:
                 self.close()
 
     def active(self):
         return not self.dead and (self.fd is None or not select.select([self.fd], [], [], 0)[0])
 
     def close(self):
-        if self.fd is not None:
+        if self._queue is not None:
+            self._queue.close()
+            self._queue = None
+        elif self.fd is not None:
             os.close(self.fd)
-            self.fd = None
+        self.fd = None
 
     def __enter__(self):
         return self

@@ -14,6 +14,7 @@ import re
 import shutil
 import stat
 import tempfile
+from kilix_sdk import hostproc
 
 
 CHROMIUM_COMMANDS = {
@@ -45,12 +46,8 @@ def _require_private_directory(path: str, label: str) -> None:
 
 def _process_start(pid: int) -> int | None:
     try:
-        # /proc/PID/stat starts at field 3 after the final ') '; starttime is
-        # field 22. Splitting there remains correct when the command has spaces.
-        with open(f"/proc/{pid}/stat", encoding="ascii") as handle:
-            fields = handle.read().rsplit(") ", 1)[1].split()
-        return int(fields[19])
-    except (IndexError, OSError, OverflowError, ValueError):
+        return hostproc.start_ticks(pid)
+    except (OverflowError, ValueError):
         return None
 
 

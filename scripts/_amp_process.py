@@ -1,17 +1,20 @@
 """Standalone Amp setup/query supervisor, never an embedding-process reaper."""
 from __future__ import annotations
 
-import ctypes
 import os
 from pathlib import Path
 import signal
 import sys
 import time
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "config"))
+from kilix_sdk import hostproc  # noqa: E402
+
 
 def run_owned(action, timeout=900):
-    libc = ctypes.CDLL(None, use_errno=True)
-    if libc.prctl(36, 1, 0, 0, 0) != 0:  # PR_SET_CHILD_SUBREAPER
+    try:
+        hostproc.set_child_subreaper()
+    except OSError:
         print("kilix amp: owned setup supervision is unavailable", file=sys.stderr)
         return 1
     stopped = False
@@ -55,12 +58,11 @@ def run_owned(action, timeout=900):
         # descendants, which are then killed/reaped in the following rounds.
         deadline = time.monotonic() + 4
         while True:
-            for task in Path('/proc/self/task').iterdir():
-                for word in (task/'children').read_text().split():
-                    try:
-                        os.kill(int(word), signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
+            for word in hostproc.children(os.getpid()):
+                try:
+                    os.kill(int(word), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
             try:
                 while os.waitpid(-1, os.WNOHANG)[0]:
                     pass

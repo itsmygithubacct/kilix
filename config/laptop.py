@@ -50,6 +50,7 @@ import re
 import signal
 import sys
 import time
+from kilix_sdk import hostproc
 
 PROFILE_SUFFIX = ".profile"
 ID_MAX = 40
@@ -345,15 +346,7 @@ def _alive(pid: int) -> bool:
         return False
     except PermissionError:
         pass
-    try:
-        with open("/proc/%d/stat" % pid, "rb") as handle:
-            stat = handle.read(512)
-        closing = stat.rfind(b")")
-        if closing >= 0 and stat[closing + 2:closing + 3] == b"Z":
-            return False
-    except OSError:
-        pass
-    return True
+    return hostproc.process_state(pid) != "Z"
 
 
 def session_pid(profile_id: str):

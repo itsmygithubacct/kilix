@@ -11,6 +11,7 @@ import stat
 import struct
 
 from multiplexer_build_guards import BuildBoundaryChanged, search_identity, search_roots
+from kilix_sdk import hostproc
 
 MAX_PACKET = 65536
 
@@ -216,8 +217,11 @@ class SearchAdmission:
             if extra or credentials:
                 raise BuildBoundaryChanged('extra compiler search request record')
             raw = self.received[peer]
-            pid, uid, _gid = struct.unpack('3i', peer.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
-            if pid <= 0 or uid != os.geteuid():
+            try:
+                pid, uid, _gid = hostproc.peer_credentials(peer)
+            except OSError as error:
+                raise BuildBoundaryChanged('compiler search requester identity is unreadable') from error
+            if pid is None or pid <= 0 or uid != os.geteuid():
                 raise BuildBoundaryChanged('compiler search requester identity differs')
             ancestor = pid
             for _ in range(128):
@@ -225,8 +229,10 @@ class SearchAdmission:
                     break
                 if ancestor <= 1:
                     raise BuildBoundaryChanged('compiler search requester is not owned')
-                fields = Path('/proc', str(ancestor), 'stat').read_text().rsplit(') ', 1)[1].split()
-                ancestor = int(fields[1])
+                parent = hostproc.parent_pid(ancestor)
+                if parent is None:
+                    raise BuildBoundaryChanged('compiler search requester ancestry is unreadable')
+                ancestor = parent
             else:
                 raise BuildBoundaryChanged('compiler search requester ancestry exceeds bound')
             name, separator, trace = raw.partition(b'\0')
