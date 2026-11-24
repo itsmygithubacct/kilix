@@ -113,6 +113,9 @@ class Pane:
     broker_session: str | None = None
     columns: int = 0
     lines: int = 0
+    # The pane its tab shows. Unlike is_focused it does not need the Kilix OS
+    # window to hold the keyboard.
+    is_active: bool = False
 
 
 @dataclass(frozen=True)
@@ -431,6 +434,7 @@ def _pane(raw: Mapping[str, Any], tab_id: int, os_window_id: int) -> Pane:
         broker_session=env.get("KITTY_PTY_BROKER_SESSION"),
         columns=_int(raw.get("columns")),
         lines=_int(raw.get("lines")),
+        is_active=bool(raw.get("is_active")),
     )
 
 

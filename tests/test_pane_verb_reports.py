@@ -36,6 +36,23 @@ class Panes(base.RecordingPanes):
         super().__init__()
         self.workspace = Workspace()
 
+    # A focus that takes, like the engine's: the pane's tab becomes active and
+    # the pane focused. ignore_focus models a request the engine drops.
+    ignore_focus = 0
+
+    def focus(self, target):
+        super().focus(target)
+        if self.ignore_focus:
+            self.ignore_focus -= 1
+            return
+        wanted = int(str(target).split(":", 1)[1])
+        for tab in self.workspace.tabs():
+            mine = any(p.id == wanted for p in tab.panes)
+            tab.is_active = mine
+            for pane in tab.panes:
+                if mine:
+                    pane.is_active = pane.id == wanted
+
     def send(self, target, text, *, submit=False):
         self.calls.append(("send", {"target": target, "text": text, "submit": submit}))
 
@@ -71,6 +88,29 @@ class Reports(unittest.TestCase):
         self.assertEqual(
             out, "kilix pane send: typed 9 characters into pane 123 'rx-a' "
                  "and pressed Enter\n")
+
+    def test_focus_that_does_not_take_is_retried_then_reported(self):
+        panes = Panes()
+        panes.ignore_focus = 1
+        remote = base.panes_stub.install_and_load(
+            self, panes, base.ROOT, "kilix_remote_reports_under_test")
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            self.assertEqual(remote.main(["pane", "focus", "pane:95"]), 0)
+        self.assertEqual(len(panes.calls), 2)
+        self.assertIn("focused pane 95", out.getvalue())
+
+        panes = Panes()
+        panes.ignore_focus = 2
+        remote = base.panes_stub.install_and_load(
+            self, panes, base.ROOT, "kilix_remote_reports_under_test")
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = remote.main(["pane", "focus", "pane:95"])
+        self.assertNotEqual(code, 0)
+        self.assertEqual(out.getvalue(), "")
+        self.assertIn("try: kilix tab focus", err.getvalue())
+        self.assertNotIn("focused pane", out.getvalue())
 
     def test_focus_reports_the_pane(self):
         _, out, _, calls = run(self, ["pane", "focus", "pane:95"])

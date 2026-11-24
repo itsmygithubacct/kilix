@@ -162,6 +162,26 @@ class BrokerCallerBindingTests(Fixture):
                 self.assertRaises(caller_context.BrokerOwnershipUnavailable):
             caller_context.require_pane_local()
 
+    def test_a_broker_rebuilt_under_an_open_pane_is_refused_with_the_remedy(self):
+        # What /proc shows once an update replaced the binary a broker runs.
+        old = Path(f'{self.broker} (deleted)')
+        old.write_bytes(self.broker.read_bytes())
+        (self.owner / 'exe').unlink()
+        (self.owner / 'exe').symlink_to(old)
+        with mock.patch.dict(os.environ, self.env, clear=True), \
+                self.assertRaises(caller_context.BrokerOwnershipUnavailable) as raised:
+            caller_context.require_pane_local()
+        message = str(raised.exception)
+        self.assertTrue(message.startswith('cannot verify caller broker ownership'), message)
+        self.assertIn('pid 200', message)
+        self.assertIn('open a new tab, or restart Kilix', message)
+        # Any other mismatch keeps the plain refusal.
+        self.replace_owner_image()
+        with mock.patch.dict(os.environ, self.env, clear=True), \
+                self.assertRaises(caller_context.BrokerOwnershipUnavailable) as raised:
+            caller_context.require_pane_local()
+        self.assertEqual(str(raised.exception), 'cannot verify caller broker ownership')
+
     def test_nearest_unverifiable_owner_is_not_skipped_for_a_verified_outer_broker(self):
         self.replace_owner_image()
         (self.owner / 'stat').write_text('200 (broker) ' + ' '.join(['S', '300'] + ['0'] * 17 + ['777']))

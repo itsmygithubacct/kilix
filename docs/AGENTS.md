@@ -128,6 +128,11 @@ panes from such a caller open in the background, and `kilix focus` fails with
 `Focus stays in the pane the user is typing in`. Read and drive other panes with
 `kilix watch` and `kilix pane send`; neither needs focus.
 
+`kilix pane focus` reads the result back and fails if the tab did not switch.
+To see what is showing, use the active flags in `kilix pane list --json`. Do
+not screenshot the Kilix X window (`import -window ID`): it can return an old
+frame. Capture the root window and crop it instead.
+
 ## Send input and verify the result
 
 Before typing, inspect foreground process and screen. Shell commands need an idle
@@ -389,7 +394,9 @@ broker `run` ancestor: the executable inode and explicit runtime/session must
 match. A conflicting or unverified owner is refused before helper credentials
 or RPC, including when another live pane owns the supplied session. Replacing
 the executable while its old process survives makes this association unavailable;
-it does not authorize another helper or an outer broker. Process names and argv
+it does not authorize another helper or an outer broker. An update that rebuilds
+the broker does this to every pane that was already open. The refusal then says
+so: use a new tab, or restart Kilix. Process names and argv
 can identify a refusal barrier but cannot prove ownership by themselves.
 Recovery never replaces the claim with the ancestor's identity or credentials,
 and the separate shared-server guard remains in force. agent-control's
