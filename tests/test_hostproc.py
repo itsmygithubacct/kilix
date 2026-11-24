@@ -76,9 +76,11 @@ class ProcessFacts(unittest.TestCase):
         first = hostproc.start_token(self.child.pid)
         self.assertTrue(first)
         self.assertEqual(hostproc.start_token(self.child.pid), first)
+        # The token tells incarnations of one pid apart, so it only has to
+        # differ for a later start; Linux counts start time in 10 ms ticks.
+        time.sleep(0.05)
         other = subprocess.Popen(["sleep", "30"])
         try:
-            time.sleep(0.02)
             self.assertNotEqual(hostproc.start_token(other.pid), first)
         finally:
             other.kill()

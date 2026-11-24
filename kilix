@@ -208,8 +208,8 @@ Structured actions:
   kilix action --request-json -             JSON on stdin
   kilix action capabilities                inspect available features
   kilix windows --host HOST COMMAND         Windows desktop via SSH
-Also: wizard, settings, status, update, install, games, content, screen-size,
-  transcript, help-search "QUESTION". Command options: --help.
+Also: wizard, settings, status, update, install, games, screen-size, transcript,
+  help-search "QUESTION". Command options: --help.
 Terminal engine (kitty) options: kilix --help-engine
 EOF
     printf 'Agent guide: %s/docs/AGENTS.md\n' "$KILIX_HOME"
