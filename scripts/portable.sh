@@ -154,18 +154,18 @@ kilix_realpath_m() {
 # mv -T refuses a real directory at DEST; BSD mv -h stops a symlink DEST from
 # being followed, and the explicit check refuses the real directory.
 kilix_mv_onto() {
-  local force=() source dest
-  if [ "${1:-}" = -f ]; then force=(-f); shift; fi
+  local _kilix_mv_flags=() source dest
+  if [ "${1:-}" = -f ]; then _kilix_mv_flags=(-f); shift; fi
   source="$1" dest="$2"
   if [ "$_kilix_userland" = gnu ]; then
-    mv -T "${force[@]}" -- "$source" "$dest"
+    mv -T "${_kilix_mv_flags[@]}" -- "$source" "$dest"
     return
   fi
   if [ -d "$dest" ] && [ ! -L "$dest" ]; then
     echo "mv: cannot overwrite directory '$dest' with '$source'" >&2
     return 1
   fi
-  mv -h "${force[@]}" -- "$source" "$dest"
+  mv -h "${_kilix_mv_flags[@]}" -- "$source" "$dest"
 }
 
 # Lower-case SHA-256 hex digest of FILE.
