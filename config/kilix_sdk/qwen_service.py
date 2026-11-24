@@ -4,14 +4,25 @@ from __future__ import annotations
 import fcntl
 import os
 from pathlib import Path
+import secrets
 import shlex
 import stat
 import subprocess
-import tempfile
+import sys
 
 from . import qwen_provider as provider
 
 UNIT = 'kilix-qwen-provider.service'
+
+
+# The service is a systemd user unit, so it exists only where systemd does.
+SYSTEMD_HOST = sys.platform.startswith('linux')
+
+
+def require_systemd_host():
+    if not SYSTEMD_HOST:
+        raise RuntimeError(f'the Qwen speech service runs as a systemd user unit and this host '
+                           f'({sys.platform}) has no systemd; Qwen speech is Linux-only')
 
 
 def quoted(value):
@@ -77,18 +88,28 @@ def read_owned(directory_fd, name):
 
 
 def write_atomic(directory_fd, name, payload):
-    directory = Path('/proc/self/fd')/str(directory_fd)
-    fd, temporary = tempfile.mkstemp(prefix='.qwen-unit-', dir=directory)
+    # Create the temporary file through the directory descriptor itself, so no
+    # path is resolved again (and no /proc/self/fd is needed).
+    flags = os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW|os.O_CLOEXEC
+    for _ in range(100):
+        temporary = '.qwen-unit-' + secrets.token_hex(8)
+        try:
+            fd = os.open(temporary, flags, 0o600, dir_fd=directory_fd)
+            break
+        except FileExistsError:
+            continue
+    else:
+        raise FileExistsError('no free temporary name for the service unit')
     try:
         with os.fdopen(fd, 'wb') as stream:
             stream.write(payload)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(Path(temporary).name, name, src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
+        os.replace(temporary, name, src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
         os.fsync(directory_fd)
     finally:
         try:
-            os.unlink(Path(temporary).name, dir_fd=directory_fd)
+            os.unlink(temporary, dir_fd=directory_fd)
         except FileNotFoundError:
             pass
 
@@ -142,6 +163,7 @@ def restore(directory_fd,name,payload):
 
 
 def install(*, allow_stop=False):
+    require_systemd_host()
     root = provider.managed_root()
     generation = provider.current_generation(root)
     # Validate the entire immutable generation before publishing a login route.
@@ -184,6 +206,7 @@ def install(*, allow_stop=False):
 
 
 def main(action):
+    require_systemd_host()
     if action in {'install', 'enable'}:
         install(allow_stop=action=='enable')
         if action == 'enable':

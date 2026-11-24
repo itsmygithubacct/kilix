@@ -33,6 +33,7 @@ case "${1:-}" in
 esac
 
 [ "$(id -u)" -ne 0 ] || fail 'run this as the desktop user'
+[ "$_kilix_userland" = gnu ] || fail 'this locked runtime is built for Debian Linux; Qwen speech is Linux-only'
 [ "$(uname -m)" = x86_64 ] || fail 'this locked CPU runtime supports x86_64 only'
 [ -x /usr/bin/python3.13 ] || fail 'the Debian Python 3.13 interpreter is required'
 uv_cmd="$(command -v uv || true)"

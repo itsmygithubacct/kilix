@@ -12,6 +12,26 @@ from kilix_sdk import qwen_service as service
 
 
 class QwenServiceTests(unittest.TestCase):
+    def setUp(self):
+        # systemctl is mocked in every test, so the unit logic runs on any
+        # host; present a systemd host and test the refusal separately.
+        patcher = patch.object(service, 'SYSTEMD_HOST', True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_a_host_without_systemd_is_refused_before_anything_is_written(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            directory = Path(scratch)/'config/systemd/user'
+            with patch.object(service, 'SYSTEMD_HOST', False), \
+                 patch.object(service, 'unit_directory', return_value=directory), \
+                 patch.object(service, 'control') as control:
+                for call in (lambda: service.install(), lambda: service.main('install'),
+                             lambda: service.main('status')):
+                    with self.assertRaisesRegex(RuntimeError, 'no systemd; Qwen speech is Linux-only'):
+                        call()
+            control.assert_not_called()
+            self.assertFalse((Path(scratch)/'config').exists())
+
     def fixture(self, root):
         managed = root/'provider'
         generation = managed/'generations'/('a'*40+'-'+'b'*32)
