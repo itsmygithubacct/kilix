@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -67,6 +68,8 @@ def stage_installer(name, prefix, ref, destination):
     assert count == 1, "no %s_DEFAULT_REF line in %s" % (prefix, name)
     destination.write_text(body)
     destination.chmod(0o755)
+    # Installers source the host-portability helpers from beside themselves.
+    shutil.copy2(SCRIPTS / "portable.sh", destination.parent / "portable.sh")
     return destination
 
 

@@ -1,4 +1,5 @@
 """Existing foreground identity must not consume an explicit root request."""
+import sys
 import json
 import os
 from pathlib import Path
@@ -7,6 +8,8 @@ import time
 import unittest
 
 import test_tui_remote_root as remote
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _env_support import SYSTEM_PYTHON  # noqa: E402
 
 
 class ExistingRootTests(unittest.TestCase):
@@ -24,7 +27,9 @@ class ExistingRootTests(unittest.TestCase):
             'trace.write(json.dumps(args)+"\\n")\n'
             'if "ls" in args:\n'
             ' pid=int(os.environ["TEST_EXISTING_PID"])\n'
-            ' cmd=Path("/proc",str(pid),"cmdline").read_bytes().split(b"\\0")[:-1]\n'
+            ' sys.path.insert(0, ' + repr(str(remote.ROOT / 'config')) + ')\n'
+            ' from kilix_sdk import hostproc\n'
+            ' cmd=hostproc.cmdline(pid) or []\n'
             ' print(json.dumps([{"tabs":[{"windows":[{"id":7654,'
             '"foreground_processes":[{"pid":pid,"cmdline":[os.fsdecode(a) for a in cmd]}]}]}]}]))\n'
             ' sys.exit(0)\n'
@@ -43,7 +48,7 @@ class ExistingRootTests(unittest.TestCase):
             '{"pid":os.getpid(),"root":os.environ["KILIX_CONTENT_ROOT"]}))\n'
             'time.sleep(60)\n')
         old = str(case.base / 'different-active-root')
-        process = subprocess.Popen(['/usr/bin/python3', str(app)], env=dict(
+        process = subprocess.Popen([SYSTEM_PYTHON, str(app)], env=dict(
             case.env, KILIX_CONTENT_ROOT=old, TEST_EXISTING_STATE=str(state)))
         try:
             end = time.monotonic() + 3

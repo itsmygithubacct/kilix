@@ -46,7 +46,7 @@ class PtyBrokerIntegrationTests(unittest.TestCase):
         self.assertIn('"$runtime/kilix-pty-broker"', launcher)
         self.assertIn('projected="$runtime/sessions/0123456789abcdef/control.sock"',
                       launcher)
-        self.assertIn('[ "${#projected}" -ge 108 ]', launcher)
+        self.assertIn('[ "${#projected}" -ge "$(kilix_unix_socket_path_max)" ]', launcher)
         self.assertIn('runtime="$(_kilix_resolve_pty_broker_runtime)"', launcher)
         self.assertNotIn(
             '"$broker" --runtime-dir "$KILIX_SESSION_HOME/pty-broker"',
@@ -62,7 +62,10 @@ class PtyBrokerIntegrationTests(unittest.TestCase):
 
         begin = launcher.index("_kilix_default_pty_broker_runtime()")
         end = launcher.index("# Read the session-logging values", begin)
-        functions = launcher[begin:end]
+        # The extracted functions ask the host-portability helpers, so the
+        # fixture carries the canonical copy of that block first.
+        functions = ((ROOT / "scripts" / "portable.sh").read_text()
+                     + launcher[begin:end])
         with tempfile.TemporaryDirectory() as temporary:
             runtime = Path(temporary) / "run"
             runtime.mkdir(mode=0o700)

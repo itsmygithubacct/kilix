@@ -18,7 +18,7 @@ import content_app  # noqa: E402
 from kilix_sdk import _content_runtime as content_runtime  # noqa: E402
 import remote_mux  # noqa: E402
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _env_support import SYSTEM_PATH  # noqa: E402
+from _env_support import SYSTEM_PATH, SYSTEM_PYTHON  # noqa: E402
 
 
 class ContentRuntimeTests(unittest.TestCase):
@@ -168,7 +168,7 @@ class ContentRuntimeTests(unittest.TestCase):
         reset = '_kilix_tui_explicit_root=\n'
         self.assertIn(reset + 'case "${1:-}" in\n', launcher)
         desktop = fixture / 'desktop'
-        desktop.write_text('#!/usr/bin/python3\nimport json,os,sys\n'
+        desktop.write_text('#!' + SYSTEM_PYTHON + '\nimport json,os,sys\n'
             'print(json.dumps({"root":os.environ["KILIX_CONTENT_ROOT"],'
             '"argv":sys.argv[1:]}))\n')
         desktop.chmod(0o700)
@@ -238,7 +238,7 @@ class ContentRuntimeTests(unittest.TestCase):
             fixture = Path(temporary)
             executable = fixture / "fake-amp"
             executable.write_text(
-                "#!/usr/bin/python3\nimport json,os,sys\n"
+                "#!" + SYSTEM_PYTHON + "\nimport json,os,sys\n"
                 "print(json.dumps({'argv':sys.argv[1:],'root':os.environ.get('KILIX_CONTENT_ROOT')}))\n")
             executable.chmod(0o700)
             script = (

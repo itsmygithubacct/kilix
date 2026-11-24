@@ -1,4 +1,5 @@
 from pathlib import Path
+import sys
 import json
 import os
 import subprocess
@@ -7,6 +8,8 @@ import shutil
 import tempfile
 import time
 import unittest
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _env_support import SYSTEM_BASH  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -90,7 +93,7 @@ class BundledTmuxTests(unittest.TestCase):
                     'GPU_TERMINAL_HOME': str(self.root / 'untouched'),
                     'TERM': 'xterm-256color'}
         self.tmux('-f', '/dev/null', 'new-session', '-d', '-s', 'fixture',
-                  '-x', '200', '-y', '30', '/bin/bash --noprofile --norc')
+                  '-x', '200', '-y', '30', f'{SYSTEM_BASH} --noprofile --norc')
         self.pane = self.tmux('display-message', '-p', '-t', '=fixture:', '#{pane_id}').strip()
         self.addCleanup(self.temp.cleanup)
         self.addCleanup(self.tmux, 'kill-server')

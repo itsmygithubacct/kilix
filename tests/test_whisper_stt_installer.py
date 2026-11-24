@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _env_support import sandbox_env, SYSTEM_PATH
+from _env_support import SYSTEM_BASH, SYSTEM_PATH, sandbox_env
 
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = ROOT / 'scripts/install-kilix-whisper-stt.sh'
@@ -53,13 +53,13 @@ class WhisperSttInstallerTests(unittest.TestCase):
         bins.mkdir()
         ref = pin()
         git = bins / 'git'
-        git.write_text('#!/bin/bash\necho "$*" >> "$GIT_LOG"\ncase "$*" in\n'
+        git.write_text('#!' + SYSTEM_BASH + '\necho "$*" >> "$GIT_LOG"\ncase "$*" in\n'
                        ' *"rev-parse HEAD"*) echo "$SOURCE_PIN" ;;\n'
                        ' *status*) [ -z "${SOURCE_DIRTY:-}" ] || echo " M cli.py" ;;\n'
                        ' *) exit 0 ;;\nesac\n')
         git.chmod(0o755)
         uv = bins / 'uv'
-        uv.write_text('#!/bin/bash\necho "$*" >> "$UV_LOG"\n'
+        uv.write_text('#!' + SYSTEM_BASH + '\necho "$*" >> "$UV_LOG"\n'
                       '[ -z "${UV_FAIL:-}" ] || exit 1\n'
                       'mkdir -p "$UV_PROJECT_ENVIRONMENT/bin"\n'
                       'printf "#!/bin/sh\\n[ \\"\\$1\\" = --version ]\\n" '

@@ -10,6 +10,8 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _env_support import SYSTEM_PYTHON  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'config'))
@@ -90,7 +92,7 @@ class TranscribeRouteTests(unittest.TestCase):
         python_root = root / 'python-root'
         (python_root / 'bin').mkdir(mode=0o700, parents=True)
         python = python_root / 'bin/python'
-        python.write_text('#!/usr/bin/python3 -I\nimport json,sys;print(json.dumps(sys.argv[1:]))\n')
+        python.write_text('#!' + SYSTEM_PYTHON + ' -I\nimport json,sys;print(json.dumps(sys.argv[1:]))\n')
         python.chmod(0o700)
         binding = {'files': launcher.file_population(generation / 'lib'),
             'runtime_files': launcher.file_population(generation / 'runtime'), 'python': str(python),
@@ -119,7 +121,7 @@ class TranscribeRouteTests(unittest.TestCase):
                 elif damage == 'python':
                     (python_root / 'unexpected').write_text('changed')
                 elif damage == 'external_link':
-                    (python_root / 'external').symlink_to('/usr/bin/python3')
+                    (python_root / 'external').symlink_to(SYSTEM_PYTHON)
                 elif damage == 'serve_override':
                     args += ['--runtime-root', '/changed']
                 elif damage == 'generation_mode':
@@ -128,7 +130,7 @@ class TranscribeRouteTests(unittest.TestCase):
                     (generation / 'lib').chmod(0o755)
                 elif damage == 'runtime_mode':
                     (generation / 'runtime').chmod(0o755)
-                result = subprocess.run(['/usr/bin/python3', '-I', '-B', str(executable), *args],
+                result = subprocess.run([SYSTEM_PYTHON, '-I', '-B', str(executable), *args],
                                         capture_output=True, text=True)
                 if damage == 'none':
                     self.assertEqual(result.returncode, 0, result.stderr)
@@ -179,7 +181,7 @@ class TranscribeRouteTests(unittest.TestCase):
             (root / 'python').symlink_to('python3.12')
             self.assertNotEqual(launcher.tree_digest(root), before)
             (root / 'python').unlink()
-            (root / 'python').symlink_to('/usr/bin/python3')
+            (root / 'python').symlink_to(SYSTEM_PYTHON)
             with self.assertRaises(ValueError):
                 launcher.tree_digest(root)
 

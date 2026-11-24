@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tests'))
-from _env_support import sandbox_env
+from _env_support import SYSTEM_BASH, sandbox_env
 sys.path.insert(0, str(ROOT / "config"))
 from kilix_tmux import dispatch
 
@@ -76,9 +76,9 @@ class PrivateServerTests(unittest.TestCase):
         self.env = sandbox_env(HOME=self.tmp.name, PS1="fixture> ", TERM="xterm-256color")
         self.env.pop("TMUX", None)
         self.tmux("-f", "/dev/null", "new-session", "-d", "-s", "fixture", "-x", "200", "-y", "30",
-                  "/bin/bash --noprofile --norc")
-        self.tmux("set-option", "-g", "default-shell", "/bin/bash")
-        self.tmux("set-option", "-g", "default-command", "/bin/bash --noprofile --norc")
+                  f"{SYSTEM_BASH} --noprofile --norc")
+        self.tmux("set-option", "-g", "default-shell", SYSTEM_BASH)
+        self.tmux("set-option", "-g", "default-command", f"{SYSTEM_BASH} --noprofile --norc")
 
     def tearDown(self):
         try:
@@ -171,7 +171,7 @@ class PrivateServerTests(unittest.TestCase):
         self.await_receipt(receipt, payload + payload + "\r")
 
     def test_ambiguous_session_refused_explicit_panes_work(self):
-        self.tmux("split-window", "-d", "-t", "=fixture:", "/bin/bash --noprofile --norc")
+        self.tmux("split-window", "-d", "-t", "=fixture:", f"{SYSTEM_BASH} --noprofile --norc")
         for op, fields in [("read", {}), ("send", {"text": "hello"}),
                            ("type", {"text": "hello"}), ("key", {"keys": ["Enter"]})]:
             result = dispatch(dict(operation=op, socket=self.socket, target="fixture", **fields))

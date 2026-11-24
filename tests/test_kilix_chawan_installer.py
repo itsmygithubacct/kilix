@@ -28,7 +28,7 @@ import unittest
 # The suite runs both as `discover -s tests` (bare module names) and as
 # `-m unittest tests.<module>` (package), so name this directory explicitly.
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from _env_support import sandbox_env  # noqa: E402
+from _env_support import SYSTEM_BASH, sandbox_env  # noqa: E402
 
 
 
@@ -180,7 +180,7 @@ class BrowserPolicyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as home:
             script = (f'. "{POLICY}"\n'
                       '_kilix_find_installed_chawan && echo FOUND || echo NONE\n')
-            result = run(["/bin/bash", "-c", script],
+            result = run([SYSTEM_BASH, "-c", script],
                          KILIX_HOME=str(ROOT),
                          KILIX_CHAWAN_DIR=os.path.join(home, "absent"))
             self.assertEqual(result.stdout.strip().splitlines()[-1], "NONE")

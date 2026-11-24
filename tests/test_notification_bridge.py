@@ -1,9 +1,13 @@
 """Native notification identifiers, signal ordering and caller ownership."""
 from pathlib import Path
+import os
+import sys
 import json
 import shutil
 import subprocess
 import unittest
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _env_support import SYSTEM_PYTHON  # noqa: E402
 
 try:
     from gi.repository import Gio
@@ -18,7 +22,7 @@ class NotificationBridgeTests(unittest.TestCase):
                          'System GI and private D-Bus required')
     def test_owned_buses_preserve_native_notifications_and_client_isolation(self):
         result = subprocess.run([
-            'dbus-run-session', '--', '/usr/bin/python3',
+            'dbus-run-session', '--', SYSTEM_PYTHON,
             str(ROOT / 'tests/fixtures/notification_bridge_fixture.py'),
             'host', str(ROOT / 'config/kilix_sdk/portal_bridge.py'),
         ], capture_output=True, text=True, timeout=30)

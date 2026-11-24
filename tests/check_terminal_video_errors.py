@@ -14,7 +14,7 @@ import subprocess
 import time
 from PIL import Image, ImageChops
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _env_support import SYSTEM_PATH  # noqa: E402
+from _env_support import SYSTEM_PATH, SYSTEM_PYTHON  # noqa: E402
 
 
 def main():
@@ -42,7 +42,7 @@ def main():
                '--script-opts=osc-visibility=always', '--osd-level=0',
                '--log-file=' + str(private / 'player.log')]
     shim = private / 'bin/kilix-mpv'
-    shim.write_text('#!/usr/bin/python3\nimport os, sys\n'
+    shim.write_text('#!' + SYSTEM_PYTHON + '\nimport os, sys\n'
                     f'player = {str(player)!r}\noptions = {options!r}\n'
                     'os.execv(player, [player] + sys.argv[1:-2] + options + sys.argv[-2:])\n')
     shim.chmod(0o700)
@@ -74,7 +74,7 @@ def main():
             str(engine), '--config', 'NONE', '--class', 'kilix-errors-test',
             '-o', 'initial_window_width=900', '-o', 'initial_window_height=600',
             '-o', 'remember_window_size=no', '-o', 'software_mouse_cursor=none',
-            '-o', 'mouse_hide_wait=0', '/usr/bin/python3', str(runner)],
+            '-o', 'mouse_hide_wait=0', SYSTEM_PYTHON, str(runner)],
             env=env, stdout=subprocess.DEVNULL,
             stderr=(private / 'terminal.log').open('wb'), start_new_session=True)
         for _ in range(150):

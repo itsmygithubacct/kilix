@@ -11,6 +11,11 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _env_support import sandbox_env  # noqa: E402
 
+if not sys.platform.startswith("linux"):
+    raise unittest.SkipTest(
+        "the multiplexer build orchestrator (config/multiplexer_compile.py) addresses held "
+        "directories as /proc/self/fd/N, which only Linux provides")
+
 ROOT=Path(__file__).resolve().parents[1]
 FIXTURE_PARENT=ROOT/'.test-tmp'
 

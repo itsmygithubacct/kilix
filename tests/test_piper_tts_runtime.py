@@ -7,7 +7,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _env_support import sandbox_env, SYSTEM_PATH
+from _env_support import SYSTEM_BASH, SYSTEM_PATH, sandbox_env
 
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = ROOT / 'scripts/install-kilix-piper-tts.sh'
@@ -21,10 +21,10 @@ class PiperRuntimeTests(unittest.TestCase):
             root = Path(tmp)
             (root / 'scripts').mkdir()
             tool = root / 'tool'
-            tool.write_text('#!/bin/bash\necho "${PYTHONPATH:-}" >&2\nprintf "%s\\n" "$@" >> "$EVENTS"\n')
+            tool.write_text('#!' + SYSTEM_BASH + '\necho "${PYTHONPATH:-}" >&2\nprintf "%s\\n" "$@" >> "$EVENTS"\n')
             tool.chmod(0o755)
             installer = root / 'scripts/install-kilix-piper-tts.sh'
-            installer.write_text('#!/bin/bash\necho installed >> "$EVENTS"\n')
+            installer.write_text('#!' + SYSTEM_BASH + '\necho installed >> "$EVENTS"\n')
             installer.chmod(0o755)
             wrapper = root / 'wrapper'
             wrapper.write_text('set -eu\n_kilix_voice_tool() { echo "$TOOL"; }\ncase "$1" in\n' + dispatch + '\nesac\n')
@@ -54,14 +54,14 @@ class PiperRuntimeTests(unittest.TestCase):
             source = root / 'sources' / ('.kilix-piper-tts-' + ref)
             source.mkdir(parents=True)
             git = bins / 'git'
-            git.write_text('#!/bin/bash\ncase "$*" in\n'
+            git.write_text('#!' + SYSTEM_BASH + '\ncase "$*" in\n'
                            ' *archive*) tar -C "$HOST_CONTENT" -cf - . ;;\n'
                            ' *HEAD:third_party/kilix-content*) echo "$HOST_PIN" ;;\n'
                            ' *"rev-parse HEAD"*) if [[ "$2" == *third_party/kilix-content ]]; then echo "${CHECKOUT_PIN:-$HOST_PIN}"; else echo "$PIPER_PIN"; fi ;;\n'
                            ' *status*) exit 0 ;;\n *) exit 99 ;;\nesac\n')
             git.chmod(0o755)
             uv = bins / 'uv'
-            uv.write_text('#!/bin/bash\necho "$*" >> "$UV_LOG"\n'
+            uv.write_text('#!' + SYSTEM_BASH + '\necho "$*" >> "$UV_LOG"\n'
                           'if [ "$1" = sync ]; then mkdir -p "$UV_PROJECT_ENVIRONMENT/bin"; '
                           'printf "#!/bin/sh\\nexit 0\\n" > "$UV_PROJECT_ENVIRONMENT/bin/kilix-piper-tts"; '
                           'cp "$UV_PROJECT_ENVIRONMENT/bin/kilix-piper-tts" "$UV_PROJECT_ENVIRONMENT/bin/python"; '

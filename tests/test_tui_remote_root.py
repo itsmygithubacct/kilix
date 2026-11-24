@@ -7,7 +7,7 @@ import tempfile
 import unittest
 import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _env_support import SYSTEM_PATH  # noqa: E402
+from _env_support import SYSTEM_PATH, SYSTEM_PYTHON  # noqa: E402
 
 ROOT = Path(os.environ.get('C9_TEST_HOST', Path(__file__).resolve().parents[1]))
 
@@ -25,7 +25,7 @@ class RemoteRootTests(unittest.TestCase):
         self.log = self.base / 'relaunch.jsonl'
         self.output = self.base / 'output.json'
         desktop = self.bin / 'kilix-tui'
-        desktop.write_text('#!/usr/bin/python3\nimport json,os,sys\n'
+        desktop.write_text('#!' + SYSTEM_PYTHON + '\nimport json,os,sys\n'
             'from pathlib import Path\n'
             'Path(os.environ["TEST_OUTPUT"]).write_text(json.dumps({"argv":sys.argv[1:],'
             '"root":os.environ["KILIX_CONTENT_ROOT"]}))\n')
@@ -35,7 +35,7 @@ class RemoteRootTests(unittest.TestCase):
         (engine / 'kitty').write_text('#!/bin/sh\nexit 99\n')
         (engine / 'kitty').chmod(0o700)
         relay = engine / 'kitten'
-        relay.write_text('#!/usr/bin/python3\n'
+        relay.write_text('#!' + SYSTEM_PYTHON + '\n'
             'import json,os,subprocess,sys\nfrom pathlib import Path\n'
             'args=sys.argv[1:]\n'
             'if "ls" in args: print("[]");sys.exit(0)\n'

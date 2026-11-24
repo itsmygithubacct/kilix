@@ -11,7 +11,7 @@ import tempfile
 # The suite runs both as `discover -s tests` (bare module names) and as
 # `-m unittest tests.<module>` (package), so name this directory explicitly.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _env_support import sandbox_env  # noqa: E402
+from _env_support import SYSTEM_BASH, sandbox_env  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,15 +28,15 @@ class QwenCpuRuntimeTests(unittest.TestCase):
             scripts = root / "scripts"
             scripts.mkdir()
             tool = root / "tool"
-            tool.write_text('#!/bin/bash\nprintf "tool:%s\\n" "$*" >> "$EVENTS"\n'
+            tool.write_text('#!' + SYSTEM_BASH + '\nprintf "tool:%s\\n" "$*" >> "$EVENTS"\n'
                             '[[ " $* " != *" --check-session "* ]] || exit "${CHECK_STATUS:-0}"\n')
             tool.chmod(0o755)
             python = root / "python"
-            python.write_text('#!/bin/bash\nprintf "run:%s\\n" "$*" >> "$EVENTS"\n')
+            python.write_text('#!' + SYSTEM_BASH + '\nprintf "run:%s\\n" "$*" >> "$EVENTS"\n')
             python.chmod(0o755)
             for backend in ("cpu", "gpu"):
                 installer = scripts / f"install-kilix-qwen-tts-{backend}.sh"
-                installer.write_text(f'#!/bin/bash\necho install:{backend} >> "$EVENTS"\necho "{python}"\n')
+                installer.write_text(f'#!{SYSTEM_BASH}\necho install:{backend} >> "$EVENTS"\necho "{python}"\n')
                 installer.chmod(0o755)
             wrapper = root / "wrapper"
             wrapper.write_text('set -euo pipefail\n_kilix_voice_tool() { echo "$TOOL"; }\n'

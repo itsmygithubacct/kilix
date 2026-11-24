@@ -12,6 +12,16 @@ module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 
 
+def owner_handle(side_effect):
+    """Make acquiring the kernel's handle on the owner fail with SIDE_EFFECT:
+    pidfd_open(2) on Linux, the kqueue NOTE_EXIT registration elsewhere."""
+    if hasattr(os, 'pidfd_open'):
+        return mock.patch.object(module.os, 'pidfd_open', side_effect=side_effect)
+    queue = mock.Mock()
+    queue.control.side_effect = side_effect
+    return mock.patch.object(module.select, 'kqueue', return_value=queue)
+
+
 class NativeLoggerLifecycleTests(unittest.TestCase):
     def test_kernel_handle_observes_real_parent_exit(self):
         owner = subprocess.Popen(['sleep', '60'])
@@ -36,7 +46,7 @@ class NativeLoggerLifecycleTests(unittest.TestCase):
     def test_pre_acquisition_pid_reuse_is_rejected_by_expected_start_tick(self):
         owner = subprocess.Popen(['sleep', '60'])
         try:
-            tick = int(Path(f'/proc/{owner.pid}/stat').read_text().rsplit(') ', 1)[1].split()[19])
+            tick = module.hostproc.start_ticks(owner.pid)
             with module.ParentLifetime(owner.pid, tick + 1) as parent:
                 self.assertFalse(parent.active())
                 self.assertIsNone(parent.fd)
@@ -49,13 +59,13 @@ class NativeLoggerLifecycleTests(unittest.TestCase):
 
     def test_explicit_no_parent_observer_stays_persistent(self):
         for value in (None, 0):
-            with mock.patch.object(module.os, 'pidfd_open', side_effect=AssertionError('no owner')):
+            with owner_handle(AssertionError('no owner')):
                 with module.ParentLifetime(value) as parent:
                     self.assertTrue(parent.active())
                     self.assertIsNone(parent.fd)
 
     def test_exited_parent_is_not_replaced_by_persistent_mode(self):
-        with mock.patch.object(module.os, 'pidfd_open', side_effect=ProcessLookupError):
+        with owner_handle(ProcessLookupError):
             with module.ParentLifetime(12345) as parent:
                 self.assertFalse(parent.active())
                 self.assertIsNone(parent.fd)

@@ -1,6 +1,7 @@
 """Exercise launcher worker ownership without starting an engine or broker."""
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -55,6 +56,8 @@ _kilix_transcript_reap_periodically "$$" "$((identity + 1))" /unused
             self.assertEqual(result.returncode, 0)
             self.assertFalse(passes.exists())
 
+    @unittest.skipUnless(sys.platform.startswith('linux'),
+                         'parses /proc/PID/stat; other hosts read ps(1)')
     def test_proc_comm_with_spaces_and_parentheses_parses_start_tick(self):
         # Bash sees its child's kernel comm rather than splitting on the first ).
         program = '''import ctypes,time

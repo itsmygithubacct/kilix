@@ -14,7 +14,7 @@ import unittest
 from unittest.mock import patch
 import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _env_support import SYSTEM_PATH  # noqa: E402
+from _env_support import SYSTEM_PATH, SYSTEM_PYTHON  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('terminal_video', ROOT / 'config/terminal_video.py')
@@ -92,6 +92,8 @@ class TerminalMediaTests(unittest.TestCase):
             video.main(['--vo', 'tct', 'clip.mp4'])
             self.assertNotIn('--vo-kitty-use-shm=yes', run.call_args.args[0])
 
+    @unittest.skipUnless(sys.platform.startswith('linux'),
+                         'the proof reads /proc/PID/root/dev/shm; elsewhere it always fails closed')
     def test_local_terminal_proof_fails_closed(self):
         with patch.dict(video.os.environ, {'KITTY_PID': str(os.getpid())}, clear=True):
             self.assertFalse(video.local_shared_memory_terminal())  # this process is Python
@@ -169,7 +171,7 @@ class TerminalMediaTests(unittest.TestCase):
     def test_native_abort_restores_terminal_and_mouse_modes(self):
         with tempfile.TemporaryDirectory() as tmp:
             fake = Path(tmp) / 'mpv'
-            fake.write_text("#!/usr/bin/python3\nimport os,tty,resource,signal\n"
+            fake.write_text("#!" + SYSTEM_PYTHON + "\nimport os,tty,resource,signal\n"
                             "import sys\nif '--version' in sys.argv: print('mpv test'); sys.exit(0)\n"
                             "resource.setrlimit(resource.RLIMIT_CORE,(0,0))\n"
                             "tty.setraw(0)\nos.write(1,b'\\x1b[?1003h\\x1b[?2026h')\n"
@@ -180,7 +182,7 @@ class TerminalMediaTests(unittest.TestCase):
             original = termios.tcgetattr(slave)
             try:
                 proc = subprocess.Popen(
-                    ['/usr/bin/python3', '-B', str(ROOT / 'config/terminal_video.py'), 'clip.mp4'],
+                    [SYSTEM_PYTHON, '-B', str(ROOT / 'config/terminal_video.py'), 'clip.mp4'],
                     stdin=slave, stdout=slave, stderr=slave,
                     env={'PATH': tmp + ':' + SYSTEM_PATH, 'HOME': tmp})
                 self.assertEqual(proc.wait(timeout=5), 134)

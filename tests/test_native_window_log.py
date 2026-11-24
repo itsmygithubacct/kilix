@@ -8,7 +8,7 @@ import tempfile
 import time
 import unittest
 
-from _env_support import sandbox_env
+from _env_support import SYSTEM_PYTHON, sandbox_env
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'scripts/native-window-log.py'
 spec = importlib.util.spec_from_file_location('native_window_log', SCRIPT)
@@ -84,7 +84,7 @@ class NativeWindowIntegration(unittest.TestCase):
                         time.sleep(.03)
                     self.fail('timed out waiting for X11/logger state')
                 wait_for(lambda: root.get_full_property(atom('_NET_SUPPORTING_WM_CHECK'), X.AnyPropertyType))
-                cmd = ['/usr/bin/python3', str(SCRIPT), '--state-dir', str(state)]
+                cmd = [SYSTEM_PYTHON, str(SCRIPT), '--state-dir', str(state)]
                 stderr = tempfile.TemporaryFile()
                 logger = subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL, stderr=stderr)
                 children.append(logger)

@@ -9,7 +9,7 @@ from pathlib import Path
 # The suite runs both as `discover -s tests` (bare module names) and as
 # `-m unittest tests.<module>` (package), so name this directory explicitly.
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from _env_support import sandbox_env  # noqa: E402
+from _env_support import SYSTEM_BASH, sandbox_env  # noqa: E402
 
 
 
@@ -39,7 +39,7 @@ class BrowserPolicyTests(unittest.TestCase):
         environment = sandbox_env(PATH=str(directory), KILIX_RUN_ALIASES="0")
         environment.update(overrides)
         return subprocess.run(
-            ["/bin/bash", "-c", script, "browser-policy-test", *arguments],
+            [SYSTEM_BASH, "-c", script, "browser-policy-test", *arguments],
             env=environment, text=True, capture_output=True, check=True,
         ).stdout.splitlines()
 
@@ -102,7 +102,7 @@ class BrowserPolicyTests(unittest.TestCase):
             )
             environment = sandbox_env(PATH=directory)
             subprocess.run(
-                ["/bin/bash", "-c", script],
+                [SYSTEM_BASH, "-c", script],
                 env=environment, check=True,
             )
 

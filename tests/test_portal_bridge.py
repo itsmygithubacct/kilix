@@ -3,10 +3,13 @@ from pathlib import Path
 import json
 import shutil
 import subprocess
+import os
 import sys
 import threading
 from types import SimpleNamespace
 import unittest
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _env_support import SYSTEM_PYTHON  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "config"))
@@ -100,7 +103,7 @@ class PortalPathTests(unittest.TestCase):
     @unittest.skipUnless(Gio and shutil.which("dbus-run-session"), "GI and private D-Bus needed")
     def test_real_private_buses_forward_fds_and_cleanup_client_sessions(self):
         fixture = Path(__file__).with_name("fixtures") / "portal_bridge_fixture.py"
-        result = subprocess.run(["dbus-run-session", "--", "/usr/bin/python3", str(fixture),
+        result = subprocess.run(["dbus-run-session", "--", SYSTEM_PYTHON, str(fixture),
                                  "host", str(ROOT / "config/kilix_sdk/portal_bridge.py")],
                                 capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

@@ -7,6 +7,7 @@ a pipe fd with raw terminal bytes.
 """
 import atexit
 import contextlib
+import errno
 import os
 import shutil
 import sys
@@ -159,3 +160,53 @@ def term_feed(data, chunks=None):
     finally:
         os.close(t.fd)
         os.close(w)
+
+
+# ── POSIX shared memory, as the presenter creates it ───────────────────────
+# Linux shows these objects as files under /dev/shm; FreeBSD keeps them out of
+# the file system, so there they are reached through shm_open(3).
+def _shm_libc():
+    import ctypes
+    import ctypes.util
+    libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+    libc.shm_open.argtypes = [ctypes.c_char_p, ctypes.c_int, ctypes.c_uint]
+    libc.shm_unlink.argtypes = [ctypes.c_char_p]
+    return libc
+
+
+def _shm_error(libc, name):
+    import ctypes
+    code = ctypes.get_errno()
+    return (FileNotFoundError if code == errno.ENOENT else OSError)(
+        code, os.strerror(code), name)
+
+
+def shm_stat(name):
+    """os.stat_result of the shared-memory object NAME."""
+    if sys.platform.startswith("linux"):
+        return os.stat("/dev/shm/" + name.lstrip("/"))
+    libc = _shm_libc()
+    fd = libc.shm_open(("/" + name.lstrip("/")).encode(), os.O_RDONLY, 0)
+    if fd < 0:
+        raise _shm_error(libc, name)
+    try:
+        return os.fstat(fd)
+    finally:
+        os.close(fd)
+
+
+def shm_exists(name):
+    try:
+        shm_stat(name)
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def shm_unlink(name):
+    if sys.platform.startswith("linux"):
+        os.unlink("/dev/shm/" + name.lstrip("/"))
+        return
+    libc = _shm_libc()
+    if libc.shm_unlink(("/" + name.lstrip("/")).encode()) != 0:
+        raise _shm_error(libc, name)

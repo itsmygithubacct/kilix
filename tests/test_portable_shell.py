@@ -168,7 +168,7 @@ class HelpersAnswerLikePython(unittest.TestCase):
         self.addCleanup(sleeper.kill)
         first = self.run_ok('kilix_process_start_token "$1"', str(sleeper.pid))
         second = self.run_ok('kilix_process_start_token "$1"', str(sleeper.pid))
-        self.assertTrue(first)
+        self.assertTrue(first.isdigit(), first)
         self.assertEqual(first, second)
         sleeper.kill()
         sleeper.wait()

@@ -10,6 +10,8 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _env_support import SYSTEM_PYTHON  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'config'))
@@ -209,7 +211,7 @@ class QwenProviderRouteTests(unittest.TestCase):
                     (launcher.parent.parent/'environment/pyvenv.cfg').write_text('home = /changed\n')
                 elif kind == 'bytecode':
                     (launcher.parent.parent/'lib/kilix_qwen_tts/extra.pyc').write_bytes(b'changed bytecode')
-                result = subprocess.run(['/usr/bin/python3','-I','-B',str(launcher),'status'],
+                result = subprocess.run([SYSTEM_PYTHON,'-I','-B',str(launcher),'status'],
                                         capture_output=True,text=True)
                 if kind == 'unchanged':
                     self.assertEqual(result.returncode,0,result.stderr)
@@ -222,7 +224,7 @@ class QwenProviderRouteTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as scratch:
             launcher,_python,_site,_runtime = self.launcher_fixture(
                 Path(scratch),'#!/bin/sh\nprintf "%s\\n" "$@"\n')
-            result = subprocess.run(['/usr/bin/python3','-I','-B',str(launcher),'serve'],
+            result = subprocess.run([SYSTEM_PYTHON,'-I','-B',str(launcher),'serve'],
                                     capture_output=True,text=True)
             self.assertEqual(result.returncode,0,result.stderr)
             words = result.stdout.splitlines()
@@ -262,7 +264,7 @@ class QwenProviderRouteTests(unittest.TestCase):
                 (generation/'binding.json').write_bytes(payload)
                 launcher.write_text((ROOT/'scripts/kilix-qwen-provider-launch.py').read_text().replace(
                     '@BINDING_SHA256@',hashlib.sha256(payload).hexdigest()))
-                result = subprocess.run(['/usr/bin/python3','-I','-B',str(launcher),'status'],
+                result = subprocess.run([SYSTEM_PYTHON,'-I','-B',str(launcher),'status'],
                                         capture_output=True,text=True)
                 self.assertNotEqual(result.returncode,0)
                 self.assertEqual(result.stdout,'')

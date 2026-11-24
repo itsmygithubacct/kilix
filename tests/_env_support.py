@@ -29,6 +29,11 @@ STACK_PREFIXES = ("KILIX", "GPU_TERMINAL", "KITTY", "PLEB")
 SYSTEM_PATH = ("/usr/local/bin:/usr/bin:/bin" if sys.platform.startswith("freebsd")
                else "/usr/bin:/bin")
 
+#: The host's own interpreters, as the product resolves them (kilix_system_python).
+SYSTEM_PYTHON = ("/usr/local/bin/python3" if sys.platform.startswith("freebsd")
+                 else "/usr/bin/python3")
+SYSTEM_BASH = "/usr/local/bin/bash" if sys.platform.startswith("freebsd") else "/bin/bash"
+
 
 def sandbox_env(**overrides):
     """The parent environment minus every stack variable, plus *overrides*.
@@ -74,3 +79,67 @@ def running_executable(pid: int) -> str:
         return os.path.realpath(f"/proc/{pid}/exe")
     except OSError:
         return ""
+
+
+def open_fd_count() -> int:
+    """How many descriptors this process holds, for leak checks.
+
+    /proc/self/fd on Linux; elsewhere (FreeBSD mounts no fdescfs by default)
+    each descriptor number up to the soft limit is probed with F_GETFD.
+    """
+    try:
+        return len(os.listdir("/proc/self/fd"))
+    except FileNotFoundError:
+        pass
+    import fcntl
+    import resource
+    limit = resource.getrlimit(resource.RLIMIT_NOFILE)[0]
+    if limit == resource.RLIM_INFINITY or limit > 1 << 20:
+        limit = 1 << 20
+    count = 0
+    for descriptor in range(limit):
+        try:
+            fcntl.fcntl(descriptor, fcntl.F_GETFD)
+        except OSError:
+            continue
+        count += 1
+    return count
+
+
+def take_posix_shm(name: str) -> bytes:
+    """Read a POSIX shared-memory object's bytes, then unlink it.
+
+    Linux exposes these objects as files under /dev/shm; FreeBSD keeps them out
+    of the file system, so there they are opened with shm_open(3).
+    """
+    if os.path.isdir("/dev/shm") and sys.platform.startswith("linux"):
+        path = "/dev/shm/" + name.lstrip("/")
+        with open(path, "rb") as stream:
+            data = stream.read()
+        os.unlink(path)
+        return data
+    import ctypes
+    import ctypes.util
+    libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+    libc.shm_open.argtypes = [ctypes.c_char_p, ctypes.c_int, ctypes.c_uint]
+    libc.shm_unlink.argtypes = [ctypes.c_char_p]
+    encoded = ("/" + name.lstrip("/")).encode()
+    descriptor = libc.shm_open(encoded, os.O_RDONLY, 0)
+    if descriptor < 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error), name)
+    try:
+        size = os.fstat(descriptor).st_size
+        chunks, remaining = [], size
+        while remaining:
+            chunk = os.pread(descriptor, remaining, size - remaining)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+    finally:
+        os.close(descriptor)
+    if libc.shm_unlink(encoded) != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error), name)
+    return b"".join(chunks)

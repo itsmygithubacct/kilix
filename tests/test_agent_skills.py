@@ -13,6 +13,8 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "config"))
+sys.path.insert(0, str(ROOT / "tests"))
+from _env_support import open_fd_count  # noqa: E402
 import agent_skills as skills  # noqa: E402
 
 
@@ -35,18 +37,18 @@ class SkillsTests(unittest.TestCase):
             (folder / "references" / "example.txt").write_text("supporting bytes\n")
         self.root = self.home / ".agents/skills"
         self.store = self.root.parent / skills.STORE
-        self.before_fds = len(os.listdir("/proc/self/fd"))
+        self.before_fds = open_fd_count()
 
     def tearDown(self):
-        self.assertEqual(self.before_fds, len(os.listdir("/proc/self/fd")))
+        self.assertEqual(self.before_fds, open_fd_count())
 
     def call(self, action="install", agent="codex", **kwargs):
-        before = len(os.listdir("/proc/self/fd"))
+        before = open_fd_count()
         try:
             return skills.operate(action, agent, source=self.source,
                                   home=self.home, env=kwargs.pop("env", {}), **kwargs)
         finally:
-            self.assertEqual(len(os.listdir("/proc/self/fd")), before)
+            self.assertEqual(open_fd_count(), before)
 
     def snapshot(self, path=None):
         path = self.home if path is None else path
@@ -82,8 +84,12 @@ class SkillsTests(unittest.TestCase):
         uid_index = 4
         def root_owned(fd):
             value = fstat(fd)
-            path = Path(os.readlink(f"/proc/self/fd/{fd}"))
-            if path == self.source or self.source in path.parents or path == self.root:
+            # The same question as "is this fd's path under source, or root
+            # itself", asked by inode so it needs no /proc/self/fd.
+            shipped = {(entry.st_dev, entry.st_ino) for entry in
+                       (os.lstat(item) for item in (self.source, *self.source.rglob("*"), self.root)
+                        if os.path.lexists(item))}
+            if (value.st_dev, value.st_ino) in shipped:
                 fields = list(value)
                 fields[uid_index] = 0
                 return os.stat_result(fields)

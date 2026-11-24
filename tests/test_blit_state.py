@@ -16,6 +16,8 @@ sys.path.insert(0, str(ROOT / "config"))
 sys.path.insert(0, str(ROOT / "desktop"))
 
 import gfx
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _env_support import take_posix_shm  # noqa: E402
 
 
 class FakeTerm:
@@ -35,11 +37,8 @@ class FakeTerm:
             return
         for match in self.SHM.finditer(value):
             name = base64.b64decode(match.group(2)).decode("ascii")
-            path = "/dev/shm/" + name.lstrip("/")
-            with open(path, "rb") as stream:
-                self.payloads.append(stream.read())
+            self.payloads.append(take_posix_shm(name))
             self.shm_names.append(name)
-            os.unlink(path)
 
     def escapes(self):
         return "".join(self.writes)

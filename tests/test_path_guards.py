@@ -85,6 +85,8 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "config"))
+sys.path.insert(0, str(ROOT / "tests"))
+from _env_support import open_fd_count  # noqa: E402
 
 import agent_skills  # noqa: E402
 import app_profiles  # noqa: E402
@@ -223,9 +225,9 @@ class GuardTestCase(unittest.TestCase):
         self.assertEqual(self.accepted_owners(accepts), set(trusted))
 
     def assert_no_descriptors_leaked(self, call):
-        before = len(os.listdir("/proc/self/fd"))
+        before = open_fd_count()
         call()
-        self.assertEqual(len(os.listdir("/proc/self/fd")), before)
+        self.assertEqual(open_fd_count(), before)
 
 
 class AgentSkillsDirectoryTests(GuardTestCase):
