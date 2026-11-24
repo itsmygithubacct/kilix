@@ -162,12 +162,12 @@ kilix_mv_onto() {
 
 # Lower-case SHA-256 hex digest of FILE.
 kilix_sha256_tool() {
-  if [ "$_kilix_userland" = bsd ]; then printf 'sha256\n'; else printf 'sha256sum\n'; fi
+  if [ "$_kilix_userland" = bsd ]; then printf '/sbin/sha256\n'; else printf 'sha256sum\n'; fi
 }
 kilix_sha256() {
   local line
   if [ "$_kilix_userland" = bsd ]; then
-    line="$(sha256 -q -- "$1")" || return 1
+    line="$(/sbin/sha256 -q -- "$1")" || return 1
   else
     line="$(sha256sum -- "$1")" || return 1
     line="${line%% *}"
@@ -213,7 +213,8 @@ kilix_copy_entry() {
 # A token that names one incarnation of process PID: the same value for as long
 # as that process lives, a different one if the PID is reused. Fails when PID is
 # not running or is a zombie. Linux: the start tick, field 22 of /proc/PID/stat.
-# FreeBSD: ps(1)'s start time.
+# FreeBSD: ps(1)'s start time as epoch seconds. Numeric on both hosts; compare
+# only values read on the same host.
 kilix_process_start_token() {
   local pid="$1" record state started
   local -a fields=()
@@ -222,7 +223,7 @@ kilix_process_start_token() {
     read -r state started <<<"$record"
     [ -n "${started:-}" ] || return 1
     case "$state" in Z*) return 1 ;; esac
-    printf '%s\n' "${started// /_}"
+    LC_ALL=C date -j -f '%a %b %e %T %Y' "$started" +%s 2>/dev/null || return 1
     return 0
   fi
   [ -r "/proc/$pid/stat" ] || return 1

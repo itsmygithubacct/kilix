@@ -4,6 +4,7 @@
 # Build and install Avatar; model downloads and credentials remain explicit.
 set -euo pipefail
 umask 077
+. "$(dirname -- "${BASH_SOURCE[0]}")/portable.sh"
 
 KILIX_HOME="${KILIX_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 GPU_TERMINAL_SOURCE_HOME="${GPU_TERMINAL_SOURCE_HOME:-$HOME/.local/gpu_terminal/sources}"
@@ -84,9 +85,9 @@ fi
 
 git -C "$checkout" submodule update --init --recursive \
   || die "could not fetch Avatar's pinned build dependencies"
-make -C "$checkout" verify-dependencies \
+kilix_make -C "$checkout" verify-dependencies \
   || die "Avatar build dependencies do not match the release pins"
-make -C "$checkout" -j2 PREFIX="$KILIX_AVATAR_PREFIX" install \
+kilix_make -C "$checkout" -j2 PREFIX="$KILIX_AVATAR_PREFIX" install \
   || die "the kilix-avatar build/install failed"
 [ -x "$KILIX_AVATAR_PREFIX/bin/kilix-avatar" ] \
   || die "installer did not create $KILIX_AVATAR_PREFIX/bin/kilix-avatar"

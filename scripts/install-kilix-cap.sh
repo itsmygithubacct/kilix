@@ -72,7 +72,7 @@ case "$cap_dir" in
     die "refusing broad Kilix Cap checkout path: $cap_dir" ;;
 esac
 
-for command in git make cc; do
+for command in git "$(kilix_make_tool)" cc; do
   command -v "$command" >/dev/null 2>&1 \
     || die "$command is required (install git, make, a C compiler, and zlib development headers)"
 done
@@ -100,7 +100,7 @@ build_checkout() {
       || die "could not prepare the pinned Kilix Cap module closure"
   fi
   log "building $directory"
-  make --no-print-directory -C "$directory" >&2 \
+  kilix_make --no-print-directory -C "$directory" >&2 \
     || die "build failed (install a C toolchain and zlib development headers)"
   if [ ! -f "$binary" ] || [ -L "$binary" ] || [ ! -x "$binary" ]; then
     die "build did not produce a regular executable: $binary"

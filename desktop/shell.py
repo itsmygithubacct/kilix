@@ -11,6 +11,7 @@ into new kilix tabs/windows over kitty remote control; X11 apps go through
 import configparser
 import json
 import os
+import shlex
 import shutil
 import stat
 import subprocess
@@ -1189,7 +1190,11 @@ class Shell:
     # ── shutdown actions ────────────────────────────────────────────────────
     def _power_off(self):
         # run in a tab so a permission error (rather than a silent no-op) shows
-        self._spawn_kitty_launch(["--type=tab"], "systemctl poweroff",
+        # `kilix power` owns the host's argv (systemctl on Linux, shutdown(8)
+        # on FreeBSD), so the desktop does not repeat it.
+        self._spawn_kitty_launch(["--type=tab"],
+                                 shlex.join([os.path.join(KILIX_HOME, "kilix"),
+                                             "power", "poweroff"]),
                                  "Shut Down")
 
     def _restart_desktop(self):

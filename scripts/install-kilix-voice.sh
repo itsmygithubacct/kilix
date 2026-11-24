@@ -584,7 +584,7 @@ if [ "$force" = 0 ] && stamp_satisfies_this_run && voice_runtime_works; then
   exit 0
 fi
 
-for command in git make python3 install; do
+for command in git "$(kilix_make_tool)" python3 install; do
   command -v "$command" >/dev/null 2>&1 \
     || die "$command is required (install build-essential, git, and python3)"
 done
@@ -807,7 +807,7 @@ stage_runtime_generation() {
   runtime_stage="$(mktemp -d "$runtime_generations/.install.XXXXXX")" \
     || die "could not allocate voice runtime staging"
   log "installing the pinned voice engine into a private generation"
-  make -B -C "$voice_dir" install PREFIX="$runtime_stage"
+  kilix_make -B -C "$voice_dir" install PREFIX="$runtime_stage"
   stage_license_authority "$runtime_stage"
   stage_content_first_use "$runtime_stage"
   for tool in kilix-tts kilix-stt kilix-voiced; do

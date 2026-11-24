@@ -50,7 +50,16 @@ import re
 import signal
 import sys
 import time
-from kilix_sdk import hostproc
+try:
+    from kilix_sdk import hostproc
+except ImportError:
+    # Loaded by file path (tests, standalone tools) without its package on
+    # sys.path: hostproc needs only the standard library, so load it the same way.
+    import importlib.util as _hostproc_util
+    _hostproc_spec = _hostproc_util.spec_from_file_location(
+        "kilix_sdk_hostproc", os.path.join(os.path.dirname(os.path.abspath(__file__)), "kilix_sdk", "hostproc.py"))
+    hostproc = _hostproc_util.module_from_spec(_hostproc_spec)
+    _hostproc_spec.loader.exec_module(hostproc)
 
 PROFILE_SUFFIX = ".profile"
 ID_MAX = 40
@@ -422,8 +431,24 @@ def _spawn_detached(argv: list) -> int:
     if devnull > 2:
         actions.append((os.POSIX_SPAWN_CLOSE, devnull))
     try:
-        return os.posix_spawn(
-            argv[0], argv, os.environ, file_actions=actions, setsid=True)
+        try:
+            return os.posix_spawn(
+                argv[0], argv, os.environ, file_actions=actions, setsid=True)
+        except NotImplementedError:
+            # This platform's posix_spawn has no POSIX_SPAWN_SETSID (FreeBSD's
+            # Python build): do the same three steps by hand.
+            pid = os.fork()
+            if pid == 0:                                 # pragma: no cover - child
+                try:
+                    os.setsid()
+                    for descriptor in (0, 1, 2):
+                        os.dup2(devnull, descriptor)
+                    if devnull > 2:
+                        os.close(devnull)
+                    os.execve(argv[0], argv, os.environ)
+                finally:
+                    os._exit(127)
+            return pid
     finally:
         os.close(devnull)
 

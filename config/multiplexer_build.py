@@ -90,6 +90,9 @@ def main():
     try:
         if not re.fullmatch('[0-9a-f]{40}',args.commit) or not 1 <= args.timeout <= 240:
             raise ValueError('exact source commit and timeout 1..240 are required')
+        if not sys.platform.startswith('linux'):
+            raise ValueError('the source-bound remote build is available on Linux only; '
+                             'build third_party/kilix-multiplexer with its Makefile instead')
         from multiplexer_compile import build
         value=build(args,package_plan)
         if value:

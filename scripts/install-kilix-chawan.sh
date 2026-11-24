@@ -126,7 +126,7 @@ if [ ! -e "$chawan_dir" ] && [ ! -L "$chawan_dir" ] && ! download_allowed; then
   die "kilix-chawan is not installed at $chawan_dir; set KILIX_CHAWAN_AUTO_INSTALL=1 to download it"
 fi
 
-for command in git make cc pkg-config tar xz sha256sum; do
+for command in git "$(kilix_make_tool)" cc pkg-config tar xz "$(kilix_sha256_tool)"; do
   command -v "$command" >/dev/null 2>&1 \
     || die "$command is required (install git, make, a C compiler, pkg-config, xz-utils, and coreutils)"
 done
@@ -144,7 +144,7 @@ fetch_verified() {
   curl -fsSL --proto '=https' --tlsv1.2 -o "$temporary" -- "$url" \
     || { rm -f -- "$temporary"; die "download failed: $url"; }
   local got
-  got="$(sha256sum -- "$temporary" | cut -d' ' -f1)"
+  got="$(kilix_sha256 "$temporary")"
   if [ "$got" != "$want" ]; then
     rm -f -- "$temporary"
     die "checksum mismatch for $url (expected $want, got $got)"
@@ -366,7 +366,7 @@ build_checkout() {
   [ "$CHA_SFTP" = 1 ] || log "building without SFTP support"
   log "building $directory"
   PATH="$(dirname "$NIM_BIN"):$PATH" \
-  make --no-print-directory -C "$directory" \
+  kilix_make --no-print-directory -C "$directory" \
        NIM="$NIM_BIN" CHA_SFTP="$CHA_SFTP" \
        -j "$(nproc 2>/dev/null || echo 2)" >&2 \
     || die "build failed"

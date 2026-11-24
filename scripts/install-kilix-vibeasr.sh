@@ -65,7 +65,7 @@ if [ -L "$current" ] && [ "$(readlink -- "$current")" = "$generation" ] \
   exit 0
 fi
 
-for tool in git cmake make c++ cc; do
+for tool in git cmake "$(kilix_make_tool)" c++ cc; do
   command -v "$tool" >/dev/null \
     || fail "$tool is required to build VibeASR (Debian: sudo apt install build-essential cmake git)"
 done
