@@ -27,6 +27,8 @@ from _env_support import sandbox_env  # noqa: E402
 SELFCHECK = "x11_sandbox_selfcheck"
 
 
+@unittest.skipUnless(sys.platform.startswith("linux"),
+                     "the sandbox's user, mount and network namespaces are Linux-only")
 @unittest.skipUnless(shutil.which("Xvfb"),
                      "the X tests that need the sandbox are skipped too")
 class SandboxedChildTests(unittest.TestCase):
@@ -71,6 +73,8 @@ class UnavailableSandboxTests(unittest.TestCase):
             suite.run(result)
         return result
 
+    @unittest.skipUnless(sys.platform.startswith("linux"),
+                         "only Linux can be configured to provide the namespaces")
     def test_an_unbuildable_sandbox_is_an_error_not_a_skip(self):
         result = self._run_proxy({})
         self.assertEqual((result.testsRun, len(result.errors),
@@ -80,6 +84,18 @@ class UnavailableSandboxTests(unittest.TestCase):
         self.assertIn("SandboxUnavailable", detail)
         self.assertIn("X11 SANDBOX UNAVAILABLE", detail)
         self.assertIn("planted: no namespaces", detail)
+
+    @unittest.skipIf(sys.platform.startswith("linux"), "Linux reports an error instead")
+    def test_a_host_without_namespaces_records_a_named_skip(self):
+        # Nothing on a non-Linux host can provide them, so the loss is a skip,
+        # but it still names itself, per test.
+        result = self._run_proxy({})
+        self.assertEqual((result.testsRun, len(result.errors),
+                          len(result.failures), len(result.skipped)),
+                         (1, 0, 0, 1))
+        reason = result.skipped[0][1]
+        self.assertTrue(reason.startswith("X11 SANDBOX UNAVAILABLE"), reason)
+        self.assertIn("planted: no namespaces", reason)
 
     def test_the_explicit_opt_out_records_a_named_skip(self):
         result = self._run_proxy({x11_sandbox.OPTIONAL_ENV: "1"})

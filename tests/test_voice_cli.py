@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import pathlib
+import shutil
 import socket
 import subprocess
 import sys
@@ -17,7 +18,7 @@ import unittest
 # `-m unittest tests.<module>` (package), so name this directory explicitly
 # rather than relying on either style's import roots.
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from _env_support import sandbox_env  # noqa: E402
+from _env_support import SYSTEM_BASH, SYSTEM_PYTHON, sandbox_env  # noqa: E402
 
 
 
@@ -193,7 +194,7 @@ class VoiceCliTests(unittest.TestCase):
             "  *kilix-tts-sizer-*status*) exit 0 ;;\n"
             "  *fetch*) exit 1 ;;\n"
             "esac\n"
-            'exec /usr/bin/git "$@"\n')
+            f'exec {shutil.which("git", path="/usr/bin:/usr/local/bin")} "$@"\n')
         git.chmod(0o755)
         return sizer, log
 
@@ -357,7 +358,19 @@ class VoiceCliTests(unittest.TestCase):
 
     def hermetic_path(self):
         """A PATH that cannot resolve voice tools installed on this machine."""
-        self.environment["PATH"] = f"{self.bin}{os.pathsep}/usr/bin{os.pathsep}/bin"
+        directories = [str(self.bin), "/usr/bin", "/bin"]
+        # Where bash and python3 live outside /usr/bin and /bin (FreeBSD keeps
+        # packages in /usr/local/bin), link just those two rather than adding
+        # a directory that may hold installed voice tools.
+        interpreters = self.root / "interpreters"
+        for name, target in (("bash", SYSTEM_BASH), ("python3", SYSTEM_PYTHON)):
+            if os.path.dirname(target) not in ("/usr/bin", "/bin"):
+                interpreters.mkdir(exist_ok=True)
+                if not (interpreters / name).exists():
+                    (interpreters / name).symlink_to(target)
+        if interpreters.is_dir():
+            directories.insert(1, str(interpreters))
+        self.environment["PATH"] = os.pathsep.join(directories)
 
     def test_voice_daemon_runs_the_installed_prefix_daemon_off_path(self):
         # Desktop launch contexts often lack ~/.local/bin on PATH. An

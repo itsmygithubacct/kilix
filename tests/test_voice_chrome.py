@@ -966,6 +966,11 @@ class VoiceSegmentTests(unittest.TestCase):
         except OSError as error:
             self.skipTest(f"SOCK_SEQPACKET socketpair unavailable: {error}")
         self.addCleanup(receiver.close)
+        # The daemon's side of the contract: a receive buffer that holds one
+        # whole request. Linux sizes this by the sender; FreeBSD by the
+        # receiver, whose default (net.local.seqpacket.recvspace) is 64 KiB.
+        receiver.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF,
+                            self.voice._CONTROL_MAX_REQUEST_BYTES + 4096)
         receiver.send(json.dumps({"ok": True, "chunks": 1}).encode())
         text = "😀" * self.voice._MAX_REQUEST_CHARS
 

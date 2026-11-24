@@ -53,7 +53,8 @@ class VibeAsrInstallerTests(unittest.TestCase):
         (data / "voice" / "vibeasr" / "current").symlink_to(generation)
         bare = Path(root, "bin")
         bare.mkdir()
-        for tool in ("bash", "cat", "readlink", "mkdir", "flock", "id", "grep"):
+        lock = "flock" if shutil.which("flock") else "lockf"
+        for tool in ("bash", "cat", "readlink", "mkdir", lock, "id", "grep"):
             (bare / tool).symlink_to(shutil.which(tool))
         env = sandbox_env(KILIX_DATA_HOME=str(data),
                           GPU_TERMINAL_SOURCE_HOME=root + "/sources", PATH=str(bare))

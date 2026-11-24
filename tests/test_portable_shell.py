@@ -7,6 +7,7 @@ file system, on whichever host runs them (GNU userland on Linux, BSD userland
 on FreeBSD).
 """
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -40,12 +41,21 @@ class CopiesAgree(unittest.TestCase):
                                  f"{name}'s portability block differs from scripts/portable.sh")
 
     def test_no_gnu_only_calls_outside_the_block(self):
-        forbidden = ("stat -c", "stat -Lc", "realpath -m", "mv -T", "mv -fT", "mv -Tf",
-                     "date -d", "sha256sum -c --status", "/proc/$$/fd", "-printf",
-                     "--preserve=", "--no-dereference")
-        for name in ("build.sh", "kilix"):
+        forbidden = ("stat -c", "stat -Lc", "realpath -m", "realpath -e", "mv -T", "mv -fT",
+                     "mv -Tf", "date -d", "sha256sum -c", "/proc/$$/fd", "-printf",
+                     "--preserve=", "--no-dereference", "readlink -e", "readlink -m")
+        scripts = sorted(path.relative_to(ROOT).as_posix()
+                         for directory in ("scripts", "desktop/scripts")
+                         for path in (ROOT / directory).glob("*.sh")
+                         if path.name != "portable.sh")
+        for name in ("build.sh", "kilix", *scripts):
             text = (ROOT / name).read_text()
-            text = text.replace(block(ROOT / name), "")
+            if name in ("build.sh", "kilix"):
+                text = text.replace(block(ROOT / name), "")
+            if re.search(r'(?m)^INSTALL_SHA256="[0-9a-f]{64}"$', text):
+                # A pinned 64-hex literal cannot be the malformed line that
+                # FreeBSD's sha256sum check mode passes; a wrong one fails.
+                text = text.replace("sha256sum -c -", "")
             for pattern in forbidden:
                 with self.subTest(name=name, pattern=pattern):
                     self.assertNotIn(pattern, text)
@@ -122,6 +132,17 @@ class HelpersAnswerLikePython(unittest.TestCase):
         for given, expected in cases.items():
             with self.subTest(given=given):
                 self.assertEqual(self.run_ok('kilix_realpath_m "$1"', given), expected)
+
+    def test_realpath_e(self):
+        real = self.tmp / "real"
+        real.mkdir()
+        (self.tmp / "alias").symlink_to(real)
+        self.assertEqual(self.run_ok('kilix_realpath_e "$1"', str(self.tmp / "alias")),
+                         os.path.realpath(real))
+        for missing in (self.tmp / "alias" / "missing", self.tmp / "gone" / "deeper"):
+            with self.subTest(missing=str(missing)):
+                self.assertNotEqual(
+                    helper('kilix_realpath_e "$1"', str(missing)).returncode, 0)
 
     def test_mv_onto_replaces_symlink_not_its_directory(self):
         (self.tmp / "gen-a").mkdir()
