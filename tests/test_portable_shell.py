@@ -62,6 +62,16 @@ class CopiesAgree(unittest.TestCase):
 
 
 @unittest.skipUnless(shutil.which("bash"), "needs bash")
+class BlockReturnsItsOwnStatus(unittest.TestCase):
+    def test_no_bare_return_in_the_block(self):
+        # bash 5.2 makes a bare `return` run from a trap handler report the
+        # status of the command that fired the trap, not its own. kilix update
+        # rolls back from its EXIT trap, so every helper names its status.
+        lines = (ROOT / "scripts" / "portable.sh").read_text().splitlines()
+        bare = [n for n, line in enumerate(lines, 1) if re.fullmatch(r"\s*return\s*", line)]
+        self.assertEqual(bare, [], "write `return $?`: scripts/portable.sh lines")
+
+
 class HelpersAnswerLikePython(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
@@ -154,6 +164,23 @@ class HelpersAnswerLikePython(unittest.TestCase):
         self.run_ok('kilix_mv_onto -f "$1" "$2"', str(staged), str(current))
         self.assertEqual(os.readlink(current), "gen-b")
         self.assertEqual(list((self.tmp / "gen-a").iterdir()), [])
+
+    def test_helpers_report_their_own_status_from_an_exit_trap(self):
+        new, old = self.tmp / "new", self.tmp / "old"
+        new.write_text("new\n")
+        old.write_text("old\n")
+        # The trap calls the handler without arguments, so take them first.
+        snippet = ('new="$1" old="$2" dir="$3"\n'
+                   'handler() {\n'
+                   '  kilix_mv_onto -f "$new" "$old"; echo "mv=$?"\n'
+                   '  kilix_realpath_m "$dir/missing/leaf" >/dev/null; echo "realpath=$?"\n'
+                   '  exec 9<"$old"; kilix_fd_identity 9 >/dev/null; echo "fd=$?"\n'
+                   '}\n'
+                   'trap handler EXIT\n'
+                   'false')
+        result = helper(snippet, str(new), str(old), str(self.tmp))
+        self.assertEqual(result.stdout.split(), ["mv=0", "realpath=0", "fd=0"], result.stderr)
+        self.assertEqual(old.read_text(), "new\n")
 
     def test_mv_onto_refuses_a_real_directory(self):
         (self.tmp / "dest").mkdir()

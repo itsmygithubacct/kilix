@@ -102,7 +102,7 @@ kilix_fd_identity() {
   local fd="$1" device inode
   if [ "$_kilix_userland" = gnu ]; then
     stat -Lc '%d:%i' -- "/proc/$$/fd/$fd"
-    return
+    return $?
   fi
   read -r device inode < <(fstat -n -p "$$" 2>/dev/null \
     | awk -v fd="$fd" '$4 == fd { print $5, $6; exit }') || true
@@ -147,7 +147,7 @@ kilix_realpath_m() {
   local -a parts
   if [ "$_kilix_userland" = gnu ]; then
     realpath -m -- "$path"
-    return
+    return $?
   fi
   case "$path" in /*) ;; *) path="$PWD/$path" ;; esac
   IFS=/ read -r -a parts <<<"$path"
@@ -174,7 +174,7 @@ kilix_mv_onto() {
   source="$1" dest="$2"
   if [ "$_kilix_userland" = gnu ]; then
     mv -T "${_kilix_mv_flags[@]}" -- "$source" "$dest"
-    return
+    return $?
   fi
   if [ -d "$dest" ] && [ ! -L "$dest" ]; then
     echo "mv: cannot overwrite directory '$dest' with '$source'" >&2
