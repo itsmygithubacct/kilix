@@ -40,6 +40,10 @@ management. Native Windows and WSL share SDK 1.18's `kilix_sdk.windows` client. 
 `kilix windows --host SSH_ALIAS` through an existing SSH connection. See the
 [Windows desktop commands](windows/README.md#windows-desktop-automation).
 
+FreeBSD 15 (amd64 and arm64) is a supported host: the fork engine, the CLI,
+sessions, panes and the desktop build and run there. See [FreeBSD](#freebsd)
+for the packages, the `kilix-deps` meta-port and what differs.
+
 See the [0.2.2 help guide](docs/help/README.md) for current commands, storage,
 model setup, speech and troubleshooting. Older release sections below describe
 their named versions; they are not a current component inventory.
@@ -934,6 +938,39 @@ To get the buttons, install the build deps and build the fork:
 ```
 
 (`scripts/install-build-deps.sh --verify` re-checks without installing.)
+
+### FreeBSD
+
+Kilix builds and runs on FreeBSD 15 (amd64 and arm64) from the same checkout;
+there is no prebuilt engine, so build the fork. Install the packages either with
+the installer above (it uses `pkg` on FreeBSD) or with the meta-port in
+[`packaging/freebsd/kilix-deps`](packaging/freebsd/kilix-deps), which also pulls
+in the Xvfb server and python-xlib the desktop's X11 apps use:
+
+```bash
+# from the Kilix checkout, as root (needs a ports tree in /usr/ports):
+cp -R packaging/freebsd/kilix-deps /usr/ports/x11/
+make -C /usr/ports/x11/kilix-deps install clean
+# then, as your user:
+~/.local/gpu_terminal/sources/kilix/kilix --build
+```
+
+The meta-port installs no Kilix files; the checkout stays per-user and updates
+itself. Its `DISTVERSION` follows Kilix releases.
+
+What differs on FreeBSD:
+
+- The engine builds with the base `cc`, and GNU make is `gmake`.
+- `kilix power` uses `shutdown(8)`, so reboot and power-off need the `operator`
+  group. Logout has no login-manager session to end.
+- FreeBSD has no atomic directory exchange. A first install of an app, game or
+  model works. Reinstalling or repairing one stops without changing anything
+  and names `kilix content set-aside PATH`, which moves the old tree aside
+  (kept, not deleted) so the same install can run again.
+- Not available: speech (the Vosk library is Linux-only), the GPU and ML
+  runtimes (Qwen, Whistle), and the Linux namespace sandbox the X11 tests use
+  (those tests are reported as skipped, by name).
+- The telemetry collector reads Linux `/proc`; on FreeBSD it reports no samples yet.
 
 ### Optional coding-agent skills
 

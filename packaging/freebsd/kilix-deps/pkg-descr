@@ -1,0 +1,12 @@
+Kilix is a terminal built on a fork of kitty, with a pixel desktop, pane
+and tab control for coding agents, and a small app catalog.
+
+Kilix installs as a per-user checkout that builds its own engine and keeps
+itself up to date, so this port installs no Kilix files. It pulls in the
+packages that checkout builds and runs against: the toolchain, the engine's
+libraries, Pillow and Go, the desktop's Media Player and browser libraries,
+and the Xvfb and python-xlib its X11 apps use. Then, as your user:
+
+  git clone --recursive https://github.com/itsmygithubacct/kilix.git \
+      ~/.local/gpu_terminal/sources/kilix
+  ~/.local/gpu_terminal/sources/kilix/kilix --build
