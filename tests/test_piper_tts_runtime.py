@@ -7,7 +7,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _env_support import sandbox_env
+from _env_support import sandbox_env, SYSTEM_PATH
 
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = ROOT / 'scripts/install-kilix-piper-tts.sh'
@@ -68,7 +68,7 @@ class PiperRuntimeTests(unittest.TestCase):
                           'chmod +x "$UV_PROJECT_ENVIRONMENT/bin/"*; fi\n')
             uv.chmod(0o755)
             log = root / 'uv.log'
-            env = sandbox_env(HOME=str(root), PATH=f'{bins}:/usr/bin:/bin',
+            env = sandbox_env(HOME=str(root), PATH=f'{bins}:{SYSTEM_PATH}',
                               GPU_TERMINAL_HOME=str(root / 'data'),
                               GPU_TERMINAL_SOURCE_HOME=str(root / 'sources'),
                               KILIX_HOME=str(host), HOST_PIN='a' * 40,

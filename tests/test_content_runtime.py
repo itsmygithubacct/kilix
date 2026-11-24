@@ -17,6 +17,8 @@ sys.path.insert(0, str(ROOT / "config"))
 import content_app  # noqa: E402
 from kilix_sdk import _content_runtime as content_runtime  # noqa: E402
 import remote_mux  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _env_support import SYSTEM_PATH  # noqa: E402
 
 
 class ContentRuntimeTests(unittest.TestCase):
@@ -143,7 +145,7 @@ class ContentRuntimeTests(unittest.TestCase):
     def test_amp_print_root_is_read_only_and_uses_shared_resolution(self):
         with tempfile.TemporaryDirectory() as temporary:
             selected = str(Path(temporary) / "not-created 'quoted'")
-            environment = {"PATH": os.defpath, "HOME": temporary,
+            environment = {"PATH": SYSTEM_PATH, "HOME": temporary,
                            "KILIX_DATA_HOME": selected, "KILIX_CONTENT_ROOT": "/wrong",
                            "PYTHONDONTWRITEBYTECODE": "1"}
             result = subprocess.run([
@@ -174,7 +176,7 @@ class ContentRuntimeTests(unittest.TestCase):
             + 'case "${1:-}" in\n  tui|kilix-tui)\n' + alias + 'esac\n'
             + '[ "$1" = desktop ]\nshift\ncase tui in\n' + block + 'esac\n')
         return subprocess.run(['bash', '-c', script, 'fixture', *arguments], env={
-            'PATH': os.defpath, 'HOME': str(fixture), 'KILIX_HOME': str(ROOT),
+            'PATH': SYSTEM_PATH, 'HOME': str(fixture), 'KILIX_HOME': str(ROOT),
             'KILIX_DATA_HOME': str(fixture / "host data 'quoted'"),
             'KILIX_CONTENT_ROOT': str(fixture / 'stale95'),
             '_kilix_tui_explicit_root': str(fixture / 'forged-private-root'),
@@ -253,7 +255,7 @@ class ContentRuntimeTests(unittest.TestCase):
                     selected = str(fixture / "data 'with' $characters")
                     result = subprocess.run(["bash", "-c", script, "fixture",
                         "amp", *extra, "--", "song name.wav"], env={
-                        "PATH": os.defpath, "HOME": temporary, "KILIX_HOME": str(ROOT),
+                        "PATH": SYSTEM_PATH, "HOME": temporary, "KILIX_HOME": str(ROOT),
                         "KILIX_DATA_HOME": selected, "KILIX_CONTENT_ROOT": "/wrong",
                         "KILIX_SESSION_HOME": str(fixture / "session"),
                         "FIXTURE_AMP": str(executable), "PYTHONDONTWRITEBYTECODE": "1",

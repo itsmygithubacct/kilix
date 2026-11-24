@@ -1,7 +1,10 @@
-import subprocess
+import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _env_support import SYSTEM_PATH, run_interactive_bash  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,13 +43,11 @@ class RunAliasTests(unittest.TestCase):
         self.temp.cleanup()
 
     def _shell(self, script, **extra):
-        env = {"PATH": f"{self.bin}:/usr/bin:/bin", "HOME": str(self.home),
+        env = {"PATH": f"{self.bin}:{SYSTEM_PATH}", "HOME": str(self.home),
                "TERM": "dumb", "XDG_DATA_HOME": str(self.data_home),
                "XDG_DATA_DIRS": str(self.data_dirs)}
         env.update(extra)
-        return subprocess.run(
-            ["bash", "--rcfile", str(RCFILE), "-i"], input=script, env=env,
-            capture_output=True, text=True, timeout=30)
+        return run_interactive_bash(["--rcfile", str(RCFILE)], script, env)
 
     def _type(self, name, **extra):
         return self._shell(f"type -t {name}\n", **extra).stdout.strip()
@@ -176,7 +177,7 @@ class RunAliasTests(unittest.TestCase):
         local = f"{self.home}/.local/bin"
         out = self._shell(
             "printf '%s\\n' \"$PATH\"\n",
-            PATH=f"{local}:{self.bin}:/usr/bin:/bin").stdout
+            PATH=f"{local}:{self.bin}:{SYSTEM_PATH}").stdout
         path = out.strip().splitlines()[-1]
         self.assertEqual(path.split(":").count(local), 1,
                          f"prepend must not duplicate, got: {path}")
@@ -238,14 +239,12 @@ class TbAliasTests(unittest.TestCase):
         self.temp.cleanup()
 
     def _shell(self, script, **extra):
-        env = {"PATH": f"{self.bin}:/usr/bin:/bin", "HOME": str(self.home),
+        env = {"PATH": f"{self.bin}:{SYSTEM_PATH}", "HOME": str(self.home),
                "TERM": "dumb",
                "GPU_TERMINAL_SOURCE_HOME": str(self.sources),
                "KILIX_STATE_DIRECTORY": str(self.state)}
         env.update(extra)
-        return subprocess.run(
-            ["bash", "--rcfile", str(RCFILE), "-i"], input=script, env=env,
-            capture_output=True, text=True, timeout=30)
+        return run_interactive_bash(["--rcfile", str(RCFILE)], script, env)
 
     def test_tb_aliases_to_the_delivered_tb_py(self):
         out = self._shell("type -t tb\ntb log --pane 3\n")

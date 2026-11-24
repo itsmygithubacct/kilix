@@ -11,6 +11,8 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'config'))
 import model_wizard as wizard
 import system_llm
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _env_support import SYSTEM_PATH  # noqa: E402
 
 
 def asset(name, provider='test'):
@@ -271,7 +273,7 @@ class WizardTests(unittest.TestCase):
             sentinel.write_text('#!/bin/sh\nprintf "%s\\n" "$0 $*" >> "$INSTALL_SENTINEL"\nexit 79\n')
             sentinel.chmod(0o700)
         environment = {
-            'HOME': os.environ['HOME'], 'PATH': str(bin_dir) + os.pathsep + os.defpath,
+            'HOME': os.environ['HOME'], 'PATH': str(bin_dir) + os.pathsep + SYSTEM_PATH,
             'GPU_TERMINAL_HOME': str(root / 'stack'),
             'GPU_TERMINAL_SOURCE_HOME': str(root / 'sources'),
             'KILIX95_STATE_HOME': str(root / 'wizard'),

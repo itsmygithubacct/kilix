@@ -1,3 +1,5 @@
+import os
+import sys
 """`--install-desktop` and `--uninstall-desktop` are one transaction, apart.
 
 The freedesktop paths are the only place kilix writes outside its own storage
@@ -16,6 +18,8 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _env_support import SYSTEM_PATH  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -48,7 +52,7 @@ class DesktopEntryTests(unittest.TestCase):
             timeout=120,
             env={
                 "HOME": str(self.home),
-                "PATH": "/usr/bin:/bin",
+                "PATH": SYSTEM_PATH,
                 "TERM": "xterm",
                 "XDG_DATA_HOME": str(self.data),
             },

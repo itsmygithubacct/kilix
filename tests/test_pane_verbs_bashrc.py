@@ -1,3 +1,5 @@
+import os
+import sys
 """Pane and tab shell verbs, and their completions (kilix.bashrc section 7).
 
 The fake-kilix-on-PATH pattern is taken wholesale from test_kilix_bashrc.py:
@@ -10,10 +12,11 @@ Live ids come from tests/fixtures/kitten_ls.json, a recorded and sanitised
 """
 
 import json
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _env_support import SYSTEM_PATH, run_interactive_bash  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -73,15 +76,13 @@ class PaneVerbTestCase(unittest.TestCase):
         self.temp.cleanup()
 
     def _shell(self, script, **extra):
-        env = {"PATH": f"{self.bin}:/usr/bin:/bin", "HOME": str(self.home),
+        env = {"PATH": f"{self.bin}:{SYSTEM_PATH}", "HOME": str(self.home),
                "TERM": "dumb", "KITTY_LISTEN_ON": "unix:/tmp/kilix-test.sock"}
         env.update({k: v for k, v in extra.items() if v is not None})
         for key, value in extra.items():
             if value is None:
                 env.pop(key, None)
-        return subprocess.run(
-            ["bash", "--rcfile", str(RCFILE), "-i"], input=script, env=env,
-            capture_output=True, text=True, timeout=30)
+        return run_interactive_bash(["--rcfile", str(RCFILE)], script, env)
 
     def _type(self, name, **extra):
         return self._shell(f"type -t {name}\n", **extra).stdout.strip()

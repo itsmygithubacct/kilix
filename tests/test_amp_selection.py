@@ -11,6 +11,8 @@ import sys
 import tempfile
 import unittest
 from unittest import mock
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _env_support import SYSTEM_PATH  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('amp_setup_selection', ROOT/'scripts/install-kilix-amp.py')
@@ -38,7 +40,7 @@ class SelectionTests(unittest.TestCase):
         self.patch.start(); self.addCleanup(self.patch.stop)
         self.env = mock.patch.dict(os.environ, {'HOME':str(self.base/'home'),
             'KILIX_DATA_HOME':str(self.base/'host-data'),'KILIX_CONTENT_ROOT':str(self.base/'stale'),
-            'PATH':os.defpath,'GIT_ALLOW_PROTOCOL':'file'}, clear=True)
+            'PATH':SYSTEM_PATH,'GIT_ALLOW_PROTOCOL':'file'}, clear=True)
         self.env.start();self.addCleanup(self.env.stop)
 
     def call(self,*args):

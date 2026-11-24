@@ -12,7 +12,7 @@ from pathlib import Path
 # The suite runs both as `discover -s tests` (bare module names) and as
 # `-m unittest tests.<module>` (package), so name this directory explicitly.
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from _env_support import sandbox_env  # noqa: E402
+from _env_support import running_executable, sandbox_env  # noqa: E402
 
 
 
@@ -153,7 +153,7 @@ if [ -e "$build/current" ] || [ -L "$build/current" ]; then
 fi
 target="generations/${stage##*/}"
 ln -s "$target" "$build/.current.$$"
-mv -Tf -- "$build/.current.$$" "$build/current"
+mv -f -- "$build/.current.$$" "$build/current"
 promoted=1
 if [ "${FAKE_KILIX_BUILD_FAIL:-}" = after_current ]; then exit 24; fi
 case "${FAKE_KILIX_BUILD_INVALID:-}" in
@@ -164,7 +164,7 @@ case "${FAKE_KILIX_BUILD_INVALID:-}" in
 esac
 if [ "${FAKE_KILIX_BUILD_INVALID:-}" != stamp_missing ]; then
   chmod 0600 "$state/fork-built-ref.tmp"
-  mv -Tf -- "$state/fork-built-ref.tmp" "$state/fork-built-ref"
+  mv -f -- "$state/fork-built-ref.tmp" "$state/fork-built-ref"
 fi
 if [ "${FAKE_KILIX_BUILD_FAIL:-}" = after_stamp ]; then exit 25; fi
 '''
@@ -605,10 +605,7 @@ if [ "${FAKE_KILIX_BUILD_FAIL:-}" = after_stamp ]; then exit 25; fi
         process = subprocess.Popen([str(live_executable), "30"])
         try:
             for _ in range(100):
-                try:
-                    running = os.path.realpath(f"/proc/{process.pid}/exe")
-                except OSError:
-                    running = ""
+                running = running_executable(process.pid)
                 if running == str(live_executable.resolve()):
                     break
                 time.sleep(0.01)

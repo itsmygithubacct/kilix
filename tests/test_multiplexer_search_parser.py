@@ -18,6 +18,9 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _env_support import SYSTEM_PATH  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -131,7 +134,7 @@ class SearchListParsingTests(unittest.TestCase):
         result = subprocess.run(
             [str(COMPILER), '-Wp,-v', '-E', '-o', '/dev/null', '-I', str(selected), str(source)],
             capture_output=True, check=False,
-            env=dict(PATH='/usr/bin:/bin', LC_ALL='C', HOME=str(self.root)))
+            env=dict(PATH=SYSTEM_PATH, LC_ALL='C', HOME=str(self.root)))
         self.assertEqual(result.returncode, 0, result.stderr.decode('utf-8', 'replace'))
         reported = result.stderr
         self.assertIn(b'\n ' + os.fsencode(selected) + b'\n', reported)

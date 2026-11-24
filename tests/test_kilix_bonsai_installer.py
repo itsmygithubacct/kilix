@@ -23,7 +23,7 @@ import unittest
 # The suite runs both as `discover -s tests` (bare module names) and as
 # `-m unittest tests.<module>` (package), so name this directory explicitly.
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from _env_support import sandbox_env  # noqa: E402
+from _env_support import sandbox_env, SYSTEM_PATH  # noqa: E402
 
 
 
@@ -179,7 +179,7 @@ class DispatchTests(unittest.TestCase):
                          GPU_TERMINAL_SOURCE_HOME=str(source_home),
                          GPU_TERMINAL_HOME=os.path.join(home, "state"),
                          KILIX_BONSAI_PREFIX=os.path.join(home, "prefix"),
-                         KILIX_BONSAI_REF="unset", PATH="/usr/bin:/bin")
+                         KILIX_BONSAI_REF="unset", PATH=SYSTEM_PATH)
             self.assertNotEqual(result.returncode, 0)
             self.assertNotIn("checkout marker", result.stdout)
             self.assertIn("no published commit", result.stderr)
@@ -193,7 +193,7 @@ class DispatchTests(unittest.TestCase):
                          GPU_TERMINAL_SOURCE_HOME=os.path.join(home, "src"),
                          GPU_TERMINAL_HOME=os.path.join(home, "state"),
                          KILIX_BONSAI_PREFIX=os.path.join(home, "prefix"),
-                         KILIX_BONSAI_REF="unset", PATH="/usr/bin:/bin")
+                         KILIX_BONSAI_REF="unset", PATH=SYSTEM_PATH)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("no published commit", result.stderr)
 
@@ -209,7 +209,7 @@ class DispatchTests(unittest.TestCase):
             binary.chmod(0o755)
             result = run([str(LAUNCHER), "bonsai", "marker"],
                          KILIX_BONSAI_PREFIX=os.path.join(home, "prefix"),
-                         PATH="/usr/bin:/bin")
+                         PATH=SYSTEM_PATH)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout.strip(), "prefix marker")
 

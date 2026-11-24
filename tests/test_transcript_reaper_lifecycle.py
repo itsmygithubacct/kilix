@@ -7,8 +7,11 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (ROOT / 'kilix').read_text()
-HELPERS = SOURCE[SOURCE.index('_kilix_process_start_tick() {'):
-                 SOURCE.index('\n_kilix_validate_private_storage_layout || exit 1')]
+# The extracted functions ask the host-portability helpers (process start
+# tokens), so the fixture carries the canonical copy of that block first.
+HELPERS = ((ROOT / 'scripts' / 'portable.sh').read_text()
+           + SOURCE[SOURCE.index('_kilix_process_start_tick() {'):
+                    SOURCE.index('\n_kilix_validate_private_storage_layout || exit 1')])
 STUBS = '''
 _kilix_read_transcript_config() { _KILIX_TRANSCRIPT_TOTAL=1; _KILIX_TRANSCRIPT_ARCHIVE=1; }
 _kilix_transcript_reap() { echo pass >> "$TEST_PASSES"; }

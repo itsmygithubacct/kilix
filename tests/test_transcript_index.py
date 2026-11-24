@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 LAUNCHER = ROOT / "kilix"
 MODULE_PATH = ROOT / "src" / "kitty" / "pty_broker.py"
 
-HAVE_REAPER = bool(shutil.which("zstd") and shutil.which("flock"))
+HAVE_REAPER = bool(shutil.which("zstd") and (shutil.which("flock") or shutil.which("lockf")))
 
 
 def load_module():

@@ -15,6 +15,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "config"))
 import agent_control as control
 import agent_delivery as delivery
 from test_agent_control import FakeClient, TARGET_BROKER, SOURCE_BROKER
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _env_support import SYSTEM_PATH  # noqa: E402
 
 
 def screen(value=None, history="", *, busy=False, dim_placeholder=True):
@@ -349,7 +351,7 @@ class DeliveryTests(unittest.TestCase):
         password = root/'credential'
         password.write_text('fixture only')
         password.chmod(0o600)
-        env = {'PATH': '/usr/bin:/bin', 'HOME': str(root),
+        env = {'PATH': SYSTEM_PATH, 'HOME': str(root),
                'XDG_STATE_HOME': str(root/'state'), 'KITTY_LISTEN_ON': 'unix:/fixture',
                'KITTY_WINDOW_ID': '1', 'KILIX_KITTEN': str(kitten),
                'KILIX_RC_PASSWORD_FILE': str(password), 'PYTHONDONTWRITEBYTECODE': '1'}

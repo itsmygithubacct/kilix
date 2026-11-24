@@ -15,6 +15,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _env_support import SYSTEM_PATH  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "config"))
@@ -23,7 +25,7 @@ sys.path.insert(0, os.path.join(ROOT, "config"))
 def _play(home, *args):
     env = {
         "HOME": home,
-        "PATH": "/usr/bin:/bin",
+        "PATH": SYSTEM_PATH,
         "TERM": "xterm",
         "KILIX_HOME": ROOT,
     }
@@ -78,7 +80,7 @@ class DesktopGamesPlayTests(unittest.TestCase):
                 "assert 'solitaire' not in games.DESKTOP_APP_GAMES;"
                 "print('ready')") % (os.path.join(ROOT, "desktop"),
                                      os.path.join(ROOT, "config"))
-        env = {"HOME": self.home, "PATH": "/usr/bin:/bin",
+        env = {"HOME": self.home, "PATH": SYSTEM_PATH,
                "KILIX_HOME": ROOT}
         result = subprocess.run([sys.executable, "-c", code],
                                 capture_output=True, text=True, timeout=60,
@@ -122,7 +124,7 @@ class PlayFromAnAgentShellTests(unittest.TestCase):
         self.temp.cleanup()
 
     def _run(self, **extra):
-        env = {"HOME": self.home, "PATH": "/usr/bin:/bin", "TERM": "dumb",
+        env = {"HOME": self.home, "PATH": SYSTEM_PATH, "TERM": "dumb",
                "KILIX_HOME": ROOT, **extra}
         return subprocess.run(
             [os.path.join(ROOT, "kilix"), "games", "play", "minesweeper"],

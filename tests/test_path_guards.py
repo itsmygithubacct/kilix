@@ -625,6 +625,7 @@ def _a_foreign_owned_regular_file(caller):
     raise SandboxUnavailable("no foreign-owned readable regular file found")
 
 
+@unittest.skipUnless(sys.platform.startswith("linux"), "needs Linux user and mount namespaces")
 class RealForeignOwnerTests(unittest.TestCase):
     """Each guard against ownership the kernel reports and nothing supplies.
 
@@ -747,6 +748,7 @@ class RealForeignOwnerTests(unittest.TestCase):
         self.assertEqual(result["verdicts"]["our_own_file"], "accepted")
 
 
+@unittest.skipUnless(sys.platform.startswith("linux"), "needs Linux user and mount namespaces")
 class NamespaceSandboxTests(unittest.TestCase):
     """The second instrument, checked the same way as the first."""
 

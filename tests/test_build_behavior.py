@@ -16,7 +16,7 @@ from pathlib import Path
 # The suite runs both as `discover -s tests` (bare module names) and as
 # `-m unittest tests.<module>` (package), so name this directory explicitly.
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from _env_support import sandbox_env  # noqa: E402
+from _env_support import running_executable, sandbox_env  # noqa: E402
 
 
 
@@ -26,18 +26,6 @@ ROOT = Path(__file__).resolve().parents[1]
 def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
-
-def running_executable(pid: int) -> str:
-    """Resolved executable of PID: /proc on Linux, procstat(1) on FreeBSD."""
-    if sys.platform.startswith("freebsd"):
-        result = subprocess.run(["procstat", "-h", "-b", str(pid)],
-                                capture_output=True, text=True)
-        fields = result.stdout.split(None, 3)
-        return fields[3].strip() if len(fields) == 4 else ""
-    try:
-        return os.path.realpath(f"/proc/{pid}/exe")
-    except OSError:
-        return ""
 
 
 def setup_that_writes_launchers(kitty: str,

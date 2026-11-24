@@ -7,7 +7,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0,str(Path(__file__).resolve().parent))
-from _env_support import sandbox_env
+from _env_support import sandbox_env, SYSTEM_PATH
 
 ROOT=Path(__file__).resolve().parents[1]
 INSTALLER=ROOT/'scripts/install-kilix-avatar.sh'
@@ -30,7 +30,7 @@ class AvatarLauncherTests(unittest.TestCase):
             app=prefix/'bin/kilix-avatar'
             app.write_text('#!/usr/bin/python3\nimport json,sys\nprint(json.dumps(sys.argv[1:]))\n');app.chmod(0o755)
             env=sandbox_env()
-            env.update(KILIX_AVATAR_PREFIX=root,KILIX_HOME=str(ROOT),GPU_TERMINAL_HOME=root+'/storage',PATH='/usr/bin:/bin')
+            env.update(KILIX_AVATAR_PREFIX=root,KILIX_HOME=str(ROOT),GPU_TERMINAL_HOME=root+'/storage',PATH=SYSTEM_PATH)
             result=subprocess.run([str(ROOT/'kilix'),'avatar','--model','codex','--say','hello world'],env=env,capture_output=True,text=True)
             self.assertEqual(result.returncode,0,result.stderr)
             self.assertEqual(json.loads(result.stdout),['--chat','--model','codex','--say','hello world'])

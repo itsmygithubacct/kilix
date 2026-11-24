@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _env_support import sandbox_env
+from _env_support import sandbox_env, SYSTEM_PATH
 
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = ROOT / 'scripts/install-kilix-whisper-stt.sh'
@@ -74,7 +74,7 @@ class WhisperSttInstallerTests(unittest.TestCase):
                       # One that deletion cannot remove, so only the final check stops it.
                       '[ -z "${UV_STRAY_ONNX:-}" ] || mkdir -p "$UV_PROJECT_ENVIRONMENT/stray.onnx"\n')
         uv.chmod(0o755)
-        env = sandbox_env(HOME=str(root), PATH=f'{bins}:/usr/bin:/bin',
+        env = sandbox_env(HOME=str(root), PATH=f'{bins}:{SYSTEM_PATH}',
                           KILIX_DATA_HOME=str(root / 'data'),
                           GPU_TERMINAL_SOURCE_HOME=str(root / 'sources'),
                           SOURCE_PIN=ref, UV_LOG=str(root / 'uv.log'),

@@ -5,6 +5,9 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _env_support import SYSTEM_PATH  # noqa: E402
 
 ROOT = Path(os.environ.get('C9_TEST_HOST', Path(__file__).resolve().parents[1]))
 
@@ -46,7 +49,7 @@ class RemoteRootTests(unittest.TestCase):
             'sys.exit(subprocess.run(cmd,env=env,timeout=10).returncode)\n')
         relay.chmod(0o700)
         self.env = {
-            'PATH': str(self.bin) + ':' + os.defpath, 'HOME': str(self.home),
+            'PATH': str(self.bin) + ':' + SYSTEM_PATH, 'HOME': str(self.home),
             'GPU_TERMINAL_HOME': str(self.base / 'shared'),
             'GPU_TERMINAL_SOURCE_HOME': str(self.base / 'sources'),
             'GPU_TERMINAL_SETTINGS_FILE': str(self.base / 'settings'),

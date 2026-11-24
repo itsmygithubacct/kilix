@@ -1,10 +1,14 @@
 """The desktop provider is restarted after an abnormal exit, never after a clean one."""
 import json
+import sys
 import os
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _env_support import SYSTEM_PATH  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 LAUNCHER = (ROOT / "kilix").read_text()
@@ -45,7 +49,7 @@ class DesktopSupervisorTests(unittest.TestCase):
                         'python3 "$1/provider.py" "$1"\n')
             result = subprocess.run(
                 ["bash", "-c", script, "fixture", str(base)],
-                env={"PATH": os.defpath, "KILIX_DESKTOP_RESTART_DELAY": "0", "CLOCK_STEP": "0", **env},
+                env={"PATH": SYSTEM_PATH, "KILIX_DESKTOP_RESTART_DELAY": "0", "CLOCK_STEP": "0", **env},
                 capture_output=True, text=True, timeout=60)
             runs = [json.loads(line) for line in
                     (base / "runs").read_text().splitlines()]

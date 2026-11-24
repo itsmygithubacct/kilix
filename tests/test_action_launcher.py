@@ -1,9 +1,13 @@
+import os
+import sys
 """Structured discovery and request validation must precede desktop setup."""
 import json
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _env_support import SYSTEM_PATH  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -15,7 +19,7 @@ class ActionLauncherTests(unittest.TestCase):
             home = Path(temporary) / "home"
             home.mkdir()
             environment = {
-                "PATH": "/usr/bin:/bin", "HOME": str(home),
+                "PATH": SYSTEM_PATH, "HOME": str(home),
                 "LANG": "C.UTF-8", "PYTHONDONTWRITEBYTECODE": "1",
                 "XDG_STATE_HOME": str(home / "state"),
                 "XDG_CONFIG_HOME": str(home / "config"),

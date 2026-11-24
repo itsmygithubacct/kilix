@@ -184,6 +184,9 @@ def enter_private_x11_namespace() -> None:
     """
     if in_sandbox():
         return
+    if not sys.platform.startswith("linux"):
+        raise SandboxUnavailable(f"user, mount and network namespaces are Linux-only "
+                                 f"(this is {sys.platform})")
     threads = _thread_count()
     if threads != 1:
         raise SandboxUnavailable(
@@ -517,6 +520,9 @@ def _module_results(module_name: str) -> dict:
             f"test was not run: {results}")
         if os.environ.get(OPTIONAL_ENV) == "1":
             raise unittest.SkipTest(f"{message} ({OPTIONAL_ENV}=1)")
+        if not sys.platform.startswith("linux"):
+            # Nothing on this host can be configured to provide them.
+            raise unittest.SkipTest(message)
         raise SandboxUnavailable(
             f"{message}. Allow unprivileged user namespaces on this host, "
             f"or set {OPTIONAL_ENV}=1 to record these as skips instead")

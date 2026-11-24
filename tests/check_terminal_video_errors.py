@@ -1,3 +1,4 @@
+import sys
 #!/usr/bin/env python3
 """Check persistent video errors in a private Xvfb terminal.
 
@@ -12,6 +13,8 @@ import socket
 import subprocess
 import time
 from PIL import Image, ImageChops
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _env_support import SYSTEM_PATH  # noqa: E402
 
 
 def main():
@@ -61,7 +64,7 @@ def main():
     env = {'HOME': str(private / 'home'), 'XDG_CONFIG_HOME': str(private / 'config'),
            'XDG_CACHE_HOME': str(private / 'cache'),
            'XDG_RUNTIME_DIR': str(private / 'runtime'),
-           'PATH': str(private / 'bin') + ':/usr/bin:/bin', 'DISPLAY': display,
+           'PATH': str(private / 'bin') + ':' + SYSTEM_PATH, 'DISPLAY': display,
            'LANG': 'C.UTF-8', 'LIBGL_ALWAYS_SOFTWARE': '1'}
     terminal = None
     connection = None

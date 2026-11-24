@@ -12,6 +12,9 @@ import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
+import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _env_support import SYSTEM_PATH  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('terminal_video', ROOT / 'config/terminal_video.py')
@@ -179,7 +182,7 @@ class TerminalMediaTests(unittest.TestCase):
                 proc = subprocess.Popen(
                     ['/usr/bin/python3', '-B', str(ROOT / 'config/terminal_video.py'), 'clip.mp4'],
                     stdin=slave, stdout=slave, stderr=slave,
-                    env={'PATH': tmp + ':/usr/bin:/bin', 'HOME': tmp})
+                    env={'PATH': tmp + ':' + SYSTEM_PATH, 'HOME': tmp})
                 self.assertEqual(proc.wait(timeout=5), 134)
                 self.assertEqual(termios.tcgetattr(slave), original)
                 output = b''
@@ -196,7 +199,7 @@ class TerminalMediaTests(unittest.TestCase):
 
     def test_wrapper_help_needs_no_engine_or_storage(self):
         with tempfile.TemporaryDirectory() as home:
-            env = {'HOME': home, 'PATH': '/usr/bin:/bin'}
+            env = {'HOME': home, 'PATH': SYSTEM_PATH}
             for verb in ['image', 'video']:
                 result = subprocess.run([str(ROOT / 'kilix'), verb, '--help'],
                                         env=env, capture_output=True, text=True)
