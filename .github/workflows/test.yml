@@ -35,7 +35,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             ffmpeg python3-pil python3-xlib shellcheck xvfb xauth openbox dbus-daemon tmux \
-            libsamplerate0-dev libssl-dev python3-dbus polkitd bubblewrap
+            libsamplerate0-dev libssl-dev python3-dbus python3-nacl polkitd bubblewrap
+          sudo install -D -m 0644 src/terminfo/x/xterm-kitty /usr/share/terminfo/x/xterm-kitty
 
       - name: Allow unprivileged user namespaces for the X11 sandbox tests
         # tests/x11_sandbox.py and the path-guard tests enter a private
@@ -91,6 +92,8 @@ jobs:
             printf '%s=%s\n' "$variable" "$destination" >> "$GITHUB_ENV"
           }
           fetch_fixture kilix-voice f0884f1d83cc4778b48b36f0b1a13f4ccb41a511 KILIX_VOICE_TEST_SOURCE
+          tui_ref="$(scripts/install-kilix-tui-utils.sh --print-ref)"
+          fetch_fixture kilix-tui-utils "$tui_ref" KILIX_TUI_UTILS_TEST_SOURCE
           fetch_fixture kilix-system-monitor 9316bc2631958f5dcdb3588012d9baca7be1566d KILIX_DEVICE_LEASE_TEST_SOURCE
           fetch_fixture pleb 9420e7a0a8cfd63584b4f42b383ca9bae0786f33 KILIX_PLEB_TEST_SOURCE
           fetch_fixture plebian-os 1b190a62c535163f3c424c8dcf4ab6469c08a419 KILIX_OS_TEST_SOURCE
@@ -108,7 +111,7 @@ jobs:
             python3 -m unittest discover -s third_party/kilix-telemetry/tests -p 'test_*.py'
           PYTHONPATH=third_party/kilix-transcript-clean/src:third_party/kilix-transcript-clean/tests \
             python3 -m unittest discover -s third_party/kilix-transcript-clean/tests -p 'test_*.py'
-          python3 -m unittest discover -s tests -p 'test_*.py'
+          /usr/bin/python3 -m unittest discover -s tests -p 'test_*.py'
           python3 -m unittest discover -s third_party/kitty-frame-presenter/tests -p 'test_*.py'
 
       - name: Run desktop tests

@@ -265,6 +265,11 @@ def recovered_values():
     return values
 
 
+#: The kitten of the kilix-engine Debian package. A fixed system path, never
+#: taken from the environment: the kitten receives the password file.
+PACKAGED_KITTEN = "/usr/lib/kilix/engine/bin/kitten"
+
+
 def kitten_path(values, from_socket=True):
     """The kitten matching this terminal. The process a socket names is trusted
     to locate it only for the inherited socket: a refreshed route names a
@@ -278,6 +283,7 @@ def kitten_path(values, from_socket=True):
             pass
     if build := values.get("KILIX_BUILD_DIRECTORY"):
         candidates.append(str(Path(build) / "current/src/kitty/launcher/kitten"))
+    candidates.append(PACKAGED_KITTEN)
     if prebuilt := values.get("KILIX_PREBUILT_HOME"):
         candidates.append(str(Path(prebuilt) / "bin/kitten"))
     candidates.append(shutil.which("kitten") or "")

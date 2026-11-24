@@ -2071,6 +2071,7 @@ buttons on the right (bold):
 | Button | Click does | Same as |
 |---|---|---|
 | CPU/RAM chip | open Kilix Memory; CPU is left, pane RAM is right | `kilix memory --graphics` |
+| camera | screenshot the pane and choose where to save it; right-click for **Record screen** and the output formats | `kilix_pane_screenshot`, `kilix_pane_capture_menu` |
 | keyboard | join/leave the pane's synchronized-input group | Tilix input synchronization |
 | `+` | increase font size for this Kilix window | `change_font_size current +2.0` |
 | `-` | decrease font size for this Kilix window | `change_font_size current -2.0` |
@@ -2096,6 +2097,35 @@ clear, split right/down, close (maximize also lives on the `▢` button and
 `Ctrl+Alt+Z`).
 The active pane's header is highlighted (bright blue); inactive panes are grayed —
 matching Tilix's active-pane cue.
+
+**Screenshots and recordings.** The camera button captures the pane's
+contents, without its title bar, at full resolution, exactly as drawn. A Save As
+dialog then opens on the file name, in `~/Pictures` (or your XDG pictures
+folder), with a name made from the pane title and the time. Press Enter to
+save, or Esc to browse folders. Right-click the camera for a menu:
+
+- **Take screenshot**
+- **Record screen** records the pane at 15 frames per second. While it
+  records, the button is a red timer (`● 0:12`); click it, or choose **Stop
+  recording and save…**, to stop and pick a file name in `~/Videos`. Closing
+  the pane also stops the recording and asks where to save it. Menus and
+  dialogs that open over the pane are left out: the recording holds the last
+  frame instead.
+- **Screenshot format**: PNG (default), JPEG, WebP (lossless), TIFF or BMP.
+- **Recording format**: MP4 (H.264, default), WebM (VP9), MKV (H.264), GIF,
+  APNG or animated WebP.
+
+The format can also be changed in the Save As dialog by typing another
+extension (`shot.jpg`, `demo.gif`); a name without one gets the selected
+format's. Saving over an existing file asks first, and a failed save never
+leaves a partial file. The chosen formats are stored as
+`KILIX_CAPTURE_IMAGE_FORMAT` and `KILIX_CAPTURE_VIDEO_FORMAT` in the shared
+settings (`kilix-settings --set screenshot_format=webp`). PNG is encoded by
+Kilix itself; every other format and all recordings need `ffmpeg`, and
+formats it cannot write are marked in the menu. A recording is kept as a
+lossless master in `~/.cache/kilix/capture/` until it is saved or the dialog
+is cancelled. Turn the button off with `KILIX_CHROME_BUTTON_SCREENSHOT=0`; a
+running recording stays visible so it can be stopped.
 
 Both resource sides are enabled in `auto` mode by default. The CPU value is
 the sampled use of the pane's shell and descendant processes in logical-core
@@ -3561,6 +3591,27 @@ does the same ahead of time. Kilix95 then offers LLM Chat and Kilix Avatar
 entries for this model, both with thinking off: the 0.8B does worse with
 thinking on, and `kilix-llm --think` prints a warning saying so before it
 starts.
+
+`kilix llama` runs kilix-llm through Kilix. The first use installs the pinned
+kilix-llm, and it installs it again whenever this checkout's pin moves; the
+first chat, run or serve then builds llama.cpp. Its commands:
+
+| Command | What it does |
+|---|---|
+| `kilix llama chat` | talk to a local model (`run 'PROMPT'` for one answer, `serve` for a loopback OpenAI-compatible server) |
+| `kilix llama status` | which llama.cpp build is in use, and what rollback returns to |
+| `kilix llama update [--check]` | build llama.cpp's newest release for the backends in use and switch to it, after it starts and accepts every command line kilix-llm uses |
+| `kilix llama rollback` | switch back to the build before the last update |
+| `kilix llama install` | install and build now rather than on first use: CPU, plus Vulkan when there is a GPU and `glslc` |
+
+The same actions are in the GUI Start menu, under Software ▸ Kilix
+components ▸ Local models (llama.cpp), and in Kilix 95, under Programs ▸ Local
+Models (llama.cpp); right-click that entry for the others. `kilix install`
+lists the runtime as `llama-cpp`, and `kilix install --update llama-cpp` is the
+updater. Building needs a C++ compiler, CMake and rsync, plus `glslc` and the
+Vulkan headers for the GPU backend; OpenBLAS speeds up the CPU backend.
+Plebian-OS installs all of them with the desktop, and `kilix llama` names any
+that are missing. `kilix deps` reinstalls Kilix's own build prerequisites.
 
 If a model acquisition fails, the wizard continues with other accepted models
 and completes categories whose selected models are ready. It reports each

@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -297,15 +298,29 @@ class CatalogApplicationStateTests(unittest.TestCase):
             source_type="git",
             content_id="kilix-pdf-conversion",
         )
-        with mock.patch.object(
-                installer.content.default_catalog(), "require",
-                return_value=spec), \
+        with mock.patch.object(installer.content, "verified_packaged_catalog") as catalog, \
              mock.patch.object(
                  installer.content_app, "ensure_application",
                  return_value="/data/kilix-pdf") as ensure:
+            catalog.return_value.require.return_value = spec
             self.assertEqual(
                 installer._install_catalog("kilix-pdf-conversion"), 0)
         ensure.assert_called_once_with(spec, install=True)
+
+    def test_converter_is_listed_and_selected_on_a_fresh_install(self):
+        catalog = installer.content.verified_packaged_catalog()
+        for model in ("encodec-24khz-stateful", "encodec-48khz-frame"):
+            asset = catalog.require_asset(model)
+            tool = catalog.require(asset.convert_tool_asset_id)
+            with self.subTest(model=model), tempfile.TemporaryDirectory() as data, \
+                    mock.patch.object(installer.paths, "data_dir", return_value=data), \
+                    mock.patch("kilix_content.install.shutil.which", return_value=asset.convert_argv[0]), \
+                    mock.patch.object(installer.content.Installer, "_ensure_git") as build:
+                self.assertTrue(installer._catalog_installed(tool))
+                self.assertFalse(os.path.exists(os.path.join(data, "desktop-apps")))
+                self.assertEqual(installer._install_catalog(tool.content_id), 0)
+                self.assertTrue(installer._catalog_installed(tool))
+                build.assert_not_called()
 
     def test_system_app_state_uses_its_declared_command_plan(self):
         spec = mock.Mock(

@@ -1,20 +1,8 @@
 #!/usr/bin/env python3
-"""Prepare the exact Kilix Amp build this Kilix checkout pins.
+"""Locate the packaged Media Player or prepare a catalog-selected source build.
 
-Kilix Amp is catalog content, not a component with a ref of its own: its
-commit lives in the pinned content catalog beside the games, and the shared
-installer clones, verifies and builds it into Kilix's own data directory. So
-this drives that installer rather than repeating a pin here, which is why it
-is Python where the component installers next to it are shell.
-
-The Media Player has always installed on first use from the desktop. This
-gives the same install a name a caller can reach: `kilix amp` for a person,
-`kilix amp --install-only` for a provisioner that wants it present before
-anyone asks.
-
-There is no force flag because there is nothing for one to do. The shared
-installer treats a checkout whose origin or commit does not match the catalog
-as not installed, so moving the catalog pin already rebuilds on the next call.
+Explicit embedding roots and JSON catalog queries retain the pinned source
+selection. A packaged CLI can launch the system player without a checkout.
 """
 from __future__ import annotations
 
@@ -30,7 +18,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(HOST_ROOT / "config"))
 
 from kilix_sdk import content as kilix_content  # noqa: E402
-from kilix_sdk._content_runtime import apps_root, normalized_root  # noqa: E402
+from kilix_sdk._content_runtime import apps_root, normalized_root, packaged_amp  # noqa: E402
 
 CONTENT_ID = "kilix-amp"
 
@@ -84,6 +72,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.print_root:
         print(root)
         return 0
+
+    if not (args.content_root or args.print_ref or args.resolve or args.json):
+        try:
+            executable = packaged_amp(HOST_ROOT)
+        except FileNotFoundError as error:
+            report(str(error))
+            return 1
+        if executable:
+            print(executable)
+            return 0
 
     try:
         spec = kilix_content.default_catalog().require(CONTENT_ID)

@@ -63,6 +63,12 @@ class WorkspaceModelTests(unittest.TestCase):
         self.assertEqual(pane.env.get("KITTY_WINDOW_ID"), "49")
         self.assertIsInstance(pane.cmdline, tuple)
 
+    def test_each_tab_shows_exactly_one_active_pane(self):
+        # is_active is what a tab shows; it does not need keyboard focus, so
+        # `kilix pane focus` reads it back to check that the focus took.
+        for tab in self.ws.tabs():
+            self.assertEqual(sum(p.is_active for p in tab.panes), 1, tab.id)
+
     def test_tab_carries_its_panes_as_the_render_branch(self):
         tab = self.ws.find_tab(2)
         self.assertEqual([p.id for p in tab.panes], [4, 49, 153])

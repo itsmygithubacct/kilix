@@ -1045,6 +1045,26 @@ raise SystemExit(result)
         catalog.assert_called_once_with(self.api)
         self.assertEqual(json.loads(output.getvalue())["verified"], spec.asset_id)
 
+    def test_quiet_ensure_checks_the_same_installed_files_without_printing_a_receipt(self):
+        spec = self.spec()
+        with self.no_network():
+            self.assertEqual(self.execute(spec, args=self.from_args(self.held())), 0)
+        args = ["--root", str(self.root / "apps"), "ensure", spec.asset_id]
+        output = io.StringIO()
+        errors = io.StringIO()
+        with mock.patch.object(ui, "_verified_catalog", return_value=self.catalog(spec)), \
+                mock.patch.object(sys, "stdout", output), mock.patch.object(sys, "stderr", errors):
+            self.assertEqual(ui.main([*args, "--quiet-verified"]), 0)
+            self.assertEqual(output.getvalue(), "")
+            # Without the flag too: ensure runs before every Ask, and the
+            # receipt is for `kilix models verify` (main's c5a91b7e).
+            self.assertEqual(ui.main(args), 0)
+            self.assertEqual(output.getvalue(), "")
+            installed = self.root / "apps" / "assets" / spec.install_name / spec.files[0].path
+            installed.write_bytes(b"damaged")
+            self.assertNotEqual(ui.main([*args, "--quiet-verified"]), 0)
+            self.assertIn("does not verify", json.loads(errors.getvalue())["error"])
+
     def test_a_receipt_for_another_manifest_does_not_cover_and_nothing_installs(self):
         self.origin()
         first = self.spec()

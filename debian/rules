@@ -1,0 +1,97 @@
+#!/usr/bin/make -f
+# kilix-native: the helpers Kilix otherwise compiles per user at first use.
+# Their sources are pinned submodules; debian/make-source.sh puts them in the
+# source tree, so this build needs no network and no git.
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+include /usr/share/dpkg/buildflags.mk
+export CPPFLAGS LDFLAGS
+
+B := $(CURDIR)/debian/build
+N := debian/kilix-native/usr/lib/kilix/native
+BROKER := third_party/kitty-pty-broker
+STATE := third_party/kilix-state
+# The broker's own Makefile adds -Werror; a distribution build must not stop
+# on a warning a newer compiler invents, so its flags are given whole here.
+BROKER_FLAGS := BUILD_DIR=$(B)/broker CFLAGS="$(CFLAGS) -std=c11 -Wall -Wextra -Wpedantic -fPIC"
+STATE_FLAGS := BUILD_DIR=$(B)/state CFLAGS="$(CFLAGS)"
+# kilix-multiplexer is built wherever control lists it for this architecture.
+MUX := third_party/kilix-multiplexer
+M := debian/kilix-multiplexer/usr/lib/kilix/native
+MUX_FLAGS := BUILD_DIR=$(B)/mux ENCODEC=1 CFLAGS="$(CFLAGS) -std=c11 -Wall -Wextra -Wpedantic -fPIC"
+WITH_MUX := $(filter kilix-multiplexer,$(shell dh_listpackages))
+WITH_KILIX := $(filter kilix,$(shell dh_listpackages))
+# kilix (arch all): the tree a checkout runs from, without what a packaged
+# system must not have: sources for the compiled helpers (their absence is
+# what routes the launcher to kilix-native), tests, the Windows port, the
+# engine source and the build scripts.
+K := debian/kilix/usr/share/kilix
+KILIX_TOP := kilix kilix-session kilix-settings VERSION config desktop scripts share skills runtimes docs
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+
+override_dh_auto_build:
+	$(MAKE) -C $(BROKER) $(BROKER_FLAGS) all
+	$(MAKE) -C $(STATE) $(STATE_FLAGS) all
+	mkdir -p $(B)/screensavers
+	set -e; for source in config/screensavers/*.c; do \
+	  $(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o "$(B)/screensavers/$$(basename "$$source" .c)" "$$source"; \
+	done
+ifneq (,$(WITH_MUX))
+	$(MAKE) -C $(MUX) $(MUX_FLAGS) $(B)/mux/kmx-serve $(B)/mux/kmx-attach
+endif
+
+override_dh_auto_test:
+ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
+	$(MAKE) -C $(BROKER) $(BROKER_FLAGS) test
+	$(MAKE) -C $(STATE) $(STATE_FLAGS) test
+ifneq (,$(WITH_MUX))
+	$(MAKE) -C $(MUX) $(MUX_FLAGS) test
+endif
+endif
+
+override_dh_auto_install:
+	install -d $(N)/screensavers
+	install -m 0755 $(B)/broker/kitty-pty-broker $(N)/kitty-pty-broker
+	install -m 0644 $(B)/broker/libkitty-pty-broker.so $(N)/libkitty-pty-broker.so
+	install -m 0644 $(B)/state/libkilix-state.so $(N)/libkilix-state.so
+	install -m 0755 $(B)/screensavers/* $(N)/screensavers/
+ifneq (,$(WITH_MUX))
+	install -d $(M)
+	install -m 0755 $(B)/mux/kmx-serve $(B)/mux/kmx-attach $(M)/
+endif
+
+ifneq (,$(WITH_KILIX))
+	install -d $(K)/third_party debian/kilix/usr/bin
+	cp -a $(KILIX_TOP) $(K)/
+	rm -rf $(K)/config/screensavers $(K)/docs/*.gif $(K)/desktop/tests
+	echo deb > $(K)/PACKAGED
+	set -e; while read -r module; do \
+	  case "$$module" in \
+	    third_party/kitty-pty-broker|third_party/kilix-multiplexer) continue ;; \
+	    third_party/kilix-state) mkdir -p "$(K)/$$module"; \
+	      cp -a "$$module/python" "$$module/LICENSE" "$(K)/$$module/" ;; \
+	    *) cp -a "$$module" "$(K)/third_party/" ;; \
+	  esac; \
+	done < debian/bundled-submodules
+	cp -a third_party/nerd-fonts $(K)/third_party/
+	find $(K)/third_party -depth \( -name tests -o -name benchmarks -o -name .github \) -type d -exec rm -rf {} +
+	find $(K) -depth -name __pycache__ -type d -exec rm -rf {} +
+	ln -s ../share/kilix/kilix debian/kilix/usr/bin/kilix
+	ln -s ../share/kilix/kilix-settings debian/kilix/usr/bin/kilix-settings
+endif
+
+# dh_fixperms makes files in libexec executable. The shared SDK installs
+# these Python modules as data for its fixed interpreter.
+execute_after_dh_fixperms-indep:
+	python3 -I debian/stage-private-bus.py
+
+# libkilix-encodec carries no shlibs file; the dependency is written in control.
+override_dh_shlibdeps:
+	dh_shlibdeps -- --ignore-missing-info
+
+override_dh_auto_clean:
+	rm -rf $(B)

@@ -8,6 +8,7 @@ import hashlib
 import os
 import socket
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -16,6 +17,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "config"))
 import kilix_about  # noqa: E402
 import kilix_asktext  # noqa: E402
+import kilix_calc  # noqa: E402
+import kilix_local  # noqa: E402
 import kilix_machine  # noqa: E402
 import kilix_self  # noqa: E402
 import kilix_tools  # noqa: E402
@@ -50,6 +53,24 @@ NOT_OURS = (
 
 
 class Answers(unittest.TestCase):
+    def test_music_client_uses_explicit_source_then_user_source_then_package(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            packaged = root / "share/kilix-tui-utils"
+            sources = root / "sources"
+            checkout = sources / "kilix-desktops/kilix-tui-utils"
+            override = root / "explicit"
+            with (mock.patch.object(kilix_local, "PACKAGED_TUI_UTILS", packaged),
+                  mock.patch.dict(os.environ, {"GPU_TERMINAL_SOURCE_HOME": str(sources),
+                                               "KILIX_TUI_UTILS_DIR": str(override)}),
+                  mock.patch.dict(sys.modules)):
+                self.assertIsNone(kilix_local._music())
+                for location in (packaged, checkout, override):
+                    client = location / "src/kilix_tui/music_protocol.py"
+                    client.parent.mkdir(parents=True)
+                    client.touch()
+                    self.assertEqual(Path(kilix_local._music().__file__), client)
+
     def ask(self, module, text):
         return module.answer(text)
 
@@ -100,6 +121,13 @@ class Answers(unittest.TestCase):
             "how many days since january 1": "313 days (44 weeks and 5 days) since Thursday, 2026-01-01",
             "how many days between march 1 2027 and april 15 2027":
                 "45 days (6 weeks and 3 days) from Monday, 2027-03-01 to Thursday, 2027-04-15",
+            "how many days between yesterday and tomorrow": "2 days from Monday, 2026-11-09 to Wednesday, 2026-11-11",
+            "how many days between November 8 2026 and today": "2 days from Sunday, 2026-11-08 to Tuesday, 2026-11-10",
+            "how many days from December 31 2020 to January 2": "2 days from Thursday, 2020-12-31 to Saturday, 2021-01-02",
+            "what day was Christmas": "Thursday, 2025-12-25",
+            "what day did Thanksgiving fall on": "Thursday, 2025-11-27",
+            "what was the day of the week on July 4": "Saturday, 2026-07-04",
+            "what day will Christmas be": "Friday, 2026-12-25",
             "what day of the week is july 4 2027": "Sunday, 2027-07-04",
             "what day was july 4 1776": "Thursday, 1776-07-04",
             "what day is friday": "Friday, 2026-11-13",
@@ -175,6 +203,22 @@ class Answers(unittest.TestCase):
         for question in ("5 kg in miles", "square root of -4", "2000 factorial", "log of 0"):
             with self.assertRaises(kilix_tools.ToolError, msg=question):
                 kilix_tools.answer(question)
+
+    def test_data_symbols_and_temperature_limits_match_in_both_converters(self):
+        cases = {"1Mb in bytes": "125000 B", "1 MB in bytes": "1000000 B", "1 GB in Gb": "8 Gb",
+                 "1 MiB in Kib": "8192 Kib", "8 bits in B": "1 B", "one megabit in bytes": "125000 B",
+                 "-273.15 C to F": "-459.67 °F", "-459.67 F in K": "0 K"}
+        for question, expected in cases.items():
+            with self.subTest(question=question):
+                self.assertEqual(kilix_calc.ask_query(question), expected)
+                self.assertEqual(kilix_tools.answer(question), (0, expected))
+        self.assertEqual(kilix_tools.answer("1 MB and 1 Mb in bytes"), (0, "1125000 B"))
+        for question in ("-500 C to F", "-500 C to K", "-500 F to C", "-1 K to K"):
+            with self.subTest(question=question):
+                with self.assertRaisesRegex(kilix_calc.CalculatorError, "below absolute zero"):
+                    kilix_calc.ask_query(question)
+                with self.assertRaisesRegex(kilix_tools.ToolError, "below absolute zero"):
+                    kilix_tools.answer(question)
 
     def test_text_codes_and_chance(self):
         cases = {

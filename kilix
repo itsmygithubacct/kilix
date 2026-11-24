@@ -147,6 +147,15 @@ KILIX_TELEMETRY_RUNTIME="${KILIX_TELEMETRY_RUNTIME:-$KILIX_SESSION_HOME/telemetr
 KILIX_DATA_HOME="${KILIX_DATA_HOME:-$KILIX_STORAGE_HOME/data}"
 KILIX_BUILD_DIRECTORY="${KILIX_BUILD_DIRECTORY:-$KILIX_STORAGE_HOME/build}"
 KILIX_PREBUILT_HOME="${KILIX_PREBUILT_HOME:-$KILIX_STORAGE_HOME/prebuilt/kitty.app}"
+# Where the kilix-engine Debian package installs the engine. A fork built in
+# the storage root still wins, so a developer build is never shadowed.
+KILIX_PACKAGED_ENGINE_HOME="${KILIX_PACKAGED_ENGINE_HOME:-/usr/lib/kilix/engine}"
+# Where the kilix-native Debian package installs the pty broker, the state
+# library and the screensavers. Used only by a tree without their source.
+KILIX_PACKAGED_NATIVE_HOME="${KILIX_PACKAGED_NATIVE_HOME:-/usr/lib/kilix/native}"
+# Where the kilix-95 Debian package installs the default desktop provider. A
+# checkout at KILIX95_DIR still wins, so a developer provider is never shadowed.
+KILIX_PACKAGED_KILIX95_HOME="${KILIX_PACKAGED_KILIX95_HOME:-/usr/share/kilix-95}"
 KILIX95_STORAGE_HOME="${KILIX95_STORAGE_HOME:-$GPU_TERMINAL_HOME/kilix-95}"
 KILIX95_CONFIG_HOME="${KILIX95_CONFIG_HOME:-$KILIX95_STORAGE_HOME/config}"
 KILIX95_STATE_HOME="${KILIX95_STATE_HOME:-$KILIX95_STORAGE_HOME/state}"
@@ -157,7 +166,8 @@ export KILIX_HOME GPU_TERMINAL_SOURCE_HOME GPU_TERMINAL_HOME GPU_TERMINAL_SETTIN
 export KILIX_STORAGE_HOME KILIX_CONFIG_HOME
 export KILIX_STATE_DIRECTORY KILIX_CACHE_HOME KILIX_SESSION_HOME
 export KILIX_TELEMETRY_RUNTIME KILIX_DATA_HOME
-export KILIX_BUILD_DIRECTORY KILIX_PREBUILT_HOME
+export KILIX_BUILD_DIRECTORY KILIX_PREBUILT_HOME KILIX_PACKAGED_ENGINE_HOME
+export KILIX_PACKAGED_NATIVE_HOME KILIX_PACKAGED_KILIX95_HOME
 export KILIX95_STORAGE_HOME KILIX95_CONFIG_HOME KILIX95_STATE_HOME
 export KILIX95_CACHE_HOME KILIX95_SESSION_HOME KILIX95_DATA_HOME
 
@@ -279,14 +289,14 @@ usage: kilix [COMMAND] [ARGS...]    (default: new window)
   kilix tmux --socket PATH [--json] VERB ...  no args: manager
   kilix desktop-action --help              X11 windows, pointer, keyboard
 TARGET: unique title or pane:ID. This is complete syntax; no subcommand --help needed. Ambiguous targets fail; verbs report results.
-  kilix agent-control context|list|dump|send|key   --help
+  kilix agent-control context|list|dump|send|key --help
   kilix session --help                     sessions, trust, logs
   kilix ralph|agent-message --help         mailboxes
   kilix action --request-json -             JSON from stdin
   kilix action capabilities                host features
   kilix windows --host HOST COMMAND         Windows via SSH
 Also: ask 'REQUEST', weather CITY, grammar, needle, shell, content, playalong, claudex route|usage,
-  wizard, settings, status, update, install, games,
+  wizard, settings, status, update, install, llama, games,
   screen-size, transcript, help-setup, help-answer "QUESTION",
   help-search "QUESTION". Options: --help.
 Engine options: kilix --help-engine
@@ -300,6 +310,9 @@ EOF
     _engine="$KILIX_BUILD_DIRECTORY/current/src/kitty/launcher/kitty"
     if [ -x "$_engine" ]; then
       exec "$_engine" --help
+    fi
+    if [ -x "$KILIX_PACKAGED_ENGINE_HOME/bin/kitty" ]; then
+      exec "$KILIX_PACKAGED_ENGINE_HOME/bin/kitty" --help
     fi
     echo "kilix: the terminal engine is not built yet ($_engine); run: kilix --build" >&2
     exit 1 ;;
@@ -598,6 +611,7 @@ _kilix_pty_kitten() {
   if [ ! -x "$kitten" ]; then
     kitten=""
     if [ -x "$FORK" ]; then kitten="$(dirname "$FORK")/kitten"
+    elif [ -x "$PACKAGED" ]; then kitten="$(dirname "$PACKAGED")/kitten"
     elif [ -x "$PREBUILT" ]; then kitten="$(dirname "$PREBUILT")/kitten"
     fi
   fi
@@ -1334,6 +1348,7 @@ _kilix_ensure_private_directory "$KILIX_TELEMETRY_RUNTIME" telemetry || exit 1
 _kilix_validate_private_storage_layout || exit 1
 
 FORK="$KILIX_BUILD_DIRECTORY/current/src/kitty/launcher/kitty"
+PACKAGED="$KILIX_PACKAGED_ENGINE_HOME/bin/kitty"
 PREBUILT="$KILIX_PREBUILT_HOME/bin/kitty"
 
 # A fresh install owns this complete tree. Legacy XDG/source-tree locations are
@@ -1605,6 +1620,31 @@ _kilix_rehome_legacy_desktop_dir \
   KILIX_LAND_DESKTOP_DIR "$GPU_TERMINAL_SOURCE_HOME/kilix-land-desktop" \
   "$GPU_TERMINAL_SOURCE_HOME/kilix-desktops/kilix-land-desktop"
 unset -f _kilix_rehome_legacy_desktop_dir
+
+# A provider tree installed by the kilix-95 package: a regular PACKAGED marker,
+# no checkout, and the tree and its entry point owned by root and writable by
+# nobody else, so nothing the desktop user can change is trusted as packaged.
+_kilix95_is_packaged_tree() {
+  local dir="$1" path mode
+  [ -d "$dir" ] && [ ! -L "$dir" ] || return 1
+  [ -f "$dir/PACKAGED" ] && [ ! -L "$dir/PACKAGED" ] || return 1
+  [ ! -e "$dir/.git" ] && [ ! -L "$dir/.git" ] || return 1
+  [ -f "$dir/main.py" ] && [ ! -L "$dir/main.py" ] || return 1
+  for path in "$dir" "$dir/main.py"; do
+    [ "$(stat -c %u "$path" 2>/dev/null)" = 0 ] || return 1
+    mode="$(stat -c %a "$path" 2>/dev/null)" || return 1
+    # group and other write bits are the last two octal digits' 2 bit
+    case "$mode" in
+      *[2367][0-7]|*[0-7][2367]) return 1 ;;
+    esac
+  done
+  return 0
+}
+# No provider checkout at KILIX95_DIR: use the packaged one when it is there.
+if [ ! -f "$KILIX95_DIR/main.py" ] && [ ! -L "$KILIX95_DIR/main.py" ] \
+     && _kilix95_is_packaged_tree "$KILIX_PACKAGED_KILIX95_HOME"; then
+  KILIX95_DIR="$KILIX_PACKAGED_KILIX95_HOME"
+fi
 export KILIX95_DIR KILIX_CAP_DIR KILIX_TUI_UTILS_DIR
 export KILIX_LAND_DESKTOP_DIR
 
@@ -1904,6 +1944,29 @@ _kilix_avatar_resolve() {
     return 1
   }
   _KILIX_AVATAR_COMMAND=("$resolved")
+}
+
+# llama.cpp comes from kilix-llm, which this checkout pins. `kilix llama`
+# installs that pin on first use, and again whenever this checkout names a
+# different one, then runs kilix-llm, whose first run, chat or serve builds
+# llama.cpp itself. The launcher it installs is generated, and points at the
+# pinned checkout, so a checkout at the pin is the whole test.
+_KILIX_LLM_PREFIX="${KILIX_LLM_PREFIX:-$HOME/.local}"
+declare -a _KILIX_LLM_COMMAND=()
+_kilix_llm_resolve() {
+  local launcher="$_KILIX_LLM_PREFIX/bin/kilix-llm" checkout pin head
+  checkout="${KILIX_LLM_SOURCES:-${KILIX_STORAGE_HOME:-${GPU_TERMINAL_HOME:-$HOME/.local/gpu_terminal}/kilix}/sources}/kilix-llm"
+  pin="$("$KILIX_HOME/scripts/install-kilix-llm.sh" --print-refs | sed -n 's/^kilix-llm=//p')"
+  head="$(git -C "$checkout" rev-parse HEAD 2>/dev/null || true)"
+  if [ ! -x "$launcher" ] || [ -z "$pin" ] || [ "${head,,}" != "${pin,,}" ]; then
+    echo "kilix llama: installing kilix-llm ${pin:0:12} (llama.cpp builds on first use)" >&2
+    "$KILIX_HOME/scripts/install-kilix-llm.sh" || return 1
+  fi
+  [ -x "$launcher" ] || {
+    echo "kilix llama: installer did not create $launcher" >&2
+    return 1
+  }
+  _KILIX_LLM_COMMAND=("$launcher")
 }
 
 # Same shape as bonsai's, and for the same reason: an installed closure the
@@ -2864,6 +2927,7 @@ _kilix_voice_pane_text() {
   kitten="${KILIX_KITTEN:-}"
   if [ -z "$kitten" ]; then
     if [ -x "$FORK" ]; then kitten="$(dirname "$FORK")/kitten"
+    elif [ -x "$PACKAGED" ]; then kitten="$(dirname "$PACKAGED")/kitten"
     elif [ -x "$PREBUILT" ]; then kitten="$(dirname "$PREBUILT")/kitten"
     fi
   fi
@@ -3170,6 +3234,8 @@ case "${1:-}" in
           # Straight to remote control, as `kilix new-tab` does once the engine
           # exists; going through the whole launcher could start a build first.
           _games_kitten="$KILIX_BUILD_DIRECTORY/current/src/kitty/launcher/kitten"
+          [ -x "$_games_kitten" ] || [ ! -x "$KILIX_PACKAGED_ENGINE_HOME/bin/kitten" ] \
+            || _games_kitten="$KILIX_PACKAGED_ENGINE_HOME/bin/kitten"
           [ -x "$_games_kitten" ] || {
             echo "kilix games: cannot open a new tab: the terminal engine is not built ($_games_kitten); run: kilix --build" >&2
             exit 1
@@ -3459,9 +3525,7 @@ case "${1:-}" in
     [ "$_rollout_install_only" = 0 ] || exit 0
     exec "$_rollout_installed" "$@" ;;
   amp|media-player)
-    # The Media Player has always built on first use from the desktop; this is
-    # the same install with a name a caller can reach. Kilix Amp is catalog
-    # content, so the pin comes from the content catalog, not from here.
+    # Packaged hosts use the system player. Source builds use the catalog pin.
     shift
     _amp_install_only=0
     _amp_headless=0
@@ -3904,7 +3968,7 @@ print(apps_root())
         # here: Needle refuses the request and names the command, as it does
         # for piped Ask.
         if [ -n "$_ask_asset" ] && [ "$_ask_yes" != 1 ]; then
-          python3 -B "$KILIX_HOME/config/content_models.py" ensure "$_ask_asset" || {
+          python3 -B "$KILIX_HOME/config/content_models.py" ensure "$_ask_asset" --quiet-verified || {
             echo "kilix ask: $_ask_asset was not installed" >&2
             _ask_status=1
             return 0
@@ -4752,6 +4816,34 @@ sys.exit(0 if ready else 1)
       fi
     fi
     exec "${_KILIX_AVATAR_COMMAND[@]}" --chat "$@" ;;
+  llama|llama.cpp|llama-cpp)
+    shift
+    case "${1:-}" in
+      -h|--help|help|'')
+        echo "usage: kilix llama COMMAND [ARGS...]"
+        echo "local models on llama.cpp; the first use installs kilix-llm, and"
+        echo "the first chat, run or serve builds llama.cpp (a few minutes)"
+        echo
+        echo "  kilix llama chat [--model-id ID]     talk to a local model"
+        echo "  kilix llama run 'PROMPT'             one answer, then exit"
+        echo "  kilix llama serve                    OpenAI-compatible server on loopback"
+        echo "  kilix llama status                   which llama.cpp build is in use"
+        echo "  kilix llama update [--check]         build llama.cpp's newest release, switch to it"
+        echo "  kilix llama rollback                 back to the build before the last update"
+        echo "  kilix llama install                  install and build now, not on first use"
+        echo "  kilix llama doctor|pull|devices|...  every other kilix-llm command"
+        echo
+        echo "Weights arrive through 'kilix wizard' or 'kilix llama pull'."
+        exit 0 ;;
+      install) shift; exec "$KILIX_HOME/scripts/install-llama-cpp.sh" --install "$@" ;;
+      status) shift; set -- runtime "$@" ;;
+    esac
+    _kilix_llm_resolve || exit 1
+    exec "${_KILIX_LLM_COMMAND[@]}" "$@" ;;
+  deps)
+    # Start > Software > Reinstall build prerequisites.
+    shift
+    exec "$KILIX_HOME/scripts/install-build-deps.sh" "$@" ;;
   bonsai|models|bitnet)
     shift
     _bonsai_install_only=0
@@ -5212,7 +5304,14 @@ sys.exit(0 if ready else 1)
     _status_dirty=clean
     git -C "$KILIX_HOME" diff --quiet --ignore-submodules=none HEAD -- 2>/dev/null \
       || _status_dirty=modified
+    if [ -f "$KILIX_HOME/PACKAGED" ] && [ ! -e "$KILIX_HOME/.git" ]; then
+      # A packaged tree is not a checkout; report the package instead.
+      _status_head=package
+      _status_dirty="$(dpkg-query -W -f='${Version}' kilix 2>/dev/null || true)"
+      [ -n "$_status_dirty" ] || _status_dirty="version unknown"
+    fi
     if [ -x "$FORK" ]; then _status_engine="$FORK"
+    elif [ -x "$PACKAGED" ]; then _status_engine="$PACKAGED"
     elif [ -x "$PREBUILT" ]; then _status_engine="$PREBUILT"
     else _status_engine=missing
     fi
@@ -5367,6 +5466,13 @@ sys.exit(0 if ready else 1)
         echo "usage: $_self update [--stack]" >&2
         exit 2 ;;
     esac
+    # Installed from Debian packages (the package ships the PACKAGED marker):
+    # there is no checkout to pull, apt owns the files. Hand over to the fixed
+    # apt upgrade in scripts/packaged-update.sh, with no arguments.
+    if [ -f "$KILIX_HOME/PACKAGED" ] && [ ! -L "$KILIX_HOME/PACKAGED" ] \
+         && [ ! -e "$KILIX_HOME/.git" ]; then
+      exec "$KILIX_HOME/scripts/packaged-update.sh"
+    fi
     _kilix_acquire_transaction_lock() {
       local lock_root lock_path fd fd_path path_identity fd_identity lock_was_present=0
       if ! command -v flock >/dev/null 2>&1; then
@@ -5905,7 +6011,7 @@ sys.exit(0 if ready else 1)
     echo "kilix update: done — restart 'kilix desktop' to load the changes."
     exit 0 ;;
   --which)
-    for b in "$FORK" "$PREBUILT"; do
+    for b in "$FORK" "$PACKAGED" "$PREBUILT"; do
       [ -x "$b" ] && { echo "$b"; exec "$b" --version; }
     done
     echo "no kitty built yet — run: $KILIX_HOME/kilix --build" >&2; exit 1 ;;
@@ -6058,6 +6164,8 @@ esac
 
 if [ -x "$FORK" ]; then
   BIN="$FORK"                                     # prefer the clickable-chrome fork
+elif [ -x "$PACKAGED" ]; then
+  BIN="$PACKAGED"                                 # the engine from the kilix-engine package
 elif [ -x "$PREBUILT" ]; then
   BIN="$PREBUILT"                                 # fall back to the prebuilt binary
 elif [ "${1:-}" = "screen-size" ] || [ "${1:-}" = "font-size" ]; then
@@ -6398,6 +6506,13 @@ _kilix95_ensure_external() {
   _k95_dir="$KILIX95_DIR"
   _k95_repo="${KILIX95_REPO:-https://github.com/itsmygithubacct/kilix-95.git}"
 
+  if [ -f "$_k95_dir/main.py" ] && _kilix95_is_packaged_tree "$_k95_dir"; then
+    # Installed and pinned by apt: no origin or ref to check.
+    _kilix_desktop_validate "$_k95_dir"
+    _KILIX_DESKTOP_MAIN="$_k95_dir/main.py"
+    _KILIX_DESKTOP_MODE=python
+    return 0
+  fi
   if [ -f "$_k95_dir/main.py" ]; then
     if [ -d "$_k95_dir/.git" ]; then
       _k95_origin="$(git -C "$_k95_dir" config --get remote.origin.url 2>/dev/null || true)"
@@ -6760,9 +6875,10 @@ if [ "${1:-}" = "desktop" ]; then
   if [ "$_KILIX_DESKTOP_MODE" = python ] \
        && [ "$_KILIX_DESKTOP_MAIN" != "$KILIX_HOME/desktop/main.py" ]; then
     if [ -z "${KILIX_STATE_LIBRARY:-}" ]; then
-      "$KILIX_HOME/scripts/build-state-library.sh" \
+      KILIX_STATE_LIBRARY="$("$KILIX_HOME/scripts/build-state-library.sh" --print-path)" \
         || _kilix_desktop_die "could not prepare the pinned state library"
-      KILIX_STATE_LIBRARY="$KILIX_BUILD_DIRECTORY/libraries/kilix-state/libkilix-state.so"
+      [ -f "$KILIX_STATE_LIBRARY" ] \
+        || _kilix_desktop_die "could not prepare the pinned state library"
     fi
     export KILIX_STATE_LIBRARY
   fi
@@ -6819,6 +6935,7 @@ print(ids[0] if ids else "")' 2>/dev/null)"
       --env "KILIX_DATA_HOME=$KILIX_DATA_HOME" \
       --env "KILIX_BUILD_DIRECTORY=$KILIX_BUILD_DIRECTORY" \
       --env "KILIX_PREBUILT_HOME=$KILIX_PREBUILT_HOME" \
+      --env "KILIX_PACKAGED_ENGINE_HOME=$KILIX_PACKAGED_ENGINE_HOME" \
       --env "KILIX_STATE_LIBRARY=${KILIX_STATE_LIBRARY:-}" \
       --env "KILIX_DESKTOP_PROVIDER=${KILIX_DESKTOP_PROVIDER:-}" \
       --env "KILIX_DESKTOP_COMMAND=${KILIX_DESKTOP_COMMAND:-}" \
@@ -6974,9 +7091,16 @@ if [ "${1:-}" = "screensaver" ]; then
   _sssrc="$KILIX_HOME/config/screensavers/$_ss.c"
   _sscache="$KILIX_CACHE_HOME/screensavers"
   _ssbin="$_sscache/$_ss"
+  # A packaged Kilix carries no screensaver source; kilix-native has them built.
+  _sspackaged="$KILIX_PACKAGED_NATIVE_HOME/screensavers"
+  case "$_ss" in */*|.*|"") _sspackaged="" ;; esac
+  if [ ! -f "$_sssrc" ] && [ -n "$_sspackaged" ] \
+       && [ -f "$_sspackaged/$_ss" ] && [ -x "$_sspackaged/$_ss" ]; then
+    exec "$_sspackaged/$_ss" "$@"
+  fi
   if [ ! -f "$_sssrc" ]; then
     echo "kilix: no screensaver '$_ss'. Available:" >&2
-    for _f in "$KILIX_HOME"/config/screensavers/*.c; do
+    for _f in "$KILIX_HOME"/config/screensavers/*.c "$KILIX_PACKAGED_NATIVE_HOME"/screensavers/*; do
       [ -e "$_f" ] && echo "  $(basename "$_f" .c)" >&2
     done
     exit 1

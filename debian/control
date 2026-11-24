@@ -1,0 +1,64 @@
+Source: kilix
+Section: x11
+Priority: optional
+Maintainer: itsmygithubacct <itsmygithubacct@users.noreply.github.com>
+Build-Depends: debhelper-compat (= 13),
+ libkilix-encodec,
+ libonnxruntime-dev,
+ libsamplerate0-dev,
+ libssl-dev,
+ libzstd-dev,
+ pkgconf,
+ procps <!nocheck>,
+ python3,
+ zlib1g-dev
+Standards-Version: 4.7.2
+Homepage: https://github.com/itsmygithubacct/kilix
+Rules-Requires-Root: no
+
+Package: kilix
+Architecture: all
+Depends: kilix-engine, kilix-native, kilix-tui-utils (>= 0.3.1+packaging2),
+ dbus-daemon, git, polkitd, procps, python3, python3-dbus, util-linux,
+ ${misc:Depends}
+Recommends: kilix-multiplexer
+Description: terminal desktop built on the Kilix engine
+ Kilix turns a GPU terminal into a small desktop: tabs and panes that outlive
+ the window, a settings panel, a file and application launcher, session
+ persistence and helpers for coding agents.
+ .
+ This package carries the launcher, its configuration, the built-in desktop
+ and the Python modules Kilix pins. It installs under /usr/share/kilix and
+ adds the command kilix. The terminal engine and the compiled helpers come
+ from kilix-engine and kilix-native. Per-user state stays under
+ ~/.local/gpu_terminal.
+
+Package: kilix-native
+Architecture: amd64 arm64
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: compiled helpers for the Kilix terminal desktop
+ Kilix builds a few small C programs for each user the first time they are
+ needed. This package carries them already built, so a machine that installs
+ Kilix from packages needs no compiler:
+ .
+  * kitty-pty-broker, which owns the pseudo-terminals of Kilix panes so that
+    they outlive the terminal window;
+  * libkilix-state, the durable store for desktop settings;
+  * the terminal screensavers.
+ .
+ Everything is installed under /usr/lib/kilix/native. Nothing is added to
+ PATH or to the system library path.
+
+Package: kilix-multiplexer
+Architecture: amd64 arm64
+Depends: libkilix-encodec (>= 0.1.5),
+ ${shlibs:Depends}, ${misc:Depends}
+Description: remote terminal programs for the Kilix terminal desktop
+ The two programs behind "kilix remote": kmx-serve shares a Kilix pane over
+ an encrypted connection and kmx-attach connects to one, with predictive
+ echo and optional EnCodec audio. Kilix otherwise compiles them per user.
+ .
+ Both are installed under /usr/lib/kilix/native. Nothing is added to PATH.
+ .
+ It links the audio codec library libkilix-encodec, which needs the patched
+ ONNX Runtime 1.21 build from the same archive.

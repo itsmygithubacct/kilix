@@ -54,6 +54,7 @@ TOP_BAR_TOGGLES = (
 
 PANE_BUTTON_TOGGLES = (
     ToggleSpec("KILIX_CHROME_BUTTON_LOG", "Open pane session log", "Pane buttons"),
+    ToggleSpec("KILIX_CHROME_BUTTON_SCREENSHOT", "Screenshot / record pane", "Pane buttons"),
     ToggleSpec("KILIX_CHROME_BUTTON_SYNCHRONIZE_INPUT", "Synchronize keyboard input", "Pane buttons"),
     ToggleSpec("KILIX_CHROME_BUTTON_FONT_INCREASE", "Increase text size", "Pane buttons"),
     ToggleSpec("KILIX_CHROME_BUTTON_FONT_DECREASE", "Decrease text size", "Pane buttons"),
@@ -187,6 +188,14 @@ PANE_GPU_MODE_CHOICES = ("auto", "always", "off")
 TAB_BAR_EDGE_KEY = "KILIX_CHROME_TAB_BAR_EDGE"
 TAB_BAR_EDGE_DEFAULT = "top"
 TAB_BAR_EDGE_CHOICES = ("top", "bottom")
+# The pane camera button: formats for screenshots and recordings. The engine
+# writes these from the button's right-click menu (kitty/kilix_capture.py).
+CAPTURE_IMAGE_FORMAT_KEY = "KILIX_CAPTURE_IMAGE_FORMAT"
+CAPTURE_IMAGE_FORMAT_DEFAULT = "png"
+CAPTURE_IMAGE_FORMAT_CHOICES = ("png", "jpeg", "webp", "tiff", "bmp")
+CAPTURE_VIDEO_FORMAT_KEY = "KILIX_CAPTURE_VIDEO_FORMAT"
+CAPTURE_VIDEO_FORMAT_DEFAULT = "mp4"
+CAPTURE_VIDEO_FORMAT_CHOICES = ("mp4", "webm", "mkv", "gif", "apng", "webp")
 
 # Kitty ships images as APC sequences whose payload is base64 pixel data, so a
 # pane running the desktop, a browser, or icat can emit megabytes per second.
@@ -370,6 +379,8 @@ MANAGED_KEYS = tuple(spec.key for spec in TOGGLE_SPECS) + (
     PANE_MEMORY_MODE_KEY,
     PANE_GPU_MODE_KEY,
     TAB_BAR_EDGE_KEY,
+    CAPTURE_IMAGE_FORMAT_KEY,
+    CAPTURE_VIDEO_FORMAT_KEY,
     TRANSCRIPT_GRAPHICS_KEY,
     TRANSCRIPT_LIMIT_KEY,
     TRANSCRIPT_TOTAL_KEY,
@@ -470,6 +481,16 @@ def _normalize_change(key: str, raw_value: object) -> str:
             choices = ", ".join(TAB_BAR_EDGE_CHOICES)
             raise ValueError(f"{TAB_BAR_EDGE_KEY} must be one of: {choices}")
         return value
+    if key in (CAPTURE_IMAGE_FORMAT_KEY, CAPTURE_VIDEO_FORMAT_KEY):
+        value = str(raw_value).strip().lower()
+        if key == CAPTURE_IMAGE_FORMAT_KEY and value == "jpg":
+            value = "jpeg"
+        choices_for_key = (
+            CAPTURE_IMAGE_FORMAT_CHOICES if key == CAPTURE_IMAGE_FORMAT_KEY
+            else CAPTURE_VIDEO_FORMAT_CHOICES)
+        if value not in choices_for_key:
+            raise ValueError(f"{key} must be one of: {', '.join(choices_for_key)}")
+        return value
     if key == TRANSCRIPT_GRAPHICS_KEY:
         value = str(raw_value).strip().lower()
         if value not in TRANSCRIPT_GRAPHICS_CHOICES:
@@ -536,6 +557,8 @@ def defaults(*, migrate_environment: bool = False) -> dict[str, str]:
     values[PANE_MEMORY_MODE_KEY] = PANE_MEMORY_MODE_DEFAULT
     values[PANE_GPU_MODE_KEY] = PANE_GPU_MODE_DEFAULT
     values[TAB_BAR_EDGE_KEY] = TAB_BAR_EDGE_DEFAULT
+    values[CAPTURE_IMAGE_FORMAT_KEY] = CAPTURE_IMAGE_FORMAT_DEFAULT
+    values[CAPTURE_VIDEO_FORMAT_KEY] = CAPTURE_VIDEO_FORMAT_DEFAULT
     values[TRANSCRIPT_GRAPHICS_KEY] = TRANSCRIPT_GRAPHICS_DEFAULT
     values[TRANSCRIPT_LIMIT_KEY] = TRANSCRIPT_LIMIT_DEFAULT
     values[TRANSCRIPT_TOTAL_KEY] = TRANSCRIPT_TOTAL_DEFAULT
@@ -628,6 +651,8 @@ def _initial_text(values: Mapping[str, str]) -> str:
     lines.append(f"{PANE_MEMORY_MODE_KEY}={values[PANE_MEMORY_MODE_KEY]}")
     lines.append(f"{PANE_GPU_MODE_KEY}={values[PANE_GPU_MODE_KEY]}")
     lines.append(f"{TAB_BAR_EDGE_KEY}={values[TAB_BAR_EDGE_KEY]}")
+    lines.append(f"{CAPTURE_IMAGE_FORMAT_KEY}={values[CAPTURE_IMAGE_FORMAT_KEY]}")
+    lines.append(f"{CAPTURE_VIDEO_FORMAT_KEY}={values[CAPTURE_VIDEO_FORMAT_KEY]}")
     lines.extend(("", SESSION_LOG_MARKER))
     for spec in SESSION_LOG_TOGGLES:
         lines.append(f"{spec.key}={values[spec.key]}")
@@ -1037,6 +1062,12 @@ __all__ = [
     "SYSTEM_LOAD_MODE_CHOICES",
     "SYSTEM_LOAD_MODE_DEFAULT",
     "SYSTEM_LOAD_MODE_KEY",
+    "CAPTURE_IMAGE_FORMAT_CHOICES",
+    "CAPTURE_IMAGE_FORMAT_DEFAULT",
+    "CAPTURE_IMAGE_FORMAT_KEY",
+    "CAPTURE_VIDEO_FORMAT_CHOICES",
+    "CAPTURE_VIDEO_FORMAT_DEFAULT",
+    "CAPTURE_VIDEO_FORMAT_KEY",
     "TAB_BAR_EDGE_CHOICES",
     "TAB_BAR_EDGE_DEFAULT",
     "TAB_BAR_EDGE_KEY",

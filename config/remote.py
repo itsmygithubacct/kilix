@@ -69,7 +69,7 @@ def _rows_for_panes(workspace) -> list[dict[str, str]]:
     for tab in workspace.tabs():
         for pane in tab.panes:
             rows.append({
-                "active": "*" if (tab.is_active and pane.is_focused) else " ",
+                "active": "*" if (tab.is_active and getattr(pane, "is_active", pane.is_focused)) else " ",
                 "index": str(len(rows) + 1),
                 "pane_id": str(pane.id),
                 "tab_id": str(tab.id),
@@ -139,6 +139,16 @@ def cmd_ls(argv: list[str]) -> int:
         return 0
     print_table(rows, PANE_COLUMNS if ns.panes else TAB_COLUMNS)
     return 0
+
+
+def _pane_showing(workspace, pane_id: int):
+    """Whether a pane is the one its OS window shows: the active pane of the
+    active tab. Keyboard focus is not required; the user may be in another app."""
+    for tab in workspace.tabs():
+        for pane in tab.panes:
+            if pane.id == pane_id:
+                return bool(tab.is_active and pane.is_active), tab
+    return False, None
 
 
 def cmd_focus(argv: list[str]) -> int:
@@ -336,7 +346,7 @@ def pane_as_dict(pane: Any) -> dict[str, Any]:
     """A pane rendered for --json, tolerant of fields the SDK may not carry."""
     out: dict[str, Any] = {}
     for field in ("id", "tab_id", "os_window_id", "title", "cwd", "pid",
-                  "process", "is_focused", "is_self", "columns", "lines"):
+                  "process", "is_focused", "is_active", "is_self", "columns", "lines"):
         value = getattr(pane, field, None)
         if value is not None:
             out[field] = value
@@ -530,8 +540,19 @@ def _pane_subcommand(name: str, argv: list[str]) -> int:
         ns = parser.parse_args(argv)
         panes = load_panes("pane focus")
         pane = panes.snapshot().find_pane(ns.target)
-        panes.focus(f"pane:{pane.id}")
-        return done("pane focus", f"focused {describe(pane)}")
+        # The engine answers a focus request without saying whether it took.
+        # Read the result back, so the report says what the screen shows.
+        tab = None
+        for _attempt in range(2):
+            panes.focus(f"pane:{pane.id}")
+            showing, tab = _pane_showing(panes.snapshot(), pane.id)
+            if showing:
+                return done("pane focus", f"focused {describe(pane)}")
+        if tab is None:
+            return fail("pane focus", f"{describe(pane)} closed while it was being focused")
+        return fail("pane focus", f"asked to focus {describe(pane)}, but its tab {tab.id} "
+                                  + ("is showing another pane" if tab.is_active else "is not the active tab")
+                                  + f"; try: kilix tab focus {tab.id}")
 
     if name == "read":
         parser.description = "Print a pane's contents"

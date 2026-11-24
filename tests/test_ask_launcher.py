@@ -53,7 +53,7 @@ if log and sys.argv[1:2] == ["ensure"]:
 if os.environ.get("ASK_TEST_MODEL_DECLINED"):
     # 1 is a failed install, 3 a no at the install screen.
     raise SystemExit(int(os.environ["ASK_TEST_MODEL_DECLINED"]))
-if sys.argv[1:] == ["ensure", "lfm2-kilix-commands"]:
+if sys.argv[1:] == ["ensure", "lfm2-kilix-commands", "--quiet-verified"]:
     open(os.environ["ASK_TEST_STATE"] + ".installed", "w").close()
 raise SystemExit(0)
 '''
@@ -68,6 +68,9 @@ if sys.argv[1:2] == ["workflows"]:
     state = os.environ["ASK_TEST_STATE"]
     with open(os.environ["ASK_TEST_LOG"], "a") as stream:
         stream.write(json.dumps({"workflows": sys.argv[2:], "tty": sys.stdin.isatty()}) + "\\n")
+    if sys.argv[2:] == ["status", "--json"]:
+        print(json.dumps({"backend": "grammar", "ready": True}))
+        raise SystemExit(0)
     if sys.argv[2:3] == ["select"]:
         if os.environ.get("ASK_TEST_SELECT_FAILS"):
             raise SystemExit(1)
@@ -483,7 +486,8 @@ def json_request(url):
         self.assertTrue(all("needle" not in call for call in self.calls()))
 
     def test_volume_is_checked_and_set_without_needle(self):
-        missing = self.run_ask("what is the volume?", ASK_TEST_MISSING="1")
+        missing = self.run_ask("what is the volume?", ASK_TEST_MISSING="1",
+                               KILIX_VOLUME_BIN=str(self.root / "missing-volume"))
         self.assertEqual(missing.returncode, 1, missing.stdout)
         self.assertIn("volume control is not installed", missing.stderr)
         state = self.root / "volume-state"
@@ -673,7 +677,16 @@ def json_request(url):
         self.assertEqual(absent.returncode, 0, absent.stderr)
         self.assertEqual(absent.stdout.strip(), "nothing is playing")
         self.assertFalse((self.root / "missing-amp.sock").exists())
+        self.assertTrue(all("needle" not in call for call in self.calls()))
 
+    def test_playing_track_uses_the_amp_client_without_needle(self):
+        playing_env = {"ASK_TEST_MISSING": "1"}
+        source = os.environ.get("KILIX_TUI_UTILS_TEST_SOURCE")
+        if source:
+            self.assertTrue((Path(source) / "src/kilix_tui/music_protocol.py").is_file(), source)
+            playing_env["KILIX_TUI_UTILS_DIR"] = source
+        elif not Path("/usr/share/kilix-tui-utils/src/kilix_tui/music_protocol.py").is_file():
+            self.skipTest("install kilix-tui-utils or set KILIX_TUI_UTILS_TEST_SOURCE")
         amp_dir = self.root / "amp"
         amp_dir.mkdir(mode=0o700)
         amp_dir.chmod(0o700)
@@ -742,12 +755,7 @@ def json_request(url):
         self.addCleanup(thread.join, 3)
         self.addCleanup(server.close)
         self.addCleanup(stop.set)
-        playing_env = {
-            "ASK_TEST_MISSING": "1",
-            "KILIX_AMP_SOCKET": str(amp_path),
-            "KILIX_TUI_UTILS_DIR":
-                "/home/pleb/.local/gpu_terminal/sources/kilix-desktops/kilix-tui-utils",
-        }
+        playing_env["KILIX_AMP_SOCKET"] = str(amp_path)
         playing = self.run_ask("what's playing?", **playing_env)
         self.assertEqual(playing.returncode, 0, (playing.stderr, errors))
         self.assertEqual(playing.stdout.strip(), "Night Drive", errors)
@@ -760,7 +768,9 @@ def json_request(url):
         write_track(state="stopped", title="Night Drive")
         stopped = self.run_ask("what's playing?", **playing_env)
         self.assertEqual(stopped.stdout.strip(), "nothing is playing", errors)
+        self.assertEqual(self.calls(), [])
 
+    def test_microphone_status_does_not_use_needle(self):
         silent = self.run_ask("is the microphone on?", ASK_TEST_MISSING="1")
         self.assertEqual(silent.returncode, 0, silent.stderr)
         self.assertEqual(silent.stdout.strip(), "not listening")
@@ -773,6 +783,7 @@ def json_request(url):
             "status": {"listening": True, "speaking": True, "model": "whisper"},
         }), encoding="utf-8")
         voice_stop = threading.Event()
+        errors = []
         voice_server = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
         voice_server.bind(str(voice_path))
         voice_server.listen(4)
@@ -1135,7 +1146,7 @@ def json_request(url):
                     ["--model", model, "--hold", "--", "close tab 2"], b"\n")
                 self.assertEqual(status, 0, output)
                 ensured = [call for call in self.calls() if "models_ensure" in call]
-                self.assertEqual(ensured, [{"models_ensure": ["ensure", asset]}])
+                self.assertEqual(ensured, [{"models_ensure": ["ensure", asset, "--quiet-verified"]}])
                 self.assertIn("--commands-backend", self.calls()[-1]["needle"])
                 self.assertIn(model, self.calls()[-1]["needle"])
 
@@ -1154,7 +1165,7 @@ def json_request(url):
         self.assertIn("needle3-kilix-commands was not installed", output)
         self.assertEqual(
             [call for call in self.calls() if "models_ensure" in call],
-            [{"models_ensure": ["ensure", "needle3-kilix-commands"]}])
+            [{"models_ensure": ["ensure", "needle3-kilix-commands", "--quiet-verified"]}])
         self.assertFalse(any("needle" in call for call in self.calls()))
 
     # --- LFM2 is offered once, at a terminal, and never installed unasked ---
@@ -1219,7 +1230,7 @@ def json_request(url):
         self.assertEqual(status, 0, output)
         self.assertEqual(self.offer_calls(), [
             {"workflows": ["choice"], "tty": False},
-            {"models_ensure": ["ensure", "lfm2-kilix-commands"]}])
+            {"models_ensure": ["ensure", "lfm2-kilix-commands", "--quiet-verified"]}])
         self.assertFalse(Path(self.env["ASK_TEST_STATE"]).exists())
         self.assertIn("needle", self.calls()[-1])
         self.log.write_text("")
@@ -1228,7 +1239,7 @@ def json_request(url):
         self.assertNotIn("Install the LFM2", output)
         self.assertEqual(self.offer_calls(), [
             {"workflows": ["choice"], "tty": False},
-            {"models_ensure": ["ensure", "lfm2-kilix-commands"]}])
+            {"models_ensure": ["ensure", "lfm2-kilix-commands", "--quiet-verified"]}])
 
     def test_a_no_at_the_install_screen_is_remembered_and_runs_the_request(self):
         self.without_the_model()
@@ -1285,7 +1296,7 @@ def json_request(url):
         self.assertNotIn("Install the LFM2", output)
         self.assertEqual(self.offer_calls(), [
             {"workflows": ["choice"], "tty": False},
-            {"models_ensure": ["ensure", "lfm2-kilix-commands"]}])
+            {"models_ensure": ["ensure", "lfm2-kilix-commands", "--quiet-verified"]}])
         for arguments, env in ((["--model", "grammar"], {}), ([], {"KILIX_ASK_COMMANDS_BACKEND": "grammar"})):
             with self.subTest(arguments=arguments, env=env):
                 Path(str(state) + ".installed").unlink(missing_ok=True)
@@ -1411,6 +1422,17 @@ def json_request(url):
         result = self.run_ask("--yes", "split right", PATH=f"{bindir}:{self.env['PATH']}", ASK_TEST_MISSING="1")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual([call.get("needle") for call in self.calls()], [["ask", "--yes", "--", "split right"]])
+        status = self.run_ask("what model does ask use?", PATH=f"{bindir}:{self.env['PATH']}", ASK_TEST_MISSING="1")
+        self.assertEqual(status.returncode, 0, status.stderr)
+        self.assertIn("grammar", status.stdout)
+        self.assertEqual(self.calls()[-1]["workflows"], ["status", "--json"])
+        self.assertFalse(any("content_app" in call for call in self.calls()))
+
+    def test_model_status_finds_a_catalog_only_installation_without_building(self):
+        status = self.run_ask("what model does ask use?")
+        self.assertEqual(status.returncode, 0, status.stderr)
+        self.assertIn("grammar", status.stdout)
+        self.assertEqual(self.calls()[0], {"content_app": ["install", "kilix-needle"], "auto_install": "0"})
 
     def test_quoted_text_reaches_exact_answers_intact(self):
         result = self.run_ask('please count characters in "a  b"', ASK_TEST_MISSING="1")
@@ -1564,6 +1586,20 @@ def json_request(url):
         bad = self.run_ask("--model-answers", "maybe", **env)
         self.assertEqual(bad.returncode, 2)
         self.assertIn("must be on, off, setup or status", bad.stderr)
+
+    def test_yes_in_a_terminal_uses_only_an_already_set_up_answer_model(self):
+        ollama, env = self.model_service()
+        args = ["--yes", "--model", "grammar", "who wrote Don Quixote?"]
+        env.update(ASK_TEST_STATUS="3", KILIX_MODEL_AUTO_INSTALL="1")
+        status, output = self.run_tty(args, [], **env)
+        self.assertEqual(status, 0, output)
+        self.assertIn("Cervantes", output)
+        ollama.models.clear()
+        status, output = self.run_tty(args, [], **env)
+        self.assertEqual(status, 1, output)
+        self.assertIn("kilix ask --model-answers setup", output)
+        self.assertNotIn("Checking the installed", output)
+        self.assertEqual(len(ollama.posted("/api/chat")), 1)
 
     def test_without_a_fitting_model_the_miss_is_unchanged(self):
         # The default test environment has no sizer: nothing about models is said.

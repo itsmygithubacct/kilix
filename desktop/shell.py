@@ -523,6 +523,8 @@ class Shell:
                 "~/.local/gpu_terminal/kilix"))
         for cand in (os.path.join(storage_home,
                                   "build/current/src/kitty/launcher/kitten"),
+                     os.path.join(os.environ.get("KILIX_PACKAGED_ENGINE_HOME")
+                                  or "/usr/lib/kilix/engine", "bin/kitten"),
                      os.path.join(storage_home, "prebuilt/kitty.app/bin/kitten"),
                      shutil.which("kitten")):
             if cand and os.access(cand, os.X_OK):

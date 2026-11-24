@@ -30,6 +30,19 @@ case "${1:-}" in
   *) echo "usage: $0 [--print-path serve|attach]" >&2; exit 2 ;;
 esac
 
+# A packaged Kilix carries no multiplexer source: the kilix-multiplexer package
+# supplies the built pair instead. A tree that carries the source always
+# builds its own pin.
+packaged="${KILIX_PACKAGED_NATIVE_HOME:-/usr/lib/kilix/native}"
+if [ ! -e "$MULTIPLEXER_SOURCE/Makefile" ] \
+     && [ -f "$packaged/kmx-serve" ] && [ ! -L "$packaged/kmx-serve" ] && [ -x "$packaged/kmx-serve" ] \
+     && [ -f "$packaged/kmx-attach" ] && [ ! -L "$packaged/kmx-attach" ] && [ -x "$packaged/kmx-attach" ]; then
+  if [ "${1:-}" = --print-path ]; then
+    printf '%s\n' "$packaged/kmx-$2"
+  fi
+  exit 0
+fi
+
 source_path="$(realpath -m -- "$MULTIPLEXER_SOURCE")"
 storage_path="$(realpath -m -- "$KILIX_STORAGE_HOME")"
 build_path="$(realpath -m -- "$KILIX_BUILD_DIRECTORY")"

@@ -24,6 +24,20 @@ case "${1:-}" in
   *) echo "usage: $0 [--print-path]" >&2; exit 2 ;;
 esac
 
+# A packaged Kilix carries no broker source: the kilix-native package supplies
+# the built pair instead. A tree that does carry the source always builds its
+# own pin, so a checkout is never served by whatever the system has installed.
+_packaged="${KILIX_PACKAGED_NATIVE_HOME:-/usr/lib/kilix/native}"
+if [ ! -e "$BROKER_SOURCE/Makefile" ] \
+     && [ -f "$_packaged/kitty-pty-broker" ] && [ ! -L "$_packaged/kitty-pty-broker" ] \
+     && [ -x "$_packaged/kitty-pty-broker" ] \
+     && [ -f "$_packaged/libkitty-pty-broker.so" ] && [ ! -L "$_packaged/libkitty-pty-broker.so" ]; then
+  if [ "${1:-}" = --print-path ]; then
+    printf '%s\n' "$_packaged/kitty-pty-broker"
+  fi
+  exit 0
+fi
+
 _source="$(realpath -m -- "$BROKER_SOURCE")"
 _storage="$(realpath -m -- "$KILIX_STORAGE_HOME")"
 _build="$(realpath -m -- "$KILIX_BUILD_DIRECTORY")"

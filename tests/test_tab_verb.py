@@ -32,6 +32,7 @@ class FakePane:
         self.lines = raw.get("lines")
         self.is_self = raw.get("is_self", False)
         self.is_focused = raw.get("is_focused", False)
+        self.is_active = raw.get("is_active", self.is_focused)
 
 
 class FakeTab:

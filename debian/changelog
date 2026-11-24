@@ -1,0 +1,105 @@
+kilix (0.2.3+packaging15) UNRELEASED; urgency=medium
+
+  * Offer the pinned EnCodec converter when a selected model needs conversion.
+    Share the prompt and installer between Model Setup and the models command.
+
+ -- itsmygithubacct <itsmygithubacct@users.noreply.github.com>  Sun, 22 Nov 2026 22:51:00 +0000
+
+kilix (0.2.3+packaging14) UNRELEASED; urgency=medium
+
+  * Keep repeated model verification receipts out of interactive Ask output.
+
+ -- itsmygithubacct <itsmygithubacct@users.noreply.github.com>  Sun, 22 Nov 2026 16:09:39 +0000
+
+kilix (0.2.3+packaging13) UNRELEASED; urgency=medium
+
+  * Install the shared private GUI bus supervisor, its systemd template and
+    its per-user policy so packaged desktop apps can open in an XPane.
+
+ -- itsmygithubacct <itsmygithubacct@users.noreply.github.com>  Sun, 22 Nov 2026 13:03:15 +0000
+
+kilix (0.2.3+packaging12) UNRELEASED; urgency=medium
+
+  * Open the packaged Media Player inside the desktop and preserve explicitly
+    configured source installations.
+  * Use the installed player for kilix amp and its headless mode.
+
+ -- itsmygithubacct <itsmygithubacct@users.noreply.github.com>  Sun, 22 Nov 2026 11:24:32 +0000
+
+kilix (0.2.3+packaging11) UNRELEASED; urgency=medium
+
+  * Find the installed music client when Ask reads the current track.
+    Require the kilix-tui-utils release with headless volume commands.
+  * Select the reviewed Needle and volume commands from the content catalog.
+    Use the same catalog revision for speech provider preparation.
+
+ -- itsmygithubacct <itsmygithubacct@users.noreply.github.com>  Sat, 21 Nov 2026 01:09:19 +0000
+
+kilix (0.2.3+packaging10) UNRELEASED; urgency=medium
+
+  * Use the active Needle for Ask status and suppress first-use answer model
+    setup under --yes.
+  * Resolve relative dates and past holidays correctly. Distinguish bit and
+    byte symbols and check absolute zero in both conversion paths.
+
+ -- itsmygithubacct <itsmygithubacct@users.noreply.github.com>  Fri, 20 Nov 2026 23:31:39 +0000
+
+kilix (0.2.3+packaging9) UNRELEASED; urgency=medium
+
+  * Install /usr/bin/kilix-settings beside /usr/bin/kilix.
+
+ -- itsmygithubacct <itsmygithubacct@users.noreply.github.com>  Fri, 20 Nov 2026 22:13:00 +0000
+
+kilix (0.2.3+packaging8) UNRELEASED; urgency=medium
+
+  * Use the Needle command on PATH for Ask. Preserve quoted text for
+    exact answers and resolve past dates and yearless leap days correctly.
+
+ -- itsmygithubacct <itsmygithubacct@users.noreply.github.com>  Fri, 20 Nov 2026 21:26:00 +0000
+
+kilix (0.2.3+packaging7) UNRELEASED; urgency=medium
+
+  * List and install catalog tools through kilix-content. Select the
+    OS-provided EnCodec converters on fresh and existing installations.
+
+ -- itsmygithubacct <itsmygithubacct@users.noreply.github.com>  Fri, 20 Nov 2026 18:47:00 +0000
+
+kilix (0.2.3+packaging6) UNRELEASED; urgency=medium
+
+  * Find the kilix-95 package's desktop in /usr/share/kilix-95 when no
+    provider checkout is present, and trust it without git checks only when
+    it carries the PACKAGED marker and root owns it, writable by nobody else.
+
+ -- itsmygithubacct <itsmygithubacct@users.noreply.github.com>  Wed, 18 Nov 2026 02:00:00 +0000
+
+kilix (0.2.3+packaging5) UNRELEASED; urgency=medium
+
+  * Pin kitty-pty-broker 426c1b5: end a session's processes on kernels
+    without /proc/<pid>/task/<tid>/children (the opi4's 5.10 kernel), and two
+    broker tests made independent of scheduling and of a kernel EOF bug.
+
+ -- itsmygithubacct <itsmygithubacct@users.noreply.github.com>  Wed, 18 Nov 2026 01:00:00 +0000
+
+kilix (0.2.3+packaging4) UNRELEASED; urgency=medium
+
+  * Add the kilix package: launcher, configuration, desktop, Python modules.
+
+ -- itsmygithubacct <itsmygithubacct@users.noreply.github.com>  Wed, 18 Nov 2026 00:00:00 +0000
+
+kilix (0.2.3+packaging3) UNRELEASED; urgency=medium
+
+  * Build kilix-multiplexer for arm64 as well.
+
+ -- itsmygithubacct <itsmygithubacct@users.noreply.github.com>  Tue, 17 Nov 2026 18:00:00 +0000
+
+kilix (0.2.3+packaging2) UNRELEASED; urgency=medium
+
+  * Add kilix-multiplexer: kmx-serve and kmx-attach, amd64 only.
+
+ -- itsmygithubacct <itsmygithubacct@users.noreply.github.com>  Tue, 17 Nov 2026 12:00:00 +0000
+
+kilix (0.2.3+packaging1) UNRELEASED; urgency=medium
+
+  * First Debian packaging: the compiled helpers as kilix-native.
+
+ -- itsmygithubacct <itsmygithubacct@users.noreply.github.com>  Tue, 17 Nov 2026 00:00:00 +0000

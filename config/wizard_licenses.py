@@ -1,5 +1,7 @@
 """Apply standard licence policy and collect decisions on additional terms."""
 import hashlib
+import os
+import subprocess
 from pathlib import Path
 from contextlib import nullcontext
 import sys
@@ -218,12 +220,21 @@ def consent_and_install(selected, *, input_fn=input, before_install=None):
             before_install(set(allowed))
         from kilix_sdk._content_runtime import apps_root
         installer = api.Installer(apps_root())
-        from wizard_converters import prepare_converters
-        prepare_converters(api, installer, [specs[model] for model in selected
-                                           if model in allowed and model in specs], input_fn=input_fn)
+        from wizard_converters import ENCODEC_MODELS, prepare_converters, prepare_encodec
+        wanted = [specs[model] for model in selected if model in allowed and model in specs]
+        prepare_converters(api, installer, [spec for spec in wanted if spec.asset_id not in ENCODEC_MODELS],
+                           input_fn=input_fn)
+        audio = [spec for spec in wanted if spec.asset_id in ENCODEC_MODELS]
+        if audio:
+            try:
+                prepare_encodec(installer, audio, lambda message: ask(message, input_fn) == 'yes')
+            except (OSError, ValueError, subprocess.SubprocessError) as error:
+                for spec in audio:
+                    if not os.path.lexists(installer.asset_destination(spec)):
+                        failures[spec.asset_id] = error
         installed = set()
         for model in selected:
-            if model not in allowed: continue
+            if model not in allowed or model in failures: continue
             print('\nInstalling ' + model + '…', flush=True)
             try:
                 if model in specs:

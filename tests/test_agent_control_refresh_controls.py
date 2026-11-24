@@ -51,6 +51,12 @@ class Fixture(unittest.TestCase):
         self.kitty = script(self.g2 / "kitty")
         self.g2_kitten = script(self.g2 / "kitten")
         self.built_kitten = script(self.engine / "current/src/kitty/launcher/kitten")
+        # The packaged kitten is a fixed system path; keep the host's own
+        # installation out of every case and let a case plant one here.
+        self.packaged_kitten = self.root / "packaged/bin/kitten"
+        patcher = mock.patch.object(control, "PACKAGED_KITTEN", str(self.packaged_kitten))
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.elsewhere = self.root / "elsewhere"
         self.elsewhere_kitten = script(self.elsewhere / "kitten")
         script(self.elsewhere / "unrelated")
@@ -159,6 +165,31 @@ class ControlF1Closure(Fixture):
         self.poison_helper()
         self.shell(100, {})
         env = self.base(**self.stale, **self.identity)
+        with self.assertRaisesRegex(control.ControlError, "matching kitten is unavailable"):
+            self.client(env)
+
+    def test_packaged_kitten_serves_when_no_engine_is_built(self):
+        self.shell(100, {})
+        script(self.packaged_kitten)
+        script(self.root / "pb/bin/kitten")
+        env = self.base(**self.stale, **self.identity, KILIX_PREBUILT_HOME=str(self.root / "pb"))
+        client = self.client(env)
+        self.assertEqual(client.command[0], str(self.packaged_kitten))
+
+    def test_built_kitten_is_chosen_over_the_packaged_one(self):
+        self.shell(100, {})
+        script(self.packaged_kitten)
+        env = self.base(**self.stale, **self.identity, KILIX_BUILD_DIRECTORY=str(self.engine))
+        client = self.client(env)
+        self.assertEqual(client.command[0], str(self.built_kitten))
+
+    def test_packaged_kitten_path_is_fixed_and_not_read_from_the_environment(self):
+        self.assertEqual(Path(SRC / "config/agent_control.py").read_text().count(
+            'PACKAGED_KITTEN = "/usr/lib/kilix/engine/bin/kitten"'), 1)
+        self.shell(100, {})
+        script(self.elsewhere / "packaged/bin/kitten")
+        env = self.base(**self.stale, **self.identity,
+                        KILIX_PACKAGED_ENGINE_HOME=str(self.elsewhere / "packaged"))
         with self.assertRaisesRegex(control.ControlError, "matching kitten is unavailable"):
             self.client(env)
 

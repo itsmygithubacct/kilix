@@ -59,14 +59,21 @@ def native_library_path() -> Path:
 
     An explicit environment override remains useful for packaging and tests.
     Normal launches use the private, generated host build rather than a
-    mutable system installation.
+    mutable system installation. Where no host build exists, the library the
+    kilix-native package installs is used.
     """
 
     override = os.environ.get("KILIX_STATE_LIBRARY")
     if override:
         return Path(os.path.abspath(os.path.expanduser(override)))
-    return Path(paths.build_dir()) / "libraries" / "kilix-state" / \
+    built = Path(paths.build_dir()) / "libraries" / "kilix-state" / \
         "libkilix-state.so"
+    # A packaged Kilix has no per-user build; kilix-native supplies the library.
+    packaged = Path(os.environ.get("KILIX_PACKAGED_NATIVE_HOME")
+                    or "/usr/lib/kilix/native") / "libkilix-state.so"
+    if not built.exists() and packaged.is_file() and not packaged.is_symlink():
+        return packaged
+    return built
 
 
 @lru_cache(maxsize=8)

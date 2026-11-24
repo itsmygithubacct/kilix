@@ -40,6 +40,14 @@ def _identity(path: Path) -> tuple[int, int, int]:
     return owner, int(fields[1]), int(fields[19])
 
 
+def _replaced(path: Path, executable: str) -> bool:
+    """The process runs an executable that was deleted from this very path."""
+    try:
+        return os.readlink(path / 'exe') == f'{executable} (deleted)'
+    except OSError:
+        return False
+
+
 def _broker_startup(path: Path, executable: str, name: bytes) -> tuple[str, str] | None:
     """Verify a broker run identity or refuse an unverifiable owner barrier.
 
@@ -70,6 +78,15 @@ def _broker_startup(path: Path, executable: str, name: bytes) -> tuple[str, str]
                       or (runtime is not None and command == [b'run']))
     if not possible_owner:
         return None
+    if not same_image and command == [b'run'] and _replaced(path, executable):
+        # Still a refusal: the old image proves nothing. But this is the
+        # common way to get here, after an update rebuilt the broker under
+        # panes that were already open, and it has a remedy.
+        raise BrokerOwnershipUnavailable(
+            f'cannot verify caller broker ownership: this pane\'s broker (pid {path.name}) '
+            f'still runs the {os.path.basename(executable)} that an update has since replaced. '
+            'Panes opened before the update cannot read or send to other panes; '
+            'open a new tab, or restart Kilix')
     if not same_image or command != [b'run']:
         raise BrokerOwnershipUnavailable('cannot verify caller broker ownership')
     index += 1

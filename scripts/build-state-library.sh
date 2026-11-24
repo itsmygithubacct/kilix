@@ -15,6 +15,18 @@ case "${1:-}" in
   *) echo "usage: $0 [--print-path]" >&2; exit 2 ;;
 esac
 
+# A packaged Kilix carries no state-library source: the kilix-native package
+# supplies the built library instead. A tree that carries the source always
+# builds its own pin.
+_packaged="${KILIX_PACKAGED_NATIVE_HOME:-/usr/lib/kilix/native}"
+if [ ! -e "$STATE_SOURCE/Makefile" ] \
+     && [ -f "$_packaged/libkilix-state.so" ] && [ ! -L "$_packaged/libkilix-state.so" ]; then
+  if [ "${1:-}" = --print-path ]; then
+    printf '%s\n' "$_packaged/libkilix-state.so"
+  fi
+  exit 0
+fi
+
 _storage="$(realpath -m -- "$KILIX_STORAGE_HOME")"
 _build="$(realpath -m -- "$KILIX_BUILD_DIRECTORY")"
 _home="$(realpath -m -- "$HOME")"

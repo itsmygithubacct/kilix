@@ -104,6 +104,21 @@ class SelectionTests(unittest.TestCase):
         (checkout/'kilix-amp').unlink()
         self.assertIsNone(json.loads(self.call('--resolve','--content-root',str(root))[1])['executable'])
 
+    def test_packaged_launch_avoids_catalog_and_honors_explicit_selection(self):
+        with mock.patch.object(setup, 'packaged_amp', return_value='/usr/bin/kilix-amp'):
+            self.assertEqual(self.call(), (0, '/usr/bin/kilix-amp\n', ''))
+            self.catalog.require.assert_not_called()
+            self.assertEqual(self.call('--print-ref')[1].strip(), self.ref)
+            root = self.base / 'explicit'
+            self.assertIsNone(json.loads(self.call('--resolve', '--content-root', str(root))[1])['executable'])
+
+    def test_missing_packaged_player_reports_apt_without_building(self):
+        with mock.patch.object(setup, 'packaged_amp', side_effect=FileNotFoundError('apt install kilix-amp')):
+            code, out, error = self.call()
+        self.assertEqual((code, out), (1, ''))
+        self.assertIn('apt install kilix-amp', error)
+        self.catalog.require.assert_not_called()
+
     def test_auto_install_refusal_uses_explicit_root(self):
         root=self.base/'explicit'
         with mock.patch.dict(os.environ,{'KILIX_AMP_AUTO_INSTALL':'0'}):

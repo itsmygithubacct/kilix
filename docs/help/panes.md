@@ -19,3 +19,11 @@ Watching does not carry graphics, mouse state or an interactive PTY.
 Use `kilix switch` or F12 for the page/pane switcher. F2 renames the current
 page; `Ctrl+Shift+T` opens a new page. `Ctrl+Alt+R` splits right and
 `Ctrl+Alt+D` splits down. `Alt+Arrows` changes pane focus.
+
+To capture a pane, click the camera button on its title bar. The screenshot
+is saved where you choose in the Save As dialog, in PNG unless you pick
+another format. Right-click the camera to record the pane (**Record screen**)
+or to choose the screenshot format (PNG, JPEG, WebP, TIFF, BMP) and the
+recording format (MP4, WebM, MKV, GIF, APNG, animated WebP). While a pane
+records, its camera is a red timer; click it to stop and save. Formats other
+than PNG need `ffmpeg`.
