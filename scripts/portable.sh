@@ -241,4 +241,43 @@ kilix_make_tool() {
 kilix_make() {
   if [ "$_kilix_userland" = bsd ]; then gmake "$@"; else make "$@"; fi
 }
+# Copy FILE to DEST keeping its mode and times (GNU `--preserve=mode,timestamps`;
+# BSD `cp -p`, which also tries owner and group and stays silent when it can't).
+kilix_copy_mode_times() {
+  if [ "$_kilix_userland" = bsd ]; then
+    cp -p -- "$1" "$2"
+  else
+    cp --preserve=mode,timestamps -- "$1" "$2"
+  fi
+}
+
+# Regular files directly in DIR matching NAME: "MTIME PATH" lines (fractional
+# seconds, for sort -n), or just their sizes in bytes.
+kilix_find_mtime_paths() {
+  if [ "$_kilix_userland" = bsd ]; then
+    find "$1" -maxdepth 1 -type f -name "$2" -exec stat -f '%Fm %N' -- {} +
+  else
+    find "$1" -maxdepth 1 -type f -name "$2" -printf '%T@ %p\n'
+  fi
+}
+kilix_find_mtime_size_paths() {
+  if [ "$_kilix_userland" = bsd ]; then
+    find "$1" -maxdepth 1 -type f -name "$2" -exec stat -f '%Fm %z %N' -- {} +
+  else
+    find "$1" -maxdepth 1 -type f -name "$2" -printf '%T@ %s %p\n'
+  fi
+}
+kilix_find_sizes() {
+  if [ "$_kilix_userland" = bsd ]; then
+    find "$1" -maxdepth 1 -type f -name "$2" -exec stat -f '%z' -- {} +
+  else
+    find "$1" -maxdepth 1 -type f -name "$2" -printf '%s\n'
+  fi
+}
+
+# The host's own Python 3, outside any virtual environment: Debian's
+# /usr/bin/python3, or the python3 package's /usr/local/bin/python3 on FreeBSD.
+kilix_system_python() {
+  if [ "$_kilix_userland" = bsd ]; then printf '/usr/local/bin/python3\n'; else printf '/usr/bin/python3\n'; fi
+}
 # ---------------------------------------------------------------------------

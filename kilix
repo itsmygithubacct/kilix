@@ -456,6 +456,45 @@ kilix_make_tool() {
 kilix_make() {
   if [ "$_kilix_userland" = bsd ]; then gmake "$@"; else make "$@"; fi
 }
+# Copy FILE to DEST keeping its mode and times (GNU `--preserve=mode,timestamps`;
+# BSD `cp -p`, which also tries owner and group and stays silent when it can't).
+kilix_copy_mode_times() {
+  if [ "$_kilix_userland" = bsd ]; then
+    cp -p -- "$1" "$2"
+  else
+    cp --preserve=mode,timestamps -- "$1" "$2"
+  fi
+}
+
+# Regular files directly in DIR matching NAME: "MTIME PATH" lines (fractional
+# seconds, for sort -n), or just their sizes in bytes.
+kilix_find_mtime_paths() {
+  if [ "$_kilix_userland" = bsd ]; then
+    find "$1" -maxdepth 1 -type f -name "$2" -exec stat -f '%Fm %N' -- {} +
+  else
+    find "$1" -maxdepth 1 -type f -name "$2" -printf '%T@ %p\n'
+  fi
+}
+kilix_find_mtime_size_paths() {
+  if [ "$_kilix_userland" = bsd ]; then
+    find "$1" -maxdepth 1 -type f -name "$2" -exec stat -f '%Fm %z %N' -- {} +
+  else
+    find "$1" -maxdepth 1 -type f -name "$2" -printf '%T@ %s %p\n'
+  fi
+}
+kilix_find_sizes() {
+  if [ "$_kilix_userland" = bsd ]; then
+    find "$1" -maxdepth 1 -type f -name "$2" -exec stat -f '%z' -- {} +
+  else
+    find "$1" -maxdepth 1 -type f -name "$2" -printf '%s\n'
+  fi
+}
+
+# The host's own Python 3, outside any virtual environment: Debian's
+# /usr/bin/python3, or the python3 package's /usr/local/bin/python3 on FreeBSD.
+kilix_system_python() {
+  if [ "$_kilix_userland" = bsd ]; then printf '/usr/local/bin/python3\n'; else printf '/usr/bin/python3\n'; fi
+}
 # ---------------------------------------------------------------------------
 
 _kilix_validate_private_storage_layout() {
@@ -730,7 +769,7 @@ _kilix_transcript_reap() (
   done
 
   # 2. Over the recent budget, recompress oldest-first into the denser tier.
-  used=$(find "$recent" -maxdepth 1 -type f -name '*.log.zst' -printf '%s\n' \
+  used=$(kilix_find_sizes "$recent" '*.log.zst' \
     2>/dev/null | awk '{s+=$1} END {print s+0}')
   if [ "$used" -gt "$recent_budget" ]; then
     mkdir -p "$archive" && chmod 700 "$archive" 2>/dev/null
@@ -761,16 +800,16 @@ _kilix_transcript_reap() (
           errors=$((errors + 1))
         fi
       fi
-    done < <(find "$recent" -maxdepth 1 -type f -name '*.log.zst' -printf '%T@ %p\n' \
+    done < <(kilix_find_mtime_paths "$recent" '*.log.zst' \
       2>/dev/null | sort -n | cut -d' ' -f2-)
   fi
 
   # 3. Over the older budget too, the oldest history is dropped.
   if [ -d "$archive" ]; then
-    used=$(find "$archive" -maxdepth 1 -type f -name '*.log.zst' -printf '%s\n' \
+    used=$(kilix_find_sizes "$archive" '*.log.zst' \
       2>/dev/null | awk '{s+=$1} END {print s+0}')
     while [ "$used" -gt "$archive_budget" ]; do
-      file="$(find "$archive" -maxdepth 1 -type f -name '*.log.zst' -printf '%T@ %p\n' \
+      file="$(kilix_find_mtime_paths "$archive" '*.log.zst' \
         2>/dev/null | sort -n | head -1 | cut -d' ' -f2-)"
       [ -n "$file" ] || break
       size=$(kilix_stat_size "$file" 2>/dev/null || echo 0)
@@ -2399,10 +2438,10 @@ case "${1:-}" in
         # it, so on a fresh install these finds legitimately have nothing to
         # walk. Without the `|| true`, `set -o pipefail` turns that into a
         # silent exit here and the index below never prints at all.
-        _tr_used=$( { find "$_tr_dir/recent" -maxdepth 1 -type f -name '*.log.zst' \
-          -printf '%s\n' 2>/dev/null || true; } | awk '{s+=$1} END {print s+0}')
-        _tr_arc_used=$( { find "$_tr_dir/archive" -maxdepth 1 -type f -name '*.log.zst' \
-          -printf '%s\n' 2>/dev/null || true; } | awk '{s+=$1} END {print s+0}')
+        _tr_used=$( { kilix_find_sizes "$_tr_dir/recent" '*.log.zst' \
+          2>/dev/null || true; } | awk '{s+=$1} END {print s+0}')
+        _tr_arc_used=$( { kilix_find_sizes "$_tr_dir/archive" '*.log.zst' \
+          2>/dev/null || true; } | awk '{s+=$1} END {print s+0}')
         printf 'recent (zstd -3): %s of %s   older (zstd -9): %s of %s\n' \
           "$(numfmt --to=iec --suffix=B "$_tr_used" 2>/dev/null || echo "$_tr_used")" \
           "$(numfmt --to=iec --suffix=B "$_KILIX_TRANSCRIPT_TOTAL" 2>/dev/null || echo "$_KILIX_TRANSCRIPT_TOTAL")" \
@@ -2421,12 +2460,12 @@ case "${1:-}" in
         [ -n "$_tr_cols" ] || _tr_cols=0
         # Newest first: the pane you just lost is the one you want. Archived
         # entries are listed alongside live ones so history stays discoverable.
-        _tr_index="$( { find "$_tr_dir" -maxdepth 1 -type f -name '*.log' \
-            -printf '%T@ %s %p [live]\n' 2>/dev/null || true
-          find "$_tr_dir/recent" -maxdepth 1 -type f -name '*.log.zst' \
-            -printf '%T@ %s %p [recent]\n' 2>/dev/null || true
-          find "$_tr_dir/archive" -maxdepth 1 -type f -name '*.log.zst' \
-            -printf '%T@ %s %p [older]\n' 2>/dev/null || true
+        _tr_index="$( { kilix_find_mtime_size_paths "$_tr_dir" '*.log' 2>/dev/null \
+            | sed 's/$/ [live]/' || true
+          kilix_find_mtime_size_paths "$_tr_dir/recent" '*.log.zst' 2>/dev/null \
+            | sed 's/$/ [recent]/' || true
+          kilix_find_mtime_size_paths "$_tr_dir/archive" '*.log.zst' 2>/dev/null \
+            | sed 's/$/ [older]/' || true
         } | sort -rn )"
         [ -n "$_tr_index" ] || exit 0
         printf '%s\n' "$_tr_index" \
@@ -2850,7 +2889,7 @@ case "${1:-}" in
     exit 0 ;;
   transcribe|kilix-transcribe)
     shift
-    exec /usr/bin/python3 -I -B -c '
+    exec "$(kilix_system_python)" -I -B -c '
 import sys
 sys.path.insert(0,sys.argv[1])
 from kilix_sdk.transcribe_provider import main
@@ -2861,7 +2900,7 @@ raise SystemExit(main(sys.argv[2:]))
     shift
     if [ "${1:-}" = provider ]; then
       shift
-      exec /usr/bin/python3 -I -B -c '
+      exec "$(kilix_system_python)" -I -B -c '
 import sys
 sys.path.insert(0,sys.argv[1])
 from kilix_sdk.qwen_provider import main
@@ -2991,7 +3030,7 @@ raise SystemExit(main(sys.argv[2:]))
           echo "kilix tts: the Qwen CPU tier needs an interactive terminal" >&2
           exit 2
         fi
-        if ! "$_tts_installed" --tiers --json | /usr/bin/python3 -c '
+        if ! "$_tts_installed" --tiers --json | "$(kilix_system_python)" -c '
 import json, sys
 try:
     report = json.load(sys.stdin)
@@ -3045,7 +3084,7 @@ sys.exit(0 if ready else 1)
           esac
           _tts_python="$KILIX_QWEN_GPU_PYTHON"
         else
-          if ! "$_tts_installed" --tiers --json | /usr/bin/python3 -c '
+          if ! "$_tts_installed" --tiers --json | "$(kilix_system_python)" -c '
 import json, sys
 try:
     report = json.load(sys.stdin)
@@ -3083,7 +3122,7 @@ sys.exit(0 if ready else 1)
         fi
         if [ "$_tts_argument" = --tier=pocket-cpu ] \
             || [ "$_tts_argument" = pocket-cpu ]; then
-          if ! "$_tts_installed" --tiers --json | /usr/bin/python3 -c '
+          if ! "$_tts_installed" --tiers --json | "$(kilix_system_python)" -c '
 import json, sys
 try:
     report = json.load(sys.stdin)
@@ -4154,7 +4193,7 @@ sys.exit(0 if ready else 1)
       fi
       _kilix_ensure_private_directory "$KILIX_STATE_DIRECTORY" state || return 1
       tmp="$(mktemp "$KILIX_STATE_DIRECTORY/fork-built-ref.restore.XXXXXX")" || return 1
-      if ! cp --preserve=mode,timestamps -- "$_update_txn_dir/fork-stamp" "$tmp" \
+      if ! kilix_copy_mode_times "$_update_txn_dir/fork-stamp" "$tmp" \
            || ! chmod 0600 "$tmp" \
            || ! kilix_mv_onto -f "$tmp" "$_fork_stamp"; then
         rm -f -- "$tmp"

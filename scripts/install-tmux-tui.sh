@@ -205,7 +205,7 @@ managed_link() {
   [ ! -e "$temporary" ] && [ ! -L "$temporary" ] \
     || die "temporary link path already exists: $temporary"
   ln -s -- "$target" "$temporary"
-  mv -fT -- "$temporary" "$link"
+  kilix_mv_onto -f "$temporary" "$link"
 }
 
 remove_managed_tb_link() {
@@ -239,6 +239,6 @@ stamp_tmp="$(mktemp "$state_dir/.tmux-tui-refs.XXXXXX")" \
   || die "could not create install stamp"
 printf '%s\n' "$expected_refs" >"$stamp_tmp"
 chmod -- 0600 "$stamp_tmp"
-mv -fT -- "$stamp_tmp" "$stamp"
+kilix_mv_onto -f "$stamp_tmp" "$stamp"
 log "installed and verified $tmux_tui_link"
 [ "$tb_mode" != install ] || log "installed and verified $tb_link"

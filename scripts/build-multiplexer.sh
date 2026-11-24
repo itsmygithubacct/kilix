@@ -105,6 +105,6 @@ if [ "${1:-}" = --print-path ]; then
   _print=(--print-kind "$2")
 fi
 # The dedicated owner retains the lock until all build descendants are reaped.
-exec /usr/bin/python3 "$KILIX_HOME/config/multiplexer_build.py" \
+exec "$(kilix_system_python)" "$KILIX_HOME/config/multiplexer_build.py" \
   --source "$source_path" --commit "$MULTIPLEXER_COMMIT" \
   --build-dir "$MULTIPLEXER_BUILD" "${_print[@]}"

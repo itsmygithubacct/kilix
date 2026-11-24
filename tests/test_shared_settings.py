@@ -972,7 +972,7 @@ class TranscriptBudgetTests(unittest.TestCase):
         launcher = (ROOT / "kilix").read_text()
         self.assertIn("_kilix_transcript_reap_periodically()", launcher)
         self.assertIn('[ "$current_tick" = "$frontend_start_tick" ]', launcher)
-        self.assertIn('flock -n 9', launcher)
+        self.assertIn('kilix_lock_fd_try 9', launcher)
 
 
 class TranscriptArchiveIntegrationTests(unittest.TestCase):

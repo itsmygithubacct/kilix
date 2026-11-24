@@ -736,9 +736,9 @@ write_library_provenance() {
   print_library_provenance >"$notice_tmp"
   chmod -- 0644 "$notice_tmp"
   install -m 0644 -- "$KILIX_VOICE_APACHE_LICENSE_FILE" "$license_tmp"
-  mv -fT -- "$notice_tmp" "$notice" \
+  kilix_mv_onto -f "$notice_tmp" "$notice" \
     || { rm -f -- "$notice_tmp" "$license_tmp"; die "could not publish Vosk library provenance"; }
-  mv -fT -- "$license_tmp" "$license" \
+  kilix_mv_onto -f "$license_tmp" "$license" \
     || { rm -f -- "$license_tmp"; die "could not publish Vosk library license"; }
 }
 
@@ -752,9 +752,9 @@ write_model_provenance() {
   print_model_provenance >"$notice_tmp"
   chmod -- 0644 "$notice_tmp"
   install -m 0644 -- "$KILIX_VOICE_APACHE_LICENSE_FILE" "$license_tmp"
-  mv -fT -- "$notice_tmp" "$notice" \
+  kilix_mv_onto -f "$notice_tmp" "$notice" \
     || { rm -f -- "$notice_tmp" "$license_tmp"; die "could not publish Vosk model provenance"; }
-  mv -fT -- "$license_tmp" "$license" \
+  kilix_mv_onto -f "$license_tmp" "$license" \
     || { rm -f -- "$license_tmp"; die "could not publish Vosk model license"; }
 }
 
@@ -768,7 +768,7 @@ swap_link() {
     rm -f -- "$staged"
     return 1
   fi
-  if ! mv -fT -- "$staged" "$link"; then
+  if ! kilix_mv_onto -f "$staged" "$link"; then
     rm -f -- "$staged"
     return 1
   fi
@@ -900,7 +900,7 @@ prepare_runtime_entrypoints() {
     rm -f -- "$staged"
     ln -s -- "$expected" "$staged" \
       || { rm -f -- "$staged"; die "could not stage the $tool entrypoint"; }
-    mv -fT -- "$staged" "$entry" \
+    kilix_mv_onto -f "$staged" "$entry" \
       || { rm -f -- "$staged"; die "could not publish the $tool entrypoint"; }
     changed_entrypoints+=("$tool")
   done
@@ -928,7 +928,7 @@ rollback_runtime_transaction() {
     if [ -e "$entry_backup/.missing-$tool" ]; then
       rm -f -- "$entry" || failed=1
     else
-      mv -fT -- "$entry_backup/$tool" "$entry" || failed=1
+      kilix_mv_onto -f "$entry_backup/$tool" "$entry" || failed=1
     fi
   done
 
@@ -1018,7 +1018,7 @@ if [ "$without_dictation" = 0 ]; then
       || die "the verified Vosk wheel did not contain a safe libvosk.so"
     vosk_library_works "$library_extract_tmp" \
       || die "the verified Vosk library could not load or lacks its required API"
-    mv -fT -- "$library_extract_tmp" "$library_generation/libvosk.so" \
+    kilix_mv_onto -f "$library_extract_tmp" "$library_generation/libvosk.so" \
       || die "could not publish the verified Vosk library"
     library_extract_tmp=""
     rm -f -- "$library_archive"
@@ -1092,7 +1092,7 @@ promote "generations/${uncommitted_generation##*/}" "$runtime_current"
 runtime_changed=1
 voice_runtime_works \
   || die "the published voice runtime generation did not pass validation"
-mv -fT -- "$stamp_tmp" "$stamp" || die "could not publish the voice install stamp"
+kilix_mv_onto -f "$stamp_tmp" "$stamp" || die "could not publish the voice install stamp"
 stamp_tmp=""
 transaction_committed=1
 if [ "$without_dictation" = 1 ]; then

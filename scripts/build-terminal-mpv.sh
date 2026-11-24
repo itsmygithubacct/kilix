@@ -9,7 +9,7 @@ if [[ ${1:-} == --help ]]; then
   exit 0
 fi
 [[ $# == 0 ]] || { echo 'unexpected installer argument' >&2; exit 2; }
-for tool in meson ninja cc pkg-config curl patch tar sha256sum flock; do
+for tool in meson ninja cc pkg-config curl patch tar "$(kilix_sha256_tool)" "$(kilix_lock_tool)"; do
   command -v "$tool" >/dev/null || { echo "kilix video: build prerequisite missing: $tool" >&2; exit 1; }
 done
 pkg-config --exists libavcodec libavfilter libavformat libavutil libswresample libswscale libplacebo libass luajit libpulse || {
@@ -24,7 +24,8 @@ work="$(mktemp -d "$root/build.XXXXXXXX")"
 trap 'rm -rf -- "$work"' EXIT
 curl --fail --location --retry 2 --output "$work/source.tar.gz" \
   https://codeload.github.com/mpv-player/mpv/tar.gz/refs/tags/v0.40.0
-(cd "$work" && echo '10a0f4654f62140a6dd4d380dcf0bbdbdcf6e697556863dc499c296182f081a3  source.tar.gz' | sha256sum -c -)
+[ "$(kilix_sha256 "$work/source.tar.gz")" = 10a0f4654f62140a6dd4d380dcf0bbdbdcf6e697556863dc499c296182f081a3 ] \
+  || { echo 'kilix video: mpv source checksum mismatch' >&2; exit 1; }
 tar -xzf "$work/source.tar.gz" -C "$work"
 source_dir="$work/mpv-0.40.0"
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"

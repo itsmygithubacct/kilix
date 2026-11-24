@@ -55,6 +55,11 @@ if [ "$IF_STALE" = 1 ] && [ "$FORCE" = 0 ] && [ -z "$PINNED_VERSION" ] \
   if find "$STAMP" -mtime -1 2>/dev/null | grep -q .; then exit 0; fi
 fi
 
+if [ "$(uname -s)" != Linux ]; then
+  # Upstream publishes prebuilt bundles for Linux (and macOS apps) only.
+  log "no prebuilt kitty bundle exists for $(uname -s); build the fork with ./build.sh"
+  exit 1
+fi
 case "$(uname -m)" in
   x86_64|amd64)  KARCH=x86_64 ;;
   aarch64|arm64) KARCH=arm64 ;;

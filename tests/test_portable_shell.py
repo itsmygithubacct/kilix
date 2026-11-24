@@ -40,8 +40,9 @@ class CopiesAgree(unittest.TestCase):
                                  f"{name}'s portability block differs from scripts/portable.sh")
 
     def test_no_gnu_only_calls_outside_the_block(self):
-        forbidden = ("stat -c", "stat -Lc", "realpath -m", "mv -T", "date -d",
-                     "sha256sum -c --status", "/proc/$$/fd")
+        forbidden = ("stat -c", "stat -Lc", "realpath -m", "mv -T", "mv -fT", "mv -Tf",
+                     "date -d", "sha256sum -c --status", "/proc/$$/fd", "-printf",
+                     "--preserve=", "--no-dereference")
         for name in ("build.sh", "kilix"):
             text = (ROOT / name).read_text()
             text = text.replace(block(ROOT / name), "")
@@ -178,6 +179,33 @@ class HelpersAnswerLikePython(unittest.TestCase):
         self.addCleanup(sleeper.kill)
         listed = self.run_ok("kilix_process_executables").splitlines()
         self.assertIn(os.path.realpath(shutil.which("sleep")), listed)
+
+    def test_copy_mode_times(self):
+        source = self.tmp / "source"
+        source.write_text("x")
+        os.chmod(source, 0o640)
+        os.utime(source, (1_000_000_000, 1_000_000_000))
+        self.run_ok('kilix_copy_mode_times "$1" "$2"', str(source), str(self.tmp / "copy"))
+        info = os.stat(self.tmp / "copy")
+        self.assertEqual(stat.S_IMODE(info.st_mode), 0o640)
+        self.assertEqual(int(info.st_mtime), 1_000_000_000)
+
+    def test_find_mtime_paths_and_sizes(self):
+        for name, size, when in (("b.log", 3, 2_000), ("a.log", 5, 1_000), ("c.txt", 7, 500)):
+            path = self.tmp / name
+            path.write_bytes(b"x" * size)
+            os.utime(path, (when, when))
+        (self.tmp / "dir.log").mkdir()
+        ordered = self.run_ok('kilix_find_mtime_paths "$1" "*.log" | sort -n | cut -d" " -f2-',
+                              str(self.tmp)).splitlines()
+        self.assertEqual(ordered, [str(self.tmp / "a.log"), str(self.tmp / "b.log")])
+        sizes = sorted(self.run_ok('kilix_find_sizes "$1" "*.log"', str(self.tmp)).split())
+        self.assertEqual(sizes, ["3", "5"])
+        rows = self.run_ok('kilix_find_mtime_size_paths "$1" "*.log" | sort -n',
+                           str(self.tmp)).splitlines()
+        self.assertEqual([row.split(" ", 1)[1] for row in rows],
+                         [f"5 {self.tmp / 'a.log'}", f"3 {self.tmp / 'b.log'}"])
+        self.assertEqual(float(rows[0].split()[0]), 1000.0)
 
     def test_format_epoch(self):
         self.assertEqual(self.run_ok('TZ=UTC kilix_format_epoch 0 "+%Y-%m-%d %H:%M:%S"'),

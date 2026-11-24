@@ -112,5 +112,5 @@ trap - EXIT
 runs "$binary" || fail 'the published asr_infer failed verification'
 link="$root/.current-$$"
 ln -s -- "$generation" "$link"
-mv -fT -- "$link" "$current" || fail 'could not publish the VibeASR runtime'
+kilix_mv_onto -f "$link" "$current" || fail 'could not publish the VibeASR runtime'
 printf 'kilix vibeasr: runtime ready at %s\n' "$current/bin/asr_infer" >&2

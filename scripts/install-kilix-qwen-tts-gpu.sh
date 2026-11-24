@@ -85,6 +85,6 @@ assert y.shape == q.shape and bool(torch.isfinite(y).all())
 printf '%s\n' "$digest" >"$generation/.kilix-verified"
 link="$root/.current-$$"
 ln -s -- "$generation" "$link"
-mv -fT -- "$link" "$current" || fail 'could not publish the Qwen GPU runtime'
+kilix_mv_onto -f "$link" "$current" || fail 'could not publish the Qwen GPU runtime'
 printf 'kilix qwen gpu: runtime ready; model downloads after first-use notice\n' >&2
 printf '%s\n' "$current/bin/python"

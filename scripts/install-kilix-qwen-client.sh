@@ -98,5 +98,5 @@ mv -- "$stage" "$generation" || fail 'could not publish the Qwen client generati
 trap - EXIT
 link="$root/.current-$$"
 ln -s -- "$generation" "$link"
-mv -fT -- "$link" "$current" || fail 'could not publish the Qwen client'
+kilix_mv_onto -f "$link" "$current" || fail 'could not publish the Qwen client'
 printf '%s\n' "$current/bin/kilix-qwen-tts"

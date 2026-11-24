@@ -109,5 +109,5 @@ fi
 printf '%s\n' "$KILIX_WHISPER_STAMP" >"$generation/REF"
 link="$root/.current-$$"
 ln -s -- "$generation" "$link"
-mv -fT -- "$link" "$current" || fail 'could not publish the Whisper runtime'
+kilix_mv_onto -f "$link" "$current" || fail 'could not publish the Whisper runtime'
 printf 'kilix whisper: runtime ready at %s\n' "$current/bin/kilix-whisper-stt" >&2

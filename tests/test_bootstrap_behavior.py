@@ -18,8 +18,29 @@ from _env_support import sandbox_env  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
+IS_LINUX = sys.platform.startswith("linux")
 
 
+@unittest.skipIf(IS_LINUX, "Linux has prebuilt bundles")
+class NoPrebuiltOffLinuxTests(unittest.TestCase):
+    def test_bootstrap_refuses_before_any_download(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bindir = root / "bin"
+            bindir.mkdir()
+            marker = root / "curl-called"
+            (bindir / "curl").write_text(f"#!/bin/sh\ntouch '{marker}'\nexit 1\n")
+            (bindir / "curl").chmod(0o755)
+            env = sandbox_env(HOME=str(root), GPU_TERMINAL_HOME=str(root / "gt"),
+                              PATH=str(bindir) + os.pathsep + os.environ["PATH"])
+            result = subprocess.run(["bash", str(ROOT / "bootstrap.sh")], env=env,
+                                    capture_output=True, text=True, timeout=30)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("build the fork with ./build.sh", result.stderr)
+            self.assertFalse(marker.exists())
+
+
+@unittest.skipUnless(IS_LINUX, "upstream publishes prebuilt kitty bundles for Linux only")
 class BootstrapBehaviorTests(unittest.TestCase):
     @staticmethod
     def _clean_env(root, bindir):
