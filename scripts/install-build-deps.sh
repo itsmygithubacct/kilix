@@ -157,7 +157,7 @@ verify() {
   done
   local cc_tool=gcc make_tool=make
   local -a cc_search=()
-  if [ "$(uname -s)" = FreeBSD ]; then
+  if [ "$(uname -s 2>/dev/null)" = FreeBSD ]; then
     # Base cc does not search the packages' include directory on its own.
     cc_tool=cc; make_tool=gmake; cc_search=(-I/usr/local/include)
   fi
