@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Lazy, inference-free client for Voice's receipt-backed Qwen provider.
 set -euo pipefail
-. "$(dirname -- "${BASH_SOURCE[0]}")/portable.sh"
+# Locate portable.sh without dirname(1): callers may run this on a bare PATH.
+case "${BASH_SOURCE[0]}" in */*) . "${BASH_SOURCE[0]%/*}/portable.sh" ;; *) . ./portable.sh ;; esac
 umask 077
 
 KILIX_HOME="${KILIX_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -30,7 +31,7 @@ case "${1:-}" in
 esac
 
 [ "$(id -u)" -ne 0 ] || fail 'run this as the desktop user'
-[ -x /usr/bin/python3 ] || fail 'system Python is unavailable'
+[ -x "$(kilix_system_python)" ] || fail 'system Python is unavailable'
 command -v git >/dev/null || fail 'git is required for the pinned client source'
 command -v "$(kilix_lock_tool)" >/dev/null || fail "$(kilix_lock_tool) is required for the client install lock"
 case "$root" in /|"$HOME") fail 'refusing a broad runtime directory' ;; esac

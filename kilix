@@ -227,7 +227,9 @@ esac
 # functions a question instead of spelling one userland's flags, so each answer
 # is chosen once, here. The external tools are still found on PATH by their
 # plain names, so a test that shadows `mv` or `stat` shadows it here too.
-case "$(uname -s 2>/dev/null || true)" in
+# uname falls back to its absolute paths so a minimal PATH cannot quietly
+# select the GNU spellings on a BSD host.
+case "$(uname -s 2>/dev/null || /usr/bin/uname -s 2>/dev/null || /bin/uname -s 2>/dev/null || true)" in
   FreeBSD|DragonFly|NetBSD|OpenBSD|Darwin) _kilix_userland=bsd ;;
   *) _kilix_userland=gnu ;;
 esac
@@ -330,6 +332,12 @@ kilix_lock_fd() {
 # The same lock, but fail at once instead of waiting when it is held.
 kilix_lock_fd_try() {
   if [ "$_kilix_userland" = bsd ]; then lockf -s -t 0 "$1"; else flock -n "$1"; fi
+}
+
+# realpath -e: canonicalize PATH, failing unless every component exists. BSD
+# realpath already fails on a missing path; GNU needs -e for the last one.
+kilix_realpath_e() {
+  if [ "$_kilix_userland" = bsd ]; then realpath -- "$1"; else realpath -e -- "$1"; fi
 }
 
 # realpath -m: canonicalize PATH whether or not it, or any parent, exists.
@@ -1658,11 +1666,18 @@ def request(client, message):
             "(%d bytes; limit %d). Read a smaller extent or shorter text."
             % (len(payload), MAX_REQUEST_BYTES))
     try:
-        client.sendall(payload)
+        # One request is one record. sendall() would split a short write into
+        # a second record; FreeBSD writes short instead of failing when the
+        # daemon's receive buffer is smaller than the request.
+        written = client.send(payload)
     except OSError as error:
         raise AmbiguousRequest(
             "the voice daemon connection failed during a %s request: %s"
             % (message["op"], error)) from error
+    if written != len(payload):
+        raise AmbiguousRequest(
+            "the voice daemon took only %d of %d bytes of a %s request"
+            % (written, len(payload), message["op"]))
     try:
         raw = client.recv(65536)
     except OSError as error:

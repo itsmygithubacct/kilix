@@ -10,7 +10,8 @@
 # resolves. Weights are not handled here: they are the licence-gated
 # vibevoice-asr-bitnet model, installed by `kilix stt --install`.
 set -euo pipefail
-. "$(dirname -- "${BASH_SOURCE[0]}")/portable.sh"
+# Locate portable.sh without dirname(1): callers may run this on a bare PATH.
+case "${BASH_SOURCE[0]}" in */*) . "${BASH_SOURCE[0]%/*}/portable.sh" ;; *) . ./portable.sh ;; esac
 umask 077
 
 GPU_TERMINAL_HOME="${GPU_TERMINAL_HOME:-$HOME/.local/gpu_terminal}"

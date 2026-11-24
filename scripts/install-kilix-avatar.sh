@@ -4,7 +4,8 @@
 # Build and install Avatar; model downloads and credentials remain explicit.
 set -euo pipefail
 umask 077
-. "$(dirname -- "${BASH_SOURCE[0]}")/portable.sh"
+# Locate portable.sh without dirname(1): callers may run this on a bare PATH.
+case "${BASH_SOURCE[0]}" in */*) . "${BASH_SOURCE[0]%/*}/portable.sh" ;; *) . ./portable.sh ;; esac
 
 KILIX_HOME="${KILIX_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 GPU_TERMINAL_SOURCE_HOME="${GPU_TERMINAL_SOURCE_HOME:-$HOME/.local/gpu_terminal/sources}"

@@ -18,7 +18,8 @@
 #
 # Nothing is installed system-wide and nothing is installed as root.
 set -euo pipefail
-. "$(dirname -- "${BASH_SOURCE[0]}")/portable.sh"
+# Locate portable.sh without dirname(1): callers may run this on a bare PATH.
+case "${BASH_SOURCE[0]}" in */*) . "${BASH_SOURCE[0]%/*}/portable.sh" ;; *) . ./portable.sh ;; esac
 umask 077
 
 KILIX_HOME="${KILIX_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"

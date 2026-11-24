@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Install the exact Kilix Voice closure selected by this Kilix checkout.
 set -euo pipefail
-. "$(dirname -- "${BASH_SOURCE[0]}")/portable.sh"
+# Locate portable.sh without dirname(1): callers may run this on a bare PATH.
+case "${BASH_SOURCE[0]}" in */*) . "${BASH_SOURCE[0]%/*}/portable.sh" ;; *) . ./portable.sh ;; esac
 umask 077
 
 KILIX_HOME="${KILIX_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -314,7 +315,7 @@ dictation_assets_present() {
   for catalog_model in small-en-us lgraph-en-us; do
     # The catalog entry is a symlink into the immutable generations; the
     # payload check wants the generation directory itself.
-    resolved="$(realpath -e -- "$models_root/$catalog_model" 2>/dev/null)" \
+    resolved="$(kilix_realpath_e "$models_root/$catalog_model" 2>/dev/null)" \
       || continue
     if model_payload_works "$resolved"; then
       installed_dictation_model="$catalog_model"
@@ -589,7 +590,7 @@ for command in git "$(kilix_make_tool)" python3 install; do
     || die "$command is required (install build-essential, git, and python3)"
 done
 if [ "$without_dictation" = 0 ]; then
-  for command in curl sha256sum unzip; do
+  for command in curl "$(kilix_sha256_tool)" unzip; do
     command -v "$command" >/dev/null 2>&1 \
       || die "$command is required to install the pinned speech library and model"
   done
@@ -654,7 +655,12 @@ fetch_verified() {
   log "fetching verified $label"
   curl -fL --retry 3 --max-time 900 -o "$download_tmp" -- "$url" \
     || die "could not download $label from $url"
-  printf '%s  %s\n' "$expected" "$download_tmp" | sha256sum -c --status \
+  # Compare digests directly: FreeBSD's sha256sum check mode passes a malformed line.
+  [[ "${expected,,}" =~ ^[0-9a-f]{64}$ ]] \
+    || die "the pinned digest for $label is not a SHA-256; refusing to install it"
+  local got
+  got="$(kilix_sha256 "$download_tmp")" || die "could not hash the downloaded $label"
+  [ "$got" = "${expected,,}" ] \
     || die "checksum mismatch for $label; refusing to install an unverified download"
   chmod -- 0600 "$download_tmp" || die "could not secure the downloaded $label"
   mv -f -- "$download_tmp" "$destination" || die "could not publish $label"

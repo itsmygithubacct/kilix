@@ -27,7 +27,9 @@ export KILIX_STATE_DIRECTORY KILIX_BUILD_DIRECTORY KILIX_SYSDEPS_HOME
 # functions a question instead of spelling one userland's flags, so each answer
 # is chosen once, here. The external tools are still found on PATH by their
 # plain names, so a test that shadows `mv` or `stat` shadows it here too.
-case "$(uname -s 2>/dev/null || true)" in
+# uname falls back to its absolute paths so a minimal PATH cannot quietly
+# select the GNU spellings on a BSD host.
+case "$(uname -s 2>/dev/null || /usr/bin/uname -s 2>/dev/null || /bin/uname -s 2>/dev/null || true)" in
   FreeBSD|DragonFly|NetBSD|OpenBSD|Darwin) _kilix_userland=bsd ;;
   *) _kilix_userland=gnu ;;
 esac
@@ -130,6 +132,12 @@ kilix_lock_fd() {
 # The same lock, but fail at once instead of waiting when it is held.
 kilix_lock_fd_try() {
   if [ "$_kilix_userland" = bsd ]; then lockf -s -t 0 "$1"; else flock -n "$1"; fi
+}
+
+# realpath -e: canonicalize PATH, failing unless every component exists. BSD
+# realpath already fails on a missing path; GNU needs -e for the last one.
+kilix_realpath_e() {
+  if [ "$_kilix_userland" = bsd ]; then realpath -- "$1"; else realpath -e -- "$1"; fi
 }
 
 # realpath -m: canonicalize PATH whether or not it, or any parent, exists.

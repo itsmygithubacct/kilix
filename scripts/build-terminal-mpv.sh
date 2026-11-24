@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Build the pinned terminal player with the Kitty resize-buffer lifetime fix.
 set -euo pipefail
-. "$(dirname -- "${BASH_SOURCE[0]}")/portable.sh"
+# Locate portable.sh without dirname(1): callers may run this on a bare PATH.
+case "${BASH_SOURCE[0]}" in */*) . "${BASH_SOURCE[0]%/*}/portable.sh" ;; *) . ./portable.sh ;; esac
 if [[ ${1:-} == --help ]]; then
   echo 'usage: kilix video --install-player'
   echo 'Builds mpv 0.40.0 with the terminal resize fix into private Kilix storage.'
