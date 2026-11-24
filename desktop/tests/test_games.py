@@ -155,8 +155,39 @@ subprocess.run(["git", "-C", seed, "commit", "-qm", "game"], check=True)
 ref = subprocess.check_output(
     ["git", "-C", seed, "rev-parse", "HEAD"], text=True).strip()
 subprocess.run(["git", "init", "-q", dest], check=True)  # interrupted old run
-recovered = games._clone_and_make(
-    seed, ref, dest, "game", "unused", lambda _msg: None)
+import kilix_content  # noqa: E402  (the pinned package games' SDK selected)
+
+
+def _host_can_exchange():
+    probe = tempfile.mkdtemp(prefix="games-exchange-probe-")
+    try:
+        os.mkdir(os.path.join(probe, "a"))
+        os.mkdir(os.path.join(probe, "b"))
+        kilix_content.install._rename_exchange(
+            os.path.join(probe, "a"), os.path.join(probe, "b"))
+        return True
+    except OSError:
+        return False
+    finally:
+        subprocess.run(["rm", "-rf", "--", probe], check=True)
+
+
+if _host_can_exchange():
+    recovered = games._clone_and_make(
+        seed, ref, dest, "game", "unused", lambda _msg: None)
+else:
+    # No atomic exchange (FreeBSD): repair refuses, changes nothing and names
+    # the way forward; after that set-aside the same install recovers.
+    try:
+        games._clone_and_make(seed, ref, dest, "game", "unused", lambda _msg: None)
+        assert False, "repair replaced an installed tree without an atomic exchange"
+    except kilix_content.ExchangeUnavailable as refused:
+        assert "kilix content set-aside" in str(refused), str(refused)
+    assert os.path.isdir(os.path.join(dest, ".git"))
+    aside = kilix_content.set_aside(dest)
+    assert os.path.isdir(os.path.join(aside, ".git")) and not os.path.exists(dest)
+    recovered = games._clone_and_make(
+        seed, ref, dest, "game", "unused", lambda _msg: None)
 assert os.access(recovered, os.X_OK)
 assert subprocess.check_output(
     ["git", "-C", dest, "rev-parse", "HEAD"], text=True).strip() == ref

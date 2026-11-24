@@ -165,6 +165,11 @@ case "${1:-}" in
   models)
     shift
     exec python3 "$KILIX_HOME/config/content_models.py" "$@" ;;
+  content)
+    # Installed-tree maintenance; `set-aside` is what a host without atomic
+    # directory exchange (FreeBSD) needs before a reinstall or repair.
+    shift
+    exec python3 -B "$KILIX_HOME/config/content_cli.py" "$@" ;;
   tmux)
     # Keep the interactive manager path; explicit control is headless and
     # runs before any engine/storage setup, with a mandatory socket.
@@ -203,8 +208,8 @@ Structured actions:
   kilix action --request-json -             JSON on stdin
   kilix action capabilities                inspect available features
   kilix windows --host HOST COMMAND         Windows desktop via SSH
-Also: wizard, settings, status, update, install, games, screen-size, transcript,
-  help-search "QUESTION". Command options: --help.
+Also: wizard, settings, status, update, install, games, content, screen-size,
+  transcript, help-search "QUESTION". Command options: --help.
 Terminal engine (kitty) options: kilix --help-engine
 EOF
     printf 'Agent guide: %s/docs/AGENTS.md\n' "$KILIX_HOME"

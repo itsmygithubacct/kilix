@@ -31,6 +31,10 @@ PackageSpec = _shared.PackageSpec
 ActionSpec = _shared.ActionSpec
 LifecycleSpec = _shared.LifecycleSpec
 InstallError = _shared.InstallError
+# Newer Content pins: a replace refused for want of an atomic exchange, and the
+# set-aside that lets the same install run again. Older pins lack both.
+ExchangeUnavailable = getattr(_shared, "ExchangeUnavailable", InstallError)
+set_aside = getattr(_shared, "set_aside", None)
 Installer = _shared.Installer
 default_catalog = _shared.default_catalog
 download = _shared.download
