@@ -303,10 +303,20 @@ class SelectionBridge:
             # Release at this endpoint's own claim time, never CurrentTime: X
             # ignores an older SetSelectionOwner, so a copy another client
             # made since (even one this endpoint has not yet heard about) is
-            # never taken away.
-            xrequest.SetSelectionOwner(display=self.d.display, window=X.NONE,
-                                       selection=self.atoms['CLIPBOARD'],
-                                       time=self._timestamp)
+            # never taken away. X honours an *equal* time, though, and server
+            # time is coarse (10 ms steps on a 100 Hz FreeBSD kernel), so a
+            # copy made in the same tick as this claim would be cleared. Under
+            # a server grab nothing can claim between the check and the
+            # release: release only what this endpoint still owns.
+            self.d.grab_server()
+            try:
+                owner = self.d.get_selection_owner(self.atoms['CLIPBOARD'])
+                if owner and owner.id == self.win.id:
+                    xrequest.SetSelectionOwner(display=self.d.display, window=X.NONE,
+                                               selection=self.atoms['CLIPBOARD'],
+                                               time=self._timestamp)
+            finally:
+                self.d.ungrab_server()
         if self._selection_owner == self.win.id:
             self._selection_owner = 0
         self.d.flush()
