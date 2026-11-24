@@ -17,9 +17,11 @@ KILIX_LLM_SOURCES="${KILIX_LLM_SOURCES:-$KILIX_STORAGE_HOME/sources}"
 # kilix-llm commit with qwen-0.8b-no-loop-02, its `chat` command and the
 # first-use build that keeps only the runtime's bin/. pull of that id is
 # refused; the build does not fetch llama.cpp's web UI. Thinking mode stays
-# off for that model, and --think prints a warning before it starts.
+# off for that model, and --think prints a warning before it starts. It adds
+# `update`, `rollback` and `runtime`, which move to llama.cpp's newest release
+# beside this pin, and builds the CPU backend with OpenBLAS when present.
 KILIX_LLM_REPO="${KILIX_LLM_REPO:-https://github.com/itsmygithubacct/kilix-llm.git}"
-KILIX_LLM_REF="${KILIX_LLM_REF:-24292157f980fe574dbf66fdc2403e2f82129f00}"
+KILIX_LLM_REF="${KILIX_LLM_REF:-022f36f5c1b907bd1d50c17615eaedb6ec0123f0}"
 
 die() { printf 'kilix llm: %s\n' "$*" >&2; exit 1; }
 log() { printf 'kilix llm: %s\n' "$*" >&2; }

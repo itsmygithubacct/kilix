@@ -289,14 +289,14 @@ usage: kilix [COMMAND] [ARGS...]    (default: new window)
   kilix tmux --socket PATH [--json] VERB ...  no args: manager
   kilix desktop-action --help              X11 windows, pointer, keyboard
 TARGET: unique title or pane:ID. This is complete syntax; no subcommand --help needed. Ambiguous targets fail; verbs report results.
-  kilix agent-control context|list|dump|send|key   --help
+  kilix agent-control context|list|dump|send|key --help
   kilix session --help                     sessions, trust, logs
   kilix ralph|agent-message --help         mailboxes
   kilix action --request-json -             JSON from stdin
   kilix action capabilities                host features
   kilix windows --host HOST COMMAND         Windows via SSH
 Also: ask 'REQUEST', weather CITY, grammar, needle, shell, content, playalong, claudex route|usage,
-  wizard, settings, status, update, install, games,
+  wizard, settings, status, update, install, llama, games,
   screen-size, transcript, help-setup, help-answer "QUESTION",
   help-search "QUESTION". Options: --help.
 Engine options: kilix --help-engine
@@ -1944,6 +1944,29 @@ _kilix_avatar_resolve() {
     return 1
   }
   _KILIX_AVATAR_COMMAND=("$resolved")
+}
+
+# llama.cpp comes from kilix-llm, which this checkout pins. `kilix llama`
+# installs that pin on first use, and again whenever this checkout names a
+# different one, then runs kilix-llm, whose first run, chat or serve builds
+# llama.cpp itself. The launcher it installs is generated, and points at the
+# pinned checkout, so a checkout at the pin is the whole test.
+_KILIX_LLM_PREFIX="${KILIX_LLM_PREFIX:-$HOME/.local}"
+declare -a _KILIX_LLM_COMMAND=()
+_kilix_llm_resolve() {
+  local launcher="$_KILIX_LLM_PREFIX/bin/kilix-llm" checkout pin head
+  checkout="${KILIX_LLM_SOURCES:-${KILIX_STORAGE_HOME:-${GPU_TERMINAL_HOME:-$HOME/.local/gpu_terminal}/kilix}/sources}/kilix-llm"
+  pin="$("$KILIX_HOME/scripts/install-kilix-llm.sh" --print-refs | sed -n 's/^kilix-llm=//p')"
+  head="$(git -C "$checkout" rev-parse HEAD 2>/dev/null || true)"
+  if [ ! -x "$launcher" ] || [ -z "$pin" ] || [ "${head,,}" != "${pin,,}" ]; then
+    echo "kilix llama: installing kilix-llm ${pin:0:12} (llama.cpp builds on first use)" >&2
+    "$KILIX_HOME/scripts/install-kilix-llm.sh" || return 1
+  fi
+  [ -x "$launcher" ] || {
+    echo "kilix llama: installer did not create $launcher" >&2
+    return 1
+  }
+  _KILIX_LLM_COMMAND=("$launcher")
 }
 
 # Same shape as bonsai's, and for the same reason: an installed closure the
@@ -4793,6 +4816,34 @@ sys.exit(0 if ready else 1)
       fi
     fi
     exec "${_KILIX_AVATAR_COMMAND[@]}" --chat "$@" ;;
+  llama|llama.cpp|llama-cpp)
+    shift
+    case "${1:-}" in
+      -h|--help|help|'')
+        echo "usage: kilix llama COMMAND [ARGS...]"
+        echo "local models on llama.cpp; the first use installs kilix-llm, and"
+        echo "the first chat, run or serve builds llama.cpp (a few minutes)"
+        echo
+        echo "  kilix llama chat [--model-id ID]     talk to a local model"
+        echo "  kilix llama run 'PROMPT'             one answer, then exit"
+        echo "  kilix llama serve                    OpenAI-compatible server on loopback"
+        echo "  kilix llama status                   which llama.cpp build is in use"
+        echo "  kilix llama update [--check]         build llama.cpp's newest release, switch to it"
+        echo "  kilix llama rollback                 back to the build before the last update"
+        echo "  kilix llama install                  install and build now, not on first use"
+        echo "  kilix llama doctor|pull|devices|...  every other kilix-llm command"
+        echo
+        echo "Weights arrive through 'kilix wizard' or 'kilix llama pull'."
+        exit 0 ;;
+      install) shift; exec "$KILIX_HOME/scripts/install-llama-cpp.sh" --install "$@" ;;
+      status) shift; set -- runtime "$@" ;;
+    esac
+    _kilix_llm_resolve || exit 1
+    exec "${_KILIX_LLM_COMMAND[@]}" "$@" ;;
+  deps)
+    # Start > Software > Reinstall build prerequisites.
+    shift
+    exec "$KILIX_HOME/scripts/install-build-deps.sh" "$@" ;;
   bonsai|models|bitnet)
     shift
     _bonsai_install_only=0

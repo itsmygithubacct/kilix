@@ -235,11 +235,27 @@ RUNTIMES = (
         "description": "YAMNet sound runtime — what kilix-listen and "
                        "kilix-nvr recognise barking, speech and glass with",
     },
+    {
+        # Installed under a prefix, not a runtimes/ directory: the helper
+        # installs kilix-llm's launcher, and llama.cpp builds beside it.
+        "id": "llama-cpp",
+        "label": "llama.cpp local models",
+        "helper": "install-llama-cpp.sh",
+        "prefix_env": "KILIX_LLM_PREFIX",
+        "command": "kilix-llm",
+        "description": "llama.cpp through kilix-llm — local chat and an "
+                       "OpenAI-compatible server; update follows llama.cpp's "
+                       "newest release",
+    },
 )
 
 
 def _runtime_paths(runtime: dict) -> tuple[str, str]:
     """The runtime's directory and the command it installs."""
+    if "prefix_env" in runtime:
+        prefix = os.environ.get(runtime["prefix_env"]) or os.path.join(
+            os.path.expanduser("~"), ".local")
+        return prefix, os.path.join(prefix, "bin", runtime["command"])
     root = os.environ.get("GPU_TERMINAL_DATA_HOME") or os.path.join(
         os.path.expanduser("~"), ".local", "gpu_terminal")
     # Each runtime names its own override rather than sharing one: two
