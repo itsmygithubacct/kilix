@@ -16,6 +16,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "config"))
 from kilix_sdk import hostproc  # noqa: E402
+sys.path.insert(0, str(ROOT / "tests"))
+from _env_support import sandbox_env  # noqa: E402
 
 SUPPORTED = hostproc.IS_LINUX or hostproc.IS_FREEBSD
 
@@ -54,11 +56,10 @@ class ProcessFacts(unittest.TestCase):
         self.assertEqual(hostproc.cmdline(pid), [b"sleep", b"30"])
 
     def test_environ_of_own_child(self):
-        child = subprocess.Popen(["sleep", "30"], env={"KILIX_HOSTPROC_PROBE": "yes",
-                                                       "PATH": os.environ["PATH"]})
+        child = subprocess.Popen(["sleep", "30"], env=sandbox_env(KILIX_HOSTPROC_PROBE="yes"))
         try:
             for _ in range(100):
-                values = hostproc.environ(child.pid) or []
+                values = hostproc.process_environment(child.pid) or []
                 if b"KILIX_HOSTPROC_PROBE=yes" in values:
                     break
                 time.sleep(0.01)

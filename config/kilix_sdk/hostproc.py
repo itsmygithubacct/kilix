@@ -212,7 +212,7 @@ def cmdline(pid: int) -> list[bytes] | None:
         return None
 
 
-def environ(pid: int, limit: int = 262144) -> list[bytes] | None:
+def process_environment(pid: int, limit: int = 262144) -> list[bytes] | None:
     """PID's environment as NAME=VALUE byte strings; None if unreadable or larger
     than LIMIT bytes (the kernel only answers for a process the caller owns)."""
     if IS_FREEBSD:

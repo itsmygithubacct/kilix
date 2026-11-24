@@ -27,7 +27,16 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Iterator, Mapping, Sequence
 
-from . import hostproc
+try:
+    from . import hostproc
+except ImportError:
+    # Loaded by file path (tests, standalone tools) without its package on
+    # sys.path: hostproc needs only the standard library, so load it the same way.
+    import importlib.util as _hostproc_util
+    _hostproc_spec = _hostproc_util.spec_from_file_location(
+        "kilix_sdk_hostproc", os.path.join(os.path.dirname(os.path.abspath(__file__)), "hostproc.py"))
+    hostproc = _hostproc_util.module_from_spec(_hostproc_spec)
+    _hostproc_spec.loader.exec_module(hostproc)
 
 #: Pause between a sent text and its separate Enter, so the target has taken
 #: the text (and closed any bracketed paste) before the key arrives.

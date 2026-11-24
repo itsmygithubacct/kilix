@@ -27,7 +27,16 @@ import socket
 import stat
 import subprocess
 import time
-from kilix_sdk import hostproc
+try:
+    from kilix_sdk import hostproc
+except ImportError:
+    # Loaded by file path (tests, standalone tools) without its package on
+    # sys.path: hostproc needs only the standard library, so load it the same way.
+    import importlib.util as _hostproc_util
+    _hostproc_spec = _hostproc_util.spec_from_file_location(
+        "kilix_sdk_hostproc", os.path.join(os.path.dirname(os.path.abspath(__file__)), "kilix_sdk", "hostproc.py"))
+    hostproc = _hostproc_util.module_from_spec(_hostproc_spec)
+    _hostproc_spec.loader.exec_module(hostproc)
 
 
 def _runtime_root():
