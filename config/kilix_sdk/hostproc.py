@@ -20,6 +20,15 @@ import sys
 IS_LINUX = sys.platform.startswith("linux")
 IS_FREEBSD = sys.platform.startswith("freebsd")
 
+
+def system_python() -> str:
+    """The host's packaged interpreter (the one with its GI bindings), not a venv's.
+
+    Debian ships it as /usr/bin/python3; FreeBSD's python3 package installs it
+    as /usr/local/bin/python3.
+    """
+    return "/usr/local/bin/python3" if IS_FREEBSD else "/usr/bin/python3"
+
 # --- FreeBSD ABI constants (sys/sysctl.h, sys/procctl.h, sys/un.h) -----------
 _CTL_KERN = 1
 _KERN_PROC = 14

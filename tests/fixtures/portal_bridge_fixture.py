@@ -11,7 +11,9 @@ import time
 from gi.repository import Gio, GLib
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from _env_support import sandbox_env  # noqa: E402
+from _env_support import SYSTEM_PYTHON, sandbox_env  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'config'))
+from kilix_sdk import hostproc  # noqa: E402
 
 NAME = "org.freedesktop.portal.Desktop"
 ROOT = "/org/freedesktop/portal/desktop"
@@ -171,8 +173,8 @@ def host(bridge):
         proof = Path(directory) / 'proof.json'
         env = sandbox_env(KILIX_PORTAL_HOST_BUS=os.environ['DBUS_SESSION_BUS_ADDRESS'],
                    BRIDGE_FIXTURE_PROOF=str(proof))
-        app = subprocess.Popen(['dbus-run-session', '--', '/usr/bin/python3', bridge, '--wrap', '--',
-                                '/usr/bin/python3', __file__, 'client'], env=env,
+        app = subprocess.Popen(['dbus-run-session', '--', SYSTEM_PYTHON, bridge, '--wrap', '--',
+                                SYSTEM_PYTHON, __file__, 'client'], env=env,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                start_new_session=True)
         try:
@@ -190,10 +192,9 @@ def host(bridge):
             # process must be killed to exercise the relay parent-death path.
             result = json.loads(proof.read_text())
             app_pid = result.pop('app_pid')
-            entry = Path('/proc', str(app_pid))
-            args = (entry / 'cmdline').read_bytes().split(b'\0')
+            args = hostproc.cmdline(app_pid) or []
             assert __file__.encode() in args and b'client' in args
-            assert f'PPid:\t{app.pid}\n' in (entry / 'status').read_text()
+            assert hostproc.parent_pid(app_pid) == app.pid
             os.kill(app_pid, 9)
             deadline = time.monotonic() + 4
             while (active or len(disconnected) < 2) and time.monotonic() < deadline:

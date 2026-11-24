@@ -465,13 +465,18 @@ class PortalRelay:
         self.loop.quit()
 
 
-def relay(ready_fd: int, parent: int):
-    # Do this before importing GI or connecting either bus; a hard-killed app
-    # must never leave a relay holding screen-sharing sessions alive.
+def _hostproc():
     try:
         from . import hostproc
     except ImportError:  # run as a script beside its siblings
         import hostproc
+    return hostproc
+
+
+def relay(ready_fd: int, parent: int):
+    # Do this before importing GI or connecting either bus; a hard-killed app
+    # must never leave a relay holding screen-sharing sessions alive.
+    hostproc = _hostproc()
     try:
         hostproc.set_parent_death_signal(signal.SIGKILL)
     except OSError as error:
@@ -497,7 +502,7 @@ def launch(command):
     helper = None
     try:
         helper = subprocess.Popen(
-            ["/usr/bin/python3", str(Path(__file__).resolve()), "--relay", str(write_fd), str(os.getpid())],
+            [_hostproc().system_python(), str(Path(__file__).resolve()), "--relay", str(write_fd), str(os.getpid())],
             pass_fds=(write_fd,), stdin=subprocess.DEVNULL)
         os.close(write_fd)
         write_fd = -1
