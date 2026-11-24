@@ -18,6 +18,7 @@
 #
 # Nothing is installed system-wide and nothing is installed as root.
 set -euo pipefail
+. "$(dirname -- "${BASH_SOURCE[0]}")/portable.sh"
 umask 077
 
 KILIX_HOME="${KILIX_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -74,7 +75,7 @@ case "$KILIX_YAMNET_DIR" in
   /*) ;;
   *) die "KILIX_YAMNET_DIR must be an absolute path: $KILIX_YAMNET_DIR" ;;
 esac
-yamnet_dir="$(realpath -m -- "$KILIX_YAMNET_DIR" 2>/dev/null)" \
+yamnet_dir="$(kilix_realpath_m "$KILIX_YAMNET_DIR" 2>/dev/null)" \
   || die "could not normalize KILIX_YAMNET_DIR=$KILIX_YAMNET_DIR"
 case "$yamnet_dir" in
   /|"$HOME"|"$GPU_TERMINAL_DATA_HOME")
@@ -134,7 +135,7 @@ report() {
   fi
   if [ -f "$model" ]; then
     printf 'model:      %s (%s bytes)\n' "$model" \
-      "$(stat -c %s -- "$model" 2>/dev/null || echo '?')"
+      "$(kilix_stat_size "$model" 2>/dev/null || echo '?')"
   else
     printf 'model:      not fetched\n'
   fi

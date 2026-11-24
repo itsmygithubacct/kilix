@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Install the locked CPU audition runtime only when its tier is selected.
 set -euo pipefail
+. "$(dirname -- "${BASH_SOURCE[0]}")/portable.sh"
 umask 077
 
 KILIX_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -43,7 +44,7 @@ mkdir -p -- "$root/generations" "$root/tmp"
 [ ! -e "$current" ] || [ -L "$current" ] \
   || fail 'the managed Qwen current path is not a symlink'
 exec 9<"$root"
-flock 9
+kilix_lock_fd 9
 if [ -L "$current" ]; then
   previous="$(readlink -- "$current")"
   case "$previous" in "$root/generations/"*) ;; \

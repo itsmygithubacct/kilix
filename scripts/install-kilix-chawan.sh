@@ -5,6 +5,7 @@
 # so this installer bootstraps a pinned Nim toolchain of its own rather than
 # asking the user to install one system-wide. Nothing here needs root.
 set -euo pipefail
+. "$(dirname -- "${BASH_SOURCE[0]}")/portable.sh"
 umask 077
 
 KILIX_HOME="${KILIX_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -85,7 +86,7 @@ case "$KILIX_CHAWAN_DIR" in
   /*) ;;
   *) die "KILIX_CHAWAN_DIR must be a normalized absolute path: $KILIX_CHAWAN_DIR" ;;
 esac
-chawan_dir="$(realpath -m -- "$KILIX_CHAWAN_DIR" 2>/dev/null)" \
+chawan_dir="$(kilix_realpath_m "$KILIX_CHAWAN_DIR" 2>/dev/null)" \
   || die "could not normalize KILIX_CHAWAN_DIR=$KILIX_CHAWAN_DIR"
 [ "$chawan_dir" = "$KILIX_CHAWAN_DIR" ] \
   || die "KILIX_CHAWAN_DIR must be normalized and contain no symlink components: $KILIX_CHAWAN_DIR"
@@ -435,7 +436,7 @@ advance_existing_checkout() {
 if git -C "$chawan_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   checkout_root="$(git -C "$chawan_dir" rev-parse --show-toplevel 2>/dev/null)" \
     || die "could not resolve the kilix-chawan checkout root"
-  checkout_root="$(realpath -m -- "$checkout_root")"
+  checkout_root="$(kilix_realpath_m "$checkout_root")"
   [ "$checkout_root" = "$chawan_dir" ] \
     || die "$chawan_dir is nested inside a different Git checkout: $checkout_root"
   origin="$(git -C "$chawan_dir" remote get-url origin 2>/dev/null || true)"

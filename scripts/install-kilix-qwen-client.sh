@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Lazy, inference-free client for Voice's receipt-backed Qwen provider.
 set -euo pipefail
+. "$(dirname -- "${BASH_SOURCE[0]}")/portable.sh"
 umask 077
 
 KILIX_HOME="${KILIX_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -31,7 +32,7 @@ esac
 [ "$(id -u)" -ne 0 ] || fail 'run this as the desktop user'
 [ -x /usr/bin/python3 ] || fail 'system Python is unavailable'
 command -v git >/dev/null || fail 'git is required for the pinned client source'
-command -v flock >/dev/null || fail 'flock is required for the client install lock'
+command -v "$(kilix_lock_tool)" >/dev/null || fail "$(kilix_lock_tool) is required for the client install lock"
 case "$root" in /|"$HOME") fail 'refusing a broad runtime directory' ;; esac
 case "$source_dir" in /|"$HOME") fail 'refusing a broad source directory' ;; esac
 mkdir -p -- "$GPU_TERMINAL_SOURCE_HOME" "$root/generations"
@@ -42,7 +43,7 @@ mkdir -p -- "$GPU_TERMINAL_SOURCE_HOME" "$root/generations"
 [ ! -e "$current" ] || [ -L "$current" ] \
   || fail 'the managed client current path is not a symlink'
 exec 9<"$root"
-flock 9
+kilix_lock_fd 9
 # An upgrade finds current on the previously pinned generation; anything that
 # is not a managed generation directory is still refused.
 if [ -L "$current" ]; then

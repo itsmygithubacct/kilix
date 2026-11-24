@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Prepare the exact Kilix Cap desktop selected by this Kilix checkout.
 set -euo pipefail
+. "$(dirname -- "${BASH_SOURCE[0]}")/portable.sh"
 umask 077
 
 KILIX_HOME="${KILIX_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -62,7 +63,7 @@ case "$KILIX_CAP_DIR" in
   /*) ;;
   *) die "KILIX_CAP_DIR must be a normalized absolute path: $KILIX_CAP_DIR" ;;
 esac
-cap_dir="$(realpath -m -- "$KILIX_CAP_DIR" 2>/dev/null)" \
+cap_dir="$(kilix_realpath_m "$KILIX_CAP_DIR" 2>/dev/null)" \
   || die "could not normalize KILIX_CAP_DIR=$KILIX_CAP_DIR"
 [ "$cap_dir" = "$KILIX_CAP_DIR" ] \
   || die "KILIX_CAP_DIR must be normalized and contain no symlink components: $KILIX_CAP_DIR"
@@ -165,7 +166,7 @@ advance_existing_checkout() {
 if git -C "$cap_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   checkout_root="$(git -C "$cap_dir" rev-parse --show-toplevel 2>/dev/null)" \
     || die "could not resolve the Kilix Cap checkout root"
-  checkout_root="$(realpath -m -- "$checkout_root")"
+  checkout_root="$(kilix_realpath_m "$checkout_root")"
   [ "$checkout_root" = "$cap_dir" ] \
     || die "$cap_dir is nested inside a different Git checkout: $checkout_root"
   origin="$(git -C "$cap_dir" remote get-url origin 2>/dev/null || true)"

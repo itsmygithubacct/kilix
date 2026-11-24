@@ -20,6 +20,7 @@
 # virtualenv is the user's, under the GPU Terminal data root, and removing the
 # directory removes the runtime.
 set -euo pipefail
+. "$(dirname -- "${BASH_SOURCE[0]}")/portable.sh"
 umask 077
 
 KILIX_HOME="${KILIX_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -90,7 +91,7 @@ case "$KILIX_YOLO_DIR" in
   /*) ;;
   *) die "KILIX_YOLO_DIR must be an absolute path: $KILIX_YOLO_DIR" ;;
 esac
-yolo_dir="$(realpath -m -- "$KILIX_YOLO_DIR" 2>/dev/null)" \
+yolo_dir="$(kilix_realpath_m "$KILIX_YOLO_DIR" 2>/dev/null)" \
   || die "could not normalize KILIX_YOLO_DIR=$KILIX_YOLO_DIR"
 case "$yolo_dir" in
   /|"$HOME"|"$GPU_TERMINAL_DATA_HOME")
@@ -164,7 +165,7 @@ report() {
     printf 'ultralytics: not installed\n'
   fi
   if [ -f "$weights" ]; then
-    printf 'weights:   %s (%s bytes)\n' "$weights" "$(stat -c %s "$weights")"
+    printf 'weights:   %s (%s bytes)\n' "$weights" "$(kilix_stat_size "$weights")"
   else
     printf 'weights:   %s missing\n' "$weights"
   fi

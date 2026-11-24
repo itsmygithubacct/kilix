@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Install the exact tmux-tui + tmux-cli source closure selected by Kilix.
 set -euo pipefail
+. "$(dirname -- "${BASH_SOURCE[0]}")/portable.sh"
 umask 077
 
 KILIX_HOME="${KILIX_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -60,7 +61,7 @@ done
 normalize_absolute() {
   local value="$1" normalized
   case "$value" in /*) ;; *) return 1 ;; esac
-  normalized="$(realpath -m -- "$value" 2>/dev/null)" || return 1
+  normalized="$(kilix_realpath_m "$value" 2>/dev/null)" || return 1
   [ "$normalized" = "$value" ] || return 1
   printf '%s\n' "$normalized"
 }
@@ -75,15 +76,15 @@ case "$source_home" in /|"$HOME") die "refusing broad source root: $source_home"
 case "$prefix" in /|"$HOME") die "refusing broad install prefix: $prefix" ;; esac
 
 mkdir -p -- "$source_home" "$state_dir" "$prefix/bin"
-chmod 0700 -- "$state_dir" 2>/dev/null || true
+chmod -- 0700 "$state_dir" 2>/dev/null || true
 for protected in "$source_home" "$state_dir"; do
   [ -d "$protected" ] && [ ! -L "$protected" ] \
-    && [ "$(stat -c '%u' -- "$protected" 2>/dev/null)" = "$(id -u)" ] \
+    && [ "$(kilix_stat_uid "$protected" 2>/dev/null)" = "$(id -u)" ] \
     || die "source/state directories must be real directories owned by the current user: $protected"
 done
-if command -v flock >/dev/null 2>&1; then
+if command -v "$(kilix_lock_tool)" >/dev/null 2>&1; then
   exec 9>"$state_dir/tmux-tui-install.lock"
-  flock 9
+  kilix_lock_fd 9
 fi
 
 for command in git python3 ln readlink realpath; do
@@ -92,9 +93,9 @@ done
 
 managed_sources="$source_home/.tmux-tui-sources"
 mkdir -p -- "$managed_sources"
-chmod 0700 -- "$managed_sources" 2>/dev/null || true
+chmod -- 0700 "$managed_sources" 2>/dev/null || true
 [ -d "$managed_sources" ] && [ ! -L "$managed_sources" ] \
-  && [ "$(stat -c '%u:%a' -- "$managed_sources" 2>/dev/null)" = "$(id -u):700" ] \
+  && [ "$(kilix_stat_uid "$managed_sources" 2>/dev/null):$(kilix_stat_mode "$managed_sources" 2>/dev/null)" = "$(id -u):700" ] \
   || die "managed source directory must be owned by the current user with mode 0700"
 
 checkout_dir="$managed_sources/tmux-tui-$TMUX_TUI_REF"
@@ -158,7 +159,7 @@ ensure_checkout() {
     || die "tmux-tui entrypoint is missing or unsafe"
   [ -f "$tb_bin" ] && [ ! -L "$tb_bin" ] \
     || die "tmux-cli entrypoint is missing or unsafe"
-  chmod 0755 -- "$tmux_tui_bin" "$tb_bin"
+  chmod -- 0755 "$tmux_tui_bin" "$tb_bin"
   python3 "$tmux_tui_bin" --version >/dev/null \
     || die "tmux-tui version probe failed"
   python3 "$tb_bin" --version >/dev/null \
@@ -185,8 +186,8 @@ is_managed_checkout_entry() {
   [[ "${checkout##*/}" =~ ^tmux-tui-[0-9a-fA-F]{40}$ ]] || return 1
   [ "${sources##*/}" = .tmux-tui-sources ] || return 1
   [ -d "$sources" ] && [ ! -L "$sources" ] && [ -d "$checkout" ] \
-    && [ "$(stat -c '%u' -- "$sources" 2>/dev/null)" = "$(id -u)" ] \
-    && [ "$(stat -c '%u' -- "$checkout" 2>/dev/null)" = "$(id -u)" ]
+    && [ "$(kilix_stat_uid "$sources" 2>/dev/null)" = "$(id -u)" ] \
+    && [ "$(kilix_stat_uid "$checkout" 2>/dev/null)" = "$(id -u)" ]
 }
 
 managed_link() {
@@ -237,7 +238,7 @@ esac
 stamp_tmp="$(mktemp "$state_dir/.tmux-tui-refs.XXXXXX")" \
   || die "could not create install stamp"
 printf '%s\n' "$expected_refs" >"$stamp_tmp"
-chmod 0600 -- "$stamp_tmp"
+chmod -- 0600 "$stamp_tmp"
 mv -fT -- "$stamp_tmp" "$stamp"
 log "installed and verified $tmux_tui_link"
 [ "$tb_mode" != install ] || log "installed and verified $tb_link"

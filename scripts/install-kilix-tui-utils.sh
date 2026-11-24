@@ -2,6 +2,7 @@
 # Prepare the exact kilix-tui-utils checkout selected by this Kilix checkout,
 # install its commands, and print the desktop entry point.
 set -euo pipefail
+. "$(dirname -- "${BASH_SOURCE[0]}")/portable.sh"
 umask 077
 
 KILIX_HOME="${KILIX_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -64,7 +65,7 @@ case "$KILIX_TUI_UTILS_DIR" in
   /*) ;;
   *) die "KILIX_TUI_UTILS_DIR must be a normalized absolute path: $KILIX_TUI_UTILS_DIR" ;;
 esac
-tui_dir="$(realpath -m -- "$KILIX_TUI_UTILS_DIR" 2>/dev/null)" \
+tui_dir="$(kilix_realpath_m "$KILIX_TUI_UTILS_DIR" 2>/dev/null)" \
   || die "could not normalize KILIX_TUI_UTILS_DIR=$KILIX_TUI_UTILS_DIR"
 [ "$tui_dir" = "$KILIX_TUI_UTILS_DIR" ] \
   || die "KILIX_TUI_UTILS_DIR must be normalized and contain no symlink components: $KILIX_TUI_UTILS_DIR"
@@ -160,7 +161,7 @@ advance_existing_checkout() {
 if git -C "$tui_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   checkout_root="$(git -C "$tui_dir" rev-parse --show-toplevel 2>/dev/null)" \
     || die "could not resolve the kilix-tui-utils checkout root"
-  checkout_root="$(realpath -m -- "$checkout_root")"
+  checkout_root="$(kilix_realpath_m "$checkout_root")"
   [ "$checkout_root" = "$tui_dir" ] \
     || die "$tui_dir is nested inside a different Git checkout: $checkout_root"
   origin="$(git -C "$tui_dir" remote get-url origin 2>/dev/null || true)"

@@ -24,6 +24,7 @@
 # Nothing is installed system-wide and nothing is installed as root. Removing
 # the runtime directory removes the runtime.
 set -euo pipefail
+. "$(dirname -- "${BASH_SOURCE[0]}")/portable.sh"
 umask 077
 
 KILIX_HOME="${KILIX_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -109,7 +110,7 @@ case "$KILIX_YOLOX_DIR" in
   /*) ;;
   *) die "KILIX_YOLOX_DIR must be an absolute path: $KILIX_YOLOX_DIR" ;;
 esac
-yolox_dir="$(realpath -m -- "$KILIX_YOLOX_DIR" 2>/dev/null)" \
+yolox_dir="$(kilix_realpath_m "$KILIX_YOLOX_DIR" 2>/dev/null)" \
   || die "could not normalize KILIX_YOLOX_DIR=$KILIX_YOLOX_DIR"
 case "$yolox_dir" in
   /|"$HOME"|"$GPU_TERMINAL_DATA_HOME")
@@ -215,7 +216,7 @@ resolve_source() {
     /*) ;;
     *) die "KILIX_YOLOX_SRC must be a normalized absolute path: $KILIX_YOLOX_SRC" ;;
   esac
-  src="$(realpath -m -- "$KILIX_YOLOX_SRC" 2>/dev/null)" \
+  src="$(kilix_realpath_m "$KILIX_YOLOX_SRC" 2>/dev/null)" \
     || die "could not normalize KILIX_YOLOX_SRC=$KILIX_YOLOX_SRC"
   [ "$src" = "$KILIX_YOLOX_SRC" ] \
     || die "KILIX_YOLOX_SRC must be normalized and contain no symlink components: $KILIX_YOLOX_SRC"
@@ -226,7 +227,7 @@ resolve_source() {
   command -v git >/dev/null 2>&1 || die "git is required"
 
   if git -C "$src" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    [ "$(realpath -m -- "$(git -C "$src" rev-parse --show-toplevel)")" = "$src" ] \
+    [ "$(kilix_realpath_m "$(git -C "$src" rev-parse --show-toplevel)")" = "$src" ] \
       || die "$src is nested inside a different Git checkout"
     origin="$(git -C "$src" remote get-url origin 2>/dev/null || true)"
     if [ "$origin" != "$KILIX_YOLOX_REPO" ] \
@@ -304,7 +305,7 @@ report() {
     printf 'onnxruntime: not installed\n'
   fi
   if [ -f "$weights" ]; then
-    printf 'weights:   %s (%s bytes)\n' "$weights" "$(stat -c %s "$weights")"
+    printf 'weights:   %s (%s bytes)\n' "$weights" "$(kilix_stat_size "$weights")"
   else
     printf 'weights:   %s missing\n' "$weights"
   fi

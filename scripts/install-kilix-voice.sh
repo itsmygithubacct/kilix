@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Install the exact Kilix Voice closure selected by this Kilix checkout.
 set -euo pipefail
+. "$(dirname -- "${BASH_SOURCE[0]}")/portable.sh"
 umask 077
 
 KILIX_HOME="${KILIX_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -177,7 +178,7 @@ python3 -I -B -- "$voice_license_verifier" --check >/dev/null \
 normalize_absolute() {
   local value="$1" normalized
   case "$value" in /*) ;; *) return 1 ;; esac
-  normalized="$(realpath -m -- "$value" 2>/dev/null)" || return 1
+  normalized="$(kilix_realpath_m "$value" 2>/dev/null)" || return 1
   [ "$normalized" = "$value" ] || return 1
   printf '%s\n' "$normalized"
 }
@@ -213,7 +214,7 @@ ensure_owned_directory() {
   [ ! -L "$directory" ] || die "$label must not be a symlink: $directory"
   mkdir -p -- "$directory" || die "could not create $label: $directory"
   [ -d "$directory" ] && [ ! -L "$directory" ] \
-    && [ "$(stat -c '%u' -- "$directory" 2>/dev/null)" = "$(id -u)" ] \
+    && [ "$(kilix_stat_uid "$directory" 2>/dev/null)" = "$(id -u)" ] \
     || die "$label must be a real directory owned by the current user: $directory"
 }
 
@@ -227,14 +228,14 @@ ensure_owned_directory "$models_root" "voice model directory"
 ensure_owned_directory "$runtime_root" "voice runtime directory"
 ensure_owned_directory "$runtime_generations" "voice runtime generations directory"
 ensure_owned_directory "$prefix_bin" "voice command directory"
-chmod 0700 -- "$state_dir" "$voice_data" "$library_root" "$models_root" \
+chmod -- 0700 "$state_dir" "$voice_data" "$library_root" "$models_root" \
   "$runtime_root" "$runtime_generations"
-if command -v flock >/dev/null 2>&1; then
+if command -v "$(kilix_lock_tool)" >/dev/null 2>&1; then
   # Lock the already-validated directory itself. Opening a named lock file with
   # shell redirection would follow a pre-planted symlink and truncate its target
   # before flock ever ran.
   exec 9<"$state_dir"
-  flock 9
+  kilix_lock_fd 9
 fi
 
 # Keep installer-owned exact checkouts separate from editable sibling projects.
@@ -242,9 +243,9 @@ fi
 # developer's checkout, and an older closure remains available after rollback.
 managed_sources="$source_home/.kilix-voice-sources"
 ensure_owned_directory "$managed_sources" "managed source directory"
-chmod 0700 -- "$managed_sources" 2>/dev/null || true
+chmod -- 0700 "$managed_sources" 2>/dev/null || true
 [ -d "$managed_sources" ] && [ ! -L "$managed_sources" ] \
-  && [ "$(stat -c '%u:%a' -- "$managed_sources" 2>/dev/null)" = "$(id -u):700" ] \
+  && [ "$(kilix_stat_uid "$managed_sources" 2>/dev/null):$(kilix_stat_mode "$managed_sources" 2>/dev/null)" = "$(id -u):700" ] \
   || die "managed source directory must be owned by the current user with mode 0700"
 voice_dir="$managed_sources/kilix-voice-$KILIX_VOICE_REF"
 model="$models_root/$model_id"
@@ -655,7 +656,7 @@ fetch_verified() {
     || die "could not download $label from $url"
   printf '%s  %s\n' "$expected" "$download_tmp" | sha256sum -c --status \
     || die "checksum mismatch for $label; refusing to install an unverified download"
-  chmod 0600 -- "$download_tmp" || die "could not secure the downloaded $label"
+  chmod -- 0600 "$download_tmp" || die "could not secure the downloaded $label"
   mv -f -- "$download_tmp" "$destination" || die "could not publish $label"
   download_tmp=""
 }
@@ -733,7 +734,7 @@ write_library_provenance() {
   license_tmp="$(mktemp "$directory/.LICENSE.Apache-2.0.XXXXXX")" \
     || { rm -f -- "$notice_tmp"; die "could not stage Vosk library license"; }
   print_library_provenance >"$notice_tmp"
-  chmod 0644 -- "$notice_tmp"
+  chmod -- 0644 "$notice_tmp"
   install -m 0644 -- "$KILIX_VOICE_APACHE_LICENSE_FILE" "$license_tmp"
   mv -fT -- "$notice_tmp" "$notice" \
     || { rm -f -- "$notice_tmp" "$license_tmp"; die "could not publish Vosk library provenance"; }
@@ -749,7 +750,7 @@ write_model_provenance() {
   license_tmp="$(mktemp "$directory/.LICENSE.Apache-2.0.XXXXXX")" \
     || { rm -f -- "$notice_tmp"; die "could not stage Vosk model license"; }
   print_model_provenance >"$notice_tmp"
-  chmod 0644 -- "$notice_tmp"
+  chmod -- 0644 "$notice_tmp"
   install -m 0644 -- "$KILIX_VOICE_APACHE_LICENSE_FILE" "$license_tmp"
   mv -fT -- "$notice_tmp" "$notice" \
     || { rm -f -- "$notice_tmp" "$license_tmp"; die "could not publish Vosk model provenance"; }
@@ -997,8 +998,8 @@ if [ "$without_dictation" = 0 ]; then
   else
     mkdir -- "$library_generation"
   fi
-  chmod 0700 -- "$library_generation"
-  [ "$(stat -c '%u:%a' -- "$library_generation" 2>/dev/null)" = "$(id -u):700" ] \
+  chmod -- 0700 "$library_generation"
+  [ "$(kilix_stat_uid "$library_generation" 2>/dev/null):$(kilix_stat_mode "$library_generation" 2>/dev/null)" = "$(id -u):700" ] \
     || die "Vosk library generation must be owned by the current user with mode 0700"
 
   if [ -e "$library_generation/libvosk.so" ] \

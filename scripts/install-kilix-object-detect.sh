@@ -2,6 +2,7 @@
 # Prepare the exact kilix-look image and video analyzer selected by this Kilix
 # checkout.
 set -euo pipefail
+. "$(dirname -- "${BASH_SOURCE[0]}")/portable.sh"
 umask 077
 
 KILIX_HOME="${KILIX_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -59,7 +60,7 @@ case "$KILIX_LOOK_DIR" in
   /*) ;;
   *) die "KILIX_LOOK_DIR must be a normalized absolute path: $KILIX_LOOK_DIR" ;;
 esac
-look_dir="$(realpath -m -- "$KILIX_LOOK_DIR" 2>/dev/null)" \
+look_dir="$(kilix_realpath_m "$KILIX_LOOK_DIR" 2>/dev/null)" \
   || die "could not normalize KILIX_LOOK_DIR=$KILIX_LOOK_DIR"
 [ "$look_dir" = "$KILIX_LOOK_DIR" ] \
   || die "KILIX_LOOK_DIR must be normalized and contain no symlink components: $KILIX_LOOK_DIR"
@@ -163,7 +164,7 @@ advance_existing_checkout() {
 if git -C "$look_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   checkout_root="$(git -C "$look_dir" rev-parse --show-toplevel 2>/dev/null)" \
     || die "could not resolve the kilix-object-detect checkout root"
-  checkout_root="$(realpath -m -- "$checkout_root")"
+  checkout_root="$(kilix_realpath_m "$checkout_root")"
   [ "$checkout_root" = "$look_dir" ] \
     || die "$look_dir is nested inside a different Git checkout: $checkout_root"
   origin="$(git -C "$look_dir" remote get-url origin 2>/dev/null || true)"

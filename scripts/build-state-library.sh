@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+. "$(dirname -- "${BASH_SOURCE[0]}")/portable.sh"
 umask 077
 
 KILIX_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
@@ -15,10 +16,10 @@ case "${1:-}" in
   *) echo "usage: $0 [--print-path]" >&2; exit 2 ;;
 esac
 
-_storage="$(realpath -m -- "$KILIX_STORAGE_HOME")"
-_build="$(realpath -m -- "$KILIX_BUILD_DIRECTORY")"
-_home="$(realpath -m -- "$HOME")"
-_source="$(realpath -m -- "$KILIX_HOME")"
+_storage="$(kilix_realpath_m "$KILIX_STORAGE_HOME")"
+_build="$(kilix_realpath_m "$KILIX_BUILD_DIRECTORY")"
+_home="$(kilix_realpath_m "$HOME")"
+_source="$(kilix_realpath_m "$KILIX_HOME")"
 if [ "$_storage" = / ] || [ "$_storage" = "$_home" ] \
      || [ "$_storage" = "$_source" ]; then
   echo "kilix state: refusing broad or source-tree storage root: $_storage" >&2
@@ -48,12 +49,12 @@ _ensure_private_directory() {
   else
     mkdir -p -- "$path"
   fi
-  owner="$(stat -c '%u' -- "$path")"
+  owner="$(kilix_stat_uid "$path")"
   if [ "$owner" != "$(id -u)" ]; then
     echo "kilix state: $label directory is not owned by this user: $path" >&2
     return 1
   fi
-  chmod 0700 -- "$path"
+  chmod -- 0700 "$path"
 }
 
 [ -f "$STATE_SOURCE/Makefile" ] || {
@@ -72,12 +73,12 @@ if [ -n "$(git -C "$STATE_SOURCE" status --porcelain \
   echo "kilix state: refusing modified pinned native source" >&2
   exit 1
 fi
-command -v make >/dev/null 2>&1 || {
-  echo "kilix state: make is required to build libkilix-state" >&2
+command -v "$(kilix_make_tool)" >/dev/null 2>&1 || {
+  echo "kilix state: $(kilix_make_tool) is required to build libkilix-state" >&2
   exit 1
 }
-command -v flock >/dev/null 2>&1 || {
-  echo "kilix state: flock is required to serialize native builds" >&2
+command -v "$(kilix_lock_tool)" >/dev/null 2>&1 || {
+  echo "kilix state: $(kilix_lock_tool) is required to serialize native builds" >&2
   exit 1
 }
 
@@ -88,17 +89,17 @@ _ensure_private_directory "$STATE_BUILD" state-build
 
 exec 9>"$STATE_BUILD/.build.lock"
 chmod 0600 "$STATE_BUILD/.build.lock"
-flock 9
+kilix_lock_fd 9
 _source_stamp="$STATE_BUILD/source-id"
 _force=()
 if [ ! -f "$_source_stamp" ] \
      || [ "$(cat "$_source_stamp" 2>/dev/null || true)" != "$_actual_source" ]; then
   _force=(-B)
 fi
-if ! make --silent --no-print-directory --question -C "$STATE_SOURCE" \
+if ! kilix_make --silent --no-print-directory --question -C "$STATE_SOURCE" \
      "${_force[@]}" BUILD_DIR="$STATE_BUILD" all >/dev/null 2>&1; then
   echo "kilix state: building pinned libkilix-state" >&2
-  make --silent --no-print-directory "${_force[@]}" -C "$STATE_SOURCE" \
+  kilix_make --silent --no-print-directory "${_force[@]}" -C "$STATE_SOURCE" \
     BUILD_DIR="$STATE_BUILD" all
 fi
 [ -f "$STATE_LIBRARY" ] && [ ! -L "$STATE_LIBRARY" ] || {
@@ -109,11 +110,11 @@ _stamp_tmp="$(mktemp "$STATE_BUILD/source-id.tmp.XXXXXX")"
 printf '%s\n' "$_actual_source" >"$_stamp_tmp"
 chmod 0600 "$_stamp_tmp"
 mv -f -- "$_stamp_tmp" "$_source_stamp"
-if [ "$(stat -c '%u' -- "$STATE_LIBRARY")" != "$(id -u)" ]; then
+if [ "$(kilix_stat_uid "$STATE_LIBRARY")" != "$(id -u)" ]; then
   echo "kilix state: native library is not owned by this user" >&2
   exit 1
 fi
-chmod 0700 -- "$STATE_LIBRARY"
+chmod -- 0700 "$STATE_LIBRARY"
 
 if [ "${1:-}" = --print-path ]; then
   printf '%s\n' "$STATE_LIBRARY"

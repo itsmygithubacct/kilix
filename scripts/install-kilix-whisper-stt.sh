@@ -8,6 +8,7 @@
 # model and never downloads one: the weights are the licence-gated
 # faster-whisper-small-en asset, installed by `kilix stt --install`.
 set -euo pipefail
+. "$(dirname -- "${BASH_SOURCE[0]}")/portable.sh"
 umask 077
 
 GPU_TERMINAL_HOME="${GPU_TERMINAL_HOME:-$HOME/.local/gpu_terminal}"
@@ -49,7 +50,7 @@ mkdir -p -- "$GPU_TERMINAL_SOURCE_HOME" "$root/generations"
 [ ! -e "$current" ] || [ -L "$current" ] \
   || fail 'the managed Whisper current path is not a symlink'
 exec 9<"$root"
-flock 9
+kilix_lock_fd 9
 if [ -L "$current" ]; then
   case "$(readlink -- "$current")" in "$root/generations/"*) ;;
     *) fail 'the managed Whisper current link points outside the generation store' ;;

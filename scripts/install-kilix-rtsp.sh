@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Prepare the exact kilix-rtsp camera viewer selected by this Kilix checkout.
 set -euo pipefail
+. "$(dirname -- "${BASH_SOURCE[0]}")/portable.sh"
 umask 077
 
 KILIX_HOME="${KILIX_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -58,7 +59,7 @@ case "$KILIX_RTSP_DIR" in
   /*) ;;
   *) die "KILIX_RTSP_DIR must be a normalized absolute path: $KILIX_RTSP_DIR" ;;
 esac
-rtsp_dir="$(realpath -m -- "$KILIX_RTSP_DIR" 2>/dev/null)" \
+rtsp_dir="$(kilix_realpath_m "$KILIX_RTSP_DIR" 2>/dev/null)" \
   || die "could not normalize KILIX_RTSP_DIR=$KILIX_RTSP_DIR"
 [ "$rtsp_dir" = "$KILIX_RTSP_DIR" ] \
   || die "KILIX_RTSP_DIR must be normalized and contain no symlink components: $KILIX_RTSP_DIR"
@@ -161,7 +162,7 @@ advance_existing_checkout() {
 if git -C "$rtsp_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   checkout_root="$(git -C "$rtsp_dir" rev-parse --show-toplevel 2>/dev/null)" \
     || die "could not resolve the kilix-rtsp checkout root"
-  checkout_root="$(realpath -m -- "$checkout_root")"
+  checkout_root="$(kilix_realpath_m "$checkout_root")"
   [ "$checkout_root" = "$rtsp_dir" ] \
     || die "$rtsp_dir is nested inside a different Git checkout: $checkout_root"
   origin="$(git -C "$rtsp_dir" remote get-url origin 2>/dev/null || true)"

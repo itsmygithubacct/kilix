@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Prepare the exact Kilix Land desktop selected by this Kilix checkout.
 set -euo pipefail
+. "$(dirname -- "${BASH_SOURCE[0]}")/portable.sh"
 umask 077
 
 KILIX_HOME="${KILIX_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -65,7 +66,7 @@ case "$KILIX_LAND_DESKTOP_DIR" in
   /*) ;;
   *) die "KILIX_LAND_DESKTOP_DIR must be a normalized absolute path: $KILIX_LAND_DESKTOP_DIR" ;;
 esac
-land_dir="$(realpath -m -- "$KILIX_LAND_DESKTOP_DIR" 2>/dev/null)" \
+land_dir="$(kilix_realpath_m "$KILIX_LAND_DESKTOP_DIR" 2>/dev/null)" \
   || die "could not normalize KILIX_LAND_DESKTOP_DIR=$KILIX_LAND_DESKTOP_DIR"
 [ "$land_dir" = "$KILIX_LAND_DESKTOP_DIR" ] \
   || die "KILIX_LAND_DESKTOP_DIR must be normalized and contain no symlink components: $KILIX_LAND_DESKTOP_DIR"
@@ -176,7 +177,7 @@ advance_existing_checkout() {
 if git -C "$land_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   checkout_root="$(git -C "$land_dir" rev-parse --show-toplevel 2>/dev/null)" \
     || die "could not resolve the Kilix Land checkout root"
-  checkout_root="$(realpath -m -- "$checkout_root")"
+  checkout_root="$(kilix_realpath_m "$checkout_root")"
   [ "$checkout_root" = "$land_dir" ] \
     || die "$land_dir is nested inside a different Git checkout: $checkout_root"
   origin="$(git -C "$land_dir" remote get-url origin 2>/dev/null || true)"

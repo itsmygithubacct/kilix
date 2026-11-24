@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+. "$(dirname -- "${BASH_SOURCE[0]}")/portable.sh"
 umask 077
 
 KILIX_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
@@ -30,11 +31,11 @@ case "${1:-}" in
   *) echo "usage: $0 [--print-path serve|attach]" >&2; exit 2 ;;
 esac
 
-source_path="$(realpath -m -- "$MULTIPLEXER_SOURCE")"
-storage_path="$(realpath -m -- "$KILIX_STORAGE_HOME")"
-build_path="$(realpath -m -- "$KILIX_BUILD_DIRECTORY")"
-home_path="$(realpath -m -- "$HOME")"
-kilix_path="$(realpath -m -- "$KILIX_HOME")"
+source_path="$(kilix_realpath_m "$MULTIPLEXER_SOURCE")"
+storage_path="$(kilix_realpath_m "$KILIX_STORAGE_HOME")"
+build_path="$(kilix_realpath_m "$KILIX_BUILD_DIRECTORY")"
+home_path="$(kilix_realpath_m "$HOME")"
+kilix_path="$(kilix_realpath_m "$KILIX_HOME")"
 
 case "$source_path" in
   /|"$home_path"|"$kilix_path")
@@ -62,15 +63,15 @@ ensure_private_directory() {
   else
     mkdir -p -- "$path"
   fi
-  owner="$(stat -c '%u' -- "$path")"
+  owner="$(kilix_stat_uid "$path")"
   if [ "$owner" != "$(id -u)" ]; then
     echo "kilix remote: $label directory is not owned by this user: $path" >&2
     return 1
   fi
   # Do not mutate the directory history of another current build owner when
   # the required mode is already in place.
-  if [ "$(stat -c '%a' -- "$path")" != 700 ]; then
-    chmod 0700 -- "$path"
+  if [ "$(kilix_stat_mode "$path")" != 700 ]; then
+    chmod -- 0700 "$path"
   fi
 }
 
@@ -81,16 +82,16 @@ if [ ! -f "$source_path/Makefile" ] \
   exit 1
 fi
 if [ -L "$source_path" ] \
-     || [ "$(stat -c '%u' -- "$source_path")" != "$(id -u)" ]; then
+     || [ "$(kilix_stat_uid "$source_path")" != "$(id -u)" ]; then
   echo "kilix remote: source must be a real directory owned by this user: $source_path" >&2
   exit 1
 fi
-command -v make >/dev/null 2>&1 || {
-  echo "kilix remote: make is required" >&2
+command -v "$(kilix_make_tool)" >/dev/null 2>&1 || {
+  echo "kilix remote: $(kilix_make_tool) is required" >&2
   exit 1
 }
-command -v flock >/dev/null 2>&1 || {
-  echo "kilix remote: flock is required" >&2
+command -v "$(kilix_lock_tool)" >/dev/null 2>&1 || {
+  echo "kilix remote: $(kilix_lock_tool) is required" >&2
   exit 1
 }
 

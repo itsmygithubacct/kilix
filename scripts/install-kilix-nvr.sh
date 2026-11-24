@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Prepare the exact kilix-nvr camera recorder selected by this Kilix checkout.
 set -euo pipefail
+. "$(dirname -- "${BASH_SOURCE[0]}")/portable.sh"
 umask 077
 
 KILIX_HOME="${KILIX_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -58,7 +59,7 @@ case "$KILIX_NVR_DIR" in
   /*) ;;
   *) die "KILIX_NVR_DIR must be a normalized absolute path: $KILIX_NVR_DIR" ;;
 esac
-nvr_dir="$(realpath -m -- "$KILIX_NVR_DIR" 2>/dev/null)" \
+nvr_dir="$(kilix_realpath_m "$KILIX_NVR_DIR" 2>/dev/null)" \
   || die "could not normalize KILIX_NVR_DIR=$KILIX_NVR_DIR"
 [ "$nvr_dir" = "$KILIX_NVR_DIR" ] \
   || die "KILIX_NVR_DIR must be normalized and contain no symlink components: $KILIX_NVR_DIR"
@@ -162,7 +163,7 @@ advance_existing_checkout() {
 if git -C "$nvr_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   checkout_root="$(git -C "$nvr_dir" rev-parse --show-toplevel 2>/dev/null)" \
     || die "could not resolve the kilix-nvr checkout root"
-  checkout_root="$(realpath -m -- "$checkout_root")"
+  checkout_root="$(kilix_realpath_m "$checkout_root")"
   [ "$checkout_root" = "$nvr_dir" ] \
     || die "$nvr_dir is nested inside a different Git checkout: $checkout_root"
   origin="$(git -C "$nvr_dir" remote get-url origin 2>/dev/null || true)"

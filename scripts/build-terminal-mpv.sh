@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Build the pinned terminal player with the Kitty resize-buffer lifetime fix.
 set -euo pipefail
+. "$(dirname -- "${BASH_SOURCE[0]}")/portable.sh"
 if [[ ${1:-} == --help ]]; then
   echo 'usage: kilix video --install-player'
   echo 'Builds mpv 0.40.0 with the terminal resize fix into private Kilix storage.'
@@ -18,7 +19,7 @@ pkg-config --exists libavcodec libavfilter libavformat libavutil libswresample l
 root="${KILIX_STORAGE_HOME:-${GPU_TERMINAL_HOME:-$HOME/.local/gpu_terminal}/kilix}/media/mpv-0.40.0-kilix1"
 mkdir -p "$root"
 exec 9>"$root/build.lock"
-flock 9
+kilix_lock_fd 9
 work="$(mktemp -d "$root/build.XXXXXXXX")"
 trap 'rm -rf -- "$work"' EXIT
 curl --fail --location --retry 2 --output "$work/source.tar.gz" \

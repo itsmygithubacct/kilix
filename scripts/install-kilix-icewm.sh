@@ -2,6 +2,7 @@
 # Prepare the exact Kilix IceWM desktop selected by this Kilix checkout.
 # The provider checkout is pinned here; its own lazy builder owns the IceWM pin.
 set -euo pipefail
+. "$(dirname -- "${BASH_SOURCE[0]}")/portable.sh"
 umask 077
 
 KILIX_HOME="${KILIX_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -62,7 +63,7 @@ case "$KILIX_ICEWM_DIR" in
   /*) ;;
   *) die "KILIX_ICEWM_DIR must be a normalized absolute path: $KILIX_ICEWM_DIR" ;;
 esac
-icewm_dir="$(realpath -m -- "$KILIX_ICEWM_DIR" 2>/dev/null)" \
+icewm_dir="$(kilix_realpath_m "$KILIX_ICEWM_DIR" 2>/dev/null)" \
   || die "could not normalize KILIX_ICEWM_DIR=$KILIX_ICEWM_DIR"
 [ "$icewm_dir" = "$KILIX_ICEWM_DIR" ] \
   || die "KILIX_ICEWM_DIR must be normalized and contain no symlink components: $KILIX_ICEWM_DIR"
@@ -145,7 +146,7 @@ advance_existing_checkout() {
 if git -C "$icewm_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   checkout_root="$(git -C "$icewm_dir" rev-parse --show-toplevel 2>/dev/null)" \
     || die "could not resolve the Kilix IceWM checkout root"
-  checkout_root="$(realpath -m -- "$checkout_root")"
+  checkout_root="$(kilix_realpath_m "$checkout_root")"
   [ "$checkout_root" = "$icewm_dir" ] \
     || die "$icewm_dir is nested inside a different Git checkout: $checkout_root"
   origin="$(git -C "$icewm_dir" remote get-url origin 2>/dev/null || true)"

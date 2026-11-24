@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+. "$(dirname -- "${BASH_SOURCE[0]}")/portable.sh"
 umask 077
 
 KILIX_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
@@ -24,11 +25,11 @@ case "${1:-}" in
   *) echo "usage: $0 [--print-path]" >&2; exit 2 ;;
 esac
 
-_source="$(realpath -m -- "$BROKER_SOURCE")"
-_storage="$(realpath -m -- "$KILIX_STORAGE_HOME")"
-_build="$(realpath -m -- "$KILIX_BUILD_DIRECTORY")"
-_home="$(realpath -m -- "$HOME")"
-_kilix="$(realpath -m -- "$KILIX_HOME")"
+_source="$(kilix_realpath_m "$BROKER_SOURCE")"
+_storage="$(kilix_realpath_m "$KILIX_STORAGE_HOME")"
+_build="$(kilix_realpath_m "$KILIX_BUILD_DIRECTORY")"
+_home="$(kilix_realpath_m "$HOME")"
+_kilix="$(kilix_realpath_m "$KILIX_HOME")"
 
 case "$_source" in
   /|"$HOME"|"$KILIX_HOME")
@@ -55,12 +56,12 @@ _ensure_private_directory() {
   else
     mkdir -p -- "$path"
   fi
-  owner="$(stat -c '%u' -- "$path")"
+  owner="$(kilix_stat_uid "$path")"
   if [ "$owner" != "$(id -u)" ]; then
     echo "kilix pty broker: $label directory is not owned by this user: $path" >&2
     return 1
   fi
-  chmod 0700 -- "$path"
+  chmod -- 0700 "$path"
 }
 
 if [ ! -f "$_source/Makefile" ] || [ ! -f "$_source/include/kitty_pty_broker.h" ]; then
@@ -68,16 +69,16 @@ if [ ! -f "$_source/Makefile" ] || [ ! -f "$_source/include/kitty_pty_broker.h" 
   echo "initialize third_party/kitty-pty-broker or set KILIX_PTY_BROKER_HOME" >&2
   exit 1
 fi
-if [ -L "$_source" ] || [ "$(stat -c '%u' -- "$_source")" != "$(id -u)" ]; then
+if [ -L "$_source" ] || [ "$(kilix_stat_uid "$_source")" != "$(id -u)" ]; then
   echo "kilix pty broker: source must be a real directory owned by this user: $_source" >&2
   exit 1
 fi
-command -v make >/dev/null 2>&1 || {
-  echo "kilix pty broker: make is required" >&2
+command -v "$(kilix_make_tool)" >/dev/null 2>&1 || {
+  echo "kilix pty broker: $(kilix_make_tool) is required" >&2
   exit 1
 }
-command -v flock >/dev/null 2>&1 || {
-  echo "kilix pty broker: flock is required" >&2
+command -v "$(kilix_lock_tool)" >/dev/null 2>&1 || {
+  echo "kilix pty broker: $(kilix_lock_tool) is required" >&2
   exit 1
 }
 
@@ -88,11 +89,11 @@ _ensure_private_directory "$BROKER_BUILD" broker-build
 
 exec 9>"$BROKER_BUILD/.build.lock"
 chmod 0600 "$BROKER_BUILD/.build.lock"
-flock 9
-if ! make --silent --no-print-directory --question -C "$_source" \
+kilix_lock_fd 9
+if ! kilix_make --silent --no-print-directory --question -C "$_source" \
      BUILD_DIR="$BROKER_BUILD" all >/dev/null 2>&1; then
   echo "kilix: building kitty-pty-broker" >&2
-  make --silent --no-print-directory -C "$_source" \
+  kilix_make --silent --no-print-directory -C "$_source" \
     BUILD_DIR="$BROKER_BUILD" all
 fi
 if [ ! -x "$BROKER_EXECUTABLE" ] || [ -L "$BROKER_EXECUTABLE" ] \
@@ -100,12 +101,12 @@ if [ ! -x "$BROKER_EXECUTABLE" ] || [ -L "$BROKER_EXECUTABLE" ] \
   echo "kilix pty broker: native build did not produce the expected artifacts" >&2
   exit 1
 fi
-if [ "$(stat -c '%u' -- "$BROKER_EXECUTABLE")" != "$(id -u)" ] \
-     || [ "$(stat -c '%u' -- "$BROKER_LIBRARY")" != "$(id -u)" ]; then
+if [ "$(kilix_stat_uid "$BROKER_EXECUTABLE")" != "$(id -u)" ] \
+     || [ "$(kilix_stat_uid "$BROKER_LIBRARY")" != "$(id -u)" ]; then
   echo "kilix pty broker: build artifacts are not owned by this user" >&2
   exit 1
 fi
-chmod 0700 -- "$BROKER_EXECUTABLE" "$BROKER_LIBRARY"
+chmod -- 0700 "$BROKER_EXECUTABLE" "$BROKER_LIBRARY"
 
 if [ "${1:-}" = --print-path ]; then
   printf '%s\n' "$BROKER_EXECUTABLE"
