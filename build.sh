@@ -21,11 +21,248 @@ KILIX_BUILD_ENV="${KILIX_BUILD_ENV:-$KILIX_CONFIG_HOME/build.env}"
 export GPU_TERMINAL_HOME KILIX_STORAGE_HOME KILIX_CONFIG_HOME KILIX_CACHE_HOME
 export KILIX_STATE_DIRECTORY KILIX_BUILD_DIRECTORY KILIX_SYSDEPS_HOME
 
+# --- Host portability -------------------------------------------------------
+# GNU userland (Linux) and the BSD userland (FreeBSD) answer the same questions
+# about files with different flags. Every call site below asks one of these
+# functions a question instead of spelling one userland's flags, so each answer
+# is chosen once, here. The external tools are still found on PATH by their
+# plain names, so a test that shadows `mv` or `stat` shadows it here too.
+case "$(uname -s 2>/dev/null || true)" in
+  FreeBSD|DragonFly|NetBSD|OpenBSD|Darwin) _kilix_userland=bsd ;;
+  *) _kilix_userland=gnu ;;
+esac
+
+# Owner uid of PATH (not following a final symlink).
+kilix_stat_uid() {
+  if [ "$_kilix_userland" = bsd ]; then stat -f '%u' -- "$1"; else stat -c '%u' -- "$1"; fi
+}
+
+# Permission bits of PATH in octal, as GNU `stat -c %a` prints them: no leading
+# zero, special bits only when set (700, 600, 1777, 4755).
+# With -L, of what a final symlink points to.
+kilix_stat_mode() {
+  local mode follow=()
+  if [ "${1:-}" = -L ]; then follow=(-L); shift; fi
+  if [ "$_kilix_userland" = bsd ]; then
+    mode="$(stat "${follow[@]}" -f '%Mp%Lp' -- "$1")" || return 1
+    case "$mode" in 0???) mode="${mode#0}" ;; esac
+    printf '%s\n' "$mode"
+  else
+    stat "${follow[@]}" -c '%a' -- "$1"
+  fi
+}
+
+# Size of PATH in bytes.
+kilix_stat_size() {
+  if [ "$_kilix_userland" = bsd ]; then stat -f '%z' -- "$1"; else stat -c '%s' -- "$1"; fi
+}
+
+# "<file type><TAB><device>:<inode>" of PATH, not following a final symlink.
+# The type's spelling is the host stat's own; the value is only ever compared
+# with another value taken on the same host.
+kilix_stat_type_identity() {
+  if [ "$_kilix_userland" = bsd ]; then
+    stat -f '%HT%t%d:%i' -- "$1"
+  else
+    stat -c '%F\t%d:%i' -- "$1"
+  fi
+}
+
+# uid:mode:link-count of PATH (not following a final symlink).
+kilix_stat_meta() {
+  local uid mode links
+  if [ "$_kilix_userland" = bsd ]; then
+    uid="$(stat -f '%u' -- "$1")" || return 1
+    mode="$(kilix_stat_mode "$1")" || return 1
+    links="$(stat -f '%l' -- "$1")" || return 1
+    printf '%s:%s:%s\n' "$uid" "$mode" "$links"
+  else
+    stat -c '%u:%a:%h' -- "$1"
+  fi
+}
+
+# device:inode of PATH; with -L, of what a final symlink points to.
+kilix_stat_identity() {
+  local follow=()
+  if [ "${1:-}" = -L ]; then follow=(-L); shift; fi
+  if [ "$_kilix_userland" = bsd ]; then
+    stat "${follow[@]}" -f '%d:%i' -- "$1"
+  else
+    stat "${follow[@]}" -c '%d:%i' -- "$1"
+  fi
+}
+
+# device:inode of the file open on descriptor FD of this shell. Linux exposes
+# it as /proc/$$/fd/FD. FreeBSD has neither /proc nor (without fdescfs mounted)
+# /dev/fd/N above 2, but base fstat(1) -n reports each descriptor's device (in
+# hex) and inode; printf %u turns the device into stat's unsigned decimal.
+kilix_fd_identity() {
+  local fd="$1" device inode
+  if [ "$_kilix_userland" = gnu ]; then
+    stat -Lc '%d:%i' -- "/proc/$$/fd/$fd"
+    return
+  fi
+  read -r device inode < <(fstat -n -p "$$" 2>/dev/null \
+    | awk -v fd="$fd" '$4 == fd { print $5, $6; exit }') || true
+  case "${device:-}" in 0x[0-9a-fA-F]*) ;; *) return 1 ;; esac
+  case "${inode:-}" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%u:%s\n' "$device" "$inode"
+}
+
+# True when descriptor FD of this shell is open.
+kilix_fd_is_open() {
+  if [ "$_kilix_userland" = gnu ]; then
+    [ -e "/proc/$$/fd/$1" ]
+  else
+    { true >&"$1"; } 2>/dev/null || { true <&"$1"; } 2>/dev/null
+  fi
+}
+
+# The tool that takes an exclusive flock(2) on an open descriptor of this
+# shell: util-linux flock(1) on Linux, base lockf(1) on FreeBSD (its `fd` form
+# uses flock(2), so both interoperate with Python's fcntl.flock).
+kilix_lock_tool() {
+  if [ "$_kilix_userland" = bsd ]; then printf 'lockf\n'; else printf 'flock\n'; fi
+}
+kilix_lock_fd() {
+  if [ "$_kilix_userland" = bsd ]; then lockf -s "$1"; else flock -x "$1"; fi
+}
+# The same lock, but fail at once instead of waiting when it is held.
+kilix_lock_fd_try() {
+  if [ "$_kilix_userland" = bsd ]; then lockf -s -t 0 "$1"; else flock -n "$1"; fi
+}
+
+# realpath -m: canonicalize PATH whether or not it, or any parent, exists.
+# Existing leading components are resolved physically; the rest lexically.
+kilix_realpath_m() {
+  local path="$1" resolved="" component
+  local -a parts
+  if [ "$_kilix_userland" = gnu ]; then
+    realpath -m -- "$path"
+    return
+  fi
+  case "$path" in /*) ;; *) path="$PWD/$path" ;; esac
+  IFS=/ read -r -a parts <<<"$path"
+  for component in "${parts[@]}"; do
+    case "$component" in
+      ''|.) continue ;;
+      ..) resolved="${resolved%/*}"; continue ;;
+    esac
+    resolved="$resolved/$component"
+    if [ -e "$resolved" ]; then
+      resolved="$(realpath -- "$resolved")" || return 1
+      [ "$resolved" != / ] || resolved=""
+    fi
+  done
+  printf '%s\n' "${resolved:-/}"
+}
+
+# mv -T: rename SOURCE onto DEST itself, never into a directory DEST names. GNU
+# mv -T refuses a real directory at DEST; BSD mv -h stops a symlink DEST from
+# being followed, and the explicit check refuses the real directory.
+kilix_mv_onto() {
+  local force=() source dest
+  if [ "${1:-}" = -f ]; then force=(-f); shift; fi
+  source="$1" dest="$2"
+  if [ "$_kilix_userland" = gnu ]; then
+    mv -T "${force[@]}" -- "$source" "$dest"
+    return
+  fi
+  if [ -d "$dest" ] && [ ! -L "$dest" ]; then
+    echo "mv: cannot overwrite directory '$dest' with '$source'" >&2
+    return 1
+  fi
+  mv -h "${force[@]}" -- "$source" "$dest"
+}
+
+# Lower-case SHA-256 hex digest of FILE.
+kilix_sha256_tool() {
+  if [ "$_kilix_userland" = bsd ]; then printf 'sha256\n'; else printf 'sha256sum\n'; fi
+}
+kilix_sha256() {
+  local line
+  if [ "$_kilix_userland" = bsd ]; then
+    line="$(sha256 -q -- "$1")" || return 1
+  else
+    line="$(sha256sum -- "$1")" || return 1
+    line="${line%% *}"
+  fi
+  printf '%s\n' "${line,,}"
+}
+
+# Print the resolved executable path of every process this user can see.
+kilix_process_executables() {
+  local proc_exe
+  if [ "$_kilix_userland" = bsd ]; then
+    # PID COMM OSREL PATH; kernel threads report "-".
+    procstat -h -b -a 2>/dev/null \
+      | awk '{ if (sub(/^ *[0-9]+ +[^ ]+ +[0-9]+ +/, "") && $0 != "-") print }'
+    return 0
+  fi
+  [ -d /proc ] || return 0
+  for proc_exe in /proc/[0-9]*/exe; do
+    [ -L "$proc_exe" ] || continue
+    readlink -f -- "$proc_exe" 2>/dev/null || true
+  done
+}
+# Bytes in sockaddr_un.sun_path, terminator included: 108 on Linux, 104 on the
+# BSDs. A socket path must be shorter than this.
+kilix_unix_socket_path_max() {
+  if [ "$_kilix_userland" = bsd ]; then printf '104\n'; else printf '108\n'; fi
+}
+# Format a Unix time (seconds) with a strftime FORMAT (leading "+" included).
+kilix_format_epoch() {
+  if [ "$_kilix_userland" = bsd ]; then date -r "$1" "$2"; else date -d "@$1" "$2"; fi
+}
+
+# Copy one filesystem entry, never following a symlink, keeping its mode and
+# times (GNU `cp -a --no-dereference`; BSD `cp -a` never dereferences).
+kilix_copy_entry() {
+  if [ "$_kilix_userland" = bsd ]; then
+    cp -a -- "$1" "$2"
+  else
+    cp -a --no-dereference -- "$1" "$2"
+  fi
+}
+
+# A token that names one incarnation of process PID: the same value for as long
+# as that process lives, a different one if the PID is reused. Fails when PID is
+# not running or is a zombie. Linux: the start tick, field 22 of /proc/PID/stat.
+# FreeBSD: ps(1)'s start time.
+kilix_process_start_token() {
+  local pid="$1" record state started
+  local -a fields=()
+  if [ "$_kilix_userland" = bsd ]; then
+    record="$(LC_ALL=C ps -ww -o state= -o lstart= -p "$pid" 2>/dev/null)" || return 1
+    read -r state started <<<"$record"
+    [ -n "${started:-}" ] || return 1
+    case "$state" in Z*) return 1 ;; esac
+    printf '%s\n' "${started// /_}"
+    return 0
+  fi
+  [ -r "/proc/$pid/stat" ] || return 1
+  record=$(<"/proc/$pid/stat") || return 1
+  # comm can contain spaces and closing parentheses; fields follow the last ).
+  read -r -a fields <<<"${record##*) }"
+  [ "${fields[0]:-}" != Z ] && [ "${fields[0]:-}" != X ] || return 1
+  [[ "${fields[19]:-}" =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "${fields[19]}"
+}
+# GNU make: `make` on Linux, the `gmake` package on FreeBSD (whose own make is
+# bmake, which has neither GNU syntax nor GNU long options).
+kilix_make_tool() {
+  if [ "$_kilix_userland" = bsd ]; then printf 'gmake\n'; else printf 'make\n'; fi
+}
+kilix_make() {
+  if [ "$_kilix_userland" = bsd ]; then gmake "$@"; else make "$@"; fi
+}
+# ---------------------------------------------------------------------------
+
 validate_private_storage_layout() {
   local storage private home source
-  storage="$(realpath -m -- "$KILIX_STORAGE_HOME" 2>/dev/null)" || return 1
-  home="$(realpath -m -- "$HOME" 2>/dev/null)" || return 1
-  source="$(realpath -m -- "$KILIX_HOME" 2>/dev/null)" || return 1
+  storage="$(kilix_realpath_m "$KILIX_STORAGE_HOME" 2>/dev/null)" || return 1
+  home="$(kilix_realpath_m "$HOME" 2>/dev/null)" || return 1
+  source="$(kilix_realpath_m "$KILIX_HOME" 2>/dev/null)" || return 1
   if [ "$storage" = / ] || [ "$storage" = "$home" ] \
        || [ "$storage" = "$source" ]; then
     echo "kilix: refusing broad or source-tree storage root: $storage" >&2
@@ -42,7 +279,7 @@ validate_private_storage_layout() {
   for private in "$KILIX_CONFIG_HOME" "$KILIX_CACHE_HOME" \
                  "$KILIX_STATE_DIRECTORY" "$KILIX_BUILD_DIRECTORY" \
                  "$KILIX_SYSDEPS_HOME"; do
-    private="$(realpath -m -- "$private" 2>/dev/null)" || return 1
+    private="$(kilix_realpath_m "$private" 2>/dev/null)" || return 1
     case "$private" in "$storage"/*) ;;
       *) echo "kilix: writable roots must be strict descendants of Kilix storage: $private" >&2
          return 1 ;;
@@ -60,13 +297,13 @@ ensure_private_directory() {
   else
     mkdir -p -- "$path" || return 1
   fi
-  owner="$(stat -c '%u' -- "$path" 2>/dev/null)" || return 1
+  owner="$(kilix_stat_uid "$path" 2>/dev/null)" || return 1
   [ "$owner" = "$(id -u)" ] || {
     echo "kilix: $label directory is not owned by the current user: $path" >&2
     return 1
   }
-  chmod 0700 -- "$path" || return 1
-  mode="$(stat -c '%a' -- "$path" 2>/dev/null)" || return 1
+  chmod -- 0700 "$path" || return 1
+  mode="$(kilix_stat_mode "$path" 2>/dev/null)" || return 1
   [ "$mode" = 700 ] || {
     echo "kilix: $label directory is not mode 0700: $path" >&2
     return 1
@@ -98,9 +335,9 @@ if [ -d "$KILIX_SYSDEPS_HOME/usr" ]; then
 fi
 
 acquire_transaction_lock() {
-  local lock_root lock_path fd fd_path path_identity fd_identity lock_was_present=0
-  if ! command -v flock >/dev/null 2>&1; then
-    echo "kilix: flock not found; cannot serialize build/update" >&2
+  local lock_root lock_path fd path_identity fd_identity lock_was_present=0
+  if ! command -v "$(kilix_lock_tool)" >/dev/null 2>&1; then
+    echo "kilix: $(kilix_lock_tool) not found; cannot serialize build/update" >&2
     return 1
   fi
   ensure_private_directory "$KILIX_STATE_DIRECTORY" state || return 1
@@ -109,7 +346,7 @@ acquire_transaction_lock() {
   if [ -e "$lock_path" ] || [ -L "$lock_path" ]; then
     lock_was_present=1
     if [ ! -f "$lock_path" ] || [ -L "$lock_path" ] \
-         || [ "$(stat -c '%u:%a:%h' -- "$lock_path" 2>/dev/null)" \
+         || [ "$(kilix_stat_meta "$lock_path" 2>/dev/null)" \
               != "$(id -u):600:1" ]; then
       echo "kilix: refusing unsafe transaction lock: $lock_path" >&2
       return 1
@@ -121,8 +358,7 @@ acquire_transaction_lock() {
       echo "kilix: invalid inherited KILIX_TRANSACTION_LOCK_FD" >&2
       return 1 ;;
     esac
-    fd_path="/proc/$$/fd/$fd"
-    [ -e "$fd_path" ] || {
+    kilix_fd_is_open "$fd" || {
       echo "kilix: inherited transaction-lock FD is not open" >&2
       return 1
     }
@@ -135,22 +371,21 @@ acquire_transaction_lock() {
     fd="$_kilix_transaction_lock_fd"
     KILIX_TRANSACTION_LOCK_FD="$fd"
     export KILIX_TRANSACTION_LOCK_FD
-    fd_path="/proc/$$/fd/$fd"
   fi
   [ "$lock_was_present" = 1 ] || chmod 0600 "$lock_path" 2>/dev/null || return 1
   if [ ! -f "$lock_path" ] || [ -L "$lock_path" ] \
-       || [ "$(stat -c '%u:%a:%h' -- "$lock_path" 2>/dev/null)" \
+       || [ "$(kilix_stat_meta "$lock_path" 2>/dev/null)" \
             != "$(id -u):600:1" ]; then
     echo "kilix: transaction lock is not a private regular file" >&2
     return 1
   fi
-  path_identity="$(stat -c '%d:%i' -- "$lock_path" 2>/dev/null)" || return 1
-  fd_identity="$(stat -Lc '%d:%i' -- "$fd_path" 2>/dev/null)" || return 1
+  path_identity="$(kilix_stat_identity "$lock_path" 2>/dev/null)" || return 1
+  fd_identity="$(kilix_fd_identity "$fd" 2>/dev/null)" || return 1
   if [ "$fd_identity" != "$path_identity" ]; then
     echo "kilix: inherited transaction-lock FD points to the wrong file" >&2
     return 1
   fi
-  flock -x "$fd" || return 1
+  kilix_lock_fd "$fd" || return 1
   KILIX_TRANSACTION_LOCK_PATH="$lock_path"
   export KILIX_TRANSACTION_LOCK_PATH
 }
@@ -161,11 +396,12 @@ command -v timeout >/dev/null 2>&1 \
 
 case "$(uname -s):$(uname -m)" in
   Linux:x86_64|Linux:amd64|Linux:aarch64|Linux:arm64) ;;
-  Linux:*)
-    echo "kilix: fork builds support Linux x86_64 and ARM64 only (this is $(uname -m))" >&2
+  FreeBSD:amd64|FreeBSD:x86_64|FreeBSD:arm64|FreeBSD:aarch64) ;;
+  Linux:*|FreeBSD:*)
+    echo "kilix: fork builds support Linux and FreeBSD on x86_64 and ARM64 only (this is $(uname -m))" >&2
     exit 1 ;;
   *)
-    echo "kilix: fork builds support Linux x86_64 and ARM64 only" >&2
+    echo "kilix: fork builds support Linux and FreeBSD on x86_64 and ARM64 only" >&2
     exit 1 ;;
 esac
 
@@ -213,9 +449,9 @@ verify_file() {
   [[ "$expected" =~ ^[0-9a-fA-F]{64}$ ]] \
     || { echo "kilix: invalid SHA-256 for $label" >&2; return 1; }
   [ -f "$path" ] || { echo "kilix: missing $label: $path" >&2; return 1; }
-  command -v sha256sum >/dev/null 2>&1 \
-    || { echo "kilix: sha256sum is required to verify $label" >&2; return 1; }
-  printf '%s  %s\n' "$expected" "$path" | sha256sum -c --status \
+  command -v "$(kilix_sha256_tool)" >/dev/null 2>&1 \
+    || { echo "kilix: $(kilix_sha256_tool) is required to verify $label" >&2; return 1; }
+  [ "$(kilix_sha256 "$path" 2>/dev/null)" = "${expected,,}" ] \
     || { echo "kilix: checksum mismatch for $label" >&2; return 1; }
 }
 
@@ -595,20 +831,18 @@ generation_target_is_referenced() {
 }
 
 generation_has_live_executable() {
-  local candidate="$1" proc_exe executable inspected=0
-  # /proc is the runtime lease registry for build generations. If it is not
-  # available (for example in a restricted container), retain the generation:
-  # reclaiming disk is less important than invalidating a running terminal.
-  [ -d /proc ] || return 0
-  for proc_exe in /proc/[0-9]*/exe; do
-    [ -L "$proc_exe" ] || continue
-    executable="$(readlink -f -- "$proc_exe" 2>/dev/null || true)"
+  local candidate="$1" executable inspected=0
+  # The process table is the runtime lease registry for build generations:
+  # /proc/*/exe on Linux, procstat(1) on FreeBSD. If it cannot be read (for
+  # example in a restricted container), retain the generation: reclaiming disk
+  # is less important than invalidating a running terminal.
+  while IFS= read -r executable; do
     [ -n "$executable" ] || continue
     inspected=1
     case "$executable" in
       "$candidate"|"$candidate"/*) return 0 ;;
     esac
-  done
+  done < <(kilix_process_executables)
   [ "$inspected" = 1 ] || return 0
   return 1
 }
@@ -674,7 +908,7 @@ promote_current() {
   link_tmp="$KILIX_BUILD_DIRECTORY/.current.$$"
   if [ "$promotion_ok" = 1 ]; then
     if ln -s -- "$target" "$link_tmp" \
-         && mv -Tf -- "$link_tmp" "$current"; then
+         && kilix_mv_onto -f "$link_tmp" "$current"; then
       new_installed=1
     else
       rm -f -- "$link_tmp" || rollback_ok=0
@@ -682,7 +916,7 @@ promote_current() {
     fi
   fi
   if [ "$promotion_ok" = 1 ] && [ -n "$stamp_tmp" ]; then
-    if ! mv -Tf -- "$stamp_tmp" "$STATE_DIR/fork-built-ref"; then
+    if ! kilix_mv_onto -f "$stamp_tmp" "$STATE_DIR/fork-built-ref"; then
       promotion_ok=0
     else
       stamp_tmp=""
@@ -777,7 +1011,7 @@ promote_prepared() {
   target="generations/${stage##*/}"
   link_tmp="$KILIX_BUILD_DIRECTORY/.prepared.$$"
   ln -s -- "$target" "$link_tmp"
-  mv -Tf -- "$link_tmp" "$KILIX_BUILD_DIRECTORY/prepared"
+  kilix_mv_onto -f "$link_tmp" "$KILIX_BUILD_DIRECTORY/prepared"
   stage=""
 }
 

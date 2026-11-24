@@ -27,6 +27,19 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def running_executable(pid: int) -> str:
+    """Resolved executable of PID: /proc on Linux, procstat(1) on FreeBSD."""
+    if sys.platform.startswith("freebsd"):
+        result = subprocess.run(["procstat", "-h", "-b", str(pid)],
+                                capture_output=True, text=True)
+        fields = result.stdout.split(None, 3)
+        return fields[3].strip() if len(fields) == 4 else ""
+    try:
+        return os.path.realpath(f"/proc/{pid}/exe")
+    except OSError:
+        return ""
+
+
 def setup_that_writes_launchers(kitty: str,
                                 kitten: str = "#!/bin/sh\nexit 0\n") -> str:
     """A stand-in `setup.py` that produces the two launchers a build must yield.
@@ -295,9 +308,11 @@ class BuildPreparationTests(unittest.TestCase):
         bindir = self.base / "bin"
         bindir.mkdir(exist_ok=True)
         uname = bindir / "uname"
+        # Only the machine is pretended; the kernel stays the host's own, so
+        # the build still speaks to this host's userland.
         uname.write_text(
-            "#!/bin/sh\ncase \"$1\" in -s) echo Linux;; -m) echo "
-            + machine + ";; esac\n")
+            "#!/bin/sh\ncase \"$1\" in -s) echo " + os.uname().sysname
+            + ";; -m) echo " + machine + ";; esac\n")
         uname.chmod(0o755)
         env = dict(self.env if env is None else env)
         env["PATH"] = str(bindir) + os.pathsep + env["PATH"]
@@ -328,7 +343,7 @@ class BuildPreparationTests(unittest.TestCase):
     def test_unsupported_arch_fails_before_download(self):
         result = self.run_build(self.bundle_env("riscv64"))
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("support Linux x86_64 and ARM64", result.stderr)
+        self.assertIn("support Linux and FreeBSD on x86_64 and ARM64", result.stderr)
 
     def test_arm64_bundle_mode_is_refused_before_download(self):
         # The pinned kitty dependency bundle is an x86_64 tree; ARM64 builds
@@ -488,10 +503,7 @@ class BuildPreparationTests(unittest.TestCase):
         process = subprocess.Popen([str(live_executable), "30"])
         try:
             for _ in range(100):
-                try:
-                    running = os.path.realpath(f"/proc/{process.pid}/exe")
-                except OSError:
-                    running = ""
+                running = running_executable(process.pid)
                 if running == str(live_executable.resolve()):
                     break
                 time.sleep(0.01)
