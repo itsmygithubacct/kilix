@@ -18,6 +18,18 @@ spec.loader.exec_module(installer)
 
 
 class WhistleInstallerTests(unittest.TestCase):
+    def setUp(self):
+        # The pinned build runs on Linux x86_64 glibc only, and install() checks
+        # that first. Present that host so these tests reach the behaviour they
+        # check on every host; the refusals are tested on their own below.
+        for target, value in ((installer.sys, 'platform'), (installer.platform, 'machine'),
+                              (installer.platform, 'libc_ver')):
+            replacement = {'platform': 'linux', 'machine': lambda: 'x86_64',
+                           'libc_ver': lambda *a, **k: ('glibc', '2.41')}[value]
+            patcher = mock.patch.object(target, value, replacement)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
     def test_queries_and_dispatch_do_not_create_a_runtime(self):
         with tempfile.TemporaryDirectory() as tmp:
             env = sandbox_env(KILIX_HOME=str(ROOT), KILIX_DATA_HOME=tmp + '/g/kilix/data',
@@ -75,3 +87,13 @@ class WhistleInstallerTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'x86_64'):
                     installer.install(root / 'other')
             self.assertFalse((root / 'other').exists())
+
+    def test_freebsd_and_musl_hosts_are_refused_before_anything_is_written(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for patch in (mock.patch.object(installer.sys, 'platform', 'freebsd15'),
+                          mock.patch.object(installer.platform, 'libc_ver', return_value=('', ''))):
+                with self.subTest(host=str(patch.attribute)), patch:
+                    with self.assertRaisesRegex(ValueError, 'requires Linux x86_64 with glibc'):
+                        installer.install(root / 'store')
+                    self.assertFalse((root / 'store').exists())
