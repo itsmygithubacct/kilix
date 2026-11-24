@@ -12,6 +12,7 @@
 #   Debian/Ubuntu: apt-get, -dev packages
 #   Arch         : pacman
 #   openSUSE     : zypper
+#   FreeBSD      : pkg (base cc, gmake; zstd is in base)
 #
 # Go: the fork's go.mod pins a Go version newer than some distros ship. Rather
 # than install Go by hand, this enables Go's own toolchain auto-download
@@ -154,14 +155,20 @@ verify() {
       echo "                 goes without; on Debian: apt install libssh2-1-dev libbrotli-dev)"
     fi
   done
-  for tool in gcc make pkg-config git curl zstd; do
+  local cc_tool=gcc make_tool=make
+  local -a cc_search=()
+  if [ "$(uname -s)" = FreeBSD ]; then
+    # Base cc does not search the packages' include directory on its own.
+    cc_tool=cc; make_tool=gmake; cc_search=(-I/usr/local/include)
+  fi
+  for tool in "$cc_tool" "$make_tool" pkg-config git curl zstd; do
     if command -v "$tool" >/dev/null 2>&1; then
       echo "   $tool: $(command -v "$tool")"
     else
       echo "   $tool: MISSING"; ok=0
     fi
   done
-  if printf '%s\n' '#include <simde/x86/avx2.h>' | gcc -E -x c - >/dev/null 2>&1; then
+  if printf '%s\n' '#include <simde/x86/avx2.h>' | "$cc_tool" "${cc_search[@]}" -E -x c - >/dev/null 2>&1; then
     echo "   SIMDe headers: yes"
   else
     echo "   SIMDe headers: MISSING"; ok=0
@@ -522,6 +529,21 @@ suse_install() {
   sudo zypper --non-interactive install "${packages[@]}"
 }
 
+# FreeBSD: the fork builds with base cc (setup.py picks it on FreeBSD) and
+# GNU make as gmake; zstd ships in base. The package set is the one the fork
+# build, the Media Player and chawan were verified with on amd64 and arm64.
+freebsd_install() {
+  local pkgs="bash gmake pkgconf git curl go python312 py312-pillow \
+    libX11 libXrandr libXinerama libXcursor libXi libxkbcommon mesa-libs dbus \
+    fontconfig freetype2 png lcms2 cairo harfbuzz xxhash simde wayland \
+    wayland-protocols sdl2 sdl2_image libsndfile fluidsynth fluid-soundfont \
+    libssh2 brotli"
+  local -a packages
+  echo "==> FreeBSD detected — installing system-wide via pkg"
+  read -r -a packages <<<"$pkgs"
+  sudo pkg install -y "${packages[@]}"
+}
+
 # ---- dispatch ----------------------------------------------------------------
 # Sourced (the tests do this to drive one backend against fixture roots): stop
 # here, having defined the functions and changed nothing. This keys on how the
@@ -539,8 +561,10 @@ elif command -v pacman >/dev/null 2>&1; then
   arch_install
 elif command -v zypper >/dev/null 2>&1; then
   suse_install
+elif [ "$(uname -s)" = FreeBSD ] && command -v pkg >/dev/null 2>&1; then
+  freebsd_install
 else
-  log "unsupported distro — need one of: dnf, apt-get, pacman, zypper."
+  log "unsupported distro — need one of: dnf, apt-get, pacman, zypper, pkg (FreeBSD)."
   log "install manually: a C compiler, make, pkg-config, Go, git, curl, zstd,"
   log "Python 3.11+ with venv + Pillow, and the dev libs for: $PC_DEPS $AMP_PC_DEPS"
   exit 1
