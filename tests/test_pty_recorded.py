@@ -122,7 +122,7 @@ class RecordedRealBrokerTests(RealBrokerCase):
 class RecordedDocsTests(unittest.TestCase):
     def test_every_agent_entry_states_the_recorded_matching_rule(self):
         surfaces = {"AGENTS": agents_section(), "skill": text("skills", "kilix-pty", "SKILL.md"),
-                    "README": text("README.md"), "persistence": text("docs", "help", "operations", "persistence.md"),
+                    "persistent-panes": text("docs", "persistent-panes.md"), "persistence": text("docs", "help", "operations", "persistence.md"),
                     "help": help_output()}
         if CONTRACT:
             surfaces["CONTRACT"] = Path(CONTRACT).read_text()
