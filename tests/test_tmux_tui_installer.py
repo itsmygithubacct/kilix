@@ -128,6 +128,29 @@ class TmuxTuiInstallerTests(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(manager.resolve().stat().st_mode), 0o755)
         self.assertIn(self.tui_ref, str(manager.resolve()))
 
+    def test_paths_under_a_symlinked_parent_are_accepted(self):
+        # A home moved to another disk: every path is spelled through a
+        # symlinked parent and left unresolved.
+        disk = self.root / "disk"
+        disk.mkdir()
+        moved = self.root / "moved-home"
+        moved.symlink_to(disk, target_is_directory=True)
+        self.source = moved / "sources"
+        self.state = moved / "state"
+        self.prefix = moved / "prefix"
+        result = self.run_installer(check=False)
+        self.assertNotIn("normalized absolute path", result.stderr)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((disk / "prefix" / "bin" / "tmux-tui").is_symlink())
+
+    def test_a_symlink_cannot_stand_in_for_a_broad_prefix(self):
+        to_home = self.root / "to-home"
+        to_home.symlink_to(Path.home(), target_is_directory=True)
+        self.prefix = to_home
+        refused = self.run_installer(check=False)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("refusing broad install prefix", refused.stderr)
+
     def test_with_tb_publishes_nested_cli_and_is_idempotent(self):
         self.run_installer("--with-tb")
         self.run_installer("--with-tb")

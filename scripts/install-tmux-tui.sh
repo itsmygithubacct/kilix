@@ -57,12 +57,29 @@ done
 [[ "$TMUX_CLI_REF" =~ ^[0-9a-fA-F]{40}$ ]] \
   || die "TMUX_CLI_REF must be a full 40-character commit SHA"
 
+# Lexical normalization only (-s): refuse ".", "..", "//" and a trailing slash,
+# but let a parent directory be a symlink, as a home moved to another disk is.
+# Leaf symlinks are refused separately, before anything is created or chmodded.
 normalize_absolute() {
   local value="$1" normalized
   case "$value" in /*) ;; *) return 1 ;; esac
-  normalized="$(realpath -m -- "$value" 2>/dev/null)" || return 1
+  normalized="$(realpath -m -s -- "$value" 2>/dev/null)" || return 1
   [ "$normalized" = "$value" ] || return 1
   printf '%s\n' "$normalized"
+}
+
+# The broad-root refusals compare both the spelling and the resolved target,
+# so a symlink cannot stand in for / or $HOME.
+resolved_path() {
+  realpath -m -- "$1" 2>/dev/null || printf '%s\n' "$1"
+}
+home_resolved="$(resolved_path "$HOME")"
+is_broad_root() {
+  local path="$1" resolved
+  resolved="$(resolved_path "$path")"
+  case "$path" in /|"$HOME"|"$home_resolved") return 0 ;; esac
+  case "$resolved" in /|"$HOME"|"$home_resolved") return 0 ;; esac
+  return 1
 }
 
 source_home="$(normalize_absolute "$GPU_TERMINAL_SOURCE_HOME")" \
@@ -71,8 +88,8 @@ prefix="$(normalize_absolute "$TMUX_TUI_PREFIX")" \
   || die "TMUX_TUI_PREFIX must be a normalized absolute path"
 state_dir="$(normalize_absolute "$KILIX_STATE_DIRECTORY")" \
   || die "KILIX_STATE_DIRECTORY must be a normalized absolute path"
-case "$source_home" in /|"$HOME") die "refusing broad source root: $source_home" ;; esac
-case "$prefix" in /|"$HOME") die "refusing broad install prefix: $prefix" ;; esac
+! is_broad_root "$source_home" || die "refusing broad source root: $source_home"
+! is_broad_root "$prefix" || die "refusing broad install prefix: $prefix"
 
 mkdir -p -- "$source_home" "$state_dir" "$prefix/bin"
 chmod 0700 -- "$state_dir" 2>/dev/null || true

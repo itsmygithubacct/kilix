@@ -174,12 +174,29 @@ command -v python3 >/dev/null 2>&1 \
 python3 -I -B -- "$voice_license_verifier" --check >/dev/null \
   || die "the vendored kilix-license does not hash up to its pin $voice_license_pin; refusing to stage it"
 
+# Lexical normalization only (-s): refuse ".", "..", "//" and a trailing slash,
+# but let a parent directory be a symlink, as a home moved to another disk is.
+# Leaf symlinks are refused separately, before anything is created or chmodded.
 normalize_absolute() {
   local value="$1" normalized
   case "$value" in /*) ;; *) return 1 ;; esac
-  normalized="$(realpath -m -- "$value" 2>/dev/null)" || return 1
+  normalized="$(realpath -m -s -- "$value" 2>/dev/null)" || return 1
   [ "$normalized" = "$value" ] || return 1
   printf '%s\n' "$normalized"
+}
+
+# The broad-root refusals compare both the spelling and the resolved target,
+# so a symlink cannot stand in for / or $HOME.
+resolved_path() {
+  realpath -m -- "$1" 2>/dev/null || printf '%s\n' "$1"
+}
+home_resolved="$(resolved_path "$HOME")"
+is_broad_root() {
+  local path="$1" resolved
+  resolved="$(resolved_path "$path")"
+  case "$path" in /|"$HOME"|"$home_resolved") return 0 ;; esac
+  case "$resolved" in /|"$HOME"|"$home_resolved") return 0 ;; esac
+  return 1
 }
 
 source_home="$(normalize_absolute "$GPU_TERMINAL_SOURCE_HOME")" \
@@ -190,14 +207,18 @@ state_dir="$(normalize_absolute "$KILIX_STATE_DIRECTORY")" \
   || die "KILIX_STATE_DIRECTORY must be a normalized absolute path"
 data_dir="$(normalize_absolute "$KILIX_DATA_HOME")" \
   || die "KILIX_DATA_HOME must be a normalized absolute path"
-case "$source_home" in /|"$HOME") die "refusing broad source root: $source_home" ;; esac
-case "$prefix" in /|"$HOME") die "refusing broad install prefix: $prefix" ;; esac
-case "$data_dir" in /|"$HOME") die "refusing broad data root: $data_dir" ;; esac
+! is_broad_root "$source_home" || die "refusing broad source root: $source_home"
+! is_broad_root "$prefix" || die "refusing broad install prefix: $prefix"
+! is_broad_root "$data_dir" || die "refusing broad data root: $data_dir"
 # The model and the library are generated inputs, so they land under the Kilix
 # data root and never in the source checkout.
-case "$data_dir" in "$KILIX_HOME"|"$KILIX_HOME"/*)
-  die "refusing to place voice data inside the Kilix source checkout: $data_dir" ;;
-esac
+kilix_home_resolved="$(resolved_path "$KILIX_HOME")"
+data_dir_resolved="$(resolved_path "$data_dir")"
+for candidate in "$data_dir" "$data_dir_resolved"; do
+  case "$candidate" in "$KILIX_HOME"|"$KILIX_HOME"/*|"$kilix_home_resolved"|"$kilix_home_resolved"/*)
+    die "refusing to place voice data inside the Kilix source checkout: $data_dir" ;;
+  esac
+done
 
 voice_data="$data_dir/voice"
 library_root="$voice_data/lib"

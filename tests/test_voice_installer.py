@@ -1056,6 +1056,44 @@ class KilixVoiceInstallerTests(unittest.TestCase):
             self.assertNotEqual(refused.returncode, 0)
             self.assertIn(message, refused.stderr)
 
+    def test_paths_under_a_symlinked_parent_are_accepted(self):
+        # A home moved to another disk: ~/.local is a symlink, and every
+        # configured path is spelled through it, unresolved.
+        disk = self.root / "disk"
+        disk.mkdir()
+        moved = self.root / "moved-home"
+        moved.symlink_to(disk, target_is_directory=True)
+        result = self.run_installer(
+            "--without-dictation", check=False,
+            GPU_TERMINAL_SOURCE_HOME=str(moved / "source"),
+            KILIX_VOICE_PREFIX=str(moved / "prefix"),
+            KILIX_STATE_DIRECTORY=str(moved / "state"),
+            KILIX_DATA_HOME=str(moved / "data"))
+        self.assertNotIn("normalized absolute path", result.stderr)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((disk / "prefix" / "bin").is_dir())
+        self.assertTrue((disk / "data" / "voice").is_dir())
+
+    def test_a_symlink_cannot_stand_in_for_a_broad_root(self):
+        to_home = self.root / "to-home"
+        to_home.symlink_to(Path.home(), target_is_directory=True)
+        to_root = self.root / "to-root"
+        to_root.symlink_to("/", target_is_directory=True)
+        for prefix in (to_home, to_root):
+            refused = self.run_installer(
+                "--without-dictation", check=False, KILIX_VOICE_PREFIX=str(prefix))
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertIn("refusing broad install prefix", refused.stderr)
+
+    def test_a_symlink_into_the_source_tree_cannot_hold_voice_data(self):
+        into_checkout = self.root / "into-checkout"
+        into_checkout.symlink_to(self.checkout, target_is_directory=True)
+        refused = self.run_installer(
+            "--without-dictation", check=False,
+            KILIX_DATA_HOME=str(into_checkout / "data"))
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("inside the Kilix source checkout", refused.stderr)
+
     def test_installer_owned_directories_stay_private(self):
         self.run_installer("--without-dictation")
         for directory in (
