@@ -53,6 +53,7 @@ def functional_agent(**kwargs):
     # Hardening permanently changes the runner's dumpability/core limit. Test
     # those kernel effects in a child; functional agent tests keep shared state.
     with unittest.mock.patch.object(agentmod, "_harden_process", return_value=agentmod.HardenReport()):
+        kwargs.setdefault("custody_watch", False)   # no monitor runs in these fixtures
         return agentmod.Agent(**kwargs)
 
 
@@ -806,6 +807,7 @@ class SessionGateTests(unittest.TestCase):
         properties.GetAll.return_value = facts
         dbus = SimpleNamespace(SystemBus=unittest.mock.Mock(return_value=bus), UInt32=int,
                                Interface=unittest.mock.Mock(side_effect=[manager, properties]))
+        dbus.properties = properties
         return dbus, bus, manager, facts
 
     def test_reads_live_lock_hint_and_supports_named_sessions(self):
@@ -814,8 +816,12 @@ class SessionGateTests(unittest.TestCase):
         self.assertTrue(session.locked)
         self.assertEqual(session.session_id, "c7")
         self.assertEqual(session.uid, 1000)
-        manager.GetSessionByPID.assert_called_once_with(42, timeout=5)
-        dbus.SystemBus.assert_called_once_with(private=True)
+        (pid,), kwargs = manager.GetSessionByPID.call_args
+        self.assertEqual(pid, 42)
+        # One deadline covers GetSessionByPID and GetAll together.
+        self.assertTrue(0 < kwargs["timeout"] <= agentmod.LOGIND_TIMEOUT_SECONDS)
+        self.assertLessEqual(dbus.properties.GetAll.call_args.kwargs["timeout"], kwargs["timeout"])
+        dbus.SystemBus.assert_called_once_with(private=True, mainloop=None)   # this fake has no dbus.mainloop
         bus.close.assert_called_once_with()
 
     def test_missing_or_malformed_logind_properties_fail_closed(self):

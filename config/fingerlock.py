@@ -942,6 +942,16 @@ def _wipe_secret(buf: bytearray | None) -> None:
     lockermod.wipe_buffer(buf)
 
 
+def _touch_prompt(verb: str, binding: dict[str, Any]) -> str:
+    # The reader is armed only after approval; a touch before then is not read.
+    # The full digest: the dialog shows all 64 hex digits, and a request from
+    # another process differs from this one somewhere a prefix may not reach.
+    return (f"approve the request to {verb} {binding['name']} only if the dialog shows "
+            f"SHA-256 {binding['sha256']}, "
+            f"then touch the sensor; if a scan is rejected, lift and touch again "
+            f"(up to {agentmod.VERIFY_ATTEMPTS} scans)\n")
+
+
 def _agent_holds(agent: agentmod.AgentClient, info: lockermod.LockerInfo) -> bool:
     if not agent.available():
         return False
@@ -1081,7 +1091,7 @@ def cmd_unlock(args: argparse.Namespace) -> int:
         for container, header, blob in loaded:
             if use_custody:
                 binding = lockermod.binding_for("unlock", container.name, blob)
-                sys.stderr.write(f"touch the sensor to unlock {binding['name']} ({binding['sha256'][:12]})\n")
+                sys.stderr.write(_touch_prompt("unlock", binding))
                 plain = agent.unseal(info.locker_id, blob, binding, getattr(args, "finger", ANY_FINGER))
                 if len(plain) != header["size"]:
                     raise LockerError("custodian returned plaintext of the wrong length; destination not written")
@@ -1170,7 +1180,7 @@ def cmd_password(args: argparse.Namespace) -> int:
         try:
             if use_custody:
                 binding = lockermod.binding_for("password-get", args.name, blob)
-                sys.stderr.write(f"touch the sensor to read {args.name} ({binding['sha256'][:12]})\n")
+                sys.stderr.write(_touch_prompt("read", binding))
                 secret = agent.unseal(info.locker_id, blob, binding, getattr(args, "finger", ANY_FINGER))
             else:
                 private = bytearray(locker.derive_private_key(_read_passphrase(args, "locker passphrase: "), info))
@@ -1223,6 +1233,13 @@ def cmd_agent(args: argparse.Namespace) -> int:
         return 0
     if not data["available"]:
         sys.stdout.write(f"agent: not installed ({PROG} install --agent)\n")
+        return 1
+    watch = data.get("watch")
+    if isinstance(watch, dict) and watch.get("required") and (
+            watch.get("monitor") != "running" or watch.get("sleep_guard") != "ready"):
+        # The custodian cannot forget the key on lock or sleep, so it holds none.
+        sys.stdout.write(f"agent: not watching the session (monitor {watch.get('monitor')}, "
+                         f"sleep guard {watch.get('sleep_guard')}); custody is refused until it is\n")
         return 1
     if data.get("held"):
         sys.stdout.write(

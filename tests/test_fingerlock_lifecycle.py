@@ -26,7 +26,7 @@ def forbidden(*args, **kwargs):
 
 listener = socket.socket(fileno=int(sys.argv[2]))
 server = agent.Agent(
-    allowed_uid=int(sys.argv[3]), client_factory=forbidden, approve=forbidden,
+    allowed_uid=int(sys.argv[3]), client_factory=forbidden, approve=forbidden, custody_watch=False,
     session_lookup=lambda pid: agent.CallerSession("fixture", os.getuid(), True,
                                                  "active", "seat0", False, False))
 release = server._release_slot
