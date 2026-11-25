@@ -20,8 +20,9 @@ KILIX_LLM_SOURCES="${KILIX_LLM_SOURCES:-$KILIX_STORAGE_HOME/sources}"
 # off for that model, and --think prints a warning before it starts. It adds
 # `update`, `rollback` and `runtime`, which move to llama.cpp's newest release
 # beside this pin, and builds the CPU backend with OpenBLAS when present.
+# 0.2.4 adds the judge, the multi-worker stack and the vLLM backend.
 KILIX_LLM_REPO="${KILIX_LLM_REPO:-https://github.com/itsmygithubacct/kilix-llm.git}"
-KILIX_LLM_REF="${KILIX_LLM_REF:-022f36f5c1b907bd1d50c17615eaedb6ec0123f0}"
+KILIX_LLM_REF="${KILIX_LLM_REF:-c34bfb4a693319602d2fe658305799dfa398dc4a}"
 
 die() { printf 'kilix llm: %s\n' "$*" >&2; exit 1; }
 log() { printf 'kilix llm: %s\n' "$*" >&2; }
