@@ -73,8 +73,18 @@ lives on `plebian-os` and plays at [plebian-os.com](https://plebian-os.com/#watc
   reset, clear, split right/down, close.
 - **Drag-to-split by quadrant** — drag a pane's header onto another pane's edge to split it (Tilix's model).
 - **Pages (Tilix sessions)** — each page is a kitty tab, with an always-on page strip and a `+` button.
-  The strip holds ten pages per row: the eleventh starts a second row (up to 20),
-  and so on in rows of ten. The `+` button follows the last page and never starts a row.
+  The strip holds eight pages per row: the ninth starts a second row (up to 16),
+  and so on in rows of eight. The `+` button follows the last page and never starts a row.
+- **Tab status mark** — before each page's title, a moon steps through its phases while a
+  program in the page is working (it printed within the last 5 seconds, or its processes
+  are using at least a tenth of a core) and a dot rests there while the page is idle.
+  The colour is the page's CPU load: green under one core, yellow from one core, red from
+  half the machine's cores (never under two). Right-click a page to see how long it has
+  been idle. A bell rung in a page shows as a violet bell. The moon steps once a
+  second; where the CPU draws the screen (no graphics card, as in most virtual machines)
+  it steps every four seconds, because each step draws a frame. The shared settings
+  `KILIX_TAB_STATUS_*` change the thresholds, the timing and the colours;
+  `kilix settings --set tab_status=off` removes the mark.
 - **Input broadcast** — `Ctrl+Alt+B` mirrors your typing to every pane in the page
   (Tilix's "synchronize input").
 - **Tilix look & keys** — per-pane title bars, active-pane highlight, dimmed inactive panes, Tango palette, Tilix keybindings.

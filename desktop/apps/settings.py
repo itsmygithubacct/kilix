@@ -55,6 +55,20 @@ def L(key, label, default, line):
     return SettingSpec("line", key, label, "bool", default, line)
 
 
+# The shared settings of the page status mark, in the order they are offered.
+TAB_STATUS_FIELDS = (
+    ("KILIX_TAB_STATUS", "Page status mark", "bool"),
+    ("KILIX_TAB_STATUS_MODERATE_CORES", "Yellow from (cores)", "text"),
+    ("KILIX_TAB_STATUS_HIGH_CORES", "Red from (cores or NN%)", "text"),
+    ("KILIX_TAB_STATUS_ACTIVE_CORES", "Working from (cores)", "text"),
+    ("KILIX_TAB_STATUS_IDLE_AFTER_SECONDS", "Idle after quiet (s)", "text"),
+    ("KILIX_TAB_STATUS_STEP_SECONDS", "Moon step (s)", "text"),
+    ("KILIX_TAB_STATUS_SOFTWARE_STEP_SECONDS", "Moon step, no graphics card (s)", "text"),
+    ("KILIX_TAB_STATUS_LOW_COLOR", "Low load color", "color"),
+    ("KILIX_TAB_STATUS_MODERATE_COLOR", "Moderate load color", "color"),
+    ("KILIX_TAB_STATUS_HIGH_COLOR", "High load color", "color"),
+)
+
 # kind: text | color | choice | bool. Bool extra is (true_value, false_value).
 SETTING_PAGES = [
     ("Look", [
@@ -125,6 +139,13 @@ SETTING_PAGES = [
         ),
         K("tab_bar_min_tabs", "Show page strip at", default="1"),
         K("tab_bar_show_new_tab_button", "New-page button", "bool", "yes"),
+        # The mark before each page's title: a moon while the page works, a
+        # dot while it is idle, coloured by its CPU load.
+        *[
+            S(key, label, kind, shared_settings.TAB_STATUS_DEFAULTS[key],
+              ("1", "0") if kind == "bool" else None)
+            for key, label, kind in TAB_STATUS_FIELDS
+        ],
     ]),
     ("Pane", [
         S(

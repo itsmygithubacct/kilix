@@ -1248,5 +1248,115 @@ class TranscriptArchiveIntegrationTests(unittest.TestCase):
                 alive.wait()
 
 
+
+class TabStatusSettingsTests(unittest.TestCase):
+    """The tab status mark's thresholds, timing and colours are shared settings."""
+
+    def test_defaults_are_the_documented_ones(self):
+        self.assertEqual(settings.TAB_STATUS_DEFAULTS, {
+            "KILIX_TAB_STATUS": "1",
+            "KILIX_TAB_STATUS_MODERATE_CORES": "1.0",
+            "KILIX_TAB_STATUS_HIGH_CORES": "50%",
+            "KILIX_TAB_STATUS_ACTIVE_CORES": "0.10",
+            "KILIX_TAB_STATUS_IDLE_AFTER_SECONDS": "5",
+            "KILIX_TAB_STATUS_STEP_SECONDS": "1",
+            "KILIX_TAB_STATUS_SOFTWARE_STEP_SECONDS": "4",
+            "KILIX_TAB_STATUS_LOW_COLOR": "#8ae234",
+            "KILIX_TAB_STATUS_MODERATE_COLOR": "#fce94f",
+            "KILIX_TAB_STATUS_HIGH_COLOR": "#ef2929",
+        })
+        with tempfile.TemporaryDirectory() as tmp:
+            values = settings.load(str(Path(tmp) / "absent.conf"))
+        for key, default in settings.TAB_STATUS_DEFAULTS.items():
+            self.assertEqual(values[key], default)
+            self.assertIn(key, settings.MANAGED_KEYS)
+            # Every default is a value the validator itself accepts.
+            self.assertEqual(settings.normalize_tab_status(key, default), default)
+        documented = (ROOT / "config" / "kilix.env").read_text()
+        for key, default in settings.TAB_STATUS_DEFAULTS.items():
+            self.assertIn(f"#   {key}={default} ", documented)
+
+    def test_validation(self):
+        good = (
+            ("KILIX_TAB_STATUS", "off", "0"), ("KILIX_TAB_STATUS", "on", "1"),
+            ("KILIX_TAB_STATUS_MODERATE_CORES", " 0.5 ", "0.5"),
+            ("KILIX_TAB_STATUS_HIGH_CORES", "4", "4"),
+            ("KILIX_TAB_STATUS_HIGH_CORES", "75%", "75%"),
+            ("KILIX_TAB_STATUS_HIGH_CORES", "100%", "100%"),
+            ("KILIX_TAB_STATUS_ACTIVE_CORES", "0", "0"),
+            ("KILIX_TAB_STATUS_IDLE_AFTER_SECONDS", "30", "30"),
+            ("KILIX_TAB_STATUS_STEP_SECONDS", "0.25", "0.25"),
+            ("KILIX_TAB_STATUS_SOFTWARE_STEP_SECONDS", "1", "1"),
+            ("KILIX_TAB_STATUS_HIGH_COLOR", "#FF0000", "#ff0000"),
+        )
+        for key, raw, stored in good:
+            with self.subTest(key=key, raw=raw):
+                self.assertEqual(settings.normalize_tab_status(key, raw), stored)
+        bad = (
+            ("KILIX_TAB_STATUS_MODERATE_CORES", "0"), ("KILIX_TAB_STATUS_MODERATE_CORES", "lots"),
+            ("KILIX_TAB_STATUS_MODERATE_CORES", "50%"), ("KILIX_TAB_STATUS_MODERATE_CORES", "-1"),
+            ("KILIX_TAB_STATUS_MODERATE_CORES", "1e3"), ("KILIX_TAB_STATUS_MODERATE_CORES", "nan"),
+            ("KILIX_TAB_STATUS_HIGH_CORES", "0%"), ("KILIX_TAB_STATUS_HIGH_CORES", "101%"),
+            ("KILIX_TAB_STATUS_HIGH_CORES", "%"), ("KILIX_TAB_STATUS_HIGH_CORES", "5000"),
+            ("KILIX_TAB_STATUS_IDLE_AFTER_SECONDS", "0.5"), ("KILIX_TAB_STATUS_IDLE_AFTER_SECONDS", "86401"),
+            ("KILIX_TAB_STATUS_STEP_SECONDS", "0.1"), ("KILIX_TAB_STATUS_STEP_SECONDS", ""),
+            ("KILIX_TAB_STATUS_SOFTWARE_STEP_SECONDS", "0"), ("KILIX_TAB_STATUS_SOFTWARE_STEP_SECONDS", "auto"),
+            ("KILIX_TAB_STATUS_LOW_COLOR", "green"), ("KILIX_TAB_STATUS_LOW_COLOR", "#12345"),
+            ("KILIX_TAB_STATUS_LOW_COLOR", "#12345g"),
+        )
+        for key, raw in bad:
+            with self.subTest(key=key, raw=raw), self.assertRaises(ValueError):
+                settings.normalize_tab_status(key, raw)
+        with self.assertRaises(KeyError):
+            settings.normalize_tab_status("KILIX_TAB_STATUS_NO_SUCH", "1")
+
+    def test_update_writes_and_keeps_other_lines(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.conf"
+            path.write_text("# mine\nKILIX_CHROME_CLOCK=0\nSOMETHING_ELSE=kept\n")
+            settings.update({"KILIX_TAB_STATUS_HIGH_CORES": "4",
+                             "KILIX_TAB_STATUS": False}, str(path))
+            text = path.read_text()
+            self.assertIn("# mine\nKILIX_CHROME_CLOCK=0\nSOMETHING_ELSE=kept\n", text)
+            self.assertIn("KILIX_TAB_STATUS_HIGH_CORES=4\n", text)
+            self.assertIn("KILIX_TAB_STATUS=0\n", text)
+            values = settings.load(str(path))
+            self.assertEqual(values["KILIX_TAB_STATUS_HIGH_CORES"], "4")
+            self.assertEqual(values["KILIX_TAB_STATUS_MODERATE_CORES"], "1.0")
+            with self.assertRaises(ValueError):
+                settings.update({"KILIX_TAB_STATUS_HIGH_CORES": "all of them"}, str(path))
+            self.assertEqual(path.read_text(), text)
+
+    def test_command_line_sets_and_prints(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.conf"
+            env = sandbox_env(GPU_TERMINAL_SETTINGS_FILE=str(path))
+            result = subprocess.run([
+                str(ROOT / "kilix-settings"),
+                "--set", "tab_status_moderate_cores=0.5",
+                "--set", "tab_status_high_cores=25%",
+                "--set", "KILIX_TAB_STATUS_HIGH_COLOR=#ff0000",
+                "--set", "tab_status=off",
+                "--print",
+            ], env=env, text=True, capture_output=True, check=True)
+            for line in ("KILIX_TAB_STATUS=0", "KILIX_TAB_STATUS_MODERATE_CORES=0.5",
+                         "KILIX_TAB_STATUS_HIGH_CORES=25%", "KILIX_TAB_STATUS_HIGH_COLOR=#ff0000",
+                         "KILIX_TAB_STATUS_IDLE_AFTER_SECONDS=5"):
+                self.assertIn(line + "\n", result.stdout)
+            self.assertIn("KILIX_TAB_STATUS_HIGH_CORES=25%\n", path.read_text())
+            before = path.read_text()
+            result = subprocess.run([
+                str(ROOT / "kilix-settings"), "--set", "tab_status_step_seconds=fast",
+            ], env=env, text=True, capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("KILIX_TAB_STATUS_STEP_SECONDS must be a number", result.stderr)
+            self.assertEqual(path.read_text(), before)
+            # A hand-edited value the engine would refuse prints as its default.
+            path.write_text(before + "KILIX_TAB_STATUS_ACTIVE_CORES=plenty\n")
+            result = subprocess.run([str(ROOT / "kilix-settings"), "--print"],
+                                    env=env, text=True, capture_output=True, check=True)
+            self.assertIn("KILIX_TAB_STATUS_ACTIVE_CORES=0.10\n", result.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

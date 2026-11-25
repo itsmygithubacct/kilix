@@ -197,6 +197,57 @@ CAPTURE_VIDEO_FORMAT_KEY = "KILIX_CAPTURE_VIDEO_FORMAT"
 CAPTURE_VIDEO_FORMAT_DEFAULT = "mp4"
 CAPTURE_VIDEO_FORMAT_CHOICES = ("mp4", "webm", "mkv", "gif", "apng", "webp")
 
+# The tab status mark: a moon that steps through its phases while a program in
+# the tab is working, a dot while the tab is idle, coloured by the CPU the
+# tab's panes use. The engine reads these keys (kitty/kilix_tab_status.py) and
+# falls back to the same defaults, so an absent key and its default are one
+# behaviour. Loads are logical cores; HIGH may also be a share of the machine,
+# "50%", which never means less than two cores.
+TAB_STATUS_KEY = "KILIX_TAB_STATUS"
+TAB_STATUS_DEFAULTS = {
+    TAB_STATUS_KEY: "1",
+    "KILIX_TAB_STATUS_MODERATE_CORES": "1.0",
+    "KILIX_TAB_STATUS_HIGH_CORES": "50%",
+    "KILIX_TAB_STATUS_ACTIVE_CORES": "0.10",
+    "KILIX_TAB_STATUS_IDLE_AFTER_SECONDS": "5",
+    "KILIX_TAB_STATUS_STEP_SECONDS": "1",
+    "KILIX_TAB_STATUS_SOFTWARE_STEP_SECONDS": "4",
+    "KILIX_TAB_STATUS_LOW_COLOR": "#8ae234",
+    "KILIX_TAB_STATUS_MODERATE_COLOR": "#fce94f",
+    "KILIX_TAB_STATUS_HIGH_COLOR": "#ef2929",
+}
+# key -> (smallest, largest) accepted number
+_TAB_STATUS_RANGES = {
+    "KILIX_TAB_STATUS_MODERATE_CORES": (0.01, 4096.0),
+    "KILIX_TAB_STATUS_HIGH_CORES": (0.01, 4096.0),
+    "KILIX_TAB_STATUS_ACTIVE_CORES": (0.0, 4096.0),
+    "KILIX_TAB_STATUS_IDLE_AFTER_SECONDS": (1.0, 86400.0),
+    "KILIX_TAB_STATUS_STEP_SECONDS": (0.25, 3600.0),
+    "KILIX_TAB_STATUS_SOFTWARE_STEP_SECONDS": (0.25, 3600.0),
+}
+
+
+def normalize_tab_status(key: str, raw_value: object) -> str:
+    """Validate one tab status setting; the stored text is what was typed."""
+    value = str(raw_value).strip()
+    if key == TAB_STATUS_KEY:
+        return "1" if truthy(value) else "0"
+    if key.endswith("_COLOR"):
+        value = value.lower()
+        if not re.fullmatch(r"#[0-9a-f]{6}", value):
+            raise ValueError(f"{key} must be a colour written #rrggbb")
+        return value
+    if key not in _TAB_STATUS_RANGES:
+        raise KeyError(key)
+    low, high = _TAB_STATUS_RANGES[key]
+    if key == "KILIX_TAB_STATUS_HIGH_CORES" and value.endswith("%"):
+        if not re.fullmatch(r"[0-9]{1,3}(?:\.[0-9]+)?%", value) or not 0.0 < float(value[:-1]) <= 100.0:
+            raise ValueError(f"{key} must be a number of cores, or a share of the machine from 1% to 100%")
+        return value
+    if not re.fullmatch(r"[0-9]{1,6}(?:\.[0-9]{1,3})?", value) or not low <= float(value) <= high:
+        raise ValueError(f"{key} must be a number from {low:g} to {high:g}")
+    return value
+
 # Kitty ships images as APC sequences whose payload is base64 pixel data, so a
 # pane running the desktop, a browser, or icat can emit megabytes per second.
 # ``elide`` records a byte-count marker instead, keeping the transcript a
@@ -385,7 +436,7 @@ MANAGED_KEYS = tuple(spec.key for spec in TOGGLE_SPECS) + (
     TRANSCRIPT_LIMIT_KEY,
     TRANSCRIPT_TOTAL_KEY,
     TRANSCRIPT_ARCHIVE_KEY,
-) + VOICE_VALUE_KEYS + CODING_KEYS + tuple(WEATHER_DEFAULTS)
+) + VOICE_VALUE_KEYS + CODING_KEYS + tuple(WEATHER_DEFAULTS) + tuple(TAB_STATUS_DEFAULTS)
 
 _ASSIGNMENT = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
 
@@ -454,6 +505,8 @@ def truthy(value: object) -> bool:
 def _normalize_change(key: str, raw_value: object) -> str:
     if key in WEATHER_DEFAULTS:
         return normalize_weather(key, raw_value)
+    if key in TAB_STATUS_DEFAULTS:
+        return normalize_tab_status(key, raw_value)
     if key == TEMPERATURE_UNIT_KEY:
         value = str(raw_value).strip().lower()
         if value not in TEMPERATURE_UNIT_CHOICES:
@@ -550,6 +603,7 @@ def defaults(*, migrate_environment: bool = False) -> dict[str, str]:
     }
     values[CLOCK_FORMAT_KEY] = CLOCK_FORMAT_DEFAULT
     values.update(WEATHER_DEFAULTS)
+    values.update(TAB_STATUS_DEFAULTS)
     values[TEMPERATURE_UNIT_KEY] = TEMPERATURE_UNIT_DEFAULT
     values[SYSTEM_LOAD_MODE_KEY] = SYSTEM_LOAD_MODE_DEFAULT
     values[SYSTEM_GPU_MODE_KEY] = SYSTEM_GPU_MODE_DEFAULT
@@ -1071,6 +1125,9 @@ __all__ = [
     "TAB_BAR_EDGE_CHOICES",
     "TAB_BAR_EDGE_DEFAULT",
     "TAB_BAR_EDGE_KEY",
+    "TAB_STATUS_DEFAULTS",
+    "TAB_STATUS_KEY",
+    "normalize_tab_status",
     "TOGGLE_BY_KEY",
     "TOGGLE_SPECS",
     "TOP_BAR_TOGGLES",
